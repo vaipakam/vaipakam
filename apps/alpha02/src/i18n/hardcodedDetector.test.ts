@@ -150,4 +150,18 @@ describe('AST hardcoded-string detector (#1365)', () => {
   it('still ignores non-copy call args, even in a throw', () => {
     expect(strings("function f() { throw new Error(fmt('Some words here')); }")).toEqual([]);
   });
+
+  // --- Codex #1394 round-4 coverage gaps ---
+
+  it('flags security-leg labels via the leg object key', () => {
+    const src = "const legs = [{ leg: 'loan asset' }, { leg: 'collateral' }];";
+    expect(strings(src)).toContain('loan asset');
+    expect(strings(src)).toContain('collateral');
+  });
+
+  it('flags FaucetRow blurb / actionLabel props', () => {
+    const src = 'const X = () => <FaucetRow blurb="Mint test tokens" actionLabel="Mint now" />;';
+    expect(strings(src)).toContain('Mint test tokens');
+    expect(strings(src)).toContain('Mint now');
+  });
 });

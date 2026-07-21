@@ -85,6 +85,9 @@ const UI_ATTRS = new Set([
   // React's `children` passed as an explicit prop is the same rendered
   // text as `<Tag>…</Tag>` — `<Button children="Click me" />`.
   'children',
+  // FaucetRow row body + button copy props.
+  'blurb',
+  'actionLabel',
 ]);
 
 /**
@@ -113,10 +116,14 @@ const UI_KEYS = new Set([
   'hint',
   'confirmLabel',
   // Typed copy-container fields rendered from objects: Home job `blurb`,
-  // OfferFlow `SideCopy` amountLabel/doneBody.
+  // OfferFlow `SideCopy` amountLabel/doneBody, FaucetRow actionLabel,
+  // desk OrderTicket securityLegs `leg` (interpolated into the security
+  // banner via text.securityBlocked/Unknown(l.leg)).
   'blurb',
   'amountLabel',
   'doneBody',
+  'actionLabel',
+  'leg',
 ]);
 
 /**
@@ -154,6 +161,9 @@ const BASELINE = {
     yearly: 1,
     '· offer #': 1,
     'network #': 1,
+    // securityLegs leg labels interpolated into the token-security banner (#1360).
+    'loan asset': 1,
+    collateral: 1,
     'You’re': 1,
     'accepting lending offer': 1,
     'funding borrow request': 1,
@@ -180,6 +190,8 @@ const BASELINE = {
   'src/components/desk/HistoryPanel.tsx': { 'Loan #': 1 },
   'src/components/desk/MatchBand.tsx': { 'bps · offers # × #': 1 },
   'src/components/desk/OpenOrdersPanel.tsx': { 'Reading the offer’s live values…': 1, Close: 1 },
+  // securityLegs leg labels interpolated into the security banner (#1360).
+  'src/components/desk/OrderTicket.tsx': { 'loan asset': 1, collateral: 1 },
   'src/components/desk/PositionsPanel.tsx': {
     'Loan #': 1,
     'd left': 1,
