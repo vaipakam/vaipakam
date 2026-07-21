@@ -1718,7 +1718,7 @@
         "borrowerYouReceiveNow": "{{principal}} ahora (menos la comisión de iniciación {{lif}}).",
         "borrowerYouReceiveOnAccept": "{{principal}} cuando un prestamista acepta tu solicitud.",
         "buyCollateralLocked": "Su {{collateral}} ya está bloqueada.",
-        "buyWhenEnds": "El reembolso vence antes de {{due}} (período de gracia: {{grace}}). Luego reclamas tus fondos.",
+        "buyWhenEnds": "El reembolso vence a más tardar el {{due}} (período de gracia: {{grace}}). Luego reclamas tus fondos.",
         "buyYouLock": "{{principal}} pagado ahora al prestamista saliente — el préstamo en sí no cambia para el prestatario.",
         "buyYouReceive": "La posición de prestamista del préstamo #{{loanId}} en curso: hasta ~{{interest}} de intereses desde ahora hasta el vencimiento si el prestatario reembolsa a tiempo, más la devolución completa del principal {{principal}}.",
         "lenderCollateralLock": "Bloquean {{collateral}}.",
@@ -1779,7 +1779,7 @@
       "showMoreHidden": "Mostrar {{next}} más ({{total}} ocultos)"
     },
     "loanState": {
-      "beingSettled": "En liquidación",
+      "beingSettled": "Saldándose",
       "closed": "Cerrado",
       "defaulted": "En default",
       "dueInDays_few": "Vence en {{count}} días",
@@ -1803,7 +1803,7 @@
     "AonRequiresFullFill": "Esta oferta es Todo-o-nada — el matcher solo lograría un llenado parcial, lo que viola los términos de la oferta. Empareja el tamaño completo o salta el par.",
     "AonRequiresSingleValueAmount": "Las ofertas Todo-o-nada requieren un importe de valor único (mínimo igual al máximo). Ajusta el rango para que ambos extremos coincidan.",
     "AssetPaused": "Este activo está pausado actualmente por la gobernanza. Espera a que se levante la pausa antes de reintentar.",
-    "BorrowerSanctioned": "La wallet del prestatario está marcada por el oráculo de sanciones on-chain, por lo que este emparejamiento no puede continuar.",
+    "BorrowerSanctioned": "La billetera del prestatario está marcada por el oráculo de sanciones on-chain, por lo que este emparejamiento no puede continuar.",
     "CancelCooldownActive": "Está activo el enfriamiento de cancelación de 5 minutos para ofertas sin llenar. La cuenta regresiva en la fila muestra cuándo la oferta podrá cancelarse.",
     "CollateralAmountMaxMustBePositive": "Introduce un importe máximo de garantía mayor que cero.",
     "CollateralMustBePositive": "Introduce un importe de garantía mayor que cero.",
@@ -1920,7 +1920,7 @@
     "PeriodicInterestDisabled": "Los pagos periódicos de intereses están desactivados actualmente en este despliegue.",
     "PositionNFTLocked": "Este NFT de posición está bloqueado mientras un flujo estratégico (precierre / refinanciación / venta de préstamo) está en curso.",
     "PrincipalNotKYCd": "Esta acción requiere verificación de identidad (KYC) para este tamaño en este despliegue.",
-    "PrincipalSanctioned": "Esta wallet está marcada por el oráculo de sanciones on-chain, por lo que el protocolo no puede abrir una nueva posición para ella.",
+    "PrincipalSanctioned": "Esta billetera está marcada por el oráculo de sanciones on-chain, por lo que el protocolo no puede abrir una nueva posición para ella.",
     "RateShortfallTooHigh": "El déficit de tasa de interés supera el límite permitido para esta venta de préstamo.",
     "ReentrancyGuardReentrantCall": "La transacción fue revertida por la protección contra reentrancia. Inténtalo de nuevo.",
     "RefinanceCarryOverCollateralShortfall": "Déficit de garantía transferida en la refinanciación",
@@ -1936,9 +1936,9 @@
     "SalePositionNotConsolidatable": "La posición de venta no se puede consolidar",
     "SaleVehicleImmutable": "Vehículo de venta inmutable",
     "SaleVehicleNotMatchable": "Vehículo de venta no emparejable",
-    "SanctionedAddress": "Esta wallet (o el creador de la oferta) está marcada por el oráculo de sanciones on-chain. El protocolo no puede emparejarte con una dirección sancionada. Si crees que es un error, contacta directamente al operador del oráculo de sanciones — Vaipakam no mantiene su propia lista de sanciones.",
+    "SanctionedAddress": "Esta billetera (o el creador de la oferta) está marcada por el oráculo de sanciones on-chain. El protocolo no puede emparejarte con una dirección sancionada. Si crees que es un error, contacta directamente al operador del oráculo de sanciones — Vaipakam no mantiene su propia lista de sanciones.",
     "SelfCollateralizedOffer": "Oferta autocollateralizada — el activo principal y el activo de garantía deben ser distintos.",
-    "SelfTrade": "No puedes emparejar tu propia oferta — prestamista y prestatario no pueden ser la misma wallet.",
+    "SelfTrade": "No puedes emparejar tu propia oferta — prestamista y prestatario no pueden ser la misma billetera.",
     "SelfTradeForbidden": "Autonegociación no permitida — las direcciones de prestamista y prestatario son iguales. Empareja contra la oferta de una contraparte.",
     "SequencerDown": "El secuenciador L2 está caído actualmente. Las lecturas de precio están pausadas hasta que vuelva a estar sano.",
     "SequencerGracePeriod": "El secuenciador L2 acaba de volver — los precios están bloqueados durante 1 hora tras la recuperación. Inténtalo de nuevo en breve.",
@@ -1955,6 +1955,6 @@
     "VaultWithdrawFailed": "Falló el retiro del Vault — inténtalo de nuevo.",
     "ZeroAmount": "No hay saldo de tesorería que reclamar para este activo.",
     "ZeroCollateral": "El préstamo no tiene garantía.",
-    "_gasEstimateUnavailable": "La wallet no pudo estimar esta transacción, por lo que muy probablemente fallaría si se firmara. Esto NO es una falta real de gas — si el paso de revisión indicó una razón específica, esa es la causa real. De lo contrario, las causas usuales son una aprobación de token faltante (aprueba el importe exacto y reintenta) o una versión de app obsoleta cuya forma de llamada ya no coincide con el contrato desplegado (recarga completa para cargar la última versión). Si persiste, comparte la exportación de diagnósticos con soporte."
+    "_gasEstimateUnavailable": "La billetera no pudo estimar esta transacción, por lo que muy probablemente fallaría si se firmara. Esto NO es una falta real de gas — si el paso de revisión indicó una razón específica, esa es la causa real. De lo contrario, las causas usuales son una aprobación de token faltante (aprueba el importe exacto y reintenta) o una versión de app obsoleta cuya forma de llamada ya no coincide con el contrato desplegado (recarga completa para cargar la última versión). Si persiste, comparte la exportación de diagnósticos con soporte."
   }
 }
