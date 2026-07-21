@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "{{duration}} 后权利自动重置。请从详情页按时关闭租赁以取回 buffer。",
       "receiptRentYouCanLose": "如果租赁未按时关闭，你可能失去 {{buffer}} buffer。无论如何，使用权会在到期时结束。",
       "receiptRentYouLock": "{{total}} 已预付 — 完整期限费用加 {{buffer}} 可退 buffer。",
-      "receiptRentYouReceive": "从现在起获得 {{nft}} 的使用权，持续 {{duration}}。"
+      "receiptRentYouReceive": "从现在起获得 {{nft}} 的使用权，持续 {{duration}}。",
+      "switchPrompt": "{{path}}？切换",
+      "prepaymentTokenLabel": "预付 token"
     },
     "preclose": {
       "title": "提前关闭此贷款",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + 最多 ~{{interest}} 利息",
         "termsRental": "{{duration}} · {{date}} 结束",
         "termsLoan": "{{rate}} 年化 · {{duration}} · {{date}} 到期",
-        "confirmAction": "确认 — {{action}}"
+        "confirmAction": "确认 — {{action}}",
+        "lockedSymbolFallback": "锁定"
       },
       "getStarted": "开始",
       "loading": "正在加载您的持仓…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "{{chain}} 上尚不能存入 VPFI。Vaipakam 的其他功能无需 VPFI 也可使用。",
       "walletBalanceHint": "你的钱包中: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} 返回你的钱包。",
-      "withdrawableHint": "现在可提取: vault 中 {{vault}} 的 {{free}} VPFI"
+      "withdrawableHint": "现在可提取: vault 中 {{vault}} 的 {{free}} VPFI",
+      "warmingUpBody": "您的余额有资格享受{{tier}}{{currently}}，但折扣按您的 30 天平均余额计算 — 保持余额，您的实际折扣会逐步跟上。",
+      "tierOff": "减免 {{discount}}",
+      "higherTier": "更高档位",
+      "currentlyClause": " （当前 {{rate}}）"
     },
     "errors": {
       "partialOverPrincipal": "这已覆盖贷款的全部剩余本金。请改用“还清此贷款” — 它会正确结算贷款并释放您的抵押品。",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} 个资产",
       "unreadableCount_zero": "{{count}} 个资产",
       "unreadableWarn": "我们刚才无法读取 {{assets}}（{{list}}）— 下方列表可能缺少余额。通常下次刷新会恢复。",
-      "lockedFreeBreakdown": "{{locked}} 已锁定 · {{free}} 可用"
+      "lockedFreeBreakdown": "{{locked}} 已锁定 · {{free}} 可用",
+      "onChain": "在 {{chain}} 上"
     },
     "activity": {
       "title": "活动",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Faucet 测试代币",
       "invalidAddress": "请输入有效的合约地址 — “0x” 后跟 40 个十六进制字符。",
       "pasteOption": "粘贴代币地址…",
-      "placeholder": "选择资产…"
+      "placeholder": "选择资产…",
+      "contractAddressAria": "{{label}} 合约地址"
     },
     "checklist": {
       "checking": "检查中",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "返回",
       "tryAgain": "重试",
-      "waitingForWallet": "等待钱包…"
+      "waitingForWallet": "等待钱包…",
+      "networkFallback": "网络 #{{id}}",
+      "unknown": "未知"
     },
     "copyAddress": {
       "copied": "地址已复制",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "请输入 0 到 {{max}} 之间的数字 — 协议将年化利率限制在 {{max}}%。",
         "theyLockCollateral": "他们锁定 {{collateral}} 作为抵押品",
         "youLockCollateral": "你锁定 {{collateral}} 作为抵押品"
-      }
+      },
+      "rowMainLine": "{{action}} {{amount}}，年化 {{rate}}",
+      "offerNumber": "报价 #{{id}}",
+      "acceptingLendingOffer": "您正在接受出借报价 #{{id}}.",
+      "fundingBorrowRequest": "您正在为借款请求出资 #{{id}}.",
+      "securityLegLoanAsset": "贷款资产",
+      "securityLegCollateral": "抵押品"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "设置"
     },
     "stepNav": {
-      "progressAria": "进度"
+      "progressAria": "进度",
+      "progress": "第 {{current}}/{{total}} 步 — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "你的 buffer 返还",

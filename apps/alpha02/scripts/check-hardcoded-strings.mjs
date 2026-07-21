@@ -204,38 +204,11 @@ const GLOSSARY = new Set(
  * too — not catalog copy, but they sit in the same rendered positions.
  */
 const BASELINE = {
-  // --- Basic / common surfaces (extract first — see #1393).
+  // --- Basic / common surfaces. The composed offer-row / step / vault /
+  //     Vpfi-tier / fallback-label strings that used to live here were
+  //     extracted into the copy catalog in the #1393 burn-down; only the
+  //     release-stage badge (a proper noun, not localized) remains.
   'src/components/AppShell.tsx': { alpha: 1 }, // release-stage badge, not localized
-  'src/components/AssetPicker.tsx': { 'contract address': 1 },
-  'src/components/OfferFlow.tsx': {
-    at: 1, // connective in the composed offer-row "{amount} at {rate} yearly" (#1360)
-    yearly: 1,
-    '· offer #': 1,
-    'network #': 1,
-    // securityLegs leg labels interpolated into the token-security banner (#1360).
-    'loan asset': 1,
-    collateral: 1,
-    'You’re': 1,
-    'accepting lending offer': 1,
-    'funding borrow request': 1,
-  },
-  'src/components/StepNav.tsx': { Step: 1, of: 1 }, // "Step {n} of {m}" (#1360)
-  'src/pages/Vault.tsx': { on: 1 }, // "on {chain}" composed label (#1360)
-  // Hardcoded string args passed INTO a copy.* template (the {{leg}} /
-  // fallback-label class, #1360): 'prepayment token' filled into the
-  // tokenSecurity gate messages, a 'network #<id>' fallback label, a
-  // 'locked' symbol fallback, and an 'unknown' chain-id fallback. These
-  // render but bypass the catalog — extract with the #1360 work.
-  'src/pages/Rent.tsx': { '? Switch': 1, 'prepayment token': 7, 'network #': 1 },
-  'src/pages/PositionDetails.tsx': { locked: 1 },
-  'src/components/DiagnosticsDrawer.tsx': { unknown: 1 },
-  'src/pages/Vpfi.tsx': {
-    'Your balance qualifies for': 1,
-    off: 1,
-    'a higher tier': 1,
-    '(currently )': 1,
-    ', but discounts use your 30-day average — keep the balance and your active discount catches up.': 1,
-  },
   // --- Advanced Rate-Desk surface: its own i18n pass (status-enum
   //     vocabulary must be localized first). Grandfathered here.
   'src/components/desk/DeskHeader.tsx': { 'bps · loan #': 1 },

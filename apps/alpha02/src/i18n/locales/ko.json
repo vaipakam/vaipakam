@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "{{duration}} 후 rights가 자동 reset됩니다. buffer를 돌려받으려면 detail page에서 rental을 제때 close하세요.",
       "receiptRentYouCanLose": "rental이 제때 close되지 않으면 {{buffer}} buffer를 잃을 수 있습니다. use rights는 어쨌든 expiry에 끝납니다.",
       "receiptRentYouLock": "{{total}} prepaid — full term fees plus {{buffer}} refundable buffer.",
-      "receiptRentYouReceive": "지금부터 {{duration}} 동안 {{nft}}의 use rights."
+      "receiptRentYouReceive": "지금부터 {{duration}} 동안 {{nft}}의 use rights.",
+      "switchPrompt": "{{path}}? 전환",
+      "prepaymentTokenLabel": "선불 토큰"
     },
     "preclose": {
       "title": "이 대출 조기 종료",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + 최대 ~{{interest}} 이자",
         "termsRental": "{{duration}} · {{date}} 종료",
         "termsLoan": "연 {{rate}} · {{duration}} · {{date}} 만기",
-        "confirmAction": "확인 — {{action}}"
+        "confirmAction": "확인 — {{action}}",
+        "lockedSymbolFallback": "잠긴"
       },
       "getStarted": "시작하기",
       "loading": "포지션 불러오는 중…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "{{chain}}에서는 아직 VPFI deposits를 사용할 수 없습니다. Vaipakam의 나머지는 VPFI 없이 작동합니다.",
       "walletBalanceHint": "wallet 안: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}}가 wallet으로 돌아옵니다.",
-      "withdrawableHint": "지금 withdrawable: vault의 {{vault}} 중 {{free}} VPFI"
+      "withdrawableHint": "지금 withdrawable: vault의 {{vault}} 중 {{free}} VPFI",
+      "warmingUpBody": "현재 잔액은 {{tier}}{{currently}} 대상이지만, 할인은 30일 평균 잔액을 기준으로 적용됩니다 — 잔액을 유지하면 적용 중인 할인이 곧 따라잡습니다.",
+      "tierOff": "{{discount}} 할인",
+      "higherTier": "더 높은 등급",
+      "currentlyClause": " (현재 {{rate}})"
     },
     "errors": {
       "partialOverPrincipal": "그 금액은 대출의 남은 원금 전액을 감당합니다. 대신 “이 대출 상환”을 사용하세요 — 대출을 제대로 정산하고 담보를 해제합니다.",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} assets",
       "unreadableCount_zero": "{{count}} assets",
       "unreadableWarn": "지금 {{assets}}를 읽을 수 없었습니다({{list}}). 아래 list에 balances가 빠졌을 수 있습니다. 보통 다음 refresh에서 해결됩니다.",
-      "lockedFreeBreakdown": "{{locked}} 잠금 · {{free}} 사용 가능"
+      "lockedFreeBreakdown": "{{locked}} 잠금 · {{free}} 사용 가능",
+      "onChain": "{{chain}}에서"
     },
     "activity": {
       "title": "활동",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Faucet 테스트 토큰",
       "invalidAddress": "올바른 컨트랙트 주소를 입력하세요 — “0x” 뒤에 40자리 16진수 문자가 와야 합니다.",
       "pasteOption": "토큰 주소 붙여넣기…",
-      "placeholder": "자산 선택…"
+      "placeholder": "자산 선택…",
+      "contractAddressAria": "{{label}} 컨트랙트 주소"
     },
     "checklist": {
       "checking": "확인 중",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "뒤로",
       "tryAgain": "다시 시도",
-      "waitingForWallet": "지갑 대기 중…"
+      "waitingForWallet": "지갑 대기 중…",
+      "networkFallback": "네트워크 #{{id}}",
+      "unknown": "알 수 없음"
     },
     "copyAddress": {
       "copied": "주소가 복사되었습니다",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "0과 {{max}} 사이의 숫자를 입력하세요. protocol은 rates를 yearly {{max}}%로 제한합니다.",
         "theyLockCollateral": "상대가 {{collateral}}를 collateral로 lock합니다",
         "youLockCollateral": "당신이 {{collateral}}를 collateral로 lock합니다"
-      }
+      },
+      "rowMainLine": "{{amount}}를 연 {{rate}}로 {{action}}",
+      "offerNumber": "오퍼 #{{id}}",
+      "acceptingLendingOffer": "대출 오퍼를 수락합니다 #{{id}}.",
+      "fundingBorrowRequest": "차입 요청에 자금을 제공합니다 #{{id}}.",
+      "securityLegLoanAsset": "대출 자산",
+      "securityLegCollateral": "담보"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "설정"
     },
     "stepNav": {
-      "progressAria": "진행 상황"
+      "progressAria": "진행 상황",
+      "progress": "{{total}}단계 중 {{current}}단계 — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "buffer 반환",

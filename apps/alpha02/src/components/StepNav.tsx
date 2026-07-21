@@ -13,7 +13,7 @@ export function StepNav({
       {/* Phones swap the dot row for this single line (UX-039) — same
           information, no wrapped orphan labels. */}
       <span className="steps-compact">
-        Step {current + 1} of {steps.length} — {steps[current]}
+        {copy.stepNav.progress(current + 1, steps.length, steps[current])}
       </span>
       {steps.map((step, i) => (
         <span

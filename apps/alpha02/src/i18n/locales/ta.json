@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "{{duration}}-க்குப் பிறகு உரிமைகள் தானாகவே மீட்டமைக்கப்படுகின்றன. இடையகத்தைத் திரும்பப்பெற வாடகையை அதன் விவரப் பக்கத்திலிருந்து சரியான நேரத்தில் மூடுங்கள்.",
       "receiptRentYouCanLose": "வாடகை சரியான நேரத்தில் மூடப்படாவிட்டால் {{buffer}} இடையகம். உங்கள் பயன்பாட்டு உரிமைகள் எப்படியும் காலாவதியில் முடிகின்றன.",
       "receiptRentYouLock": "{{total}} முன்பணம் — முழுக் காலத்தின் கட்டணங்கள் கூடவே ஒரு {{buffer}} திரும்பப்பெறத்தக்க இடையகம்.",
-      "receiptRentYouReceive": "இப்போதிலிருந்து {{duration}}-க்கு {{nft}}-ன் பயன்பாட்டு உரிமைகள்."
+      "receiptRentYouReceive": "இப்போதிலிருந்து {{duration}}-க்கு {{nft}}-ன் பயன்பாட்டு உரிமைகள்.",
+      "switchPrompt": "{{path}}? மாற்று",
+      "prepaymentTokenLabel": "முன்பணத் டோக்கன்"
     },
     "preclose": {
       "title": "இந்தக் கடனை முன்கூட்டியே மூடு",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + ~{{interest}} வரை வட்டி",
         "termsRental": "{{duration}} · {{date}} அன்று முடிகிறது",
         "termsLoan": "{{rate}} ஆண்டுக்கு · {{duration}} · {{date}} அன்று செலுத்த வேண்டும்",
-        "confirmAction": "உறுதிப்படுத்து — {{action}}"
+        "confirmAction": "உறுதிப்படுத்து — {{action}}",
+        "lockedSymbolFallback": "பூட்டப்பட்டது"
       },
       "getStarted": "தொடங்கு",
       "loading": "உங்கள் நிலைகளை ஏற்றுகிறது…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "VPFI வைப்புகள் {{chain}}-ல் இன்னும் கிடைக்கவில்லை. Vaipakam-ல் மற்ற அனைத்தும் VPFI இல்லாமல் வேலை செய்யும்.",
       "walletBalanceHint": "உங்கள் வாலெட்டில்: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} உங்கள் வாலெட்டுக்குத் திரும்ப.",
-      "withdrawableHint": "இப்போது மீளப்பெறத்தக்கது: உங்கள் பெட்டகத்தில் உள்ள {{vault}}-ல் {{free}} VPFI"
+      "withdrawableHint": "இப்போது மீளப்பெறத்தக்கது: உங்கள் பெட்டகத்தில் உள்ள {{vault}}-ல் {{free}} VPFI",
+      "warmingUpBody": "உங்கள் இருப்பு {{tier}}{{currently}} பெறத் தகுதியானது, ஆனால் தள்ளுபடிகள் உங்கள் 30-நாள் சராசரியைப் பயன்படுத்துகின்றன — இருப்பை வைத்திருங்கள், உங்கள் செயலில் உள்ள தள்ளுபடி படிப்படியாகப் பொருந்தும்.",
+      "tierOff": "{{discount}} தள்ளுபடி",
+      "higherTier": "உயர்ந்த நிலை",
+      "currentlyClause": " (தற்போது {{rate}})"
     },
     "errors": {
       "partialOverPrincipal": "அது கடனின் மீதமுள்ள முழு அசலையும் ஈடுகட்டுகிறது. அதற்குப் பதிலாக “இந்தக் கடனைத் திருப்பிச் செலுத்து” என்பதைப் பயன்படுத்தவும் — அது கடனை முறையாக முடித்து உங்கள் பிணையத்தை விடுவிக்கும்.",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} சொத்துகள்",
       "unreadableCount_zero": "{{count}} சொத்துகள்",
       "unreadableWarn": "{{assets}} இப்போது படிக்க முடியவில்லை ({{list}}) — கீழே உள்ள பட்டியலில் இருப்புகள் விடுபட்டிருக்கலாம். இது வழக்கமாக அடுத்த புதுப்பிப்பில் சரியாகிவிடும்.",
-      "lockedFreeBreakdown": "{{locked}} பூட்டப்பட்டது · {{free}} கட்டற்றது"
+      "lockedFreeBreakdown": "{{locked}} பூட்டப்பட்டது · {{free}} கட்டற்றது",
+      "onChain": "{{chain}}-இல்"
     },
     "activity": {
       "title": "செயல்பாடு",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Faucet சோதனை டோக்கன்",
       "invalidAddress": "ஒரு செல்லுபடியாகும் contract முகவரியை உள்ளிடவும் — “0x”-ஐத் தொடர்ந்து 40 hex எழுத்துகள்.",
       "pasteOption": "ஒரு டோக்கன் முகவரியை ஒட்டவும்…",
-      "placeholder": "ஒரு சொத்தைத் தேர்ந்தெடுக்கவும்…"
+      "placeholder": "ஒரு சொத்தைத் தேர்ந்தெடுக்கவும்…",
+      "contractAddressAria": "{{label}} contract முகவரி"
     },
     "checklist": {
       "checking": "சரிபார்க்கப்படுகிறது",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "பின் செல்லவும்",
       "tryAgain": "மீண்டும் முயற்சிக்கவும்",
-      "waitingForWallet": "வாலெட்டுக்காக காத்திருக்கிறது…"
+      "waitingForWallet": "வாலெட்டுக்காக காத்திருக்கிறது…",
+      "networkFallback": "நெட்வொர்க் #{{id}}",
+      "unknown": "தெரியாதது"
     },
     "copyAddress": {
       "copied": "முகவரி நகலெடுக்கப்பட்டது",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "0-க்கும் {{max}}-க்கும் இடையே ஒரு எண்ணை உள்ளிடவும் — protocol விகிதங்களை ஆண்டுக்கு {{max}}%-ல் உச்சவரம்பிடுகிறது.",
         "theyLockCollateral": "அவர்கள் {{collateral}}-ஐப் பிணையமாகப் பூட்டுகிறார்கள்",
         "youLockCollateral": "நீங்கள் {{collateral}}-ஐப் பிணையமாகப் பூட்டுகிறீர்கள்"
-      }
+      },
+      "rowMainLine": "{{rate}} ஆண்டு விகிதத்தில் {{amount}} {{action}}",
+      "offerNumber": "சலுகை #{{id}}",
+      "acceptingLendingOffer": "நீங்கள் ஏற்கும் கடனளிப்பு சலுகை #{{id}}.",
+      "fundingBorrowRequest": "நீங்கள் நிதியளிக்கும் கடன் கோரிக்கை #{{id}}.",
+      "securityLegLoanAsset": "கடன் சொத்து",
+      "securityLegCollateral": "பிணையம்"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "அமைப்புகள்"
     },
     "stepNav": {
-      "progressAria": "முன்னேற்றம்"
+      "progressAria": "முன்னேற்றம்",
+      "progress": "படி {{current}} / {{total}} — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "உங்கள் இடையகம் திரும்ப",

@@ -834,6 +834,10 @@ const copySource = {
     ownPathBlurb: 'Set a daily fee — renters prepay the whole rental up front.',
     wantPath: 'I want to rent an NFT',
     wantPathBlurb: 'Pay up front, use the NFT until the rental ends.',
+    // "‹other path›? Switch" toggle beneath the chosen rent/lend path.
+    switchPrompt: tmpl('{{path}}? Switch', ['path']),
+    // Fallback label for the prepayment token in the security-gate banners.
+    prepaymentTokenLabel: 'prepayment token',
     // UX-047 — a direct browse action on the otherwise-sparse landing.
     browseCta: 'Browse NFTs available to rent',
     custodyNote:
@@ -1349,6 +1353,9 @@ const copySource = {
         'collateralSuffix',
       ]),
       vaultCollateralSuffix: tmpl(', plus {{collateral}} collateral', ['collateral']),
+      // Fallback name for the collateral asset when its symbol is unknown,
+      // used in the "what happens if nothing is repaid" default-payout line.
+      lockedSymbolFallback: 'locked',
       // Loan/rental detail receipt lines (extracted from
       // PositionDetails.tsx inline template literals — previously
       // hardcoded English in every locale).
@@ -2184,6 +2191,16 @@ const copySource = {
     activeDiscount: 'Active discount',
     noneRightNow: 'None right now',
     warmingUp: 'Warming up',
+    // "Warming up" explainer: the balance earns a bigger discount than the
+    // 30-day average currently grants. `tier` = tierOff/higherTier below;
+    // `currently` = currentlyClause (or empty when no discount applies yet).
+    warmingUpBody: tmpl(
+      'Your balance qualifies for {{tier}}{{currently}}, but discounts use your 30-day average — keep the balance and your active discount catches up.',
+      ['tier', 'currently'],
+    ),
+    tierOff: tmpl('{{discount}} off', ['discount']),
+    higherTier: 'a higher tier',
+    currentlyClause: tmpl(' (currently {{rate}})', ['rate']),
     consentToggle: 'Use my vaulted VPFI for fee discounts',
     consentToggleSub: 'Without this, holding VPFI gives no discount.',
     switchToChange: 'Switch to a supported network to change this.',
@@ -2463,6 +2480,8 @@ const copySource = {
     ),
     loading: 'Reading your vault…',
     addressLabel: 'Vault address:',
+    // Chain suffix after the vault address ("… on Base Sepolia").
+    onChain: tmpl('on {{chain}}', ['chain']),
     noVaultTitle: 'No vault yet',
     emptyTitle: 'Nothing in your vault yet',
     emptyBody: 'Assets appear here when you post offers, open loans, or deposit VPFI.',
@@ -2784,6 +2803,19 @@ const copySource = {
     },
     rowBorrow: 'Borrow',
     rowLend: 'Lend',
+    // Offer-row main line: "Lend 100 mUSDC at 5% yearly" (the risk badge
+    // renders after this text). action = rowLend/rowBorrow.
+    rowMainLine: tmpl('{{action}} {{amount}} at {{rate}} yearly', ['action', 'amount', 'rate']),
+    // Offer id chip in the offer-row sub-line ("· offer #40").
+    offerNumber: tmpl('offer #{{id}}', ['id']),
+    // Accept-mode banner opener — which side the caller is taking, with
+    // the offer id in the template so each locale places it naturally.
+    acceptingLendingOffer: tmpl('You’re accepting lending offer #{{id}}.', ['id']),
+    fundingBorrowRequest: tmpl('You’re funding borrow request #{{id}}.', ['id']),
+    // Security-leg labels interpolated into the token-security banner via
+    // tokenSecurity.gate*(leg): "The loan asset …" / "The collateral …".
+    securityLegLoanAsset: 'loan asset',
+    securityLegCollateral: 'collateral',
     counterAssetBorrowed: 'Borrowed asset',
     counterAssetCollateral: 'Collateral asset',
     liveFeesLoaded: 'Live fee terms loaded',
@@ -2840,9 +2872,16 @@ const copySource = {
     back: 'Back',
     tryAgain: 'Try again',
     waitingForWallet: 'Waiting for wallet…',
+    // Fallback chain label when a chain id has no known name (offer-row,
+    // rental prepay). "#42" style, so the number reads as an id.
+    networkFallback: tmpl('network #{{id}}', ['id']),
+    // Fallback shown when a value (e.g. the connected chain id) is not known.
+    unknown: 'unknown',
   },
   stepNav: {
     progressAria: 'Progress',
+    // Compact one-line step indicator (phones): "Step 2 of 4 — Review".
+    progress: tmpl('Step {{current}} of {{total}} — {{label}}', ['current', 'total', 'label']),
   },
   checklist: {
     ready: 'Ready',
@@ -2854,6 +2893,8 @@ const copySource = {
     pasteOption: 'Paste a token address…',
     faucetBadge: 'Faucet test token',
     invalidAddress: 'Enter a valid contract address — “0x” followed by 40 hex characters.',
+    // aria-label for the contract-address field, prefixed by the asset label.
+    contractAddressAria: tmpl('{{label}} contract address', ['label']),
   },
   copyAddress: {
     copyAria: tmpl('Copy address {{address}}', ['address']),

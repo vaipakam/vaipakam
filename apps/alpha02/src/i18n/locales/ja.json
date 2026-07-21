@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "{{duration}} 後に権利は自動リセットされます。バッファを取り戻すには詳細ページから期限内にレンタルを閉じてください。",
       "receiptRentYouCanLose": "レンタルが期限内に閉じられない場合、{{buffer}} バッファを失う可能性があります。使用権はどちらにせよ期限で終了します。",
       "receiptRentYouLock": "{{total}} 前払い — 全期間の手数料と返金可能な {{buffer}} バッファ。",
-      "receiptRentYouReceive": "{{duration}} の間、今から {{nft}} の使用権を得ます。"
+      "receiptRentYouReceive": "{{duration}} の間、今から {{nft}} の使用権を得ます。",
+      "switchPrompt": "{{path}}？切り替える",
+      "prepaymentTokenLabel": "前払いトークン"
     },
     "preclose": {
       "title": "このローンを早期終了",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + 最大 ~{{interest}} の利息",
         "termsRental": "{{duration}} · {{date}} に終了",
         "termsLoan": "年利 {{rate}} · {{duration}} · 返済期日 {{date}}",
-        "confirmAction": "確認 — {{action}}"
+        "confirmAction": "確認 — {{action}}",
+        "lockedSymbolFallback": "ロック済み"
       },
       "getStarted": "始める",
       "loading": "ポジションを読み込み中…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "{{chain}} では VPFI 入金はまだ利用できません。Vaipakam の他の機能は VPFI なしで動作します。",
       "walletBalanceHint": "ウォレット内: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} がウォレットに戻ります。",
-      "withdrawableHint": "今出金可能: vault 内 {{vault}} のうち {{free}} VPFI"
+      "withdrawableHint": "今出金可能: vault 内 {{vault}} のうち {{free}} VPFI",
+      "warmingUpBody": "あなたの残高は{{tier}}{{currently}}の対象ですが、割引は過去30日間の平均残高に基づきます — 残高を維持すれば、有効な割引が追いついてきます。",
+      "tierOff": "{{discount}} 割引",
+      "higherTier": "より上位の割引階層",
+      "currentlyClause": " （現在 {{rate}}）"
     },
     "errors": {
       "partialOverPrincipal": "これはローンの残り元本全体をカバーします。代わりに “このローンを返済” を使ってください — ローンを正しく決済し、担保を解放します。",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} 資産",
       "unreadableCount_zero": "{{count}} 資産",
       "unreadableWarn": "現在 {{assets}} を読み取れませんでした（{{list}}）— 下のリストに残高が欠けている可能性があります。通常は次の更新で解消します。",
-      "lockedFreeBreakdown": "{{locked}} ロック中 · {{free}} 利用可能"
+      "lockedFreeBreakdown": "{{locked}} ロック中 · {{free}} 利用可能",
+      "onChain": "{{chain}} 上"
     },
     "activity": {
       "title": "アクティビティ",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Faucet テストトークン",
       "invalidAddress": "有効なコントラクトアドレスを入力してください — “0x” に続く40文字の16進文字です。",
       "pasteOption": "トークンアドレスを貼り付け…",
-      "placeholder": "資産を選択…"
+      "placeholder": "資産を選択…",
+      "contractAddressAria": "{{label}} のコントラクトアドレス"
     },
     "checklist": {
       "checking": "確認中",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "戻る",
       "tryAgain": "再試行",
-      "waitingForWallet": "ウォレットを待機中…"
+      "waitingForWallet": "ウォレットを待機中…",
+      "networkFallback": "ネットワーク #{{id}}",
+      "unknown": "不明"
     },
     "copyAddress": {
       "copied": "アドレスをコピーしました",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "0 から {{max}} の数値を入力してください — プロトコルは年 {{max}}% を上限にしています。",
         "theyLockCollateral": "相手は {{collateral}} を担保としてロックします",
         "youLockCollateral": "あなたは {{collateral}} を担保としてロックします"
-      }
+      },
+      "rowMainLine": "{{amount}} を年利 {{rate}} で{{action}}",
+      "offerNumber": "オファー #{{id}}",
+      "acceptingLendingOffer": "あなたが受け入れる貸付オファー #{{id}}.",
+      "fundingBorrowRequest": "あなたが資金提供する借入リクエスト #{{id}}.",
+      "securityLegLoanAsset": "ローン資産",
+      "securityLegCollateral": "担保"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "設定"
     },
     "stepNav": {
-      "progressAria": "進行状況"
+      "progressAria": "進行状況",
+      "progress": "ステップ {{current}}/{{total}} — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "あなたのバッファ返却",
