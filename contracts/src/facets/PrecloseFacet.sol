@@ -294,16 +294,25 @@ contract PrecloseFacet is
             // delivery, sizing the VPFI treasury-cut equivalent on
             // `interest + lateFee` so a yield-discounted grace-window preclose
             // keeps the late fee in the lender's due (Pass-2 A1/D5 #1189).
-            // `loan.lender` is consolidated to the current holder earlier in the
-            // direct-close terminal (the `eagerConsolidateBothSides` hook above),
-            // so keying eligibility on it is safe.
+            // Keyed on the CURRENT lender-NFT holder, NOT the stored
+            // `loan.lender` (Codex #1390 P1). The `eagerConsolidateBothSides`
+            // hook above is Tier2 SKIP-not-block: it leaves `loan.lender`
+            // un-re-anchored when the current holder is sanctions-frozen or the
+            // lender side carries the #597 `heldForLender` exclusion, so a
+            // consolidation call is NOT proof the field is fresh. Since
+            // `ClaimFacet.claimAsLender` is `ownerOf(lenderTokenId)`-gated, the
+            // current holder is the party actually paid — resolving against a
+            // stale address would price the discount off the previous lender's
+            // hold tier and, once the peg is set, DEBIT their VPFI vault for a
+            // discount they never receive. Same fix as `swapToRepayFull` (#1387),
+            // which is eagerly consolidated on the same skip-not-block terms.
             // #1383 part B3 — routed through the diamond-internal resolve host
             // rather than inlining the delivery, so this size-maxed facet gets
             // the bytecode back (the host also emits the analytics passthrough,
             // which is why the separate emit block below is gone).
             (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
                 loanId,
-                loan.lender,
+                IERC721(address(this)).ownerOf(loan.lenderTokenId),
                 plan.interest + plan.lateFee,
                 plan.treasuryShare
             );
