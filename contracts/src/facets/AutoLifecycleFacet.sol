@@ -682,29 +682,23 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a
             // Full lender earns the +10% even without hold-discount consent);
             // still gated on the position NFT living with the recorded lender.
-            if (
-                treasuryShare > 0 &&
-                LibVPFIDiscount.lenderYieldFeeEligible(loan) &&
-                lenderNftOwner == loan.lender
-            ) {
-                (bool yieldApplied, ) =
-                    LibVPFIDiscount.tryApplyYieldFee(loan, totalInterestLike);
-                if (yieldApplied) {
-                    lenderShare = totalInterestLike;
-                    treasuryShare = 0;
-                } else {
-                    // E-1 (#1203) — no VPFI price source: direct lending-asset
-                    // fee reduction. Stays inside the `lenderNftOwner ==
-                    // loan.lender` guard so the discount tracks the position's
-                    // actual holder, mirroring the VPFI-mode branch.
-                    uint256 r = LibVPFIDiscount.directReductionYieldFee(
+            // #1354 §F2 / #1383 — the shared resolve helper runs the whole
+            // VPFI-payment-then-direct-reduction delivery. This facet does NOT
+            // consolidate `loan.lender`, so the `lenderNftOwner == loan.lender`
+            // guard stays: it ensures the helper's eligibility read and any VPFI
+            // vault debit hit the party that actually receives the interest —
+            // when the position NFT has changed hands, fall back to the plain
+            // split (no discount, no debit) rather than charge a stale lender.
+            if (lenderNftOwner == loan.lender) {
+                (uint256 lenderExtra, uint256 newTreasury, ) =
+                    LibVPFIDiscount.resolveLenderYieldFee(
                         loan,
+                        totalInterestLike,
                         treasuryShare
                     );
-                    if (r > 0) {
-                        lenderShare += r;
-                        treasuryShare -= r;
-                    }
+                if (lenderExtra > 0) {
+                    lenderShare += lenderExtra;
+                    treasuryShare = newTreasury;
                 }
             }
             _routeInterest(

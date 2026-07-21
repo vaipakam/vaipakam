@@ -1143,6 +1143,91 @@ library LibVPFIDiscount {
         reduction = (treasuryShareFull * effBps) / LibVaipakam.BASIS_POINTS;
     }
 
+    /**
+     * @notice #1383 (M2 PR-6 follow-up) — resolve the lender yield-fee discount
+     *         for ONE settlement in a single call: the whole
+     *         {lenderYieldFeeEligible} guard followed by the
+     *         VPFI-payment-then-direct-reduction fallback, returning the deltas
+     *         the caller folds into its settlement plan.
+     *
+     * @dev Behaviour-identical to the block that was duplicated across the four
+     *      primary lender-yield settlement facets (repay, preclose direct,
+     *      refinance, auto-lifecycle) — this is the single source of that
+     *      delivery logic. Being an `internal` library function it is INLINED
+     *      into each caller, so it does not by itself shrink facet bytecode; the
+     *      EIP-170 headroom that lets the size-constrained SECONDARY settlement
+     *      paths (swap-to-repay, partial repay, preclose Option 2b/3, periodic
+     *      interest) adopt it comes from wrapping THIS helper behind a
+     *      diamond-internal host facet (#1383 part B) that they reach via a
+     *      single `crossFacetCallReturn`, keeping the delivery logic in one
+     *      facet's code.
+     *
+     *      The caller applies the returned deltas as:
+     *          if (lenderExtra > 0) {
+     *              lenderShare   += lenderExtra;      // lending-asset
+     *              treasuryShare  = treasuryRemaining;
+     *          }
+     *      and, when `vpfiDeducted > 0`, emits the passthrough
+     *      `emitYieldFeeDiscountApplied` analytics event.
+     *
+     *      Delivery, mirroring the pre-existing inline logic:
+     *        - VPFI-payment ({tryApplyYieldFee}) succeeded → the entire treasury
+     *          cut was paid in VPFI from the lender's vault, so the lender keeps
+     *          100% of the fee in the lending asset: `lenderExtra ==
+     *          treasuryShare`, `treasuryRemaining == 0`, `vpfiDeducted > 0`.
+     *        - Otherwise the E-1 ({directReductionYieldFee}) fallback shifts the
+     *          discounted slice `r` treasury → lender: `lenderExtra == r`,
+     *          `treasuryRemaining == treasuryShare - r`, `vpfiDeducted == 0`.
+     *        - Ineligible / zero fee / zero resolved discount → the no-op
+     *          `(0, treasuryShare, 0)`.
+     *
+     *      Eligibility keys on `loan.lender` and `feeEntitlementByLoanId[loan.id]`
+     *      (see {lenderYieldFeeEligible}); a caller whose lender-NFT may have
+     *      been transferred without consolidating `loan.lender` must consolidate
+     *      to the current holder BEFORE calling so the consent check and any
+     *      VPFI vault debit hit the party actually being paid.
+     *
+     *      DARK until #1347 stamps a `Full` lender: with no consent and no Full
+     *      stamp this is a strict no-op for every current loan.
+     *
+     * @param loan             Live loan the yield fee settles against.
+     * @param interestForQuote Pre-split interest (+ late fee) in
+     *                         `loan.principalAsset` wei the VPFI quote is sized
+     *                         against.
+     * @param treasuryShare    The full (undiscounted) lending-asset treasury
+     *                         share for this settlement.
+     * @return lenderExtra       Lending-asset amount to add to the lender share.
+     * @return treasuryRemaining Lending-asset treasury share to actually transfer.
+     * @return vpfiDeducted      VPFI moved lender-vault → treasury (0 on the
+     *                           direct-reduction path).
+     */
+    function resolveLenderYieldFee(
+        LibVaipakam.Loan storage loan,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    )
+        internal
+        returns (uint256 lenderExtra, uint256 treasuryRemaining, uint256 vpfiDeducted)
+    {
+        if (treasuryShare == 0 || !lenderYieldFeeEligible(loan)) {
+            return (0, treasuryShare, 0);
+        }
+        // VPFI-payment delivery (peg set + consent + tracked coverage): the
+        // treasury cut is satisfied in VPFI from the lender's vault and the
+        // lender keeps the whole fee in the lending asset.
+        (bool applied, uint256 deducted) = tryApplyYieldFee(loan, interestForQuote);
+        if (applied) {
+            return (treasuryShare, 0, deducted);
+        }
+        // E-1 (#1203) fallback — no VPFI move: shift the resolved discount slice
+        // from the lending-asset treasury fee to the lender.
+        uint256 r = directReductionYieldFee(loan, treasuryShare);
+        if (r > 0) {
+            return (r, treasuryShare - r, 0);
+        }
+        return (0, treasuryShare, 0);
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     /// @dev Shared conversion: fee expressed in `feeAsset` wei → VPFI (18 dec)
