@@ -752,6 +752,93 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().dayUserSideCapVpfi18[dayId];
     }
 
+    /// @dev #1351 slice 2b — expose the internal D1 day primitive so its
+    ///      invariants can be unit-tested directly (Sigma paid <= C,
+    ///      order-independence, dust bounds, fail-closed mode).
+    function processUserSideDayRaw(
+        address user,
+        uint256 d,
+        uint256[] calldata entryIds,
+        uint256 poolFresh,
+        uint256 poolRecycled
+    )
+        external
+        view
+        returns (
+            LibInteractionRewards.DayCharge memory charge,
+            LibInteractionRewards.DaySlice[] memory slices
+        )
+    {
+        return LibInteractionRewards.processUserSideDay(
+            user,
+            d,
+            entryIds,
+            LibInteractionRewards.PoolBudget({
+                fresh: poolFresh,
+                recycled: poolRecycled
+            })
+        );
+    }
+
+    function setUserSideDayPaidRaw(
+        address user,
+        uint8 side,
+        uint256 d,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().userSideDayPaidVpfi[user][side][d] = amount;
+    }
+
+    /// @dev #1351 slice 2b — seed the lender RPN row + cursor directly so a
+    ///      unit test can price a day without driving the lazy claim-path
+    ///      accrual. Sets `cumLenderRpn18[d-1] = prevCum` and
+    ///      `cumLenderRpn18[d] = prevCum + delta`, so the day's uncapped delta
+    ///      is exactly `delta`, and moves the cursor to `d`.
+    function seedCumLenderDayRaw(
+        uint256 d,
+        uint256 prevCum,
+        uint256 delta
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (d > 0) s.cumLenderRpn18[d - 1] = prevCum;
+        s.cumLenderRpn18[d] = prevCum + delta;
+        if (s.cumLenderCursor < d) s.cumLenderCursor = d;
+    }
+
+    /// @dev #1351 slice 2b — borrower-side twin of {seedCumLenderDayRaw}.
+    function seedCumBorrowerDayRaw(
+        uint256 d,
+        uint256 prevCum,
+        uint256 delta
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (d > 0) s.cumBorrowerRpn18[d - 1] = prevCum;
+        s.cumBorrowerRpn18[d] = prevCum + delta;
+        if (s.cumBorrowerCursor < d) s.cumBorrowerCursor = d;
+    }
+
+    /// @dev #1351 slice 2b — set an entry's accrual bound WITHOUT closing it.
+    ///      Production `_allocEntry` stamps a forward `endDay` at creation and
+    ///      only `_closeEntry` sets `closed`, so an open entry legitimately has
+    ///      a real window; `pushRewardEntry` above seeds `endDay = 0`, which
+    ///      cannot express that state.
+    function setRewardEntryEndDayRaw(uint256 id, uint32 endDay) external {
+        LibVaipakam.storageSlot().rewardEntries[id].endDay = endDay;
+    }
+
+    /// @dev #1351 slice 2b — set an entry's D1 claim cursor directly.
+    function setRewardEntryClaimNextDayRaw(uint256 id, uint64 nextDay) external {
+        LibVaipakam.storageSlot().rewardEntryClaimNextDay[id] = nextDay;
+    }
+
+    function setDayCapModeRaw(uint256 d, uint8 mode) external {
+        LibVaipakam.storageSlot().dayCapMode[d] = LibVaipakam.CapMode(mode);
+    }
+
+    function setDayUserSideCapRaw(uint256 d, uint256 c) external {
+        LibVaipakam.storageSlot().dayUserSideCapVpfi18[d] = c;
+    }
+
     function setDayPoolStampRaw(
         uint256 dayId,
         uint128 scheduleFloor,

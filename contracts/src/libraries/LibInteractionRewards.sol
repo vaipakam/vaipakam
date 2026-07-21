@@ -9,6 +9,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title LibInteractionRewards
@@ -2460,6 +2461,712 @@ function _dayPoolHalves(
             ((freshHalf + recycledHalf) *
                 LibVaipakam.cfgUserSideShareCapBps()) /
             LibVaipakam.BASIS_POINTS;
+    }
+
+    // ─── #1351 (M2 PR-2, slice 2b) — the shared D1 day primitive ────────────
+    //
+    // `processUserSideDay` is the ONE place a ShareOfPool day is priced and
+    // charged. Both the user claim and the forfeit sweep must route through it:
+    // the whole point of the `(user, side, day)` domain is a SINGLE absolute
+    // ceiling, and two independent code paths spending against it would
+    // reintroduce exactly the double-pay this cap exists to stop.
+
+    /// @dev The RPN row for `d` is materialized only up to the side's cursor.
+    ///      Reading `cumRpn[d]` past it would either underflow or read an unset
+    ///      slot as a false 0, so every Δ computation is gated on this.
+    function _rpnReady(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) private view returns (bool) {
+        return
+            (side == LibVaipakam.RewardSide.Lender
+                ? s.cumLenderCursor
+                : s.cumBorrowerCursor) >= d;
+    }
+
+    /// @dev Day `d`'s UNCAPPED per-RPN-unit rate, `cumRpn[d] - cumRpn[d-1]`.
+    ///      Deliberately reads `cumRpn`, never `cumMin`: under D1 the legacy
+    ///      ETH-ratio tightening is retired (finalize stamps
+    ///      `dayCapThreshold18 = max`), so stacking it under the new ceiling
+    ///      would underpay. Caller MUST have checked {_rpnReady}.
+    function _uncappedDelta(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) private view returns (uint256) {
+        if (d == 0) return 0; // day 0 is excluded from rewards by convention
+        if (side == LibVaipakam.RewardSide.Lender) {
+            return s.cumLenderRpn18[d] - s.cumLenderRpn18[d - 1];
+        }
+        return s.cumBorrowerRpn18[d] - s.cumBorrowerRpn18[d - 1];
+    }
+
+    /// @dev One entry's raw contribution for day `d`, before any clamp.
+    ///      A day with no global interest on that side pays nothing (and would
+    ///      otherwise divide by zero upstream).
+    function _contribFor(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        uint256 d
+    ) private view returns (uint256) {
+        uint256 global = e.side == LibVaipakam.RewardSide.Lender
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        if (global == 0) return 0;
+        return (e.perDayNumeraire18 * _uncappedDelta(s, e.side, d)) / 1e18;
+    }
+
+    /// @dev Remaining loan-side headroom for `(loanId, side)` — the #1353
+    ///      PR-5c lifetime cap, prorated, minus what this loan-side has already
+    ///      been paid. Composes with the D1 ceiling as a `min`, so the tighter
+    ///      of the two always binds.
+    function _loanSideRemaining(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.RewardSide side,
+        uint256 rewardedDaysIncl
+    ) private view returns (uint256) {
+        // #1351 (Codex #1399 P2) — an UNSTAMPED loan carries NO loan-side cap;
+        // it is NOT a zero cap. This mirrors `_applyLoanSideCap`, which returns
+        // the untrimmed split on `openDays == 0`. Treating unstamped as 0 would
+        // clamp `cEff` to 0, make `rawPay == 0`, and advance the day as if the
+        // budget were exhausted — permanently losing that day's reward for a
+        // cutover/backfill miss. Unbounded here defers to the D1 ceiling, which
+        // still binds.
+        if (s.feeEntitlementByLoanId[loanId].openDays == 0) {
+            return type(uint256).max;
+        }
+        uint256 capEff = _loanSideRewardCapEff(s, loanId, rewardedDaysIncl);
+        uint256 paid = s.loanSideRewardPaidVpfi[loanId][uint8(side)];
+        return capEff > paid ? capEff - paid : 0;
+    }
+
+    /// @dev Apportion `budget` across `cEff` weights: floor pro-rata, then push
+    ///      the rounding remainder largest-first but ONLY into each entry's
+    ///      residual capacity (`cEff[e] - floor_e`).
+    ///
+    ///      `Σ slices <= budget` is required; `Σ slices == budget` is NOT — when
+    ///      residual capacity is exhausted the remainder is left UNALLOCATED
+    ///      rather than pushed past somebody's `cEff`. Overshooting a single
+    ///      entry's `cEff` would break the loan-side cap that produced it, so
+    ///      leaving dust unassigned is the correct trade (it simply stays in the
+    ///      pool, the same way today's unused remainder does). Dust is never
+    ///      redistributed to another user or carried to a later day.
+    ///      Ties break to the lowest ENTRY ID, not the lowest array index
+    ///      (Codex #1399 r6 P3). Index order is whatever the caller happened to
+    ///      build, and 2e's preview is specified as an exact view-twin of the
+    ///      claim — two independently-built worklists over the SAME entries must
+    ///      land the dust identically or preview and claim disagree by a wei.
+    ///      Entry id is a property of the entry, so the split is a function of
+    ///      the SET rather than of its ordering.
+    function _proRataFloorWithCapacityBoundedDust(
+        uint256 budget,
+        uint256[] memory cEff,
+        uint256 rawPay,
+        uint256[] memory entryIds
+    ) private pure returns (uint256[] memory slices) {
+        uint256 n = cEff.length;
+        slices = new uint256[](n);
+        if (budget == 0 || rawPay == 0) return slices;
+
+        uint256 assigned;
+        for (uint256 i; i < n; ) {
+            // Floor division: the sum can only undershoot `budget`.
+            uint256 fl = (budget * cEff[i]) / rawPay;
+            slices[i] = fl;
+            assigned += fl;
+            unchecked { ++i; }
+        }
+
+        uint256 dust = budget - assigned; // >= 0 by floor construction
+        while (dust != 0) {
+            // Largest residual capacity first; ties -> lowest ENTRY ID.
+            uint256 bestI = type(uint256).max;
+            uint256 bestCap;
+            for (uint256 i; i < n; ) {
+                uint256 residual = cEff[i] - slices[i];
+                if (
+                    residual > bestCap ||
+                    (residual == bestCap &&
+                        residual != 0 &&
+                        bestI != type(uint256).max &&
+                        entryIds[i] < entryIds[bestI])
+                ) {
+                    bestCap = residual;
+                    bestI = i;
+                }
+                unchecked { ++i; }
+            }
+            if (bestI == type(uint256).max || bestCap == 0) break; // capacity gone -> leave dust
+            uint256 give = bestCap < dust ? bestCap : dust;
+            slices[bestI] += give;
+            dust -= give;
+        }
+    }
+
+    /// @dev The day's FRESH / RECYCLED per-side RPN composition, recomputed with
+    ///      the EXACT formula the cumulative accumulator uses (see
+    ///      {advanceCumLenderThrough}), so `freshDaily + recycledDaily` equals
+    ///      the stored `Δ_d` that {_uncappedDelta} reads back — the two must not
+    ///      drift, or a slice would be sized by one decomposition and attributed
+    ///      by another.
+    /// @return freshDaily    Fresh-funded component of `Δ_d` (RPN units).
+    /// @return recycledDaily Recycled-funded component of `Δ_d`.
+    /// @return halt True ⇒ armed day whose pool stamp hasn't landed (mirror
+    ///         waiting on the composition broadcast). Unreachable behind
+    ///         {_rpnReady} (the cursor halts on the same condition), kept as a
+    ///         fail-closed backstop rather than a comment.
+    function _dayFreshRecycledDaily(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    )
+        private
+        view
+        returns (uint256 freshDaily, uint256 recycledDaily, bool halt)
+    {
+        (uint256 freshHalf, uint256 recycledHalf, bool h) = _dayPoolHalves(s, d);
+        if (h) return (0, 0, true);
+        uint256 globalTotal = side == LibVaipakam.RewardSide.Lender
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        if (globalTotal == 0) return (0, 0, false);
+        if (freshHalf != 0) {
+            freshDaily = (freshHalf * 1e18) / globalTotal;
+        }
+        if (recycledHalf != 0) {
+            recycledDaily = (recycledHalf * 1e18) / globalTotal;
+        }
+    }
+
+    /// @dev Attribute one leg's VPFI total to its funding sources using the
+    ///      day's composition. A ShareOfPool day is ARMED by construction (2a
+    ///      only stamps the mode under {_isArmedDay}), so there is NO pre-`D*`
+    ///      component and `total == armedFresh + recycled` exactly.
+    ///
+    ///      `recycled` FLOORS and fresh takes the rounding dust — the same
+    ///      derive-fresh-by-subtraction convention as {_entryWindowSplit}, and
+    ///      the safe direction on both ends: it can never overdraw the recycle
+    ///      bucket (the wei stays in the bucket), while the extra wei of fresh
+    ///      consumption is absorbed by {consumeArmedFresh}'s floor-at-zero.
+    function _splitDayAmount(
+        uint256 amount,
+        uint256 freshDaily,
+        uint256 recycledDaily
+    ) private pure returns (EntrySplit memory split) {
+        if (amount == 0) return split;
+        split.total = amount;
+        uint256 denom = freshDaily + recycledDaily;
+        if (denom == 0) {
+            // Unreachable: a zero-Δ day pays nothing (`rawPay == 0` returns
+            // earlier). Guarded anyway — never divide by a derived zero.
+            split.armedFresh = amount;
+            return split;
+        }
+        split.recycled = (amount * recycledDaily) / denom;
+        split.armedFresh = amount - split.recycled;
+    }
+
+    /// @notice Result of pricing one ShareOfPool `(user, side, day)`.
+    /// @param toUser     VPFI owed to the user (clean entries), decomposed by
+    ///                   funding source.
+    /// @param toTreasury VPFI owed to treasury (forfeited entries), decomposed
+    ///                   by funding source.
+    /// @param cappedOff  Reward the LOAN-SIDE lifetime cap refused. Moves no
+    ///                   tokens, but the caller MUST retire its commitments —
+    ///                   `consumeArmedFresh(cappedOff.armedFresh)` and
+    ///                   `releaseCommitment(cappedOff.recycled)` — exactly as
+    ///                   `_applyLoanSideCap` does. The day advances regardless,
+    ///                   so nobody can ever draw this value; leaving its
+    ///                   commitment outstanding permanently depresses every
+    ///                   later day's availability for reward that cannot exist.
+    ///                   Deliberately EXCLUDES the D1-ceiling residue: that
+    ///                   stays in the shared pool for other users, and retiring
+    ///                   it would destroy live value.
+    /// @param advanced   True ⇒ the caller MUST, in the SAME transaction:
+    ///                   (a) advance `rewardEntryClaimNextDay` to `d + 1` for
+    ///                   every entry in the set, (b) add `Σ slices` to
+    ///                   `userSideDayPaidVpfi[user][side][d]` — ALL slices,
+    ///                   forfeits included, so a forfeit cannot open a second
+    ///                   budget, (c) add each slice to
+    ///                   `loanSideRewardPaidVpfi[loanId][side]` **only where
+    ///                   `loanSideChargeable`** (see {DaySlice}), and
+    ///                   (d) increment `loanSideRewardedDays[loanId][side]` by
+    ///                   the day just priced (this function reads
+    ///                   `stored + 1` and cannot persist it).
+    ///                   Charging (b) is NOT optional — this function is `view`
+    ///                   and cannot do it, so a caller that transfers without
+    ///                   charging hands the user an UNLIMITED daily budget.
+    ///                   False ⇒ nothing was charged and the day stays
+    ///                   RETRYABLE (pool shortage) — see the 0-slice policy.
+    /// @dev Codex #1399 P2 — the legs are {EntrySplit}, not plain totals.
+    ///      Collapsing fresh and recycled into one number would strand every
+    ///      caller: the live reward paths need the source split to retire the
+    ///      right commitment (`consumeArmedFresh`), debit the recycle bucket
+    ///      (`LibVpfiRecycle.consume`), and — on the treasury leg — tell genuine
+    ///      absorption (`credit`) apart from a pure commitment RELEASE
+    ///      (`releaseCommitment`) for value that never physically left the
+    ///      bucket. Crediting a recycled forfeit as absorption inflates Ā while
+    ///      absorbing nothing.
+    ///
+    ///      NOT this primitive's job: retiring the day's UNCLAIMED residual
+    ///      commitment. Finalize reserves the whole day's committable amount,
+    ///      while a D1 day can close under-claimed; only a day-level view can
+    ///      see that residue, so it belongs to the 2d sweep.
+    struct DayCharge {
+        EntrySplit toUser;
+        EntrySplit toTreasury;
+        EntrySplit cappedOff;
+        bool advanced;
+    }
+
+    /// @notice The caller's REMAINING pool, per funding source.
+    /// @dev Codex #1399 r4 P2 — two budgets, not one. Fresh reward and recycled
+    ///      reward are drawn from physically different places (the fresh
+    ///      schedule vs the recycle bucket), so a single combined number can
+    ///      report "enough" on a mixed day while one source is actually short,
+    ///      and the transfer would then overdraw it. Each source is checked
+    ///      against its own remainder.
+    struct PoolBudget {
+        uint256 fresh;
+        uint256 recycled;
+    }
+
+    /// @notice One entry's share of a priced day.
+    /// @param amount             VPFI attributed to this entry.
+    /// @param loanSideChargeable True  ⇒ the caller MUST add `amount` to
+    ///                           `loanSideRewardPaidVpfi[loanId][side]`.
+    ///                           False ⇒ this is a FORFEIT: it consumes the D1
+    ///                           `(user, side, day)` ceiling but is deliberately
+    ///                           exempt from the loan-side lifetime cap, exactly
+    ///                           as `_processEntry` treats it. Charging it would
+    ///                           shrink the cap for the loan's OWN later reward
+    ///                           using value that was never emitted to the side.
+    ///                           The day itself still counts toward
+    ///                           `loanSideRewardedDays` either way (the rev-15
+    ///                           day-union rule).
+    struct DaySlice {
+        uint256 amount;
+        bool loanSideChargeable;
+    }
+
+    /// @dev Price every entry in the set against the loan-side cap for day `d`.
+    ///      Extracted from {processUserSideDay} purely to stay under the viaIR
+    ///      stack ceiling — no behaviour of its own.
+    /// @return cEff     Per-entry ceiling after the loan-side trim.
+    /// @return freshCap Fresh available within each `cEff`, fresh-first.
+    /// @return rawPay   `Σ cEff`.
+    /// @return capped   What the loan-side cap refused, by source.
+    function _priceEntriesForDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory entryIds,
+        DaySlice[] memory slices,
+        LibVaipakam.RewardSide side,
+        uint256 d,
+        uint256 freshDaily,
+        uint256 recycledDaily
+    )
+        private
+        view
+        returns (
+            uint256[] memory cEff,
+            uint256[] memory freshCap,
+            uint256 rawPay,
+            EntrySplit memory capped
+        )
+    {
+        uint256 n = entryIds.length;
+        cEff = new uint256[](n);
+        freshCap = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
+            uint256 v = _contribFor(s, e, d);
+            // The loan-side lifetime cap composes as a `min`, so whichever of
+            // the two ceilings is tighter binds.
+            // `_loanSideRewardCapEff` prorates by `min(daysIncl, openDays) /
+            // openDays`, so `daysIncl` must INCLUDE the day being priced — the
+            // same convention the #1353 call sites use
+            // (`storedDays + _entryArmedDays(e)`). Passing the stale stored
+            // count instead makes a loan's FIRST day compute `capEff = 0`, so
+            // `cEff` clamps to 0 and the primitive pays nothing, forever.
+            // Since this prices exactly ONE day, that is `stored + 1`.
+            //
+            // Safe to add 1 per entry: entries for a given (loanId, side) are
+            // adjacent and non-overlapping (a sale split ends the old window
+            // where the new one begins), so at most one entry of a loan-side
+            // can cover any single day.
+            //
+            // This function is `view` — the CALLER must persist the matching
+            // `loanSideRewardedDays` increment alongside the paid maps.
+            //
+            // Codex #1399 r3 P2 — the loan-side cap bounds reward PAID TO A
+            // USER, never a FORFEIT. `_processEntry` routes a forfeit's split
+            // to treasury UNTRIMMED (#1371 r2) because a forfeit recycles to
+            // the bucket rather than being emitted to the side; it only accrues
+            // the armed days to the union. Clamping a forfeit here would let an
+            // exhausted loan-side cap zero it out, and since the day then
+            // ADVANCES that reclaimable VPFI is never credited or released —
+            // gone, with its commitment left outstanding. Forfeits are bounded
+            // by the D1 `(user, side, day)` ceiling alone.
+            EntrySplit memory vs = _splitDayAmount(v, freshDaily, recycledDaily);
+            bool isForfeit = _isForfeited(s, e);
+            slices[i].loanSideChargeable = !isForfeit;
+            if (isForfeit) {
+                cEff[i] = v;
+                freshCap[i] = vs.armedFresh;
+            } else {
+                uint256 lsr = _loanSideRemaining(
+                    s,
+                    e.loanId,
+                    side,
+                    s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
+                );
+                if (v <= lsr) {
+                    cEff[i] = v;
+                    freshCap[i] = vs.armedFresh;
+                } else {
+                // Codex #1399 r7 P2 — the loan-side trim is FRESH-FIRST, not
+                // pro-rata by the day's composition. `_applyLoanSideCap` fills
+                // the headroom from fresh and only then from recycled
+                // ("Pay fresh first, then recycled, up to `remaining`"), so a
+                // composition-proportional trim here would report a recycled
+                // draw the live path never makes — debiting the recycle bucket
+                // for reward that should have come out of fresh, and
+                // under-releasing the recycled commitment by the same amount.
+                uint256 paidFresh =
+                    vs.armedFresh <= lsr ? vs.armedFresh : lsr;
+                cEff[i] = lsr;
+                freshCap[i] = paidFresh;
+                capped.armedFresh += vs.armedFresh - paidFresh;
+                capped.recycled += vs.recycled - (lsr - paidFresh);
+                }
+            }
+            rawPay += cEff[i];
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Attribute each entry's slice to the user or treasury leg,
+    ///      FRESH-FIRST within that entry's own post-trim composition
+    ///      (Codex #1399 r7 P2). Uniform with `_applyLoanSideCap`'s rule, and
+    ///      it reduces to the plain composition split when nothing was trimmed
+    ///      (`freshCap[i]` is then the entry's whole fresh share).
+    ///
+    ///      This CANNOT be done by splitting the aggregate: once one entry's
+    ///      headroom has been filled fresh-first, the set no longer has a
+    ///      single composition ratio to split by.
+    ///
+    ///      Extracted from {processUserSideDay} to keep that function under the
+    ///      viaIR stack ceiling.
+    function _attributeLegs(
+        DaySlice[] memory slices,
+        uint256[] memory amounts,
+        uint256[] memory freshCap,
+        uint256[] memory cEff
+    ) private pure returns (EntrySplit memory user_, EntrySplit memory treas_) {
+        uint256 n = slices.length;
+        for (uint256 i; i < n; ) {
+            uint256 amt = amounts[i];
+            // Fresh-first applies to the LOAN-SIDE trim only — it is already
+            // baked into `freshCap`. The further pro-rata reduction here comes
+            // from the D1 ceiling / pool, which is not a loan-side decision, so
+            // it must preserve the composition of what SURVIVED that trim
+            // rather than re-prioritising fresh. Scaling fresh-first here would
+            // zero the recycled draw on any day whose ceiling binds hard, and
+            // the day's recycled budget would then never be consumed at all.
+            // RECYCLED floors, fresh takes the dust — the same direction as
+            // {_splitDayAmount} and {_entryWindowSplit} (Codex #1399 r8 P2).
+            // Flooring fresh instead would hand the rounding wei to recycled:
+            // a 2-fresh/1-recycled survivor scaled to a 1-wei slice would
+            // report 0 fresh / 1 recycled, overdrawing the bucket for a wei
+            // that should never have left it — and potentially blocking on a
+            // phantom recycled shortage.
+            uint256 r = cEff[i] == 0
+                ? 0
+                : ((cEff[i] - freshCap[i]) * amt) / cEff[i];
+            uint256 f = amt - r;
+            // `loanSideChargeable` is stamped from the SHARED {_isForfeited} —
+            // the same predicate `_processEntry` routes on. A borrower entry
+            // that became claimable only via a Defaulted / InternalMatched
+            // terminal keeps `e.forfeited == false`, so routing on that flag
+            // alone would pay the BORROWER what the forfeit rules send to
+            // treasury.
+            if (slices[i].loanSideChargeable) {
+                user_.total += amt;
+                user_.armedFresh += f;
+                user_.recycled += r;
+            } else {
+                treas_.total += amt;
+                treas_.armedFresh += f;
+                treas_.recycled += r;
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice The shared D1 day primitive — price + charge ONE
+    ///         `(user, side, day)` against its absolute ceiling `C`.
+    /// @dev    Both the user claim and the forfeit sweep MUST route through
+    ///         this. The `(user, side, day)` domain exists precisely so there is
+    ///         ONE ceiling; two paths spending against it independently would
+    ///         reintroduce the double-pay the cap prevents.
+    ///
+    ///         `userSideDayPaidVpfi` is charged for what is ACTUALLY transferred
+    ///         this call, and counts user payouts AND treasury forfeit slices —
+    ///         a forfeit must not open a second budget. That durability is what
+    ///         makes staggered loan closes safe: whichever of a user's loans
+    ///         settles first consumes budget the later one then cannot re-spend,
+    ///         so `Σ paid ≤ C` holds regardless of ORDER. Exact simultaneous
+    ///         pro-rata across loans that close at different times is explicitly
+    ///         NOT promised — only the ceiling is.
+    ///
+    ///         Pool shortage is ALL-OR-NOTHING, and is judged PER SOURCE: if
+    ///         either the fresh or the recycled remainder cannot cover its share
+    ///         of the day's budget, nothing is charged and `advanced` is false
+    ///         so the caller retries later. Paying a fraction and advancing
+    ///         would silently forfeit the remainder, since v1 keeps no
+    ///         partial-day accounting.
+    ///
+    /// @param user          The claimant/forfeiter.
+    /// @param d             The reward day.
+    /// @param entryIds      Entries of `user` on one side covering `d` that are
+    ///                      ready to transfer NOW for this call. Each MUST be
+    ///                      sitting exactly on day `d` (`rewardEntryClaimNextDay`,
+    ///                      or `startDay` while unset) — see the cursor check.
+    ///
+    ///                      CALLER OBLIGATION at the `D*` cutover (Codex #1399
+    ///                      r5): an entry that opened BEFORE `D*` and is still
+    ///                      open after it must have its cursor WALKED to `D*`
+    ///                      through the legacy day branch, which advances the
+    ///                      same cursor — never jumped, and never pre-seeded to
+    ///                      `D*` in bulk. Jumping would skip the entry's
+    ///                      pre-cutover days entirely; this primitive cannot
+    ///                      tell a jumped cursor from an honest one, so it
+    ///                      rejects anything not sitting on `d` and the
+    ///                      spanning-entry bootstrap is the day walk's job.
+    /// @param pool          Budget left in the caller's pool this tx, per
+    ///                      funding source. (Named `pool` to avoid shadowing
+    ///                      the {poolRemaining} accessor.)
+    /// @return charge       Amounts + whether cursors may advance.
+    /// @return slices       Per-entry slice, index-aligned with `entryIds`.
+    ///
+    /// CALLER CONSUMPTION CONTRACT — derived line-by-line from
+    /// `InteractionRewardsFacet`'s claim path, and the single place it is
+    /// written down. Nine separate rules were established across the #1399
+    /// review; scattered across resolved threads they would be rediscovered one
+    /// bug at a time by 2c/2d.
+    ///
+    /// | Facet operation                    | Feed with |
+    /// | ---------------------------------- | --------- |
+    /// | `interactionPoolPaidOut +=`        | `toUser.armedFresh + toTreasury.armedFresh` |
+    /// | `LibVpfiRecycle.consume(...)`      | `toUser.recycled` ONLY |
+    /// | `consumeArmedFresh(...)`           | `toUser.armedFresh + toTreasury.armedFresh + cappedOff.armedFresh` |
+    /// | `LibVpfiRecycle.credit(Forfeited…)`| `toTreasury.armedFresh` |
+    /// | `releaseCommitment(Forfeited…)`    | `toTreasury.recycled + cappedOff.recycled` |
+    ///
+    /// Two traps in that table:
+    ///
+    /// 1. `consumeArmedFresh` takes THREE terms. `_applyLoanSideCap` keeps
+    ///    `armedFresh` WHOLE on its user split so the full commitment retires;
+    ///    this primitive instead reports the trimmed part separately as
+    ///    {DayCharge.cappedOff}. The sum is identical — but a caller that adds
+    ///    only the two paid legs leaks a fresh commitment on every trimmed
+    ///    entry, silently depressing later days' availability.
+    /// 2. The facet derives fresh as `total − recycled` while this returns
+    ///    `armedFresh` explicitly. They coincide ONLY because a ShareOfPool day
+    ///    is armed by construction, so there is no pre-`D*` component. Do not
+    ///    port this table to a legacy day.
+    function processUserSideDay(
+        address user,
+        uint256 d,
+        uint256[] memory entryIds,
+        PoolBudget memory pool
+    ) internal view returns (DayCharge memory charge, DaySlice[] memory slices) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 n = entryIds.length;
+        slices = new DaySlice[](n);
+        if (n == 0) return (charge, slices);
+
+        LibVaipakam.RewardSide side = s.rewardEntries[entryIds[0]].side;
+
+        // Validate the transfer set BEFORE any early return. A malformed set is
+        // a CALLER BUG and must always surface as a revert — if this sat after
+        // the readiness gate, the same bad set would silently no-op whenever the
+        // RPN row happened to be behind, hiding the defect until the day it
+        // isn't.
+        for (uint256 i; i < n; ) {
+            LibVaipakam.RewardEntry storage v = s.rewardEntries[entryIds[i]];
+            // `side` is taken from entry[0] and then drives BOTH the loan-side
+            // clamp and the `userSideDayPaidVpfi` key, so a mixed-side or
+            // foreign-user set would charge the wrong budget and pay slices for
+            // entries the claimant doesn't own. Two independent callers build
+            // this set (2c claim, 2d sweep), so an unchecked precondition in a
+            // fund-moving primitive is exactly the kind of assumption that
+            // silently rots — make it a revert, not a comment.
+            //
+            // Paying a day the entry doesn't cover would also mint reward from
+            // nothing (`perDayNumeraire18 × Δ` is computed regardless).
+            if (
+                v.user != user ||
+                v.side != side ||
+                d < v.startDay ||
+                d >= v.endDay
+            ) {
+                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+            }
+            // Codex #1399 P2 — the entry must be AT day `d` on its own cursor.
+            // Covering `d` is not enough: a stale worklist could re-present an
+            // entry that already advanced past `d` and get it priced a SECOND
+            // time out of any unsaturated `C`, and the loan-side proration
+            // (recomputed from `stored + 1`) would not catch it.
+            uint256 nd = s.rewardEntryClaimNextDay[entryIds[i]];
+            if ((nd == 0 ? uint256(v.startDay) : nd) != d) {
+                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+            }
+            // Codex #1399 r1/r2 P2 — an entry is payable only once CLAIMABLE
+            // and not yet processed. The legacy `_processEntry` applies exactly
+            // this gate before pricing, and a shared fund-moving primitive must
+            // not depend on the outer worklist remembering to.
+            //
+            // {_entryClaimable}, NOT `closed`: an entry made claimable by the
+            // LOAN-TERMINAL fallback is never `closed` (`_closeEntry` didn't
+            // run), and that is precisely the population {_entryTerminalForfeit}
+            // exists to route below. Gating on `closed` would revert those
+            // entries before the routing branch could ever see them — the
+            // branch would be dead code, and a defaulted borrower's forfeit
+            // would strand, never advancing its cursor. Active /
+            // FallbackPending loans are still rejected, which is the part that
+            // actually protects funds.
+            if (!_entryClaimable(s, v) || v.processed) {
+                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+            }
+            // Codex #1399 P2 — a duplicated id would read the SAME unchanged
+            // loan-side remaining twice, count the entry twice in `rawPay`, and
+            // let the caller persist both slices past the loan-side cap.
+            for (uint256 j; j < i; ) {
+                if (entryIds[j] == entryIds[i]) {
+                    revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+                }
+                unchecked { ++j; }
+            }
+            unchecked { ++i; }
+        }
+
+        // `_rpnReady` also subsumes the `knownGlobalSet[d]` gate: the cursor
+        // advance halts at the first day without a known global set, so
+        // `cursor >= d` implies day `d` was finalized. Do NOT "optimise" this
+        // check away — without it an unfinalized day reads an unset RPN row as
+        // a false 0 and would advance past itself, losing that day forever.
+        if (!_rpnReady(s, side, d)) return (charge, slices);
+
+        // Fail CLOSED — but only for a day that HAS finalized. An armed day
+        // that never got its mode stamp is not a legacy day; treating it as one
+        // would price it with the retired ETH-ratio cap (disabled at finalize ⇒
+        // effectively uncapped).
+        //
+        // Codex #1399 r4 P2 — this MUST sit behind the readiness gate. Finalize
+        // writes the mode stamp and the globals/RPN row together, so a day that
+        // simply hasn't finalized yet has no stamp either. Checking first turned
+        // "not ready, retry later" into a hard revert that would brick the whole
+        // claim for a not-yet-finalized day. Unlike a malformed transfer set
+        // (always a caller bug ⇒ always revert), an unfinalized day is a normal
+        // transient state.
+        if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
+            revert IVaipakamErrors.DayCapModeUnsetPostCutover(d);
+        }
+
+        // Resolve the day's funding composition BEFORE anything is priced: on
+        // the (unreachable-behind-`_rpnReady`) stamp-missing case the day must
+        // stay retryable, and bailing out after `slices` were computed would
+        // hand the caller a populated array with `advanced == false`.
+        (uint256 freshDaily, uint256 recycledDaily, bool halt) =
+            _dayFreshRecycledDaily(s, side, d);
+        if (halt) return (charge, slices);
+
+        uint256 c = s.dayUserSideCapVpfi18[d];
+        uint256 paid = s.userSideDayPaidVpfi[user][uint8(side)][d];
+        // Exhausted (including a legitimate `C == 0` dust day) — advance with a
+        // 0 slice so the walk makes progress instead of spinning on this day.
+        if (paid >= c) {
+            charge.advanced = true;
+            return (charge, slices);
+        }
+
+        (
+            uint256[] memory cEff,
+            uint256[] memory freshCap,
+            uint256 rawPay,
+            EntrySplit memory capped
+        ) = _priceEntriesForDay(
+            s, entryIds, slices, side, d, freshDaily, recycledDaily
+        );
+
+        // Legitimately nothing to pay (zero weights / loan-side exhausted):
+        // advance so the walk progresses. This is NOT the pool-shortage case.
+        if (rawPay == 0) {
+            capped.total = capped.armedFresh + capped.recycled;
+            charge.cappedOff = capped;
+            charge.advanced = true;
+            return (charge, slices);
+        }
+
+        uint256 remainingD1 = c - paid;
+        uint256 budget = rawPay < remainingD1 ? rawPay : remainingD1;
+
+        uint256[] memory amounts =
+            _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay, entryIds);
+        (EntrySplit memory user_, EntrySplit memory treas_) =
+            _attributeLegs(slices, amounts, freshCap, cEff);
+
+        // ALL-OR-NOTHING vs the pool — do NOT advance, so this day is retried
+        // once the pool refills.
+        //
+        // Checked PER SOURCE, because fresh and recycled reward come from
+        // physically different places: a mixed day that fits the combined
+        // remainder can still be short of one alone.
+        //
+        // Codex #1399 r6 P2 — and checked against the EXACT leg totals, not
+        // against a split of `budget`. Each leg floors its recycled share
+        // independently, and fresh is the subtraction remainder, so a set
+        // holding BOTH payable and forfeited entries can draw a wei or two more
+        // fresh than a single split of `budget` predicts. `consumeArmedFresh`
+        // floors at zero and would absorb that silently — which is exactly why
+        // it must not be relied on here: the pool is a real balance, and
+        // "off by a wei, absorbed downstream" is how a drift becomes
+        // unattributable. Compute the legs first, then check what will
+        // ACTUALLY be drawn.
+        //
+        // `cappedOff` is deliberately absent: it moves no tokens (it only
+        // retires commitments), so it draws nothing from the pool.
+        //
+        // Codex #1399 r9 P2 — the two sources are ASYMMETRIC across the legs,
+        // matching what the facet actually does with each:
+        //   • FRESH — both legs spend it. The user leg pays out; the forfeit
+        //     leg's fresh share is genuine absorption that `credit`s the
+        //     recycle bucket. `interactionPoolPaidOut` counts both.
+        //   • RECYCLED — only the USER leg consumes it (`LibVpfiRecycle
+        //     .consume`). The forfeit leg's recycled share never physically
+        //     left the bucket, so it is a pure `releaseCommitment` — zero
+        //     tokens move. Requiring recycled liquidity for it would strand a
+        //     recycled-funded forfeit (and its commitment) behind unrelated
+        //     payout budget that the release does not need.
+        if (
+            pool.fresh < user_.armedFresh + treas_.armedFresh ||
+            pool.recycled < user_.recycled
+        ) {
+            return (charge, slices);
+        }
+
+        for (uint256 i; i < n; ) {
+            slices[i].amount = amounts[i];
+            unchecked { ++i; }
+        }
+        charge.toUser = user_;
+        charge.toTreasury = treas_;
+        capped.total = capped.armedFresh + capped.recycled;
+        charge.cappedOff = capped;
+        charge.advanced = true;
     }
 
     /// @notice Store a broadcast-canonical threshold on a mirror (from Base's
