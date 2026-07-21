@@ -257,4 +257,27 @@ describe('AST hardcoded-string detector (#1365)', () => {
     // text-input values. Left out deliberately — see the round-7 refute.
     expect(strings("const X = () => <input type='submit' value='Place order' />;")).toEqual([]);
   });
+
+  // --- Codex #1394 round-8 coverage gaps ---
+
+  it('respects lexical shadowing of a copy alias (no false positive)', () => {
+    // A module-level `const text = copy.…` must NOT make a shadowing callback
+    // param `text` be treated as a catalog call — that would be a spurious
+    // CI failure on ordinary code reusing a common variable name.
+    const shadow =
+      "const text = copy.desk.orders; const X = () => rows.map(text => text.format('hello world'));";
+    expect(strings(shadow)).toEqual([]);
+    const fnShadow = "const text = copy.desk.x; function g(text){ return text.build('hello world'); }";
+    expect(strings(fnShadow)).toEqual([]);
+  });
+
+  it('still scans a genuine copy alias that is not shadowed', () => {
+    // The real desk pattern must keep working after the shadowing fix.
+    const real =
+      "const text = copy.tokenSecurity; const X = () => <span>{text.gateUnknown('prepayment token')}</span>;";
+    expect(strings(real)).toContain('prepayment token');
+    const nested =
+      "const text = copy.desk.x; const X = () => { const f = () => text.label('hi there'); return f; };";
+    expect(strings(nested)).toContain('hi there');
+  });
 });

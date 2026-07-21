@@ -25,7 +25,9 @@ labels) is covered as a whole without enumerating every field name, while
 lowercase look-alikes like `context` stay untouched. Hardcoded values
 passed into a catalog template through the codebase's established
 branch-alias pattern (`const text = copy.desk.ticket; text.method('…')`)
-are followed via a single-file syntactic alias map, and prose inside
+are followed via a single-file, lexically-scoped alias map — a shadowing
+callback parameter of the same name is respected, so ordinary code that
+reuses a common variable name is never mis-flagged — and prose inside
 tagged templates or object-spread prop bags is scanned the same as its
 direct form.
 Because the parse makes "is this rendered?" unambiguous, the detector can

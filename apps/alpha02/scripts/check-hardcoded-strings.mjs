@@ -359,27 +359,49 @@ export function analyzeSource(rel, src) {
   const findings = [];
   const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
-  // Pre-pass: collect local aliases of a `copy.*` branch — the established
-  // desk pattern `const text = copy.desk.ticket` (and `const seo = copy.seo`).
+  // SCOPE-AWARE aliasing of a `copy.*` branch — the established desk
+  // pattern `const text = copy.desk.ticket` (and `const seo = copy.seo`).
   // A hardcoded arg passed through such an alias (`text.gateUnknown('x')`)
   // is the same user-facing interpolation value as `copy.…('x')`, so the
-  // call-arg scan must treat these alias roots like `copy` itself. This is
-  // a bounded, single-file SYNTACTIC alias map (initializer rooted at
-  // `copy`), NOT general data-flow — no symbol table needed.
-  const copyAliases = new Set();
-  const collectAliases = (node) => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      node.initializer &&
-      ts.isIdentifier(node.name) &&
-      accessRoot(node.initializer) === 'copy'
-    ) {
-      copyAliases.add(node.name.text);
+  // call-arg scan treats these alias roots like `copy` itself. This is a
+  // bounded, single-file SYNTACTIC alias map (initializer rooted at
+  // `copy`), NOT general data-flow — no symbol table.
+  //
+  // Resolution is LEXICALLY SCOPED so a shadowing binding wins: a callback
+  // param `rows.map(text => text.format('x'))` re-binds `text` to a
+  // non-copy value and must NOT be scanned even when a module-level
+  // `const text = copy.…` exists. `scopes` is a stack of Map<name,isAlias>;
+  // a function-like node pushes a frame carrying its params (isAlias=false,
+  // params are never copy), and `const x = copy.…` declarations set
+  // isAlias=true in the current frame. `resolveCopyRoot` walks innermost-out
+  // and falls back to the literal `copy` identifier.
+  const scopes = [new Map()];
+  const declareInScope = (name, isAlias) => scopes[scopes.length - 1].set(name, isAlias);
+  const resolveCopyRoot = (name) => {
+    if (name == null) return false;
+    for (let i = scopes.length - 1; i >= 0; i--) {
+      if (scopes[i].has(name)) return scopes[i].get(name);
     }
-    ts.forEachChild(node, collectAliases);
+    return name === 'copy';
   };
-  collectAliases(sf);
-  const isCopyRoot = (name) => name === 'copy' || copyAliases.has(name);
+  const isFnLike = (n) =>
+    ts.isFunctionDeclaration(n) ||
+    ts.isFunctionExpression(n) ||
+    ts.isArrowFunction(n) ||
+    ts.isMethodDeclaration(n) ||
+    ts.isGetAccessorDeclaration(n) ||
+    ts.isSetAccessorDeclaration(n) ||
+    ts.isConstructorDeclaration(n);
+  // Identifier names bound by a (possibly destructuring) parameter/binding.
+  const collectBindingNames = (name, out = []) => {
+    if (ts.isIdentifier(name)) out.push(name.text);
+    else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+      for (const el of name.elements) {
+        if (ts.isBindingElement(el)) collectBindingNames(el.name, out);
+      }
+    }
+    return out;
+  };
 
   const report = (node, raw) => {
     const s = staticText(raw);
@@ -392,6 +414,12 @@ export function analyzeSource(rel, src) {
   };
 
   const visit = (node) => {
+    // Declare `const x = …` bindings in the current scope as they are
+    // encountered (const is declare-before-use), tagging whether the value
+    // is a `copy.*` branch. A later `x.method('…')` then resolves correctly.
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      declareInScope(node.name.text, !!node.initializer && accessRoot(node.initializer) === 'copy');
+    }
     // 1. JSX text children.
     if (ts.isJsxText(node)) {
       if (node.text.trim()) report(node, node.text);
@@ -434,10 +462,22 @@ export function analyzeSource(rel, src) {
     //    to a variable, etc.). Visiting every node means this catches
     //    the call in or out of a rendered position; only `copy.*`
     //    callees are scanned, so ordinary calls stay untouched.
-    else if (ts.isCallExpression(node) && isCopyRoot(accessRoot(node.expression))) {
+    else if (ts.isCallExpression(node) && resolveCopyRoot(accessRoot(node.expression))) {
       for (const arg of node.arguments) {
         for (const part of renderedStatic(arg)) report(node, part);
       }
+    }
+    // A function-like node opens a new lexical scope: its parameters shadow
+    // any outer alias of the same name (isAlias=false), so descend with a
+    // fresh frame pushed, then pop it.
+    if (isFnLike(node)) {
+      scopes.push(new Map());
+      for (const p of node.parameters) {
+        for (const nm of collectBindingNames(p.name)) declareInScope(nm, false);
+      }
+      ts.forEachChild(node, visit);
+      scopes.pop();
+      return;
     }
     ts.forEachChild(node, visit);
   };
