@@ -36,7 +36,8 @@
       "moreSheetAria": "その他の移動先",
       "navPrimaryAria": "メイン",
       "navQuickAria": "クイックナビゲーション",
-      "skipToContent": "コンテンツへスキップ"
+      "skipToContent": "コンテンツへスキップ",
+      "connectedTo": "{{chain}}に接続済み"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
       "moreOffers_zero": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
       "receiptYouReceive": "~{{toSeller}} が同じトランザクションで直接ウォレットに支払われます — オファー #{{offerId}} へ年 {{rate}} で売却します。後で請求するものはありません。",
-      "rowReceive": "今 ~{{amount}} を受け取れます"
+      "rowReceive": "今 ~{{amount}} を受け取れます",
+      "offerRowLine": "オファー #{{id}} · 年利 {{rate}} · {{duration}}"
     },
     "loanSale": {
       "title": "このポジションを売却に出す",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": "、さらに {{collateral}} 担保",
         "youBorrowed": "{{principal}} を借りました",
         "youLent": "{{principal}} を貸しました",
-        "youRent": "{{nft}} を借りています"
+        "youRent": "{{nft}} を借りています",
+        "lockedCollateralBorrower": "{{collateral}} の担保（借り手のもの）",
+        "owedPrincipalUpToInterest": "{{principal}} + 最大 ~{{interest}} の利息",
+        "termsRental": "{{duration}} · {{date}} に終了",
+        "termsLoan": "年利 {{rate}} · {{duration}} · 返済期日 {{date}}",
+        "confirmAction": "確認 — {{action}}"
       },
       "getStarted": "始める",
       "loading": "ポジションを読み込み中…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "あなたの貸付オファー",
         "yourNftListing": "あなたの NFT listing",
         "receiptUnlocked": "{{locked}} 返却 — このオファーから即時にアンロックされます。",
-        "youNft": "あなたの NFT {{addr}} #{{id}}"
+        "youNft": "あなたの NFT {{addr}} #{{id}}",
+        "waitingAccept": "オファー #{{id}} · 相手の承諾を待っています"
       },
       "openOffers": "未決済オファー",
       "graceCountdownBorrower": "このローンは期限を過ぎています。約 {{remaining}} 以内に返済してください — その後、貸し手は担保を取得できます。",
@@ -1093,7 +1101,8 @@
       "yearly": "年率",
       "expiresLabel": "{{date}} に期限切れ",
       "rateBand": "利率帯 {{min}}–{{max}} bps",
-      "staleList": "このリストの最終更新は {{age}} 前で、遅れている可能性があります — 表示されていない新しいオファーがあるかもしれません。しばらくして確認してください。"
+      "staleList": "このリストの最終更新は {{age}} 前で、遅れている可能性があります — 表示されていない新しいオファーがあるかもしれません。しばらくして確認してください。",
+      "perDayInline": "{{amount}} {{symbol}}/日"
     },
     "desk": {
       "title": "レートデスク",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} 資産",
       "unreadableCount_two": "{{count}} 資産",
       "unreadableCount_zero": "{{count}} 資産",
-      "unreadableWarn": "現在 {{assets}} を読み取れませんでした（{{list}}）— 下のリストに残高が欠けている可能性があります。通常は次の更新で解消します。"
+      "unreadableWarn": "現在 {{assets}} を読み取れませんでした（{{list}}）— 下のリストに残高が欠けている可能性があります。通常は次の更新で解消します。",
+      "lockedFreeBreakdown": "{{locked}} ロック中 · {{free}} 利用可能"
     },
     "activity": {
       "title": "アクティビティ",
@@ -1791,6 +1801,30 @@
       "dueToday": "本日期限",
       "pastDue": "期限超過",
       "repaid": "返済済み"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} 日",
+      "durationDay_one": "1 日",
+      "durationDay_two": "{{count, number}} 日",
+      "durationDay_few": "{{count, number}} 日",
+      "durationDay_many": "{{count, number}} 日",
+      "durationDay_other": "{{count, number}} 日",
+      "durationMonth_zero": "{{count, number}} か月",
+      "durationMonth_one": "1 か月",
+      "durationMonth_two": "{{count, number}} か月",
+      "durationMonth_few": "{{count, number}} か月",
+      "durationMonth_many": "{{count, number}} か月",
+      "durationMonth_other": "{{count, number}} か月",
+      "durationYear_zero": "{{count, number}} 年",
+      "durationYear_one": "1 年",
+      "durationYear_two": "{{count, number}} 年",
+      "durationYear_few": "{{count, number}} 年",
+      "durationYear_many": "{{count, number}} 年",
+      "durationYear_other": "{{count, number}} 年",
+      "timeJustNow": "たった今",
+      "timeMinutesAgo": "{{count}} 分前",
+      "timeHoursAgo": "{{count}} 時間前",
+      "timeDaysAgo": "{{count}} 日前"
     }
   },
   "contractError": {

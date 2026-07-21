@@ -36,7 +36,8 @@
       "moreSheetAria": "다른 이동 위치",
       "navPrimaryAria": "기본",
       "navQuickAria": "빠른 탐색",
-      "skipToContent": "본문으로 건너뛰기"
+      "skipToContent": "본문으로 건너뛰기",
+      "connectedTo": "{{chain}}에 연결됨"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "표시된 것보다 적게 지급하는 matching offers가 {{count}}개 더 있습니다.",
       "moreOffers_zero": "표시된 것보다 적게 지급하는 matching offers가 {{count}}개 더 있습니다.",
       "receiptYouReceive": "~{{toSeller}}가 같은 transaction에서 wallet으로 바로 지급됩니다 — offer #{{offerId}}에 {{rate}} yearly로 판매합니다. 이후 claim할 것은 없습니다.",
-      "rowReceive": "지금 ~{{amount}}를 받습니다"
+      "rowReceive": "지금 ~{{amount}}를 받습니다",
+      "offerRowLine": "제안 #{{id}} · 연 {{rate}} · {{duration}}"
     },
     "loanSale": {
       "title": "이 포지션 판매 등록",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": ", plus {{collateral}} collateral",
         "youBorrowed": "{{principal}}를 borrow했습니다",
         "youLent": "{{principal}}를 lend했습니다",
-        "youRent": "{{nft}}를 rent 중입니다"
+        "youRent": "{{nft}}를 rent 중입니다",
+        "lockedCollateralBorrower": "{{collateral}} 담보 (차입자의)",
+        "owedPrincipalUpToInterest": "{{principal}} + 최대 ~{{interest}} 이자",
+        "termsRental": "{{duration}} · {{date}} 종료",
+        "termsLoan": "연 {{rate}} · {{duration}} · {{date}} 만기",
+        "confirmAction": "확인 — {{action}}"
       },
       "getStarted": "시작하기",
       "loading": "포지션 불러오는 중…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "회원님의 대출 제안",
         "yourNftListing": "회원님의 NFT listing",
         "receiptUnlocked": "{{locked}} 반환 — 이 offer에서 즉시 unlocked.",
-        "youNft": "당신의 NFT {{addr}} #{{id}}"
+        "youNft": "당신의 NFT {{addr}} #{{id}}",
+        "waitingAccept": "제안 #{{id}} · 상대방의 수락 대기 중"
       },
       "openOffers": "열린 제안",
       "graceCountdownBorrower": "이 loan은 past due입니다. 약 {{remaining}} 내에 repay하세요. 그 뒤 lender가 collateral을 가져갈 수 있습니다.",
@@ -1093,7 +1101,8 @@
       "yearly": "연간",
       "expiresLabel": "{{date}}에 expires",
       "rateBand": "rate band {{min}}–{{max}} bps",
-      "staleList": "이 list는 {{age}} 전에 마지막으로 update되어 뒤처질 수 있습니다. 표시되지 않는 새 offers가 있을 수 있습니다. 잠시 후 확인하세요."
+      "staleList": "이 list는 {{age}} 전에 마지막으로 update되어 뒤처질 수 있습니다. 표시되지 않는 새 offers가 있을 수 있습니다. 잠시 후 확인하세요.",
+      "perDayInline": "{{amount}} {{symbol}}/일"
     },
     "desk": {
       "title": "금리 데스크",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} assets",
       "unreadableCount_two": "{{count}} assets",
       "unreadableCount_zero": "{{count}} assets",
-      "unreadableWarn": "지금 {{assets}}를 읽을 수 없었습니다({{list}}). 아래 list에 balances가 빠졌을 수 있습니다. 보통 다음 refresh에서 해결됩니다."
+      "unreadableWarn": "지금 {{assets}}를 읽을 수 없었습니다({{list}}). 아래 list에 balances가 빠졌을 수 있습니다. 보통 다음 refresh에서 해결됩니다.",
+      "lockedFreeBreakdown": "{{locked}} 잠금 · {{free}} 사용 가능"
     },
     "activity": {
       "title": "활동",
@@ -1791,6 +1801,30 @@
       "dueToday": "오늘 due",
       "pastDue": "past due",
       "repaid": "repaid"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}}일",
+      "durationDay_one": "1일",
+      "durationDay_two": "{{count, number}}일",
+      "durationDay_few": "{{count, number}}일",
+      "durationDay_many": "{{count, number}}일",
+      "durationDay_other": "{{count, number}}일",
+      "durationMonth_zero": "{{count, number}}개월",
+      "durationMonth_one": "1개월",
+      "durationMonth_two": "{{count, number}}개월",
+      "durationMonth_few": "{{count, number}}개월",
+      "durationMonth_many": "{{count, number}}개월",
+      "durationMonth_other": "{{count, number}}개월",
+      "durationYear_zero": "{{count, number}}년",
+      "durationYear_one": "1년",
+      "durationYear_two": "{{count, number}}년",
+      "durationYear_few": "{{count, number}}년",
+      "durationYear_many": "{{count, number}}년",
+      "durationYear_other": "{{count, number}}년",
+      "timeJustNow": "방금 전",
+      "timeMinutesAgo": "{{count}}분 전",
+      "timeHoursAgo": "{{count}}시간 전",
+      "timeDaysAgo": "{{count}}일 전"
     }
   },
   "contractError": {

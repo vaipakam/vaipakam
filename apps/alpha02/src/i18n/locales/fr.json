@@ -36,7 +36,8 @@
       "moreSheetAria": "Autres destinations",
       "navPrimaryAria": "Principal",
       "navQuickAria": "Navigation rapide",
-      "skipToContent": "Aller au contenu"
+      "skipToContent": "Aller au contenu",
+      "connectedTo": "Connecté à {{chain}}"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "{{count}} offres correspondantes supplémentaires paient moins que celles affichées.",
       "moreOffers_zero": "{{count}} offres correspondantes supplémentaires paient moins que celles affichées.",
       "receiptYouReceive": "~{{toSeller}}, payé directement dans votre wallet dans la même transaction — vente à l’offre n°{{offerId}} à {{rate}} annuel. Rien à réclamer ensuite.",
-      "rowReceive": "vous recevriez ~{{amount}} maintenant"
+      "rowReceive": "vous recevriez ~{{amount}} maintenant",
+      "offerRowLine": "Offre #{{id}} · {{rate}} par an · {{duration}}"
     },
     "loanSale": {
       "title": "Lister cette position à vendre",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": ", plus {{collateral}} de garantie",
         "youBorrowed": "Vous avez emprunté {{principal}}",
         "youLent": "Vous avez prêté {{principal}}",
-        "youRent": "Vous louez {{nft}}"
+        "youRent": "Vous louez {{nft}}",
+        "lockedCollateralBorrower": "{{collateral}} de garantie (de l’emprunteur)",
+        "owedPrincipalUpToInterest": "{{principal}} + jusqu’à ~{{interest}} d’intérêts",
+        "termsRental": "{{duration}} · se termine le {{date}}",
+        "termsLoan": "{{rate}} par an · {{duration}} · échéance le {{date}}",
+        "confirmAction": "Confirmer — {{action}}"
       },
       "getStarted": "Commencer",
       "loading": "Chargement de vos positions…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "Votre offre de prêt",
         "yourNftListing": "Votre annonce NFT",
         "receiptUnlocked": "{{locked}} rendu — déverrouillé immédiatement depuis cette offre.",
-        "youNft": "Votre NFT {{addr}} n°{{id}}"
+        "youNft": "Votre NFT {{addr}} n°{{id}}",
+        "waitingAccept": "Offre #{{id}} · en attente d’acceptation par l’autre partie"
       },
       "openOffers": "Offres ouvertes",
       "graceCountdownBorrower": "Ce prêt est en retard. Remboursez dans un délai de {{remaining}} — après cela, le prêteur peut prendre la garantie.",
@@ -1093,7 +1101,8 @@
       "yearly": "annuel",
       "expiresLabel": "expire le {{date}}",
       "rateBand": "fourchette de taux {{min}}–{{max}} bps",
-      "staleList": "Cette liste a été mise à jour il y a {{age}} et peut être en retard — de nouvelles offres peuvent exister sans être affichées. Revenez bientôt."
+      "staleList": "Cette liste a été mise à jour il y a {{age}} et peut être en retard — de nouvelles offres peuvent exister sans être affichées. Revenez bientôt.",
+      "perDayInline": "{{amount}} {{symbol}}/jour"
     },
     "desk": {
       "title": "Bureau des taux",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} actifs",
       "unreadableCount_two": "{{count}} actifs",
       "unreadableCount_zero": "{{count}} actifs",
-      "unreadableWarn": "Nous n’avons pas pu lire {{assets}} pour l’instant ({{list}}) — la liste ci-dessous peut omettre des soldes. Cela se corrige généralement au prochain rafraîchissement."
+      "unreadableWarn": "Nous n’avons pas pu lire {{assets}} pour l’instant ({{list}}) — la liste ci-dessous peut omettre des soldes. Cela se corrige généralement au prochain rafraîchissement.",
+      "lockedFreeBreakdown": "{{locked}} verrouillé · {{free}} disponible"
     },
     "activity": {
       "title": "Activité",
@@ -1791,6 +1801,30 @@
       "dueToday": "Échéance aujourd’hui",
       "pastDue": "En retard",
       "repaid": "Remboursé"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} jours",
+      "durationDay_one": "1 jour",
+      "durationDay_two": "{{count, number}} jours",
+      "durationDay_few": "{{count, number}} jours",
+      "durationDay_many": "{{count, number}} jours",
+      "durationDay_other": "{{count, number}} jours",
+      "durationMonth_zero": "{{count, number}} mois",
+      "durationMonth_one": "1 mois",
+      "durationMonth_two": "{{count, number}} mois",
+      "durationMonth_few": "{{count, number}} mois",
+      "durationMonth_many": "{{count, number}} mois",
+      "durationMonth_other": "{{count, number}} mois",
+      "durationYear_zero": "{{count, number}} ans",
+      "durationYear_one": "1 an",
+      "durationYear_two": "{{count, number}} ans",
+      "durationYear_few": "{{count, number}} ans",
+      "durationYear_many": "{{count, number}} ans",
+      "durationYear_other": "{{count, number}} ans",
+      "timeJustNow": "à l’instant",
+      "timeMinutesAgo": "il y a {{count}} min",
+      "timeHoursAgo": "il y a {{count}} h",
+      "timeDaysAgo": "il y a {{count}} j"
     }
   },
   "contractError": {

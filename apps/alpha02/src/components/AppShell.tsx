@@ -223,7 +223,7 @@ export function AppShell() {
             on a supported chain; an unsupported one is handled by the
             NetworkBanner in the main region. */}
         {isConnected && onSupportedChain && walletChain ? (
-          <span className="net-chip" title={`Connected to ${walletChain.name}`}>
+          <span className="net-chip" title={copy.chrome.connectedTo(walletChain.name)}>
             <span className="net-chip-dot" aria-hidden />
             <span className="net-chip-name">{walletChain.name}</span>
           </span>

@@ -4,6 +4,8 @@
  * "Key UX Requirements").
  */
 import { formatUnits } from 'viem';
+import i18n from '../i18n';
+import { copy } from '../content/copy';
 
 /** Human display of a token amount. Small-but-nonzero values keep
  *  enough significant digits that real money never renders as "0"
@@ -45,17 +47,25 @@ export function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+/** Human duration, locale-aware. Reads the unit words (day/month/year,
+ *  singular/plural) from the copy catalog so every locale renders its
+ *  own — the English one/other forms reproduce the previous hardcoded
+ *  output exactly. Whole-year and whole-month spans collapse to those
+ *  units; everything else counts in days. */
 export function formatDurationDays(days: number): string {
-  if (days === 1) return '1 day';
-  if (days < 30) return `${days} days`;
-  if (days % 365 === 0) return days === 365 ? '1 year' : `${days / 365} years`;
-  if (days % 30 === 0) return days === 30 ? '1 month' : `${days / 30} months`;
-  return `${days} days`;
+  if (days < 30) return copy.units.durationDay(days);
+  if (days % 365 === 0) return copy.units.durationYear(days / 365);
+  if (days % 30 === 0) return copy.units.durationMonth(days / 30);
+  return copy.units.durationDay(days);
 }
 
-/** Unix-seconds → "12 Jun 2026". */
+/** Unix-seconds → localized date ("12 Jun 2026" / "2026年6月12日" / …).
+ *  Uses the active UI language so the month name and ordering match
+ *  the rest of the surface; falls back to en-US before i18next is
+ *  ready. */
 export function formatDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleDateString('en-US', {
+  const locale = i18n.isInitialized && i18n.language ? i18n.language : 'en-US';
+  return new Date(unixSeconds * 1000).toLocaleDateString(locale, {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -66,10 +76,10 @@ export function formatDate(unixSeconds: number): string {
  *  Used by the Rate Desk tape; clamps future/clock-skew to "just now". */
 export function formatTimeAgo(unixSeconds: number): string {
   const diff = Math.floor(Date.now() / 1000) - unixSeconds;
-  if (diff < 60) return 'just now';
-  if (diff < 3_600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86_400) return `${Math.floor(diff / 3_600)}h ago`;
-  if (diff < 30 * 86_400) return `${Math.floor(diff / 86_400)}d ago`;
+  if (diff < 60) return copy.units.timeJustNow;
+  if (diff < 3_600) return copy.units.timeMinutesAgo(Math.floor(diff / 60));
+  if (diff < 86_400) return copy.units.timeHoursAgo(Math.floor(diff / 3_600));
+  if (diff < 30 * 86_400) return copy.units.timeDaysAgo(Math.floor(diff / 86_400));
   return formatDate(unixSeconds);
 }
 

@@ -1418,7 +1418,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <dd>
               {isRental
                 ? copy.positions.details.nftStaysVault(nftStr, hasCollateral ? copy.positions.details.vaultCollateralSuffix(collateralStr) : '')
-                : `${collateralStr} collateral (borrower’s)`}
+                : copy.positions.details.lockedCollateralBorrower(collateralStr)}
             </dd>
           </div>
           <div className="receipt-row">
@@ -1434,15 +1434,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                         ? copy.positions.owedDefaulted
                         : copy.positions.owedDefaultedNoCollateral
                       : copy.positions.owedClosed
-                  : `${principalStr} + up to ~${interestStr} interest`}
+                  : copy.positions.details.owedPrincipalUpToInterest(principalStr, interestStr)}
             </dd>
           </div>
           <div className="receipt-row">
             <dt>{copy.positions.details.labels.terms}</dt>
             <dd>
               {isRental
-                ? `${formatDurationDays(row.durationDays)} · ends ${dueDate}`
-                : `${formatBpsAsPercent(row.interestRateBps)} yearly · ${formatDurationDays(row.durationDays)} · due ${dueDate}`}
+                ? copy.positions.details.termsRental(
+                    formatDurationDays(row.durationDays),
+                    dueDate,
+                  )
+                : copy.positions.details.termsLoan(
+                    formatBpsAsPercent(row.interestRateBps),
+                    formatDurationDays(row.durationDays),
+                    dueDate,
+                  )}
             </dd>
           </div>
           {isAdvanced && (role === 'borrower' || role === 'lender') ? (
@@ -2072,7 +2079,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <section className="card">
             <ConfirmReceipt
               busy={busy}
-              confirmLabel={`Confirm — ${actionLabel}`}
+              confirmLabel={copy.positions.details.confirmAction(actionLabel)}
               onBack={() => setConfirmingSurface(null)}
               onConfirm={() => void run(action)}
               // wallet/public client hydrate async after connect —
