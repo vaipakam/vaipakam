@@ -870,17 +870,16 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 bytes4(0)
             );
-            // #1383 — guard the transfer: the yield-fee discount can drive the
-            // treasury share to 0 (VPFI-payment path), which was impossible when
-            // this transfer was unconditional.
-            if (treasuryShare > 0) {
-                IERC20(loan.principalAsset).safeTransferFrom(
-                    msg.sender,
-                    treasury,
-                    treasuryShare
-                );
-                LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
-            }
+            // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
+            // VPFI-payment path; a 0-value `safeTransferFrom` is a harmless no-op
+            // (and `recordTreasuryAccrual(asset, 0)` is a no-op), so the transfer
+            // stays unconditional as before.
+            IERC20(loan.principalAsset).safeTransferFrom(
+                msg.sender,
+                treasury,
+                treasuryShare
+            );
+            LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryShare);
 
             unchecked {
                 loan.principal -= partialAmount;
@@ -1074,21 +1073,21 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // #821 (Codex #832 r3 P1) — the treasury deduction also pulls the
             // prepay from the payer's own vault; arm the move-out exemption so a
             // borrower flagged after init can still service the partial rental.
-            // #1383 — guarded: the yield-fee discount can drive the share to 0.
-            if (treasuryShare > 0) {
-                LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        msg.sender,
-                        loan.prepayAsset,
-                        treasury,
-                        treasuryShare
-                    ),
-                    TreasuryTransferFailed.selector
-                );
-                LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
-            }
+            // #1383 — a yield-fee discount can drive `treasuryShare` to 0 on the
+            // VPFI-payment path; `vaultWithdrawERC20(..., 0)` is a harmless no-op
+            // (0-value ERC-20 transfer), so this stays unconditional as before.
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    msg.sender,
+                    loan.prepayAsset,
+                    treasury,
+                    treasuryShare
+                ),
+                TreasuryTransferFailed.selector
+            );
+            LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
             // Pass-2 D1 (#1188) — keep `durationDays` immutable (fixed
@@ -1265,6 +1264,19 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 interestForQuote,
         uint256 treasuryShare
     ) private returns (uint256 lenderExtra, uint256 newTreasury) {
+        // #1383 — short-circuit the ineligible/dark case with an INLINED
+        // eligibility read (`consent OR Full`, no cross-facet routing) before
+        // the host call. This keeps the resolve a strict no-op for every
+        // unstamped/no-consent loan — including test diamonds that don't cut
+        // `VPFIDiscountFacet` — and only routes to the host when a discount can
+        // actually apply.
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (
+            treasuryShare == 0 ||
+            !LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)
+        ) {
+            return (0, treasuryShare);
+        }
         bytes memory ret = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
                 VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
