@@ -88,6 +88,8 @@ const UI_ATTRS = new Set([
   // FaucetRow row body + button copy props.
   'blurb',
   'actionLabel',
+  // StepNav renders each element of `steps={[...]}` as a visible label.
+  'steps',
 ]);
 
 /**
@@ -124,6 +126,11 @@ const UI_KEYS = new Set([
   'doneBody',
   'actionLabel',
   'leg',
+  // OfferFlow SideCopy empty-state field (no camelCase suffix, so listed
+  // explicitly; the rest of the SideCopy family — rateLabel, submitLabel,
+  // doneTitle, amountHint, acceptDoneBody, … — is covered by the suffix
+  // rule below).
+  'matchEmpty',
   // ReviewReceipt `data` fields — rendered into <dd> rows on the
   // pre-sign trust surface (ReviewReceipt.tsx).
   'youReceive',
@@ -133,6 +140,37 @@ const UI_KEYS = new Set([
   'fees',
   'whenThisEnds',
 ]);
+
+/**
+ * CamelCase suffixes that mark a prop / object key as user-visible copy
+ * regardless of its prefix — `rateLabel`, `submitLabel`, `takeLabel`,
+ * `doneTitle`, `amountHint`, `acceptDoneBody`, `helpText`, … This
+ * generalizes the app's typed copy-container fields (OfferFlow SideCopy,
+ * etc.) so the guardrail doesn't need every field enumerated. Matched
+ * capitalized so lowercase words like `context` (ends in `text`, not
+ * `Text`) are NOT swept in.
+ */
+const UI_NAME_SUFFIXES = [
+  'Label',
+  'Title',
+  'Body',
+  'Hint',
+  'Text',
+  'Blurb',
+  'Message',
+  'Caption',
+  'Tooltip',
+  'Heading',
+  'Subtitle',
+  'Placeholder',
+];
+
+/** Is this prop / object-key name a user-visible copy field — either an
+ *  exact member of `set` or ending in a camelCase copy suffix? */
+function isUiName(name, set) {
+  if (set.has(name)) return true;
+  return UI_NAME_SUFFIXES.some((suf) => name.length > suf.length && name.endsWith(suf));
+}
 
 /**
  * Tokens that are legitimately English in every locale — protocol
@@ -340,7 +378,7 @@ export function analyzeSource(rel, src) {
     // 3. User-visible JSX attributes.
     else if (ts.isJsxAttribute(node) && node.initializer) {
       const name = node.name.getText(sf);
-      if (UI_ATTRS.has(name)) {
+      if (isUiName(name, UI_ATTRS)) {
         const init = node.initializer;
         if (ts.isStringLiteral(init)) report(node, init.text);
         else if (ts.isJsxExpression(init) && init.expression) {
@@ -353,7 +391,7 @@ export function analyzeSource(rel, src) {
     //    property is reached here too).
     else if (ts.isPropertyAssignment(node)) {
       const key = propKey(node.name, sf);
-      if (key && UI_KEYS.has(key)) reportExpr(node, node.initializer);
+      if (key && isUiName(key, UI_KEYS)) reportExpr(node, node.initializer);
     }
     // 5. ANY `copy.*` call, wherever it sits — a hardcoded string arg
     //    (`copy.tokenSecurity.gateUnknown('prepayment token')`) is a

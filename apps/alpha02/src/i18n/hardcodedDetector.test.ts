@@ -188,4 +188,37 @@ describe('AST hardcoded-string detector (#1365)', () => {
     expect(strings('const X = () => <span>{n}d left</span>;')).toEqual(['d left']);
     expect(strings('const X = () => <span>{a} × {b}</span>;')).toEqual([]);
   });
+
+  // --- Codex #1394 round-6 coverage gaps ---
+
+  it('flags the whole camelCase copy-field family via suffix (Label/Title/Body/Hint/…)', () => {
+    // OfferFlow SideCopy shape: any *Label/*Title/*Body/*Hint field carrying
+    // a hardcoded literal is caught without enumerating every field name.
+    const src =
+      "const t = { rateLabel: 'Rate', submitLabel: 'Submit', doneTitle: 'Done', amountHint: 'Amount', acceptDoneBody: 'Accepted' };";
+    const out = strings(src);
+    expect(out).toContain('Rate');
+    expect(out).toContain('Submit');
+    expect(out).toContain('Done');
+    expect(out).toContain('Amount');
+    expect(out).toContain('Accepted');
+  });
+
+  it('flags a suffix-matched user-visible attribute (RateLadder takeLabel)', () => {
+    expect(strings('const X = () => <RateLadder takeLabel="Take offer" />;')).toContain(
+      'Take offer',
+    );
+  });
+
+  it('flags each rendered element of a steps={[...]} prop (StepNav)', () => {
+    const out = strings("const X = () => <StepNav steps={['Pick asset', 'Confirm terms']} />;");
+    expect(out).toContain('Pick asset');
+    expect(out).toContain('Confirm terms');
+  });
+
+  it('does NOT sweep lowercase words that merely end in a suffix (context / subtext)', () => {
+    // `context` ends in "text" but not "Text" — code, not copy. The suffix
+    // rule matches capitalized boundaries only, so it is not flagged.
+    expect(strings("const X = () => <C context='some code value' subtext='more' />;")).toEqual([]);
+  });
 });

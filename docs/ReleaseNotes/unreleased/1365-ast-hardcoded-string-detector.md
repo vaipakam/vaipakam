@@ -17,7 +17,12 @@ This replaces the regex scanner with a detector that parses each `.tsx`
 with the TypeScript compiler and inspects the exact rendered positions
 the syntax tree exposes: JSX text children, string/template literals used
 as JSX children (including inside conditionals), and a small allowlist of
-user-visible JSX attributes (title, aria-label, placeholder, alt, …).
+user-visible JSX attributes (title, aria-label, placeholder, alt, …). The
+attribute/object-key allowlist is backed by a camelCase-suffix rule
+(`*Label`, `*Title`, `*Body`, `*Hint`, …) so a component's typed
+copy-field family (the offer-flow side copy, step labels, take/submit
+labels) is covered as a whole without enumerating every field name, while
+lowercase look-alikes like `context` stay untouched.
 Because the parse makes "is this rendered?" unambiguous, the detector can
 flag even a single prose word without the false positives that blocked
 the regex — a template literal assigned to a className or a route is
