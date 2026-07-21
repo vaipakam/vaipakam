@@ -2411,6 +2411,18 @@ function _dayPoolHalves(
         // Pre-arming days are left untouched: `CapMode.LegacyEthRatio` is the
         // zero value, so every historical day keeps its existing meaning with
         // no migration.
+        // NOTE (#1351 slice 2a — BASE-ONLY so far): this stamp lands on the
+        // CANONICAL finalize path only. The day broadcast still carries just the
+        // legacy threshold + pool halves + `armedFromDay`, so a MIRROR has no
+        // `dayCapMode` / `dayUserSideCapVpfi18` for post-`D*` days and would
+        // fail closed (or miss the cap) once claim/sweep land there.
+        //
+        // Closing that is slice 2g (messenger `MSG_TYPE_BROADCAST_V2 = 5`
+        // carrying `capMode` + `capPayload`, mirrors-decode-FIRST). Harmless
+        // today because the whole stack is dark until `D*` is armed — but
+        // `D*` MUST NOT be armed until 2g has shipped and every mirror decodes
+        // the widened broadcast, or mirror-side reward days become unpriceable.
+        // PR-9 (#1356) deploy-asserts are the enforcement point for that gate.
         if (armed) {
             s.dayCapMode[dayId] = LibVaipakam.CapMode.ShareOfPool;
         }
