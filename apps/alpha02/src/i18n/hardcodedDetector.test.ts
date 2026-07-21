@@ -342,4 +342,41 @@ describe('AST hardcoded-string detector (#1365)', () => {
     // errors route through copy.* / captureTxError. See the round-10 refute.
     expect(strings("const X = () => { setMode('accept'); setStep('review'); return null; };")).toEqual([]);
   });
+
+  // --- Codex #1394 round-11 coverage gaps ---
+
+  it('tracks a destructured copy alias', () => {
+    expect(
+      strings("const { tokenSecurity } = copy; const X = () => <span>{tokenSecurity.gateUnknown('prepayment token')}</span>;"),
+    ).toContain('prepayment token');
+    expect(
+      strings("const { tokenSecurity: ts2 } = copy; const X = () => <span>{ts2.gateUnknown('prepayment token')}</span>;"),
+    ).toContain('prepayment token');
+    // A non-copy destructure of the same name still shadows an outer alias.
+    expect(
+      strings("const text = copy.desk.x; const X = () => { const { text } = props; return text.build('hello world'); };"),
+    ).toEqual([]);
+  });
+
+  it('strips HTML entities so an entity-only separator is not prose', () => {
+    expect(strings('const X = () => <span>&nbsp;</span>;')).toEqual([]);
+    expect(strings('const X = () => <span>&middot;</span>;')).toEqual([]);
+    // A real word next to an entity is still flagged.
+    expect(strings('const X = () => <span>You have&nbsp;items here</span>;')).toContain(
+      'You have items here',
+    );
+  });
+
+  it('flags string literals returned from a rendered .map() callback', () => {
+    const out = strings("const X = () => <>{items.map(i => i.ok ? 'Active loan' : 'Closed loan')}</>;");
+    expect(out).toContain('Active loan');
+    expect(out).toContain('Closed loan');
+    // Block-body return is covered too.
+    expect(strings("const X = () => <>{items.map(i => { return 'Loading item'; })}</>;")).toContain(
+      'Loading item',
+    );
+    // A callback returning JSX or a property (not a string) yields nothing.
+    expect(strings("const X = () => <>{items.map(i => <div>{i.n}</div>)}</>;")).toEqual([]);
+    expect(strings("const X = () => <>{items.map(i => i.name)}</>;")).toEqual([]);
+  });
 });

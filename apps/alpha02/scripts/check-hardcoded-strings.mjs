@@ -258,9 +258,16 @@ const BASELINE = {
 };
 
 /** Collapse interpolations + whitespace to inspect only the STATIC text
- *  a template/JSX node contributes to the DOM. */
+ *  a template/JSX node contributes to the DOM. HTML entities are dropped
+ *  first: TS keeps the raw entity spelling (`&nbsp;`, `&middot;`,
+ *  `&#160;`) in JSX text, which renders as punctuation/spacing, not
+ *  translatable words — without stripping, the entity NAME (`nbsp`) would
+ *  read as prose and wrongly fail CI. */
 function staticText(raw) {
-  return raw.replace(/\s+/g, ' ').trim();
+  return raw
+    .replace(/&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** Is this static run real prose (≥1 non-glossary alphabetic word)?
@@ -318,8 +325,37 @@ function accessRoot(expr) {
   return ts.isIdentifier(e) ? e.text : null;
 }
 
+/** Return expressions a function-like's body yields to its caller — the
+ *  concise-arrow body, or each `return <expr>` in a block body. Nested
+ *  functions are NOT descended into (their returns belong to them). */
+function callbackReturnExprs(fn) {
+  if (!fn.body) return [];
+  if (!ts.isBlock(fn.body)) return [fn.body]; // concise arrow body
+  const out = [];
+  const walk = (n) => {
+    if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)) return;
+    if (ts.isReturnStatement(n) && n.expression) out.push(n.expression);
+    ts.forEachChild(n, walk);
+  };
+  walk(fn.body);
+  return out;
+}
+
 function renderedStatic(node) {
   if (ts.isStringLiteralLike(node)) return [node.text];
+  // A `.map()` / `.flatMap()` in a rendered child position renders the
+  // callback's returned strings (`{items.map(i => i.ok ? 'A' : 'B')}`), so
+  // recurse into the callback's return expression(s). Only string/template
+  // returns contribute — `i => i.name` / `i => <Foo/>` yield nothing.
+  if (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    (node.expression.name.text === 'map' || node.expression.name.text === 'flatMap') &&
+    node.arguments.length >= 1 &&
+    (ts.isArrowFunction(node.arguments[0]) || ts.isFunctionExpression(node.arguments[0]))
+  ) {
+    return callbackReturnExprs(node.arguments[0]).flatMap((e) => renderedStatic(e));
+  }
   if (ts.isTemplateExpression(node)) {
     const literalRun = [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' ');
     const interp = node.templateSpans.flatMap((s) => renderedStatic(s.expression));
@@ -444,8 +480,17 @@ export function analyzeSource(rel, src) {
     // Declare `const x = …` bindings in the current scope as they are
     // encountered (const is declare-before-use), tagging whether the value
     // is a `copy.*` branch. A later `x.method('…')` then resolves correctly.
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      declareInScope(node.name.text, !!node.initializer && accessRoot(node.initializer) === 'copy');
+    // Destructuring off a copy branch — `const { tokenSecurity } = copy` or
+    // `const { gate } = copy.tokenSecurity` — binds each name to a copy
+    // sub-branch/leaf, so those bind-names are copy aliases too; a non-copy
+    // destructure registers them false so they still shadow an outer alias.
+    if (ts.isVariableDeclaration(node)) {
+      const initCopy = !!node.initializer && resolveCopyRoot(accessRoot(node.initializer));
+      if (ts.isIdentifier(node.name)) {
+        declareInScope(node.name.text, initCopy);
+      } else if (ts.isObjectBindingPattern(node.name) || ts.isArrayBindingPattern(node.name)) {
+        for (const nm of collectBindingNames(node.name)) declareInScope(nm, initCopy);
+      }
     }
     // 1. JSX text children.
     if (ts.isJsxText(node)) {

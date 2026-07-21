@@ -24,12 +24,15 @@ copy-field family (the offer-flow side copy, step labels, take/submit
 labels) is covered as a whole without enumerating every field name, while
 lowercase look-alikes like `context` stay untouched. Hardcoded values
 passed into a catalog template through the codebase's established
-branch-alias pattern (`const text = copy.desk.ticket; text.method('…')`)
-are followed via a single-file, lexically-scoped alias map — both function
-parameters and block-local declarations that reuse a common variable name
-are respected, so ordinary code is never mis-flagged and a real alias call
-after a shadowing block still is — and prose inside tagged templates or
-object-spread prop bags is scanned the same as its direct form.
+branch-alias pattern (`const text = copy.desk.ticket; text.method('…')`,
+including destructured `const { tokenSecurity } = copy`) are followed via
+a single-file, lexically-scoped alias map — function parameters, block,
+loop, and catch bindings that reuse a common variable name are respected,
+so ordinary code is never mis-flagged and a real alias call after a
+shadowing scope still is — and prose inside tagged templates, object-spread
+prop bags, or the string returns of a rendered `.map()` callback is scanned
+the same as its direct form. HTML entities (`&nbsp;`, `&middot;`) are
+treated as the punctuation/spacing they render, never as words.
 Because the parse makes "is this rendered?" unambiguous, the detector can
 flag even a single prose word without the false positives that blocked
 the regex — a template literal assigned to a className or a route is
