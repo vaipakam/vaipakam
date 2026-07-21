@@ -37,6 +37,16 @@ the walk progresses. Only the "pool ran short" case stays pending. Conflating
 those two would either lose rewards or leave a participant stuck retrying a day
 that can never pay.
 
+**Rewards say where they came from.** A day's reward pool is funded from two
+sources: newly scheduled rewards, and rewards recycled from fees already
+collected. The calculation now reports each payout broken down by source rather
+than as a single number, in the same proportion as the day's pool was funded.
+That distinction is not cosmetic — the two sources are settled differently
+downstream, and on the treasury side they are not even the same kind of event:
+one is genuine new absorption, the other merely releases a reservation on money
+that never moved. Reporting a flat total would have made those impossible to
+tell apart.
+
 Finally, the calculation refuses to run on a mismatched request — one mixing
 different participants or sides, or naming a day a reward doesn't cover — rather
 than trusting its caller, since two separate callers construct those requests.

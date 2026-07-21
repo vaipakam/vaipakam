@@ -2592,9 +2592,74 @@ function _dayPoolHalves(
         }
     }
 
+    /// @dev The day's FRESH / RECYCLED per-side RPN composition, recomputed with
+    ///      the EXACT formula the cumulative accumulator uses (see
+    ///      {advanceCumLenderThrough}), so `freshDaily + recycledDaily` equals
+    ///      the stored `Δ_d` that {_uncappedDelta} reads back — the two must not
+    ///      drift, or a slice would be sized by one decomposition and attributed
+    ///      by another.
+    /// @return freshDaily    Fresh-funded component of `Δ_d` (RPN units).
+    /// @return recycledDaily Recycled-funded component of `Δ_d`.
+    /// @return halt True ⇒ armed day whose pool stamp hasn't landed (mirror
+    ///         waiting on the composition broadcast). Unreachable behind
+    ///         {_rpnReady} (the cursor halts on the same condition), kept as a
+    ///         fail-closed backstop rather than a comment.
+    function _dayFreshRecycledDaily(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    )
+        private
+        view
+        returns (uint256 freshDaily, uint256 recycledDaily, bool halt)
+    {
+        (uint256 freshHalf, uint256 recycledHalf, bool h) = _dayPoolHalves(s, d);
+        if (h) return (0, 0, true);
+        uint256 globalTotal = side == LibVaipakam.RewardSide.Lender
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        if (globalTotal == 0) return (0, 0, false);
+        if (freshHalf != 0) {
+            freshDaily = (freshHalf * 1e18) / globalTotal;
+        }
+        if (recycledHalf != 0) {
+            recycledDaily = (recycledHalf * 1e18) / globalTotal;
+        }
+    }
+
+    /// @dev Attribute one leg's VPFI total to its funding sources using the
+    ///      day's composition. A ShareOfPool day is ARMED by construction (2a
+    ///      only stamps the mode under {_isArmedDay}), so there is NO pre-`D*`
+    ///      component and `total == armedFresh + recycled` exactly.
+    ///
+    ///      `recycled` FLOORS and fresh takes the rounding dust — the same
+    ///      derive-fresh-by-subtraction convention as {_entryWindowSplit}, and
+    ///      the safe direction on both ends: it can never overdraw the recycle
+    ///      bucket (the wei stays in the bucket), while the extra wei of fresh
+    ///      consumption is absorbed by {consumeArmedFresh}'s floor-at-zero.
+    function _splitDayAmount(
+        uint256 amount,
+        uint256 freshDaily,
+        uint256 recycledDaily
+    ) private pure returns (EntrySplit memory split) {
+        if (amount == 0) return split;
+        split.total = amount;
+        uint256 denom = freshDaily + recycledDaily;
+        if (denom == 0) {
+            // Unreachable: a zero-Δ day pays nothing (`rawPay == 0` returns
+            // earlier). Guarded anyway — never divide by a derived zero.
+            split.armedFresh = amount;
+            return split;
+        }
+        split.recycled = (amount * recycledDaily) / denom;
+        split.armedFresh = amount - split.recycled;
+    }
+
     /// @notice Result of pricing one ShareOfPool `(user, side, day)`.
-    /// @param toUser     VPFI owed to the user (clean entries).
-    /// @param toTreasury VPFI owed to treasury (forfeited entries).
+    /// @param toUser     VPFI owed to the user (clean entries), decomposed by
+    ///                   funding source.
+    /// @param toTreasury VPFI owed to treasury (forfeited entries), decomposed
+    ///                   by funding source.
     /// @param advanced   True ⇒ the caller MUST, in the SAME transaction:
     ///                   (a) advance `rewardEntryClaimNextDay` to `d + 1` for
     ///                   every entry in the set, (b) add `Σ slices` to
@@ -2608,9 +2673,23 @@ function _dayPoolHalves(
     ///                   charging hands the user an UNLIMITED daily budget.
     ///                   False ⇒ nothing was charged and the day stays
     ///                   RETRYABLE (pool shortage) — see the 0-slice policy.
+    /// @dev Codex #1399 P2 — the legs are {EntrySplit}, not plain totals.
+    ///      Collapsing fresh and recycled into one number would strand every
+    ///      caller: the live reward paths need the source split to retire the
+    ///      right commitment (`consumeArmedFresh`), debit the recycle bucket
+    ///      (`LibVpfiRecycle.consume`), and — on the treasury leg — tell genuine
+    ///      absorption (`credit`) apart from a pure commitment RELEASE
+    ///      (`releaseCommitment`) for value that never physically left the
+    ///      bucket. Crediting a recycled forfeit as absorption inflates Ā while
+    ///      absorbing nothing.
+    ///
+    ///      NOT this primitive's job: retiring the day's UNCLAIMED residual
+    ///      commitment. Finalize reserves the whole day's committable amount,
+    ///      while a D1 day can close under-claimed; only a day-level view can
+    ///      see that residue, so it belongs to the 2d sweep.
     struct DayCharge {
-        uint256 toUser;
-        uint256 toTreasury;
+        EntrySplit toUser;
+        EntrySplit toTreasury;
         bool advanced;
     }
 
@@ -2725,6 +2804,14 @@ function _dayPoolHalves(
         // a false 0 and would advance past itself, losing that day forever.
         if (!_rpnReady(s, side, d)) return (charge, slices);
 
+        // Resolve the day's funding composition BEFORE anything is priced: on
+        // the (unreachable-behind-`_rpnReady`) stamp-missing case the day must
+        // stay retryable, and bailing out after `slices` were computed would
+        // hand the caller a populated array with `advanced == false`.
+        (uint256 freshDaily, uint256 recycledDaily, bool halt) =
+            _dayFreshRecycledDaily(s, side, d);
+        if (halt) return (charge, slices);
+
         uint256 c = s.dayUserSideCapVpfi18[d];
         uint256 paid = s.userSideDayPaidVpfi[user][uint8(side)][d];
         // Exhausted (including a legitimate `C == 0` dust day) — advance with a
@@ -2782,20 +2869,26 @@ function _dayPoolHalves(
         if (poolBudget < budget) return (charge, slices);
 
         slices = _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
+        uint256 userTotal;
+        uint256 treasuryTotal;
         for (uint256 i; i < n; ) {
-            LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
-            // Codex #1399 P2 — mirror the legacy `_processEntry` routing:
-            // a borrower entry that became claimable only via a Defaulted /
-            // InternalMatched terminal keeps `e.forfeited == false`, so routing
-            // on that flag alone would pay the BORROWER what the forfeit rules
-            // send to treasury.
-            if (e.forfeited || _entryTerminalForfeit(s, e)) {
-                charge.toTreasury += slices[i];
+            // Codex #1399 P2 — route through the SHARED {_isForfeited}, which
+            // the legacy `_processEntry` uses: a borrower entry that became
+            // claimable only via a Defaulted / InternalMatched terminal keeps
+            // `e.forfeited == false`, so routing on that flag alone would pay
+            // the BORROWER what the forfeit rules send to treasury.
+            if (_isForfeited(s, s.rewardEntries[entryIds[i]])) {
+                treasuryTotal += slices[i];
             } else {
-                charge.toUser += slices[i];
+                userTotal += slices[i];
             }
             unchecked { ++i; }
         }
+        // Split each leg ONCE at the aggregate: every entry in the set is
+        // priced against the SAME day, so one composition ratio governs both.
+        charge.toUser = _splitDayAmount(userTotal, freshDaily, recycledDaily);
+        charge.toTreasury =
+            _splitDayAmount(treasuryTotal, freshDaily, recycledDaily);
         charge.advanced = true;
     }
 

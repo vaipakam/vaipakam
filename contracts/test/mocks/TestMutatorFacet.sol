@@ -763,13 +763,14 @@ contract TestMutatorFacet {
     )
         external
         view
-        returns (uint256 toUser, uint256 toTreasury, bool advanced, uint256[] memory slices)
+        returns (
+            LibInteractionRewards.DayCharge memory charge,
+            uint256[] memory slices
+        )
     {
-        LibInteractionRewards.DayCharge memory ch;
-        (ch, slices) = LibInteractionRewards.processUserSideDay(
+        return LibInteractionRewards.processUserSideDay(
             user, d, entryIds, poolBudget
         );
-        return (ch.toUser, ch.toTreasury, ch.advanced, slices);
     }
 
     function setUserSideDayPaidRaw(
