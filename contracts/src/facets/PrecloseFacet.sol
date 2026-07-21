@@ -167,11 +167,6 @@ contract PrecloseFacet is
     /// `EarlyWithdrawalFacet.OffsetActiveOnLoan`.
     error SaleListingActiveOnLoan();
 
-    /// @notice #1383 — the lender yield-fee resolve host cross-facet call
-    ///         reverted (should be unreachable; the host is a diamond-internal
-    ///         resolve + optional VPFI vault debit).
-    error LenderYieldFeeResolveFailed();
-
     /// @dev Pass-2 A1/D5 (#1189) — shared maturity/grace gate for the early-close
     ///      paths (`precloseDirect`, offset completion), matching
     ///      {RepayFacet.repayLoan}. Reverts strictly past the grace window so a
@@ -2036,6 +2031,12 @@ contract PrecloseFacet is
     ///      host when a discount can actually apply. Returns
     ///      `(lenderExtra, newTreasury)`; add `lenderExtra` to the lender share
     ///      and replace the treasury share with `newTreasury` at the call site.
+    ///
+    ///      Passes `bytes4(0)` as the failure selector so a host revert bubbles
+    ///      its ORIGINAL reason rather than being masked by a facet-local error.
+    ///      That also keeps this facet's ABI unchanged (no new error entry), so
+    ///      the committed frontend ABI stays in sync — the same choice
+    ///      `RepayFacet` makes for its copy of this helper.
     function _hostResolveLenderYieldFee(
         uint256 loanId,
         address settlingLender,
