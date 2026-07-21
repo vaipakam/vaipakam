@@ -2044,7 +2044,7 @@ contract DeployDiamond is Script {
         // setVPFIBuyRate). The kept consumptive fee-discount surface remains,
         // plus the renamed discount-price config (getVPFIDiscountConfig /
         // setVPFIDiscountRate) that the discount quote depends on.
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
         s[1] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
         s[2] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
@@ -2068,6 +2068,8 @@ contract DeployDiamond is Script {
         s[16] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
         // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
         s[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
+        // #1383 — secondary-settlement lender yield-fee resolve host.
+        s[18] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
     }
 
     // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.

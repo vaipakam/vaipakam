@@ -16,6 +16,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -133,6 +134,11 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         cover the loan's required principal payoff. Borrower
     ///         must raise `maxCollateralIn` or wait for better price
     ///         action.
+    /// @notice #1383 — the lender yield-fee resolve host cross-facet call
+    ///         reverted (should be unreachable; the host is a diamond-internal
+    ///         resolve + optional VPFI vault debit).
+    error LenderYieldFeeResolveFailed();
+
     error SwapBoundsInsufficient();
 
     /// @notice `LibSwap.swapWithFailover` returned `(success=false)` —
@@ -358,6 +364,27 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 actualCollateralConsumed = maxCollateralIn -
             (IERC20(loan.collateralAsset).balanceOf(address(this)) -
                 collateralBalanceBefore);
+
+        // ── Lender Yield Fee discount (§F2 / #1354 / #1383) ──────────
+        // swap-to-repay-full consolidates BOTH sides above, so
+        // `loan.lender == current holder`; resolve keyed on `loan.lender`. The
+        // sum `lenderDue + treasuryShare` is invariant under the shift, so
+        // `requiredPrincipal` (above) and the borrower surplus (below) are
+        // unchanged — the lender just receives the discounted slice in the
+        // lending asset instead of it going to treasury.
+        {
+            (uint256 lenderExtra, uint256 newTreasury) = _resolveLenderYieldFee(
+                loanId,
+                loan.lender,
+                plan.interest + plan.lateFee,
+                plan.treasuryShare
+            );
+            if (lenderExtra > 0) {
+                plan.lenderShare += lenderExtra;
+                plan.lenderDue = plan.principal + plan.lenderShare;
+                plan.treasuryShare = newTreasury;
+            }
+        }
 
         // ── Settlement waterfall — diamond-held proceeds pattern
         //    (Codex round-1 P1 #3 — mirrors RiskFacet:702-712) ────────
@@ -934,6 +961,34 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             abi.encodeWithSelector(selector, loanId, arg2),
             bytes4(0)
         );
+    }
+
+    /// @dev #1383 — resolve the lender yield-fee discount for `settlingLender`
+    ///      via the `VPFIDiscountFacet` host, so the try-VPFI-then-direct-
+    ///      reduction delivery bytecode stays off this at-EIP-170 facet. Returns
+    ///      the deltas to fold into the settlement (`lenderShare += lenderExtra;
+    ///      treasuryShare = newTreasury`). The host emits the analytics
+    ///      passthrough on the VPFI-payment path, so the caller drops
+    ///      `vpfiDeducted`. `settlingLender` is `loan.lender` on the consolidated
+    ///      full close-out, or the current `ownerOf(lenderTokenId)` on the
+    ///      non-consolidated partial path.
+    function _resolveLenderYieldFee(
+        uint256 loanId,
+        address settlingLender,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    ) private returns (uint256 lenderExtra, uint256 newTreasury) {
+        bytes memory ret = LibFacet.crossFacetCallReturn(
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                loanId,
+                settlingLender,
+                interestForQuote,
+                treasuryShare
+            ),
+            LenderYieldFeeResolveFailed.selector
+        );
+        (lenderExtra, newTreasury, ) = abi.decode(ret, (uint256, uint256, uint256));
     }
 
     function _decrementLienAtSwapToRepayPartial(uint256 loanId, uint256 consumed) private {
