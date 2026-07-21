@@ -14,6 +14,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
+import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -676,29 +677,38 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // in VPFI from the lender's vault and route 100% of the
             // interest+lateFee to the lender in the lending asset.
             // Mirrors RepayFacet / PrecloseFacet / RefinanceFacet.
-            // Codex round-5 P1 — guard on `s.vpfiDiscountConsent[lender]`.
-            // Codex round-6 P1 — also guard on `lenderNftOwner ==
-            // loan.lender`. `tryApplyYieldFee` debits VPFI from
-            // `loan.lender`'s vault internally; if the NFT has been
-            // transferred to a new holder, the original lender would
-            // be paying treasury for interest the new owner is
-            // receiving — a mis-aligned charge. When the NFT changed
-            // hands, fall back to the standard 1% split in the
-            // lending asset (no VPFI debit).
-            // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a
-            // Full lender earns the +10% even without hold-discount consent);
-            // still gated on the position NFT living with the recorded lender.
-            // #1354 §F2 / #1383 — the shared resolve helper runs the whole
-            // VPFI-payment-then-direct-reduction delivery. This facet does NOT
-            // consolidate `loan.lender`, so the `lenderNftOwner == loan.lender`
-            // guard stays: it ensures the helper's eligibility read and any VPFI
-            // vault debit hit the party that actually receives the interest —
-            // when the position NFT has changed hands, fall back to the plain
-            // split (no discount, no debit) rather than charge a stale lender.
-            if (lenderNftOwner == loan.lender) {
-                (uint256 lenderExtra, uint256 newTreasury, ) =
-                    LibVPFIDiscount.resolveLenderYieldFee(
-                        loan,
+            // Codex round-5 P1 — the VPFI-payment delivery must only ever debit
+            // the vault of the party that RECEIVES the interest.
+            //
+            // #1392 — that requirement used to be met with a
+            // `lenderNftOwner == loan.lender` guard, because the old resolve
+            // helper keyed the consent read and the vault debit on the stored
+            // `loan.lender` internally. This facet does not consolidate
+            // `loan.lender`, so on a TRANSFERRED lender position the guard
+            // failed and the discount was skipped entirely — meaning a lender
+            // who had paid the `C*` Full tariff lost the `+10%` they bought,
+            // purely because the position changed hands.
+            //
+            // The helper is now parameterized on an explicit settling lender, so
+            // the correct fix is to key it on `lenderNftOwner` — exactly the
+            // party `_routeInterest` pays below — and drop the guard. Safe on
+            // both deliveries: the Full `+10%` slice is loan-scoped
+            // (`feeEntitlementByLoanId[loan.id]`) and therefore holder-
+            // independent, the hold tier is an instant per-address lookup so the
+            // new holder's own tier applies, and any VPFI vault debit is gated
+            // on THAT holder's own stored consent inside `quoteYieldFee` (a
+            // non-consenting holder still receives the bump, via the
+            // no-token-move direct-reduction path).
+            //
+            // Routed through the diamond-internal resolve host so the delivery
+            // — and its analytics passthrough event, which this path previously
+            // dropped — lives on one facet, matching every other settlement site
+            // in the #1383 chain.
+            {
+                (uint256 lenderExtra, uint256 newTreasury) =
+                    _hostResolveLenderYieldFee(
+                        loanId,
+                        lenderNftOwner,
                         totalInterestLike,
                         treasuryShare
                     );
@@ -833,6 +843,47 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 gasStart - gasleft()
             );
         }
+    }
+
+    /// @dev #1392 — resolve the lender yield-fee VPFI discount through the
+    ///      diamond-internal `VPFIDiscountFacet.resolveLenderYieldFeeFor` host,
+    ///      keyed on an explicit `settlingLender` (here: the current lender-NFT
+    ///      holder, the party `_routeInterest` actually pays). The host also
+    ///      emits the analytics passthrough, so indexers see this path's
+    ///      discounts on the same facet as every other settlement site.
+    ///
+    ///      Short-circuits the ineligible/dark case with an INLINED eligibility
+    ///      read (`consent OR Full`, no cross-facet routing), so an unstamped /
+    ///      no-consent loan is a strict no-op that never routes to the host —
+    ///      which also keeps this keeper-driven path from acquiring a routing
+    ///      dependency on any loan that can't take a discount anyway.
+    ///
+    ///      Returns `(lenderExtra, newTreasury)`; add `lenderExtra` to the
+    ///      lender share and replace the treasury share with `newTreasury`.
+    function _hostResolveLenderYieldFee(
+        uint256 loanId,
+        address settlingLender,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    ) private returns (uint256 lenderExtra, uint256 newTreasury) {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (
+            treasuryShare == 0 ||
+            !LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)
+        ) {
+            return (0, treasuryShare);
+        }
+        bytes memory ret = LibFacet.crossFacetCallReturn(
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                loanId,
+                settlingLender,
+                interestForQuote,
+                treasuryShare
+            ),
+            bytes4(0)
+        );
+        (lenderExtra, newTreasury, ) = abi.decode(ret, (uint256, uint256, uint256));
     }
 
     /// @dev Moves accrued interest from the borrower-NFT owner's vault
