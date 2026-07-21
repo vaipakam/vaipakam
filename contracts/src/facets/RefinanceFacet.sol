@@ -420,7 +420,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             interestPortion
         );
         uint256 yieldVpfiDeducted;
-        if (s.vpfiDiscountConsent[oldLoan.lender] && treasuryFee > 0) {
+        // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a Full
+        // lender earns the +10% even without hold-discount consent).
+        if (LibVPFIDiscount.lenderYieldFeeEligible(oldLoan) && treasuryFee > 0) {
             bool yieldApplied;
             (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount.tryApplyYieldFee(
                 oldLoan,

@@ -475,6 +475,82 @@ library LibVPFIDiscount {
     }
 
     /**
+     * @notice #1354 (M2 PR-6) — the TOTAL lender yield-fee discount BPS for a
+     *         settlement: the consent-gated hold-tier discount plus the +10%
+     *         Full-tariff bump, capped at the uniform 50% ceiling. This is the
+     *         `d = min(d_hold + d_tariff, 5000)` of formula §F2, and it is what
+     *         both yield-fee delivery paths ({quoteYieldFee} VPFI-payment and
+     *         {directReductionYieldFee} peg-unset) charge against.
+     *
+     * @dev Unlike {lenderTimeWeightedDiscountBps} — a pure hold-tier primitive
+     *      that assumes the caller already verified consent — this wrapper
+     *      internalises the §F2 consent split:
+     *        - `d_hold` counts ONLY when `vpfiDiscountConsent[lender]` is set;
+     *          without consent the hold slice is 0.
+     *        - `d_tariff` (+10%) counts whenever the lender absorbed the Full
+     *          `C*` tariff (`feeEntitlementByLoanId[loan.id].lenderMode ==
+     *          Full`, #1347). The Full opt-in is itself the consent, so the
+     *          bump applies even to a lender with no separate hold consent —
+     *          symmetric with the borrower LIF bump in {holdOnlyBorrowerLif}.
+     *
+     *      DARK until the Full tariff path (#1347) is enabled: no loan carries
+     *      a `Full` lender stamp yet, so `d_tariff` is 0 for every current loan
+     *      and this returns exactly the pre-#1354 consent-gated hold discount.
+     */
+    function _effectiveYieldFeeDiscountBps(
+        LibVaipakam.Loan storage loan,
+        bool includeHold
+    ) private view returns (uint256 d) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // d_hold — the VPFI-contingent hold-tier slice, gated on the lender's
+        // platform VPFI-discount consent (§F2). `includeHold` is false when the
+        // caller is delivering the peg-set fallback, where the hold slice is
+        // VPFI-payment-authoritative and only the paid tariff slice survives.
+        if (includeHold && s.vpfiDiscountConsent[loan.lender]) {
+            d = lenderTimeWeightedDiscountBps(loan);
+        }
+        // d_tariff — +10% PAID Full own-side bump (the lender absorbed `C*` at
+        // origination, #1347). Not contingent on holding VPFI or on the hold
+        // consent, so it is the slice the peg-set fallback still honors.
+        if (
+            s.feeEntitlementByLoanId[loan.id].lenderMode ==
+            LibVaipakam.FeeEntitlementMode.Full
+        ) {
+            d += LibVaipakam.FULL_MODE_FEE_DISCOUNT_BONUS_BPS;
+        }
+        // Uniform 50% ceiling — `min(d_hold + d_tariff, 5000)` (§F2).
+        if (d > LibVaipakam.MAX_FEE_DISCOUNT_BPS) {
+            d = LibVaipakam.MAX_FEE_DISCOUNT_BPS;
+        }
+    }
+
+    /**
+     * @notice #1354 (M2 PR-6) — whether a loan's lender qualifies for ANY
+     *         yield-fee discount at settlement, i.e. whether the settlement
+     *         sites should attempt the discount delivery at all.
+     *
+     * @dev Eligibility is `consent OR lenderMode == Full`. A lender who
+     *      absorbed the Full `C*` tariff earns the +10% even with no separate
+     *      hold-discount consent (§F2/§F3 — the Full opt-in is the consent), so
+     *      the pre-#1354 consent-only gate would have wrongly skipped them. The
+     *      actual discount magnitude (0 when neither slice applies) is computed
+     *      by {_effectiveYieldFeeDiscountBps}; this is only the cheap
+     *      attempt-or-skip guard the call sites branch on.
+     *
+     *      DARK-safe: while no loan is `Full`-stamped this reduces to the
+     *      original `vpfiDiscountConsent[lender]` gate.
+     */
+    function lenderYieldFeeEligible(
+        LibVaipakam.Loan storage loan
+    ) internal view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return
+            s.vpfiDiscountConsent[loan.lender] ||
+            s.feeEntitlementByLoanId[loan.id].lenderMode ==
+            LibVaipakam.FeeEntitlementMode.Full;
+    }
+
+    /**
      * @notice Time-weighted average discount BPS a borrower earned across a
      *         specific loan's lifetime (Phase 5 / §5.2b). Borrower mirror
      *         of {lenderTimeWeightedDiscountBps}.
@@ -665,7 +741,22 @@ library LibVPFIDiscount {
     {
         if (interestAmount == 0 || loan.lender == address(0)) return (false, 0, 0);
 
-        avgBps = lenderTimeWeightedDiscountBps(loan);
+        // #1354 (Codex r1 P2) — the VPFI-PAYMENT delivery DEBITS `loan.lender`'s
+        // vault, so it requires that party's own platform consent. Settlement
+        // hosts consolidate `loan.lender` to the CURRENT position-NFT holder
+        // before quoting, so without this gate an unsolicited transfer of a
+        // Full-stamped lender position could spend the (non-consenting)
+        // recipient's VPFI. A Full lender WITHOUT consent still receives the
+        // +10% bump — but only through the no-token-move direct-reduction path
+        // ({directReductionYieldFee}), never a vault debit. This is a no-op for
+        // the pre-existing hold path (callers only reached here with consent).
+        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[loan.lender]) {
+            return (false, 0, 0);
+        }
+
+        // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the
+        // (consent-verified above) hold slice PLUS the +10% Full-tariff bump.
+        avgBps = _effectiveYieldFeeDiscountBps(loan, true);
         if (avgBps == 0) return (false, 0, 0);
 
         // #957 (#921 item 6) — size the yield-fee VPFI requirement against the
@@ -939,6 +1030,15 @@ library LibVPFIDiscount {
         (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
         if (!canQuote) return (false, 0);
         if (vaultBal < vpfiRequired) return (false, 0);
+        // #1354 (Codex r3 P2) — require TRACKED coverage, not just the raw
+        // vault balance. Since the Full tariff bump can make `quoteYieldFee`
+        // return a positive `vpfiRequired` for a lender with little/no
+        // protocol-tracked VPFI, unsolicited VPFI dust sent directly to the
+        // vault could satisfy the raw `vaultBal` check above while
+        // `prevTracked < vpfiRequired` — underflowing `prevTracked - vpfiRequired`
+        // below and reverting settlement instead of falling back to the
+        // no-token-move direct-reduction bump. Bail to the fallback here.
+        if (prevTracked < vpfiRequired) return (false, 0);
 
         // 3. Checkpoint staking accrual at the post-mutation balance.
         //    Mirrors the pattern at every other vault-mutation site.
@@ -988,18 +1088,20 @@ library LibVPFIDiscount {
      *      remainder (`lenderShare += reduction; treasuryShare -= reduction`).
      *
      *      Returns the lending-asset amount to move from treasury to the
-     *      lender: `treasuryShareFull × effBps / BASIS_POINTS`. Returns `0`
-     *      when:
-     *        - a VPFI price source IS configured — VPFI-payment mode
-     *          ({tryApplyYieldFee}) is authoritative there, so this fallback
-     *          stays inert;
-     *        - the lender's effective discount is tier-0 / zero; or
-     *        - the fee is zero.
+     *      lender. What it carries depends on the peg (see the body): peg-unset
+     *      → the whole `min(d_hold + d_tariff, 5000)`; peg-set → only the paid
+     *      `d_tariff` Full slice (the hold slice is VPFI-payment-authoritative
+     *      when the peg is set). Returns `0` when the resulting slice is
+     *      tier-0 / non-Full zero, or the fee is zero.
      *
-     *      Consent is NOT re-checked here — the caller must have verified
-     *      `s.vpfiDiscountConsent[loan.lender]` (identical contract to
-     *      {tryApplyYieldFee}), which every call site already does before the
-     *      VPFI-mode attempt this is the else-branch of.
+     *      Consent handling (#1354): the hold slice is consent-gated INSIDE
+     *      {_effectiveYieldFeeDiscountBps}, so a lender with no
+     *      `vpfiDiscountConsent` contributes `d_hold = 0`. The call sites guard
+     *      the whole attempt on {lenderYieldFeeEligible} (`consent OR lenderMode
+     *      == Full`), and the VPFI-DEBIT path ({quoteYieldFee}) additionally
+     *      requires consent — so a Full lender without consent, or a consenting
+     *      Full lender who lacked free VPFI, always still receives the +10%
+     *      here without any vault debit.
      *
      * @param loan             Live loan the yield fee settles against.
      * @param treasuryShareFull The full (undiscounted) lending-asset treasury
@@ -1012,17 +1114,31 @@ library LibVPFIDiscount {
     ) internal view returns (uint256 reduction) {
         if (treasuryShareFull == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Price source configured ⇒ VPFI-payment mode is authoritative; this
-        // direct-reduction fallback is the peg-unset launch posture only. Keyed
-        // on the config fields directly (not `canQuote`, which is also false on
-        // a transient oracle gap even when the peg IS set).
-        if (
-            s.vpfiDiscountWeiPerVpfi != 0 &&
-            s.vpfiDiscountEthPriceAsset != address(0)
-        ) {
-            return 0;
-        }
-        uint256 effBps = lenderTimeWeightedDiscountBps(loan);
+        // This helper is only ever reached as the FALLBACK after the
+        // VPFI-payment attempt ({tryApplyYieldFee}) did NOT apply, so delivering
+        // here can never double-pay. What it delivers depends on the peg:
+        //
+        //  - Peg UNSET (Phase-1 launch posture, §F2): direct-reduction is the
+        //    SOLE delivery, so it carries the whole discount — the consent-gated
+        //    hold slice PLUS the +10% Full-tariff bump.
+        //  - Peg SET: the VPFI-contingent HOLD slice is delivered only by the
+        //    authoritative VPFI-payment path (holding VPFI is the peg-set
+        //    model), so this fallback drops it. But the +10% Full-tariff slice
+        //    is a PAID entitlement (the lender already paid `C*`), NOT contingent
+        //    on holding VPFI, so it MUST still be honored here whenever
+        //    VPFI-payment couldn't run — whether because the lender has no
+        //    consent (#1354 Codex r1 P2) OR because a consenting Full lender
+        //    lacked enough free VPFI to pay the discounted fee (#1354 Codex r2
+        //    P2). Otherwise a Full lender would be WORSE off for consenting.
+        //
+        // Keyed on the config fields directly (not `canQuote`, which is also
+        // false on a transient oracle gap even when the peg IS set).
+        bool pegSet = s.vpfiDiscountWeiPerVpfi != 0 &&
+            s.vpfiDiscountEthPriceAsset != address(0);
+        // Peg-unset → whole discount (hold + tariff); peg-set → tariff slice
+        // only (the hold slice is VPFI-payment-authoritative when the peg is
+        // set — see the body comment above). `includeHold = !pegSet`.
+        uint256 effBps = _effectiveYieldFeeDiscountBps(loan, !pegSet);
         if (effBps == 0) return 0;
         reduction = (treasuryShareFull * effBps) / LibVaipakam.BASIS_POINTS;
     }

@@ -322,7 +322,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // any precondition failure — we then fall through to the normal
             // ERC-20 split.
             uint256 yieldVpfiDeducted;
-            if (s.vpfiDiscountConsent[loan.lender] && plan.treasuryShare > 0) {
+            // #1354 §F2 — eligibility is `consent OR lenderMode == Full`: a
+            // lender who absorbed the Full C* tariff earns the +10% yield-fee
+            // discount even without separate hold-discount consent.
+            if (LibVPFIDiscount.lenderYieldFeeEligible(loan) && plan.treasuryShare > 0) {
                 bool yieldApplied;
                 (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount
                     .tryApplyYieldFee(
