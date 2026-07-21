@@ -27,6 +27,7 @@ import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol"
 ///         - dust never pushes a slice past its `cEff` (that would breach the
 ///           loan-side cap), and `Sigma slices <= budget`.
 contract ShareOfPoolDayPrimitiveTest is SetupTest {
+    uint256 constant _MAX = type(uint256).max;
     uint256 constant DAY = 5;
     uint64 constant LOAN_A = 4001;
     uint64 constant LOAN_B = 4002;
@@ -117,7 +118,26 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
                 IVaipakamErrors.DayCapModeUnsetPostCutover.selector, DAY
             )
         );
-        _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+    }
+
+    /// @dev Codex #1399 r4 P2 — the fail-closed mode check must sit BEHIND the
+    ///      readiness gate. Finalize writes the mode stamp and the globals/RPN
+    ///      row together, so a day that simply hasn't finalized yet has no stamp
+    ///      either. Checking first turned "not ready, retry later" into a hard
+    ///      revert that would brick the entire claim on a future day.
+    function test_UnfinalizedDayIsRetryableNotAHardRevert() public {
+        uint256 future = DAY + 7; // never finalized: no mode stamp, no RPN row
+        uint256 id = _mut().pushRewardEntry(
+            alice, LOAN_A, LibVaipakam.RewardSide.Lender, 1 ether, uint32(future)
+        );
+        _mut().closeRewardEntryRaw(id, uint32(future + 1));
+
+        // Must NOT revert — the day is simply not ready yet.
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, future, _ids(id), _MAX, _MAX);
+        assertFalse(ch.advanced, "unfinalized day stays retryable");
+        assertEq(ch.toUser.total, 0, "and pays nothing");
     }
 
     // ─── Transfer-set preconditions ──────────────────────────────────────────
@@ -133,7 +153,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
                 IVaipakamErrors.RewardEntrySetMismatch.selector, b
             )
         );
-        _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), type(uint256).max);
+        _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), _MAX, _MAX);
     }
 
     /// @dev Paying a day the entry doesn't cover would mint reward from nothing
@@ -148,7 +168,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
                 IVaipakamErrors.RewardEntrySetMismatch.selector, id
             )
         );
-        _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
     }
 
     /// @dev Codex #1399 P2 — an entry already advanced past `d` must be
@@ -163,7 +183,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
                 IVaipakamErrors.RewardEntrySetMismatch.selector, id
             )
         );
-        _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
     }
 
     /// @dev Codex #1399 P2 — an entry whose loan is still ACTIVE must never be
@@ -185,7 +205,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
                 IVaipakamErrors.RewardEntrySetMismatch.selector, id
             )
         );
-        _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
     }
 
     /// @dev Codex #1399 P2 — a duplicated id would read the SAME unchanged
@@ -198,7 +218,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
                 IVaipakamErrors.RewardEntrySetMismatch.selector, id
             )
         );
-        _mut().processUserSideDayRaw(alice, DAY, _ids(id, id), type(uint256).max);
+        _mut().processUserSideDayRaw(alice, DAY, _ids(id, id), _MAX, _MAX);
     }
 
     /// @dev Codex #1399 P2 — an UNSTAMPED loan carries NO loan-side cap, not a
@@ -210,7 +230,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         uint64 unstamped = 4099; // no _stampLoanCap -> openDays == 0
         uint256 id = _entry(alice, unstamped, 1 ether);
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
         assertTrue(ch.advanced, "paid day advances");
         assertGt(ch.toUser.total, 0, "unstamped loan still pays (no cap != zero cap)");
         assertLe(
@@ -229,7 +249,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
     function test_PoolShortagePaysNothingAndDoesNotAdvance() public {
         uint256 id = _entry(alice, LOAN_A, 1 ether);
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), 1 wei);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), 1 wei, 0);
         assertEq(ch.toUser.total, 0, "no user payout on pool shortage");
         assertEq(ch.toTreasury.total, 0, "no treasury payout on pool shortage");
         assertFalse(ch.advanced, "must NOT advance - day stays retryable");
@@ -244,7 +264,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         uint256 c = _mut().dayUserSideCapVpfi18Raw(DAY);
         _mut().setUserSideDayPaidRaw(alice, 0, DAY, c); // fully spent
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
         assertEq(ch.toUser.total, 0, "exhausted pays nothing");
         assertTrue(ch.advanced, "exhausted MUST advance");
     }
@@ -255,7 +275,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         _mut().setDayUserSideCapRaw(DAY, 0);
         uint256 id = _entry(alice, LOAN_A, 1 ether);
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
         assertEq(ch.toUser.total, 0, "C == 0 pays nothing");
         assertTrue(ch.advanced, "C == 0 dust day MUST advance");
     }
@@ -275,7 +295,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
             LibInteractionRewards.DayCharge memory ch,
             LibInteractionRewards.DaySlice[] memory sl
         ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), _MAX, _MAX);
         uint256 toUser = ch.toUser.total;
         uint256 toTreasury = ch.toTreasury.total;
         assertTrue(ch.advanced, "paid day advances");
@@ -312,7 +332,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         );
 
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
 
         assertTrue(ch.advanced, "terminal forfeit advances (never strands)");
         assertGt(ch.toTreasury.total, 0, "routed to treasury, not reverted");
@@ -336,7 +356,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
 
         uint256 clean = _entry(alice, LOAN_A, 900 ether);
         (LibInteractionRewards.DayCharge memory chClean, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(clean), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(clean), _MAX, _MAX);
         assertEq(chClean.toUser.total, 0, "exhausted loan-side cap zeroes a PAYOUT");
         assertTrue(chClean.advanced, "and the day still advances");
 
@@ -346,7 +366,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
             LibInteractionRewards.DayCharge memory chForfeit,
             LibInteractionRewards.DaySlice[] memory sl
         ) = _mut().processUserSideDayRaw(
-            alice, DAY, _ids(forfeited), type(uint256).max
+            alice, DAY, _ids(forfeited), _MAX, _MAX
         );
         assertGt(
             chForfeit.toTreasury.total,
@@ -356,6 +376,52 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertFalse(
             sl[0].loanSideChargeable,
             "and the caller is told not to charge it to the loan-side ledger"
+        );
+    }
+
+    /// @dev Codex #1399 r4 P2 — fresh and recycled reward come from physically
+    ///      different places, so ONE combined budget can report "enough" on a
+    ///      mixed day while the recycle bucket alone is short, and the transfer
+    ///      would overdraw it. Each source is checked against its own remainder.
+    ///
+    ///      The paired assertion is what gives this teeth: the same day with the
+    ///      recycled side funded DOES advance, so the first half can't be
+    ///      passing for some unrelated reason.
+    function test_PerSourceShortageBlocksEvenWhenTheTotalWouldFit() public {
+        _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        uint256 id = _entry(alice, LOAN_A, 900 ether);
+
+        // Fresh is effectively unlimited; recycled is empty.
+        (LibInteractionRewards.DayCharge memory blocked, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, 0);
+        assertFalse(blocked.advanced, "recycled shortage must NOT advance");
+        assertEq(blocked.toUser.total, 0, "and must pay nothing");
+
+        (LibInteractionRewards.DayCharge memory ok, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+        assertTrue(ok.advanced, "same day advances once recycled is funded");
+        assertGt(ok.toUser.recycled, 0, "and it really did need recycled");
+    }
+
+    /// @dev Codex #1399 r4 P2 — reward the LOAN-SIDE cap refuses is reported so
+    ///      the caller can retire its commitments. The day advances regardless,
+    ///      so nobody can ever draw that value; leaving the commitment
+    ///      outstanding would permanently depress every later day's availability
+    ///      for reward that cannot exist.
+    function test_LoanSideCappedOffIsReported() public {
+        _stampLoanCap(LOAN_A, 1); // prorates to a 0 effective cap on day one
+        uint256 id = _entry(alice, LOAN_A, 900 ether);
+
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+
+        assertTrue(ch.advanced, "day still advances");
+        assertEq(ch.toUser.total, 0, "nothing paid out");
+        assertGt(ch.cappedOff.total, 0, "but the refused reward IS reported");
+        assertEq(
+            ch.cappedOff.armedFresh + ch.cappedOff.recycled,
+            ch.cappedOff.total,
+            "decomposed so fresh retires and recycled releases"
         );
     }
 
@@ -373,7 +439,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         uint256 id = _entry(alice, LOAN_A, 900 ether);
 
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
 
         assertGt(ch.toUser.total, 0, "a real payout happened (non-vacuous)");
         assertEq(
@@ -396,7 +462,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
     function test_AllFreshDayAttributesNothingToRecycled() public {
         uint256 id = _entry(alice, LOAN_A, 900 ether);
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
         assertGt(ch.toUser.total, 0, "a real payout happened (non-vacuous)");
         assertEq(ch.toUser.recycled, 0, "no recycled budget => no recycled draw");
         assertEq(ch.toUser.armedFresh, ch.toUser.total, "all fresh");
@@ -413,7 +479,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         _mut().setRewardEntryForfeitedRaw(id);
 
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
 
         assertEq(ch.toUser.total, 0, "forfeited entry pays the user nothing");
         assertGt(ch.toTreasury.total, 0, "forfeit routed to treasury");
@@ -436,7 +502,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
 
         // Loan A settles first and consumes its slice.
         (LibInteractionRewards.DayCharge memory c1, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(a), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(a), _MAX, _MAX);
         uint256 firstUser = c1.toUser.total;
         uint256 firstTreas = c1.toTreasury.total;
         // Persist what a real caller would charge.
@@ -444,7 +510,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
 
         // Loan B settles later against the REDUCED remaining budget.
         (LibInteractionRewards.DayCharge memory c2, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(b), type(uint256).max);
+            _mut().processUserSideDayRaw(alice, DAY, _ids(b), _MAX, _MAX);
         uint256 secondUser = c2.toUser.total;
         uint256 secondTreas = c2.toTreasury.total;
 

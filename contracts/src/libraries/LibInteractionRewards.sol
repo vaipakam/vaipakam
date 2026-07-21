@@ -2660,6 +2660,17 @@ function _dayPoolHalves(
     ///                   funding source.
     /// @param toTreasury VPFI owed to treasury (forfeited entries), decomposed
     ///                   by funding source.
+    /// @param cappedOff  Reward the LOAN-SIDE lifetime cap refused. Moves no
+    ///                   tokens, but the caller MUST retire its commitments —
+    ///                   `consumeArmedFresh(cappedOff.armedFresh)` and
+    ///                   `releaseCommitment(cappedOff.recycled)` — exactly as
+    ///                   `_applyLoanSideCap` does. The day advances regardless,
+    ///                   so nobody can ever draw this value; leaving its
+    ///                   commitment outstanding permanently depresses every
+    ///                   later day's availability for reward that cannot exist.
+    ///                   Deliberately EXCLUDES the D1-ceiling residue: that
+    ///                   stays in the shared pool for other users, and retiring
+    ///                   it would destroy live value.
     /// @param advanced   True ⇒ the caller MUST, in the SAME transaction:
     ///                   (a) advance `rewardEntryClaimNextDay` to `d + 1` for
     ///                   every entry in the set, (b) add `Σ slices` to
@@ -2693,7 +2704,20 @@ function _dayPoolHalves(
     struct DayCharge {
         EntrySplit toUser;
         EntrySplit toTreasury;
+        EntrySplit cappedOff;
         bool advanced;
+    }
+
+    /// @notice The caller's REMAINING pool, per funding source.
+    /// @dev Codex #1399 r4 P2 — two budgets, not one. Fresh reward and recycled
+    ///      reward are drawn from physically different places (the fresh
+    ///      schedule vs the recycle bucket), so a single combined number can
+    ///      report "enough" on a mixed day while one source is actually short,
+    ///      and the transfer would then overdraw it. Each source is checked
+    ///      against its own remainder.
+    struct PoolBudget {
+        uint256 fresh;
+        uint256 recycled;
     }
 
     /// @notice One entry's share of a priced day.
@@ -2730,25 +2754,27 @@ function _dayPoolHalves(
     ///         pro-rata across loans that close at different times is explicitly
     ///         NOT promised — only the ceiling is.
     ///
-    ///         Pool shortage is ALL-OR-NOTHING: if `poolBudget` cannot cover
-    ///         the day's budget, nothing is charged and `advanced` is false so
-    ///         the caller retries later. Paying a fraction and advancing would
-    ///         silently forfeit the remainder, since v1 keeps no partial-day
-    ///         accounting.
+    ///         Pool shortage is ALL-OR-NOTHING, and is judged PER SOURCE: if
+    ///         either the fresh or the recycled remainder cannot cover its share
+    ///         of the day's budget, nothing is charged and `advanced` is false
+    ///         so the caller retries later. Paying a fraction and advancing
+    ///         would silently forfeit the remainder, since v1 keeps no
+    ///         partial-day accounting.
     ///
     /// @param user          The claimant/forfeiter.
     /// @param d             The reward day.
     /// @param entryIds      Entries of `user` on one side covering `d` that are
     ///                      ready to transfer NOW for this call.
-    /// @param poolBudget    Budget left in the caller's pool this tx. (Named to
-    ///                      avoid shadowing the {poolRemaining} accessor.)
+    /// @param pool          Budget left in the caller's pool this tx, per
+    ///                      funding source. (Named `pool` to avoid shadowing
+    ///                      the {poolRemaining} accessor.)
     /// @return charge       Amounts + whether cursors may advance.
     /// @return slices       Per-entry slice, index-aligned with `entryIds`.
     function processUserSideDay(
         address user,
         uint256 d,
         uint256[] memory entryIds,
-        uint256 poolBudget
+        PoolBudget memory pool
     ) internal view returns (DayCharge memory charge, DaySlice[] memory slices) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 n = entryIds.length;
@@ -2757,14 +2783,6 @@ function _dayPoolHalves(
 
         LibVaipakam.RewardSide side = s.rewardEntries[entryIds[0]].side;
 
-        // Fail CLOSED. An armed day that never got its mode stamp is NOT a
-        // legacy day — treating it as one would price it with the retired
-        // ETH-ratio cap (disabled at finalize ⇒ effectively uncapped).
-        if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
-            revert IVaipakamErrors.DayCapModeUnsetPostCutover(d);
-        }
-        // Never compute Δ below the cursor: the row is unset, which reads as a
-        // false 0 (silently paying nothing) rather than reverting.
         // Validate the transfer set BEFORE any early return. A malformed set is
         // a CALLER BUG and must always surface as a revert — if this sat after
         // the readiness gate, the same bad set would silently no-op whenever the
@@ -2835,6 +2853,22 @@ function _dayPoolHalves(
         // a false 0 and would advance past itself, losing that day forever.
         if (!_rpnReady(s, side, d)) return (charge, slices);
 
+        // Fail CLOSED — but only for a day that HAS finalized. An armed day
+        // that never got its mode stamp is not a legacy day; treating it as one
+        // would price it with the retired ETH-ratio cap (disabled at finalize ⇒
+        // effectively uncapped).
+        //
+        // Codex #1399 r4 P2 — this MUST sit behind the readiness gate. Finalize
+        // writes the mode stamp and the globals/RPN row together, so a day that
+        // simply hasn't finalized yet has no stamp either. Checking first turned
+        // "not ready, retry later" into a hard revert that would brick the whole
+        // claim for a not-yet-finalized day. Unlike a malformed transfer set
+        // (always a caller bug ⇒ always revert), an unfinalized day is a normal
+        // transient state.
+        if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
+            revert IVaipakamErrors.DayCapModeUnsetPostCutover(d);
+        }
+
         // Resolve the day's funding composition BEFORE anything is priced: on
         // the (unreachable-behind-`_rpnReady`) stamp-missing case the day must
         // stay retryable, and bailing out after `slices` were computed would
@@ -2854,6 +2888,7 @@ function _dayPoolHalves(
 
         uint256[] memory cEff = new uint256[](n);
         uint256 rawPay;
+        uint256 cappedOffTotal;
         for (uint256 i; i < n; ) {
             LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
             uint256 v = _contribFor(s, e, d);
@@ -2896,6 +2931,20 @@ function _dayPoolHalves(
                     s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
                 );
                 cEff[i] = v < lsr ? v : lsr;
+                // Codex #1399 r4 P2 — what the LOAN-SIDE cap refused. The day
+                // advances regardless, so this value can never be drawn by
+                // anyone again: `_applyLoanSideCap` therefore retires its fresh
+                // commitment in full and releases its recycled commitment, and
+                // the D1 path must report it so the caller can do the same.
+                // Leaving it unreported strands the commitment, permanently
+                // depressing every later day's availability for value nobody
+                // can draw.
+                //
+                // ONLY the loan-side trim belongs here — NOT the D1-ceiling
+                // residue below. That residue stays in the shared pool and
+                // another user may still draw it; retiring its commitment would
+                // destroy live value.
+                cappedOffTotal += v - cEff[i];
             }
             rawPay += cEff[i];
             unchecked { ++i; }
@@ -2904,6 +2953,8 @@ function _dayPoolHalves(
         // Legitimately nothing to pay (zero weights / loan-side exhausted):
         // advance so the walk progresses. This is NOT the pool-shortage case.
         if (rawPay == 0) {
+            charge.cappedOff =
+                _splitDayAmount(cappedOffTotal, freshDaily, recycledDaily);
             charge.advanced = true;
             return (charge, slices);
         }
@@ -2912,8 +2963,14 @@ function _dayPoolHalves(
         uint256 budget = rawPay < remainingD1 ? rawPay : remainingD1;
 
         // ALL-OR-NOTHING vs the pool — do NOT advance, so this day is retried
-        // once the pool refills.
-        if (poolBudget < budget) return (charge, slices);
+        // once the pool refills. Checked PER SOURCE: a mixed day that fits the
+        // combined remainder can still be short of recycled (or fresh) alone,
+        // and paying it would overdraw that source.
+        EntrySplit memory need =
+            _splitDayAmount(budget, freshDaily, recycledDaily);
+        if (pool.fresh < need.armedFresh || pool.recycled < need.recycled) {
+            return (charge, slices);
+        }
 
         uint256[] memory amounts =
             _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
@@ -2939,6 +2996,8 @@ function _dayPoolHalves(
         charge.toUser = _splitDayAmount(userTotal, freshDaily, recycledDaily);
         charge.toTreasury =
             _splitDayAmount(treasuryTotal, freshDaily, recycledDaily);
+        charge.cappedOff =
+            _splitDayAmount(cappedOffTotal, freshDaily, recycledDaily);
         charge.advanced = true;
     }
 

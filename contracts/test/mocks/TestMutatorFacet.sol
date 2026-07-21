@@ -759,7 +759,8 @@ contract TestMutatorFacet {
         address user,
         uint256 d,
         uint256[] calldata entryIds,
-        uint256 poolBudget
+        uint256 poolFresh,
+        uint256 poolRecycled
     )
         external
         view
@@ -769,7 +770,13 @@ contract TestMutatorFacet {
         )
     {
         return LibInteractionRewards.processUserSideDay(
-            user, d, entryIds, poolBudget
+            user,
+            d,
+            entryIds,
+            LibInteractionRewards.PoolBudget({
+                fresh: poolFresh,
+                recycled: poolRecycled
+            })
         );
     }
 

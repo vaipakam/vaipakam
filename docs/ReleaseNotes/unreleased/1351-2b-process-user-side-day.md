@@ -24,7 +24,23 @@ day perfectly evenly — only that together they never exceed the ceiling.
 day in full, that day pays nothing at all and stays pending, to be retried once
 the pool refills. Paying part of a day and marking it done would have quietly
 discarded the rest, because the current design records progress a whole day at a
-time.
+time. Each funding source is checked against its own remainder rather than
+against a single combined figure — the two sources are physically separate, so a
+combined check could report "enough" while one of them was actually short.
+
+**A day that hasn't closed yet is simply not ready.** Days that haven't been
+finalized are left pending and retried later, not treated as an error. Only a
+day that *has* closed but is missing its regime marker is refused outright,
+because that combination should be impossible and quietly guessing would apply
+the wrong limit.
+
+**Reward that a loan's own limit refuses is accounted for.** When a loan's
+lifetime limit turns some of a day's reward away, that amount is reported back
+so the bookkeeping can be released. Nobody can ever draw it — the day has moved
+on — so leaving it recorded as still-owed would shrink every future day's
+available rewards for value that cannot exist. The separate case of a
+participant hitting their own daily ceiling is deliberately *not* treated this
+way: that reward stays in the pool and someone else can still receive it.
 
 **Rounding never overshoots.** When a day is split between several of a
 participant's loans, the leftover from rounding is handed to whichever loan has
