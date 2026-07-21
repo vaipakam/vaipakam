@@ -135,11 +135,6 @@
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "newDurationDays",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -166,12 +161,6 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
-      },
-      {
-        "name": "newOpenDays",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false

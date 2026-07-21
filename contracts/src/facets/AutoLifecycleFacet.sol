@@ -786,19 +786,18 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         }
 
         // #1384 — reprice the fee entitlement for the NEW term. The extension
-        // pays no fresh Full `C*` tariff, so the un-tariffed added term must not
-        // keep a lender Full `+10%` (#1354) or an oversized loan-side reward
-        // budget (#1353). Runs UNCONDITIONALLY (not gated on `inTermExtension`):
-        // even a late in-grace extension continues to accrue future interest the
-        // stale Full stamp would discount. No-op on an unstamped loan and while
-        // the M2 fee package is dark. The borrower Full custody is untouched
-        // (whole-loan `vpfiHeld` → terminal rebate). `newDurationDays` is
-        // validated 1..365 above, so the uint32 cast is exact.
+        // pays no fresh Full `C*` tariff, so a lender who absorbed Full at
+        // origination must not keep the `+10%` yield-fee bump (#1354) on the
+        // un-tariffed added term — the reprice downgrades the lender Full stamp.
+        // Runs UNCONDITIONALLY (not gated on `inTermExtension`): even a late
+        // in-grace extension continues to accrue future interest the stale Full
+        // stamp would discount. No-op on an unstamped / non-Full loan and while
+        // the M2 fee package is dark. The loan-side reward-cap (lifetime,
+        // per-loanId) and the borrower stamp are deliberately left intact.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 FeeEntitlementFacet.repriceFeeEntitlementOnExtension.selector,
-                loanId,
-                uint32(newDurationDays)
+                loanId
             ),
             FeeEntitlementRepriceFailed.selector
         );

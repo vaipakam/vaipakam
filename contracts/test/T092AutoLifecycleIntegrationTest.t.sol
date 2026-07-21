@@ -466,12 +466,12 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.warp(block.timestamp + 2 days);
     }
 
-    /// @notice #1384 — an in-place extension downgrades a lender Full stamp and
-    ///         resets the loan-side reward-cap base for the un-tariffed new
-    ///         term, while leaving the borrower's whole-loan Full custody
-    ///         untouched. Prevents an unpriced lender +10% (#1354) / oversized
-    ///         reward budget (#1353) on added term no fresh `C*` paid for.
-    function test_1384_ExtendReprice_LenderFullDowngraded_RewardCapReset()
+    /// @notice #1384 — an in-place extension downgrades a lender Full stamp so
+    ///         the un-tariffed added term earns no `+10%` (#1354), while leaving
+    ///         the per-loanId LIFETIME loan-side reward-cap budget (#1353) and
+    ///         the borrower stamp intact (resetting the cap would wipe the
+    ///         unclaimed original-term reward budget — Codex #1386 P1).
+    function test_1384_ExtendReprice_LenderFullDowngraded_RewardCapPreserved()
         public
     {
         uint256 loanId = _setupExtendableLoan();
@@ -491,7 +491,6 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             })
         );
 
-        // Extend to a DIFFERENT term (45d) so the restamped openDays is visible.
         vm.prank(borrower);
         _f().extendLoanInPlace(loanId, 500, 45);
 
@@ -506,17 +505,52 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             "lender Full downgraded on extension"
         );
         assertEq(fe.lenderTariffPaid, 0, "lender tariff record cleared");
-        // Reward-cap base reset for the un-tariffed new term.
-        assertEq(fe.cStarOpen, 0, "cStarOpen reset");
-        assertEq(fe.loanSideRewardCapOpen, 0, "reward cap reset");
-        assertEq(uint256(fe.openDays), 45, "openDays restamped to new term");
-        // Borrower Full custody untouched (whole-loan vpfiHeld → terminal rebate).
+        // Loan-side reward-cap budget PRESERVED (lifetime per-loanId; resetting
+        // would wipe the unclaimed original-term reward). openDays + haircut
+        // snapshot untouched — the proration base stays the origination term.
+        assertEq(fe.cStarOpen, 10 ether, "cStarOpen preserved");
+        assertEq(uint256(fe.loanSideRewardCapOpen), 4 ether, "reward cap preserved");
+        assertEq(uint256(fe.openDays), 30, "openDays unchanged");
+        assertEq(uint256(fe.rewardHaircutBpsAtOpen), 2000, "haircut snapshot unchanged");
+        // Borrower stamp untouched (nothing reads borrowerMode; it is a record).
         assertEq(
             uint8(fe.borrowerMode),
             uint8(LibVaipakam.FeeEntitlementMode.Full),
-            "borrower Full preserved across extension"
+            "borrower stamp preserved across extension"
         );
         assertEq(fe.borrowerTariffPaid, 7 ether, "borrower tariff preserved");
+    }
+
+    /// @notice #1384 — a HoldOnly/None-lender loan is not modified on extension
+    ///         (only a Full lender stamp is downgraded).
+    function test_1384_ExtendReprice_NonFullLenderUntouched() public {
+        uint256 loanId = _setupExtendableLoan();
+        TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.Full,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 30,
+                rewardHaircutBpsAtOpen: 2000,
+                borrowerTariffPaid: 7 ether,
+                lenderTariffPaid: 0,
+                cStarOpen: 10 ether,
+                loanSideRewardCapOpen: 4 ether
+            })
+        );
+
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+
+        LibVaipakam.FeeEntitlement memory fe =
+            FeeEntitlementFacet(address(diamond)).getFeeEntitlement(loanId);
+        assertEq(uint256(fe.openDays), 30, "non-Full lender loan untouched");
+        assertEq(fe.cStarOpen, 10 ether, "cStarOpen untouched");
+        assertEq(
+            uint8(fe.borrowerMode),
+            uint8(LibVaipakam.FeeEntitlementMode.Full),
+            "borrower stamp untouched"
+        );
     }
 
     /// @notice #1384 — the reprice is a no-op on a plain (unstamped) loan: no
