@@ -90,7 +90,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           <span className="row-title">{title}</span>
           <br />
           <span className="row-sub">
-            Offer #{offer.offerId} · waiting for the other side to accept
+            {copy.positions.offerRow.waitingAccept(offer.offerId)}
             {error ? (
               <>
                 <br />

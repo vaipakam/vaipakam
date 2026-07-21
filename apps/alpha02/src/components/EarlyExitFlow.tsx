@@ -366,8 +366,11 @@ export function EarlyExitFlow({
                   onClick={() => choose(o.offerId)}
                 >
                   <span>
-                    Offer #{o.offerId} · {formatBpsAsPercent(o.interestRateBps)}{' '}
-                    yearly · {formatDurationDays(o.durationDays)}
+                    {copy.earlyExit.offerRowLine(
+                      o.offerId,
+                      formatBpsAsPercent(o.interestRateBps),
+                      formatDurationDays(o.durationDays),
+                    )}
                   </span>
                   <span>
                     {copy.earlyExit.rowReceive(

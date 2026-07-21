@@ -130,8 +130,10 @@ export function Vault() {
                       </span>
                       <br />
                       <span className="row-sub">
-                        {formatTokenAmount(asset.locked, asset.decimals)} locked ·{' '}
-                        {formatTokenAmount(asset.free, asset.decimals)} free
+                        {copy.vault.lockedFreeBreakdown(
+                          formatTokenAmount(asset.locked, asset.decimals),
+                          formatTokenAmount(asset.free, asset.decimals),
+                        )}
                       </span>
                     </span>
                     <span

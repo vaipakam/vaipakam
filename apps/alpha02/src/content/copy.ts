@@ -40,6 +40,7 @@ const copySource = {
    *  highest-visibility chrome is translatable). */
   chrome: {
     skipToContent: 'Skip to content',
+    connectedTo: tmpl('Connected to {{chain}}', ['chain']),
     loading: 'Loading…',
     more: 'More',
     navPrimaryAria: 'Primary',
@@ -1211,6 +1212,7 @@ const copySource = {
     unavailable:
       'We couldn’t load matching offers right now — please try again in a moment.',
     rowReceive: tmpl(`you’d receive ~{{amount}} now`, ['amount']),
+    offerRowLine: tmpl('Offer #{{id}} · {{rate}} yearly · {{duration}}', ['id', 'rate', 'duration']),
     shortfallWarn:
       'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.',
     forfeitNote:
@@ -1347,6 +1349,21 @@ const copySource = {
         'collateralSuffix',
       ]),
       vaultCollateralSuffix: tmpl(', plus {{collateral}} collateral', ['collateral']),
+      // Loan/rental detail receipt lines (extracted from
+      // PositionDetails.tsx inline template literals — previously
+      // hardcoded English in every locale).
+      lockedCollateralBorrower: tmpl('{{collateral}} collateral (borrower’s)', ['collateral']),
+      owedPrincipalUpToInterest: tmpl('{{principal}} + up to ~{{interest}} interest', [
+        'principal',
+        'interest',
+      ]),
+      termsRental: tmpl('{{duration}} · ends {{date}}', ['duration', 'date']),
+      termsLoan: tmpl('{{rate}} yearly · {{duration}} · due {{date}}', [
+        'rate',
+        'duration',
+        'date',
+      ]),
+      confirmAction: tmpl('Confirm — {{action}}', ['action']),
       addCollateralReceipt: tmpl(
         '{{amount}} {{symbol}} more collateral, returned with the rest when the loan closes properly.',
         ['amount', 'symbol'],
@@ -1452,6 +1469,7 @@ const copySource = {
     getStarted: 'Get started',
     offerRow: {
       youNft: tmpl('Your NFT {{addr}} #{{id}}', ['addr', 'id']),
+      waitingAccept: tmpl('Offer #{{id}} · waiting for the other side to accept', ['id']),
       yourLendingOffer: 'Your lending offer',
       yourBorrowRequest: 'Your borrow request',
       yourNftListing: 'Your NFT listing',
@@ -1678,6 +1696,7 @@ const copySource = {
   offers: {
     rentalListing: 'NFT rental',
     dailyFeeLoading: 'daily fee loading…',
+    perDayInline: tmpl('{{amount}} {{symbol}}/day', ['amount', 'symbol']),
     feesPrepaid: 'fees prepaid',
     yearly: 'yearly',
     collateralLabel: 'collateral',
@@ -2417,6 +2436,21 @@ const copySource = {
     },
   },
 
+  // Locale-aware duration / relative-time primitives consumed by
+  // lib/format.ts (formatDurationDays / formatTimeAgo). The English
+  // one/other forms reproduce the previous hardcoded output exactly;
+  // translated bundles get locale-correct plural categories from
+  // i18next. Number placeholders use `{{count, number}}` so the count
+  // is locale-formatted too.
+  units: {
+    durationDay: tmpl('{{count, number}} days', ['count'], { one: '1 day' }),
+    durationMonth: tmpl('{{count, number}} months', ['count'], { one: '1 month' }),
+    durationYear: tmpl('{{count, number}} years', ['count'], { one: '1 year' }),
+    timeJustNow: 'just now',
+    timeMinutesAgo: tmpl('{{count}}m ago', ['count']),
+    timeHoursAgo: tmpl('{{count}}h ago', ['count']),
+    timeDaysAgo: tmpl('{{count}}d ago', ['count']),
+  },
   vault: {
     unreadableCount: tmpl('{{count}} assets', ['count'], { one: 'one asset' }),
     unreadableWarn: tmpl(
@@ -2434,6 +2468,7 @@ const copySource = {
     emptyBody: 'Assets appear here when you post offers, open loans, or deposit VPFI.',
     badgePartlyLocked: 'Partly locked',
     badgeFree: 'Free',
+    lockedFreeBreakdown: tmpl('{{locked}} locked · {{free}} free', ['locked', 'free']),
     title: 'My vault',
     lede: 'Your own on-chain account. Only your wallet controls it — Vaipakam never pools user funds.',
     noVaultYet:

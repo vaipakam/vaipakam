@@ -119,7 +119,10 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
   const sub = isRentalListing
     ? `${
         prepayMeta.data
-          ? `${formatTokenAmount(offer.amount, prepayMeta.data.decimals)} ${prepayMeta.data.symbol}/day`
+          ? copy.offers.perDayInline(
+              formatTokenAmount(offer.amount, prepayMeta.data.decimals),
+              prepayMeta.data.symbol,
+            )
           : copy.offers.dailyFeeLoading
       } · ${formatDurationDays(offer.durationDays)} · ${copy.offers.feesPrepaid}`
     : `${formatBpsAsPercent(
