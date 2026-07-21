@@ -82,6 +82,9 @@ const UI_ATTRS = new Set([
   'sub',
   'controlLabel',
   'subtitle',
+  // React's `children` passed as an explicit prop is the same rendered
+  // text as `<Tag>…</Tag>` — `<Button children="Click me" />`.
+  'children',
 ]);
 
 /**
@@ -109,6 +112,11 @@ const UI_KEYS = new Set([
   'body',
   'hint',
   'confirmLabel',
+  // Typed copy-container fields rendered from objects: Home job `blurb`,
+  // OfferFlow `SideCopy` amountLabel/doneBody.
+  'blurb',
+  'amountLabel',
+  'doneBody',
 ]);
 
 /**
@@ -145,6 +153,7 @@ const BASELINE = {
   'src/components/OfferFlow.tsx': {
     yearly: 1,
     '· offer #': 1,
+    'network #': 1,
     'You’re': 1,
     'accepting lending offer': 1,
     'funding borrow request': 1,
@@ -152,10 +161,12 @@ const BASELINE = {
   'src/components/StepNav.tsx': { Step: 1 },
   // Hardcoded string args passed INTO a copy.* template (the {{leg}} /
   // fallback-label class, #1360): 'prepayment token' filled into the
-  // tokenSecurity gate messages, and a 'locked' symbol fallback. These
+  // tokenSecurity gate messages, a 'network #<id>' fallback label, a
+  // 'locked' symbol fallback, and an 'unknown' chain-id fallback. These
   // render but bypass the catalog — extract with the #1360 work.
-  'src/pages/Rent.tsx': { '? Switch': 1, 'prepayment token': 4 },
+  'src/pages/Rent.tsx': { '? Switch': 1, 'prepayment token': 7, 'network #': 1 },
   'src/pages/PositionDetails.tsx': { locked: 1 },
+  'src/components/DiagnosticsDrawer.tsx': { unknown: 1 },
   'src/pages/Vpfi.tsx': {
     'Your balance qualifies for': 1,
     off: 1,
@@ -225,16 +236,6 @@ function accessRoot(expr) {
 
 function renderedStatic(node) {
   if (ts.isStringLiteralLike(node)) return [node.text];
-  // A catalog-template CALL — `copy.tokenSecurity.gateUnknown('prepayment
-  // token')` — renders its arguments as interpolation values. A hardcoded
-  // string arg bypasses the catalog just like inline prose, so recurse
-  // into the args of any `copy.*` call (other calls contribute nothing).
-  if (ts.isCallExpression(node)) {
-    if (accessRoot(node.expression) === 'copy') {
-      return node.arguments.flatMap((a) => renderedStatic(a));
-    }
-    return [];
-  }
   if (ts.isTemplateExpression(node)) {
     const literalRun = [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' ');
     const interp = node.templateSpans.flatMap((s) => renderedStatic(s.expression));
@@ -323,6 +324,18 @@ export function analyzeSource(rel, src) {
     else if (ts.isPropertyAssignment(node)) {
       const key = propKey(node.name, sf);
       if (key && UI_KEYS.has(key)) reportExpr(node, node.initializer);
+    }
+    // 5. ANY `copy.*` call, wherever it sits — a hardcoded string arg
+    //    (`copy.tokenSecurity.gateUnknown('prepayment token')`) is a
+    //    user-facing interpolation value even when the call is built
+    //    before render (thrown then shown in an error banner, assigned
+    //    to a variable, etc.). Visiting every node means this catches
+    //    the call in or out of a rendered position; only `copy.*`
+    //    callees are scanned, so ordinary calls stay untouched.
+    else if (ts.isCallExpression(node) && accessRoot(node.expression) === 'copy') {
+      for (const arg of node.arguments) {
+        for (const part of renderedStatic(arg)) report(node, part);
+      }
     }
     ts.forEachChild(node, visit);
   };

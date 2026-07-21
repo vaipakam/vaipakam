@@ -128,4 +128,26 @@ describe('AST hardcoded-string detector (#1365)', () => {
     expect(strings(src)).toContain('Second line');
     expect(strings(src)).toContain('Closed label');
   });
+
+  // --- Codex #1394 round-3 coverage gaps ---
+
+  it('flags a hardcoded string on the React children prop', () => {
+    expect(strings('const X = () => <Button children="Click me" />;')).toContain('Click me');
+  });
+
+  it('flags copy.* call args built OUTSIDE a rendered position (thrown / setError)', () => {
+    const thrown = "function f() { throw new Error(copy.tokenSecurity.gateUnknown('prepayment token')); }";
+    expect(strings(thrown)).toContain('prepayment token');
+    const setErr = "const X = () => { setError(copy.errors.pick('some label here')); return null; };";
+    expect(strings(setErr)).toContain('some label here');
+  });
+
+  it('flags hardcoded copy-container fields (blurb / amountLabel / doneBody)', () => {
+    const src = "const jobs = [{ id: 1, blurb: 'Lock collateral you own' }];";
+    expect(strings(src)).toContain('Lock collateral you own');
+  });
+
+  it('still ignores non-copy call args, even in a throw', () => {
+    expect(strings("function f() { throw new Error(fmt('Some words here')); }")).toEqual([]);
+  });
 });
