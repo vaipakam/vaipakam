@@ -217,25 +217,29 @@ library LibSwapToRepayIntentSettlement {
         // `requiredPrincipal` (checked above) and `surplusPrincipal` (below) are
         // invariant under it. The host emits the analytics passthrough on the
         // VPFI-payment path. Dark until `feeEntitlementEnabled`.
-        {
+        if (plan.treasuryShare > 0) {
             address settlingLender =
                 IERC721(address(this)).ownerOf(loan.lenderTokenId);
-            bytes memory ret = LibFacet.crossFacetCallReturn(
-                abi.encodeWithSelector(
-                    VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
-                    loanId,
-                    settlingLender,
-                    plan.interest + plan.lateFee,
-                    plan.treasuryShare
-                ),
-                bytes4(0)
-            );
-            (uint256 lenderExtra, uint256 newTreasury, ) =
-                abi.decode(ret, (uint256, uint256, uint256));
-            if (lenderExtra > 0) {
-                plan.lenderShare += lenderExtra;
-                plan.lenderDue = plan.principal + plan.lenderShare;
-                plan.treasuryShare = newTreasury;
+            // #1383 — INLINED eligibility short-circuit (no cross-facet routing)
+            // so an ineligible/dark loan never calls the host.
+            if (LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)) {
+                bytes memory ret = LibFacet.crossFacetCallReturn(
+                    abi.encodeWithSelector(
+                        VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                        loanId,
+                        settlingLender,
+                        plan.interest + plan.lateFee,
+                        plan.treasuryShare
+                    ),
+                    bytes4(0)
+                );
+                (uint256 lenderExtra, uint256 newTreasury, ) =
+                    abi.decode(ret, (uint256, uint256, uint256));
+                if (lenderExtra > 0) {
+                    plan.lenderShare += lenderExtra;
+                    plan.lenderDue = plan.principal + plan.lenderShare;
+                    plan.treasuryShare = newTreasury;
+                }
             }
         }
 

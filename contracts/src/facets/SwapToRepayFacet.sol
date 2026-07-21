@@ -1003,6 +1003,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 interestForQuote,
         uint256 treasuryShare
     ) private returns (uint256 lenderExtra, uint256 newTreasury) {
+        // #1383 — short-circuit the ineligible/dark case with an INLINED
+        // eligibility read (`consent OR Full`, no cross-facet routing) before
+        // the host call. Keeps the resolve a strict no-op for every
+        // unstamped/no-consent loan and never routes to `VPFIDiscountFacet` when
+        // no discount can apply.
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (
+            treasuryShare == 0 ||
+            !LibVPFIDiscount.lenderYieldFeeEligible(loan, settlingLender)
+        ) {
+            return (0, treasuryShare);
+        }
         bytes memory ret = LibFacet.crossFacetCallReturn(
             abi.encodeWithSelector(
                 VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
