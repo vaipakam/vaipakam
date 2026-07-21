@@ -280,4 +280,24 @@ describe('AST hardcoded-string detector (#1365)', () => {
       "const text = copy.desk.x; const X = () => { const f = () => text.label('hi there'); return f; };";
     expect(strings(nested)).toContain('hi there');
   });
+
+  // --- Codex #1394 round-9 coverage gaps ---
+
+  it('restores a block-local alias shadow at the closing brace', () => {
+    // A block-scoped `const text = helper` must not leak into the enclosing
+    // function frame — a later real `text.gateUnknown('…')` after the block
+    // still resolves to the outer copy alias and is scanned.
+    const src =
+      "const text = copy.desk.x; function f(){ if (cond) { const text = helper; } return text.gateUnknown('prepayment token'); }";
+    expect(strings(src)).toContain('prepayment token');
+  });
+
+  it('flags the remaining suffix-less SideCopy fields (lede / matchLede / orPost)', () => {
+    const src =
+      "const t = { lede: 'Lock collateral', matchLede: 'We are matching', orPost: 'or post an offer' };";
+    const out = strings(src);
+    expect(out).toContain('Lock collateral');
+    expect(out).toContain('We are matching');
+    expect(out).toContain('or post an offer');
+  });
 });

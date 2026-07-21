@@ -126,11 +126,15 @@ const UI_KEYS = new Set([
   'doneBody',
   'actionLabel',
   'leg',
-  // OfferFlow SideCopy empty-state field (no camelCase suffix, so listed
-  // explicitly; the rest of the SideCopy family — rateLabel, submitLabel,
-  // doneTitle, amountHint, acceptDoneBody, … — is covered by the suffix
-  // rule below).
+  // OfferFlow SideCopy fields with no camelCase copy-suffix, listed
+  // explicitly (the rest of the family — rateLabel, submitLabel, doneTitle,
+  // amountHint, acceptDoneBody, … — is covered by the suffix rule below):
+  // the empty-state line, the page/match ledes, and the "or post" divider,
+  // all rendered directly as text.lede / text.matchLede / text.orPost.
   'matchEmpty',
+  'lede',
+  'matchLede',
+  'orPost',
   // ReviewReceipt `data` fields — rendered into <dd> rows on the
   // pre-sign trust surface (ReviewReceipt.tsx).
   'youReceive',
@@ -475,6 +479,17 @@ export function analyzeSource(rel, src) {
       for (const p of node.parameters) {
         for (const nm of collectBindingNames(p.name)) declareInScope(nm, false);
       }
+      ts.forEachChild(node, visit);
+      scopes.pop();
+      return;
+    }
+    // A block (`{ … }`, `switch` case block) is its own lexical scope for
+    // `const`/`let`, so a block-local `const text = helper` must NOT leak
+    // into the enclosing function frame — otherwise a later real
+    // `text.gateUnknown('…')` after the block would resolve as non-copy and
+    // slip its arg. Push/pop a frame so the shadow is restored at the brace.
+    if (ts.isBlock(node) || ts.isCaseBlock(node)) {
+      scopes.push(new Map());
       ts.forEachChild(node, visit);
       scopes.pop();
       return;
