@@ -786,7 +786,19 @@ library LibVPFIDiscount {
         uint256 payBps = LibVaipakam.BASIS_POINTS - avgBps;
         uint256 tierFee = (normalFee * payBps) / LibVaipakam.BASIS_POINTS;
 
-        (bool ok, uint256 vpfi) = _feeAssetWeiToVpfi(loan.principalAsset, tierFee);
+        // #1383 (Codex #1389 P2) — price against the asset the fee is actually
+        // DENOMINATED in. For an NFT rental `loan.principalAsset` is the rented
+        // NFT contract, not an ERC-20: quoting against it would read decimals /
+        // ask the oracle for a price on an NFT, fall back, and silently deny
+        // every rental lender the VPFI-payment discount. Rentals settle in
+        // `loan.prepayAsset` (the daily-fee ERC-20) on every rental fee site —
+        // periodic daily deduction, `repayPartial`, preclose direct + the
+        // obligation-transfer catch-up. The no-token-move direct-reduction path
+        // is pure BPS math and was never affected.
+        address feeAsset = loan.assetType == LibVaipakam.AssetType.ERC20
+            ? loan.principalAsset
+            : loan.prepayAsset;
+        (bool ok, uint256 vpfi) = _feeAssetWeiToVpfi(feeAsset, tierFee);
         if (!ok) return (false, 0, 0);
         return (true, vpfi, avgBps);
     }
@@ -1019,8 +1031,10 @@ library LibVPFIDiscount {
      *                       asset, lender address, and the per-loan
      *                       snapshot that anchors the time-weighted
      *                       window.
-     * @param interestAmount Pre-split interest in `loan.principalAsset`
-     *                       wei that the yield fee is computed against.
+     * @param interestAmount Pre-split interest, in the wei of the asset the fee
+     *                       is DENOMINATED in — `loan.principalAsset` for ERC-20
+     *                       loans, `loan.prepayAsset` for NFT rentals — that the
+     *                       yield fee is computed against.
      * @return applied       True iff VPFI was successfully deducted.
      * @return vpfiDeducted  VPFI moved from lender vault to treasury.
      */
@@ -1211,9 +1225,10 @@ library LibVPFIDiscount {
      *      stamp this is a strict no-op for every current loan.
      *
      * @param loan             Live loan the yield fee settles against.
-     * @param interestForQuote Pre-split interest (+ late fee) in
-     *                         `loan.principalAsset` wei the VPFI quote is sized
-     *                         against.
+     * @param interestForQuote Pre-split interest (+ late fee) the VPFI quote is
+     *                         sized against, in the wei of the asset the fee is
+     *                         DENOMINATED in (`loan.principalAsset` for ERC-20
+     *                         loans, `loan.prepayAsset` for NFT rentals).
      * @param treasuryShare    The full (undiscounted) lending-asset treasury
      *                         share for this settlement.
      * @return lenderExtra       Lending-asset amount to add to the lender share.
