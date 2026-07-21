@@ -2199,7 +2199,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](88);
+        s = new bytes4[](89);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2382,6 +2382,7 @@ contract DeployDiamond is Script {
         s[86] = ConfigFacet.getFeeEntitlementConfig.selector;
         // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
         s[87] = ConfigFacet.setRewardHaircutBps.selector;
+        s[88] = ConfigFacet.setUserSideShareCapBps.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

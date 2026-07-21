@@ -818,8 +818,21 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event RewardHaircutBpsSet(uint16 rewardHaircutBps);
 
+    /// @notice #1351 (M2 PR-2) — emitted when the D1 share-of-pool reward cap
+    ///         (BPS of a day's side-half claimable by one user on one side)
+    ///         changes. Applies to days finalized AFTER this write.
+    /// @custom:event-category informational/config
+    event UserSideShareCapBpsSet(uint16 userSideShareCapBps);
+
     error InvalidTariffKPerLifYear(uint256 k, uint256 minAllowed, uint256 maxAllowed);
     error InvalidRewardHaircutBps(uint256 bps, uint256 maxAllowed);
+    /// @notice #1351 — the D1 share cap is bounded on BOTH sides; `0` is
+    ///         rejected so a stored `0` always means "never configured".
+    error InvalidUserSideShareCapBps(
+        uint256 bps,
+        uint256 minAllowed,
+        uint256 maxAllowed
+    );
 
     /**
      * @notice Set the platform-retained recycling margin (bps) — the slight
@@ -981,6 +994,48 @@ contract ConfigFacet is DiamondAccessControl {
         }
         LibVaipakam.storageSlot().rewardHaircutBps = newHaircutBps;
         emit RewardHaircutBpsSet(newHaircutBps);
+    }
+
+    /**
+     * @notice #1351 (M2 PR-2) — set the D1 share-of-pool reward cap: the share
+     *         of one day's side-half that a SINGLE user may take on a SINGLE
+     *         side. `C[d] = sideHalf[d] × bps / BPS`.
+     * @dev    ADMIN_ROLE-only (TimelockController post-handover). Bounded on
+     *         BOTH sides — `[USER_SIDE_SHARE_CAP_MIN_BPS,
+     *         USER_SIDE_SHARE_CAP_MAX_BPS]` (50–5000) — unlike the one-sided
+     *         knobs above, and deliberately so: a near-zero share would throttle
+     *         every honest claimant on a thin day, while an unbounded-high one
+     *         would defeat the cap's anti-concentration purpose outright (at
+     *         10_000 a single user could take an entire side-half).
+     *
+     *         **`0` is NOT accepted here.** Because the floor is 50, a stored
+     *         `0` unambiguously means "never configured" and
+     *         {LibVaipakam.cfgUserSideShareCapBps} maps it to the 2000-BPS
+     *         default. That keeps "never set" distinguishable from a deliberate
+     *         policy value — a 0 share would strand every claimant, so it must
+     *         not be reachable by a single mistyped call.
+     *
+     *         Read at FINALIZE only. Days already finalized keep the `C` they
+     *         were stamped with, so a retune here cannot retroactively reprice
+     *         a past day's ceiling — it applies to days finalized after it.
+     * @param  newShareCapBps New D1 share cap (BPS), in [50, 5000].
+     */
+    function setUserSideShareCapBps(uint16 newShareCapBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (
+            newShareCapBps < LibVaipakam.USER_SIDE_SHARE_CAP_MIN_BPS ||
+            newShareCapBps > LibVaipakam.USER_SIDE_SHARE_CAP_MAX_BPS
+        ) {
+            revert InvalidUserSideShareCapBps(
+                newShareCapBps,
+                LibVaipakam.USER_SIDE_SHARE_CAP_MIN_BPS,
+                LibVaipakam.USER_SIDE_SHARE_CAP_MAX_BPS
+            );
+        }
+        LibVaipakam.storageSlot().userSideShareCapBps = newShareCapBps;
+        emit UserSideShareCapBpsSet(newShareCapBps);
     }
 
     /// @notice #1347 (M2 PR-5a/5b) + #1353 (PR-5c) — read the effective

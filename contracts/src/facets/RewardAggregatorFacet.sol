@@ -467,6 +467,12 @@ contract RewardAggregatorFacet is
             stamped: true
         });
 
+        // #1351 (M2 PR-2, slice 2a) — stamp the armed day's D1 per-(user,side)
+        // ceiling now that the pool composition is known. MUST stay after the
+        // stamp write above: `sideHalf` is read from it, so pricing `C` any
+        // earlier would silently stamp 0. No-op pre-cutover.
+        LibInteractionRewards.snapshotDayUserSideShareCap(dayId);
+
         // Commitment reservation — armed only from the PR-3c cutover day.
         // Codex #1315 P1: reserve the CAPPED committable amounts, not the
         // raw stamp — claims/remits can only ever consume the #1008-capped

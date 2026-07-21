@@ -2397,10 +2397,57 @@ function _dayPoolHalves(
         // (Codex #1371 r1 P2). This is finalize-time on Base and broadcast to
         // mirrors, so every chain retires #1008 on the same days with no
         // operator step. Pre-arming days keep the computed #1008 threshold ⇒ dark.
-        t = _isArmedDay(s, dayId)
-            ? type(uint256).max
-            : _computeDayCapThreshold18();
+        bool armed = _isArmedDay(s, dayId);
+        t = armed ? type(uint256).max : _computeDayCapThreshold18();
         s.dayCapThreshold18[dayId] = t;
+
+        // #1351 (M2 PR-2, slice 2a) — stamp the day's cap FAMILY in the SAME
+        // write as the threshold. The atomicity is load-bearing: setting
+        // `dayCapThreshold18 = max` (legacy cap disabled) without also marking
+        // the day ShareOfPool would leave an armed day priced by NEITHER cap —
+        // an uncapped hole. Claim/sweep fail closed on an armed day with no
+        // mode, so the two must never be able to drift apart.
+        //
+        // Pre-arming days are left untouched: `CapMode.LegacyEthRatio` is the
+        // zero value, so every historical day keeps its existing meaning with
+        // no migration.
+        if (armed) {
+            s.dayCapMode[dayId] = LibVaipakam.CapMode.ShareOfPool;
+        }
+    }
+
+    /// @notice #1351 (M2 PR-2, slice 2a) — stamp the armed day's D1 ceiling
+    ///         `C[d] = sideHalf[d] × userSideShareCapBps / BPS` (VPFI 1e18).
+    /// @dev    Split from {snapshotDayCapThreshold} on purpose. `sideHalf` is
+    ///         only knowable once the day's {LibVaipakam.DayPoolStamp} has been
+    ///         written, which happens LATER in `finalizeDay` — computing `C`
+    ///         alongside the threshold would read an unstamped pool and
+    ///         silently stamp `C = 0` (i.e. a day that pays nothing).
+    ///
+    ///         The atomicity the design actually requires is
+    ///         **mode ↔ max-threshold**: disabling the legacy cap without
+    ///         marking the day ShareOfPool would leave it priced by neither.
+    ///         Those two stay together in {snapshotDayCapThreshold}; `C` lands
+    ///         later in the SAME finalize transaction, and a missing/zero `C`
+    ///         is the safe direction anyway (it pays nothing) rather than an
+    ///         uncapped hole.
+    ///
+    ///         No-op on unarmed days — pre-cutover days carry no D1 ceiling.
+    ///         Prices off the finalized stamp, never a live re-derivation, so
+    ///         the ceiling can't be computed from a different pool than the
+    ///         rewards it bounds.
+    function snapshotDayUserSideShareCap(uint256 dayId) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!_isArmedDay(s, dayId)) return;
+        (uint256 freshHalf, uint256 recycledHalf, bool halt) =
+            _dayPoolHalves(s, dayId);
+        if (halt) return; // stamp not landed yet — leave C at 0 (pays nothing)
+        // May legitimately be 0 on a dust / zero-emission day — which is exactly
+        // why the MODE stamp, not this value, is the D1/legacy switch.
+        s.dayUserSideCapVpfi18[dayId] =
+            ((freshHalf + recycledHalf) *
+                LibVaipakam.cfgUserSideShareCapBps()) /
+            LibVaipakam.BASIS_POINTS;
     }
 
     /// @notice Store a broadcast-canonical threshold on a mirror (from Base's
