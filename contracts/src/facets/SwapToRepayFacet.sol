@@ -65,9 +65,11 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      tx — no soft-fallback in v1. Borrower can retry with better
  *      routing.
  *
- *      Yield-fee VPFI discount (RepayFacet:309-321) is NOT applied on
- *      this path in v1 — see docs/DesignsAndPlans/SwapToRepay.md §6.2.
- *      Tracked for v1.1.
+ *      Yield-fee VPFI discount (§F2 / #1354): honored on BOTH entry points
+ *      via the `VPFIDiscountFacet.resolveLenderYieldFeeFor` host (#1383) —
+ *      `swapToRepayFull` keys it on the consolidated `loan.lender`,
+ *      `swapToRepayPartial` on the current lender-NFT holder. Dark until the
+ *      M2 `feeEntitlementEnabled` cut-over.
  */
 contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
     using SafeERC20 for IERC20;
@@ -770,6 +772,26 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             s.assetRiskParams[loan.principalAsset].minPartialBps) /
             LibVaipakam.BASIS_POINTS;
         if (partialPrincipal < minPartial) revert InsufficientPartialAmount();
+
+        // ── Lender Yield Fee discount (§F2 / #1354 / #1383) ──────────
+        // swap-to-repay-partial does NOT consolidate `loan.lender` — the lender
+        // payout below resolves the CURRENT lender-NFT holder — so the discount
+        // is keyed on that holder, not the (possibly stale) `loan.lender`. The
+        // shift is treasury→lender, so `partialPrincipal` (already computed) and
+        // the borrower surplus (below) are invariant.
+        {
+            address settlingLender = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            (uint256 lenderExtra, uint256 newTreasury) = _resolveLenderYieldFee(
+                loanId,
+                settlingLender,
+                accrued,
+                treasuryShare
+            );
+            if (lenderExtra > 0) {
+                lenderShare += lenderExtra;
+                treasuryShare = newTreasury;
+            }
+        }
 
         // ── Settle waterfall — diamond-held pattern ──────────────────
         address treasury = LibFacet.getTreasury();

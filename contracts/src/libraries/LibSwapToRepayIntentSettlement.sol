@@ -18,6 +18,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {ConsolidationFacet} from "../facets/ConsolidationFacet.sol";
+import {VPFIDiscountFacet} from "../facets/VPFIDiscountFacet.sol";
 
 /**
  * @title LibSwapToRepayIntentSettlement — T-087 Sub 3.B extraction
@@ -207,6 +208,35 @@ library LibSwapToRepayIntentSettlement {
         uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
         if (actualDelivered < requiredPrincipal) {
             revert IntentDeliveredBelowLiveFloor(actualDelivered, requiredPrincipal);
+        }
+
+        // #1383 — honor the lender Full/hold discount (§F2 / #1354) via the
+        // `VPFIDiscountFacet` host, keyed on the CURRENT lender-NFT holder: the
+        // lender-side consolidation runs BELOW this split, so `loan.lender` is
+        // not yet re-anchored here. The shift is treasury→lender, so
+        // `requiredPrincipal` (checked above) and `surplusPrincipal` (below) are
+        // invariant under it. The host emits the analytics passthrough on the
+        // VPFI-payment path. Dark until `feeEntitlementEnabled`.
+        {
+            address settlingLender =
+                IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            bytes memory ret = LibFacet.crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                    loanId,
+                    settlingLender,
+                    plan.interest + plan.lateFee,
+                    plan.treasuryShare
+                ),
+                bytes4(0)
+            );
+            (uint256 lenderExtra, uint256 newTreasury, ) =
+                abi.decode(ret, (uint256, uint256, uint256));
+            if (lenderExtra > 0) {
+                plan.lenderShare += lenderExtra;
+                plan.lenderDue = plan.principal + plan.lenderShare;
+                plan.treasuryShare = newTreasury;
+            }
         }
 
         if (plan.treasuryShare > 0) {
