@@ -11,9 +11,20 @@ treasury cut with **no** discount:
 - **`RepayPeriodicFacet.autoDeductDaily`** (NFT-rental daily interest) — keyed on
   the current holder, which the daily payout already routes to.
 
-Both had **unconditional** treasury transfers; those are now guarded on
-`treasuryShare > 0`, since the VPFI-payment delivery can drive the treasury
-share to zero (paid in the lender's VPFI instead).
+The VPFI-payment delivery can drive the treasury share to zero (the cut is paid
+in the lender's VPFI instead). Both paths transfer the treasury cut
+unconditionally, and they deliberately stay that way: a zero-amount transfer is
+a harmless no-op, and adding a skip would have quietly changed long-standing
+behaviour that existing tests pin.
+
+A rental-specific correctness fix rides along: the yield fee on an NFT rental is
+denominated in the rental's prepay asset, but the discount quote was pricing it
+against the loan's principal asset — which for a rental is the rented NFT
+itself. Asking for a price and decimals on an NFT simply fails, so the quote
+gave up and every rental lender silently lost the option to pay the fee in VPFI.
+The quote now prices against whichever asset the fee is actually denominated in,
+which fixes it for every rental settlement path at once. The no-token-move
+discount was never affected.
 
 To make the room for these on the at-EIP-170 `RepayFacet`, its **primary**
 `repayLoan` path is switched from inlining the discount delivery to calling the
