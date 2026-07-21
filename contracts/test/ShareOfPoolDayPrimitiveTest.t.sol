@@ -541,6 +541,35 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertEq(ch.toUser.armedFresh, 1, "fresh takes the rounding dust");
     }
 
+    /// @dev Codex #1399 r9 P2 — a recycled-funded FORFEIT needs no recycled
+    ///      liquidity. The facet consumes the bucket only for the user leg
+    ///      (`LibVpfiRecycle.consume`); the forfeit leg's recycled share never
+    ///      physically left the bucket, so it is a pure `releaseCommitment` and
+    ///      moves zero tokens. Gating it on recycled budget would strand the
+    ///      forfeit — and its commitment — behind payout liquidity the release
+    ///      does not need.
+    ///
+    ///      Fresh stays gated for BOTH legs: the forfeit leg's fresh share is
+    ///      genuine absorption and is counted by `interactionPoolPaidOut`.
+    function test_RecycledForfeitNeedsNoRecycledLiquidity() public {
+        _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        _stampLoanCap(LOAN_A, 100_000 ether);
+        uint256 id = _entry(alice, LOAN_A, 900 ether);
+        _mut().setRewardEntryForfeitedRaw(id);
+
+        // Recycled budget completely empty.
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, 0);
+
+        assertTrue(ch.advanced, "a recycled forfeit must not wait on the bucket");
+        assertGt(
+            ch.toTreasury.recycled,
+            0,
+            "the release really is recycled-funded (non-vacuous)"
+        );
+        assertEq(ch.toUser.total, 0, "nothing paid to the user");
+    }
+
     // ─── Funding-source split (Codex #1399 P2) ───────────────────────────────
 
     /// @dev A payout must arrive DECOMPOSED by funding source, not as one plain

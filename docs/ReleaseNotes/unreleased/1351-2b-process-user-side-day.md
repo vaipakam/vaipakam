@@ -84,6 +84,13 @@ amount. The separate reduction that happens when a participant hits their own
 daily ceiling is *not* treated this way: that one keeps whatever mix survived, so
 a day whose ceiling binds tightly still draws on both sources.
 
+**Reclaiming a forfeited reward doesn't wait on spare funds.** Reclaimed reward
+that was originally funded from the recycled pot never actually leaves that pot —
+reclaiming it just cancels the earmark. So it is no longer held up when the
+recycled pot has nothing spare to pay out with; otherwise a reclaim could sit
+stuck behind unrelated payout funding it never needed. Reclaimed reward funded
+from newly scheduled rewards *is* still counted, because that genuinely moves.
+
 **Rounding always favours the same side.** Wherever a reward has to be divided
 between its two funding sources, the recycled share rounds down and the newly
 scheduled share absorbs the remainder. That direction is applied uniformly, so

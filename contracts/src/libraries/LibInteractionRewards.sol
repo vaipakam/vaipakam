@@ -3112,9 +3112,21 @@ function _dayPoolHalves(
         //
         // `cappedOff` is deliberately absent: it moves no tokens (it only
         // retires commitments), so it draws nothing from the pool.
+        //
+        // Codex #1399 r9 P2 — the two sources are ASYMMETRIC across the legs,
+        // matching what the facet actually does with each:
+        //   • FRESH — both legs spend it. The user leg pays out; the forfeit
+        //     leg's fresh share is genuine absorption that `credit`s the
+        //     recycle bucket. `interactionPoolPaidOut` counts both.
+        //   • RECYCLED — only the USER leg consumes it (`LibVpfiRecycle
+        //     .consume`). The forfeit leg's recycled share never physically
+        //     left the bucket, so it is a pure `releaseCommitment` — zero
+        //     tokens move. Requiring recycled liquidity for it would strand a
+        //     recycled-funded forfeit (and its commitment) behind unrelated
+        //     payout budget that the release does not need.
         if (
             pool.fresh < user_.armedFresh + treas_.armedFresh ||
-            pool.recycled < user_.recycled + treas_.recycled
+            pool.recycled < user_.recycled
         ) {
             return (charge, slices);
         }
