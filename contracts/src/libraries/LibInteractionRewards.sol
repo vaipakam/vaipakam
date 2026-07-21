@@ -2950,6 +2950,33 @@ function _dayPoolHalves(
     ///                      the {poolRemaining} accessor.)
     /// @return charge       Amounts + whether cursors may advance.
     /// @return slices       Per-entry slice, index-aligned with `entryIds`.
+    ///
+    /// CALLER CONSUMPTION CONTRACT — derived line-by-line from
+    /// `InteractionRewardsFacet`'s claim path, and the single place it is
+    /// written down. Nine separate rules were established across the #1399
+    /// review; scattered across resolved threads they would be rediscovered one
+    /// bug at a time by 2c/2d.
+    ///
+    /// | Facet operation                    | Feed with |
+    /// | ---------------------------------- | --------- |
+    /// | `interactionPoolPaidOut +=`        | `toUser.armedFresh + toTreasury.armedFresh` |
+    /// | `LibVpfiRecycle.consume(...)`      | `toUser.recycled` ONLY |
+    /// | `consumeArmedFresh(...)`           | `toUser.armedFresh + toTreasury.armedFresh + cappedOff.armedFresh` |
+    /// | `LibVpfiRecycle.credit(Forfeited…)`| `toTreasury.armedFresh` |
+    /// | `releaseCommitment(Forfeited…)`    | `toTreasury.recycled + cappedOff.recycled` |
+    ///
+    /// Two traps in that table:
+    ///
+    /// 1. `consumeArmedFresh` takes THREE terms. `_applyLoanSideCap` keeps
+    ///    `armedFresh` WHOLE on its user split so the full commitment retires;
+    ///    this primitive instead reports the trimmed part separately as
+    ///    {DayCharge.cappedOff}. The sum is identical — but a caller that adds
+    ///    only the two paid legs leaks a fresh commitment on every trimmed
+    ///    entry, silently depressing later days' availability.
+    /// 2. The facet derives fresh as `total − recycled` while this returns
+    ///    `armedFresh` explicitly. They coincide ONLY because a ShareOfPool day
+    ///    is armed by construction, so there is no pre-`D*` component. Do not
+    ///    port this table to a legacy day.
     function processUserSideDay(
         address user,
         uint256 d,
