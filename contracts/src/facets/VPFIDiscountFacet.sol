@@ -903,4 +903,69 @@ contract VPFIDiscountFacet is
             vpfiDeducted
         );
     }
+
+    /**
+     * @notice #1383 — host the lender yield-fee resolve so the size-constrained
+     *         SECONDARY settlement facets (swap-to-repay, partial repay,
+     *         preclose obligation-transfer / offset / rental-prepay, periodic
+     *         interest) honor the §F2 lender Full/hold discount without carrying
+     *         the delivery logic in their own bytecode.
+     *
+     * @dev Internal cross-facet entry (`msg.sender` MUST be the Diamond). Runs
+     *      the whole {LibVPFIDiscount.resolveLenderYieldFeeFor} delivery
+     *      (eligibility gate → VPFI-payment attempt → direct-reduction fallback)
+     *      for the EXPLICIT `settlingLender` — the current position-NFT holder on
+     *      the non-consolidated paths, or `loan.lender` on the consolidated ones
+     *      — and emits the passthrough analytics event when VPFI moved. The
+     *      caller applies the returned deltas exactly as the primary facets do:
+     *
+     *          (uint256 lenderExtra, uint256 newTreasury, ) =
+     *              VPFIDiscountFacet(address(this)).resolveLenderYieldFeeFor(...);
+     *          if (lenderExtra > 0) { lenderShare += lenderExtra; treasuryShare = newTreasury; }
+     *
+     *      Because it lives on ONE facet, the try-VPFI-then-direct-reduction
+     *      delivery bytecode is not inlined into every settlement facet (the
+     *      EIP-170 headroom an `internal` library helper cannot free). Ships DARK
+     *      with the rest of the M2 fee package.
+     *
+     * @param loanId           The loan being settled.
+     * @param settlingLender   The party paid + charged (current holder).
+     * @param interestForQuote Pre-split interest (+ late fee) the VPFI quote is
+     *                         sized against.
+     * @param treasuryShare    The full (undiscounted) lending-asset treasury
+     *                         share for this settlement.
+     * @return lenderExtra       Lending-asset amount to add to the lender share.
+     * @return treasuryRemaining Lending-asset treasury share to actually transfer.
+     * @return vpfiDeducted      VPFI moved lender-vault → treasury (0 on the
+     *                           direct-reduction path).
+     */
+    function resolveLenderYieldFeeFor(
+        uint256 loanId,
+        address settlingLender,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    )
+        external
+        returns (uint256 lenderExtra, uint256 treasuryRemaining, uint256 vpfiDeducted)
+    {
+        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        (lenderExtra, treasuryRemaining, vpfiDeducted) =
+            LibVPFIDiscount.resolveLenderYieldFeeFor(
+                loan,
+                settlingLender,
+                interestForQuote,
+                treasuryShare
+            );
+        // Passthrough the analytics event on the VPFI-payment path, so indexers
+        // subscribe to this single facet for all VPFI-discount analytics.
+        if (vpfiDeducted > 0) {
+            emit VPFIYieldFeeDiscountApplied(
+                loanId,
+                settlingLender,
+                loan.principalAsset,
+                vpfiDeducted
+            );
+        }
+    }
 }

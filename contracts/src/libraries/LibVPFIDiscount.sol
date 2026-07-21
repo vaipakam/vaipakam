@@ -451,7 +451,8 @@ library LibVPFIDiscount {
      *         sanity.
      */
     function lenderTimeWeightedDiscountBps(
-        LibVaipakam.Loan storage loan
+        LibVaipakam.Loan storage loan,
+        address lender
     ) internal view returns (uint256 avgBps) {
         // T-087 Sub 1.B: the design replaces the Phase-5 loan-window
         // averaging with INSTANT EFFECTIVE_BPS lookup at the moment of
@@ -460,8 +461,15 @@ library LibVPFIDiscount {
         // and repaid in the same block) returns 0 by parity with
         // the previous semantics. The `loan.lenderDiscountAccAtInit`
         // anchor stays populated (vestigial) but is no longer read.
+        //
+        // #1383 — keyed on the passed `lender`, not `loan.lender`: the
+        // secondary settlement paths resolve the discount for the CURRENT
+        // position-NFT holder, which the non-consolidated ones do not fold
+        // back into `loan.lender`. Because the tier read is INSTANT (no
+        // per-loan window), the holder's own current tier is exactly the
+        // right "as of now" hold discount for them.
         if (loan.startTime == 0 || block.timestamp <= loan.startTime) return 0;
-        ( , uint16 effBps) = effectiveTierAndBps(loan.lender);
+        ( , uint16 effBps) = effectiveTierAndBps(lender);
         avgBps = uint256(effBps);
         // #1352 (Codex P2): the 50% fee-discount ceiling is a UNIFORM cap.
         // `ConfigFacet.setVpfiTierDiscountBps` still permits per-tier values
@@ -499,6 +507,7 @@ library LibVPFIDiscount {
      */
     function _effectiveYieldFeeDiscountBps(
         LibVaipakam.Loan storage loan,
+        address lender,
         bool includeHold
     ) private view returns (uint256 d) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -506,8 +515,11 @@ library LibVPFIDiscount {
         // platform VPFI-discount consent (§F2). `includeHold` is false when the
         // caller is delivering the peg-set fallback, where the hold slice is
         // VPFI-payment-authoritative and only the paid tariff slice survives.
-        if (includeHold && s.vpfiDiscountConsent[loan.lender]) {
-            d = lenderTimeWeightedDiscountBps(loan);
+        // #1383 — `lender` is the settling party (current holder on the
+        // non-consolidated secondary paths), so the consent + hold tier both
+        // key on the party actually being paid, never a stale `loan.lender`.
+        if (includeHold && s.vpfiDiscountConsent[lender]) {
+            d = lenderTimeWeightedDiscountBps(loan, lender);
         }
         // d_tariff — +10% PAID Full own-side bump (the lender absorbed `C*` at
         // origination, #1347). Not contingent on holding VPFI or on the hold
@@ -541,11 +553,15 @@ library LibVPFIDiscount {
      *      original `vpfiDiscountConsent[lender]` gate.
      */
     function lenderYieldFeeEligible(
-        LibVaipakam.Loan storage loan
+        LibVaipakam.Loan storage loan,
+        address lender
     ) internal view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1383 — consent keys on the settling `lender` (current holder on the
+        // non-consolidated paths); the Full stamp is loan-scoped (keyed on
+        // `loan.id`) and so is holder-independent.
         return
-            s.vpfiDiscountConsent[loan.lender] ||
+            s.vpfiDiscountConsent[lender] ||
             s.feeEntitlementByLoanId[loan.id].lenderMode ==
             LibVaipakam.FeeEntitlementMode.Full;
     }
@@ -733,30 +749,33 @@ library LibVPFIDiscount {
      */
     function quoteYieldFee(
         LibVaipakam.Loan storage loan,
+        address lender,
         uint256 interestAmount
     )
         internal
         view
         returns (bool canQuote, uint256 vpfiRequired, uint256 avgBps)
     {
-        if (interestAmount == 0 || loan.lender == address(0)) return (false, 0, 0);
+        if (interestAmount == 0 || lender == address(0)) return (false, 0, 0);
 
-        // #1354 (Codex r1 P2) — the VPFI-PAYMENT delivery DEBITS `loan.lender`'s
-        // vault, so it requires that party's own platform consent. Settlement
-        // hosts consolidate `loan.lender` to the CURRENT position-NFT holder
-        // before quoting, so without this gate an unsolicited transfer of a
-        // Full-stamped lender position could spend the (non-consenting)
-        // recipient's VPFI. A Full lender WITHOUT consent still receives the
-        // +10% bump — but only through the no-token-move direct-reduction path
-        // ({directReductionYieldFee}), never a vault debit. This is a no-op for
-        // the pre-existing hold path (callers only reached here with consent).
-        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[loan.lender]) {
+        // #1354 (Codex r1 P2) — the VPFI-PAYMENT delivery DEBITS the settling
+        // `lender`'s vault, so it requires that party's own platform consent.
+        // Settlement resolves `lender` to the CURRENT position-NFT holder
+        // (consolidated into `loan.lender` on the primary paths, passed
+        // explicitly on the non-consolidated secondary paths, #1383), so
+        // without this gate an unsolicited transfer of a Full-stamped lender
+        // position could spend the (non-consenting) recipient's VPFI. A Full
+        // lender WITHOUT consent still receives the +10% bump — but only through
+        // the no-token-move direct-reduction path ({directReductionYieldFee}),
+        // never a vault debit. No-op for the pre-existing hold path (callers
+        // only reached here with consent).
+        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[lender]) {
             return (false, 0, 0);
         }
 
         // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the
         // (consent-verified above) hold slice PLUS the +10% Full-tariff bump.
-        avgBps = _effectiveYieldFeeDiscountBps(loan, true);
+        avgBps = _effectiveYieldFeeDiscountBps(loan, lender, true);
         if (avgBps == 0) return (false, 0, 0);
 
         // #957 (#921 item 6) — size the yield-fee VPFI requirement against the
@@ -1007,9 +1026,9 @@ library LibVPFIDiscount {
      */
     function tryApplyYieldFee(
         LibVaipakam.Loan storage loan,
+        address lender,
         uint256 interestAmount
     ) internal returns (bool applied, uint256 vpfiDeducted) {
-        address lender = loan.lender;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vpfi = s.vpfiToken;
         address lenderVault = s.userVaipakamVaults[lender];
@@ -1027,7 +1046,7 @@ library LibVPFIDiscount {
         // Quote against the live accumulator + the loan's init
         // snapshot. This returns the time-weighted avg discount
         // for the window, not a live tier lookup.
-        (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
+        (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, lender, interestAmount);
         if (!canQuote) return (false, 0);
         if (vaultBal < vpfiRequired) return (false, 0);
         // #1354 (Codex r3 P2) — require TRACKED coverage, not just the raw
@@ -1110,6 +1129,7 @@ library LibVPFIDiscount {
      */
     function directReductionYieldFee(
         LibVaipakam.Loan storage loan,
+        address lender,
         uint256 treasuryShareFull
     ) internal view returns (uint256 reduction) {
         if (treasuryShareFull == 0) return 0;
@@ -1138,7 +1158,7 @@ library LibVPFIDiscount {
         // Peg-unset → whole discount (hold + tariff); peg-set → tariff slice
         // only (the hold slice is VPFI-payment-authoritative when the peg is
         // set — see the body comment above). `includeHold = !pegSet`.
-        uint256 effBps = _effectiveYieldFeeDiscountBps(loan, !pegSet);
+        uint256 effBps = _effectiveYieldFeeDiscountBps(loan, lender, !pegSet);
         if (effBps == 0) return 0;
         reduction = (treasuryShareFull * effBps) / LibVaipakam.BASIS_POINTS;
     }
@@ -1209,19 +1229,55 @@ library LibVPFIDiscount {
         internal
         returns (uint256 lenderExtra, uint256 treasuryRemaining, uint256 vpfiDeducted)
     {
-        if (treasuryShare == 0 || !lenderYieldFeeEligible(loan)) {
+        // #1383 — the consolidated primary paths settle for `loan.lender`
+        // (re-anchored to the current holder before this call). The
+        // non-consolidated secondary paths call {resolveLenderYieldFeeFor}
+        // directly with the current position-NFT holder.
+        return resolveLenderYieldFeeFor(loan, loan.lender, interestForQuote, treasuryShare);
+    }
+
+    /**
+     * @notice #1383 — {resolveLenderYieldFee} settling for an EXPLICIT lender
+     *         address (the current position-NFT holder on the non-consolidated
+     *         secondary settlement paths, where `loan.lender` may be stale).
+     *
+     * @dev Identical delivery to {resolveLenderYieldFee}, but the consent read
+     *      and any VPFI vault debit key on `lender` rather than `loan.lender`.
+     *      The Full `+10%` tariff slice is loan-scoped (keyed on `loan.id`), so
+     *      it applies to whoever currently holds the position; the hold slice is
+     *      an INSTANT tier read on `lender`, so the current holder's own tier is
+     *      the correct "as of now" hold discount. See {resolveLenderYieldFee}
+     *      for the returned-delta contract.
+     *
+     * @param loan             Live loan the yield fee settles against.
+     * @param lender           The party being paid + charged (current holder).
+     * @param interestForQuote Pre-split interest (+ late fee) the VPFI quote is
+     *                         sized against.
+     * @param treasuryShare    The full (undiscounted) lending-asset treasury
+     *                         share for this settlement.
+     */
+    function resolveLenderYieldFeeFor(
+        LibVaipakam.Loan storage loan,
+        address lender,
+        uint256 interestForQuote,
+        uint256 treasuryShare
+    )
+        internal
+        returns (uint256 lenderExtra, uint256 treasuryRemaining, uint256 vpfiDeducted)
+    {
+        if (treasuryShare == 0 || !lenderYieldFeeEligible(loan, lender)) {
             return (0, treasuryShare, 0);
         }
         // VPFI-payment delivery (peg set + consent + tracked coverage): the
         // treasury cut is satisfied in VPFI from the lender's vault and the
         // lender keeps the whole fee in the lending asset.
-        (bool applied, uint256 deducted) = tryApplyYieldFee(loan, interestForQuote);
+        (bool applied, uint256 deducted) = tryApplyYieldFee(loan, lender, interestForQuote);
         if (applied) {
             return (treasuryShare, 0, deducted);
         }
         // E-1 (#1203) fallback — no VPFI move: shift the resolved discount slice
         // from the lending-asset treasury fee to the lender.
-        uint256 r = directReductionYieldFee(loan, treasuryShare);
+        uint256 r = directReductionYieldFee(loan, lender, treasuryShare);
         if (r > 0) {
             return (r, treasuryShare - r, 0);
         }

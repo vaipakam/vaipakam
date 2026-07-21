@@ -678,6 +678,11 @@
   },
   {
     "type": "error",
+    "name": "LenderYieldFeeResolveFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LiquidationFailed",
     "inputs": []
   },

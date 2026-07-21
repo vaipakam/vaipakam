@@ -139,6 +139,9 @@ contract SwapToRepayFacetTest is SetupTest {
         );
 
         LibVaipakam.Loan memory loan;
+        // #1383 — the fee-entitlement eligibility read keys on `loan.id`, so a
+        // real loan's id must be stamped for the settlement discount to resolve.
+        loan.id = loanId;
         loan.principal = LOAN_PRINCIPAL;
         loan.principalAsset = address(principalAsset);
         loan.collateralAmount = LOAN_COLLATERAL;
@@ -809,5 +812,141 @@ contract SwapToRepayFacetTest is SetupTest {
             "frozen-owed VPFI is excluded from the stored borrower's tier balance"
         );
         assertEq(tier, 0, "excluded balance yields tier 0");
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #1383 — lender yield-fee discount on the swap-to-repay paths
+    // ── ─────────────────────────────────────────────────────── ──
+
+    /// @dev Re-seed the borrower vault with fresh collateral so a second swap
+    ///      in the same test can't underflow the shared vault.
+    function _reseedCollateral() internal {
+        ERC20Mock(address(collateralAsset)).mint(borrowerVault, LOAN_COLLATERAL);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrowerEoa,
+            address(collateralAsset),
+            IERC20(address(collateralAsset)).balanceOf(borrowerVault)
+        );
+    }
+
+    /// @dev Stamp `loanId` with a lender Full fee-entitlement (the record the
+    ///      #1347 charger writes for a lender who absorbed the Full `C*`).
+    function _stampLenderFull(uint256 loanId) internal {
+        TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                openDays: uint32(LOAN_DURATION_DAYS),
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 1 ether,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: 0
+            })
+        );
+    }
+
+    /// @notice #1383 — a Full-stamped lender settled through `swapToRepayFull`
+    ///         now receives the +10% yield-fee discount (peg unset → delivered
+    ///         as a direct reduction of the treasury cut), which the path
+    ///         ignored entirely before.
+    function test_swapToRepayFull_LenderFull_DiscountsTreasuryCut() public {
+        address treasury = AdminFacet(address(diamond)).getTreasury();
+
+        // Reference: no stamp → full treasury cut.
+        _reseedCollateral();
+        _scaffoldLoan(1, false, false);
+        adapter1.setOutputMultiplierBps(10_000);
+        uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), 1_100 ether);
+        uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
+        assertGt(base, 0, "reference collected a treasury cut");
+
+        // Treatment: Full lender → +10% off the treasury cut.
+        _reseedCollateral();
+        _scaffoldLoan(2, false, false);
+        _stampLenderFull(2);
+        adapter1.setOutputMultiplierBps(10_000);
+        uint256 t1 = IERC20(address(principalAsset)).balanceOf(treasury);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(2, _adapterTryList(1), 1_100 ether);
+        uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t1;
+
+        assertEq(disc, base - (base * 1000) / 10_000, "Full lender -> 10% off the treasury cut");
+    }
+
+    /// @notice #1383 — same +10% honored on `swapToRepayPartial`, which also
+    ///         ignored the discount before.
+    function test_swapToRepayPartial_LenderFull_DiscountsTreasuryCut() public {
+        address treasury = AdminFacet(address(diamond)).getTreasury();
+        uint256 swapAmt = 250 ether;
+
+        _reseedCollateral();
+        _scaffoldLoan(1, true, false);
+        adapter1.setOutputMultiplierBps(10_000);
+        uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
+        uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
+        assertGt(base, 0, "reference collected a treasury cut");
+
+        _reseedCollateral();
+        _scaffoldLoan(2, true, false);
+        _stampLenderFull(2);
+        adapter1.setOutputMultiplierBps(10_000);
+        uint256 t1 = IERC20(address(principalAsset)).balanceOf(treasury);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
+        uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t1;
+
+        assertEq(disc, base - (base * 1000) / 10_000, "Full lender -> 10% off (partial)");
+    }
+
+    /// @notice #1383 — on the non-consolidated partial path the discount is
+    ///         keyed on the CURRENT lender-NFT holder. A Full-stamped loan whose
+    ///         lender position was transferred still honors the stamp, and the
+    ///         current holder (not the stale `loan.lender`) receives the lender
+    ///         payout.
+    function test_swapToRepayPartial_TransferredHolder_FullHonored() public {
+        address treasury = AdminFacet(address(diamond)).getTreasury();
+        address newLender = makeAddr("newLenderHolder");
+        uint256 swapAmt = 250 ether;
+
+        // Reference partial (no stamp).
+        _reseedCollateral();
+        _scaffoldLoan(1, true, false);
+        adapter1.setOutputMultiplierBps(10_000);
+        uint256 r0 = IERC20(address(principalAsset)).balanceOf(treasury);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
+        uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - r0;
+        assertGt(base, 0, "reference collected a treasury cut");
+
+        // Full loan whose lender position was TRANSFERRED: ownerOf(lenderTokenId)
+        // now differs from the stale `loan.lender` (still lenderEoa).
+        _reseedCollateral();
+        _scaffoldLoan(2, true, false);
+        _stampLenderFull(2);
+        TestMutatorFacet(address(diamond)).burnNFTRaw(3); // lenderTokenId = 2*2-1
+        TestMutatorFacet(address(diamond)).mintNFTRaw(newLender, 3);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
+        uint256 newLenderBefore = IERC20(address(principalAsset)).balanceOf(newLender);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
+
+        // Full stamp (loan-scoped) honored on the transferred position — the
+        // treasury cut is discounted — AND the CURRENT holder (not the stale
+        // `loan.lender`) receives the lender proceeds.
+        uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
+        assertEq(disc, base - (base * 1000) / 10_000, "Full honored on transferred position");
+        assertGt(
+            IERC20(address(principalAsset)).balanceOf(newLender),
+            newLenderBefore,
+            "current lender-NFT holder receives the payout"
+        );
     }
 }

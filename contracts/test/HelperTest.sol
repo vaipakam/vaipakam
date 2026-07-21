@@ -1475,7 +1475,7 @@ contract HelperTest {
         // #687-A: fixed-rate SALE surface removed — mirror of production's
         // pruned _getVpfiDiscountSelectors (kept discount surface + the renamed
         // getVPFIDiscountConfig / setVPFIDiscountRate price config).
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[1] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
         selectors[2] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
@@ -1499,6 +1499,8 @@ contract HelperTest {
         selectors[16] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
         // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
         selectors[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
+        // #1383 — secondary-settlement lender yield-fee resolve host.
+        selectors[18] = VPFIDiscountFacet.resolveLenderYieldFeeFor.selector;
         return selectors;
     }
 
