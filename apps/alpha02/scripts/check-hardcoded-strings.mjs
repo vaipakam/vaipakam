@@ -73,6 +73,15 @@ const UI_ATTRS = new Set([
   'heading',
   'text',
   'tooltip',
+  // Custom copy-bearing component props in this app's design system:
+  // EmptyState/UnavailableState `body`, AssetPicker `hint`,
+  // ConfirmReceipt `confirmLabel`, SelectMenu option `sub`/`controlLabel`.
+  'body',
+  'hint',
+  'confirmLabel',
+  'sub',
+  'controlLabel',
+  'subtitle',
 ]);
 
 /**
@@ -94,6 +103,12 @@ const UI_KEYS = new Set([
   'message',
   'ariaLabel',
   'aria-label',
+  // Custom option/config copy fields (SelectMenu options, receipt props).
+  'sub',
+  'controlLabel',
+  'body',
+  'hint',
+  'confirmLabel',
 ]);
 
 /**
@@ -135,7 +150,12 @@ const BASELINE = {
     'funding borrow request': 1,
   },
   'src/components/StepNav.tsx': { Step: 1 },
-  'src/pages/Rent.tsx': { '? Switch': 1 },
+  // Hardcoded string args passed INTO a copy.* template (the {{leg}} /
+  // fallback-label class, #1360): 'prepayment token' filled into the
+  // tokenSecurity gate messages, and a 'locked' symbol fallback. These
+  // render but bypass the catalog — extract with the #1360 work.
+  'src/pages/Rent.tsx': { '? Switch': 1, 'prepayment token': 4 },
+  'src/pages/PositionDetails.tsx': { locked: 1 },
   'src/pages/Vpfi.tsx': {
     'Your balance qualifies for': 1,
     off: 1,
@@ -193,8 +213,28 @@ function isProse(text) {
  *     prose branch is enough to flag,
  *   - paren / `as` / `!` / `satisfies` / `<T>` wrappers → unwrapped.
  *  Anything else (a call, an identifier) contributes no static text. */
+/** Leftmost identifier of a (possibly nested) property/element access —
+ *  `copy.foo.bar` → 'copy', `x[0].y` → 'x' — or null. */
+function accessRoot(expr) {
+  let e = expr;
+  while (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+    e = e.expression;
+  }
+  return ts.isIdentifier(e) ? e.text : null;
+}
+
 function renderedStatic(node) {
   if (ts.isStringLiteralLike(node)) return [node.text];
+  // A catalog-template CALL — `copy.tokenSecurity.gateUnknown('prepayment
+  // token')` — renders its arguments as interpolation values. A hardcoded
+  // string arg bypasses the catalog just like inline prose, so recurse
+  // into the args of any `copy.*` call (other calls contribute nothing).
+  if (ts.isCallExpression(node)) {
+    if (accessRoot(node.expression) === 'copy') {
+      return node.arguments.flatMap((a) => renderedStatic(a));
+    }
+    return [];
+  }
   if (ts.isTemplateExpression(node)) {
     const literalRun = [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' ');
     const interp = node.templateSpans.flatMap((s) => renderedStatic(s.expression));
@@ -299,11 +339,17 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** Scan the whole src tree; return findings that EXCEED the baselined
- *  occurrence count for their (file, string). New files, new strings,
- *  and extra duplicates all surface. */
+/** Scan the whole src tree. Returns:
+ *   - `violations`: findings that EXCEED the baselined occurrence count
+ *     for their (file, string) — new files, new strings, extra dupes;
+ *   - `stale`: baselined (file, string) entries that now appear FEWER
+ *     times than their count (a burn-down extracted an occurrence but
+ *     did not lower the count). Failing on stale keeps the ratchet
+ *     honest: a leftover allowance would silently permit reintroducing
+ *     an already-extracted string. */
 function runCli() {
   const violations = [];
+  const perFile = new Map();
   for (const file of walk(SRC)) {
     const rel = relative(ROOT, file).split('\\').join('/');
     const found = analyzeSource(rel, readFileSync(file, 'utf8'));
@@ -313,6 +359,7 @@ function runCli() {
       arr.push(f);
       byString.set(f.s, arr);
     }
+    perFile.set(rel, byString);
     const base = BASELINE[rel] || {};
     for (const [s, occs] of byString) {
       const allowed = base[s] || 0;
@@ -322,7 +369,15 @@ function runCli() {
       }
     }
   }
-  return violations;
+  const stale = [];
+  for (const [rel, entries] of Object.entries(BASELINE)) {
+    const byString = perFile.get(rel) || new Map();
+    for (const [s, count] of Object.entries(entries)) {
+      const actual = (byString.get(s) || []).length;
+      if (actual < count) stale.push({ rel, s, count, actual });
+    }
+  }
+  return { violations, stale };
 }
 
 // CLI entry — run the scan only when executed directly (`node
@@ -332,13 +387,13 @@ const isMain =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
-  const findings = runCli();
-  if (findings.length > 0) {
-    findings.sort((a, b) => a.rel.localeCompare(b.rel) || a.line - b.line);
+  const { violations, stale } = runCli();
+  if (violations.length > 0) {
+    violations.sort((a, b) => a.rel.localeCompare(b.rel) || a.line - b.line);
     console.error(
-      `[check-hardcoded-strings] ${findings.length} user-visible string(s) bypass the copy catalog:\n`,
+      `[check-hardcoded-strings] ${violations.length} user-visible string(s) bypass the copy catalog:\n`,
     );
-    for (const { rel, line, s } of findings) {
+    for (const { rel, line, s } of violations) {
       console.error(`  ${rel}:${line}: ${JSON.stringify(s)}`);
     }
     console.error(
@@ -348,7 +403,15 @@ if (isMain) {
       'or if it is deliberately English (glossary token, baselined, dev diagnostic),',
     );
     console.error('add it to GLOSSARY / BASELINE in this script with the reason clear.');
-    process.exit(1);
   }
+  if (stale.length > 0) {
+    console.error(
+      `\n[check-hardcoded-strings] ${stale.length} stale BASELINE entr(y/ies) — the string now appears fewer times than allowed. Lower the count (or drop the entry) so the ratchet keeps the burn-down locked in:\n`,
+    );
+    for (const { rel, s, count, actual } of stale) {
+      console.error(`  ${rel}: ${JSON.stringify(s)} — baseline ${count}, found ${actual}`);
+    }
+  }
+  if (violations.length > 0 || stale.length > 0) process.exit(1);
   console.log('[check-hardcoded-strings] OK — no un-catalogued user-visible strings.');
 }

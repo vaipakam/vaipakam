@@ -100,4 +100,32 @@ describe('AST hardcoded-string detector (#1365)', () => {
     const src = "const X = () => <input {...{ placeholder: 'Search offers' }} />;";
     expect(strings(src)).toContain('Search offers');
   });
+
+  // --- Codex #1394 round-2 coverage gaps ---
+
+  it('flags a hardcoded string argument to a copy.* template call', () => {
+    const src = "const X = () => <span>{copy.tokenSecurity.gateUnknown('prepayment token')}</span>;";
+    expect(strings(src)).toContain('prepayment token');
+  });
+
+  it('does NOT flag string arguments to non-copy calls (no data-flow guessing)', () => {
+    const src = "const X = () => <span>{formatSomething('Some words here')}</span>;";
+    expect(strings(src)).toEqual([]);
+  });
+
+  it('flags custom copy props body / hint / confirmLabel', () => {
+    expect(strings('const X = () => <UnavailableState body="Try again later" />;')).toContain(
+      'Try again later',
+    );
+    expect(strings('const X = () => <ConfirmReceipt confirmLabel="Confirm payment" />;')).toContain(
+      'Confirm payment',
+    );
+  });
+
+  it('flags SelectMenu option secondary fields sub / controlLabel', () => {
+    const src =
+      "const X = () => <SelectMenu options={[{ value: 'n', sub: 'Second line', controlLabel: 'Closed label' }]} />;";
+    expect(strings(src)).toContain('Second line');
+    expect(strings(src)).toContain('Closed label');
+  });
 });
