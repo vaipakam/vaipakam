@@ -2808,9 +2808,10 @@ const copySource = {
     rowMainLine: tmpl('{{action}} {{amount}} at {{rate}} yearly', ['action', 'amount', 'rate']),
     // Offer id chip in the offer-row sub-line ("· offer #40").
     offerNumber: tmpl('offer #{{id}}', ['id']),
-    // Accept-mode banner opener — which side the caller is taking.
-    acceptingLendingOffer: 'You’re accepting lending offer',
-    fundingBorrowRequest: 'You’re funding borrow request',
+    // Accept-mode banner opener — which side the caller is taking, with
+    // the offer id in the template so each locale places it naturally.
+    acceptingLendingOffer: tmpl('You’re accepting lending offer #{{id}}.', ['id']),
+    fundingBorrowRequest: tmpl('You’re funding borrow request #{{id}}.', ['id']),
     // Security-leg labels interpolated into the token-security banner via
     // tokenSecurity.gate*(leg): "The loan asset …" / "The collateral …".
     securityLegLoanAsset: 'loan asset',

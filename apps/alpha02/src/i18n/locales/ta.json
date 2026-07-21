@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{rate}} ஆண்டு விகிதத்தில் {{amount}} {{action}}",
       "offerNumber": "சலுகை #{{id}}",
-      "acceptingLendingOffer": "நீங்கள் ஏற்கும் கடனளிப்பு சலுகை",
-      "fundingBorrowRequest": "நீங்கள் நிதியளிக்கும் கடன் கோரிக்கை",
+      "acceptingLendingOffer": "நீங்கள் ஏற்கும் கடனளிப்பு சலுகை #{{id}}.",
+      "fundingBorrowRequest": "நீங்கள் நிதியளிக்கும் கடன் கோரிக்கை #{{id}}.",
       "securityLegLoanAsset": "கடன் சொத்து",
       "securityLegCollateral": "பிணையம்"
     },

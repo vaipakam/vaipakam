@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{action}} {{amount}} — {{rate}} सालाना",
       "offerNumber": "ऑफ़र #{{id}}",
-      "acceptingLendingOffer": "आप lending offer accept कर रहे हैं",
-      "fundingBorrowRequest": "आप borrow request fund कर रहे हैं",
+      "acceptingLendingOffer": "आप lending offer accept कर रहे हैं #{{id}}.",
+      "fundingBorrowRequest": "आप borrow request fund कर रहे हैं #{{id}}.",
       "securityLegLoanAsset": "loan asset",
       "securityLegCollateral": "collateral"
     },

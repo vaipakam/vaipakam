@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{action}} {{amount}} à {{rate}} annuel",
       "offerNumber": "offre #{{id}}",
-      "acceptingLendingOffer": "Vous acceptez l’offre de prêt",
-      "fundingBorrowRequest": "Vous financez la demande d’emprunt",
+      "acceptingLendingOffer": "Vous acceptez l’offre de prêt #{{id}}.",
+      "fundingBorrowRequest": "Vous financez la demande d’emprunt #{{id}}.",
       "securityLegLoanAsset": "actif prêté",
       "securityLegCollateral": "garantie"
     },

@@ -955,7 +955,7 @@
         "termsRental": "{{duration}} · {{date}} に終了",
         "termsLoan": "年利 {{rate}} · {{duration}} · 返済期日 {{date}}",
         "confirmAction": "確認 — {{action}}",
-        "lockedSymbolFallback": "ロック済み担保"
+        "lockedSymbolFallback": "ロック済み"
       },
       "getStarted": "始める",
       "loading": "ポジションを読み込み中…",
@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{amount}} を年利 {{rate}} で{{action}}",
       "offerNumber": "オファー #{{id}}",
-      "acceptingLendingOffer": "あなたが受け入れる貸付オファー",
-      "fundingBorrowRequest": "あなたが資金提供する借入リクエスト",
+      "acceptingLendingOffer": "あなたが受け入れる貸付オファー #{{id}}.",
+      "fundingBorrowRequest": "あなたが資金提供する借入リクエスト #{{id}}.",
       "securityLegLoanAsset": "ローン資産",
       "securityLegCollateral": "担保"
     },

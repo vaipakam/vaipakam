@@ -955,7 +955,7 @@
         "termsRental": "{{duration}} · {{date}} 结束",
         "termsLoan": "{{rate}} 年化 · {{duration}} · {{date}} 到期",
         "confirmAction": "确认 — {{action}}",
-        "lockedSymbolFallback": "锁定资产"
+        "lockedSymbolFallback": "锁定"
       },
       "getStarted": "开始",
       "loading": "正在加载您的持仓…",
@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{action}} {{amount}}，年化 {{rate}}",
       "offerNumber": "报价 #{{id}}",
-      "acceptingLendingOffer": "您正在接受出借报价",
-      "fundingBorrowRequest": "您正在为借款请求出资",
+      "acceptingLendingOffer": "您正在接受出借报价 #{{id}}.",
+      "fundingBorrowRequest": "您正在为借款请求出资 #{{id}}.",
       "securityLegLoanAsset": "贷款资产",
       "securityLegCollateral": "抵押品"
     },

@@ -955,7 +955,7 @@
         "termsRental": "{{duration}} · {{date}} 종료",
         "termsLoan": "연 {{rate}} · {{duration}} · {{date}} 만기",
         "confirmAction": "확인 — {{action}}",
-        "lockedSymbolFallback": "잠긴 자산"
+        "lockedSymbolFallback": "잠긴"
       },
       "getStarted": "시작하기",
       "loading": "포지션 불러오는 중…",
@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{amount}}를 연 {{rate}}로 {{action}}",
       "offerNumber": "오퍼 #{{id}}",
-      "acceptingLendingOffer": "대출 오퍼를 수락합니다",
-      "fundingBorrowRequest": "차입 요청에 자금을 제공합니다",
+      "acceptingLendingOffer": "대출 오퍼를 수락합니다 #{{id}}.",
+      "fundingBorrowRequest": "차입 요청에 자금을 제공합니다 #{{id}}.",
       "securityLegLoanAsset": "대출 자산",
       "securityLegCollateral": "담보"
     },

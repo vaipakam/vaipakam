@@ -1133,9 +1133,18 @@ export function OfferFlow({ side }: { side: Side }) {
   // 'needed' derives from the check's INPUTS (shape + curated), never
   // from query lifecycle state — fetchStatus returns to idle once a
   // query settles, which must not un-gate a bad verdict.
+  // Stable, language-independent leg ids for MATCHING (the submit-time
+  // recheck loops compare by `key`, never by the display label). `leg` is
+  // the LOCALIZED label shown in the security banner / gate messages —
+  // matching on it would break in a translated locale (Codex #1400).
+  const legLabel = {
+    loanAsset: copy.offerFlow.securityLegLoanAsset,
+    collateral: copy.offerFlow.securityLegCollateral,
+  } as const;
   const securityLegs = [
     {
-      leg: copy.offerFlow.securityLegLoanAsset,
+      key: 'loanAsset' as const,
+      leg: legLabel.loanAsset,
       needed:
         secLendingLeg.isErc20 &&
         needsSecurityCheck(readChain.chainId, secLendingLeg.addr),
@@ -1143,7 +1152,8 @@ export function OfferFlow({ side }: { side: Side }) {
       errored: acceptLendingSec.isError,
     },
     {
-      leg: copy.offerFlow.securityLegCollateral,
+      key: 'collateral' as const,
+      leg: legLabel.collateral,
       needed:
         secCollateralLeg.isErc20 &&
         needsSecurityCheck(readChain.chainId, secCollateralLeg.addr),
@@ -1181,7 +1191,7 @@ export function OfferFlow({ side }: { side: Side }) {
   const securityFingerprint = securityLegs
     .map(
       (l) =>
-        `${l.leg}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
+        `${l.key}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
     )
     .join('|');
   // The fingerprint that was current when the user LAST ticked the
@@ -1394,8 +1404,8 @@ export function OfferFlow({ side }: { side: Side }) {
     // approval can mine. Same disclosure rules as the accept path —
     // a live verdict differing from the reviewed one is pushed into
     // the query cache so the re-review renders it and voids consent.
-    for (const [leg, addr, isErc20] of [
-      ['loan asset', form.lendingAsset, form.assetType === 'erc20'],
+    for (const [key, addr, isErc20] of [
+      ['loanAsset', form.lendingAsset, form.assetType === 'erc20'],
       [
         'collateral',
         form.collateralAsset,
@@ -1404,6 +1414,7 @@ export function OfferFlow({ side }: { side: Side }) {
     ] as const) {
       if (!isErc20 || !addr) continue;
       if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
+      const leg = legLabel[key];
       const v = await fetchTokenSecurity(walletChain.chainId, addr);
       const cacheKey = ['tokenSecurity', readChain.chainId, addr.toLowerCase()];
       if (v.kind === 'block') {
@@ -1421,7 +1432,7 @@ export function OfferFlow({ side }: { side: Side }) {
         throw new Error(copy.tokenSecurity.gateUnknown(leg));
       }
       if (v.kind === 'warn') {
-        const reviewed = securityLegs.find((l) => l.leg === leg);
+        const reviewed = securityLegs.find((l) => l.key === key);
         if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
           queryClient.setQueryData(cacheKey, v);
           // Clear consent SYNCHRONOUSLY — the fingerprint effect only
@@ -1634,8 +1645,8 @@ export function OfferFlow({ side }: { side: Side }) {
       // the re-review renders the new finding (and the fingerprint
       // effect voids the stale consent) — the abort message alone
       // would otherwise be the only place the user ever saw it.
-      for (const [leg, addr, isErc20] of [
-        ['loan asset', selected.lendingAsset, selected.assetType === AssetType.ERC20],
+      for (const [key, addr, isErc20] of [
+        ['loanAsset', selected.lendingAsset, selected.assetType === AssetType.ERC20],
         [
           'collateral',
           selected.collateralAsset,
@@ -1644,6 +1655,7 @@ export function OfferFlow({ side }: { side: Side }) {
       ] as const) {
         if (!isErc20) continue;
         if (isCuratedAsset(walletChain.chainId, addr)) continue; // pre-vetted
+        const leg = legLabel[key];
         const v = await fetchTokenSecurity(walletChain.chainId, addr);
         const cacheKey = [
           'tokenSecurity',
@@ -1670,7 +1682,7 @@ export function OfferFlow({ side }: { side: Side }) {
         // whose content changed — was never consented to: abort,
         // surface it, re-collect consent.
         if (v.kind === 'warn') {
-          const reviewed = securityLegs.find((l) => l.leg === leg);
+          const reviewed = securityLegs.find((l) => l.key === key);
           if (verdictFingerprint(v) !== verdictFingerprint(reviewed?.verdict)) {
             queryClient.setQueryData(cacheKey, v);
             // Synchronous consent clear — the fingerprint effect only
@@ -2238,9 +2250,9 @@ export function OfferFlow({ side }: { side: Side }) {
             <div className="banner banner-info">
               <span className="banner-body">
                 {side === 'borrower'
-                  ? copy.offerFlow.acceptingLendingOffer
-                  : copy.offerFlow.fundingBorrowRequest}{' '}
-                #{selected.offerId}. {copy.match.wholeOfferNote}
+                  ? copy.offerFlow.acceptingLendingOffer(selected.offerId)
+                  : copy.offerFlow.fundingBorrowRequest(selected.offerId)}{' '}
+                {copy.match.wholeOfferNote}
               </span>
             </div>
           ) : null}

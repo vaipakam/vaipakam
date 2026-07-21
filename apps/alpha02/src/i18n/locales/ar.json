@@ -1755,8 +1755,8 @@
       },
       "rowMainLine": "{{action}} {{amount}} بنسبة {{rate}} سنويًا",
       "offerNumber": "عرض #{{id}}",
-      "acceptingLendingOffer": "أنت تقبل عرض إقراض",
-      "fundingBorrowRequest": "أنت تموّل طلب اقتراض",
+      "acceptingLendingOffer": "أنت تقبل عرض إقراض #{{id}}.",
+      "fundingBorrowRequest": "أنت تموّل طلب اقتراض #{{id}}.",
       "securityLegLoanAsset": "أصل القرض",
       "securityLegCollateral": "ضمان"
     },
