@@ -368,16 +368,19 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 collateralBalanceBefore);
 
         // ── Lender Yield Fee discount (§F2 / #1354 / #1383) ──────────
-        // swap-to-repay-full consolidates BOTH sides above, so
-        // `loan.lender == current holder`; resolve keyed on `loan.lender`. The
-        // sum `lenderDue + treasuryShare` is invariant under the shift, so
-        // `requiredPrincipal` (above) and the borrower surplus (below) are
-        // unchanged — the lender just receives the discounted slice in the
-        // lending asset instead of it going to treasury.
+        // Key on the CURRENT lender-NFT holder, not `loan.lender`. The lender
+        // consolidation above is a `Tier2CloseOut` skip-NOT-block: a sanctioned
+        // holder (or the #597 `heldForLender` exclusion) leaves `loan.lender`
+        // stale, so keying on it could resolve the discount — and any VPFI vault
+        // debit — for the wrong party (Codex #1387 P1). `ownerOf(lenderTokenId)`
+        // is the canonical current holder (the loan is pre-terminal here, so the
+        // lender NFT is live). The sum `lenderDue + treasuryShare` is invariant
+        // under the shift, so `requiredPrincipal` (above) and the borrower
+        // surplus (below) are unchanged.
         {
             (uint256 lenderExtra, uint256 newTreasury) = _resolveLenderYieldFee(
                 loanId,
-                loan.lender,
+                IERC721(address(this)).ownerOf(loan.lenderTokenId),
                 plan.interest + plan.lateFee,
                 plan.treasuryShare
             );
