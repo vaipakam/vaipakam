@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "{{duration}} के बाद rights automatically reset होते हैं। Buffer वापस लेने के लिए detail page से rental समय पर close करें।",
       "receiptRentYouCanLose": "Rental समय पर close न होने पर {{buffer}} buffer। आपकी use rights expiry पर वैसे भी end हो जाती हैं।",
       "receiptRentYouLock": "{{total}} prepaid — full term fees plus {{buffer}} refundable buffer।",
-      "receiptRentYouReceive": "{{duration}} के लिए {{nft}} की use rights, अभी से।"
+      "receiptRentYouReceive": "{{duration}} के लिए {{nft}} की use rights, अभी से।",
+      "switchPrompt": "{{path}}? Switch करें",
+      "prepaymentTokenLabel": "prepayment token"
     },
     "preclose": {
       "title": "इस loan को early close करें",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + ~{{interest}} तक का ब्याज",
         "termsRental": "{{duration}} · {{date}} को समाप्त",
         "termsLoan": "{{rate}} सालाना · {{duration}} · {{date}} को देय",
-        "confirmAction": "पुष्टि करें — {{action}}"
+        "confirmAction": "पुष्टि करें — {{action}}",
+        "lockedSymbolFallback": "locked"
       },
       "getStarted": "शुरू करें",
       "loading": "आपकी positions लोड हो रही हैं…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "VPFI deposits अभी {{chain}} पर available नहीं हैं। Vaipakam पर बाकी सब VPFI के बिना चलता है।",
       "walletBalanceHint": "आपके wallet में: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} वापस आपके wallet में।",
-      "withdrawableHint": "अभी withdrawable: आपके vault में {{vault}} में से {{free}} VPFI"
+      "withdrawableHint": "अभी withdrawable: आपके vault में {{vault}} में से {{free}} VPFI",
+      "warmingUpBody": "आपका balance {{tier}}{{currently}} के लिए qualify करता है, लेकिन discounts आपके 30-दिन के average पर आधारित होते हैं — balance बनाए रखें और आपका active discount catch up कर लेगा।",
+      "tierOff": "{{discount}} की छूट",
+      "higherTier": "एक ऊँचे tier",
+      "currentlyClause": " (अभी {{rate}})"
     },
     "errors": {
       "partialOverPrincipal": "यह loan के पूरे remaining principal को cover करता है। इसके बजाय “इस loan को repay करें” use करें — यह loan properly settle करता है और collateral release करता है।",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} assets",
       "unreadableCount_zero": "{{count}} assets",
       "unreadableWarn": "हम अभी {{assets}} पढ़ नहीं सके ({{list}}) — नीचे list में balances missing हो सकते हैं। यह आम तौर पर next refresh पर clear हो जाता है।",
-      "lockedFreeBreakdown": "{{locked}} लॉक किया गया · {{free}} मुक्त"
+      "lockedFreeBreakdown": "{{locked}} लॉक किया गया · {{free}} मुक्त",
+      "onChain": "{{chain}} पर"
     },
     "activity": {
       "title": "Activity",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Faucet टेस्ट टोकन",
       "invalidAddress": "एक मान्य कॉन्ट्रैक्ट पता डालें — “0x” के बाद 40 hex अक्षर।",
       "pasteOption": "टोकन पता पेस्ट करें…",
-      "placeholder": "एसेट चुनें…"
+      "placeholder": "एसेट चुनें…",
+      "contractAddressAria": "{{label}} का contract address"
     },
     "checklist": {
       "checking": "जांच हो रही है",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "वापस",
       "tryAgain": "फिर कोशिश करें",
-      "waitingForWallet": "वॉलेट का इंतजार…"
+      "waitingForWallet": "वॉलेट का इंतजार…",
+      "networkFallback": "network #{{id}}",
+      "unknown": "अज्ञात"
     },
     "copyAddress": {
       "copied": "पता कॉपी हुआ",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "0 और {{max}} के बीच number enter करें — protocol rates को yearly {{max}}% पर cap करता है।",
         "theyLockCollateral": "वे {{collateral}} collateral के रूप में lock करते हैं",
         "youLockCollateral": "आप {{collateral}} collateral के रूप में lock करते हैं"
-      }
+      },
+      "rowMainLine": "{{action}} {{amount}} — {{rate}} सालाना",
+      "offerNumber": "ऑफ़र #{{id}}",
+      "acceptingLendingOffer": "आप lending offer accept कर रहे हैं",
+      "fundingBorrowRequest": "आप borrow request fund कर रहे हैं",
+      "securityLegLoanAsset": "loan asset",
+      "securityLegCollateral": "collateral"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "Settings"
     },
     "stepNav": {
-      "progressAria": "Progress"
+      "progressAria": "Progress",
+      "progress": "Step {{current}}/{{total}} — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "आपका buffer वापस",

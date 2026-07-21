@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "Los derechos se reinician automáticamente después de {{duration}}. Cierra el alquiler a tiempo desde su página de detalle para recuperar el buffer.",
       "receiptRentYouCanLose": "El buffer {{buffer}} si el alquiler no se cierra a tiempo. Tus derechos de uso terminan al expirar en cualquier caso.",
       "receiptRentYouLock": "{{total}} prepagado — las comisiones del plazo completo más un buffer reembolsable de {{buffer}}.",
-      "receiptRentYouReceive": "Derechos de uso de {{nft}} por {{duration}}, desde ahora."
+      "receiptRentYouReceive": "Derechos de uso de {{nft}} por {{duration}}, desde ahora.",
+      "switchPrompt": "¿{{path}}? Cambiar",
+      "prepaymentTokenLabel": "token de prepago"
     },
     "preclose": {
       "title": "Cerrar este préstamo antes",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + hasta ~{{interest}} de interés",
         "termsRental": "{{duration}} · finaliza {{date}}",
         "termsLoan": "{{rate}} anual · {{duration}} · vence {{date}}",
-        "confirmAction": "Confirmar — {{action}}"
+        "confirmAction": "Confirmar — {{action}}",
+        "lockedSymbolFallback": "bloqueado"
       },
       "getStarted": "Empezar",
       "loading": "Cargando tus posiciones…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "Los depósitos VPFI aún no están disponibles en {{chain}}. Todo lo demás en Vaipakam funciona sin VPFI.",
       "walletBalanceHint": "En tu wallet: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} de vuelta en tu wallet.",
-      "withdrawableHint": "Retirable ahora: {{free}} VPFI de {{vault}} en tu vault"
+      "withdrawableHint": "Retirable ahora: {{free}} VPFI de {{vault}} en tu vault",
+      "warmingUpBody": "Tu saldo califica para {{tier}}{{currently}}, pero los descuentos usan tu promedio de 30 días — mantén el saldo y tu descuento activo se pondrá al día.",
+      "tierOff": "{{discount}} de descuento",
+      "higherTier": "un nivel superior",
+      "currentlyClause": " (actualmente {{rate}})"
     },
     "errors": {
       "partialOverPrincipal": "Eso cubre todo el principal restante del préstamo. Usa “Pagar este préstamo” en su lugar — liquida el préstamo correctamente y libera tu garantía.",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} activos",
       "unreadableCount_zero": "{{count}} activos",
       "unreadableWarn": "No pudimos leer {{assets}} ahora ({{list}}) — la lista de abajo puede omitir saldos. Esto suele corregirse en el siguiente refresco.",
-      "lockedFreeBreakdown": "{{locked}} bloqueado · {{free}} libre"
+      "lockedFreeBreakdown": "{{locked}} bloqueado · {{free}} libre",
+      "onChain": "en {{chain}}"
     },
     "activity": {
       "title": "Actividad",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Token de prueba del faucet",
       "invalidAddress": "Introduce una dirección de contrato válida — “0x” seguido de 40 caracteres hexadecimales.",
       "pasteOption": "Pegar una dirección de token…",
-      "placeholder": "Elige un activo…"
+      "placeholder": "Elige un activo…",
+      "contractAddressAria": "dirección del contrato de {{label}}"
     },
     "checklist": {
       "checking": "Comprobando",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "Atrás",
       "tryAgain": "Intentar de nuevo",
-      "waitingForWallet": "Esperando la billetera…"
+      "waitingForWallet": "Esperando la billetera…",
+      "networkFallback": "red #{{id}}",
+      "unknown": "desconocido"
     },
     "copyAddress": {
       "copied": "Dirección copiada",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "Introduce un número entre 0 y {{max}} — el protocolo limita las tasas a {{max}}% anual.",
         "theyLockCollateral": "bloquean {{collateral}} como garantía",
         "youLockCollateral": "bloqueas {{collateral}} como garantía"
-      }
+      },
+      "rowMainLine": "{{action}} {{amount}} al {{rate}} anual",
+      "offerNumber": "oferta #{{id}}",
+      "acceptingLendingOffer": "Estás aceptando la oferta de préstamo",
+      "fundingBorrowRequest": "Estás financiando la solicitud de préstamo",
+      "securityLegLoanAsset": "activo del préstamo",
+      "securityLegCollateral": "garantía"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "Configuración"
     },
     "stepNav": {
-      "progressAria": "Progreso"
+      "progressAria": "Progreso",
+      "progress": "Paso {{current}} de {{total}} — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "tu buffer de vuelta",

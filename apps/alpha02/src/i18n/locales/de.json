@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "Rechte werden nach {{duration}} automatisch zurückgesetzt. Schließen Sie die Miete rechtzeitig auf der Detailseite, um den Puffer zurückzuerhalten.",
       "receiptRentYouCanLose": "Den {{buffer}} Puffer, wenn die Miete nicht rechtzeitig geschlossen wird. Ihre Nutzungsrechte enden in jedem Fall beim Ablauf.",
       "receiptRentYouLock": "{{total}} vorausbezahlt — die Gebühren für die volle Laufzeit plus ein rückzahlbarer Puffer von {{buffer}}.",
-      "receiptRentYouReceive": "Nutzungsrechte an {{nft}} für {{duration}}, ab jetzt."
+      "receiptRentYouReceive": "Nutzungsrechte an {{nft}} für {{duration}}, ab jetzt.",
+      "switchPrompt": "{{path}}? Wechseln",
+      "prepaymentTokenLabel": "Vorauszahlungs-Token"
     },
     "preclose": {
       "title": "Diesen Kredit vorzeitig schließen",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + bis zu ~{{interest}} Zinsen",
         "termsRental": "{{duration}} · endet {{date}}",
         "termsLoan": "{{rate}} jährlich · {{duration}} · fällig {{date}}",
-        "confirmAction": "Bestätigen — {{action}}"
+        "confirmAction": "Bestätigen — {{action}}",
+        "lockedSymbolFallback": "gesperrt"
       },
       "getStarted": "Loslegen",
       "loading": "Ihre Positionen werden geladen…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "VPFI-Einzahlungen sind auf {{chain}} noch nicht verfügbar. Alles andere auf Vaipakam funktioniert ohne VPFI.",
       "walletBalanceHint": "In Ihrer Wallet: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} zurück in Ihrer Wallet.",
-      "withdrawableHint": "Jetzt abhebbar: {{free}} VPFI von {{vault}} in Ihrem Vault"
+      "withdrawableHint": "Jetzt abhebbar: {{free}} VPFI von {{vault}} in Ihrem Vault",
+      "warmingUpBody": "Ihr Guthaben qualifiziert sich für {{tier}}{{currently}}, aber Rabatte nutzen Ihren 30-Tage-Durchschnitt — behalten Sie das Guthaben, und Ihr aktiver Rabatt zieht nach.",
+      "tierOff": "{{discount}} Rabatt",
+      "higherTier": "eine höhere Stufe",
+      "currentlyClause": " (aktuell {{rate}})"
     },
     "errors": {
       "partialOverPrincipal": "Das deckt den gesamten verbleibenden Kreditbetrag ab. Verwenden Sie stattdessen „Diesen Kredit zurückzahlen“ — das wickelt den Kredit ordnungsgemäß ab und gibt Ihre Sicherheiten frei.",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} Assets",
       "unreadableCount_zero": "{{count}} Assets",
       "unreadableWarn": "Wir konnten {{assets}} gerade nicht lesen ({{list}}) — der Liste unten können Guthaben fehlen. Das behebt sich meist beim nächsten Aktualisieren.",
-      "lockedFreeBreakdown": "{{locked}} gesperrt · {{free}} frei"
+      "lockedFreeBreakdown": "{{locked}} gesperrt · {{free}} frei",
+      "onChain": "auf {{chain}}"
     },
     "activity": {
       "title": "Aktivität",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "Faucet-Test-Token",
       "invalidAddress": "Geben Sie eine gültige Vertragsadresse ein — „0x“ gefolgt von 40 Hex-Zeichen.",
       "pasteOption": "Token-Adresse einfügen…",
-      "placeholder": "Asset auswählen…"
+      "placeholder": "Asset auswählen…",
+      "contractAddressAria": "Vertragsadresse von {{label}}"
     },
     "checklist": {
       "checking": "Wird geprüft",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "Zurück",
       "tryAgain": "Erneut versuchen",
-      "waitingForWallet": "Warten auf die Wallet…"
+      "waitingForWallet": "Warten auf die Wallet…",
+      "networkFallback": "Netzwerk #{{id}}",
+      "unknown": "unbekannt"
     },
     "copyAddress": {
       "copied": "Adresse kopiert",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "Geben Sie eine Zahl zwischen 0 und {{max}} ein — das Protokoll deckelt Sätze bei {{max}} % jährlich.",
         "theyLockCollateral": "sie sperren {{collateral}} als Sicherheit",
         "youLockCollateral": "Sie sperren {{collateral}} als Sicherheit"
-      }
+      },
+      "rowMainLine": "{{action}} {{amount}} zu {{rate}} jährlich",
+      "offerNumber": "Angebot #{{id}}",
+      "acceptingLendingOffer": "Sie akzeptieren das Kreditangebot",
+      "fundingBorrowRequest": "Sie finanzieren die Leihanfrage",
+      "securityLegLoanAsset": "Kredit-Asset",
+      "securityLegCollateral": "Sicherheit"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "Einstellungen"
     },
     "stepNav": {
-      "progressAria": "Fortschritt"
+      "progressAria": "Fortschritt",
+      "progress": "Schritt {{current}} von {{total}} — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "Ihren Puffer zurück",

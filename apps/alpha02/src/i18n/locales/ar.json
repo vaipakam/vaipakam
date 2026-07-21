@@ -558,7 +558,9 @@
       "receiptRentWhenEnds": "تتم إعادة الحقوق تلقائيا بعد {{duration}}. أغلق rental في الوقت من صفحة التفاصيل لاسترجاع buffer.",
       "receiptRentYouCanLose": "قد تخسر {{buffer}} buffer إذا لم يغلق rental في الوقت. تنتهي حقوق الاستخدام عند expiry في كل الأحوال.",
       "receiptRentYouLock": "{{total}} مدفوع مسبقا — رسوم كامل المدة زائد {{buffer}} buffer قابل للاسترداد.",
-      "receiptRentYouReceive": "حقوق استخدام {{nft}} لمدة {{duration}}، بدءا الآن."
+      "receiptRentYouReceive": "حقوق استخدام {{nft}} لمدة {{duration}}، بدءا الآن.",
+      "switchPrompt": "{{path}}؟ بدّل",
+      "prepaymentTokenLabel": "رمز الدفع المسبق"
     },
     "preclose": {
       "title": "أغلق هذا القرض مبكرًا",
@@ -952,7 +954,8 @@
         "owedPrincipalUpToInterest": "{{principal}} + حتى ~{{interest}} فائدة",
         "termsRental": "{{duration}} · ينتهي {{date}}",
         "termsLoan": "{{rate}} سنويًا · {{duration}} · مستحق {{date}}",
-        "confirmAction": "تأكيد — {{action}}"
+        "confirmAction": "تأكيد — {{action}}",
+        "lockedSymbolFallback": "مقفل"
       },
       "getStarted": "ابدأ",
       "loading": "جارٍ تحميل مراكزك…",
@@ -1407,7 +1410,11 @@
       "notOnThisChain": "إيداعات VPFI غير متاحة على {{chain}} بعد. كل شيء آخر في Vaipakam يعمل بدون VPFI.",
       "walletBalanceHint": "في محفظتك: {{amount}} VPFI",
       "withdrawYouReceive": "{{amt}} عائدة إلى محفظتك.",
-      "withdrawableHint": "قابل للسحب الآن: {{free}} VPFI من {{vault}} في vault الخاص بك"
+      "withdrawableHint": "قابل للسحب الآن: {{free}} VPFI من {{vault}} في vault الخاص بك",
+      "warmingUpBody": "رصيدك يؤهلك لـ {{tier}}{{currently}}، لكن الخصومات تعتمد على متوسط رصيدك خلال 30 يومًا — احتفظ بالرصيد وسيلحق خصمك النشط بذلك.",
+      "tierOff": "خصم {{discount}}",
+      "higherTier": "طبقة أعلى",
+      "currentlyClause": " (حاليًا {{rate}})"
     },
     "errors": {
       "partialOverPrincipal": "هذا يغطّي كامل أصل القرض المتبقي. استخدم ”سدّد هذا القرض“ بدلًا من ذلك — فهو يسوّي القرض بشكل صحيح ويحرّر ضمانك.",
@@ -1528,7 +1535,8 @@
       "unreadableCount_two": "{{count}} أصول",
       "unreadableCount_zero": "{{count}} أصول",
       "unreadableWarn": "لم نستطع قراءة {{assets}} الآن ({{list}}) — قد تفقد القائمة أدناه بعض الأرصدة. غالبا يزول هذا في التحديث التالي.",
-      "lockedFreeBreakdown": "{{locked}} مقفل · {{free}} متاح"
+      "lockedFreeBreakdown": "{{locked}} مقفل · {{free}} متاح",
+      "onChain": "على {{chain}}"
     },
     "activity": {
       "title": "النشاط",
@@ -1646,7 +1654,8 @@
       "faucetBadge": "رمز اختبار من Faucet",
       "invalidAddress": "أدخل عنوان عقد صالحًا — “0x” متبوعًا بـ 40 محرفًا سداسيًا.",
       "pasteOption": "الصق عنوان رمز…",
-      "placeholder": "اختر أصلًا…"
+      "placeholder": "اختر أصلًا…",
+      "contractAddressAria": "عنوان عقد {{label}}"
     },
     "checklist": {
       "checking": "جارٍ الفحص",
@@ -1656,7 +1665,9 @@
     "common": {
       "back": "رجوع",
       "tryAgain": "حاول مرة أخرى",
-      "waitingForWallet": "بانتظار المحفظة…"
+      "waitingForWallet": "بانتظار المحفظة…",
+      "networkFallback": "شبكة #{{id}}",
+      "unknown": "غير معروف"
     },
     "copyAddress": {
       "copied": "تم نسخ العنوان",
@@ -1741,7 +1752,13 @@
         "rateOutOfRange": "أدخل رقما بين 0 و {{max}} — البروتوكول يحد rates عند {{max}}% سنويا.",
         "theyLockCollateral": "يقفلون {{collateral}} كـ collateral",
         "youLockCollateral": "تقفل {{collateral}} كـ collateral"
-      }
+      },
+      "rowMainLine": "{{action}} {{amount}} بنسبة {{rate}} سنويًا",
+      "offerNumber": "عرض #{{id}}",
+      "acceptingLendingOffer": "أنت تقبل عرض إقراض",
+      "fundingBorrowRequest": "أنت تموّل طلب اقتراض",
+      "securityLegLoanAsset": "أصل القرض",
+      "securityLegCollateral": "ضمان"
     },
     "settingsPage": {
       "experience": {
@@ -1769,7 +1786,8 @@
       "title": "الإعدادات"
     },
     "stepNav": {
-      "progressAria": "التقدم"
+      "progressAria": "التقدم",
+      "progress": "الخطوة {{current}} من {{total}} — {{label}}"
     },
     "claimAll": {
       "borrowerBufferBack": "buffer الخاص بك عائد",
