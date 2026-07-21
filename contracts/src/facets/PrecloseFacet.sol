@@ -1558,6 +1558,15 @@ contract PrecloseFacet is
     /// @return treasuryFee        the treasury cut on accrued interest
     /// @return lenderTotal        principal + (accrued − fee) + shortfall owed
     ///                            to the old lender
+    /// @return interestBase       #1391 — the treasury-split base
+    ///                            (`accruedInterest + lateFee`). Threaded out
+    ///                            because the lender yield-fee discount must be
+    ///                            sized on the SAME base the treasury cut was
+    ///                            taken from, but can only be DELIVERED at
+    ///                            completion (this helper is `view`, and the
+    ///                            delivery may debit a VPFI vault). Excludes
+    ///                            `shortfall`, which is a pure lender top-up the
+    ///                            treasury never touches.
     function _computeOffsetSettlement(
         LibVaipakam.Loan storage loan,
         uint256 interestRateBps,
@@ -1566,7 +1575,7 @@ contract PrecloseFacet is
     )
         private
         view
-        returns (uint256 treasuryFee, uint256 lenderTotal)
+        returns (uint256 treasuryFee, uint256 lenderTotal, uint256 interestBase)
     {
         // #641 — read the interest clock, not the immutable term tuple.
         uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
@@ -1600,8 +1609,9 @@ contract PrecloseFacet is
         // Defensive parity: the #1032 anti-drift guard in `_completeOffsetImpl`
         // already blocks any at/post-maturity completion, so `lateFee` is 0 in
         // practice today; this keeps the term correct should that guard relax.
-        (treasuryFee, ) = LibEntitlement.splitTreasury(loan, accruedInterest + lateFee);
-        lenderTotal = loan.principal + (accruedInterest + lateFee - treasuryFee) + shortfall;
+        interestBase = accruedInterest + lateFee;
+        (treasuryFee, ) = LibEntitlement.splitTreasury(loan, interestBase);
+        lenderTotal = loan.principal + (interestBase - treasuryFee) + shortfall;
     }
 
     /// @dev #1001 (S3, Codex #1070 redesign) — settle the old lender AT
@@ -1626,9 +1636,47 @@ contract PrecloseFacet is
             loanId,
             uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY
         );
-        (uint256 treasuryFee, uint256 lenderTotal) = _computeOffsetSettlement(
-            loan, offer.interestRateBps, offer.durationDays, lateFee
-        );
+        (uint256 treasuryFee, uint256 lenderTotal, uint256 interestBase) =
+            _computeOffsetSettlement(
+                loan, offer.interestRateBps, offer.durationDays, lateFee
+            );
+
+        // Lender Yield Fee discount (Tokenomics §6 / §F2, #1354 / #1391) — the
+        // offset close-out took its treasury cut undiscounted, so a Full-stamped
+        // (or consent-holding) old lender lost the discount purely by exiting
+        // through an offset instead of a repay/preclose.
+        //
+        // This is the one settlement site where the split is COMPUTED in a `view`
+        // and DELIVERED later, so the base is threaded out of
+        // `_computeOffsetSettlement` and the delivery runs here, inside the
+        // acceptor's atomic tx. That is safe for both delivery modes: the
+        // direct-reduction path moves no tokens (it just shifts the split), and
+        // the VPFI-payment path is already gated on the CHARGED party's own
+        // stored consent inside `quoteYieldFee` — so a non-consenting old lender
+        // can never have their vault debited by someone else's accept tx; they
+        // simply receive the bump via direct reduction.
+        //
+        // Keyed on the CURRENT lender-NFT holder, NOT the stored `loan.lender`:
+        // `_completeOffsetImpl`'s `eagerConsolidateBothSides` is Tier2
+        // skip-not-block (it declines to re-anchor for a sanctions-frozen holder
+        // or the #597 `heldForLender` exclusion), so a consolidation call is not
+        // proof the field is fresh, and `ClaimFacet.claimAsLender` is
+        // `ownerOf(lenderTokenId)`-gated — the current holder is who is paid
+        // (Codex #1390 P1, same reasoning as the other preclose legs).
+        {
+            (uint256 offLenderExtra, uint256 offNewTreasury) =
+                _hostResolveLenderYieldFee(
+                    loanId,
+                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                    interestBase,
+                    treasuryFee
+                );
+            if (offLenderExtra > 0) {
+                lenderTotal += offLenderExtra;
+                treasuryFee = offNewTreasury;
+            }
+        }
+
         address payAssetOffset = _paymentAsset(loan);
         if (treasuryFee > 0) {
             IERC20(payAssetOffset).safeTransferFrom(
