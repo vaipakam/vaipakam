@@ -324,14 +324,17 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode ==
             // Full`; the resolve host runs the whole VPFI-payment-then-direct-
             // reduction delivery and emits the analytics passthrough itself.
-            // `loan.lender` is consolidated to the current holder earlier in this
-            // terminal, so keying on it is safe. Routing through the host (rather
-            // than inlining `LibVPFIDiscount.resolveLenderYieldFee`) keeps the
-            // delivery bytecode off this at-EIP-170 facet — headroom the
-            // repayPartial secondary path below also needs (#1383).
+            // Keyed on the CURRENT lender-NFT holder (not `loan.lender`): the
+            // terminal consolidation is skip-not-block, so keying on the live
+            // `ownerOf(lenderTokenId)` resolves the discount + any VPFI debit for
+            // the right party even when consolidation was skipped (Codex #1387
+            // P1). Routing through the host (rather than inlining
+            // `LibVPFIDiscount.resolveLenderYieldFee`) keeps the delivery
+            // bytecode off this at-EIP-170 facet — headroom the repayPartial
+            // secondary path below also needs (#1383).
             (uint256 lenderExtra, uint256 newTreasury) = _hostResolveLenderYieldFee(
                 loan.id,
-                loan.lender,
+                IERC721(address(this)).ownerOf(loan.lenderTokenId),
                 plan.interest + plan.lateFee,
                 plan.treasuryShare
             );
