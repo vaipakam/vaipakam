@@ -37,6 +37,16 @@ the walk progresses. Only the "pool ran short" case stays pending. Conflating
 those two would either lose rewards or leave a participant stuck retrying a day
 that can never pay.
 
+**A forfeited reward is not capped like a payout.** Each loan carries its own
+lifetime limit on how much reward it can pay its participants. That limit
+applies to money actually paid *out* to someone — it does not apply to a reward
+that was forfeited and is being reclaimed, because reclaimed value is returned
+to the pool rather than handed to a participant. Applying the payout limit to a
+reclaim would have let an exhausted loan limit silently swallow reclaimable
+funds, and because the day moves on regardless, they would never have been
+recovered. Forfeits are still bounded by the per-participant daily ceiling, so
+they can't be used to sidestep it.
+
 **Rewards say where they came from.** A day's reward pool is funded from two
 sources: newly scheduled rewards, and rewards recycled from fees already
 collected. The calculation now reports each payout broken down by source rather

@@ -765,7 +765,7 @@ contract TestMutatorFacet {
         view
         returns (
             LibInteractionRewards.DayCharge memory charge,
-            uint256[] memory slices
+            LibInteractionRewards.DaySlice[] memory slices
         )
     {
         return LibInteractionRewards.processUserSideDay(

@@ -271,7 +271,10 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         // Two entries each individually able to exceed the ceiling.
         uint256 a = _entry(alice, LOAN_A, 900 ether);
         uint256 b = _entry(alice, LOAN_B, 900 ether);
-        (LibInteractionRewards.DayCharge memory ch, uint256[] memory sl) =
+        (
+            LibInteractionRewards.DayCharge memory ch,
+            LibInteractionRewards.DaySlice[] memory sl
+        ) =
             _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), type(uint256).max);
         uint256 toUser = ch.toUser.total;
         uint256 toTreasury = ch.toTreasury.total;
@@ -281,7 +284,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertGt(toUser, 0, "a real payout actually happened");
         assertEq(toUser + toTreasury, c, "two oversized entries saturate C");
         assertLe(toUser + toTreasury, c, "Sigma paid <= C");
-        assertLe(sl[0] + sl[1], c, "Sigma slices <= C");
+        assertLe(sl[0].amount + sl[1].amount, c, "Sigma slices <= C");
     }
 
     /// @dev Codex #1399 r2 P2 — the counterpart to the test above, and the
@@ -314,6 +317,46 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertTrue(ch.advanced, "terminal forfeit advances (never strands)");
         assertGt(ch.toTreasury.total, 0, "routed to treasury, not reverted");
         assertEq(ch.toUser.total, 0, "defaulted borrower collects nothing");
+    }
+
+    /// @dev Codex #1399 r3 P2 — the loan-side lifetime cap bounds reward PAID TO
+    ///      A USER, never a FORFEIT. `_processEntry` routes a forfeit's split to
+    ///      treasury untrimmed because it recycles to the bucket rather than
+    ///      being emitted to the side. Clamping it here would let an exhausted
+    ///      loan-side cap zero the forfeit out — and since the day then ADVANCES,
+    ///      that reclaimable VPFI would be gone with its commitment still
+    ///      outstanding.
+    ///
+    ///      The clean-entry half of the assertion is what makes this meaningful:
+    ///      the SAME cap that zeroes a payout must not zero a forfeit.
+    function test_ForfeitIsExemptFromTheLoanSideCap() public {
+        // capOpen = 1 wei over 30 open days ⇒ capEff prorates to 0 on day one.
+        _stampLoanCap(LOAN_A, 1);
+        _stampLoanCap(LOAN_B, 1);
+
+        uint256 clean = _entry(alice, LOAN_A, 900 ether);
+        (LibInteractionRewards.DayCharge memory chClean, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(clean), type(uint256).max);
+        assertEq(chClean.toUser.total, 0, "exhausted loan-side cap zeroes a PAYOUT");
+        assertTrue(chClean.advanced, "and the day still advances");
+
+        uint256 forfeited = _entry(alice, LOAN_B, 900 ether);
+        _mut().setRewardEntryForfeitedRaw(forfeited);
+        (
+            LibInteractionRewards.DayCharge memory chForfeit,
+            LibInteractionRewards.DaySlice[] memory sl
+        ) = _mut().processUserSideDayRaw(
+            alice, DAY, _ids(forfeited), type(uint256).max
+        );
+        assertGt(
+            chForfeit.toTreasury.total,
+            0,
+            "the SAME cap must NOT zero a forfeit"
+        );
+        assertFalse(
+            sl[0].loanSideChargeable,
+            "and the caller is told not to charge it to the loan-side ledger"
+        );
     }
 
     // ─── Funding-source split (Codex #1399 P2) ───────────────────────────────

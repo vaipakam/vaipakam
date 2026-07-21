@@ -2663,8 +2663,11 @@ function _dayPoolHalves(
     /// @param advanced   True ⇒ the caller MUST, in the SAME transaction:
     ///                   (a) advance `rewardEntryClaimNextDay` to `d + 1` for
     ///                   every entry in the set, (b) add `Σ slices` to
-    ///                   `userSideDayPaidVpfi[user][side][d]`, and (c) add each
-    ///                   slice to `loanSideRewardPaidVpfi[loanId][side]`, and
+    ///                   `userSideDayPaidVpfi[user][side][d]` — ALL slices,
+    ///                   forfeits included, so a forfeit cannot open a second
+    ///                   budget, (c) add each slice to
+    ///                   `loanSideRewardPaidVpfi[loanId][side]` **only where
+    ///                   `loanSideChargeable`** (see {DaySlice}), and
     ///                   (d) increment `loanSideRewardedDays[loanId][side]` by
     ///                   the day just priced (this function reads
     ///                   `stored + 1` and cannot persist it).
@@ -2691,6 +2694,24 @@ function _dayPoolHalves(
         EntrySplit toUser;
         EntrySplit toTreasury;
         bool advanced;
+    }
+
+    /// @notice One entry's share of a priced day.
+    /// @param amount             VPFI attributed to this entry.
+    /// @param loanSideChargeable True  ⇒ the caller MUST add `amount` to
+    ///                           `loanSideRewardPaidVpfi[loanId][side]`.
+    ///                           False ⇒ this is a FORFEIT: it consumes the D1
+    ///                           `(user, side, day)` ceiling but is deliberately
+    ///                           exempt from the loan-side lifetime cap, exactly
+    ///                           as `_processEntry` treats it. Charging it would
+    ///                           shrink the cap for the loan's OWN later reward
+    ///                           using value that was never emitted to the side.
+    ///                           The day itself still counts toward
+    ///                           `loanSideRewardedDays` either way (the rev-15
+    ///                           day-union rule).
+    struct DaySlice {
+        uint256 amount;
+        bool loanSideChargeable;
     }
 
     /// @notice The shared D1 day primitive — price + charge ONE
@@ -2728,10 +2749,10 @@ function _dayPoolHalves(
         uint256 d,
         uint256[] memory entryIds,
         uint256 poolBudget
-    ) internal view returns (DayCharge memory charge, uint256[] memory slices) {
+    ) internal view returns (DayCharge memory charge, DaySlice[] memory slices) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 n = entryIds.length;
-        slices = new uint256[](n);
+        slices = new DaySlice[](n);
         if (n == 0) return (charge, slices);
 
         LibVaipakam.RewardSide side = s.rewardEntries[entryIds[0]].side;
@@ -2853,13 +2874,29 @@ function _dayPoolHalves(
             //
             // This function is `view` — the CALLER must persist the matching
             // `loanSideRewardedDays` increment alongside the paid maps.
-            uint256 lsr = _loanSideRemaining(
-                s,
-                e.loanId,
-                side,
-                s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
-            );
-            cEff[i] = v < lsr ? v : lsr;
+            //
+            // Codex #1399 r3 P2 — the loan-side cap bounds reward PAID TO A
+            // USER, never a FORFEIT. `_processEntry` routes a forfeit's split
+            // to treasury UNTRIMMED (#1371 r2) because a forfeit recycles to
+            // the bucket rather than being emitted to the side; it only accrues
+            // the armed days to the union. Clamping a forfeit here would let an
+            // exhausted loan-side cap zero it out, and since the day then
+            // ADVANCES that reclaimable VPFI is never credited or released —
+            // gone, with its commitment left outstanding. Forfeits are bounded
+            // by the D1 `(user, side, day)` ceiling alone.
+            bool isForfeit = _isForfeited(s, e);
+            slices[i].loanSideChargeable = !isForfeit;
+            if (isForfeit) {
+                cEff[i] = v;
+            } else {
+                uint256 lsr = _loanSideRemaining(
+                    s,
+                    e.loanId,
+                    side,
+                    s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
+                );
+                cEff[i] = v < lsr ? v : lsr;
+            }
             rawPay += cEff[i];
             unchecked { ++i; }
         }
@@ -2878,19 +2915,22 @@ function _dayPoolHalves(
         // once the pool refills.
         if (poolBudget < budget) return (charge, slices);
 
-        slices = _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
+        uint256[] memory amounts =
+            _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
         uint256 userTotal;
         uint256 treasuryTotal;
         for (uint256 i; i < n; ) {
-            // Codex #1399 P2 — route through the SHARED {_isForfeited}, which
-            // the legacy `_processEntry` uses: a borrower entry that became
-            // claimable only via a Defaulted / InternalMatched terminal keeps
-            // `e.forfeited == false`, so routing on that flag alone would pay
-            // the BORROWER what the forfeit rules send to treasury.
-            if (_isForfeited(s, s.rewardEntries[entryIds[i]])) {
-                treasuryTotal += slices[i];
+            slices[i].amount = amounts[i];
+            // `loanSideChargeable` was stamped from the SHARED {_isForfeited}
+            // above — the same predicate `_processEntry` routes on. A borrower
+            // entry that became claimable only via a Defaulted / InternalMatched
+            // terminal keeps `e.forfeited == false`, so routing on that flag
+            // alone would pay the BORROWER what the forfeit rules send to
+            // treasury.
+            if (slices[i].loanSideChargeable) {
+                userTotal += amounts[i];
             } else {
-                userTotal += slices[i];
+                treasuryTotal += amounts[i];
             }
             unchecked { ++i; }
         }
