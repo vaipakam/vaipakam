@@ -389,6 +389,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
     ///      passing for some unrelated reason.
     function test_PerSourceShortageBlocksEvenWhenTheTotalWouldFit() public {
         _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        _stampLoanCap(LOAN_A, 100_000 ether); // keep the loan-side trim out of it
         uint256 id = _entry(alice, LOAN_A, 900 ether);
 
         // Fresh is effectively unlimited; recycled is empty.
@@ -436,6 +437,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
     ///      on `budget` would pass at the lower figure.
     function test_PoolCheckUsesExactLegTotalsNotABudgetSplit() public {
         _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        _stampLoanCap(LOAN_A, 100_000 ether);
         uint256 clean = _entry(alice, LOAN_A, 900 ether);
         uint256 gone = _entry(alice, LOAN_B, 900 ether);
         _mut().setRewardEntryForfeitedRaw(gone);
@@ -485,6 +487,37 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertEq(ab[1].amount, ba[0].amount, "entry b's slice ignores ordering");
     }
 
+    /// @dev Codex #1399 r7 P2 — the LOAN-SIDE trim is FRESH-FIRST, matching
+    ///      `_applyLoanSideCap` ("Pay fresh first, then recycled, up to
+    ///      `remaining`"). A composition-proportional trim would report a
+    ///      recycled draw the live path never makes — debiting the recycle
+    ///      bucket for reward that should have come from fresh, and
+    ///      under-releasing the recycled commitment by the same amount.
+    ///
+    ///      Headroom here is smaller than the entry's FRESH share, so a correct
+    ///      implementation pays fresh only; a pro-rata one would show 40%
+    ///      recycled.
+    function test_LoanSideTrimIsFreshFirst() public {
+        _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        _mut().setDayUserSideCapRaw(DAY, _MAX); // isolate the loan-side trim
+        _stampLoanCap(LOAN_A, 3_000 ether); // capEff = 3000/30 = 100 ether
+        uint256 id = _entry(alice, LOAN_A, 900 ether); // 540 fresh / 360 recycled
+
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+
+        assertGt(ch.toUser.total, 0, "a real payout happened (non-vacuous)");
+        assertEq(
+            ch.toUser.recycled,
+            0,
+            "headroom below the fresh share draws NO recycled"
+        );
+        assertEq(ch.toUser.armedFresh, ch.toUser.total, "paid entirely from fresh");
+        // The capped-off leg carries the rest: the unpaid fresh AND all recycled.
+        assertGt(ch.cappedOff.recycled, 0, "capped-off recycled is released");
+        assertGt(ch.cappedOff.armedFresh, 0, "capped-off fresh is retired");
+    }
+
     // ─── Funding-source split (Codex #1399 P2) ───────────────────────────────
 
     /// @dev A payout must arrive DECOMPOSED by funding source, not as one plain
@@ -496,6 +529,11 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
     function test_SourceSplitFollowsTheDayComposition() public {
         // 60% fresh / 40% recycled for this day.
         _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        // Loan-side headroom well clear of the contribution: the loan-side trim
+        // is FRESH-FIRST (see test_LoanSideTrimIsFreshFirst), so a binding
+        // loan-side cap would legitimately produce an all-fresh payout and this
+        // test would be measuring that instead of the composition split.
+        _stampLoanCap(LOAN_A, 100_000 ether);
         uint256 id = _entry(alice, LOAN_A, 900 ether);
 
         (LibInteractionRewards.DayCharge memory ch, ) =
@@ -535,6 +573,7 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
     ///      absorption average while absorbing nothing.
     function test_ForfeitLegCarriesItsOwnSourceSplit() public {
         _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        _stampLoanCap(LOAN_A, 100_000 ether);
         uint256 id = _entry(alice, LOAN_A, 900 ether);
         _mut().setRewardEntryForfeitedRaw(id);
 

@@ -2751,6 +2751,150 @@ function _dayPoolHalves(
         bool loanSideChargeable;
     }
 
+    /// @dev Price every entry in the set against the loan-side cap for day `d`.
+    ///      Extracted from {processUserSideDay} purely to stay under the viaIR
+    ///      stack ceiling — no behaviour of its own.
+    /// @return cEff     Per-entry ceiling after the loan-side trim.
+    /// @return freshCap Fresh available within each `cEff`, fresh-first.
+    /// @return rawPay   `Σ cEff`.
+    /// @return capped   What the loan-side cap refused, by source.
+    function _priceEntriesForDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory entryIds,
+        DaySlice[] memory slices,
+        LibVaipakam.RewardSide side,
+        uint256 d,
+        uint256 freshDaily,
+        uint256 recycledDaily
+    )
+        private
+        view
+        returns (
+            uint256[] memory cEff,
+            uint256[] memory freshCap,
+            uint256 rawPay,
+            EntrySplit memory capped
+        )
+    {
+        uint256 n = entryIds.length;
+        cEff = new uint256[](n);
+        freshCap = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
+            uint256 v = _contribFor(s, e, d);
+            // The loan-side lifetime cap composes as a `min`, so whichever of
+            // the two ceilings is tighter binds.
+            // `_loanSideRewardCapEff` prorates by `min(daysIncl, openDays) /
+            // openDays`, so `daysIncl` must INCLUDE the day being priced — the
+            // same convention the #1353 call sites use
+            // (`storedDays + _entryArmedDays(e)`). Passing the stale stored
+            // count instead makes a loan's FIRST day compute `capEff = 0`, so
+            // `cEff` clamps to 0 and the primitive pays nothing, forever.
+            // Since this prices exactly ONE day, that is `stored + 1`.
+            //
+            // Safe to add 1 per entry: entries for a given (loanId, side) are
+            // adjacent and non-overlapping (a sale split ends the old window
+            // where the new one begins), so at most one entry of a loan-side
+            // can cover any single day.
+            //
+            // This function is `view` — the CALLER must persist the matching
+            // `loanSideRewardedDays` increment alongside the paid maps.
+            //
+            // Codex #1399 r3 P2 — the loan-side cap bounds reward PAID TO A
+            // USER, never a FORFEIT. `_processEntry` routes a forfeit's split
+            // to treasury UNTRIMMED (#1371 r2) because a forfeit recycles to
+            // the bucket rather than being emitted to the side; it only accrues
+            // the armed days to the union. Clamping a forfeit here would let an
+            // exhausted loan-side cap zero it out, and since the day then
+            // ADVANCES that reclaimable VPFI is never credited or released —
+            // gone, with its commitment left outstanding. Forfeits are bounded
+            // by the D1 `(user, side, day)` ceiling alone.
+            EntrySplit memory vs = _splitDayAmount(v, freshDaily, recycledDaily);
+            bool isForfeit = _isForfeited(s, e);
+            slices[i].loanSideChargeable = !isForfeit;
+            if (isForfeit) {
+                cEff[i] = v;
+                freshCap[i] = vs.armedFresh;
+            } else {
+                uint256 lsr = _loanSideRemaining(
+                    s,
+                    e.loanId,
+                    side,
+                    s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
+                );
+                if (v <= lsr) {
+                    cEff[i] = v;
+                    freshCap[i] = vs.armedFresh;
+                } else {
+                // Codex #1399 r7 P2 — the loan-side trim is FRESH-FIRST, not
+                // pro-rata by the day's composition. `_applyLoanSideCap` fills
+                // the headroom from fresh and only then from recycled
+                // ("Pay fresh first, then recycled, up to `remaining`"), so a
+                // composition-proportional trim here would report a recycled
+                // draw the live path never makes — debiting the recycle bucket
+                // for reward that should have come out of fresh, and
+                // under-releasing the recycled commitment by the same amount.
+                uint256 paidFresh =
+                    vs.armedFresh <= lsr ? vs.armedFresh : lsr;
+                cEff[i] = lsr;
+                freshCap[i] = paidFresh;
+                capped.armedFresh += vs.armedFresh - paidFresh;
+                capped.recycled += vs.recycled - (lsr - paidFresh);
+                }
+            }
+            rawPay += cEff[i];
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Attribute each entry's slice to the user or treasury leg,
+    ///      FRESH-FIRST within that entry's own post-trim composition
+    ///      (Codex #1399 r7 P2). Uniform with `_applyLoanSideCap`'s rule, and
+    ///      it reduces to the plain composition split when nothing was trimmed
+    ///      (`freshCap[i]` is then the entry's whole fresh share).
+    ///
+    ///      This CANNOT be done by splitting the aggregate: once one entry's
+    ///      headroom has been filled fresh-first, the set no longer has a
+    ///      single composition ratio to split by.
+    ///
+    ///      Extracted from {processUserSideDay} to keep that function under the
+    ///      viaIR stack ceiling.
+    function _attributeLegs(
+        DaySlice[] memory slices,
+        uint256[] memory amounts,
+        uint256[] memory freshCap,
+        uint256[] memory cEff
+    ) private pure returns (EntrySplit memory user_, EntrySplit memory treas_) {
+        uint256 n = slices.length;
+        for (uint256 i; i < n; ) {
+            uint256 amt = amounts[i];
+            // Fresh-first applies to the LOAN-SIDE trim only — it is already
+            // baked into `freshCap`. The further pro-rata reduction here comes
+            // from the D1 ceiling / pool, which is not a loan-side decision, so
+            // it must preserve the composition of what SURVIVED that trim
+            // rather than re-prioritising fresh. Scaling fresh-first here would
+            // zero the recycled draw on any day whose ceiling binds hard, and
+            // the day's recycled budget would then never be consumed at all.
+            uint256 f = cEff[i] == 0 ? 0 : (freshCap[i] * amt) / cEff[i];
+            // `loanSideChargeable` is stamped from the SHARED {_isForfeited} —
+            // the same predicate `_processEntry` routes on. A borrower entry
+            // that became claimable only via a Defaulted / InternalMatched
+            // terminal keeps `e.forfeited == false`, so routing on that flag
+            // alone would pay the BORROWER what the forfeit rules send to
+            // treasury.
+            if (slices[i].loanSideChargeable) {
+                user_.total += amt;
+                user_.armedFresh += f;
+                user_.recycled += amt - f;
+            } else {
+                treas_.total += amt;
+                treas_.armedFresh += f;
+                treas_.recycled += amt - f;
+            }
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice The shared D1 day primitive — price + charge ONE
     ///         `(user, side, day)` against its absolute ceiling `C`.
     /// @dev    Both the user claim and the forfeit sweep MUST route through
@@ -2912,75 +3056,20 @@ function _dayPoolHalves(
             return (charge, slices);
         }
 
-        uint256[] memory cEff = new uint256[](n);
-        uint256 rawPay;
-        uint256 cappedOffTotal;
-        for (uint256 i; i < n; ) {
-            LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
-            uint256 v = _contribFor(s, e, d);
-            // The loan-side lifetime cap composes as a `min`, so whichever of
-            // the two ceilings is tighter binds.
-            // `_loanSideRewardCapEff` prorates by `min(daysIncl, openDays) /
-            // openDays`, so `daysIncl` must INCLUDE the day being priced — the
-            // same convention the #1353 call sites use
-            // (`storedDays + _entryArmedDays(e)`). Passing the stale stored
-            // count instead makes a loan's FIRST day compute `capEff = 0`, so
-            // `cEff` clamps to 0 and the primitive pays nothing, forever.
-            // Since this prices exactly ONE day, that is `stored + 1`.
-            //
-            // Safe to add 1 per entry: entries for a given (loanId, side) are
-            // adjacent and non-overlapping (a sale split ends the old window
-            // where the new one begins), so at most one entry of a loan-side
-            // can cover any single day.
-            //
-            // This function is `view` — the CALLER must persist the matching
-            // `loanSideRewardedDays` increment alongside the paid maps.
-            //
-            // Codex #1399 r3 P2 — the loan-side cap bounds reward PAID TO A
-            // USER, never a FORFEIT. `_processEntry` routes a forfeit's split
-            // to treasury UNTRIMMED (#1371 r2) because a forfeit recycles to
-            // the bucket rather than being emitted to the side; it only accrues
-            // the armed days to the union. Clamping a forfeit here would let an
-            // exhausted loan-side cap zero it out, and since the day then
-            // ADVANCES that reclaimable VPFI is never credited or released —
-            // gone, with its commitment left outstanding. Forfeits are bounded
-            // by the D1 `(user, side, day)` ceiling alone.
-            bool isForfeit = _isForfeited(s, e);
-            slices[i].loanSideChargeable = !isForfeit;
-            if (isForfeit) {
-                cEff[i] = v;
-            } else {
-                uint256 lsr = _loanSideRemaining(
-                    s,
-                    e.loanId,
-                    side,
-                    s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
-                );
-                cEff[i] = v < lsr ? v : lsr;
-                // Codex #1399 r4 P2 — what the LOAN-SIDE cap refused. The day
-                // advances regardless, so this value can never be drawn by
-                // anyone again: `_applyLoanSideCap` therefore retires its fresh
-                // commitment in full and releases its recycled commitment, and
-                // the D1 path must report it so the caller can do the same.
-                // Leaving it unreported strands the commitment, permanently
-                // depressing every later day's availability for value nobody
-                // can draw.
-                //
-                // ONLY the loan-side trim belongs here — NOT the D1-ceiling
-                // residue below. That residue stays in the shared pool and
-                // another user may still draw it; retiring its commitment would
-                // destroy live value.
-                cappedOffTotal += v - cEff[i];
-            }
-            rawPay += cEff[i];
-            unchecked { ++i; }
-        }
+        (
+            uint256[] memory cEff,
+            uint256[] memory freshCap,
+            uint256 rawPay,
+            EntrySplit memory capped
+        ) = _priceEntriesForDay(
+            s, entryIds, slices, side, d, freshDaily, recycledDaily
+        );
 
         // Legitimately nothing to pay (zero weights / loan-side exhausted):
         // advance so the walk progresses. This is NOT the pool-shortage case.
         if (rawPay == 0) {
-            charge.cappedOff =
-                _splitDayAmount(cappedOffTotal, freshDaily, recycledDaily);
+            capped.total = capped.armedFresh + capped.recycled;
+            charge.cappedOff = capped;
             charge.advanced = true;
             return (charge, slices);
         }
@@ -2990,28 +3079,8 @@ function _dayPoolHalves(
 
         uint256[] memory amounts =
             _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay, entryIds);
-        uint256 userTotal;
-        uint256 treasuryTotal;
-        for (uint256 i; i < n; ) {
-            // `loanSideChargeable` was stamped from the SHARED {_isForfeited}
-            // above — the same predicate `_processEntry` routes on. A borrower
-            // entry that became claimable only via a Defaulted / InternalMatched
-            // terminal keeps `e.forfeited == false`, so routing on that flag
-            // alone would pay the BORROWER what the forfeit rules send to
-            // treasury.
-            if (slices[i].loanSideChargeable) {
-                userTotal += amounts[i];
-            } else {
-                treasuryTotal += amounts[i];
-            }
-            unchecked { ++i; }
-        }
-        // Split each leg ONCE at the aggregate: every entry in the set is
-        // priced against the SAME day, so one composition ratio governs both.
-        EntrySplit memory user_ =
-            _splitDayAmount(userTotal, freshDaily, recycledDaily);
-        EntrySplit memory treas_ =
-            _splitDayAmount(treasuryTotal, freshDaily, recycledDaily);
+        (EntrySplit memory user_, EntrySplit memory treas_) =
+            _attributeLegs(slices, amounts, freshCap, cEff);
 
         // ALL-OR-NOTHING vs the pool — do NOT advance, so this day is retried
         // once the pool refills.
@@ -3046,8 +3115,8 @@ function _dayPoolHalves(
         }
         charge.toUser = user_;
         charge.toTreasury = treas_;
-        charge.cappedOff =
-            _splitDayAmount(cappedOffTotal, freshDaily, recycledDaily);
+        capped.total = capped.armedFresh + capped.recycled;
+        charge.cappedOff = capped;
         charge.advanced = true;
     }
 

@@ -74,6 +74,16 @@ funds, and because the day moves on regardless, they would never have been
 recovered. Forfeits are still bounded by the per-participant daily ceiling, so
 they can't be used to sidestep it.
 
+**A loan's own limit is met from newly scheduled rewards first.** When a loan's
+lifetime limit only permits part of a day's reward, the part that is paid comes
+from the newly scheduled pool before any recycled reward is touched — the same
+order the existing settlement path already uses. Sharing it proportionally
+instead would have drawn down the recycled pot for reward that should have come
+from elsewhere, and left the corresponding bookkeeping unreleased by exactly that
+amount. The separate reduction that happens when a participant hits their own
+daily ceiling is *not* treated this way: that one keeps whatever mix survived, so
+a day whose ceiling binds tightly still draws on both sources.
+
 **Rewards say where they came from.** A day's reward pool is funded from two
 sources: newly scheduled rewards, and rewards recycled from fees already
 collected. The calculation now reports each payout broken down by source rather
