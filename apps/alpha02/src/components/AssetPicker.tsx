@@ -178,7 +178,7 @@ export function AssetPicker({
       />
       {showCustom ? (
         <input
-          aria-label={`${label} contract address`}
+          aria-label={copy.assetPicker.contractAddressAria(label)}
           className={`input ${value !== '' && !isAddressLike(value) ? 'input-invalid' : ''}`}
           placeholder="0x…"
           value={value}

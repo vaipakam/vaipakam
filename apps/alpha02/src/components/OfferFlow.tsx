@@ -238,8 +238,11 @@ function MatchOfferRow({
     <div className="item-row">
       <span className="row-main">
         <span className="row-title">
-          {side === 'borrower' ? copy.offerFlow.rowBorrow : copy.offerFlow.rowLend} {amountStr} at{' '}
-          {formatBpsAsPercent(offerRateBps(offer))} yearly{' '}
+          {copy.offerFlow.rowMainLine(
+            side === 'borrower' ? copy.offerFlow.rowBorrow : copy.offerFlow.rowLend,
+            amountStr,
+            formatBpsAsPercent(offerRateBps(offer)),
+          )}{' '}
           <OfferRiskBadge level={risk} />
         </span>
         <br />
@@ -248,7 +251,7 @@ function MatchOfferRow({
           {side === 'borrower'
             ? copy.offerFlow.receipts.youLockCollateral(collateralStr)
             : copy.offerFlow.receipts.theyLockCollateral(collateralStr)}{' '}
-          · offer #{offer.offerId}
+          · {copy.offerFlow.offerNumber(offer.offerId)}
         </span>
       </span>
       <button type="button" className="btn btn-primary btn-sm" onClick={onChoose}>
@@ -337,7 +340,7 @@ export function OfferFlow({ side }: { side: Side }) {
       const target = getSupportedChain(Number(chainParam));
       clear(
         copy.match.wrongChainLink(
-          target ? target.name : `network #${chainParam}`,
+          target ? target.name : copy.common.networkFallback(chainParam),
         ),
       );
       return;
@@ -1132,7 +1135,7 @@ export function OfferFlow({ side }: { side: Side }) {
   // query settles, which must not un-gate a bad verdict.
   const securityLegs = [
     {
-      leg: 'loan asset',
+      leg: copy.offerFlow.securityLegLoanAsset,
       needed:
         secLendingLeg.isErc20 &&
         needsSecurityCheck(readChain.chainId, secLendingLeg.addr),
@@ -1140,7 +1143,7 @@ export function OfferFlow({ side }: { side: Side }) {
       errored: acceptLendingSec.isError,
     },
     {
-      leg: 'collateral',
+      leg: copy.offerFlow.securityLegCollateral,
       needed:
         secCollateralLeg.isErc20 &&
         needsSecurityCheck(readChain.chainId, secCollateralLeg.addr),
@@ -2234,7 +2237,9 @@ export function OfferFlow({ side }: { side: Side }) {
           {mode === 'accept' && selected ? (
             <div className="banner banner-info">
               <span className="banner-body">
-                You’re {side === 'borrower' ? 'accepting lending offer' : 'funding borrow request'}{' '}
+                {side === 'borrower'
+                  ? copy.offerFlow.acceptingLendingOffer
+                  : copy.offerFlow.fundingBorrowRequest}{' '}
                 #{selected.offerId}. {copy.match.wholeOfferNote}
               </span>
             </div>

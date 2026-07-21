@@ -79,7 +79,7 @@ export function Vault() {
                 address={vault.data.vaultAddress}
                 explorerBase={readChain.blockExplorer}
               />{' '}
-              on {readChain.name}
+              {copy.vault.onChain(readChain.name)}
             </p>
           </section>
 

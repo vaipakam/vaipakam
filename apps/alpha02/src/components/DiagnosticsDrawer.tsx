@@ -216,7 +216,7 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   const walletOnUnsupported = isConnected && !onSupportedChain;
   const networkLine = walletOnUnsupported
     ? copy.diagnostics.networkUnsupported(
-        walletChainId === undefined ? 'unknown' : String(walletChainId),
+        walletChainId === undefined ? copy.common.unknown : String(walletChainId),
         readChain.name,
         readChain.chainId,
       )

@@ -538,6 +538,8 @@
       "ownPathBlurb": "Set a daily fee — renters prepay the whole rental up front.",
       "wantPath": "I want to rent an NFT",
       "wantPathBlurb": "Pay up front, use the NFT until the rental ends.",
+      "switchPrompt": "{{path}}? Switch",
+      "prepaymentTokenLabel": "prepayment token",
       "browseCta": "Browse NFTs available to rent",
       "custodyNote": "The NFT never leaves vault custody. The renter receives temporary use rights only — not ownership.",
       "postListing": "Post rental listing",
@@ -822,6 +824,7 @@
         "loanBetween": "A loan of {{principal}} between two other wallets",
         "nftStaysVault": "{{nft}} stays in the owner’s vault{{collateralSuffix}}",
         "vaultCollateralSuffix": ", plus {{collateral}} collateral",
+        "lockedSymbolFallback": "locked",
         "lockedCollateralBorrower": "{{collateral}} collateral (borrower’s)",
         "owedPrincipalUpToInterest": "{{principal}} + up to ~{{interest}} interest",
         "termsRental": "{{duration}} · ends {{date}}",
@@ -1380,6 +1383,10 @@
       "activeDiscount": "Active discount",
       "noneRightNow": "None right now",
       "warmingUp": "Warming up",
+      "warmingUpBody": "Your balance qualifies for {{tier}}{{currently}}, but discounts use your 30-day average — keep the balance and your active discount catches up.",
+      "tierOff": "{{discount}} off",
+      "higherTier": "a higher tier",
+      "currentlyClause": " (currently {{rate}})",
       "consentToggle": "Use my vaulted VPFI for fee discounts",
       "consentToggleSub": "Without this, holding VPFI gives no discount.",
       "switchToChange": "Switch to a supported network to change this.",
@@ -1544,6 +1551,7 @@
       "noBalancesInWindow": "No balances among the first {{count}} tokens checked — widen the scan below to keep looking.",
       "loading": "Reading your vault…",
       "addressLabel": "Vault address:",
+      "onChain": "on {{chain}}",
       "noVaultTitle": "No vault yet",
       "emptyTitle": "Nothing in your vault yet",
       "emptyBody": "Assets appear here when you post offers, open loans, or deposit VPFI.",
@@ -1750,6 +1758,12 @@
       },
       "rowBorrow": "Borrow",
       "rowLend": "Lend",
+      "rowMainLine": "{{action}} {{amount}} at {{rate}} yearly",
+      "offerNumber": "offer #{{id}}",
+      "acceptingLendingOffer": "You’re accepting lending offer",
+      "fundingBorrowRequest": "You’re funding borrow request",
+      "securityLegLoanAsset": "loan asset",
+      "securityLegCollateral": "collateral",
       "counterAssetBorrowed": "Borrowed asset",
       "counterAssetCollateral": "Collateral asset",
       "liveFeesLoaded": "Live fee terms loaded",
@@ -1805,10 +1819,13 @@
     "common": {
       "back": "Back",
       "tryAgain": "Try again",
-      "waitingForWallet": "Waiting for wallet…"
+      "waitingForWallet": "Waiting for wallet…",
+      "networkFallback": "network #{{id}}",
+      "unknown": "unknown"
     },
     "stepNav": {
-      "progressAria": "Progress"
+      "progressAria": "Progress",
+      "progress": "Step {{current}} of {{total}} — {{label}}"
     },
     "checklist": {
       "ready": "Ready",
@@ -1819,7 +1836,8 @@
       "placeholder": "Choose an asset…",
       "pasteOption": "Paste a token address…",
       "faucetBadge": "Faucet test token",
-      "invalidAddress": "Enter a valid contract address — “0x” followed by 40 hex characters."
+      "invalidAddress": "Enter a valid contract address — “0x” followed by 40 hex characters.",
+      "contractAddressAria": "{{label}} contract address"
     },
     "copyAddress": {
       "copyAria": "Copy address {{address}}",

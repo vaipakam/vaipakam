@@ -1548,7 +1548,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                       : copy.positions.details.whatIfNothingRentalViewer
                   : role === 'borrower'
                     ? copy.positions.whatIfNothingBorrower(
-                        collateral?.symbol ?? 'locked',
+                        collateral?.symbol ?? copy.positions.details.lockedSymbolFallback,
                         graceLengthStr ? `${graceLengthStr} ` : '',
                       )
                     : role === 'lender'

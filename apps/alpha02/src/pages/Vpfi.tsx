@@ -482,15 +482,14 @@ export function Vpfi() {
                 <div className="receipt-row">
                   <dt>{copy.vpfi.warmingUp}</dt>
                   <dd>
-                    Your balance qualifies for
-                    {tierRows[snapshot.rawTier - 1]
-                      ? ` ${tierRows[snapshot.rawTier - 1].discount} off`
-                      : ' a higher tier'}
-                    {snapshot.effectiveBps > 0
-                      ? ` (currently ${formatBpsAsPercent(snapshot.effectiveBps)})`
-                      : ''}
-                    , but discounts use your 30-day average — keep the balance
-                    and your active discount catches up.
+                    {copy.vpfi.warmingUpBody(
+                      tierRows[snapshot.rawTier - 1]
+                        ? copy.vpfi.tierOff(tierRows[snapshot.rawTier - 1].discount)
+                        : copy.vpfi.higherTier,
+                      snapshot.effectiveBps > 0
+                        ? copy.vpfi.currentlyClause(formatBpsAsPercent(snapshot.effectiveBps))
+                        : '',
+                    )}
                   </dd>
                 </div>
               ) : null}

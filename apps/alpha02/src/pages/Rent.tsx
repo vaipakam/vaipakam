@@ -757,7 +757,7 @@ function RentNftFlow() {
       const target = getSupportedChain(Number(chainParam));
       clear(
         copy.match.wrongChainLink(
-          target ? target.name : `network #${chainParam}`,
+          target ? target.name : copy.common.networkFallback(chainParam),
         ),
       );
       return;
@@ -1005,7 +1005,7 @@ function RentNftFlow() {
         ];
         if (v.kind === 'block') {
           queryClient.setQueryData(cacheKey, v);
-          throw new Error(copy.tokenSecurity.gateBlock('prepayment token', v.reasons.join('; ')));
+          throw new Error(copy.tokenSecurity.gateBlock(copy.rent.prepaymentTokenLabel, v.reasons.join('; ')));
         }
         if (v.kind === 'unknown') {
           // RESET (not invalidate): reset drops `data` to undefined
@@ -1015,7 +1015,7 @@ function RentNftFlow() {
           // outage then errors into the blocked banner + "Check
           // again".
           void queryClient.resetQueries({ queryKey: cacheKey });
-          throw new Error(copy.tokenSecurity.gateUnknown('prepayment token'));
+          throw new Error(copy.tokenSecurity.gateUnknown(copy.rent.prepaymentTokenLabel));
         }
         // A live 'warn' passes ONLY when the review already disclosed
         // this exact warning (same reasons) — anything else was never
@@ -1029,7 +1029,7 @@ function RentNftFlow() {
           // next render; a fast retry inside that window would pass
           // un-consented.
           setConsent(false);
-          throw new Error(copy.tokenSecurity.gateChanged('prepayment token'));
+          throw new Error(copy.tokenSecurity.gateChanged(copy.rent.prepaymentTokenLabel));
         }
       }
       let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
@@ -1310,9 +1310,9 @@ function RentNftFlow() {
               <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">
                   {prepaySec.isError || prepaySec.data === undefined
-                    ? copy.tokenSecurity.gateUnknown('prepayment token')
+                    ? copy.tokenSecurity.gateUnknown(copy.rent.prepaymentTokenLabel)
                     : copy.tokenSecurity.gateBlock(
-                        'prepayment token',
+                        copy.rent.prepaymentTokenLabel,
                         (prepaySec.data.kind === 'block' ? prepaySec.data.reasons : []).join('; '),
                       )}
                 </span>
@@ -1333,7 +1333,7 @@ function RentNftFlow() {
               <div className="banner banner-warn" role="alert" style={{ marginTop: 16 }}>
                 <span className="banner-body">
                   {copy.tokenSecurity.gateWarn(
-                    'prepayment token',
+                    copy.rent.prepaymentTokenLabel,
                     (prepaySec.data?.kind === 'warn' ? prepaySec.data.reasons : []).join('; '),
                   )}
                 </span>
@@ -1341,7 +1341,7 @@ function RentNftFlow() {
             ) : prepaySecNeeded && prepaySec.data?.kind === 'unsupported' ? (
               <div className="banner banner-info" role="note" style={{ marginTop: 16 }}>
                 <span className="banner-body">
-                  {copy.tokenSecurity.gateUnsupported('prepayment token')}
+                  {copy.tokenSecurity.gateUnsupported(copy.rent.prepaymentTokenLabel)}
                 </span>
               </div>
             ) : null}
@@ -1512,7 +1512,7 @@ export function Rent() {
               className="btn btn-ghost btn-sm"
               onClick={() => setPath(null)}
             >
-              ← {path === 'own' ? copy.rent.wantPath : copy.rent.ownPath}? Switch
+              ← {copy.rent.switchPrompt(path === 'own' ? copy.rent.wantPath : copy.rent.ownPath)}
             </button>
           </p>
           {path === 'own' ? <ListNftFlow /> : <RentNftFlow />}
