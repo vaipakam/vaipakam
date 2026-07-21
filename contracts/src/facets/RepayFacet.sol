@@ -321,35 +321,21 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // in the lending asset. tryApplyYieldFee returns (false, 0) on
             // any precondition failure — we then fall through to the normal
             // ERC-20 split.
-            uint256 yieldVpfiDeducted;
-            // #1354 §F2 — eligibility is `consent OR lenderMode == Full`: a
-            // lender who absorbed the Full C* tariff earns the +10% yield-fee
-            // discount even without separate hold-discount consent.
-            if (LibVPFIDiscount.lenderYieldFeeEligible(loan) && plan.treasuryShare > 0) {
-                bool yieldApplied;
-                (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount
-                    .tryApplyYieldFee(
-                        loan,
-                        plan.interest + plan.lateFee
-                    );
-                if (yieldApplied) {
-                    plan.lenderShare = plan.interest + plan.lateFee;
-                    plan.lenderDue = plan.principal + plan.lenderShare;
-                    plan.treasuryShare = 0;
-                } else {
-                    // E-1 (#1203) — no VPFI price source: deliver the hold-tier
-                    // discount as a direct reduction of the lending-asset
-                    // treasury fee (lender keeps the difference).
-                    uint256 r = LibVPFIDiscount.directReductionYieldFee(
-                        loan,
-                        plan.treasuryShare
-                    );
-                    if (r > 0) {
-                        plan.lenderShare += r;
-                        plan.lenderDue = plan.principal + plan.lenderShare;
-                        plan.treasuryShare -= r;
-                    }
-                }
+            // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode ==
+            // Full`; the shared resolve helper runs the whole
+            // VPFI-payment-then-direct-reduction delivery and returns the deltas
+            // to fold into the plan. `loan.lender` is consolidated to the
+            // current holder earlier in this terminal, so keying on it is safe.
+            (uint256 lenderExtra, uint256 newTreasury, uint256 yieldVpfiDeducted) =
+                LibVPFIDiscount.resolveLenderYieldFee(
+                    loan,
+                    plan.interest + plan.lateFee,
+                    plan.treasuryShare
+                );
+            if (lenderExtra > 0) {
+                plan.lenderShare += lenderExtra;
+                plan.lenderDue = plan.principal + plan.lenderShare;
+                plan.treasuryShare = newTreasury;
             }
 
             // Treasury share transferred immediately (no claim needed).

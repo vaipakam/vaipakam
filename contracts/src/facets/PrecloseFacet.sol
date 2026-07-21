@@ -287,43 +287,25 @@ contract PrecloseFacet is
             uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
             LibSettlement.ERC20Settlement memory plan = LibSettlement.computePreclose(loan, lateFee);
 
-            // Lender Yield Fee discount (Tokenomics §6): when the lender has
-            // platform-level VPFI-discount consent AND holds >= the required
-            // VPFI in vault, the 1% treasury cut is paid in VPFI from the
-            // lender's vault and the lender keeps 100% of interest in the
-            // lending asset. tryApplyYieldFee is a silent fallback.
-            uint256 yieldVpfiDeducted;
-            // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a
-            // Full lender earns the +10% even without hold-discount consent).
-            if (LibVPFIDiscount.lenderYieldFeeEligible(loan) && plan.treasuryShare > 0) {
-                bool yieldApplied;
-                // Pass-2 A1/D5 (#1189) — base the VPFI treasury-cut equivalent on
-                // `interest + lateFee` and let the lender keep the whole
-                // `interest + lateFee` in the lending asset, mirroring
-                // {RepayFacet.repayLoan}. Otherwise a yield-discounted grace-window
-                // preclose would silently drop the late fee from the lender's due.
-                (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount
-                    .tryApplyYieldFee(
-                        loan,
-                        plan.interest + plan.lateFee
-                    );
-                if (yieldApplied) {
-                    plan.lenderShare = plan.interest + plan.lateFee;
-                    plan.lenderDue = plan.principal + plan.lenderShare;
-                    plan.treasuryShare = 0;
-                } else {
-                    // E-1 (#1203) — no VPFI price source: direct lending-asset
-                    // fee reduction (mirrors {RepayFacet.repayLoan}).
-                    uint256 r = LibVPFIDiscount.directReductionYieldFee(
-                        loan,
-                        plan.treasuryShare
-                    );
-                    if (r > 0) {
-                        plan.lenderShare += r;
-                        plan.lenderDue = plan.principal + plan.lenderShare;
-                        plan.treasuryShare -= r;
-                    }
-                }
+            // Lender Yield Fee discount (Tokenomics §6 / §F2, #1354 / #1383):
+            // eligibility is `consent OR lenderMode == Full` (a Full lender
+            // earns the +10% even without hold-discount consent). The shared
+            // resolve helper runs the whole VPFI-payment-then-direct-reduction
+            // delivery, sizing the VPFI treasury-cut equivalent on
+            // `interest + lateFee` so a yield-discounted grace-window preclose
+            // keeps the late fee in the lender's due (Pass-2 A1/D5 #1189).
+            // `loan.lender` is consolidated to the current holder earlier in the
+            // direct-close terminal, so keying eligibility on it is safe.
+            (uint256 lenderExtra, uint256 newTreasury, uint256 yieldVpfiDeducted) =
+                LibVPFIDiscount.resolveLenderYieldFee(
+                    loan,
+                    plan.interest + plan.lateFee,
+                    plan.treasuryShare
+                );
+            if (lenderExtra > 0) {
+                plan.lenderShare += lenderExtra;
+                plan.lenderDue = plan.principal + plan.lenderShare;
+                plan.treasuryShare = newTreasury;
             }
 
             // Treasury fee transferred immediately (skipped when satisfied in VPFI).

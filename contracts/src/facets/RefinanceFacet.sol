@@ -419,30 +419,20 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             oldLoan,
             interestPortion
         );
-        uint256 yieldVpfiDeducted;
-        // #1354 §F2 — eligibility is `consent OR lenderMode == Full` (a Full
-        // lender earns the +10% even without hold-discount consent).
-        if (LibVPFIDiscount.lenderYieldFeeEligible(oldLoan) && treasuryFee > 0) {
-            bool yieldApplied;
-            (yieldApplied, yieldVpfiDeducted) = LibVPFIDiscount.tryApplyYieldFee(
+        // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode == Full` (a
+        // Full lender earns the +10% even without hold-discount consent). The
+        // shared resolve helper runs the whole VPFI-payment-then-direct-reduction
+        // delivery against `oldLoan` (consolidated to the current lender holder
+        // earlier in the refinance), returning the deltas to fold in.
+        (uint256 lenderExtra, uint256 newTreasuryFee, uint256 yieldVpfiDeducted) =
+            LibVPFIDiscount.resolveLenderYieldFee(
                 oldLoan,
-                interestPortion
+                interestPortion,
+                treasuryFee
             );
-            if (yieldApplied) {
-                lenderInterest = interestPortion;
-                treasuryFee = 0;
-            } else {
-                // E-1 (#1203) — no VPFI price source: direct lending-asset fee
-                // reduction (mirrors {RepayFacet.repayLoan}).
-                uint256 r = LibVPFIDiscount.directReductionYieldFee(
-                    oldLoan,
-                    treasuryFee
-                );
-                if (r > 0) {
-                    lenderInterest += r;
-                    treasuryFee -= r;
-                }
-            }
+        if (lenderExtra > 0) {
+            lenderInterest += lenderExtra;
+            treasuryFee = newTreasuryFee;
         }
         uint256 lenderDue = oldLoan.principal + lenderInterest;
 
