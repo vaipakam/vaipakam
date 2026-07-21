@@ -21,8 +21,15 @@
  *
  *   1. JSX text children (`<span>Some words {x}</span>`),
  *   2. literals used as JSX children (`{cond ? `… {a} …` : '…'}`),
+ *      including words inside the interpolation branches themselves
+ *      (`{`${n === 1 ? 'day' : 'days'}`}`) and through TS-only wrappers
+ *      (`{'Loading' as const}`, `{('x')!}`, `satisfies`),
  *   3. literals in a small set of user-visible JSX attributes
- *      (title / aria-label / placeholder / alt / …).
+ *      (title / aria-label / placeholder / alt / heading / text / …),
+ *      including attributes supplied via a spread of an object literal,
+ *   4. literals on user-visible OBJECT-LITERAL keys (`label` / `text` /
+ *      `tooltip` / …) — the shape components consume as row/option copy
+ *      (`options={[{ label: 'Newest first' }]}`).
  *
  * Node context makes "is this rendered?" unambiguous, so the detector
  * can flag even a SINGLE prose word without the false positives that
@@ -32,10 +39,9 @@
  * A finding is NOT a bug when the literal is deliberately English —
  * a glossary/brand token (VPFI, NFT, Vaipakam), or a string that is
  * consciously deferred. Glossary tokens live in GLOSSARY; the rest go
- * in ALLOWLIST (keyed by the exact trimmed prose), each with the reason
- * clear from its grouping. Add there rather than loosening the detector.
+ * in BASELINE (below). Add there rather than loosening the detector.
  *
- * Exit 1 on any un-allowlisted hit. Wired into the alpha02 typecheck
+ * Exit 1 on any un-baselined hit. Wired into the alpha02 typecheck
  * lane so a PR that reintroduces a bypass fails CI.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -48,9 +54,9 @@ const SRC = join(ROOT, 'src');
 
 /**
  * JSX attributes whose value is shown to the user (tooltip, a11y label,
- * input hint, image fallback). Only these attributes are scanned for
- * hardcoded prose; everything else (className, href, id, key, to,
- * role, data-*, style, type, name, …) is code, never rendered text.
+ * input hint, image fallback, custom-component copy props). Only these
+ * are scanned; everything else (className, href, id, key, to, role,
+ * data-*, style, type, name, …) is code, never rendered text.
  */
 const UI_ATTRS = new Set([
   'title',
@@ -64,6 +70,30 @@ const UI_ATTRS = new Set([
   'alt',
   'label',
   'caption',
+  'heading',
+  'text',
+  'tooltip',
+]);
+
+/**
+ * Object-literal property keys that carry user-visible copy when the
+ * object is consumed by a component (`options={[{ label, text }]}`,
+ * `{ badge: { text } }`, a spread attribute `{...{ placeholder }}`).
+ * Same intent as UI_ATTRS but for the object-shape path.
+ */
+const UI_KEYS = new Set([
+  'label',
+  'title',
+  'text',
+  'tooltip',
+  'heading',
+  'placeholder',
+  'caption',
+  'alt',
+  'subtitle',
+  'message',
+  'ariaLabel',
+  'aria-label',
 ]);
 
 /**
@@ -83,54 +113,53 @@ const GLOSSARY = new Set(
 
 /**
  * BASELINE — pre-existing violations frozen at the moment this AST
- * detector landed (#1365), keyed by FILE so freezing e.g. "Close" in
- * one desk panel does NOT punch a global hole for "Close" everywhere.
- * A new file, or a new string in a listed file, is still flagged — the
- * detector ratchets: existing debt is grandfathered, new debt is
- * blocked. Burn-down (extract → catalog → translate) is tracked in
- * #1393; entries leave this map as they are extracted.
- *
- * Developer diagnostics / thrown tx-hash errors are baselined too — they
- * are not catalog copy, but they live in the same rendered positions.
+ * detector landed (#1365), keyed by FILE and then by the exact string,
+ * with an OCCURRENCE COUNT. Freezing e.g. one `Close` in a desk panel
+ * grandfathers exactly that one occurrence: a SECOND rendered `Close`
+ * in the same file exceeds the count and is flagged, so the ratchet
+ * blocks new violations (new files, new strings, AND new duplicates),
+ * not merely new string values. Burn-down (extract → catalog →
+ * translate) is tracked in #1393; entries leave this map as they are
+ * extracted. Developer diagnostics / thrown tx-hash errors are baselined
+ * too — not catalog copy, but they sit in the same rendered positions.
  */
 const BASELINE = {
-  // Release-stage badge — a fixed marker, not localized.
-  'src/components/AppShell.tsx': ['alpha'],
-  'src/components/AssetPicker.tsx': ['contract address'],
+  // --- Basic / common surfaces (extract first — see #1393).
+  'src/components/AppShell.tsx': { alpha: 1 }, // release-stage badge, not localized
+  'src/components/AssetPicker.tsx': { 'contract address': 1 },
+  'src/components/OfferFlow.tsx': {
+    yearly: 1,
+    '· offer #': 1,
+    'You’re': 1,
+    'accepting lending offer': 1,
+    'funding borrow request': 1,
+  },
+  'src/components/StepNav.tsx': { Step: 1 },
+  'src/pages/Rent.tsx': { '? Switch': 1 },
+  'src/pages/Vpfi.tsx': {
+    'Your balance qualifies for': 1,
+    off: 1,
+    'a higher tier': 1,
+    '(currently )': 1,
+    ', but discounts use your 30-day average — keep the balance and your active discount catches up.': 1,
+  },
   // --- Advanced Rate-Desk surface: its own i18n pass (status-enum
   //     vocabulary must be localized first). Grandfathered here.
-  'src/components/desk/DeskHeader.tsx': ['bps · loan #'],
-  'src/components/desk/HistoryPanel.tsx': ['Loan #'],
-  'src/components/desk/MatchBand.tsx': ['bps · offers # × #'],
-  'src/components/desk/OpenOrdersPanel.tsx': ['Reading the offer’s live values…', 'Close'],
-  'src/components/desk/PositionsPanel.tsx': ['Loan #', 'd left', 'd overdue', '· partial repay OK'],
-  'src/components/desk/RateLadder.tsx': ['bps quoted mid', 'mid'],
-  'src/components/desk/SignedFillConfirm.tsx': ['Close'],
-  'src/components/desk/TapePanel.tsx': ['bps · loan # ·', 'Loading recent fills…'],
-  // --- Basic/common surfaces with pre-existing hardcoded prose.
-  'src/components/OfferFlow.tsx': [
-    'yearly',
-    '· offer #',
-    'You’re',
-    'accepting lending offer',
-    'funding borrow request',
-  ],
-  'src/components/StepNav.tsx': ['Step'],
-  'src/pages/Rent.tsx': ['? Switch'],
-  'src/pages/Vpfi.tsx': [
-    'Your balance qualifies for',
-    'off',
-    'a higher tier',
-    '(currently )',
-    ', but discounts use your 30-day average — keep the balance and your active discount catches up.',
-  ],
-  // Developer diagnostics / thrown errors (never rendered as UI copy).
-  'src/components/ErrorBoundary.tsx': [
-    'A component threw during render',
-    'React error # — see https://react.dev/errors/',
-    'Component stack:',
-  ],
-  'src/pages/Faucet.tsx': ['Transaction reverted ()'],
+  'src/components/desk/DeskHeader.tsx': { 'bps · loan #': 1 },
+  'src/components/desk/HistoryPanel.tsx': { 'Loan #': 1 },
+  'src/components/desk/MatchBand.tsx': { 'bps · offers # × #': 1 },
+  'src/components/desk/OpenOrdersPanel.tsx': { 'Reading the offer’s live values…': 1, Close: 1 },
+  'src/components/desk/PositionsPanel.tsx': {
+    'Loan #': 1,
+    'd left': 1,
+    'd overdue': 1,
+    '· partial repay OK': 1,
+  },
+  'src/components/desk/RateLadder.tsx': { 'bps quoted mid': 1, mid: 1, '· spread': 1 },
+  'src/components/desk/SignedFillConfirm.tsx': { Close: 1 },
+  'src/components/desk/TapePanel.tsx': { 'Loading recent fills…': 1, 'bps · loan # ·': 1 },
+  // --- Developer diagnostic rendered inside the crash UI (not copy).
+  'src/components/ErrorBoundary.tsx': { 'Component stack:': 1 },
 };
 
 /** Collapse interpolations + whitespace to inspect only the STATIC text
@@ -155,21 +184,31 @@ function isProse(text) {
 }
 
 /** Static contribution(s) of an expression used in a rendered position,
- *  as an ARRAY of independent fragments — a string literal, a template
- *  literal (head + each span's literal, joined: one DOM run), or the
- *  branches of a conditional / `&&` / `||` / `??` / `+` / paren, each
- *  returned separately so one prose branch is enough to flag while the
- *  others stay isolated. Interpolations are dropped (replaced by a
- *  space) — the AST gives exact `${}` boundaries, no regex blanking. */
+ *  as an ARRAY of independent DOM fragments:
+ *   - a string / no-substitution template literal → its text,
+ *   - a template literal → its literal spans joined as one run PLUS each
+ *     interpolation expression recursed (branch words like
+ *     `${n === 1 ? 'day' : 'days'}` render too),
+ *   - conditional / `&&` / `||` / `??` / `+` → each side, isolated so one
+ *     prose branch is enough to flag,
+ *   - paren / `as` / `!` / `satisfies` / `<T>` wrappers → unwrapped.
+ *  Anything else (a call, an identifier) contributes no static text. */
 function renderedStatic(node) {
   if (ts.isStringLiteralLike(node)) return [node.text];
-  if (ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
   if (ts.isTemplateExpression(node)) {
-    let out = node.head.text;
-    for (const span of node.templateSpans) out += ' ' + span.literal.text;
-    return [out];
+    const literalRun = [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' ');
+    const interp = node.templateSpans.flatMap((s) => renderedStatic(s.expression));
+    return [literalRun, ...interp];
   }
-  if (ts.isParenthesizedExpression(node)) return renderedStatic(node.expression);
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    (typeof ts.isTypeAssertionExpression === 'function' && ts.isTypeAssertionExpression(node)) ||
+    (typeof ts.isSatisfiesExpression === 'function' && ts.isSatisfiesExpression(node))
+  ) {
+    return renderedStatic(node.expression);
+  }
   if (ts.isConditionalExpression(node)) {
     return [...renderedStatic(node.whenTrue), ...renderedStatic(node.whenFalse)];
   }
@@ -185,6 +224,14 @@ function renderedStatic(node) {
     }
   }
   return [];
+}
+
+/** Property-name text for an object-literal `PropertyAssignment`
+ *  (identifier or string key), or null for computed/other keys. */
+function propKey(name, sf) {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return null;
+  return null;
 }
 
 /**
@@ -230,6 +277,13 @@ export function analyzeSource(rel, src) {
         }
       }
     }
+    // 4. User-visible object-literal properties (row/option copy, and
+    //    spread attributes `{...{ placeholder: '…' }}`, whose object
+    //    property is reached here too).
+    else if (ts.isPropertyAssignment(node)) {
+      const key = propKey(node.name, sf);
+      if (key && UI_KEYS.has(key)) reportExpr(node, node.initializer);
+    }
     ts.forEachChild(node, visit);
   };
   visit(sf);
@@ -245,24 +299,30 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** Apply the file-scoped BASELINE ratchet to a raw finding. */
-function isBaselined(rel, s) {
-  const key = rel.split('\\').join('/');
-  return (BASELINE[key] || []).includes(s);
-}
-
-/** CLI entry — scan the whole src tree and exit non-zero on any
- *  un-baselined finding. Guarded so importing this module (the unit
- *  test) does not run the scan. */
+/** Scan the whole src tree; return findings that EXCEED the baselined
+ *  occurrence count for their (file, string). New files, new strings,
+ *  and extra duplicates all surface. */
 function runCli() {
-  const findings = [];
+  const violations = [];
   for (const file of walk(SRC)) {
     const rel = relative(ROOT, file).split('\\').join('/');
-    for (const f of analyzeSource(rel, readFileSync(file, 'utf8'))) {
-      if (!isBaselined(f.rel, f.s)) findings.push(f);
+    const found = analyzeSource(rel, readFileSync(file, 'utf8'));
+    const byString = new Map();
+    for (const f of found) {
+      const arr = byString.get(f.s) || [];
+      arr.push(f);
+      byString.set(f.s, arr);
+    }
+    const base = BASELINE[rel] || {};
+    for (const [s, occs] of byString) {
+      const allowed = base[s] || 0;
+      if (occs.length > allowed) {
+        occs.sort((a, b) => a.line - b.line);
+        for (const f of occs.slice(allowed)) violations.push(f);
+      }
     }
   }
-  return findings;
+  return violations;
 }
 
 // CLI entry — run the scan only when executed directly (`node

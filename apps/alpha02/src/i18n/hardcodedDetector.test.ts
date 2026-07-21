@@ -64,4 +64,40 @@ describe('AST hardcoded-string detector (#1365)', () => {
     );`;
     expect(strings(src)).toEqual([]);
   });
+
+  // --- Codex #1394 round-1 coverage gaps ---
+
+  it('flags the visible custom props heading / text / tooltip', () => {
+    expect(strings('const X = () => <EmptyState heading="No offers yet" />;')).toContain(
+      'No offers yet',
+    );
+    expect(strings('const X = () => <HelpTip tooltip="Close position" />;')).toContain(
+      'Close position',
+    );
+  });
+
+  it('flags prose inside a template interpolation expression', () => {
+    const src = "const X = () => <span>{`${n === 1 ? 'day' : 'days'}`}</span>;";
+    expect(strings(src)).toContain('day');
+    expect(strings(src)).toContain('days');
+  });
+
+  it('flags a literal wrapped in a type-only expression (as const / non-null)', () => {
+    expect(strings("const X = () => <span>{'Loading offers' as const}</span>;")).toContain(
+      'Loading offers',
+    );
+    expect(strings("const X = () => <span>{('Failed to load')!}</span>;")).toContain(
+      'Failed to load',
+    );
+  });
+
+  it('flags visible option labels inside object-valued props', () => {
+    const src = "const X = () => <SelectMenu options={[{ value: 'newest', label: 'Newest first' }]} />;";
+    expect(strings(src)).toContain('Newest first');
+  });
+
+  it('flags user-visible attributes supplied via a spread of an object literal', () => {
+    const src = "const X = () => <input {...{ placeholder: 'Search offers' }} />;";
+    expect(strings(src)).toContain('Search offers');
+  });
 });
