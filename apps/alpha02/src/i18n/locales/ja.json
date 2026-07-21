@@ -117,7 +117,15 @@
           "title": "ポジションを管理",
           "blurb": "ローンとレンタルを確認し、返済、担保追加、請求を行います。"
         }
-      }
+      },
+      "activePositions_few": "アクティブなポジションが {{count}} 件あります。マイポジションで確認できます。",
+      "activePositions_many": "アクティブなポジションが {{count}} 件あります。マイポジションで確認できます。",
+      "activePositions_one": "アクティブなポジションが {{count}} 件あります。マイポジションで確認できます。",
+      "activePositions_other": "アクティブなポジションが {{count}} 件あります。マイポジションで確認できます。",
+      "activePositions_two": "アクティブなポジションが {{count}} 件あります。マイポジションで確認できます。",
+      "activePositions_zero": "アクティブなポジションが {{count}} 件あります。マイポジションで確認できます。",
+      "assetsNote": "資産はあなた自身のオンチェーン vault にあります — Vaipakam がプールしたり預かったりすることはありません。",
+      "testnetNudge": "現在 {{chainName}}（テストネット）上です。無料のテスト資産で試してみましょう →"
     },
     "tokenSecurity": {
       "pickerUnknown": "独立したセキュリティチェックで、このトークンを現在確認できませんでした。未確認トークンを使う取引は、チェックが成功するまで保留されます。",
@@ -137,7 +145,22 @@
           "title": "このオファー内のトークンを独立したセキュリティ画面で確認できませんでした。特に注意して扱ってください。"
         }
       },
-      "reputationUnlisted": "このアドレスの市場リストは見つかりません — 広い市場ではこのトークンが知られていません。それだけで悪いわけではありませんが、取引前にプロジェクトとコントラクトアドレスを確認してください。"
+      "reputationUnlisted": "このアドレスの市場リストは見つかりません — 広い市場ではこのトークンが知られていません。それだけで悪いわけではありませんが、取引前にプロジェクトとコントラクトアドレスを確認してください。",
+      "gateBlock": "この取引の {{leg}} は独立したセキュリティチェックに失敗しました: {{reasons}}。承諾は無効です — このようなトークンは条件に関係なく売却や転送が不可能な場合があります。",
+      "gateChanged": "この取引の {{leg}} のセキュリティチェックで、確認後に新しい検出事項が報告されました。何も署名されていません。上のレビューに更新が表示されています — 読んだうえで続行する場合は同意チェックを再度入れてください。",
+      "gateUnknown": "この取引の {{leg}} の独立したセキュリティチェックを実行できませんでした。しばらくして再試行してください — トークンを検証できるまで承諾は保留されます。",
+      "gateUnsupported": "独立したセキュリティチェックはこのネットワークを対象外としています（テストネットはインデックスされません）。そのため、この取引の {{leg}} はスクリーニングされていません。信頼できるトークンだけを承諾してください。",
+      "gateWarn": "この取引の {{leg}} に注意: {{reasons}}。続行前に内容を理解してください。",
+      "matchesHidden_few": "独立したセキュリティチェックが危険なトークンを検出したため、一致オファー {{count}} 件が非表示です。",
+      "matchesHidden_many": "独立したセキュリティチェックが危険なトークンを検出したため、一致オファー {{count}} 件が非表示です。",
+      "matchesHidden_one": "独立したセキュリティチェックが危険なトークンを検出したため、一致オファー 1 件が非表示です。",
+      "matchesHidden_other": "独立したセキュリティチェックが危険なトークンを検出したため、一致オファー {{count}} 件が非表示です。",
+      "matchesHidden_two": "独立したセキュリティチェックが危険なトークンを検出したため、一致オファー {{count}} 件が非表示です。",
+      "matchesHidden_zero": "独立したセキュリティチェックが危険なトークンを検出したため、一致オファー {{count}} 件が非表示です。",
+      "pickerBlock": "危険 — 独立したセキュリティチェックがこのトークンをフラグしています: {{reasons}}。このトークンを含む取引はフローで続行できません。",
+      "pickerWarn": "注意 — 独立したセキュリティチェックの報告: {{reasons}}。続行できますが、先に内容をよく読んでください。",
+      "reputationListedDeep": "市場リスティング検出: {{name}}{{symbolSuffix}} — 市場規模トップ 200 圏外。小さいトークンは動きにくく消えやすいため、プロジェクトを再確認してください。",
+      "reputationListedTop": "市場リスティング検出: {{name}}{{symbolSuffix}}、市場規模ランク #{{rank}}。意図したトークンと一致するか確認してください。"
     },
     "signing": {
       "approveUnknown": "トークンを承認します — 1 回の確認、またはウォレットが古い承認を先に 0 に戻す必要がある場合は 2 回です（確認中）。",
@@ -148,7 +171,18 @@
       "accept": "取引を開始します — 最後のトランザクションです。",
       "approveNft": "このコレクションの NFT をプロトコルが移動できるよう許可します — コレクションごとに一度だけのトランザクションです。",
       "postListing": "リスティングを投稿します — 最後のトランザクションです。",
-      "acceptRental": "レンタルを開始します — 最後のトランザクションです。"
+      "acceptRental": "レンタルを開始します — 最後のトランザクションです。",
+      "introUpTo": "最大 {{n}} 回のウォレット確認をこの順番で行います:",
+      "intro_few": "ウォレットで {{count}} 回、この順番で確認します:",
+      "intro_many": "ウォレットで {{count}} 回、この順番で確認します:",
+      "intro_one": "1 回のウォレット確認で完了します:",
+      "intro_other": "ウォレットで {{count}} 回、この順番で確認します:",
+      "intro_two": "ウォレットで {{count}} 回、この順番で確認します:",
+      "intro_zero": "ウォレットで {{count}} 回、この順番で確認します:",
+      "phaseApprove": "承認中…（{{c}} / {{t}}）",
+      "phasePermit": "権限に署名中…（{{c}} / {{t}}）— 無料、gas なし",
+      "phaseSend": "送信中…（{{c}} / {{t}}）",
+      "phaseSign": "条件に署名中…（{{c}} / {{t}}）"
     },
     "killSwitch": {
       "disabled": "この操作は現在オフになっています — 運営者が確認のため予防的に一時停止しています。すでにあなたのものは影響を受けません: 返済、請求、引き出しはすべて開いたままです。"
@@ -191,7 +225,8 @@
       "bandAlert": "アラート",
       "bandCritical": "重大",
       "bandWarn": "警告",
-      "bandsSave": "保存"
+      "bandsSave": "保存",
+      "optoutUnavailable": "この切り替えは現在保存できません — アラートサービスをアップグレード中です。しばらくして再試行してください。"
     },
     "notifications": {
       "bellLabel": "通知",
@@ -213,7 +248,14 @@
         "hf_alert": "ローンの健全性が 1.2 を下回りました — 開いて状況を確認してください。",
         "hf_critical": "ローンの健全性が 1.05 を下回り、1.0 の清算ラインに近づいています — 開いて対応してください。",
         "generic": "ローンに更新があります。"
-      }
+      },
+      "loanRef": "ローン #{{loanId}} · タップして表示",
+      "unreadBadgeTitle_few": "未読通知 {{count}} 件",
+      "unreadBadgeTitle_many": "未読通知 {{count}} 件",
+      "unreadBadgeTitle_one": "未読通知 1 件",
+      "unreadBadgeTitle_other": "未読通知 {{count}} 件",
+      "unreadBadgeTitle_two": "未読通知 {{count}} 件",
+      "unreadBadgeTitle_zero": "未読通知 {{count}} 件"
     },
     "errorBoundary": {
       "title": "このページで問題が発生しました",
@@ -251,7 +293,11 @@
       "report": "GitHub で問題を報告",
       "reportHint": "上の詳細と直近の記録エラーを含む GitHub issue を事前入力して開きます。あなたの完全なウォレットアドレスは含まれません。",
       "copyDetails": "詳細をコピー",
-      "copied": "コピーしました。"
+      "copied": "コピーしました。",
+      "indexerOk": "最新です（{{age}} 前に更新）",
+      "indexerStale": "遅延中（最終更新 {{age}} 前）— 市場リストは遅れる場合がありますが、自分のポジションは引き続きチェーンから直接読み込みます。",
+      "networkUnsupported": "ウォレットは未対応ネットワーク上です（chain id {{walletChainId}}）— 表示データは {{readName}}（{{readChainId}}）からのものです。取引するにはネットワークを切り替えてください。",
+      "rpcOk": "稼働中 — 最新ブロック {{block}}"
     },
     "support": {
       "title": "サポートに連絡",
@@ -273,12 +319,15 @@
       "unavailable": "サポート inbox は現在メッセージを受け取れませんでした。あなた側で失われたものはありません — 代わりにメールしてください:",
       "failed": "メッセージを送信できませんでした。少し待って再試行するか、メールしてください:",
       "helpTitle": "人のサポートが必要ですか？",
-      "helpBody": "各ページ隅の丸いボタンからサポートパネルを開くと、ワンクリックでチームにメッセージを送れます — アプリ自身のヘルス詳細を添付でき、原因が含まれていることが多いです。直接メールすることもできます:"
+      "helpBody": "各ページ隅の丸いボタンからサポートパネルを開くと、ワンクリックでチームにメッセージを送れます — アプリ自身のヘルス詳細を添付でき、原因が含まれていることが多いです。直接メールすることもできます:",
+      "sent": "送信しました。チケット番号は {{id}} です — 保管してください。問い合わせ時に引用するとこのレポートに紐づきます。"
     },
     "wallet": {
       "connect": "ウォレットを接続",
       "connectFirst": "続行するにはウォレットを接続してください。",
-      "switchNetwork": "ネットワークを切り替え"
+      "switchNetwork": "ネットワークを切り替え",
+      "switchToChain": "{{chain}} に切り替え",
+      "unsupportedNetwork": "このネットワークはサポートされていません。Vaipakam は {{chainNames}} で利用できます。続行するにはネットワークを切り替えてください。"
     },
     "checks": {
       "walletConnected": "ウォレット接続済み",
@@ -287,7 +336,9 @@
       "consent": "リスク開示と条件を承諾済み",
       "getTestAssets": "テスト資産を取得",
       "connectEarly": "続行するにはウォレットを接続してください — 署名に必要なので、今接続しておくのが簡単です。",
-      "sanctionsChecking": "コンプライアンス状態を確認中…"
+      "sanctionsChecking": "コンプライアンス状態を確認中…",
+      "balanceSufficient": "ウォレットに十分な {{asset}} があります",
+      "recognised": "{{label}} を認識しました（{{symbol}}）"
     },
     "receipt": {
       "heading": "署名前に確認",
@@ -409,7 +460,11 @@
       "linkedLoanCheckFailed": "このオファーが進行中ローンのポジション売却かどうか確認できませんでした。この確認は重要な開示を決めるため、成功するまで署名は一時停止されます。",
       "graceChecking": "この取引の判定に使われる返済猶予期間を確認しています…",
       "graceCheckFailed": "返済猶予期間を確認できませんでした。レビューには実際の値が必要です — 成功するまで署名は一時停止されます。",
-      "riskGateBlocked": "プロトコルのリスクアクセスルールにより、あなたのウォレットでは現在この受け入れがブロックされています — このアプリではまだ収集できない常設オンチェーン承認またはアクセスレベルが必要です。何も送信または承認されていません。"
+      "riskGateBlocked": "プロトコルのリスクアクセスルールにより、あなたのウォレットでは現在この受け入れがブロックされています — このアプリではまだ収集できない常設オンチェーン承認またはアクセスレベルが必要です。何も送信または承認されていません。",
+      "linkedLoanAcceptBlocked": "このオファーはすでに実行中のローン #{{loanId}} に結び付いています — 承諾すると上で確認した新規ローンではなく、そのローンのポジション決済または移転になります。このアプリはその種の取引の実際の条件をまだ表示できないため、ここでの承諾は現在無効です。",
+      "saleBuyerNext": "あなたはローン #{{loanId}} の貸し手になりました — 借り手にとってローンは変わらず継続し、返済はあなたへ届きます。マイポジションで追跡し、返済されたら元本と残り利息を請求してください。",
+      "saleVehicleBanner": "これはポジション販売です: 新規ローンではなく、すでに実行中のローン #{{loanId}} の貸し手側を購入します。借り手と返済義務は変わらず、貸し手だけが変わります。下の数値はそのローンからライブで取得しています。",
+      "wrongChainLink": "このリンクは {{chainName}} 上のオファーを指しています。ページ上部でそのネットワークに切り替えてからリンクを再度開いてください — オファー番号はネットワークごとに重複するため推測しません。"
     },
     "borrow": {
       "title": "資産を借りる",
@@ -491,7 +546,18 @@
       "tryAgain": "再試行",
       "viewPositions": "自分のポジションを見る",
       "viewTransaction": "トランザクションを見る",
-      "waitingForWallet": "ウォレットを待機中…"
+      "waitingForWallet": "ウォレットを待機中…",
+      "browseRowPriced": "{{daily}} {{pay}}/日 · {{duration}} · {{total}} {{pay}} 前払い（バッファ含む）",
+      "browseRowUnpriced": "{{duration}} · リスティング #{{id}}",
+      "bufferNote": "レンターは全期間分と {{pct}} の返金可能バッファを前払いします。期限内にレンタルを閉じるとバッファは返却されます。",
+      "durationCap": "プロトコルは現在リスティングを {{max}} に制限しています — 短い期間を選んでください。",
+      "perDaySuffix": "（{{symbol}}/日）",
+      "receiptListYouLock": "あなたの NFT {{nft}} は vault に移動し、リスティングとレンタル中ずっとそこに残ります。",
+      "receiptListYouReceive": "全 {{term}} 期間のレンタル手数料として ~{{fees}} — レンターは全額前払いします。",
+      "receiptRentWhenEnds": "{{duration}} 後に権利は自動リセットされます。バッファを取り戻すには詳細ページから期限内にレンタルを閉じてください。",
+      "receiptRentYouCanLose": "レンタルが期限内に閉じられない場合、{{buffer}} バッファを失う可能性があります。使用権はどちらにせよ期限で終了します。",
+      "receiptRentYouLock": "{{total}} 前払い — 全期間の手数料と返金可能な {{buffer}} バッファ。",
+      "receiptRentYouReceive": "{{duration}} の間、今から {{nft}} の使用権を得ます。"
     },
     "preclose": {
       "title": "このローンを早期終了",
@@ -537,7 +603,20 @@
       "repayWarnPending": "このローンには借り換えリクエストがまだ有効です。返済するとローンが決済され、その後リクエストは完了できなくなります — 後でカードからキャンセルしてください（常設 payoff 承認も削除されます）。それまでは期限切れまで残るだけです。",
       "consentLabel": "以下の payoff とウォレット残高の条件を理解し、同意します。",
       "receiptLock": "新たにロックされるものはありません — 既存の担保はアンロックされずに新しいローンへ引き継がれます。",
-      "receiptReceive": "貸し手が受け入れた瞬間、選んだ条件の新しいローンになります — 担保は自動的に移り、このローンは同じトランザクションで終了します。"
+      "receiptReceive": "貸し手が受け入れた瞬間、選んだ条件の新しいローンになります — 担保は自動的に移り、このローンは同じトランザクションで終了します。",
+      "balanceShort": "ウォレットの余裕残高が、このリクエストに必要な約 {{topUp}} を下回っています — 今貸し手が承諾すると失敗します。ウォレットを補充するかリクエストをキャンセルしてください。",
+      "durationRange": "1 から {{max}} 日の間。",
+      "expiresAfterDays": "投稿から {{days}} 日後に期限切れになる時",
+      "expiresAtGraceEnd": "このローンの猶予期間（{{date}}）とともに期限切れになる時 — 借り換えリクエストは置き換えるローンより長く残れません",
+      "feesTreasuryNote": "payoff 利息のプロトコル取り分 {{cut}} は payoff 内で決済されます。",
+      "lateFeeDisclosure": "貸し手がローン期限後に承諾すると、payoff は増えます — 遅延手数料と増え続ける利息により、このリクエストでは最大約 {{maxGrowth}} 追加されます。あなたが付与する承認はそれもカバーするため、遅い承諾で失敗しません。",
+      "pending": "借り換えリクエスト #{{offerId}} は有効です。貸し手が承諾すると、このローンは同じトランザクションで自動的に終了します。",
+      "pendingChecking": "借り換えリクエスト #{{offerId}} の状態を確認中…",
+      "pendingExpired": "この借り換えリクエストは {{date}} に期限切れになりました — もう貸し手は承諾できず、ここでの他の操作もブロックしません。下でキャンセルすると継続 payoff 承認も削除できます。ローンは変わらず継続します。",
+      "pendingExpires": "誰も承諾しなければ、リクエストは {{date}} に期限切れになります。",
+      "receiptYouMayOwe": "このローンの payoff として ~{{payoff}}。貸し手が承諾すると自動的に引き落とされます。",
+      "walletNote": "貸し手が承諾した瞬間に payoff はウォレットから自動で引き落とされます。新しいローンの資金は同じトランザクションで届くため、リクエストが開いている間はウォレットに約 {{topUp}}（利息分と新ローン開始手数料）を余裕として残してください。",
+      "whenEndsComposed": "貸し手がリクエストを承諾した時、あなたがキャンセルした時、または {{branch}}。"
     },
     "approvals": {
       "title": "常設トークン承認",
@@ -549,7 +628,15 @@
       "unavailable": "現在承認を読み取れませんでした — 少し待って再試行してください。",
       "sourcesUnavailable": "現在ローンとオファーを読み込めないため、このリストを完全には作れません — 部分的な表示を避け、少し待って再試行してください。",
       "revoke": "取り消す",
-      "staleNote": "現在このリストを更新できませんでした — 表示行は少し古い可能性があります。取り消しは引き続き動作します。"
+      "staleNote": "現在このリストを更新できませんでした — 表示行は少し古い可能性があります。取り消しは引き続き動作します。",
+      "checkMoreUnchecked": "さらに {{next}} 個のトークンを確認（未確認 {{total}}）",
+      "checkMore_few": "さらに {{count}} 個のトークンを確認",
+      "checkMore_many": "さらに {{count}} 個のトークンを確認",
+      "checkMore_one": "さらに {{count}} 個のトークンを確認",
+      "checkMore_other": "さらに {{count}} 個のトークンを確認",
+      "checkMore_two": "さらに {{count}} 個のトークンを確認",
+      "checkMore_zero": "さらに {{count}} 個のトークンを確認",
+      "revoked": "{{symbol}} の承認を削除しました。アクティブなリクエストまたはリスティングが必要としていた場合、カードが警告し復元を提示します。"
     },
     "nftVerifier": {
       "title": "NFT 検証ツール",
@@ -578,7 +665,12 @@
       "inKindLabel": "デフォルト時の支払い",
       "inKindNote": "紐づくローンの借り手がデフォルトした場合、この請求はローンの生の担保を現物で支払います — プロトコルはあなたの代わりに価格付けや売却をしません。このポジションを買う前に、実際に受け取るものの価値を評価してください。",
       "liveNote": "ライブとは正確にこういう意味です: トークンはここに存在し、その保有者が紐づくポジションを支配しています。ローンの健全性や相手側の行動を保証するものではありません。",
-      "goneBody": "請求が完了してトークンが退役したか、そもそもここで mint されていなかったかのどちらかです — ネットワークはどちらかを記録していません。この token id を売る・転送するというオファーは、このネットワークでは無価値として扱ってください。"
+      "goneBody": "請求が完了してトークンが退役したか、そもそもここで mint されていなかったかのどちらかです — ネットワークはどちらかを記録していません。この token id を売る・転送するというオファーは、このネットワークでは無価値として扱ってください。",
+      "chainNote": "{{chain}} で確認済み。トークン ID はネットワーク間で重複します — ここに存在することは他ネットワークについて何も示しません。",
+      "goneTitle": "トークン #{{id}} は現在このネットワークに存在しません",
+      "liveTitle": "トークン #{{id}} はこのネットワークで有効です",
+      "offerValue": "#{{offerId}} — このトークンはまだローンになっていないオファー用にミントされました。",
+      "positionRowNote": "— このローンの {{role}} 権利を保持しています。信頼する前に必ずポジション NFT を確認してください。"
     },
     "keepers": {
       "title": "Keeper 権限",
@@ -640,7 +732,8 @@
       "loanToggleOff": "このローンで keeper を無効化しました。",
       "loanEnablesUnavailable": "現在このローンの keeper スイッチを読み取れませんでした — 読み取りに成功するまでトグルは一時停止されます（表示状態は古い可能性があります）。",
       "loanNoKeepers": "まだ keeper を承認していません — 設定 → Keeper 権限で設定してください。",
-      "loanMasterOff": "keeper のマスタースイッチがオフなので、このローンのスイッチがオンでも何も実行できません — 設定 → Keeper 権限でオンにしてください。"
+      "loanMasterOff": "keeper のマスタースイッチがオフなので、このローンのスイッチがオンでも何も実行できません — 設定 → Keeper 権限でオンにしてください。",
+      "atCap": "承認済み keeper は上限 {{max}} 件に達しています — 追加するには既存の keeper を 1 件取り消してください。"
     },
     "earlyExit": {
       "title": "このローンから早期退出",
@@ -661,7 +754,15 @@
       "receiptEnds": "即時 — あなたのポジションは買い手に移り、このローンから離れます。借り手のレートと期日は変わりません。",
       "receiptFees": "プロトコルの取り分は放棄される利息から出ます — 表示額を超えてあなたの受取額から引かれることはありません。",
       "receiptLockNothing": "なし。",
-      "receiptOweNothing": "なし — 何も承認せず、自己負担で支払うものもありません。"
+      "receiptOweNothing": "なし — 何も承認せず、自己負担で支払うものもありません。",
+      "moreOffers_few": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
+      "moreOffers_many": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
+      "moreOffers_one": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
+      "moreOffers_other": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
+      "moreOffers_two": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
+      "moreOffers_zero": "表示中のものより支払いが少ない一致オファーがさらに {{count}} 件あります。",
+      "receiptYouReceive": "~{{toSeller}} が同じトランザクションで直接ウォレットに支払われます — オファー #{{offerId}} へ年 {{rate}} で売却します。後で請求するものはありません。",
+      "rowReceive": "今 ~{{amount}} を受け取れます"
     },
     "loanSale": {
       "title": "このポジションを売却に出す",
@@ -690,7 +791,12 @@
       "receiptCanLose": "残高または継続承認が不足すると、買い手の受け入れは単に失敗します — 何も取られませんが、復元またはキャンセルするまで listing は約定できません。",
       "receiptEnds": "買い手が受け入れたとき（すべて買い手のトランザクションで決済）またはあなたが listing をキャンセルしたとき。自然には期限切れになりません。",
       "receiptFees": "プロトコルの取り分は決済額から出ます — それ以上はありません。",
-      "receiptLock": "売却完了または listing キャンセルまで、あなたの貸し手ポジション NFT。ほかには何もありません。"
+      "receiptLock": "売却完了または listing キャンセルまで、あなたの貸し手ポジション NFT。ほかには何もありません。",
+      "allowanceShortDetail": "（買い手が承諾すると今すぐ ~{{amount}} {{symbol}} が引き落とされます）",
+      "approvalNote": "リスティングは最大 {{amount}} までの継続承認を設定します — ローン期間中いつでも販売決済をカバーできるよう、期間に 1 か月の余裕を加えてサイズ調整されています（承諾時点の未収利息または残存期間の利率差の大きい方）。実際に引き落とされるのは買い手自身のトランザクション内の実額のみです。万一リスティングが余裕を超えて残った場合、カードが警告し承認の補充を提示します。",
+      "pending": "販売リスティング #{{offerId}} は有効で、あなたの貸し手 NFT は有効中ロックされています。買い手が承諾すると未払い額が支払われ、決済は同じトランザクションで引き落とされます。",
+      "receiptYouMayOwe": "承諾時、決済額はウォレットから引き落とされます: その時点までの未収利息、または残存期間の利率差の大きい方 — 両方ではありません。現在なら約 {{amount}} {{sym}} です。",
+      "receiptYouReceive": "{{principal}} — 買い手が承諾した瞬間にウォレットへ支払われる未払い全額。"
     },
     "positions": {
       "title": "自分のポジション",
@@ -819,7 +925,27 @@
         "titleRental": "レンタル",
         "whatIfNothingRentalOwner": "借り手の権利は期日と猶予期間後にリセットされます。あなたの手数料はここで請求可能なままです。",
         "whatIfNothingRentalRenter": "使用権は期日に終了し、前払いバッファは所有者へ渡ります — 期限内に終了して取り戻してください。",
-        "whatIfNothingRentalViewer": "借り手の使用権は期日に終了します。所有者の手数料とバッファはレンタル条件に従って決済されます。"
+        "whatIfNothingRentalViewer": "借り手の使用権は期日に終了します。所有者の手数料とバッファはレンタル条件に従って決済されます。",
+        "addCollateralReceipt": "追加の {{amount}} {{symbol}} 担保。ローンが正常に終了すると残りと一緒に返却されます。",
+        "collateralBackAfterClose": "{{collateral}} 担保返却 — クローズ直後に請求可能。",
+        "collateralBackAfterRepay": "{{collateral}} 担保返却 — 返済決済直後に請求可能。",
+        "collateralBackPlain": "{{collateral}} 担保返却。",
+        "exactAmountNote": "確認時に正確な金額をライブで読み取ります。承認には小さな余裕がありますが、使われることはありません。",
+        "loanAssetFallback": "ローン資産",
+        "loanBetween": "他の 2 つのウォレット間の {{principal}} ローン",
+        "nftRentalBetween": "他の 2 つのウォレット間の {{nft}} レンタル",
+        "nftRentedOut": "あなたの {{nft}} は貸し出し中です",
+        "nftStaysVault": "{{nft}} は所有者の vault に残ります{{collateralSuffix}}",
+        "owedPrincipalPlusInterest": "{{principal}} + このローンの利息。全期間ローン（プロトコル標準）では早期返済でも全期間の利息が適用されます。日割りローンでは発生済み分のみ請求されます。確認時に正確な金額をライブで読み取ります。承認には小さな余裕がありますが、使われることはありません。",
+        "paidNow": "~{{amount}} {{symbol}}、今支払われます。",
+        "partialOwe": "今 {{amount}} {{symbol}} と、これまでに発生した利息（この支払いで一緒に引き落とし）。期限日は変わりません。",
+        "principalPlusInterest": "{{principal}} と獲得利息。",
+        "recoveredSummary": "このローンが回収したもの: {{asset}} の販売代金、またはデフォルト処理に応じて {{collateral}} 担保そのもの。",
+        "toppingUp": "{{symbol}} 担保を補充するとローンが安全になり、清算が遠ざかります。",
+        "vaultCollateralSuffix": "、さらに {{collateral}} 担保",
+        "youBorrowed": "{{principal}} を借りました",
+        "youLent": "{{principal}} を貸しました",
+        "youRent": "{{nft}} を借りています"
       },
       "getStarted": "始める",
       "loading": "ポジションを読み込み中…",
@@ -835,9 +961,20 @@
         "receiptNothing": "なし。",
         "yourBorrowRequest": "あなたの借入リクエスト",
         "yourLendingOffer": "あなたの貸付オファー",
-        "yourNftListing": "あなたの NFT listing"
+        "yourNftListing": "あなたの NFT listing",
+        "receiptUnlocked": "{{locked}} 返却 — このオファーから即時にアンロックされます。",
+        "youNft": "あなたの NFT {{addr}} #{{id}}"
       },
-      "openOffers": "未決済オファー"
+      "openOffers": "未決済オファー",
+      "graceCountdownBorrower": "このローンは期限を過ぎています。約 {{remaining}} 以内に返済してください — その後、貸し手は担保を取得できます。",
+      "graceCountdownLender": "このローンは期限を過ぎています。借り手が約 {{remaining}} 以内に返済しない場合、あなたは担保を請求できます。",
+      "graceCountdownViewer": "このローンは期限を過ぎています。約 {{remaining}} 以内に返済されない場合、貸し手は担保を請求できます。",
+      "owedRepaid": "なし — {{principal}} と利息は全額返済済みです。",
+      "rowLoan": "ローン #{{id}} · 年利 {{rate}}",
+      "rowRental": "レンタル #{{id}} · 手数料前払い済み",
+      "whatIfNothingBorrower": "何もしないままローンが期限日と {{grace}}猶予期間（貸し手が担保を取得できる前の短い追加返済期間）を過ぎると、貸し手はあなたの {{collateral}} 担保を受け取れます。",
+      "whatIfNothingLender": "借り手が期限日と {{grace}}猶予期間（短い追加返済期間）までに返済しない場合、あなたは担保を請求できます。",
+      "whatIfNothingViewer": "借り手が期限日と {{grace}}猶予期間（短い追加返済期間）までに返済しない場合、貸し手は担保を請求できます。"
     },
     "powerSurface": {
       "body": "これはパワーユーザー向け画面です — 生のオファーとライブレートを、少ない手助けで表示します。ガイド付きの借りる・貸すフローでも同じ操作をステップごとの説明付きで行えます。",
@@ -881,8 +1018,27 @@
         "whyRentalClosed": "レンタルが終了しました — 返金可能なバッファが解放されています。",
         "whyRentalEnded": "レンタルが終了しました — 獲得した手数料を受け取り、NFT を取り戻してください。",
         "whyRepaidBorrower": "このローンを返済したため、担保が解放されています。",
-        "whyRepaidLender": "借り手がこのローンを返済しました。"
-      }
+        "whyRepaidLender": "借り手がこのローンを返済しました。",
+        "amountWithSuffix": "{{amount}}{{suffix}}",
+        "bufferBack": "{{amount}} バッファ返却",
+        "collateralBack": "{{collateral}} 担保返却",
+        "collateralBackWithAmount": "{{amount}} 担保返却{{rebateSuffix}}",
+        "collateralLabel": "{{collateral}} 担保",
+        "defaultRecovery": "デフォルト回収 — {{collateral}}",
+        "feesNftBack": "{{amount}} 手数料 + あなたの {{nft}} 返却",
+        "heldProceedsSuffix": " + 保留収益",
+        "principalPlusInterest": "{{amount}} {{symbol}} + 利息",
+        "rebateAmount": "{{amount}} VPFI リベート",
+        "recoveredFromDefault": "デフォルトから {{amount}}{{held}} を回収",
+        "rentalFeesNftBack": "レンタル手数料 + あなたの {{nft}} 返却"
+      },
+      "allButton_few": "{{count}} 件を請求",
+      "allButton_many": "{{count}} 件を請求",
+      "allButton_one": "{{count}} 件を請求",
+      "allButton_other": "{{count}} 件を請求",
+      "allButton_two": "{{count}} 件を請求",
+      "allButton_zero": "{{count}} 件を請求",
+      "allTooMany": "一度に選択できるのは {{max}} 件までです — 残りは 2 回目のバッチで請求してください。"
     },
     "offers": {
       "title": "オファーブック",
@@ -934,7 +1090,10 @@
       },
       "loading": "オファーブックを読み込み中…",
       "rentalListing": "NFT レンタル",
-      "yearly": "年率"
+      "yearly": "年率",
+      "expiresLabel": "{{date}} に期限切れ",
+      "rateBand": "利率帯 {{min}}–{{max}} bps",
+      "staleList": "このリストの最終更新は {{age}} 前で、遅れている可能性があります — 表示されていない新しいオファーがあるかもしれません。しばらくして確認してください。"
     },
     "desk": {
       "title": "レートデスク",
@@ -975,7 +1134,9 @@
         "executing": "マッチング中…",
         "executed": "マッチを実行しました — クロスしたオファーはローンとして決済されました。",
         "noLongerMatchable": "これらのオファーはもうクロスできません — マッチ送信前にブックが動きました。何も送信されていません。",
-        "matchingDisabled": "オファーマッチングはプロトコルガバナンスにより先ほどオフにされたため、このマッチは現在送信できません。何も送信されていません。"
+        "matchingDisabled": "オファーマッチングはプロトコルガバナンスにより先ほどオフにされたため、このマッチは現在送信できません。何も送信されていません。",
+        "amount": "{{amount}} {{symbol}} がマッチします。",
+        "matchable": "{{rate}} でマッチ可能"
       },
       "signed": {
         "badge": "署名済み",
@@ -992,7 +1153,10 @@
         "riskBlocked": "このデプロイのリスクアクセスルールにより、この注文の片側が現在ブロックされています — maker またはあなたのウォレットには、このコンパクト確認では収集できないオンチェーンアクセスレベルまたは常設同意が必要です。何も送信または承認されていません。",
         "accept": "注文を fill",
         "accepting": "Fill 中…",
-        "accepted": "署名済み注文を fill しました — ローンはライブです。"
+        "accepted": "署名済み注文を fill しました — ローンはライブです。",
+        "payCollateral": "{{amount}} {{symbol}} を担保としてロックし、ローン元本を受け取ります。",
+        "payPrincipal": "{{amount}} {{symbol}} のローン元本を拠出します。",
+        "rateLine": "{{rate}} APR · {{days}}"
       },
       "chart": {
         "title": "約定レート",
@@ -1010,7 +1174,20 @@
         "attribution": "Charts by TradingView",
         "mobileBook": "ブック",
         "mobileChart": "チャート",
-        "mobileViewLabel": "デスク表示"
+        "mobileViewLabel": "デスク表示",
+        "lastFill": "最終約定: {{rate}} · {{ago}}",
+        "sparseNote_few": "薄い市場 — この範囲に {{count}} 件の約定があり、個別に描画しています。意味のある板情報が十分になるとローソク足が表示されます。",
+        "sparseNote_many": "薄い市場 — この範囲に {{count}} 件の約定があり、個別に描画しています。意味のある板情報が十分になるとローソク足が表示されます。",
+        "sparseNote_one": "薄い市場 — この範囲に {{count}} 件の約定があり、個別に描画しています。意味のある板情報が十分になるとローソク足が表示されます。",
+        "sparseNote_other": "薄い市場 — この範囲に {{count}} 件の約定があり、個別に描画しています。意味のある板情報が十分になるとローソク足が表示されます。",
+        "sparseNote_two": "薄い市場 — この範囲に {{count}} 件の約定があり、個別に描画しています。意味のある板情報が十分になるとローソク足が表示されます。",
+        "sparseNote_zero": "薄い市場 — この範囲に {{count}} 件の約定があり、個別に描画しています。意味のある板情報が十分になるとローソク足が表示されます。",
+        "tooltipFills_few": "{{count}} 件の約定",
+        "tooltipFills_many": "{{count}} 件の約定",
+        "tooltipFills_one": "{{count}} 件の約定",
+        "tooltipFills_other": "{{count}} 件の約定",
+        "tooltipFills_two": "{{count}} 件の約定",
+        "tooltipFills_zero": "{{count}} 件の約定"
       },
       "history": {
         "tab": "履歴",
@@ -1080,7 +1257,19 @@
         "expiryGtcTitle": "キャンセルまで有効 — あなたがキャンセルするまで残ります",
         "expiryGttTitle": "指定時刻まで有効 — 締切で自動的に失効します",
         "rateBpsNote": "レートはベーシスポイントで保存されます (1% = 100 bps)",
-        "selfCollateral": "担保はローン資産と同じトークンにはできません。"
+        "selfCollateral": "担保はローン資産と同じトークンにはできません。",
+        "commitAtFill": "{{amount}} {{symbol}} をコミットします — テイカーが約定した時だけ vault から引き落とされます。",
+        "escrowNow": "今エスクローします: {{amount}} {{symbol}}。",
+        "gaslessFundsWarn": "注意: vault の自由残高が、この注文でコミットする {{amount}} {{symbol}} を下回っています。テイカーが承諾した時に資金がなければ約定は失敗します — 注文を約定可能に保つには vault へ入金してください。",
+        "gaslessRejected": "板がこの注文を拒否しました（{{reason}}）。何も投稿されていません。",
+        "lifNote": "ローン開始手数料: 元本の {{feePct}}%（≈ {{amount}} {{symbol}}）、ローン開始時に請求されます。",
+        "lockAtFill": "{{amount}} {{symbol}} の担保をコミットします — テイカーが約定した時だけロックされます。",
+        "lockNow": "今ロックします: {{amount}} {{symbol}} を担保として。",
+        "netYield": "獲得利息への {{feePct}}% プロトコル手数料後の純利回り ≈ {{net}}% APR。",
+        "overDurationCap": "プロトコルは現在オファー期間を {{max}} 日に制限しています — 上で短い期間を選んでください。",
+        "securityBlocked": "投稿保留: 独立したセキュリティチェックが {{leg}} をフラグしています（{{reasons}}）。",
+        "securityUnknown": "{{leg}} の独立したセキュリティチェックが成功するまで投稿は保留されます。",
+        "tenorNote": "選択した {{label}} 市場に投稿します — 上のチップで期間を変更できます。"
       },
       "orders": {
         "tab": "オープン注文",
@@ -1116,7 +1305,11 @@
         "signedCancelNote": "投稿は無料でしたが、キャンセルには gas がかかります: ブックが保持している署名を取り消す唯一の方法はオンチェーントランザクションです。",
         "signedCancelled": "署名済み注文をオンチェーンでキャンセルしました。",
         "signedTruncated": "この市場には一度に一覧できる数を超える署名済み注文があります — これは完全な一覧ではありません。",
-        "loading": "未決済注文を読み込み中…"
+        "loading": "未決済注文を読み込み中…",
+        "amendGrowNote": "この注文を増やすと、ウォレットからさらに {{amount}} {{symbol}} がロックされます — 先にトークン承認が必要です。",
+        "cancelCooldown": "{{secs}} 秒後にキャンセル可能 — 新しい未約定オファーには短いプロトコル待機時間があります。",
+        "fillSummary": " · {{filled}} 約定（{{pct}}）· 残り {{remaining}}",
+        "filledTooltip": "{{pct}} 約定済み"
       },
       "positions": {
         "tab": "ポジション",
@@ -1132,7 +1325,18 @@
       "cumHeadingTitle": "その側の先頭からの累積深度",
       "loadMarket": "市場を読み込む",
       "marketsLoading": "市場を読み込み中…",
-      "oneSidedBook": "片側だけのブック"
+      "oneSidedBook": "片側だけのブック",
+      "healthLtvTitle": "ヘルスファクター {{ratio}} · LTV {{ltv}}",
+      "midQuotedTitle": "{{bps}} bps（提示値、未実行）",
+      "rateLadderTitle_few": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",
+      "rateLadderTitle_many": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",
+      "rateLadderTitle_one": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",
+      "rateLadderTitle_other": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",
+      "rateLadderTitle_two": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",
+      "rateLadderTitle_zero": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",
+      "tenorLiveTitle": "{{tenor}} — 板上のライブオファー",
+      "tenorNoOffersTitle": "{{tenor}} — まだライブオファーはありません",
+      "walletBalanceTitle": "ウォレット内: {{amount}} {{symbol}}"
     },
     "vpfi": {
       "title": "VPFI 割引",
@@ -1186,7 +1390,15 @@
       "warmingUp": "準備中",
       "withdraw": "出金",
       "withdrawCta": "VPFI を出金",
-      "withdrawDone": "出金が確認されました。VPFI はウォレットに戻りました。"
+      "withdrawDone": "出金が確認されました。VPFI はウォレットに戻りました。",
+      "availabilityCheckFailed": "現在 {{chain}} での VPFI 利用可否を確認できませんでした。しばらくして再試行してください。",
+      "belowMinNote": "{{floor}} VPFI 未満の保有では手数料割引はありません。",
+      "checkingAvailability": "{{chain}} での VPFI 利用可否を確認中…",
+      "depositYouLock": "{{amt}} がウォレットから Vaipakam Vault へ移動します。",
+      "notOnThisChain": "{{chain}} では VPFI 入金はまだ利用できません。Vaipakam の他の機能は VPFI なしで動作します。",
+      "walletBalanceHint": "ウォレット内: {{amount}} VPFI",
+      "withdrawYouReceive": "{{amt}} がウォレットに戻ります。",
+      "withdrawableHint": "今出金可能: vault 内 {{vault}} のうち {{free}} VPFI"
     },
     "errors": {
       "partialOverPrincipal": "これはローンの残り元本全体をカバーします。代わりに “このローンを返済” を使ってください — ローンを正しく決済し、担保を解放します。",
@@ -1206,12 +1418,23 @@
       "refinancePastGrace": "このローンは期日と猶予期間を過ぎているため、もう借り換えできません — 何も送信されていません。これからデフォルト処理が適用されます。",
       "saleListingMatured": "このローンは期日を過ぎているため、ポジションを売却に出すことはもうできません — 何も送信されていません。",
       "refinanceNotOriginalBorrower": "ローン開始後にこのポジションの保有者が変わったため、担保を借り換えへ引き継げません — 何も送信されていません。返済または早期終了は引き続き利用できます。",
-      "lenderBlockedPartial": "貸し手のウォレットは現在直接の部分支払いを受け取れません（コンプライアンスフラグ）。ローン全額返済は引き続き開いています — その経路では、スクリーニング済み請求のために資金が保持されます。"
+      "lenderBlockedPartial": "貸し手のウォレットは現在直接の部分支払いを受け取れません（コンプライアンスフラグ）。ローン全額返済は引き続き開いています — その経路では、スクリーニング済み請求のために資金が保持されます。",
+      "needMore": "続行するにはさらに {{asset}} が必要です。",
+      "needMoreBy": "続行するには約 {{shortBy}} {{asset}} 不足しています。",
+      "noRpcClient": "アクティブなチェーンの RPC クライアントがありません。",
+      "publicClientUnavailable": "public client を利用できません",
+      "walletClientUnavailable": "wallet client を利用できません",
+      "walletConnectFirst": "先に対応ネットワーク上のウォレットを接続してください。",
+      "walletNotConnected": "ウォレットが接続されていません"
     },
     "fees": {
       "lateFee": "遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。",
       "faqQuestion": "Vaipakam はどのような手数料を取りますか？",
-      "faqAnswerGeneric": "Vaipakam は借入額に対してローン開始手数料を取り、貸し手が得る利息の一部を保持します。遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ行きます。正確な現在レートを見るにはウォレットを接続してください。"
+      "faqAnswerGeneric": "Vaipakam は借入額に対してローン開始手数料を取り、貸し手が得る利息の一部を保持します。遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ行きます。正確な現在レートを見るにはウォレットを接続してください。",
+      "borrowerLIF": "Vaipakam は借入額に対して {{pct}} のローン開始手数料を請求します。",
+      "faqAnswer": "Vaipakam は借入額に対して {{lifPct}} のローン開始手数料を請求します。Vaipakam はあなたが得る利息の {{yieldPct}} を保持します。返済遅延では 1 日目以降に未払い額の 1% が加算され、1 日あたり 0.5% ずつ増え、上限は 5% です。ネットワーク gas は別で、Vaipakam ではなくブロックチェーンへ支払われます。",
+      "lenderRentalFee": "Vaipakam はあなたが得るレンタル手数料の {{pct}} を保持します。",
+      "lenderYieldFee": "Vaipakam はあなたが得る利息の {{pct}} を保持します。"
     },
     "faucet": {
       "title": "テスト資産を取得",
@@ -1230,14 +1453,20 @@
       "copiedTokenId": "コピーしました。",
       "liquid": {
         "title": "流動的なテストトークン (tLIQ)",
-        "blurb": "テストオラクルで価格付けされるため、流動資産のように動作します — ヘルスファクター、清算、借り換えがすべて機能します。フローで 2 つの異なる流動トークンが必要な場合は、mWETH と組み合わせてください（片方をローン、片方を担保にします）。"
+        "blurb": "テストオラクルで価格付けされるため、流動資産のように動作します — ヘルスファクター、清算、借り換えがすべて機能します。フローで 2 つの異なる流動トークンが必要な場合は、mWETH と組み合わせてください（片方をローン、片方を担保にします）。",
+        "action": "{{units, number}} tLIQ をミント"
       },
       "liquid2": {
-        "blurb": "$1 のテストオラクル価格を持つテスト USDC です — tLIQ / mWETH に対して現実的な価格差を持つ、2 つ目の別の流動トークンなので、ローンと担保の両方が流動的な取引を、同じトークン同士で組まずに試せます。"
+        "blurb": "$1 のテストオラクル価格を持つテスト USDC です — tLIQ / mWETH に対して現実的な価格差を持つ、2 つ目の別の流動トークンなので、ローンと担保の両方が流動的な取引を、同じトークン同士で組まずに試せます。",
+        "action": "{{units, number}} {{symbol}} をミント",
+        "actionGeneric": "{{units, number}} テスト用ステーブルコインをミント",
+        "title": "Mock USD Coin（{{symbol}}）",
+        "titleGeneric": "Mock USD Coin（テスト用ステーブルコイン）"
       },
       "mweth": {
         "title": "Mock wrapped ETH (mWETH)",
-        "blurb": "デモで “wrapped ETH” の役割をする、オラクル価格付きテストトークンです。本物の WETH ではありません — 無料で mint でき、価値はありません。"
+        "blurb": "デモで “wrapped ETH” の役割をする、オラクル価格付きテストトークンです。本物の WETH ではありません — 無料で mint でき、価値はありません。",
+        "action": "{{units, number}} mWETH をミント"
       },
       "nft2": {
         "title": "2 つ目のレンタル可能テスト NFT (vART)",
@@ -1247,17 +1476,25 @@
       "addedToWallet": "ウォレットに追跡するよう依頼しました。",
       "illiquid": {
         "title": "非流動的なテストトークン (tILQ)",
-        "blurb": "価格フィードがないため、非流動資産のように動作します — 両側の同意が必要で、デフォルト時は担保が現物で移転します。"
+        "blurb": "価格フィードがないため、非流動資産のように動作します — 両側の同意が必要で、デフォルト時は担保が現物で移転します。",
+        "action": "{{units, number}} tILQ をミント"
       },
       "illiquid2": {
         "title": "2 つ目の非流動テストトークン (tILQ2)",
-        "blurb": "これも価格付けされません。tILQ と組み合わせると（片方をローン、片方を担保）、どちら側にも価格がない取引を試せます — 両当事者の同意が必要で、ヘルスファクターは適用されず、デフォルト時は担保が現物で渡ります。"
+        "blurb": "これも価格付けされません。tILQ と組み合わせると（片方をローン、片方を担保）、どちら側にも価格がない取引を試せます — 両当事者の同意が必要で、ヘルスファクターは適用されず、デフォルト時は担保が現物で渡ります。",
+        "action": "{{units, number}} tILQ2 をミント"
       },
       "nft": {
         "title": "レンタルテスト NFT (vRENT)",
         "blurb": "NFT レンタルフローを試すための ERC-4907 レンタル可能 NFT です。",
         "action": "テスト NFT を mint"
-      }
+      },
+      "addToWallet": "{{symbol}} を MetaMask に追加",
+      "mintedTokens": "{{units, number}} {{symbol}} をウォレットにミントしました。",
+      "noMocksBody": "{{chainName}} ではテスト資産がまだ設定されていません。別のテストネットを試すか、後でもう一度確認してください。",
+      "notTestnetBody": "faucet はテストネットでのみ動作します。現在の {{chainName}} は実資産を使うネットワークです — 練習用トークンをミントするにはテストネットへ切り替えてください。",
+      "switchTitle": "テスト資産をミントするにはウォレットを {{chainName}} に切り替えてください。",
+      "testnetNote": "現在 {{chainName}}（テストネット）上です。これらのトークンはテスト専用で実価値はありません。"
     },
     "vault": {
       "title": "自分の vault",
@@ -1273,7 +1510,15 @@
       "emptyBody": "オファーを投稿、ローンを開始、または VPFI を入金すると、資産がここに表示されます。",
       "emptyTitle": "まだ vault に何もありません",
       "loading": "vault を読み込み中…",
-      "noVaultTitle": "まだ vault がありません"
+      "noVaultTitle": "まだ vault がありません",
+      "noBalancesInWindow": "最初の {{count}} トークン内に残高はありません — 下のスキャン範囲を広げて続けて探してください。",
+      "unreadableCount_few": "{{count}} 資産",
+      "unreadableCount_many": "{{count}} 資産",
+      "unreadableCount_one": "1 資産",
+      "unreadableCount_other": "{{count}} 資産",
+      "unreadableCount_two": "{{count}} 資産",
+      "unreadableCount_zero": "{{count}} 資産",
+      "unreadableWarn": "現在 {{assets}} を読み取れませんでした（{{list}}）— 下のリストに残高が欠けている可能性があります。通常は次の更新で解消します。"
     },
     "activity": {
       "title": "アクティビティ",
@@ -1290,7 +1535,69 @@
       "loadingMore": "読み込み中…",
       "unavailableFallback": "現在のローンとレンタルは常にこちらで利用できます",
       "positionsLink": "自分のポジション",
-      "loading": "アクティビティを読み込み中…"
+      "loading": "アクティビティを読み込み中…",
+      "labels": {
+        "Approval": "承認",
+        "BackstopAbsorbedLoan": "バックストップに吸収されたローン",
+        "BorrowerFundsClaimed": "担保を請求済み",
+        "BorrowerLifRebateClaimed": "手数料リベートを請求済み",
+        "CollateralAdded": "担保を追加",
+        "IntentLoanRolled": "ローンをロールオーバー",
+        "InteractionRewardsClaimed": "報酬を請求済み",
+        "InternalMatchExecuted": "ローンを内部マッチ",
+        "LenderFundsClaimed": "資金を請求済み",
+        "LoanDefaulted": "ローンがデフォルト",
+        "LoanExtended": "ローンを延長",
+        "LoanInitiated": "ローン開始",
+        "LoanInitiatedDetails": "ローン開始",
+        "LoanLiquidated": "ローン清算",
+        "LoanObligationTransferred": "ローンポジションを移転",
+        "LoanPreclosedDirect": "ローンを早期クローズ",
+        "LoanRefinanced": "ローンを借り換え",
+        "LoanRepaid": "ローン返済済み",
+        "LoanSaleCompleted": "ローン販売完了",
+        "LoanSaleOfferLinked": "ローンを販売掲載",
+        "LoanSettled": "ローン決済済み",
+        "LoanSettlementBreakdown": "ローン決済済み",
+        "LoanSold": "ローン売却済み",
+        "OfferAccepted": "オファー承諾",
+        "OfferCanceled": "オファー取消",
+        "OfferClosed": "オファー終了",
+        "OfferConsumedBySale": "販売に使用されたオファー",
+        "OfferCreated": "オファー作成",
+        "OfferMatched": "オファーをマッチ",
+        "OfferModified": "オファー変更",
+        "OffsetCompleted": "ローン相殺",
+        "OffsetOfferCreated": "相殺オファー作成",
+        "PartialRepaid": "部分返済",
+        "PeriodicInterestAutoLiquidated": "利息のため自動清算",
+        "PeriodicInterestSettled": "利息決済済み",
+        "PeriodicSlippageOverBuffer": "スリッページ込みで利息決済",
+        "PrepayCollateralSaleSettled": "担保販売決済済み",
+        "PrepayListingCanceled": "担保リスティング取消",
+        "PrepayListingMatched": "担保販売マッチ",
+        "PrepayListingPosted": "担保を販売掲載",
+        "PrepayListingUpdated": "担保リスティング更新",
+        "RepayPartialPeriodAdvanced": "利息期間を進行",
+        "RewardDeliveredToVault": "報酬を vault に送付",
+        "SignedOfferCancelled": "署名済みオファー取消",
+        "SignedOfferFilled": "署名済みオファー約定",
+        "SignedOfferMatched": "署名済みオファーをマッチ",
+        "SignedOfferNonceBurned": "署名済みオファーを無効化",
+        "SwapToRepayExecuted": "担保スワップで返済",
+        "SwapToRepayIntentCancelled": "返済用スワップを取消",
+        "SwapToRepayIntentCommitted": "返済用スワップを設定",
+        "SwapToRepayIntentFilled": "返済用スワップが約定",
+        "SwapToRepayIntentForceCancelled": "返済用スワップを取消",
+        "SwapToRepayPartialExecuted": "スワップで部分返済",
+        "Transfer": "転送",
+        "VPFIDepositedToVault": "VPFI を vault に入金",
+        "VPFIWithdrawnFromVault": "VPFI を vault から出金",
+        "VaultVpfiDebited": "vault から VPFI を使用"
+      },
+      "loanRef": "ローン #{{loanId}}",
+      "offerRef": "オファー #{{offerId}}",
+      "plusMore": " · このトランザクション内でさらに {{n}} 件"
     },
     "rewards": {
       "title": "インタラクション報酬",
@@ -1298,7 +1605,8 @@
       "empty": "まだ報酬はありません。報酬は貸付または借入アクティビティ後に表示されます。",
       "waiting": "報酬を確定中です — 報酬日は全チェーンで終了してから請求可能になります。後でもう一度確認してください。",
       "claim": "報酬を請求",
-      "unavailable": "報酬を今は確認できませんでした — しばらくしてから再試行してください。"
+      "unavailable": "報酬を今は確認できませんでした — しばらくしてから再試行してください。",
+      "readyToClaim": "{{amount}} VPFI を請求できます。"
     },
     "sanctions": {
       "title": "このウォレットはコンプライアンスオラクルに掲載されています。",
@@ -1314,7 +1622,10 @@
       "liquidatable": "今すぐ清算可能",
       "explain": "担保価値が借入額に対して大きく下がると、ローンは清算される可能性があります。担保を追加すると安全性が高まります。",
       "listChecking": "健全性を確認中",
-      "listCheckingTitle": "このローンの健全性はまだ読み取られていないため、バッジは中立のままです。清算保護はオンチェーンで引き続き適用されます。"
+      "listCheckingTitle": "このローンの健全性はまだ読み取られていないため、バッジは中立のままです。清算保護はオンチェーンで引き続き適用されます。",
+      "advancedDetail": "（ヘルスファクター {{ratio}} — 借入に対する担保価値。1.00 未満でローンは清算可能です。Loan-to-value {{ltvPct}} — 担保価値に対する借入額の割合。{{dropClause}}）",
+      "advancedDetailDrop": " おおよそ、担保価値が約 {{drop}} 下がると清算が始まります。",
+      "healthTitle": "ヘルス {{ratio}} — 1.00 が清算ライン"
     },
     "notFound": {
       "title": "このページは存在しません",
@@ -1338,7 +1649,9 @@
       "waitingForWallet": "ウォレットを待機中…"
     },
     "copyAddress": {
-      "copied": "アドレスをコピーしました"
+      "copied": "アドレスをコピーしました",
+      "copyAria": "アドレス {{address}} をコピー",
+      "viewAria": "{{address}} をブロックエクスプローラーで表示"
     },
     "loanRow": {
       "youRent": "あなたが借りる",
@@ -1393,7 +1706,32 @@
       },
       "viewPositions": "自分のポジションを見る",
       "viewTransaction": "トランザクションを見る",
-      "waitingForWallet": "ウォレットを待機中…"
+      "waitingForWallet": "ウォレットを待機中…",
+      "durationCap": "プロトコルは現在オファーを {{max}} に制限しています — 短い期間を選んでください。",
+      "receipts": {
+        "borrowerWhenEndsAccept": "{{duration}} 以内に返済し（猶予期間: {{grace}}）、その後担保を請求してください。",
+        "borrowerWhenEndsPost": "承諾から {{duration}} 以内に返済し（猶予期間: {{grace}}）、その後担保を請求してください。",
+        "borrowerYouCanLose": "期限内に返済しない場合、{{collateral}} 担保を失う可能性があります。",
+        "borrowerYouLockNow": "{{collateral}} を担保として今ロックします。",
+        "borrowerYouLockStarting": "{{collateral}} を担保として今からロックします。",
+        "borrowerYouMayOwe": "期限までに {{principal}} と最大約 {{interest}} の利息を支払う可能性があります。",
+        "borrowerYouReceiveNow": "{{principal}} を今受け取ります（開始手数料 {{lif}} を差し引き）。",
+        "borrowerYouReceiveOnAccept": "貸し手がリクエストを承諾すると {{principal}} を受け取ります。",
+        "buyCollateralLocked": "相手の {{collateral}} はすでにロックされています。",
+        "buyWhenEnds": "返済期限は {{due}}（猶予期間: {{grace}}）です。その後資金を請求します。",
+        "buyYouLock": "{{principal}} を退出する貸し手へ今支払います — 借り手にとってローン自体は変わりません。",
+        "buyYouReceive": "実行中ローン #{{loanId}} の貸し手ポジション: 借り手が期限内に返済すれば、今から期限まで最大約 {{interest}} の利息と、{{principal}} 元本全額を受け取れます。",
+        "lenderCollateralLock": "相手は {{collateral}} をロックします。",
+        "lenderCollateralMustLock": "相手は {{collateral}} をロックする必要があります。",
+        "lenderWhenEndsAccept": "返済は {{duration}} 以内に期限が来ます（猶予期間: {{grace}}）。その後資金を請求します。",
+        "lenderWhenEndsPost": "借り手の承諾から {{duration}} 後に返済期限が来ます（猶予期間: {{grace}}）。その後資金を請求します。",
+        "lenderYouLockAccept": "{{principal}} を借り手へ今貸し付けます。",
+        "lenderYouLockPost": "{{principal}} を今ロックし、オファーが承諾されるかキャンセルするまで維持します。",
+        "lenderYouReceive": "借り手が期限内に返済すれば最大約 {{interest}} の利息と、あなたの {{principal}} が戻ります。",
+        "rateOutOfRange": "0 から {{max}} の数値を入力してください — プロトコルは年 {{max}}% を上限にしています。",
+        "theyLockCollateral": "相手は {{collateral}} を担保としてロックします",
+        "youLockCollateral": "あなたは {{collateral}} を担保としてロックします"
+      }
     },
     "settingsPage": {
       "experience": {
@@ -1422,6 +1760,201 @@
     },
     "stepNav": {
       "progressAria": "進行状況"
+    },
+    "claimAll": {
+      "borrowerBufferBack": "あなたのバッファ返却",
+      "borrowerCollateralBack": "担保返却",
+      "borrowerResidual": "内部マッチ後の残余",
+      "borrowerSurplus": "清算後の余剰（あれば）",
+      "itemLabel": "{{noun}} #{{id}} — {{what}}",
+      "lenderProceeds": "あなたの収益",
+      "lenderRentalFeesNft": "手数料 + あなたの NFT 返却",
+      "loanNoun": "ローン",
+      "rentalNoun": "レンタル",
+      "rewardsLabel": "インタラクション報酬 — {{amount}} VPFI",
+      "vaultVpfiLabel": "Vault VPFI — {{amount}} VPFI"
+    },
+    "lists": {
+      "showMore": "さらに {{next}} 件を表示",
+      "showMoreHidden": "さらに {{next}} 件を表示（{{total}} 件非表示）"
+    },
+    "loanState": {
+      "beingSettled": "決済中",
+      "closed": "終了",
+      "defaulted": "デフォルト",
+      "dueInDays_few": "{{count}} 日後に期限",
+      "dueInDays_many": "{{count}} 日後に期限",
+      "dueInDays_one": "{{count}} 日後に期限",
+      "dueInDays_other": "{{count}} 日後に期限",
+      "dueInDays_two": "{{count}} 日後に期限",
+      "dueInDays_zero": "{{count}} 日後に期限",
+      "dueToday": "本日期限",
+      "pastDue": "期限超過",
+      "repaid": "返済済み"
     }
+  },
+  "contractError": {
+    "AccessControlUnauthorizedAccount": "この操作に必要なロールがアカウントにありません。",
+    "AlreadyRegistered": "国はすでに登録済みです — 初回設定後は変更できません。",
+    "AmountMaxMustBePositive": "0 より大きい最大金額を入力してください。",
+    "AmountMustBePositive": "0 より大きい金額を入力してください。",
+    "AmountMutationUnsupportedForShape": "この形状では金額の変更はサポートされていません。",
+    "AmountTooHigh": "出金額が、ヘルスファクターを損なわずに許可される上限を超えています。",
+    "AonRequiresFullFill": "このオファーはオール・オア・ナッシングです — マッチャーでは部分約定になり、条件に反します。全量をマッチするか、このペアをスキップしてください。",
+    "AonRequiresSingleValueAmount": "オール・オア・ナッシングのオファーでは単一金額（最小と最大が同じ）が必要です。範囲の両端が一致するよう調整してください。",
+    "AssetPaused": "この資産は現在ガバナンスにより一時停止中です。解除されてから再試行してください。",
+    "BorrowerSanctioned": "借り手のウォレットはオンチェーン制裁オラクルでフラグされているため、このマッチは続行できません。",
+    "CancelCooldownActive": "未約定オファーには 5 分のキャンセル待機時間があります。行のカウントダウンにキャンセル可能時刻が表示されます。",
+    "CollateralAmountMaxMustBePositive": "0 より大きい最大担保額を入力してください。",
+    "CollateralMustBePositive": "0 より大きい担保額を入力してください。",
+    "CollateralMutationUnsupportedForShape": "このオファー形状では担保を変更できません（借り手の NFT レンタルオファーは担保ではなく vault 前払いです）。金額または利率のみ modifyOffer を使ってください。",
+    "CountriesNotCompatible": "取引相手の国が互換ではありません（制裁/コンプライアンス）。",
+    "CrossFacetCallFailed": "トランザクション内のクロスファセット呼び出しに失敗しました。診断エクスポートをサポートへ共有してください。",
+    "ERC20InsufficientAllowance": "トークン許可額が不足しています。必要額を承認してから再試行してください。",
+    "ERC20InsufficientBalance": "トークン残高が不足しています。この金額に必要なトークンがウォレットにありません。",
+    "ERC20InvalidReceiver": "トークン転送の受取先アドレスが無効です。",
+    "ERC20InvalidSender": "トークン転送の送信元アドレスが無効です。",
+    "ERC20InvalidSpender": "トークン承認の spender アドレスが無効です。",
+    "ERC721IncorrectOwner": "この NFT を所有していません。",
+    "ERC721InsufficientApproval": "NFT の承認がありません — 先に NFT を承認してください。",
+    "ERC721InvalidOwner": "NFT 所有者が無効です。",
+    "ERC721InvalidReceiver": "NFT 転送の受取先が無効です。",
+    "ERC721InvalidSender": "NFT 転送の送信元が無効です。",
+    "ERC721NonexistentToken": "この NFT は存在しません。",
+    "EnforcedPause": "プロトコルはメンテナンスのため一時停止中です。後でもう一度お試しください。",
+    "FeeTooHigh": "この操作の手数料が許容上限を超えています。",
+    "FunctionDisabled": "この機能は現在プロトコルガバナンスによりオフになっています。後でもう一度お試しください。",
+    "FunctionDoesNotExist": "このコントラクトデプロイでは関数を利用できません（facet が組み込まれていない可能性があります）。",
+    "GetUserVaultFailed": "ユーザー vault を解決できませんでした。ウォレットを再接続するか、サポートへ連絡してください。",
+    "HealthFactorCalculationFailed": "ヘルスファクターの計算に失敗しました — 再試行してください。",
+    "HealthFactorNotLow": "ヘルスファクターは清算しきい値を下回っていません。",
+    "HealthFactorTooLow": "ヘルスファクターが低すぎます。担保を追加して 1.5 を上回るようにしてください。",
+    "IllegalTransition": "不正なローン状態遷移です — ローンは要求された状態へ移行できません。",
+    "IlliquidAsset": "この資産は非流動的です（価格フィードまたは DEX プールがありません）。",
+    "IlliquidAssetNotAcknowledged": "いずれかの資産が非流動的です。続行するには非流動資産の確認にチェックしてください。",
+    "IlliquidPairNotConsented": "続行するには、双方が非流動資産の条件に同意する必要があります。",
+    "InitLtvAboveTier": "このローンはリスク階層の LTV 上限を超えます（価格または階層上限が変動しました）。借入額を下げるか担保を追加して再試行してください。",
+    "InsufficientAllowance": "許可額が不足しています",
+    "InsufficientCollateral": "新しい借り手担保が不足しています（元の担保以上である必要があります）。",
+    "InsufficientLiquidity": "この資産のオンチェーン流動性が不足しています。",
+    "InsufficientPartialAmount": "部分返済額が小さすぎます（最低しきい値未満）。",
+    "InsufficientPrepay": "発生済み手数料をカバーする前払いレンタル残高が不足しています。",
+    "InsufficientProceeds": "清算代金がローンをカバーするには不足していました。",
+    "InterestRateAboveCeiling": "金利が現在のプロトコル上限を超えています。金利を下げて再試行してください。",
+    "InvalidAddress": "無効なアドレス",
+    "InvalidAmount": "無効な金額です — 値は 0 より大きい必要があります。",
+    "InvalidAmountRange": "金額範囲が無効です — 最大は最小以上である必要があります。",
+    "InvalidAsset": "無効な資産",
+    "InvalidAssetType": "無効な資産タイプです。",
+    "InvalidCollateralAmountRange": "担保範囲が無効です — 最大は最小以上である必要があります。",
+    "InvalidCountry": "無効な国コードです。",
+    "InvalidLoan": "無効なローンです — ローンが見つからないか、期待した状態ではありません。",
+    "InvalidLoanStatus": "この操作に必要な状態にローンがありません。",
+    "InvalidNewBorrower": "新しい借り手アドレスが無効です。",
+    "InvalidOffer": "オファーが見つからないか、すでに無効です。",
+    "InvalidOfferTerms": "置換オファーの条件が貸し手有利の要件を満たしていません。",
+    "InvalidOfferType": "無効なオファータイプです — 期間は少なくとも 1 日必要です。",
+    "InvalidRateRange": "金利範囲が無効です — 最大は最小以上である必要があります。",
+    "InvalidRefinanceOffer": "無効な借り換えオファーです — 同じ資産の借り手オファーである必要があります。",
+    "InvalidRoyalty": "ロイヤリティ設定が無効です。",
+    "InvalidSaleOffer": "無効な販売オファーです — 同じ資産タイプの貸し手オファーである必要があります。",
+    "InvalidThresholds": "KYC しきい値が無効です（Tier0 は Tier1 未満である必要があります）。",
+    "InvalidTokenId": "NFT トークン ID が無効です。",
+    "InvalidTosParams": "送信された利用規約バージョンまたはコンテンツハッシュが無効です（ガバナンス側の設定エラー）。",
+    "InvalidTosVersion": "署名した利用規約のバージョンは現在有効ではありません。アプリを再読み込みし、更新後の規約を確認して再署名してください。",
+    "IocRequiresExpiry": "Immediate-or-Cancel オファーには有効期限ウィンドウが必要です。公開前に期限を設定してください。",
+    "KYCRequired": "KYC が必要です — この取引サイズでは続行前に本人確認を完了してください。",
+    "KeeperAccessRequired": "keeper アクセスが必要です — この当事者の代理実行権限がありません。",
+    "KeeperAlreadyApproved": "この keeper はすでにホワイトリストにあります。",
+    "KeeperNotApproved": "この keeper はホワイトリストにありません。",
+    "KeeperWhitelistFull": "keeper ホワイトリストが満杯です — 新しく追加する前に既存の keeper を削除してください。",
+    "LTVCalculationFailed": "LTV 計算に失敗しました — 再試行してください。",
+    "LTVExceeded": "ローン対価値比率が高すぎます。担保を増やすか借入額を減らしてください。",
+    "LenderCannotRepayOwnLoan": "自分が貸し手であるローンは返済できません — 自分のローンを返済することはできません。",
+    "LenderResolutionFailed": "貸し手 vault の解決に失敗しました — 再試行してください。",
+    "LiquidationFailed": "清算スワップに失敗しました — 再試行してください。",
+    "LiquidityMismatch": "流動性の不一致 — いずれかの資産が非流動的で、非流動資産パスに同意していません。",
+    "LoanInitiationFailed": "ローン開始に失敗しました — 再試行してください。",
+    "LoanNotActive": "ローンはアクティブではありません。",
+    "LoanNotInRepayablePhase": "このローンは現在返済を受け付けるフェーズではありません。",
+    "MatchHFTooLow": "これによりローンが最小ヘルスファクター（1.5）を下回ります。担保を追加するか借入額を減らしてください。",
+    "MaxLendingAboveCeiling": "借りたい金額に対して担保が少なすぎます。借入額を下げるか、より多くの担保をロックして再試行してください。",
+    "MinCollateralBelowFloor": "このローンの担保は必要最小額を下回っています。必要担保を増やすかローン額を減らして再試行してください。",
+    "ModifyBelowFilledFloor": "すでに約定した部分より下に上限を縮小できません — このオファーへの部分約定は現在サイズで価値を確定しています。",
+    "NFTAlreadyBurned": "このポジション NFT はすでにバーンされています。",
+    "NFTBurnFailed": "ポジション NFT のバーンに失敗しました — 再試行してください。",
+    "NFTMintFailed": "ポジション NFT のミントに失敗しました — 再試行してください。続く場合はサポートへ連絡してください。",
+    "NFTRenterUpdateFailed": "NFT レンター更新に失敗しました — 再試行してください。",
+    "NFTStatusUpdateFailed": "NFT 状態更新に失敗しました — 再試行してください。",
+    "NFTTransferFailed": "NFT 転送に失敗しました — 再試行してください。",
+    "NoDexPool": "この資産の DEX 流動性プールが見つかりません。",
+    "NoPriceFeed": "この資産の価格フィードが見つかりません。このネットワークではサポートされていない可能性があります。",
+    "NoVault": "このウォレットにはまだ vault がありません。入金または最初のローンで開いてから再試行してください。",
+    "NonLiquidAsset": "このローン内の 1 つ以上の資産が非流動的です。双方が非流動条件に同意する必要があります。",
+    "NonLiquidAssetAndNoIlliquidAsset": "非流動資産オファーを受け入れるには、双方が明示的に同意する必要があります。",
+    "NotAuthorized": "権限がありません。この操作は特定のロールまたは呼び出し元に制限されています。",
+    "NotBorrower": "この操作は借り手のみ実行できます。",
+    "NotBorrowerNftOwner": "現在の借り手ポジション保有者のみ実行できます。",
+    "NotCreatorOrNotExpired": "オファーが有効な間、キャンセルは作成者に限定されます。期限後は誰でもクリーンアップできます — 返金は呼び出し元に関係なく作成者へ戻ります。",
+    "NotDailyYet": "日次控除はまだ期限ではありません — 24 時間経過するまで待ってください。",
+    "NotDefaultedYet": "ローンはまだデフォルトしていません — 猶予期間が終了していません。",
+    "NotLender": "この操作は貸し手のみ実行できます。",
+    "NotLenderNftOwner": "現在の貸し手ポジション保有者のみ実行できます。",
+    "NotNFTOwner": "この操作を行うにはポジション NFT を所有している必要があります。",
+    "NotNFTRental": "この操作は NFT レンタルローンにのみ適用されます。",
+    "NotOfferCreator": "この操作はオファー作成者のみ実行できます。",
+    "OfferAcceptFailed": "オファーの承諾に失敗しました — 再試行してください。",
+    "OfferAlreadyAccepted": "オファーはすでに承諾されています。",
+    "OfferCreationFailed": "オファー作成に失敗しました — 再試行してください。",
+    "OfferDurationExceedsCap": "ローン期間がプロトコルの許容上限を超えています。短い期間を選んでください。",
+    "OfferExpired": "このオファーは期限切れで、承諾またはマッチできません。",
+    "OfferExpiryAboveCap": "オファー期限が遠すぎます（1 年上限）。より早い期限を選択してください。",
+    "OfferExpiryInPast": "オファー期限は未来のタイムスタンプである必要があります。現在から少なくとも 1 秒後の期限を選んでください。",
+    "OfferNotAccepted": "借り手オファーはまだ承諾されていません。",
+    "OffsetNotLinked": "オフセットオファーはこのローンにリンクされていません。",
+    "OffsetOfferNotAccepted": "オフセットオファーはまだ承諾されていません。",
+    "OraclePriceDivergence": "Chainlink と設定済みの二次オラクル（Tellor / API3 / DIA）が Soft 2-of-N クォーラムの許容範囲を超えて不一致でした。未検証価格で処理しないため、価格読み取りを拒否します。しばらくして再試行してください。",
+    "PartialRepayNotAllowed": "このローンは部分返済を許可していません — 全額を返済してください。",
+    "PartialRepayWorsensHealthFactor": "この部分返済はヘルスファクターを改善せず悪化させます。部分返済で HF を悪化させてはいけません — 金額を調整して再試行してください。",
+    "PartialSwapWorsensHealthFactor": "この担保スワップ返済はヘルスファクターを改善せず悪化させます。HF を悪化させないようスワップを調整してください。",
+    "PeriodicInterestDisabled": "このデプロイでは定期利払いが現在無効です。",
+    "PositionNFTLocked": "このポジション NFT は、戦略フロー（preclose / refinance / loan-sale）の進行中にロックされています。",
+    "PrincipalNotKYCd": "このデプロイでこのサイズの操作を行うには本人確認（KYC）が必要です。",
+    "PrincipalSanctioned": "このウォレットはオンチェーン制裁オラクルでフラグされているため、プロトコルは新しいポジションを開けません。",
+    "RateShortfallTooHigh": "このローン販売では金利不足が許容上限を超えています。",
+    "ReentrancyGuardReentrantCall": "リエントランシー保護によりトランザクションがリバートしました。再試行してください。",
+    "RefinanceCarryOverCollateralShortfall": "借り換えの引き継ぎ担保が不足しています",
+    "RentalNotActive": "この NFT レンタルローンは現在アクティブではありません。",
+    "RepaymentPastGracePeriod": "返済ウィンドウは閉じました — 猶予期間が終了しています。ローンをデフォルト化する必要があります。",
+    "RiskAndTermsConsentRequired": "続行する前にリスク開示と条件に同意してください。",
+    "RiskTierTooLow": "あなたの VPFI リスク階層は、このオファーが要求する階層を下回っています。",
+    "SaleListingActive": "販売リスティングが有効です",
+    "SaleNotLinked": "販売オファーはこのローンにリンクされていません。",
+    "SaleOfferAlreadyExists": "販売オファーはすでに存在します",
+    "SaleOfferCollateralMustBeERC20": "販売オファーの担保は ERC20 である必要があります",
+    "SaleOfferNotAccepted": "販売オファーはまだ承諾されていません。",
+    "SalePositionNotConsolidatable": "販売ポジションは統合できません",
+    "SaleVehicleImmutable": "販売ビークルは変更不能です",
+    "SaleVehicleNotMatchable": "販売ビークルはマッチできません",
+    "SanctionedAddress": "このウォレット（またはオファー作成者）はオンチェーン制裁オラクルでフラグされています。プロトコルは制裁対象アドレスとペアにできません。誤りだと思う場合は、制裁オラクルの運営者へ直接連絡してください — Vaipakam は独自の制裁リストを管理していません。",
+    "SelfCollateralizedOffer": "自己担保オファー — 元本資産と担保資産は異なる必要があります。",
+    "SelfTrade": "自分のオファーはマッチできません — 貸し手と借り手は同じウォレットにできません。",
+    "SelfTradeForbidden": "自己取引は許可されていません — 貸し手と借り手のアドレスが同じです。相手方のオファーとマッチしてください。",
+    "SequencerDown": "L2 シーケンサーは現在停止中です。シーケンサーが正常になるまで価格読み取りは停止されます。",
+    "SequencerGracePeriod": "L2 シーケンサーが復旧したばかりです — 復旧後 1 時間は価格が制限されます。しばらくして再試行してください。",
+    "SequencerUnhealthy": "L2 シーケンサーは現在異常とみなされています（停止中または復旧後 1 時間の猶予中）。しばらくして再試行してください。",
+    "StalePriceData": "価格データが古くなっています — オラクルは最近更新されていません。",
+    "TradeNotAllowed": "現在のコンプライアンス設定では、この 2 国間の取引は許可されていません。",
+    "TreasuryTransferFailed": "トレジャリー転送に失敗しました — 再試行してください。",
+    "UnauthorizedCrossFacetCall": "この関数は diamond による内部呼び出し（クロスファセット）でのみ呼び出せます。",
+    "UnsupportedLoanShape": "この資産または条件の組み合わせは、この操作ではサポートされていません。",
+    "UpdateNotAllowed": "この設定更新は現在許可されていません。",
+    "UserHasNoVault": "まだ vault がありません — 最初の入金またはローンで作成されます。それを開く操作を試してから再試行してください。",
+    "VaultResolutionFailed": "vault の解決に失敗しました — 再試行してください。",
+    "VaultTransferFailed": "vault 転送に失敗しました — 再試行してください。",
+    "VaultWithdrawFailed": "vault 出金に失敗しました — 再試行してください。",
+    "ZeroAmount": "この資産で請求できるトレジャリー残高はありません。",
+    "ZeroCollateral": "ローンの担保がゼロです。",
+    "_gasEstimateUnavailable": "ウォレットがこのトランザクションを見積もれなかったため、署名すると高い確率で失敗します。これは実際の gas 不足ではありません — レビュー手順で特定の理由が表示された場合、それが本当の原因です。そうでなければ通常の原因は、トークン承認不足（正確な金額を承認して再試行）またはデプロイ済みコントラクトと呼び出し形式が合わない古いアプリビルド（最新版を読み込むためハードリロード）です。続く場合は診断エクスポートをサポートへ共有してください。"
   }
 }
