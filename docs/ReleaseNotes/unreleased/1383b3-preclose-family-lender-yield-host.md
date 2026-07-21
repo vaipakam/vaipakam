@@ -20,11 +20,14 @@ Three settlement legs that previously ignored the discount now honor it:
   since the last daily deduction, which is forwarded to the lender at the moment
   of transfer.
 
-Each leg resolves the discount for the party that actually receives the
-proceeds. The two legs that pay the stored lender resolve for that account; the
-rental catch-up leg pays whoever currently holds the lender position, so it
-resolves for the current holder. Getting this wrong would credit a discount — or
-charge someone's VPFI — for a party who is not being paid.
+Every leg resolves the discount for **whoever currently holds the lender
+position**, which is the party a claim actually pays out to. This matters most
+when a lender position has been sold: the settlement bookkeeping can still name
+the seller in places, and pricing the discount off that stale name would have
+sized it against the seller's holdings and — once the token peg is configured —
+spent the seller's own tokens to fund a discount they would never receive. The
+discount follows the party who is paid, never the party the paperwork happens to
+still mention.
 
 To make room for all of this on a facet that was within a few hundred bytes of
 the contract size limit, the early-close ERC-20 path was switched from carrying

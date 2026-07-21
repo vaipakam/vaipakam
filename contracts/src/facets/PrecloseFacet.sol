@@ -453,17 +453,24 @@ contract PrecloseFacet is
             // `loan.prepayAsset` — which the quote path now prices against
             // (Codex #1389 P2).
             //
-            // Keyed on the STORED `loan.lender`: the eager consolidation above
+            // Keyed on the CURRENT lender-NFT holder, NOT the stored
+            // `loan.lender` (Codex #1390 P1). The eager consolidation above
             // deliberately SKIPS rentals (`LibConsolidation` returns `Skipped`
-            // for `assetType != ERC20`), and the lender payout below resolves
-            // `loan.lender`'s vault. Keying the discount on the same account the
-            // proceeds go to is the consistent choice; re-anchoring a transferred
-            // rental position is the deferred #1124 gap, not this PR's scope.
+            // for `assetType != ERC20`), so on a transferred rental position
+            // `loan.lender` is still the SELLER. `ClaimFacet.claimAsLender` is
+            // `ownerOf(lenderTokenId)`-gated, so the proceeds recorded below are
+            // ultimately drawn by the current holder — keying the discount on
+            // the stale address would price it off the seller's hold tier and,
+            // once the peg is set, DEBIT the seller's VPFI vault for a discount
+            // they don't receive. The discount must follow the party who is
+            // actually paid. (That the interim vault credit still resolves
+            // `loan.lender` is the pre-existing #1124 gap — this leg must not
+            // extend that gap into spending a non-participant's VPFI.)
             {
                 (uint256 rentLenderExtra, uint256 rentNewTreasury) =
                     _hostResolveLenderYieldFee(
                         loanId,
-                        loan.lender,
+                        IERC721(address(this)).ownerOf(loan.lenderTokenId),
                         totalDue,
                         treasuryFee
                     );
@@ -829,17 +836,22 @@ contract PrecloseFacet is
         // the shortfall is a pure lender top-up the treasury never touches, so it
         // stays outside the discount base.
         //
-        // Keyed on the STORED `loan.lender`: `transferObligationViaOffer`
-        // deliberately KEEPS `loan.lender` (see the park/reserve notes below —
-        // the deposit, the `heldForLender` credit, and the #597 reservation all
-        // key on that same account), so the discount must resolve for the party
-        // the proceeds are actually parked for. Re-anchoring a transferred lender
-        // position here is the deferred #1124 gap.
+        // Keyed on the CURRENT lender-NFT holder, NOT the stored `loan.lender`
+        // (Codex #1390 P1). `transferObligationViaOffer` KEEPS `loan.lender`, so
+        // on a transferred lender position it is still the SELLER, while the
+        // `heldForLender` credit parked below is ultimately drawn through
+        // `ClaimFacet.claimAsLender`, which is `ownerOf(lenderTokenId)`-gated —
+        // i.e. the current holder is paid. Resolving against the stale address
+        // would price the discount off the seller's hold tier and, once the peg
+        // is set, DEBIT the seller's VPFI vault for a discount they never
+        // receive. The discount follows the party who is actually paid; the
+        // interim credit keying on `loan.lender` is the pre-existing #1124 gap
+        // and must not be extended into spending a non-participant's VPFI.
         {
             (uint256 aprLenderExtra, uint256 aprNewTreasury) =
                 _hostResolveLenderYieldFee(
                     loanId,
-                    loan.lender,
+                    IERC721(address(this)).ownerOf(loan.lenderTokenId),
                     accruedInterest,
                     treasuryFee
                 );
