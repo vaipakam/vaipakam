@@ -118,12 +118,12 @@
           "blurb": "اطّلع على قروضك وإيجاراتك، وسدّد، وأضف ضمانًا، أو طالِب."
         }
       },
-      "activePositions_few": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
-      "activePositions_many": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
-      "activePositions_one": "لديك {{count}} position نشطة. شاهدها ضمن My positions.",
-      "activePositions_other": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
-      "activePositions_two": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
-      "activePositions_zero": "لديك {{count}} positions نشطة. شاهدها ضمن My positions.",
+      "activePositions_few": "لديك {{count}} positions نشطة. شاهدها ضمن مراكزي.",
+      "activePositions_many": "لديك {{count}} positions نشطة. شاهدها ضمن مراكزي.",
+      "activePositions_one": "لديك {{count}} position نشطة. شاهدها ضمن مراكزي.",
+      "activePositions_other": "لديك {{count}} positions نشطة. شاهدها ضمن مراكزي.",
+      "activePositions_two": "لديك {{count}} positions نشطة. شاهدها ضمن مراكزي.",
+      "activePositions_zero": "لديك {{count}} positions نشطة. شاهدها ضمن مراكزي.",
       "assetsNote": "أصولك تبقى في vault الخاص بك on-chain — Vaipakam لا يجمعها ولا يحتفظ بها نيابة عنك.",
       "testnetNudge": "أنت على {{chainName}}، وهي test network. احصل على test assets مجانية للتجربة →"
     },
@@ -175,7 +175,7 @@
       "introUpTo": "حتى {{n}} تأكيدات wallet، بهذا الترتيب:",
       "intro_few": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
       "intro_many": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
-      "intro_one": "تأكيد wallet واحد ينهي هذا:",
+      "intro_one": "تأكيد واحد في محفظتك ينهي هذا:",
       "intro_other": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
       "intro_two": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
       "intro_zero": "ستؤكد {{count}} مرات في محفظتك، بهذا الترتيب:",
@@ -462,7 +462,7 @@
       "graceCheckFailed": "تعذّر علينا تأكيد مهلة سماح السداد، ويجب أن تُظهر المراجعة المهلة الحقيقية — يبقى التوقيع موقوفًا حتى ينجح ذلك.",
       "riskGateBlocked": "قواعد الوصول القائمة على المخاطر في البروتوكول تحجب هذا القبول لمحفظتك الآن — فهو يتطلب إقرارًا دائمًا على السلسلة أو مستوى وصول لا يستطيع هذا التطبيق جمعه بعد. لم يُرسَل أو يُعتمد أي شيء.",
       "linkedLoanAcceptBlocked": "هذا العرض مرتبط بـ loan #{{loanId}} جار بالفعل — قبوله سيقوم بتسوية أو نقل position لذلك loan، وليس بدء loan جديد تمت مراجعته أعلاه. هذا التطبيق لا يستطيع بعد عرض الشروط الحقيقية لهذا النوع من الصفقات، لذلك القبول هنا معطل حاليا.",
-      "saleBuyerNext": "أنت الآن lender لـ loan #{{loanId}} — يستمر loan دون تغيير للمقترض، وتأتي مدفوعاته إليك. تابعه ضمن My positions؛ عندما يسدد، تطالب بالـ principal والفائدة المتبقية.",
+      "saleBuyerNext": "أنت الآن lender لـ loan #{{loanId}} — يستمر loan دون تغيير للمقترض، وتأتي مدفوعاته إليك. تابعه ضمن مراكزي؛ عندما يسدد، تطالب بالـ principal والفائدة المتبقية.",
       "saleVehicleBanner": "هذا position sale: ستشتري جانب lender من loan #{{loanId}} الجاري، وليس loan جديدا. المقترض والتزاماته لا تتغير — يتغير lender فقط. الأرقام أدناه مباشرة من ذلك loan.",
       "wrongChainLink": "هذا الرابط يشير إلى offer على {{chainName}}. بدل إلى تلك الشبكة (أعلى الصفحة)، ثم افتح الرابط مرة أخرى — أرقام offers تتكرر عبر الشبكات، لذلك لن نخمن."
     },
@@ -1028,7 +1028,7 @@
         "feesNftBack": "{{amount}} رسوم + {{nft}} الخاص بك عائد",
         "heldProceedsSuffix": " + عائدات محتجزة",
         "principalPlusInterest": "{{amount}} {{symbol}} + فائدة",
-        "rebateAmount": "خصم {{amount}} VPFI",
+        "rebateAmount": "استرداد {{amount}} VPFI",
         "recoveredFromDefault": "تم استرداد {{amount}}{{held}} من default",
         "rentalFeesNftBack": "رسوم الإيجار + {{nft}} الخاص بك عائد"
       },
