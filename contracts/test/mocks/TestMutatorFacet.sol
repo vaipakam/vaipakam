@@ -740,6 +740,18 @@ contract TestMutatorFacet {
     ///         `recycledBudget` halves without driving the full governor finalize
     ///         flow. `stamped = true`, so an armed day resolves its pool from
     ///         here instead of halting.
+    /// @dev #1351 (M2 PR-2, slice 2a) — read the D1 per-day cap stamps so tests
+    ///      can assert the finalize snapshot wrote mode + C ATOMICALLY with the
+    ///      legacy threshold. Test-only: the D1 maps have no production view
+    ///      surface while the feature is dark.
+    function dayCapModeRaw(uint256 dayId) external view returns (uint8) {
+        return uint8(LibVaipakam.storageSlot().dayCapMode[dayId]);
+    }
+
+    function dayUserSideCapVpfi18Raw(uint256 dayId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().dayUserSideCapVpfi18[dayId];
+    }
+
     function setDayPoolStampRaw(
         uint256 dayId,
         uint128 scheduleFloor,

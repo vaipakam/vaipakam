@@ -755,6 +755,19 @@ library LibVaipakam {
     uint16 constant REWARD_HAIRCUT_DEFAULT_BPS = 200; // 2%
     uint16 constant REWARD_HAIRCUT_MAX_BPS = 2000; // 20% ceiling on m_reward
 
+    /// @dev #1351 (M2 PR-2) — the D1 share-of-pool cap: the share of ONE day's
+    ///      side-half that a SINGLE user may take on a SINGLE side, in BPS.
+    ///      `C[d] = sideHalf[d] × bps / BASIS_POINTS`, an absolute VPFI amount.
+    ///
+    ///      Bounded on BOTH sides by the setter, deliberately. A too-LOW value
+    ///      would throttle every honest claimant on a thin day; a too-HIGH one
+    ///      would defeat the anti-concentration purpose of the cap entirely
+    ///      (at 10_000 a single user could take a whole side-half). Read via
+    ///      {cfgUserSideShareCapBps}; a never-configured `0` ⇒ the default.
+    uint16 constant USER_SIDE_SHARE_CAP_DEFAULT_BPS = 2000; // 20%
+    uint16 constant USER_SIDE_SHARE_CAP_MIN_BPS = 50; // 0.5% floor
+    uint16 constant USER_SIDE_SHARE_CAP_MAX_BPS = 5000; // 50% ceiling
+
     /// @custom:event-category informational/config
     event TreasurySet(address indexed newTreasury);
 
@@ -854,6 +867,25 @@ library LibVaipakam {
         Partial,
         Aon,
         Ioc
+    }
+
+    /**
+     * @notice #1351 (M2 PR-2) — which cap family prices a finalized reward day.
+     * @dev Deliberately an EXPLICIT per-day stamp rather than something derived
+     *      from the cap value: a ShareOfPool day may legitimately carry
+     *      `dayUserSideCapVpfi18 == 0` (dust / zero-emission), so
+     *      "cap value is zero ⇒ legacy" would silently hand that day to the
+     *      UNCAPPED legacy path. Claim and sweep therefore fail CLOSED when an
+     *      armed (post-`D*`) day has no mode written.
+     *
+     *      `LegacyEthRatio` is value 0 so every pre-cutover day that was
+     *      finalized before this field existed keeps its historical meaning
+     *      (the #1008 entry-independent threshold in `dayCapThreshold18`)
+     *      without a migration.
+     */
+    enum CapMode {
+        LegacyEthRatio,
+        ShareOfPool
     }
 
     /**
@@ -5362,6 +5394,52 @@ library LibVaipakam {
         //   (a sale split ends the old window where the new one begins), so the
         //   union of rewarded days equals the sum of each entry's window length.
         mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardedDays;
+        // #1351 (M2 PR-2, slice 2a) — the D1 absolute share-of-pool reward cap.
+        // APPEND-ONLY TAIL. Ships DARK: written only for ARMED days
+        // (`_isArmedDay` = the D* cutover), which is unarmed on every current
+        // deploy, so none of this is read or written until the operator jointly
+        // arms D* with PR-5c + PR-6.
+        //
+        // `userSideShareCapBps` — the D1 share knob (BPS of the day's side-half
+        //   that ONE user may take on ONE side). A never-configured `0` maps to
+        //   {USER_SIDE_SHARE_CAP_DEFAULT_BPS}; {ConfigFacet} range-bounds writes
+        //   to [{USER_SIDE_SHARE_CAP_MIN_BPS}, {USER_SIDE_SHARE_CAP_MAX_BPS}].
+        //   Lives at the Storage tail, NOT in `ProtocolConfig` — that struct is
+        //   embedded ahead of live fields, so appending to it would shift every
+        //   subsequent top-level slot.
+        uint16 userSideShareCapBps;
+        // Per-day cap FAMILY. `CapMode.LegacyEthRatio` (0) = the #1008
+        //   entry-independent ETH-ratio threshold in `dayCapThreshold18`;
+        //   `CapMode.ShareOfPool` (1) = the D1 absolute per-(user,side) ceiling
+        //   in {dayUserSideCapVpfi18}.
+        //
+        //   LOAD-BEARING: this explicit write is the ONLY D1/legacy switch.
+        //   NEVER infer the mode from `dayUserSideCapVpfi18[d] != 0` — a dust or
+        //   zero-emission day is legitimately `C == 0` while still being
+        //   ShareOfPool, and inferring would silently route it down the
+        //   uncapped legacy path. Claim/sweep fail CLOSED on an armed day whose
+        //   mode was never written.
+        mapping(uint256 => CapMode) dayCapMode;
+        // The D1 ceiling `C[d] = sideHalf[d] × userSideShareCapBps / BPS`, in
+        //   VPFI 1e18 wei — an ABSOLUTE per-(user, side, day) amount, NOT an
+        //   entry-scaled ratio. May legitimately be 0 on dust days.
+        mapping(uint256 => uint256) dayUserSideCapVpfi18;
+        // Durable remaining-budget ledger: VPFI already routed for
+        //   `(user, side, day)` — counting payouts to the USER *and* treasury
+        //   forfeit slices, because a forfeit must not open a second budget.
+        //   This durability is what makes staggered loan closes safe: without
+        //   it, loan A claiming its share and later loan B claiming its share
+        //   would each see a full `C` and together exceed it.
+        //   side: 0 = Lender, 1 = Borrower (matches {RewardSide}).
+        //   Security invariant: `userSideDayPaidVpfi[u][s][d] <= C[d]`.
+        mapping(address => mapping(uint8 => mapping(uint256 => uint256)))
+            userSideDayPaidVpfi;
+        // Per-entry day cursor for the chunked D1 claim walk. `0` means "not
+        //   started" and is read as the entry's `startDay`; it advances to
+        //   `d + 1` once day `d` has been settled for that entry, and the entry
+        //   is marked processed once it passes `endDay`. A pool shortage must
+        //   NOT advance this (the day is all-or-nothing and stays retryable).
+        mapping(uint256 => uint64) rewardEntryClaimNextDay;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
@@ -5918,6 +5996,22 @@ library LibVaipakam {
     function cfgRewardHaircutBps() internal view returns (uint256) {
         uint16 v = storageSlot().rewardHaircutBps;
         return v == 0 ? uint256(REWARD_HAIRCUT_DEFAULT_BPS) : uint256(v);
+    }
+
+    /// @dev #1351 (M2 PR-2) — the D1 share-of-pool cap in BPS. A
+    ///      never-configured `0` maps to {USER_SIDE_SHARE_CAP_DEFAULT_BPS}
+    ///      (2000). Unlike {cfgRewardHaircutBps}, `0` is NOT a valid configured
+    ///      value here — the setter's lower bound is
+    ///      {USER_SIDE_SHARE_CAP_MIN_BPS}, so a stored `0` unambiguously means
+    ///      "never configured" and can never be confused with a deliberate
+    ///      zero-share policy (which would strand every claimant).
+    ///
+    ///      Read at FINALIZE only, to stamp `dayUserSideCapVpfi18[d]`. Days
+    ///      already finalized keep the `C` they were stamped with, so a
+    ///      governance retune cannot retroactively reprice a past day's ceiling.
+    function cfgUserSideShareCapBps() internal view returns (uint256) {
+        uint16 v = storageSlot().userSideShareCapBps;
+        return v == 0 ? uint256(USER_SIDE_SHARE_CAP_DEFAULT_BPS) : uint256(v);
     }
 
     /// @dev #1347 (M2 PR-5a/5b) — whether the Full VPFI tariff is EFFECTIVELY

@@ -202,6 +202,97 @@ contract GovernorDayPoolTest is SetupTest {
         );
     }
 
+    // ─── #1351 (M2 PR-2, slice 2a) — D1 finalize snapshot ───────────────────
+
+    /// @dev The load-bearing property of slice 2a: on an ARMED day, finalize
+    ///      must stamp the cap MODE in the same write that disables the legacy
+    ///      threshold. Setting `dayCapThreshold18 = max` (legacy cap off)
+    ///      without marking the day ShareOfPool would leave the day priced by
+    ///      NEITHER cap — an uncapped hole. Asserting both together is what
+    ///      stops the two from drifting apart in a later refactor.
+    function testArmedDayStampsShareOfPoolModeAtomicallyWithMaxThreshold()
+        public
+    {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        _finalize(5);
+
+        assertEq(
+            _mut().dayCapModeRaw(5),
+            1,
+            "armed day stamped ShareOfPool"
+        );
+        // C = sideHalf * 2000bps / 10000. sideHalf = (scheduleFloor +
+        // recycledBudget) / 2 as finalized, so price the expectation off the
+        // stamp rather than re-deriving the pool independently.
+        (, uint256 floor5, uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
+        uint256 sideHalf = floor5 / 2 + recycled5 / 2;
+        assertEq(
+            _mut().dayUserSideCapVpfi18Raw(5),
+            (sideHalf * 2000) / 10_000,
+            "C = sideHalf x default 20% share"
+        );
+    }
+
+    /// @dev Pre-arming days must be left on the legacy family with no D1 stamp,
+    ///      so historical days keep their meaning without a migration.
+    function testPreArmingDayStaysLegacyWithNoD1Stamp() public {
+        _finalize(3); // unarmed (governorCommitArmedFromDay == 0)
+
+        assertEq(_mut().dayCapModeRaw(3), 0, "unarmed day stays LegacyEthRatio");
+        assertEq(
+            _mut().dayUserSideCapVpfi18Raw(3),
+            0,
+            "no D1 ceiling stamped pre-arming"
+        );
+    }
+
+    /// @dev A retune applies only to days finalized AFTER it — an already
+    ///      finalized day keeps the ceiling it was stamped with, so governance
+    ///      cannot retroactively reprice a past day's cap.
+    function testShareCapRetuneNeverRewritesAlreadyFinalizedDay() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalize(5);
+        uint256 cBefore = _mut().dayUserSideCapVpfi18Raw(5);
+
+        _cfg().setUserSideShareCapBps(500); // 5%
+
+        assertEq(
+            _mut().dayUserSideCapVpfi18Raw(5),
+            cBefore,
+            "finalized day keeps its stamped ceiling"
+        );
+
+        // ...but the NEXT finalized day prices off the new share.
+        _finalize(6);
+        (, uint256 floor6, uint256 recycled6, , ) = _agg().getDayPoolStamp(6);
+        uint256 sideHalf6 = floor6 / 2 + recycled6 / 2;
+        assertEq(
+            _mut().dayUserSideCapVpfi18Raw(6),
+            (sideHalf6 * 500) / 10_000,
+            "later day prices off the retuned share"
+        );
+    }
+
+    /// @dev The knob is bounded on BOTH sides; `0` is rejected so a stored `0`
+    ///      unambiguously means "never configured" (a 0 share would strand
+    ///      every claimant).
+    function testShareCapKnobRejectsZeroAndOutOfRange() public {
+        vm.expectRevert();
+        _cfg().setUserSideShareCapBps(0);
+
+        vm.expectRevert();
+        _cfg().setUserSideShareCapBps(49);
+
+        vm.expectRevert();
+        _cfg().setUserSideShareCapBps(5001);
+
+        _cfg().setUserSideShareCapBps(50); // floor accepted
+        _cfg().setUserSideShareCapBps(5000); // ceiling accepted
+    }
+
     function testPreArmingDaysNeverReserve() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
         _mut().setRecycledCreditedByDayRaw(5, 700 ether);
