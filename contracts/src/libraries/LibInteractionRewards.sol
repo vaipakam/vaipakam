@@ -9,6 +9,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title LibInteractionRewards
@@ -2460,6 +2461,302 @@ function _dayPoolHalves(
             ((freshHalf + recycledHalf) *
                 LibVaipakam.cfgUserSideShareCapBps()) /
             LibVaipakam.BASIS_POINTS;
+    }
+
+    // ─── #1351 (M2 PR-2, slice 2b) — the shared D1 day primitive ────────────
+    //
+    // `processUserSideDay` is the ONE place a ShareOfPool day is priced and
+    // charged. Both the user claim and the forfeit sweep must route through it:
+    // the whole point of the `(user, side, day)` domain is a SINGLE absolute
+    // ceiling, and two independent code paths spending against it would
+    // reintroduce exactly the double-pay this cap exists to stop.
+
+    /// @dev The RPN row for `d` is materialized only up to the side's cursor.
+    ///      Reading `cumRpn[d]` past it would either underflow or read an unset
+    ///      slot as a false 0, so every Δ computation is gated on this.
+    function _rpnReady(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) private view returns (bool) {
+        return
+            (side == LibVaipakam.RewardSide.Lender
+                ? s.cumLenderCursor
+                : s.cumBorrowerCursor) >= d;
+    }
+
+    /// @dev Day `d`'s UNCAPPED per-RPN-unit rate, `cumRpn[d] - cumRpn[d-1]`.
+    ///      Deliberately reads `cumRpn`, never `cumMin`: under D1 the legacy
+    ///      ETH-ratio tightening is retired (finalize stamps
+    ///      `dayCapThreshold18 = max`), so stacking it under the new ceiling
+    ///      would underpay. Caller MUST have checked {_rpnReady}.
+    function _uncappedDelta(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) private view returns (uint256) {
+        if (d == 0) return 0; // day 0 is excluded from rewards by convention
+        if (side == LibVaipakam.RewardSide.Lender) {
+            return s.cumLenderRpn18[d] - s.cumLenderRpn18[d - 1];
+        }
+        return s.cumBorrowerRpn18[d] - s.cumBorrowerRpn18[d - 1];
+    }
+
+    /// @dev One entry's raw contribution for day `d`, before any clamp.
+    ///      A day with no global interest on that side pays nothing (and would
+    ///      otherwise divide by zero upstream).
+    function _contribFor(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e,
+        uint256 d
+    ) private view returns (uint256) {
+        uint256 global = e.side == LibVaipakam.RewardSide.Lender
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        if (global == 0) return 0;
+        return (e.perDayNumeraire18 * _uncappedDelta(s, e.side, d)) / 1e18;
+    }
+
+    /// @dev Remaining loan-side headroom for `(loanId, side)` — the #1353
+    ///      PR-5c lifetime cap, prorated, minus what this loan-side has already
+    ///      been paid. Composes with the D1 ceiling as a `min`, so the tighter
+    ///      of the two always binds.
+    function _loanSideRemaining(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        LibVaipakam.RewardSide side,
+        uint256 rewardedDaysIncl
+    ) private view returns (uint256) {
+        uint256 capEff = _loanSideRewardCapEff(s, loanId, rewardedDaysIncl);
+        uint256 paid = s.loanSideRewardPaidVpfi[loanId][uint8(side)];
+        return capEff > paid ? capEff - paid : 0;
+    }
+
+    /// @dev Apportion `budget` across `cEff` weights: floor pro-rata, then push
+    ///      the rounding remainder largest-first but ONLY into each entry's
+    ///      residual capacity (`cEff[e] - floor_e`).
+    ///
+    ///      `Σ slices <= budget` is required; `Σ slices == budget` is NOT — when
+    ///      residual capacity is exhausted the remainder is left UNALLOCATED
+    ///      rather than pushed past somebody's `cEff`. Overshooting a single
+    ///      entry's `cEff` would break the loan-side cap that produced it, so
+    ///      leaving dust unassigned is the correct trade (it simply stays in the
+    ///      pool, the same way today's unused remainder does). Dust is never
+    ///      redistributed to another user or carried to a later day.
+    ///      Ties break to the LOWEST index, so the split is deterministic.
+    function _proRataFloorWithCapacityBoundedDust(
+        uint256 budget,
+        uint256[] memory cEff,
+        uint256 rawPay
+    ) private pure returns (uint256[] memory slices) {
+        uint256 n = cEff.length;
+        slices = new uint256[](n);
+        if (budget == 0 || rawPay == 0) return slices;
+
+        uint256 assigned;
+        for (uint256 i; i < n; ) {
+            // Floor division: the sum can only undershoot `budget`.
+            uint256 fl = (budget * cEff[i]) / rawPay;
+            slices[i] = fl;
+            assigned += fl;
+            unchecked { ++i; }
+        }
+
+        uint256 dust = budget - assigned; // >= 0 by floor construction
+        while (dust != 0) {
+            // Largest residual capacity first (ties -> lowest index).
+            uint256 bestI = type(uint256).max;
+            uint256 bestCap;
+            for (uint256 i; i < n; ) {
+                uint256 residual = cEff[i] - slices[i];
+                if (residual > bestCap) {
+                    bestCap = residual;
+                    bestI = i;
+                }
+                unchecked { ++i; }
+            }
+            if (bestI == type(uint256).max || bestCap == 0) break; // capacity gone -> leave dust
+            uint256 give = bestCap < dust ? bestCap : dust;
+            slices[bestI] += give;
+            dust -= give;
+        }
+    }
+
+    /// @notice Result of pricing one ShareOfPool `(user, side, day)`.
+    /// @param toUser     VPFI owed to the user (clean entries).
+    /// @param toTreasury VPFI owed to treasury (forfeited entries).
+    /// @param advanced   True ⇒ the caller MUST, in the SAME transaction:
+    ///                   (a) advance `rewardEntryClaimNextDay` to `d + 1` for
+    ///                   every entry in the set, (b) add `Σ slices` to
+    ///                   `userSideDayPaidVpfi[user][side][d]`, and (c) add each
+    ///                   slice to `loanSideRewardPaidVpfi[loanId][side]`, and
+    ///                   (d) increment `loanSideRewardedDays[loanId][side]` by
+    ///                   the day just priced (this function reads
+    ///                   `stored + 1` and cannot persist it).
+    ///                   Charging (b) is NOT optional — this function is `view`
+    ///                   and cannot do it, so a caller that transfers without
+    ///                   charging hands the user an UNLIMITED daily budget.
+    ///                   False ⇒ nothing was charged and the day stays
+    ///                   RETRYABLE (pool shortage) — see the 0-slice policy.
+    struct DayCharge {
+        uint256 toUser;
+        uint256 toTreasury;
+        bool advanced;
+    }
+
+    /// @notice The shared D1 day primitive — price + charge ONE
+    ///         `(user, side, day)` against its absolute ceiling `C`.
+    /// @dev    Both the user claim and the forfeit sweep MUST route through
+    ///         this. The `(user, side, day)` domain exists precisely so there is
+    ///         ONE ceiling; two paths spending against it independently would
+    ///         reintroduce the double-pay the cap prevents.
+    ///
+    ///         `userSideDayPaidVpfi` is charged for what is ACTUALLY transferred
+    ///         this call, and counts user payouts AND treasury forfeit slices —
+    ///         a forfeit must not open a second budget. That durability is what
+    ///         makes staggered loan closes safe: whichever of a user's loans
+    ///         settles first consumes budget the later one then cannot re-spend,
+    ///         so `Σ paid ≤ C` holds regardless of ORDER. Exact simultaneous
+    ///         pro-rata across loans that close at different times is explicitly
+    ///         NOT promised — only the ceiling is.
+    ///
+    ///         Pool shortage is ALL-OR-NOTHING: if `poolBudget` cannot cover
+    ///         the day's budget, nothing is charged and `advanced` is false so
+    ///         the caller retries later. Paying a fraction and advancing would
+    ///         silently forfeit the remainder, since v1 keeps no partial-day
+    ///         accounting.
+    ///
+    /// @param user          The claimant/forfeiter.
+    /// @param d             The reward day.
+    /// @param entryIds      Entries of `user` on one side covering `d` that are
+    ///                      ready to transfer NOW for this call.
+    /// @param poolBudget    Budget left in the caller's pool this tx. (Named to
+    ///                      avoid shadowing the {poolRemaining} accessor.)
+    /// @return charge       Amounts + whether cursors may advance.
+    /// @return slices       Per-entry slice, index-aligned with `entryIds`.
+    function processUserSideDay(
+        address user,
+        uint256 d,
+        uint256[] memory entryIds,
+        uint256 poolBudget
+    ) internal view returns (DayCharge memory charge, uint256[] memory slices) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 n = entryIds.length;
+        slices = new uint256[](n);
+        if (n == 0) return (charge, slices);
+
+        LibVaipakam.RewardSide side = s.rewardEntries[entryIds[0]].side;
+
+        // Fail CLOSED. An armed day that never got its mode stamp is NOT a
+        // legacy day — treating it as one would price it with the retired
+        // ETH-ratio cap (disabled at finalize ⇒ effectively uncapped).
+        if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
+            revert IVaipakamErrors.DayCapModeUnsetPostCutover(d);
+        }
+        // Never compute Δ below the cursor: the row is unset, which reads as a
+        // false 0 (silently paying nothing) rather than reverting.
+        // Validate the transfer set BEFORE any early return. A malformed set is
+        // a CALLER BUG and must always surface as a revert — if this sat after
+        // the readiness gate, the same bad set would silently no-op whenever the
+        // RPN row happened to be behind, hiding the defect until the day it
+        // isn't.
+        for (uint256 i; i < n; ) {
+            LibVaipakam.RewardEntry storage v = s.rewardEntries[entryIds[i]];
+            // `side` is taken from entry[0] and then drives BOTH the loan-side
+            // clamp and the `userSideDayPaidVpfi` key, so a mixed-side or
+            // foreign-user set would charge the wrong budget and pay slices for
+            // entries the claimant doesn't own. Two independent callers build
+            // this set (2c claim, 2d sweep), so an unchecked precondition in a
+            // fund-moving primitive is exactly the kind of assumption that
+            // silently rots — make it a revert, not a comment.
+            //
+            // Paying a day the entry doesn't cover would also mint reward from
+            // nothing (`perDayNumeraire18 × Δ` is computed regardless).
+            if (
+                v.user != user ||
+                v.side != side ||
+                d < v.startDay ||
+                d >= v.endDay
+            ) {
+                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
+            }
+            unchecked { ++i; }
+        }
+
+        // `_rpnReady` also subsumes the `knownGlobalSet[d]` gate: the cursor
+        // advance halts at the first day without a known global set, so
+        // `cursor >= d` implies day `d` was finalized. Do NOT "optimise" this
+        // check away — without it an unfinalized day reads an unset RPN row as
+        // a false 0 and would advance past itself, losing that day forever.
+        if (!_rpnReady(s, side, d)) return (charge, slices);
+
+        uint256 c = s.dayUserSideCapVpfi18[d];
+        uint256 paid = s.userSideDayPaidVpfi[user][uint8(side)][d];
+        // Exhausted (including a legitimate `C == 0` dust day) — advance with a
+        // 0 slice so the walk makes progress instead of spinning on this day.
+        if (paid >= c) {
+            charge.advanced = true;
+            return (charge, slices);
+        }
+
+        uint256[] memory cEff = new uint256[](n);
+        uint256 rawPay;
+        for (uint256 i; i < n; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
+            uint256 v = _contribFor(s, e, d);
+            // The loan-side lifetime cap composes as a `min`, so whichever of
+            // the two ceilings is tighter binds.
+            // `_loanSideRewardCapEff` prorates by `min(daysIncl, openDays) /
+            // openDays`, so `daysIncl` must INCLUDE the day being priced — the
+            // same convention the #1353 call sites use
+            // (`storedDays + _entryArmedDays(e)`). Passing the stale stored
+            // count instead makes a loan's FIRST day compute `capEff = 0`, so
+            // `cEff` clamps to 0 and the primitive pays nothing, forever.
+            // Since this prices exactly ONE day, that is `stored + 1`.
+            //
+            // Safe to add 1 per entry: entries for a given (loanId, side) are
+            // adjacent and non-overlapping (a sale split ends the old window
+            // where the new one begins), so at most one entry of a loan-side
+            // can cover any single day.
+            //
+            // This function is `view` — the CALLER must persist the matching
+            // `loanSideRewardedDays` increment alongside the paid maps.
+            uint256 lsr = _loanSideRemaining(
+                s,
+                e.loanId,
+                side,
+                s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
+            );
+            cEff[i] = v < lsr ? v : lsr;
+            rawPay += cEff[i];
+            unchecked { ++i; }
+        }
+
+        // Legitimately nothing to pay (zero weights / loan-side exhausted):
+        // advance so the walk progresses. This is NOT the pool-shortage case.
+        if (rawPay == 0) {
+            charge.advanced = true;
+            return (charge, slices);
+        }
+
+        uint256 remainingD1 = c - paid;
+        uint256 budget = rawPay < remainingD1 ? rawPay : remainingD1;
+
+        // ALL-OR-NOTHING vs the pool — do NOT advance, so this day is retried
+        // once the pool refills.
+        if (poolBudget < budget) return (charge, slices);
+
+        slices = _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
+        for (uint256 i; i < n; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[entryIds[i]];
+            if (e.forfeited) {
+                charge.toTreasury += slices[i];
+            } else {
+                charge.toUser += slices[i];
+            }
+            unchecked { ++i; }
+        }
+        charge.advanced = true;
     }
 
     /// @notice Store a broadcast-canonical threshold on a mirror (from Base's

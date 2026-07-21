@@ -752,6 +752,59 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().dayUserSideCapVpfi18[dayId];
     }
 
+    /// @dev #1351 slice 2b — expose the internal D1 day primitive so its
+    ///      invariants can be unit-tested directly (Sigma paid <= C,
+    ///      order-independence, dust bounds, fail-closed mode).
+    function processUserSideDayRaw(
+        address user,
+        uint256 d,
+        uint256[] calldata entryIds,
+        uint256 poolBudget
+    )
+        external
+        view
+        returns (uint256 toUser, uint256 toTreasury, bool advanced, uint256[] memory slices)
+    {
+        LibInteractionRewards.DayCharge memory ch;
+        (ch, slices) = LibInteractionRewards.processUserSideDay(
+            user, d, entryIds, poolBudget
+        );
+        return (ch.toUser, ch.toTreasury, ch.advanced, slices);
+    }
+
+    function setUserSideDayPaidRaw(
+        address user,
+        uint8 side,
+        uint256 d,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().userSideDayPaidVpfi[user][side][d] = amount;
+    }
+
+    /// @dev #1351 slice 2b — seed the lender RPN row + cursor directly so a
+    ///      unit test can price a day without driving the lazy claim-path
+    ///      accrual. Sets `cumLenderRpn18[d-1] = prevCum` and
+    ///      `cumLenderRpn18[d] = prevCum + delta`, so the day's uncapped delta
+    ///      is exactly `delta`, and moves the cursor to `d`.
+    function seedCumLenderDayRaw(
+        uint256 d,
+        uint256 prevCum,
+        uint256 delta
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (d > 0) s.cumLenderRpn18[d - 1] = prevCum;
+        s.cumLenderRpn18[d] = prevCum + delta;
+        if (s.cumLenderCursor < d) s.cumLenderCursor = d;
+    }
+
+    function setDayCapModeRaw(uint256 d, uint8 mode) external {
+        LibVaipakam.storageSlot().dayCapMode[d] = LibVaipakam.CapMode(mode);
+    }
+
+    function setDayUserSideCapRaw(uint256 d, uint256 c) external {
+        LibVaipakam.storageSlot().dayUserSideCapVpfi18[d] = c;
+    }
+
     function setDayPoolStampRaw(
         uint256 dayId,
         uint128 scheduleFloor,

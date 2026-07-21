@@ -437,4 +437,20 @@ interface IVaipakamErrors {
     ///         created before `vpfiToken` was configured (Codex #572 P1).
     ///         See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §2.
     error VpfiNotAllowedAsRentalPrepay();
+
+    /// @notice #1351 (M2 PR-2) — a post-`D*` reward day reached claim/sweep with
+    ///         no explicit `dayCapMode` stamp. FAIL CLOSED: such a day is NOT a
+    ///         legacy day. Finalize retires the ETH-ratio threshold on armed
+    ///         days (`dayCapThreshold18 = max`), so silently treating a
+    ///         mode-less armed day as `LegacyEthRatio` would price it with a
+    ///         DISABLED cap — i.e. pay it uncapped.
+    error DayCapModeUnsetPostCutover(uint256 dayId);
+
+    /// @notice #1351 (M2 PR-2) — an entry handed to `processUserSideDay` broke
+    ///         the transfer-set contract: it belongs to another user, sits on
+    ///         the other side, or does not cover the day being priced. The
+    ///         primitive keys the `(user, side, day)` budget off the FIRST
+    ///         entry, so a mismatched set would charge the wrong ceiling and
+    ///         pay slices the claimant never earned.
+    error RewardEntrySetMismatch(uint256 entryId);
 }
