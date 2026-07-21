@@ -36,7 +36,8 @@
       "moreSheetAria": "وجهات أخرى",
       "navPrimaryAria": "رئيسي",
       "navQuickAria": "تنقل سريع",
-      "skipToContent": "تجاوز إلى المحتوى"
+      "skipToContent": "تجاوز إلى المحتوى",
+      "connectedTo": "متصل بـ {{chain}}"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
       "moreOffers_zero": "{{count}} عروض مطابقة أخرى تدفع أقل من المعروضة.",
       "receiptYouReceive": "~{{toSeller}}، تدفع مباشرة إلى محفظتك في نفس المعاملة — بيع إلى offer #{{offerId}} عند {{rate}} سنويا. لا يوجد شيء للمطالبة به لاحقا.",
-      "rowReceive": "ستتلقى الآن ~{{amount}}"
+      "rowReceive": "ستتلقى الآن ~{{amount}}",
+      "offerRowLine": "عرض #{{id}} · {{rate}} سنويًا · {{duration}}"
     },
     "loanSale": {
       "title": "اعرض هذه الحصة للبيع",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": "، زائد {{collateral}} collateral",
         "youBorrowed": "اقترضت {{principal}}",
         "youLent": "أقرضت {{principal}}",
-        "youRent": "تستأجر {{nft}}"
+        "youRent": "تستأجر {{nft}}",
+        "lockedCollateralBorrower": "{{collateral}} ضمان (للمقترض)",
+        "owedPrincipalUpToInterest": "{{principal}} + حتى ~{{interest}} فائدة",
+        "termsRental": "{{duration}} · ينتهي {{date}}",
+        "termsLoan": "{{rate}} سنويًا · {{duration}} · مستحق {{date}}",
+        "confirmAction": "تأكيد — {{action}}"
       },
       "getStarted": "ابدأ",
       "loading": "جارٍ تحميل مراكزك…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "عرض إقراضك",
         "yourNftListing": "إدراج NFT الخاص بك",
         "receiptUnlocked": "{{locked}} عائد — مفكوك من هذا العرض فورا.",
-        "youNft": "NFT الخاص بك {{addr}} #{{id}}"
+        "youNft": "NFT الخاص بك {{addr}} #{{id}}",
+        "waitingAccept": "عرض #{{id}} · بانتظار قبول الطرف الآخر"
       },
       "openOffers": "العروض المفتوحة",
       "graceCountdownBorrower": "هذا loan متأخر. سدد خلال حوالي {{remaining}} — بعد ذلك يمكن لـ lender أخذ collateral.",
@@ -1093,7 +1101,8 @@
       "yearly": "سنوي",
       "expiresLabel": "ينتهي {{date}}",
       "rateBand": "rate band {{min}}–{{max}} bps",
-      "staleList": "تم تحديث هذه القائمة قبل {{age}} وقد تكون متأخرة — قد توجد عروض جديدة لا تظهر بعد. تحقق قريبا."
+      "staleList": "تم تحديث هذه القائمة قبل {{age}} وقد تكون متأخرة — قد توجد عروض جديدة لا تظهر بعد. تحقق قريبا.",
+      "perDayInline": "{{amount}} {{symbol}}/يوم"
     },
     "desk": {
       "title": "مكتب الأسعار",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} أصول",
       "unreadableCount_two": "{{count}} أصول",
       "unreadableCount_zero": "{{count}} أصول",
-      "unreadableWarn": "لم نستطع قراءة {{assets}} الآن ({{list}}) — قد تفقد القائمة أدناه بعض الأرصدة. غالبا يزول هذا في التحديث التالي."
+      "unreadableWarn": "لم نستطع قراءة {{assets}} الآن ({{list}}) — قد تفقد القائمة أدناه بعض الأرصدة. غالبا يزول هذا في التحديث التالي.",
+      "lockedFreeBreakdown": "{{locked}} مقفل · {{free}} متاح"
     },
     "activity": {
       "title": "النشاط",
@@ -1791,6 +1801,30 @@
       "dueToday": "مستحق اليوم",
       "pastDue": "متأخر",
       "repaid": "مسدد"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} يوم",
+      "durationDay_one": "يوم واحد",
+      "durationDay_two": "يومان",
+      "durationDay_few": "{{count, number}} أيام",
+      "durationDay_many": "{{count, number}} يومًا",
+      "durationDay_other": "{{count, number}} يوم",
+      "durationMonth_zero": "{{count, number}} شهر",
+      "durationMonth_one": "شهر واحد",
+      "durationMonth_two": "شهران",
+      "durationMonth_few": "{{count, number}} أشهر",
+      "durationMonth_many": "{{count, number}} شهرًا",
+      "durationMonth_other": "{{count, number}} شهر",
+      "durationYear_zero": "{{count, number}} سنة",
+      "durationYear_one": "سنة واحدة",
+      "durationYear_two": "سنتان",
+      "durationYear_few": "{{count, number}} سنوات",
+      "durationYear_many": "{{count, number}} سنة",
+      "durationYear_other": "{{count, number}} سنة",
+      "timeJustNow": "الآن",
+      "timeMinutesAgo": "منذ {{count}} د",
+      "timeHoursAgo": "منذ {{count}} س",
+      "timeDaysAgo": "منذ {{count}} ي"
     }
   },
   "contractError": {

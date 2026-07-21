@@ -36,7 +36,8 @@
       "moreSheetAria": "Más destinos",
       "navPrimaryAria": "Principal",
       "navQuickAria": "Navegación rápida",
-      "skipToContent": "Saltar al contenido"
+      "skipToContent": "Saltar al contenido",
+      "connectedTo": "Conectado a {{chain}}"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "{{count}} ofertas coincidentes más pagan menos que las mostradas.",
       "moreOffers_zero": "{{count}} ofertas coincidentes más pagan menos que las mostradas.",
       "receiptYouReceive": "~{{toSeller}}, pagado directamente a tu wallet en la misma transacción — vendiendo a la oferta #{{offerId}} a {{rate}} anual. Nada que reclamar después.",
-      "rowReceive": "recibirías ~{{amount}} ahora"
+      "rowReceive": "recibirías ~{{amount}} ahora",
+      "offerRowLine": "Oferta #{{id}} · {{rate}} anual · {{duration}}"
     },
     "loanSale": {
       "title": "Listar esta posición para venta",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": ", más {{collateral}} de garantía",
         "youBorrowed": "Pediste prestado {{principal}}",
         "youLent": "Prestaste {{principal}}",
-        "youRent": "Alquilas {{nft}}"
+        "youRent": "Alquilas {{nft}}",
+        "lockedCollateralBorrower": "{{collateral}} de colateral (del prestatario)",
+        "owedPrincipalUpToInterest": "{{principal}} + hasta ~{{interest}} de interés",
+        "termsRental": "{{duration}} · finaliza {{date}}",
+        "termsLoan": "{{rate}} anual · {{duration}} · vence {{date}}",
+        "confirmAction": "Confirmar — {{action}}"
       },
       "getStarted": "Empezar",
       "loading": "Cargando tus posiciones…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "Tu oferta de préstamo",
         "yourNftListing": "Tu publicación de NFT",
         "receiptUnlocked": "{{locked}} de vuelta — desbloqueado de esta oferta inmediatamente.",
-        "youNft": "Tu NFT {{addr}} #{{id}}"
+        "youNft": "Tu NFT {{addr}} #{{id}}",
+        "waitingAccept": "Oferta #{{id}} · esperando a que la otra parte acepte"
       },
       "openOffers": "Ofertas abiertas",
       "graceCountdownBorrower": "Este préstamo está vencido. Reembolsa dentro de aproximadamente {{remaining}} — después de eso el prestamista puede tomar la garantía.",
@@ -1093,7 +1101,8 @@
       "yearly": "anual",
       "expiresLabel": "expira {{date}}",
       "rateBand": "banda de tasa {{min}}–{{max}} bps",
-      "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve."
+      "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve.",
+      "perDayInline": "{{amount}} {{symbol}}/día"
     },
     "desk": {
       "title": "Mesa de tasas",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} activos",
       "unreadableCount_two": "{{count}} activos",
       "unreadableCount_zero": "{{count}} activos",
-      "unreadableWarn": "No pudimos leer {{assets}} ahora ({{list}}) — la lista de abajo puede omitir saldos. Esto suele corregirse en el siguiente refresco."
+      "unreadableWarn": "No pudimos leer {{assets}} ahora ({{list}}) — la lista de abajo puede omitir saldos. Esto suele corregirse en el siguiente refresco.",
+      "lockedFreeBreakdown": "{{locked}} bloqueado · {{free}} libre"
     },
     "activity": {
       "title": "Actividad",
@@ -1791,6 +1801,30 @@
       "dueToday": "Vence hoy",
       "pastDue": "Vencido",
       "repaid": "Reembolsado"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} días",
+      "durationDay_one": "1 día",
+      "durationDay_two": "{{count, number}} días",
+      "durationDay_few": "{{count, number}} días",
+      "durationDay_many": "{{count, number}} días",
+      "durationDay_other": "{{count, number}} días",
+      "durationMonth_zero": "{{count, number}} meses",
+      "durationMonth_one": "1 mes",
+      "durationMonth_two": "{{count, number}} meses",
+      "durationMonth_few": "{{count, number}} meses",
+      "durationMonth_many": "{{count, number}} meses",
+      "durationMonth_other": "{{count, number}} meses",
+      "durationYear_zero": "{{count, number}} años",
+      "durationYear_one": "1 año",
+      "durationYear_two": "{{count, number}} años",
+      "durationYear_few": "{{count, number}} años",
+      "durationYear_many": "{{count, number}} años",
+      "durationYear_other": "{{count, number}} años",
+      "timeJustNow": "ahora mismo",
+      "timeMinutesAgo": "hace {{count}} min",
+      "timeHoursAgo": "hace {{count}} h",
+      "timeDaysAgo": "hace {{count}} d"
     }
   },
   "contractError": {

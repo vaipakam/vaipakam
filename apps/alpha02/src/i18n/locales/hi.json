@@ -36,7 +36,8 @@
       "moreSheetAria": "और गंतव्य",
       "navPrimaryAria": "मुख्य",
       "navQuickAria": "त्वरित नेविगेशन",
-      "skipToContent": "कंटेंट पर जाएं"
+      "skipToContent": "कंटेंट पर जाएं",
+      "connectedTo": "{{chain}} से जुड़ा हुआ"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "{{count}} और matching offers shown offers से कम pay करते हैं।",
       "moreOffers_zero": "{{count}} और matching offers shown offers से कम pay करते हैं।",
       "receiptYouReceive": "~{{toSeller}}, उसी transaction में सीधे आपके wallet को paid — offer #{{offerId}} को {{rate}} yearly पर sell करते हुए। बाद में claim करने को कुछ नहीं।",
-      "rowReceive": "आप अभी ~{{amount}} receive करेंगे"
+      "rowReceive": "आप अभी ~{{amount}} receive करेंगे",
+      "offerRowLine": "ऑफ़र #{{id}} · {{rate}} सालाना · {{duration}}"
     },
     "loanSale": {
       "title": "इस position को sale के लिए list करें",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": ", plus {{collateral}} collateral",
         "youBorrowed": "आपने {{principal}} borrow किया",
         "youLent": "आपने {{principal}} lend किया",
-        "youRent": "आप {{nft}} rent करते हैं"
+        "youRent": "आप {{nft}} rent करते हैं",
+        "lockedCollateralBorrower": "{{collateral}} संपार्श्विक (उधारकर्ता का)",
+        "owedPrincipalUpToInterest": "{{principal}} + ~{{interest}} तक का ब्याज",
+        "termsRental": "{{duration}} · {{date}} को समाप्त",
+        "termsLoan": "{{rate}} सालाना · {{duration}} · {{date}} को देय",
+        "confirmAction": "पुष्टि करें — {{action}}"
       },
       "getStarted": "शुरू करें",
       "loading": "आपकी positions लोड हो रही हैं…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "आपका lending offer",
         "yourNftListing": "आपकी NFT listing",
         "receiptUnlocked": "{{locked}} वापस — इस offer से तुरंत unlocked।",
-        "youNft": "आपका NFT {{addr}} #{{id}}"
+        "youNft": "आपका NFT {{addr}} #{{id}}",
+        "waitingAccept": "ऑफ़र #{{id}} · दूसरे पक्ष के स्वीकार करने की प्रतीक्षा"
       },
       "openOffers": "Open offers",
       "graceCountdownBorrower": "यह loan past due है। लगभग {{remaining}} के भीतर repay करें — उसके बाद lender collateral ले सकता है।",
@@ -1093,7 +1101,8 @@
       "yearly": "yearly",
       "expiresLabel": "{{date}} को expires",
       "rateBand": "rate band {{min}}–{{max}} bps",
-      "staleList": "यह list {{age}} पहले updated हुई थी और पीछे हो सकती है — नए offers मौजूद हो सकते हैं जो अभी दिखते नहीं। थोड़ी देर बाद check करें।"
+      "staleList": "यह list {{age}} पहले updated हुई थी और पीछे हो सकती है — नए offers मौजूद हो सकते हैं जो अभी दिखते नहीं। थोड़ी देर बाद check करें।",
+      "perDayInline": "{{amount}} {{symbol}}/दिन"
     },
     "desk": {
       "title": "Rate Desk",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} assets",
       "unreadableCount_two": "{{count}} assets",
       "unreadableCount_zero": "{{count}} assets",
-      "unreadableWarn": "हम अभी {{assets}} पढ़ नहीं सके ({{list}}) — नीचे list में balances missing हो सकते हैं। यह आम तौर पर next refresh पर clear हो जाता है।"
+      "unreadableWarn": "हम अभी {{assets}} पढ़ नहीं सके ({{list}}) — नीचे list में balances missing हो सकते हैं। यह आम तौर पर next refresh पर clear हो जाता है।",
+      "lockedFreeBreakdown": "{{locked}} लॉक किया गया · {{free}} मुक्त"
     },
     "activity": {
       "title": "Activity",
@@ -1791,6 +1801,30 @@
       "dueToday": "आज due",
       "pastDue": "Past due",
       "repaid": "Repaid"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} दिन",
+      "durationDay_one": "1 दिन",
+      "durationDay_two": "{{count, number}} दिन",
+      "durationDay_few": "{{count, number}} दिन",
+      "durationDay_many": "{{count, number}} दिन",
+      "durationDay_other": "{{count, number}} दिन",
+      "durationMonth_zero": "{{count, number}} महीने",
+      "durationMonth_one": "1 महीना",
+      "durationMonth_two": "{{count, number}} महीने",
+      "durationMonth_few": "{{count, number}} महीने",
+      "durationMonth_many": "{{count, number}} महीने",
+      "durationMonth_other": "{{count, number}} महीने",
+      "durationYear_zero": "{{count, number}} साल",
+      "durationYear_one": "1 साल",
+      "durationYear_two": "{{count, number}} साल",
+      "durationYear_few": "{{count, number}} साल",
+      "durationYear_many": "{{count, number}} साल",
+      "durationYear_other": "{{count, number}} साल",
+      "timeJustNow": "अभी",
+      "timeMinutesAgo": "{{count}} मिनट पहले",
+      "timeHoursAgo": "{{count}} घंटे पहले",
+      "timeDaysAgo": "{{count}} दिन पहले"
     }
   },
   "contractError": {

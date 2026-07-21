@@ -36,7 +36,8 @@
       "moreSheetAria": "மேலும் இடங்கள்",
       "navPrimaryAria": "முதன்மை",
       "navQuickAria": "விரைவு வழிசெலுத்தல்",
-      "skipToContent": "உள்ளடக்கத்துக்கு செல்லவும்"
+      "skipToContent": "உள்ளடக்கத்துக்கு செல்லவும்",
+      "connectedTo": "{{chain}} உடன் இணைக்கப்பட்டது"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "பொருந்தும் மேலும் {{count}} சலுகைகள் காட்டப்பட்டவற்றை விடக் குறைவாகச் செலுத்துகின்றன.",
       "moreOffers_zero": "பொருந்தும் மேலும் {{count}} சலுகைகள் காட்டப்பட்டவற்றை விடக் குறைவாகச் செலுத்துகின்றன.",
       "receiptYouReceive": "~{{toSeller}}, அதே பரிவர்த்தனையில் நேரடியாக உங்கள் வாலெட்டுக்குச் செலுத்தப்படுகிறது — சலுகை #{{offerId}}-க்கு ஆண்டுக்கு {{rate}} விகிதத்தில் விற்பது. அதற்குப் பிறகு கோர எதுவும் இல்லை.",
-      "rowReceive": "நீங்கள் இப்போது ~{{amount}} பெறுவீர்கள்"
+      "rowReceive": "நீங்கள் இப்போது ~{{amount}} பெறுவீர்கள்",
+      "offerRowLine": "சலுகை #{{id}} · {{rate}} ஆண்டுக்கு · {{duration}}"
     },
     "loanSale": {
       "title": "இந்த நிலையை விற்பனைக்குப் பட்டியலிடு",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": ", கூடவே {{collateral}} பிணையம்",
         "youBorrowed": "நீங்கள் {{principal}} கடன் வாங்கினீர்கள்",
         "youLent": "நீங்கள் {{principal}} கடன் வழங்கினீர்கள்",
-        "youRent": "நீங்கள் {{nft}} வாடகைக்கு எடுக்கிறீர்கள்"
+        "youRent": "நீங்கள் {{nft}} வாடகைக்கு எடுக்கிறீர்கள்",
+        "lockedCollateralBorrower": "{{collateral}} பிணையம் (கடன் வாங்குபவரின்)",
+        "owedPrincipalUpToInterest": "{{principal}} + ~{{interest}} வரை வட்டி",
+        "termsRental": "{{duration}} · {{date}} அன்று முடிகிறது",
+        "termsLoan": "{{rate}} ஆண்டுக்கு · {{duration}} · {{date}} அன்று செலுத்த வேண்டும்",
+        "confirmAction": "உறுதிப்படுத்து — {{action}}"
       },
       "getStarted": "தொடங்கு",
       "loading": "உங்கள் நிலைகளை ஏற்றுகிறது…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "உங்கள் கடன் வழங்கல் சலுகை",
         "yourNftListing": "உங்கள் NFT பட்டியலிடல்",
         "receiptUnlocked": "{{locked}} திரும்ப — இந்தச் சலுகையிலிருந்து உடனடியாகத் திறக்கப்பட்டது.",
-        "youNft": "உங்கள் NFT {{addr}} #{{id}}"
+        "youNft": "உங்கள் NFT {{addr}} #{{id}}",
+        "waitingAccept": "சலுகை #{{id}} · மறுபக்கம் ஏற்றுக்கொள்ள காத்திருக்கிறது"
       },
       "openOffers": "திறந்த சலுகைகள்",
       "graceCountdownBorrower": "இந்தக் கடன் தவணை தாண்டியது. சுமார் {{remaining}}-க்குள் திருப்பிச் செலுத்தவும் — அதற்குப் பிறகு கடன் வழங்குநர் பிணையத்தை எடுத்துக்கொள்ளலாம்.",
@@ -1093,7 +1101,8 @@
       "yearly": "ஆண்டுக்கு",
       "expiresLabel": "காலாவதி {{date}}",
       "rateBand": "விகிதப் பட்டை {{min}}–{{max}} bps",
-      "staleList": "இந்தப் பட்டியல் கடைசியாக {{age}} முன்பு புதுப்பிக்கப்பட்டது, பின்தங்கியிருக்கலாம் — இன்னும் காட்டப்படாத புதிய சலுகைகள் இருக்கலாம். சிறிது நேரத்தில் மீண்டும் பார்க்கவும்."
+      "staleList": "இந்தப் பட்டியல் கடைசியாக {{age}} முன்பு புதுப்பிக்கப்பட்டது, பின்தங்கியிருக்கலாம் — இன்னும் காட்டப்படாத புதிய சலுகைகள் இருக்கலாம். சிறிது நேரத்தில் மீண்டும் பார்க்கவும்.",
+      "perDayInline": "{{amount}} {{symbol}}/நாள்"
     },
     "desk": {
       "title": "விகித மேசை",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} சொத்துகள்",
       "unreadableCount_two": "{{count}} சொத்துகள்",
       "unreadableCount_zero": "{{count}} சொத்துகள்",
-      "unreadableWarn": "{{assets}} இப்போது படிக்க முடியவில்லை ({{list}}) — கீழே உள்ள பட்டியலில் இருப்புகள் விடுபட்டிருக்கலாம். இது வழக்கமாக அடுத்த புதுப்பிப்பில் சரியாகிவிடும்."
+      "unreadableWarn": "{{assets}} இப்போது படிக்க முடியவில்லை ({{list}}) — கீழே உள்ள பட்டியலில் இருப்புகள் விடுபட்டிருக்கலாம். இது வழக்கமாக அடுத்த புதுப்பிப்பில் சரியாகிவிடும்.",
+      "lockedFreeBreakdown": "{{locked}} பூட்டப்பட்டது · {{free}} கட்டற்றது"
     },
     "activity": {
       "title": "செயல்பாடு",
@@ -1791,6 +1801,30 @@
       "dueToday": "இன்று நிலுவை",
       "pastDue": "தவணை தாண்டியது",
       "repaid": "திருப்பிச் செலுத்தப்பட்டது"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} நாட்கள்",
+      "durationDay_one": "1 நாள்",
+      "durationDay_two": "{{count, number}} நாட்கள்",
+      "durationDay_few": "{{count, number}} நாட்கள்",
+      "durationDay_many": "{{count, number}} நாட்கள்",
+      "durationDay_other": "{{count, number}} நாட்கள்",
+      "durationMonth_zero": "{{count, number}} மாதங்கள்",
+      "durationMonth_one": "1 மாதம்",
+      "durationMonth_two": "{{count, number}} மாதங்கள்",
+      "durationMonth_few": "{{count, number}} மாதங்கள்",
+      "durationMonth_many": "{{count, number}} மாதங்கள்",
+      "durationMonth_other": "{{count, number}} மாதங்கள்",
+      "durationYear_zero": "{{count, number}} ஆண்டுகள்",
+      "durationYear_one": "1 ஆண்டு",
+      "durationYear_two": "{{count, number}} ஆண்டுகள்",
+      "durationYear_few": "{{count, number}} ஆண்டுகள்",
+      "durationYear_many": "{{count, number}} ஆண்டுகள்",
+      "durationYear_other": "{{count, number}} ஆண்டுகள்",
+      "timeJustNow": "இப்போதுதான்",
+      "timeMinutesAgo": "{{count}}நி முன்",
+      "timeHoursAgo": "{{count}}ம முன்",
+      "timeDaysAgo": "{{count}}நா முன்"
     }
   },
   "contractError": {

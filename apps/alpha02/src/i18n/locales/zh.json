@@ -36,7 +36,8 @@
       "moreSheetAria": "更多去处",
       "navPrimaryAria": "主导航",
       "navQuickAria": "快速导航",
-      "skipToContent": "跳到内容"
+      "skipToContent": "跳到内容",
+      "connectedTo": "已连接到 {{chain}}"
     },
     "seo": {
       "home": {
@@ -762,7 +763,8 @@
       "moreOffers_two": "还有 {{count}} 个匹配报价支付低于显示的报价。",
       "moreOffers_zero": "还有 {{count}} 个匹配报价支付低于显示的报价。",
       "receiptYouReceive": "~{{toSeller}} 会在同一交易中直接支付到你的钱包 — 以 {{rate}} 年化卖给报价 #{{offerId}}。之后无需领取。",
-      "rowReceive": "你现在会收到 ~{{amount}}"
+      "rowReceive": "你现在会收到 ~{{amount}}",
+      "offerRowLine": "报价 #{{id}} · {{rate}} 年化 · {{duration}}"
     },
     "loanSale": {
       "title": "列出此持仓出售",
@@ -945,7 +947,12 @@
         "vaultCollateralSuffix": "，加 {{collateral}} 抵押品",
         "youBorrowed": "你借入了 {{principal}}",
         "youLent": "你借出了 {{principal}}",
-        "youRent": "你租用了 {{nft}}"
+        "youRent": "你租用了 {{nft}}",
+        "lockedCollateralBorrower": "{{collateral}} 抵押品（借款人的）",
+        "owedPrincipalUpToInterest": "{{principal}} + 最多 ~{{interest}} 利息",
+        "termsRental": "{{duration}} · {{date}} 结束",
+        "termsLoan": "{{rate}} 年化 · {{duration}} · {{date}} 到期",
+        "confirmAction": "确认 — {{action}}"
       },
       "getStarted": "开始",
       "loading": "正在加载您的持仓…",
@@ -963,7 +970,8 @@
         "yourLendingOffer": "您的出借 offer",
         "yourNftListing": "您的 NFT listing",
         "receiptUnlocked": "{{locked}} 返还 — 立即从此报价解锁。",
-        "youNft": "你的 NFT {{addr}} #{{id}}"
+        "youNft": "你的 NFT {{addr}} #{{id}}",
+        "waitingAccept": "报价 #{{id}} · 等待对方接受"
       },
       "openOffers": "开放 offers",
       "graceCountdownBorrower": "此贷款已逾期。请在约 {{remaining}} 内还款 — 之后贷方可以拿走抵押品。",
@@ -1093,7 +1101,8 @@
       "yearly": "年化",
       "expiresLabel": "{{date}} 过期",
       "rateBand": "利率区间 {{min}}–{{max}} bps",
-      "staleList": "此列表上次更新于 {{age}} 前，可能落后 — 可能有未显示的新报价。请稍后再查看。"
+      "staleList": "此列表上次更新于 {{age}} 前，可能落后 — 可能有未显示的新报价。请稍后再查看。",
+      "perDayInline": "{{amount}} {{symbol}}/天"
     },
     "desk": {
       "title": "利率台",
@@ -1518,7 +1527,8 @@
       "unreadableCount_other": "{{count}} 个资产",
       "unreadableCount_two": "{{count}} 个资产",
       "unreadableCount_zero": "{{count}} 个资产",
-      "unreadableWarn": "我们刚才无法读取 {{assets}}（{{list}}）— 下方列表可能缺少余额。通常下次刷新会恢复。"
+      "unreadableWarn": "我们刚才无法读取 {{assets}}（{{list}}）— 下方列表可能缺少余额。通常下次刷新会恢复。",
+      "lockedFreeBreakdown": "{{locked}} 已锁定 · {{free}} 可用"
     },
     "activity": {
       "title": "活动",
@@ -1791,6 +1801,30 @@
       "dueToday": "今天到期",
       "pastDue": "已逾期",
       "repaid": "已还款"
+    },
+    "units": {
+      "durationDay_zero": "{{count, number}} 天",
+      "durationDay_one": "1 天",
+      "durationDay_two": "{{count, number}} 天",
+      "durationDay_few": "{{count, number}} 天",
+      "durationDay_many": "{{count, number}} 天",
+      "durationDay_other": "{{count, number}} 天",
+      "durationMonth_zero": "{{count, number}} 个月",
+      "durationMonth_one": "1 个月",
+      "durationMonth_two": "{{count, number}} 个月",
+      "durationMonth_few": "{{count, number}} 个月",
+      "durationMonth_many": "{{count, number}} 个月",
+      "durationMonth_other": "{{count, number}} 个月",
+      "durationYear_zero": "{{count, number}} 年",
+      "durationYear_one": "1 年",
+      "durationYear_two": "{{count, number}} 年",
+      "durationYear_few": "{{count, number}} 年",
+      "durationYear_many": "{{count, number}} 年",
+      "durationYear_other": "{{count, number}} 年",
+      "timeJustNow": "刚刚",
+      "timeMinutesAgo": "{{count}} 分钟前",
+      "timeHoursAgo": "{{count}} 小时前",
+      "timeDaysAgo": "{{count}} 天前"
     }
   },
   "contractError": {
