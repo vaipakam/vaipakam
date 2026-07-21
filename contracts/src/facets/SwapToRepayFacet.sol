@@ -67,9 +67,10 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *
  *      Yield-fee VPFI discount (§F2 / #1354): honored on BOTH entry points
  *      via the `VPFIDiscountFacet.resolveLenderYieldFeeFor` host (#1383) —
- *      `swapToRepayFull` keys it on the consolidated `loan.lender`,
- *      `swapToRepayPartial` on the current lender-NFT holder. Dark until the
- *      M2 `feeEntitlementEnabled` cut-over.
+ *      BOTH entry points key it on the current lender-NFT holder
+ *      (`ownerOf(loan.lenderTokenId)`), never the possibly-stale
+ *      `loan.lender` field (consolidation is skip-not-block; Codex #1387 P1).
+ *      Dark until the M2 `feeEntitlementEnabled` cut-over.
  */
 contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
     using SafeERC20 for IERC20;
