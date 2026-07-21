@@ -124,6 +124,14 @@ const UI_KEYS = new Set([
   'doneBody',
   'actionLabel',
   'leg',
+  // ReviewReceipt `data` fields — rendered into <dd> rows on the
+  // pre-sign trust surface (ReviewReceipt.tsx).
+  'youReceive',
+  'youLock',
+  'youMayOwe',
+  'youCanLose',
+  'fees',
+  'whenThisEnds',
 ]);
 
 /**
@@ -158,6 +166,7 @@ const BASELINE = {
   'src/components/AppShell.tsx': { alpha: 1 }, // release-stage badge, not localized
   'src/components/AssetPicker.tsx': { 'contract address': 1 },
   'src/components/OfferFlow.tsx': {
+    at: 1, // connective in the composed offer-row "{amount} at {rate} yearly" (#1360)
     yearly: 1,
     '· offer #': 1,
     'network #': 1,
@@ -168,7 +177,8 @@ const BASELINE = {
     'accepting lending offer': 1,
     'funding borrow request': 1,
   },
-  'src/components/StepNav.tsx': { Step: 1 },
+  'src/components/StepNav.tsx': { Step: 1, of: 1 }, // "Step {n} of {m}" (#1360)
+  'src/pages/Vault.tsx': { on: 1 }, // "on {chain}" composed label (#1360)
   // Hardcoded string args passed INTO a copy.* template (the {{leg}} /
   // fallback-label class, #1360): 'prepayment token' filled into the
   // tokenSecurity gate messages, a 'network #<id>' fallback label, a
@@ -213,14 +223,17 @@ function staticText(raw) {
 
 /** Is this static run real prose (≥1 non-glossary alphabetic word)?
  *  Runs made only of glossary tokens, punctuation, separators, numbers,
- *  or short filler are not. */
+ *  or single-letter filler are not. A ≥2-letter non-glossary word counts
+ *  as prose so short translatable labels (`No`, `On`, `Go`, `OK`) are
+ *  caught; single letters are dropped (they are units / separators /
+ *  articles — `d`, `×`, `a` — never standalone copy). */
 function isProse(text) {
   const s = staticText(text);
   if (!s) return false;
   const words = s.match(/[A-Za-z][A-Za-z'’]*/g) || [];
   const meaningful = words.filter((w) => {
     const bare = w.replace(/['’]/g, '');
-    if (bare.length < 3) return false;
+    if (bare.length < 2) return false;
     return !GLOSSARY.has(bare.toLowerCase());
   });
   return meaningful.length >= 1;
@@ -264,6 +277,11 @@ function renderedStatic(node) {
   }
   if (ts.isConditionalExpression(node)) {
     return [...renderedStatic(node.whenTrue), ...renderedStatic(node.whenFalse)];
+  }
+  // An array literal rendered as a JSX child — React renders each string
+  // element (`<>{['Loading offers']}</>`), so recurse into elements.
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements.flatMap((el) => renderedStatic(el));
   }
   if (ts.isBinaryExpression(node)) {
     const k = node.operatorToken.kind;

@@ -164,4 +164,28 @@ describe('AST hardcoded-string detector (#1365)', () => {
     expect(strings(src)).toContain('Mint test tokens');
     expect(strings(src)).toContain('Mint now');
   });
+
+  // --- Codex #1394 round-5 coverage gaps ---
+
+  it('flags string elements of an array literal rendered as a JSX child', () => {
+    expect(strings("const X = () => <>{['Loading offers']}</>;")).toContain('Loading offers');
+  });
+
+  it('flags ReviewReceipt data fields', () => {
+    const src = "const X = () => <ReviewReceipt data={{ youReceive: 'Test tokens', fees: 'No fee' }} />;";
+    expect(strings(src)).toContain('Test tokens');
+    expect(strings(src)).toContain('No fee');
+  });
+
+  it('flags short two-letter UI labels (No / On / Go / OK)', () => {
+    expect(strings('const X = () => <button>No</button>;')).toContain('No');
+    expect(strings('const X = () => <button>Go</button>;')).toContain('Go');
+    expect(strings('const X = () => <button>OK</button>;')).toContain('OK');
+  });
+
+  it('still drops single-letter tokens (units / separators / articles)', () => {
+    // "d" is dropped; only the real word "left" is flagged.
+    expect(strings('const X = () => <span>{n}d left</span>;')).toEqual(['d left']);
+    expect(strings('const X = () => <span>{a} × {b}</span>;')).toEqual([]);
+  });
 });

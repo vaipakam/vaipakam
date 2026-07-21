@@ -25,11 +25,16 @@ simply never in a scanned position. A standalone TypeScript-compiler
 script was chosen over an ESLint rule because alpha02 deliberately runs no
 ESLint toolchain; the script stays wired into the same `typecheck` lane.
 
-Running the new detector on the tree found roughly two dozen pre-existing
-hardcoded strings the regex had missed. Rather than block the tooling
-change on extracting them all, they are frozen in a file-scoped baseline
-(the standard lint-ratchet: existing debt grandfathered, any new
-violation blocked) and their burn-down is tracked in a follow-up. A unit
-test pins the detector against the exact bug shapes from the previous
+Running the new detector on the tree found several dozen pre-existing
+hardcoded strings the regex had missed (the committed baseline currently
+freezes 48 occurrences across 19 files, most of them advanced Rate-Desk
+copy and hardcoded fallback labels passed into catalog templates).
+Rather than block the tooling change on extracting them all, they are
+frozen in a file-scoped, occurrence-counted baseline (the standard
+lint-ratchet: existing debt grandfathered, any new violation — new file,
+new string, or new duplicate — blocked; the check also fails if a
+baselined string is extracted without lowering its count, so burn-down
+stays honest). Their burn-down is tracked as a follow-up. A unit test
+suite pins the detector against the exact bug shapes from the previous
 release so the guardrail cannot silently regain its blind spot. Scope is
 limited to `apps/alpha02`.
