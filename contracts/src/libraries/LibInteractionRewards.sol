@@ -2875,7 +2875,17 @@ function _dayPoolHalves(
             // rather than re-prioritising fresh. Scaling fresh-first here would
             // zero the recycled draw on any day whose ceiling binds hard, and
             // the day's recycled budget would then never be consumed at all.
-            uint256 f = cEff[i] == 0 ? 0 : (freshCap[i] * amt) / cEff[i];
+            // RECYCLED floors, fresh takes the dust — the same direction as
+            // {_splitDayAmount} and {_entryWindowSplit} (Codex #1399 r8 P2).
+            // Flooring fresh instead would hand the rounding wei to recycled:
+            // a 2-fresh/1-recycled survivor scaled to a 1-wei slice would
+            // report 0 fresh / 1 recycled, overdrawing the bucket for a wei
+            // that should never have left it — and potentially blocking on a
+            // phantom recycled shortage.
+            uint256 r = cEff[i] == 0
+                ? 0
+                : ((cEff[i] - freshCap[i]) * amt) / cEff[i];
+            uint256 f = amt - r;
             // `loanSideChargeable` is stamped from the SHARED {_isForfeited} —
             // the same predicate `_processEntry` routes on. A borrower entry
             // that became claimable only via a Defaulted / InternalMatched
@@ -2885,11 +2895,11 @@ function _dayPoolHalves(
             if (slices[i].loanSideChargeable) {
                 user_.total += amt;
                 user_.armedFresh += f;
-                user_.recycled += amt - f;
+                user_.recycled += r;
             } else {
                 treas_.total += amt;
                 treas_.armedFresh += f;
-                treas_.recycled += amt - f;
+                treas_.recycled += r;
             }
             unchecked { ++i; }
         }

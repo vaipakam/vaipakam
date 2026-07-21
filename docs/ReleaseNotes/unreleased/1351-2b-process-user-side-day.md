@@ -84,6 +84,11 @@ amount. The separate reduction that happens when a participant hits their own
 daily ceiling is *not* treated this way: that one keeps whatever mix survived, so
 a day whose ceiling binds tightly still draws on both sources.
 
+**Rounding always favours the same side.** Wherever a reward has to be divided
+between its two funding sources, the recycled share rounds down and the newly
+scheduled share absorbs the remainder. That direction is applied uniformly, so
+the recycled pot is never drawn on for a fraction that should have stayed in it.
+
 **Rewards say where they came from.** A day's reward pool is funded from two
 sources: newly scheduled rewards, and rewards recycled from fees already
 collected. The calculation now reports each payout broken down by source rather

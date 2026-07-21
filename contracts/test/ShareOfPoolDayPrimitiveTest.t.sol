@@ -518,6 +518,29 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertGt(ch.cappedOff.armedFresh, 0, "capped-off fresh is retired");
     }
 
+    /// @dev Codex #1399 r8 P2 — when the D1 ceiling scales a slice down, the
+    ///      RECYCLED share floors and fresh takes the rounding dust, matching
+    ///      `_splitDayAmount` / `_entryWindowSplit`. Flooring fresh instead
+    ///      hands the wei to recycled, overdrawing the bucket for value that
+    ///      should never have left it.
+    ///
+    ///      2:1 fresh:recycled composition scaled to a ONE WEI slice: correct is
+    ///      1 fresh / 0 recycled; the inverted rounding gives 0 fresh / 1
+    ///      recycled.
+    function test_CeilingScalingFloorsRecycledNotFresh() public {
+        _mut().setDayPoolStampRaw(DAY, uint128(2 ether), uint128(1 ether));
+        _stampLoanCap(LOAN_A, 100_000 ether); // keep the loan-side trim out of it
+        _mut().setDayUserSideCapRaw(DAY, 1); // ceiling scales the slice to 1 wei
+        uint256 id = _entry(alice, LOAN_A, 900 ether);
+
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+
+        assertEq(ch.toUser.total, 1, "the ceiling really did bind at 1 wei");
+        assertEq(ch.toUser.recycled, 0, "recycled floors: the bucket is untouched");
+        assertEq(ch.toUser.armedFresh, 1, "fresh takes the rounding dust");
+    }
+
     // ─── Funding-source split (Codex #1399 P2) ───────────────────────────────
 
     /// @dev A payout must arrive DECOMPOSED by funding source, not as one plain
