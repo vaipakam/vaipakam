@@ -45,7 +45,18 @@ way: that reward stays in the pool and someone else can still receive it.
 **Rounding never overshoots.** When a day is split between several of a
 participant's loans, the leftover from rounding is handed to whichever loan has
 the most room left. If none has room, the remainder is simply left in the pool
-rather than forced onto a loan that has already hit its own separate limit.
+rather than forced onto a loan that has already hit its own separate limit. When
+two loans have equally much room, the tie is settled by which reward is older —
+not by the order the caller happened to list them in, so the same set of rewards
+always splits the same way no matter who asks.
+
+**The budget check counts what will actually be paid.** Because each side of the
+split rounds on its own, the exact amounts drawn from each source can differ from
+a single estimate by the smallest possible unit. The amounts are therefore worked
+out in full first and the available budget checked against those, rather than
+against an estimate — an "off by the smallest unit, absorbed somewhere
+downstream" discrepancy is precisely the kind that becomes impossible to trace
+later.
 
 **Days that legitimately pay nothing still move forward.** A day where the
 allowance is already used up, or where there is nothing to pay, is marked done so

@@ -425,6 +425,66 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1399 r6 P2 — the pool check must use the EXACT leg totals,
+    ///      not a split of `budget`. Each leg floors its recycled share
+    ///      independently and derives fresh by subtraction, so a set holding
+    ///      both payable and forfeited entries can draw a wei or two more fresh
+    ///      than a single split of `budget` predicts.
+    ///
+    ///      Characterised by measurement: fund fresh at exactly what the legs
+    ///      will draw (advances), then one wei less (must not). A check built
+    ///      on `budget` would pass at the lower figure.
+    function test_PoolCheckUsesExactLegTotalsNotABudgetSplit() public {
+        _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
+        uint256 clean = _entry(alice, LOAN_A, 900 ether);
+        uint256 gone = _entry(alice, LOAN_B, 900 ether);
+        _mut().setRewardEntryForfeitedRaw(gone);
+
+        (LibInteractionRewards.DayCharge memory probe, ) = _mut()
+            .processUserSideDayRaw(alice, DAY, _ids(clean, gone), _MAX, _MAX);
+        assertGt(probe.toUser.total, 0, "both legs are live (non-vacuous)");
+        assertGt(probe.toTreasury.total, 0, "both legs are live (non-vacuous)");
+
+        uint256 freshNeed = probe.toUser.armedFresh + probe.toTreasury.armedFresh;
+
+        (LibInteractionRewards.DayCharge memory exact, ) = _mut()
+            .processUserSideDayRaw(
+                alice, DAY, _ids(clean, gone), freshNeed, _MAX
+            );
+        assertTrue(exact.advanced, "exactly enough fresh advances");
+
+        (LibInteractionRewards.DayCharge memory short, ) = _mut()
+            .processUserSideDayRaw(
+                alice, DAY, _ids(clean, gone), freshNeed - 1, _MAX
+            );
+        assertFalse(short.advanced, "one wei short must NOT advance");
+    }
+
+    /// @dev Codex #1399 r6 P3 — dust ties break on the lowest ENTRY ID, so the
+    ///      split is a function of the SET rather than of the caller's array
+    ///      ordering. Load-bearing for 2e: the preview is specified as an exact
+    ///      view-twin of the claim, and two independently-built worklists over
+    ///      the same entries must land the dust identically.
+    function test_DustSplitIsIndependentOfCallerOrdering() public {
+        // An ODD ceiling across two equal-weight entries leaves exactly 1 wei
+        // of dust with both residual capacities tied.
+        _mut().setDayUserSideCapRaw(DAY, 99 ether + 1);
+        uint256 a = _entry(alice, LOAN_A, 900 ether);
+        uint256 b = _entry(alice, LOAN_B, 900 ether);
+        assertLt(a, b, "entry ids are ordered as the test assumes");
+
+        (, LibInteractionRewards.DaySlice[] memory ab) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), _MAX, _MAX);
+        (, LibInteractionRewards.DaySlice[] memory ba) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(b, a), _MAX, _MAX);
+
+        // NON-VACUITY: there must actually BE a tie-broken wei, else the
+        // assertions below hold trivially for a symmetric split.
+        assertTrue(ab[0].amount != ab[1].amount, "a real dust wei was placed");
+        assertEq(ab[0].amount, ba[1].amount, "entry a's slice ignores ordering");
+        assertEq(ab[1].amount, ba[0].amount, "entry b's slice ignores ordering");
+    }
+
     // ─── Funding-source split (Codex #1399 P2) ───────────────────────────────
 
     /// @dev A payout must arrive DECOMPOSED by funding source, not as one plain

@@ -2553,11 +2553,18 @@ function _dayPoolHalves(
     ///      leaving dust unassigned is the correct trade (it simply stays in the
     ///      pool, the same way today's unused remainder does). Dust is never
     ///      redistributed to another user or carried to a later day.
-    ///      Ties break to the LOWEST index, so the split is deterministic.
+    ///      Ties break to the lowest ENTRY ID, not the lowest array index
+    ///      (Codex #1399 r6 P3). Index order is whatever the caller happened to
+    ///      build, and 2e's preview is specified as an exact view-twin of the
+    ///      claim — two independently-built worklists over the SAME entries must
+    ///      land the dust identically or preview and claim disagree by a wei.
+    ///      Entry id is a property of the entry, so the split is a function of
+    ///      the SET rather than of its ordering.
     function _proRataFloorWithCapacityBoundedDust(
         uint256 budget,
         uint256[] memory cEff,
-        uint256 rawPay
+        uint256 rawPay,
+        uint256[] memory entryIds
     ) private pure returns (uint256[] memory slices) {
         uint256 n = cEff.length;
         slices = new uint256[](n);
@@ -2574,12 +2581,18 @@ function _dayPoolHalves(
 
         uint256 dust = budget - assigned; // >= 0 by floor construction
         while (dust != 0) {
-            // Largest residual capacity first (ties -> lowest index).
+            // Largest residual capacity first; ties -> lowest ENTRY ID.
             uint256 bestI = type(uint256).max;
             uint256 bestCap;
             for (uint256 i; i < n; ) {
                 uint256 residual = cEff[i] - slices[i];
-                if (residual > bestCap) {
+                if (
+                    residual > bestCap ||
+                    (residual == bestCap &&
+                        residual != 0 &&
+                        bestI != type(uint256).max &&
+                        entryIds[i] < entryIds[bestI])
+                ) {
                     bestCap = residual;
                     bestI = i;
                 }
@@ -2975,22 +2988,11 @@ function _dayPoolHalves(
         uint256 remainingD1 = c - paid;
         uint256 budget = rawPay < remainingD1 ? rawPay : remainingD1;
 
-        // ALL-OR-NOTHING vs the pool — do NOT advance, so this day is retried
-        // once the pool refills. Checked PER SOURCE: a mixed day that fits the
-        // combined remainder can still be short of recycled (or fresh) alone,
-        // and paying it would overdraw that source.
-        EntrySplit memory need =
-            _splitDayAmount(budget, freshDaily, recycledDaily);
-        if (pool.fresh < need.armedFresh || pool.recycled < need.recycled) {
-            return (charge, slices);
-        }
-
         uint256[] memory amounts =
-            _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay);
+            _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay, entryIds);
         uint256 userTotal;
         uint256 treasuryTotal;
         for (uint256 i; i < n; ) {
-            slices[i].amount = amounts[i];
             // `loanSideChargeable` was stamped from the SHARED {_isForfeited}
             // above — the same predicate `_processEntry` routes on. A borrower
             // entry that became claimable only via a Defaulted / InternalMatched
@@ -3006,9 +3008,44 @@ function _dayPoolHalves(
         }
         // Split each leg ONCE at the aggregate: every entry in the set is
         // priced against the SAME day, so one composition ratio governs both.
-        charge.toUser = _splitDayAmount(userTotal, freshDaily, recycledDaily);
-        charge.toTreasury =
+        EntrySplit memory user_ =
+            _splitDayAmount(userTotal, freshDaily, recycledDaily);
+        EntrySplit memory treas_ =
             _splitDayAmount(treasuryTotal, freshDaily, recycledDaily);
+
+        // ALL-OR-NOTHING vs the pool — do NOT advance, so this day is retried
+        // once the pool refills.
+        //
+        // Checked PER SOURCE, because fresh and recycled reward come from
+        // physically different places: a mixed day that fits the combined
+        // remainder can still be short of one alone.
+        //
+        // Codex #1399 r6 P2 — and checked against the EXACT leg totals, not
+        // against a split of `budget`. Each leg floors its recycled share
+        // independently, and fresh is the subtraction remainder, so a set
+        // holding BOTH payable and forfeited entries can draw a wei or two more
+        // fresh than a single split of `budget` predicts. `consumeArmedFresh`
+        // floors at zero and would absorb that silently — which is exactly why
+        // it must not be relied on here: the pool is a real balance, and
+        // "off by a wei, absorbed downstream" is how a drift becomes
+        // unattributable. Compute the legs first, then check what will
+        // ACTUALLY be drawn.
+        //
+        // `cappedOff` is deliberately absent: it moves no tokens (it only
+        // retires commitments), so it draws nothing from the pool.
+        if (
+            pool.fresh < user_.armedFresh + treas_.armedFresh ||
+            pool.recycled < user_.recycled + treas_.recycled
+        ) {
+            return (charge, slices);
+        }
+
+        for (uint256 i; i < n; ) {
+            slices[i].amount = amounts[i];
+            unchecked { ++i; }
+        }
+        charge.toUser = user_;
+        charge.toTreasury = treas_;
         charge.cappedOff =
             _splitDayAmount(cappedOffTotal, freshDaily, recycledDaily);
         charge.advanced = true;
