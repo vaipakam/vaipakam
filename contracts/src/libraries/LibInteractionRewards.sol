@@ -2369,7 +2369,7 @@ function _dayPoolHalves(
             toTreasury = split;
             return (toUser, toTreasury, c, st);
         }
-        (toUser, toTreasury, c) = _loanSideCapCompute(s, e, split);
+        (toUser, toTreasury, c) = _loanSideCapCompute(s, id, e, split);
     }
 
     /// @dev Read-only entry pricing — {_entryPriceCore} with no writes at all.
@@ -2550,6 +2550,7 @@ function _dayPoolHalves(
     /// @return c              What {_applyLoanSideCap} would persist.
     function _loanSideCapCompute(
         LibVaipakam.Storage storage s,
+        uint256 id,
         LibVaipakam.RewardEntry storage e,
         EntrySplit memory split
     )
@@ -2597,8 +2598,15 @@ function _dayPoolHalves(
             return (userSplit, recycleRelease, c);
         }
         uint8 side = uint8(e.side);
+        // Slice 2d (Codex #1409 r1 P1) — the REMAINING armed days, matching
+        // the remaining split being capped: each day the walk already settled
+        // grew `loanSideRewardedDays` by 1 in {_persistDay}, so adding the
+        // WHOLE armed window here would double-count the walked days in the
+        // proration while the rewarded window is still below `openDays` —
+        // inflating the effective ceiling the preview/expiry gates see (and,
+        // via the whole-settle's absolute stamp, the persisted union).
         uint256 daysIncl =
-            s.loanSideRewardedDays[loanId][side] + _entryArmedDays(s, e);
+            s.loanSideRewardedDays[loanId][side] + _entryArmedDaysFrom(s, id, e);
         // The armed-day union grows monotonically whether or not the split trims.
         c.stamped = true;
         c.daysIncl = daysIncl;

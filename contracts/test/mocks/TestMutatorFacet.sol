@@ -854,6 +854,17 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().rewardEntryClaimNextDay[id] = nextDay;
     }
 
+    /// @dev #1351 slice 2d — seed the per-(loanId, side) armed-day union
+    ///      directly, so a test can express "the walk already settled N days"
+    ///      without driving a full chunked claim.
+    function setLoanSideRewardedDaysRaw(
+        uint256 loanId,
+        uint8 side,
+        uint256 daysIncl
+    ) external {
+        LibVaipakam.storageSlot().loanSideRewardedDays[loanId][side] = daysIncl;
+    }
+
     function setDayCapModeRaw(uint256 d, uint8 mode) external {
         LibVaipakam.storageSlot().dayCapMode[d] = LibVaipakam.CapMode(mode);
     }

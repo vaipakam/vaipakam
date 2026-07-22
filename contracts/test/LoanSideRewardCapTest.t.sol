@@ -178,6 +178,34 @@ contract LoanSideRewardCapTest is SetupTest {
         assertEq(paid, 1.5e18, "cap prorated to min(days,openDays)/openDays");
     }
 
+    /// @dev Codex #1409 r1 P1 — the proration must count the REMAINING armed
+    ///      days of the remaining split, not the entry's whole window: each
+    ///      day the walk already settled grew `loanSideRewardedDays` by 1 in
+    ///      `_persistDay`, so whole-window counting double-counts the walked
+    ///      days while the rewarded window is still below `openDays` —
+    ///      inflating the ceiling the preview / expiry-executable gates see.
+    ///      Observed failing against the pre-fix code at 0.6e18 (daysIncl
+    ///      2 walked + 4 whole-window) vs the correct 0.4e18 (2 + 2).
+    function test_PartClaimedProrationCountsWalkedDaysOnce() public {
+        for (uint256 d = 1; d <= 4; d++) {
+            _seedArmedDay(d, 1e18, 1e18);
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        uint256 id = _pushEntry(1e18, 1, 5); // 4 armed days, raw 4e18
+        // openDays far above the window so the proration is UNclamped either
+        // way; capOpen 1e18 so the ceiling binds well below the raw reward.
+        _stampCap({openDays: 10, capOpen: 1e18});
+
+        // The walk already settled days 1-2: cursor at 3, union grew by 2.
+        _mut().setRewardEntryClaimNextDayRaw(id, 3);
+        _mut().setLoanSideRewardedDaysRaw(LOAN_ID, 0, 2);
+
+        // Remaining split = days 3-4 (raw 2e18). Correct daysIncl = 2 walked
+        // + 2 remaining = 4 -> capEff = 1e18 x 4/10 = 0.4e18, which binds.
+        uint256 need = _mut().userClaimFundingNeedRaw(rewardLender);
+        assertEq(need, 0.4e18, "proration counts each walked day exactly once");
+    }
+
     // ── Dark: an unarmed claim is uncapped (the #1008 regime is untouched) ──
 
     function test_UnarmedClaim_Uncapped() public {
