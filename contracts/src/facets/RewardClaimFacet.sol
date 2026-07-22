@@ -176,16 +176,6 @@ contract RewardClaimFacet is
         // in the treasury split; PR-3c surfaces each aggregate's RECYCLED
         // and ARMED-FRESH components (governor dual accumulator) so
         // consumption can split fresh-vs-recycled below.
-        (
-            LibInteractionRewards.EntrySplit memory userSplit,
-            LibInteractionRewards.EntrySplit memory forfeitSplit,
-            bool walkAdvanced
-        ) = LibInteractionRewards.claimForUserEntries(msg.sender);
-        uint256 entryReward = userSplit.total;
-        uint256 treasuryDelta = forfeitSplit.total;
-        uint256 paidRecycled = userSplit.recycled;
-        uint256 forfeitRecycled = forfeitSplit.recycled;
-
         uint256 last = s.interactionLastClaimedDay[msg.sender];
         uint256 lastFinalized = today - 1;
 
@@ -215,6 +205,35 @@ contract RewardClaimFacet is
             }
         }
 
+
+        // #1351 slice 2c (Codex #1404 r2) — ROOT FIX, not another reservation.
+        //
+        // The claim has THREE legs that each commit state and each draw on the
+        // same 69M fresh pool: the window leg above, the entry-path legacy
+        // slice, and the ShareOfPool day walk. Previously each priced itself
+        // against `poolRemaining()` independently and the aggregate was scaled
+        // down afterwards — AFTER all three had already mutated cursors, paid
+        // maps and commitments. Reserving one leg against another (which is how
+        // round 1 and round 2 each surfaced) only ever fixes the pair in front
+        // of you; a fourth leg would reintroduce it.
+        //
+        // So the budget is computed ONCE here and threaded in as a REQUIRED
+        // parameter. A leg that forgets to account for it cannot compile,
+        // rather than merely failing a convention.
+        uint256 freshBudget = LibInteractionRewards.poolRemaining();
+        freshBudget = freshBudget > windowReward
+            ? freshBudget - windowReward
+            : 0;
+
+        (
+            LibInteractionRewards.EntrySplit memory userSplit,
+            LibInteractionRewards.EntrySplit memory forfeitSplit,
+            bool walkAdvanced
+        ) = LibInteractionRewards.claimForUserEntries(msg.sender, freshBudget);
+        uint256 entryReward = userSplit.total;
+        uint256 treasuryDelta = forfeitSplit.total;
+        uint256 paidRecycled = userSplit.recycled;
+        uint256 forfeitRecycled = forfeitSplit.recycled;
         uint256 pending = entryReward + windowReward;
         // #1353 (M2 PR-5c) — a fully loan-side-capped entry pays 0 yet still
         // carries a finalized `armedFresh` commitment that MUST be retired

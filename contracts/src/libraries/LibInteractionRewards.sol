@@ -978,7 +978,13 @@ function _dayPoolHalves(
     ///         "nothing to claim" revert must not roll it back — otherwise the
     ///         claimant retries the same zero-pay day forever and can never
     ///         reach the payable days behind it.
-    function claimForUserEntries(address user)
+    /// @param freshBudget The fresh headroom this claim may still spend, net of
+    ///        every leg that has ALREADY committed in this tx (today: the legacy
+    ///        window leg). REQUIRED rather than derived internally — see the
+    ///        root-fix note at the call site. A leg that priced itself against
+    ///        the raw `poolRemaining()` while a sibling leg had already spoken
+    ///        for part of it is how the same bug surfaced twice in review.
+    function claimForUserEntries(address user, uint256 freshBudget)
         internal
         returns (
             EntrySplit memory toUser,
@@ -1017,7 +1023,7 @@ function _dayPoolHalves(
         uint256 legacyFresh =
             (toUser.total - toUser.recycled) + (toTreasury.total - toTreasury.recycled);
         (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
-            _walkShareOfPoolDays(s, user, legacyFresh);
+            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh);
         _foldSplit(toUser, wu);
         _foldSplit(toTreasury, wt);
         advancedAnyDay = walked;
@@ -1039,6 +1045,7 @@ function _dayPoolHalves(
     function _walkShareOfPoolDays(
         LibVaipakam.Storage storage s,
         address user,
+        uint256 freshBudget,
         uint256 legacyFreshReserved
     )
         private
@@ -1051,9 +1058,12 @@ function _dayPoolHalves(
         if (s.governorCommitArmedFromDay == 0) {
             return (toUser, toTreasury, false);
         }
-        uint256 freshLeft = poolRemaining();
-        freshLeft = freshLeft > legacyFreshReserved
-            ? freshLeft - legacyFreshReserved
+        // The walk spends what is left of the caller-supplied budget after
+        // this claim's OWN entry-path legacy slice. It never re-reads
+        // `poolRemaining()` — that is precisely the read that let two legs
+        // believe they each owned the same headroom.
+        uint256 freshLeft = freshBudget > legacyFreshReserved
+            ? freshBudget - legacyFreshReserved
             : 0;
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({fresh: freshLeft, recycled: s.recycleBucket}),
