@@ -5440,6 +5440,18 @@ library LibVaipakam {
         //   is marked processed once it passes `endDay`. A pool shortage must
         //   NOT advance this (the day is all-or-nothing and stays retryable).
         mapping(uint256 => uint64) rewardEntryClaimNextDay;
+
+        /// @notice #1351 slice 2c (Codex #1404 r2) — TRUE once an entry's
+        ///         pre-`D*` slice has actually been settled.
+        /// @dev    A DISTINCT marker on purpose. The obvious shortcut is to
+        ///         read `rewardEntryClaimNextDay != 0` as "legacy settled", but
+        ///         the walk also writes that cursor: an entry whose
+        ///         `_processEntry` returned early at the cum-cursor gate can
+        ///         still be walked for its already-finalized armed days, and
+        ///         the shortcut would then skip its legacy slice FOREVER once
+        ///         the later globals arrived. One field, two meanings, silent
+        ///         permanent loss.
+        mapping(uint256 => bool) rewardEntryLegacySettled;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

@@ -1086,9 +1086,17 @@ function _dayPoolHalves(
         for (uint256 i; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+            // Codex #1404 r2 — the walk must NEVER run ahead of the legacy
+            // settlement. An entry whose `_processEntry` bailed at the
+            // cum-cursor gate has an unpaid pre-`D*` slice; walking it here
+            // would advance its cursor and (before the distinct marker) strand
+            // that slice permanently. `_processEntry` runs for every entry
+            // before the walk in the same tx, so a genuinely deferred entry is
+            // always already flagged.
             if (
                 !e.processed &&
                 e.side == side &&
+                s.rewardEntryLegacySettled[id] &&
                 _entryClaimable(s, e) &&
                 _shareOfPoolCursorDay(s, id, e) < e.endDay
             ) {
@@ -2096,7 +2104,7 @@ function _dayPoolHalves(
             // resolved start both records "legacy settled" and seeds the walk
             // with the same value {_shareOfPoolCursorDay} would have derived.
             // No new storage, and the two cannot drift apart.
-            if (s.rewardEntryClaimNextDay[id] == 0) {
+            if (!s.rewardEntryLegacySettled[id]) {
                 EntrySplit memory legacyOnly;
                 legacyOnly.total = split.total - armedPortion; // pre-`D*` fresh
                 // Loan-side cap and forfeit-day accrual are the WALK's job —
@@ -2108,8 +2116,11 @@ function _dayPoolHalves(
                         toUser = legacyOnly;
                     }
                 }
-                s.rewardEntryClaimNextDay[id] =
-                    SafeCast.toUint64(_shareOfPoolCursorDay(s, id, e));
+                s.rewardEntryLegacySettled[id] = true;
+                if (s.rewardEntryClaimNextDay[id] == 0) {
+                    s.rewardEntryClaimNextDay[id] =
+                        SafeCast.toUint64(_shareOfPoolCursorDay(s, id, e));
+                }
             }
             return (toUser, toTreasury);
         }
