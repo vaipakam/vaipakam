@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -107,7 +108,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
 
         uint256 balBefore = vpfi.balanceOf(rewardLender);
         vm.prank(rewardLender);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // Per-day: min(Δ1,T) + min(Δ2,T) = 0.5e18 + 0.25e18 = 0.75e18.
         uint256 expectedPerDay = (P * (T + d2)) / 1e18;
@@ -127,7 +128,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
         // Δ1 = Δ2 = 0.25e18, T = 1e18 (never bites).
         (, uint256 d1, uint256 d2) = _seed(P, 4 * half, 4 * half, 1e18, 1e18);
         vm.prank(rewardLender);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, (P * (d1 + d2)) / 1e18, "uncapped telescoped total");
     }
 
@@ -140,7 +141,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
         (, uint256 d1, uint256 d2) =
             _seed(P, half, 4 * half, type(uint256).max, type(uint256).max);
         vm.prank(rewardLender);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, (P * (d1 + d2)) / 1e18, "disabled cap = uncapped");
     }
 
@@ -153,7 +154,7 @@ contract InteractionRewardDailyCapTest is SetupTest {
         uint256 T = 0.1e18; // both Δ (1e18, 0.25e18) exceed T
         _seed(P, half, 4 * half, T, T);
         vm.prank(rewardLender);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, (P * (2 * T)) / 1e18, "each day saturated at T");
     }
 }

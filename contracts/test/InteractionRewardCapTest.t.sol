@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -129,7 +130,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         assertEq(preview, cap, "preview reflects the cap");
 
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, cap, "paid == cap, not the unbounded share");
     }
 
@@ -156,7 +157,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         assertEq(formula, expectedCap, "formula matches hand-computed cap");
 
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, expectedCap, "claim pays the spec-defined cap");
     }
 
@@ -178,7 +179,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         );
 
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, sideCap * 2, "2x cap across lender + borrower branches");
     }
 
@@ -206,7 +207,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         assertLt(expectedShare, cap, "sanity: share < cap for this fixture");
 
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, expectedShare, "uncapped proportional share paid");
     }
 
@@ -235,7 +236,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
         uint256 expected = raw < cap ? raw : cap;
 
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, expected, "new cap applied at claim time");
     }
 
@@ -253,7 +254,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
         uint256 cap = _expectedCap(interestNumeraire18, lowerRatio);
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, cap, "lower cap enforced");
     }
 
@@ -271,7 +272,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
         uint256 expected = _halfPool(1); // sole lender → full half-pool.
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, expected, "uncapped payout once cap disabled");
     }
 
@@ -310,7 +311,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
         uint256 expected = _halfPool(1);
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, expected, "cap skipped when oracle read fails");
     }
 

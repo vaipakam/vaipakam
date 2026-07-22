@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -154,7 +155,7 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(address(diamond)), 0, "mirror starts empty");
         vm.prank(alice);
         vm.expectPartialRevert(IERC20Errors.ERC20InsufficientBalance.selector);
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // 2. Base remits the day-1 budget; the receiver credits the mirror.
         _fundViaReceiver(1_000e18);
@@ -168,7 +169,7 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         // 3. FUNDED: the identical claim now succeeds and pays alice.
         uint256 aliceBefore = vpfi.balanceOf(alice);
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paid, 0, "funded claim pays out");
         assertEq(vpfi.balanceOf(alice) - aliceBefore, paid, "alice received the VPFI");
         assertEq(
@@ -189,9 +190,9 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         _fundViaReceiver(1_000e18);
 
         vm.prank(alice);
-        (uint256 paidA, , ) = _facet().claimInteractionRewards();
+        (uint256 paidA, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         vm.prank(bobby);
-        (uint256 paidB, , ) = _facet().claimInteractionRewards();
+        (uint256 paidB, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paidA, 0, "alice paid");
         assertGt(paidB, 0, "bobby paid");
         assertEq(vpfi.balanceOf(alice), paidA, "alice balance");
@@ -217,12 +218,12 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
 
         vm.prank(alice);
         vm.expectPartialRevert(IERC20Errors.ERC20InsufficientBalance.selector);
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // The reward remittance tops the balance up → claim succeeds.
         _fundViaReceiver(1_000e18);
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paid, 0, "funded claim pays out");
         assertEq(vpfi.balanceOf(alice), paid, "alice received the VPFI");
     }

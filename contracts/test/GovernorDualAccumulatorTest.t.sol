@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -137,6 +138,20 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRecycledCreditedByDayRaw(armDay, creditedPerWindow);
         _finalize(armDay);
         (, floor_, recycled, , ) = _agg().getDayPoolStamp(armDay);
+        // #1351 slice 2c — `finalizeDay` also stamps the D1 `(user, side, day)`
+        // ceiling (20% of the side half by default), and an armed day is now
+        // CLAIMED through the ShareOfPool day walk that enforces it. This suite
+        // is about the DUAL ACCUMULATOR — the fresh/recycled split, the bucket
+        // debit and the commitment retirement — and its entries deliberately
+        // sweep the WHOLE side pool, which the D1 ceiling would trim to 20%.
+        //
+        // Every assertion here would still pass if simply scaled by 0.2, which
+        // is exactly why that is the wrong fix: the suite would keep passing
+        // while silently testing two mechanisms at once, and a later change to
+        // the share-cap default would break it for reasons that have nothing to
+        // do with the accumulator. Neutralise the ceiling instead; it has its
+        // own coverage in ShareOfPoolDayPrimitiveTest.
+        _mut().setDayUserSideCapRaw(armDay, type(uint256).max);
     }
 
     /// @dev Lender entry sweeping the WHOLE lender side of days
@@ -179,7 +194,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 bucketBefore = _cfg().getRecycleBucket();
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
 
@@ -273,7 +288,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         _seedEntry(alice, 43, 5, 6);
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
         assertApproxEqAbs(
@@ -294,13 +309,19 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRecycledCreditedByDayRaw(5, 700 ether);
         _finalize(4);
         _finalize(5);
+        // #1351 slice 2c — neutralise day 5's D1 ceiling for the same reason as
+        // {_armAndFinalize}: this test is about the pre/post-arming SLICE, and
+        // the entry deliberately sweeps the whole lender side. Day 4 needs no
+        // override — it is pre-arming, so it is paid by the O(1) window product
+        // and the D1 ceiling does not apply to it at all.
+        _mut().setDayUserSideCapRaw(5, type(uint256).max);
         (, uint256 floor4, uint256 recycled4, , ) = _agg().getDayPoolStamp(4);
         (, uint256 floor5, uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
         assertGt(recycled5, 0, "armed day recycled term");
 
         _seedEntry(alice, 44, 4, 6); // days 4 + 5
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
 
@@ -373,6 +394,78 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
         assertApproxEqAbs(
             outRBefore - outRAfter, recycled5 / 2, 1e6, "recycled released"
+        );
+    }
+
+    /// @dev #1351 slice 2c (Codex #1404 r4) — expiry prices the WHOLE window in
+    ///      one product, which has no memory of what a claim already paid. Once
+    ///      2c let a ShareOfPool entry be claimed a CHUNK at a time, expiring a
+    ///      part-claimed entry would recycle those same days a second time, at
+    ///      full window value.
+    ///
+    ///      {testExpiryIsAllOrNothingAtNearExhaustion} above is this test's
+    ///      CONTROL: identical setup, entry never walked, and it credits the
+    ///      full `floor5 / 2 + recycled5 / 2` once headroom is restored. The
+    ///      only difference here is the claim cursor, so a credit of 0 is
+    ///      attributable to the walk-touched gate and nothing else.
+    function testExpiryDefersAnEntryAClaimHasAlreadyWalked() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+
+        uint256 id = _seedEntry(alice, 47, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // Full pool headroom: nothing but the gate can hold the sweep back.
+        _mut().setInteractionPoolPaidOut(0);
+        // A chunked claim has already walked into this entry's days.
+        _mut().setRewardEntryClaimNextDayRaw(id, 6);
+
+        (, uint256 outFBefore, uint256 outRBefore, ) =
+            _agg().getGovernorCommitState();
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "a part-claimed entry is left to its owner, never reaped whole"
+        );
+        (, uint256 outFAfter, uint256 outRAfter, ) =
+            _agg().getGovernorCommitState();
+        assertEq(outFBefore, outFAfter, "armed fresh commitment untouched");
+        assertEq(outRBefore, outRAfter, "recycled commitment untouched");
+    }
+
+    /// @dev #1351 slice 2c — `_userForfeitFresh` sums FORFEITED entries at their
+    ///      whole-window fresh face value to size the aggregate claim funding
+    ///      need. Once a chunked claim can settle a forfeited entry's pre-`D*`
+    ///      legacy slice to treasury and stamp `rewardEntryLegacySettled`,
+    ///      counting that slice a second time OVERSTATES the need — which makes
+    ///      `_entryExecutableNow` read false and silently pauses the expiry
+    ///      accrual clock. Nothing reverts, so only the number itself shows it.
+    ///
+    ///      Found by sweeping every caller of `_entryWindowSplit` rather than by
+    ///      review: this function is not in the slice's diff — the slice changed
+    ///      the invariants it depends on, not its text.
+    function testForfeitFundingNeedDropsTheAlreadySettledLegacySlice() public {
+        _armAndFinalize(5, 700 ether);
+        // Entry spans day 4 (pre-`D*`, legacy) + day 5 (armed), and is forfeited.
+        uint256 id = _seedEntry(alice, 48, 4, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+
+        uint256 needBefore = _mut().userClaimFundingNeedRaw(alice);
+        assertGt(needBefore, 0, "an unsettled forfeited entry needs funding");
+
+        // A chunked claim settles the legacy slice and stamps the marker.
+        _mut().setRewardEntryLegacySettledRaw(id, true);
+
+        uint256 needAfter = _mut().userClaimFundingNeedRaw(alice);
+        assertLt(
+            needAfter,
+            needBefore,
+            "settled legacy slice must stop counting toward the funding need"
         );
     }
 
