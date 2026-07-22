@@ -56,16 +56,27 @@ const LOCALES = (process.env.DESK_I18N_LOCALES || 'en,zh,ta,de,fr,es,ar,ja,ko,hi
 
 // A read-only capture never mutates state. Chain READS are JSON-RPC POSTs, so
 // POST can't be blanket-blocked; instead a POST is allowed only when its body
-// is JSON-RPC whose every method avoids the signing/broadcast set — anything
-// else is aborted and logged (mirrors driver.mjs's read-only HTTP guard).
+// is JSON-RPC whose every method avoids the signing/broadcast/dev-mutator set
+// — anything else is aborted and logged (mirrors driver.mjs's read-only HTTP
+// guard, extended: an allowlist of read methods would risk aborting a
+// legitimate read the app issues and silently breaking the capture, so the
+// denylist is instead widened to cover the dev-chain state-mutating families
+// (anvil_/hardhat_/evm_/…) a preview target might expose).
 const RPC_WRITE_METHODS = new Set([
   'eth_sendRawTransaction',
   'eth_sendTransaction',
   'eth_signTransaction',
   'eth_sign',
   'personal_sign',
+  'eth_signTypedData',
+  'eth_signTypedData_v3',
   'eth_signTypedData_v4',
 ]);
+const RPC_WRITE_PREFIXES = ['anvil_', 'hardhat_', 'evm_', 'ganache_', 'tenderly_', 'wallet_'];
+function isWriteRpc(method) {
+  const m = String(method || '');
+  return RPC_WRITE_METHODS.has(m) || RPC_WRITE_PREFIXES.some((p) => m.startsWith(p));
+}
 function readOnlyViolation(req) {
   const method = req.method().toUpperCase();
   if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
@@ -75,7 +86,7 @@ function readOnlyViolation(req) {
       const parsed = JSON.parse(body);
       const calls = Array.isArray(parsed) ? parsed : [parsed];
       if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
-        const bad = calls.find((c) => RPC_WRITE_METHODS.has(c.method));
+        const bad = calls.find((c) => isWriteRpc(c.method));
         return bad ? `json-rpc ${bad.method}` : null; // read-shaped RPC — allowed
       }
     } catch {
@@ -91,8 +102,10 @@ function readOnlyViolation(req) {
 function languageMatches(lng, htmlLang, dir) {
   const base = String(htmlLang || '').toLowerCase().split('-')[0];
   if (base !== lng.toLowerCase()) return false;
-  if (lng === 'ar') return String(dir || '').toLowerCase() === 'rtl';
-  return true;
+  const d = String(dir || '').toLowerCase();
+  // Arabic must be RTL; every other (LTR) locale must NOT be mirrored, so a
+  // direction regression that stamps rtl on de/fr/en is caught too.
+  return lng === 'ar' ? d === 'rtl' : d !== 'rtl';
 }
 
 const report = {};
@@ -175,6 +188,11 @@ for (const lng of LOCALES) {
     rec.htmlLang = await page.getAttribute('html', 'lang').catch(() => null);
     rec.dir = await page.getAttribute('html', 'dir').catch(() => null);
     rec.langOk = languageMatches(lng, rec.htmlLang, rec.dir);
+    // A desk-specific container must have rendered — otherwise `main` might
+    // only hold a Suspense loading/error card (a failed /desk or locale chunk)
+    // and the row would falsely pass on shell text alone.
+    rec.deskPresent =
+      (await page.$$('[class*="desk"], [class*="ladder"], [class*="tape"], [class*="book"]')).length > 0;
     rec.titles = await page
       .$$eval('[title]', (els) =>
         Array.from(new Set(els.map((e) => e.getAttribute('title')).filter(Boolean))).slice(0, 60),
@@ -194,10 +212,15 @@ for (const lng of LOCALES) {
         ).slice(0, 120),
       )
       .catch(() => []);
-    // Success = page rendered SOME desk text AND the language actually switched.
-    rec.ok = rec.langOk && rec.deskText.length > 0;
+    // Success = the language actually switched AND a desk container rendered
+    // real text (not just a Suspense loading/error shell).
+    rec.ok = rec.langOk && rec.deskPresent && rec.deskText.length > 0;
     if (!rec.langOk) {
       rec.error = `language did not switch: html lang="${rec.htmlLang}" dir="${rec.dir}" (wanted ${lng})`;
+    } else if (!rec.deskPresent) {
+      rec.error = 'no desk container rendered (shell/loading card only)';
+    } else if (rec.deskText.length === 0) {
+      rec.error = 'desk container present but no text scraped';
     }
   } catch (e) {
     rec.error = String(e).slice(0, 300);
