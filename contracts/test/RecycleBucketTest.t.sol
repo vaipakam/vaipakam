@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -138,7 +139,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         );
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, 0, "forfeited entry pays the claimant nothing");
         uint256 bucket = _cfg().getRecycleBucket();
@@ -251,7 +252,7 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         // NOT forfeited — a proper close.
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
 

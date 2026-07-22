@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -131,7 +132,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 400 days);
         assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
         assertGt(paid, 0, "reward untouched while dark");
@@ -182,7 +183,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // The late claimant gets nothing (processed, like a claim).
         vm.prank(alice);
         vm.expectRevert();
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
     function testClaimBeforeExpiryAlwaysWins() public {
@@ -192,7 +193,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _accrue(id, 120 days); // partway through the horizon
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
         assertGt(paid, 0, "claim wins before expiry");
@@ -549,7 +550,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertGt(liveExpiry, 0, "live entry has a countdown");
 
         vm.prank(alice);
-        _facet().claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
 
         (, uint64 processedExpiry) = _lens().getRewardEntryExpiry(id);
         assertEq(processedExpiry, 0, "claimed entry shows no countdown");

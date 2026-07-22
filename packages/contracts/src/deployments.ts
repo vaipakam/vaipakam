@@ -45,6 +45,11 @@ export interface DeploymentFacets {
   earlyWithdrawalFacet?: HexAddress;
   vaultFactoryFacet?: HexAddress;
   interactionRewardsFacet?: HexAddress;
+  interactionRewardsLensFacet?: HexAddress;
+  /** #1351 slice 2c — the claim entry points split out of
+   *  `interactionRewardsFacet` for EIP-170 headroom. */
+  rewardClaimFacet?: HexAddress;
+  feeEntitlementFacet?: HexAddress;
   legalFacet?: HexAddress;
   loanFacet?: HexAddress;
   metricsFacet?: HexAddress;

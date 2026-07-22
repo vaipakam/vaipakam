@@ -969,9 +969,28 @@ function _dayPoolHalves(
      *                    routes the fresh share to the recycle bucket and
      *                    releases the recycled share's commitment).
      */
-    function claimForUserEntries(address user)
+    /// @return toUser     Aggregate reward routed to the claimant.
+    /// @return toTreasury Aggregate reward routed to the treasury channel.
+    /// @return advancedAnyDay True ⇒ the ShareOfPool walk advanced at least one
+    ///         day. Codex #1404 P2: a walk can legitimately advance ZERO-PAY
+    ///         days (a `C == 0` dust day, or a ceiling already consumed by an
+    ///         earlier entry). That is real, persisted progress, so the facet's
+    ///         "nothing to claim" revert must not roll it back — otherwise the
+    ///         claimant retries the same zero-pay day forever and can never
+    ///         reach the payable days behind it.
+    /// @param freshBudget The fresh headroom this claim may still spend, net of
+    ///        every leg that has ALREADY committed in this tx (today: the legacy
+    ///        window leg). REQUIRED rather than derived internally — a leg that
+    ///        priced itself against the raw `poolRemaining()` while a sibling
+    ///        leg had already spoken for part of it is how the same bug
+    ///        surfaced twice in the #1404 review.
+    function claimForUserEntries(address user, uint256 freshBudget)
         internal
-        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
+        returns (
+            EntrySplit memory toUser,
+            EntrySplit memory toTreasury,
+            bool advancedAnyDay
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage ids = s.userRewardEntryIds[user];
@@ -981,7 +1000,7 @@ function _dayPoolHalves(
         // so the claim no longer reads the ETH feed / cap ratio here.
         for (uint256 i = 0; i < len; ) {
             (EntrySplit memory u, EntrySplit memory t) =
-                _processEntry(s, ids[i], /* mutate */ true);
+                _processEntry(s, ids[i]);
             toUser.total += u.total;
             toUser.recycled += u.recycled;
             toUser.armedFresh += u.armedFresh;
@@ -990,6 +1009,255 @@ function _dayPoolHalves(
             toTreasury.armedFresh += t.armedFresh;
             unchecked { ++i; }
         }
+
+        // #1351 (re-land of 2c on the 2d-0 core) — the loop above paid every
+        // entry's pre-`D*` slice O(1); the armed days are priced per-day
+        // against the D1 ceiling here.
+        //
+        // Codex #1404 P2 — the walk's FRESH budget is net of the legacy fresh
+        // this claim has ALREADY committed above. Both draw on the same 69M
+        // pool, and the facet scales the aggregate down if it overruns; without
+        // this the walk would price days against a budget the legacy leg has
+        // already spoken for, then persist cursors and D1 charges for value the
+        // scaler never actually transfers — retiring the commitment while
+        // dropping the payout.
+        uint256 legacyFresh =
+            (toUser.total - toUser.recycled) +
+            (toTreasury.total - toTreasury.recycled);
+        (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
+            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh);
+        _foldSplit(toUser, wu);
+        _foldSplit(toTreasury, wt);
+        advancedAnyDay = walked;
+    }
+
+    /// @dev #1351 (M2 PR-2) — the ShareOfPool day walk.
+    ///
+    ///      Owns the ARMED (post-`D*`) portion of every entry; the pre-`D*`
+    ///      portion was already paid O(1) by {_processEntry}. Chunked at
+    ///      `MAX_INTERACTION_CLAIM_DAYS` — a long window simply needs another
+    ///      `claimInteractionRewards` call, exactly as the cum-cursor catch-up
+    ///      already does.
+    ///
+    ///      Every day that is priced is PAID and PERSISTED in this same tx
+    ///      (cursor, `userSideDayPaidVpfi`, `loanSideRewardPaidVpfi`,
+    ///      `loanSideRewardedDays`). Accumulating in memory across txs and
+    ///      paying once at the end is explicitly forbidden by §F8 — it
+    ///      double-pays.
+    function _walkShareOfPoolDays(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 freshBudget,
+        uint256 legacyFreshReserved
+    )
+        private
+        returns (
+            EntrySplit memory toUser,
+            EntrySplit memory toTreasury,
+            bool advancedAnyDay
+        )
+    {
+        if (s.governorCommitArmedFromDay == 0) {
+            return (toUser, toTreasury, false);
+        }
+        // The walk spends what is left of the caller-supplied budget after
+        // this claim's OWN entry-path legacy slice. It never re-reads
+        // `poolRemaining()` — that is precisely the read that let two legs
+        // believe they each owned the same headroom.
+        uint256 freshLeft = freshBudget > legacyFreshReserved
+            ? freshBudget - legacyFreshReserved
+            : 0;
+        WalkCtx memory ctx = WalkCtx({
+            pool: PoolBudget({fresh: freshLeft, recycled: s.recycleBucket}),
+            advanced: false,
+            daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
+        });
+
+        for (uint8 sideIdx; sideIdx < 2; ) {
+            LibVaipakam.RewardSide side = sideIdx == 0
+                ? LibVaipakam.RewardSide.Lender
+                : LibVaipakam.RewardSide.Borrower;
+            uint256[] memory work = _shareOfPoolWorklist(s, user, side);
+            if (work.length != 0) {
+                _walkSideDays(s, user, side, work, ctx, toUser, toTreasury);
+            }
+            unchecked { ++sideIdx; }
+        }
+        advancedAnyDay = ctx.advanced;
+    }
+
+    /// @dev Entries of `user` on `side` that still owe ShareOfPool days.
+    ///
+    ///      Eligibility is a PURE FUNCTION of `rewardEntryClaimNextDay`, the
+    ///      entry's own window, and `D*` — deliberately no second marker
+    ///      (#1351 2d-0 Deliverable 2; the parked 2c's `rewardEntryLegacySettled`
+    ///      marker is exactly what made its round-6 livelock representable).
+    ///      The walk must never run ahead of the legacy settlement: an entry
+    ///      whose `_processEntry` bailed at the cum-cursor gate has an unpaid
+    ///      pre-`D*` slice, and walking it would advance its cursor past that
+    ///      slice permanently. The cursor's FIRST write happens only when the
+    ///      legacy slice settles (or the walk starts on an entry with no legacy
+    ///      slice at all), so `cursor != 0 || startDay >= D*` is exactly
+    ///      "the pre-`D*` slice is settled or empty" — the two facts cannot
+    ///      disagree because they are one fact.
+    function _shareOfPoolWorklist(
+        LibVaipakam.Storage storage s,
+        address user,
+        LibVaipakam.RewardSide side
+    ) private view returns (uint256[] memory work) {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        uint256[] memory buf = new uint256[](len);
+        uint256 n;
+        for (uint256 i; i < len; ) {
+            uint256 id = ids[i];
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+            if (
+                !e.processed &&
+                e.side == side &&
+                (
+                    s.rewardEntryClaimNextDay[id] != 0 ||
+                    e.startDay >= armedFrom
+                ) &&
+                _entryClaimable(s, e) &&
+                _shareOfPoolCursorDay(s, id, e) < e.endDay
+            ) {
+                buf[n] = id;
+                unchecked { ++n; }
+            }
+            unchecked { ++i; }
+        }
+        work = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            work[i] = buf[i];
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Walk one side's days, oldest first, up to the chunk budget.
+    function _walkSideDays(
+        LibVaipakam.Storage storage s,
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256[] memory work,
+        WalkCtx memory ctx,
+        EntrySplit memory toUser,
+        EntrySplit memory toTreasury
+    ) private {
+        while (ctx.daysLeft != 0) {
+            uint256 d = _lowestPendingDay(s, work);
+            if (d == type(uint256).max) break;
+            uint256[] memory set = _entriesAtDay(s, work, d);
+            if (set.length == 0) break;
+
+            (DayCharge memory charge, DaySlice[] memory slices) =
+                processUserSideDay(user, d, set, ctx.pool);
+            // Not advanced ⇒ a recycled-bucket shortfall or an unready RPN
+            // row — both legitimately transient (#1351 2d-0: the bucket
+            // refills; the row finalizes). Nothing was charged, so STOP
+            // rather than spin: the day stays retryable. A FRESH shortfall
+            // never lands here — the day primitive settles it terminally
+            // (truncate-and-consume) and still advances.
+            if (!charge.advanced) break;
+
+            _persistDay(s, user, side, d, set, slices);
+            ctx.pool.fresh -=
+                charge.toUser.armedFresh + charge.toTreasury.armedFresh;
+            ctx.pool.recycled -= charge.toUser.recycled;
+            _foldSplit(toUser, charge.toUser);
+            _foldSplit(toTreasury, charge.toTreasury);
+            // `cappedOff` moves no tokens but MUST reach the facet so the
+            // commitments retire. Fold it EXACTLY as the loan-side cap shapes
+            // its own two legs, because the facet's arithmetic depends on that
+            // shape:
+            //   • fresh  -> `toUser.armedFresh` ONLY, never `total`. That
+            //     mirrors the user split keeping `armedFresh` whole while
+            //     `total` sheds the capped-off fresh, and it is what feeds
+            //     `consumeArmedFresh` the full commitment (pool-terminal
+            //     trims ride here too — same caller treatment).
+            //   • recycled -> BOTH `toTreasury.total` and `.recycled`, mirroring
+            //     `recycleRelease` where the two are equal. Folding it into
+            //     `.recycled` alone underflows the facet's
+            //     `freshTreasury = treasuryDelta - forfeitRecycled`.
+            toUser.armedFresh += charge.cappedOff.armedFresh;
+            toTreasury.total += charge.cappedOff.recycled;
+            toTreasury.recycled += charge.cappedOff.recycled;
+
+            ctx.advanced = true;
+            unchecked { --ctx.daysLeft; }
+        }
+    }
+
+    /// @dev Lowest day any live entry in `work` still owes; `max` when none do.
+    function _lowestPendingDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory work
+    ) private view returns (uint256 lowest) {
+        lowest = type(uint256).max;
+        for (uint256 i; i < work.length; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[work[i]];
+            if (!e.processed) {
+                uint256 nd = _shareOfPoolCursorDay(s, work[i], e);
+                if (nd < e.endDay && nd < lowest) lowest = nd;
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev The entries sitting exactly on day `d` — the joint transfer set.
+    function _entriesAtDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory work,
+        uint256 d
+    ) private view returns (uint256[] memory set) {
+        uint256[] memory buf = new uint256[](work.length);
+        uint256 n;
+        for (uint256 i; i < work.length; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[work[i]];
+            if (!e.processed && _shareOfPoolCursorDay(s, work[i], e) == d) {
+                buf[n] = work[i];
+                unchecked { ++n; }
+            }
+            unchecked { ++i; }
+        }
+        set = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            set[i] = buf[i];
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Persist everything {processUserSideDay} priced but could not write
+    ///      (it is a `view`). Skipping any of these hands the user an unbounded
+    ///      daily budget — see that function's caller contract.
+    function _persistDay(
+        LibVaipakam.Storage storage s,
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256 d,
+        uint256[] memory set,
+        DaySlice[] memory slices
+    ) private {
+        uint8 sideKey = uint8(side);
+        uint256 charged;
+        for (uint256 i; i < set.length; ) {
+            uint256 id = set[i];
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+            charged += slices[i].amount;
+            // Forfeits consume the D1 ceiling but are EXEMPT from the loan-side
+            // ledger (they are never emitted to the side).
+            if (slices[i].loanSideChargeable) {
+                s.loanSideRewardPaidVpfi[e.loanId][sideKey] += slices[i].amount;
+            }
+            // The armed-day union grows for forfeits too (rev-15 union rule).
+            s.loanSideRewardedDays[e.loanId][sideKey] += 1;
+            uint256 next = d + 1;
+            s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(next);
+            if (next >= e.endDay) e.processed = true;
+            unchecked { ++i; }
+        }
+        s.userSideDayPaidVpfi[user][sideKey][d] += charged;
     }
 
     /// @dev The FULL uncapped VPFI a claim by `user` would transfer right now
@@ -1116,7 +1384,16 @@ function _dayPoolHalves(
                     EntryPriceState memory st
                 ) = _entryPriceCore(s, e);
                 if (st.forfeit) {
-                    fresh += toTreasury.total - toTreasury.recycled;
+                    // A stamped cursor means the pre-`D*` legacy slice has
+                    // already been settled to treasury by a chunked claim —
+                    // counting it again would OVERSTATE the need and silently
+                    // pause the expiry accrual clock (Codex #1404 r6). The
+                    // armed remainder is bounded by the whole armed share
+                    // (already-walked days overstate slightly — the safe,
+                    // sufficient-bound direction this gate documents).
+                    fresh += s.rewardEntryClaimNextDay[ids[i]] != 0
+                        ? toTreasury.armedFresh
+                        : toTreasury.total - toTreasury.recycled;
                 }
             }
             unchecked { ++i; }
@@ -1176,12 +1453,12 @@ function _dayPoolHalves(
         // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
-            (, EntrySplit memory t) = _processEntry(s, lenderId, true);
+            (, EntrySplit memory t) = _processEntryWhole(s, lenderId);
             _foldSplit(toTreasury, t);
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
-            (, EntrySplit memory t) = _processEntry(s, borrowerId, true);
+            (, EntrySplit memory t) = _processEntryWhole(s, borrowerId);
             _foldSplit(toTreasury, t);
         }
 
@@ -1193,7 +1470,7 @@ function _dayPoolHalves(
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
             if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
-                (, EntrySplit memory t) = _processEntry(s, orphaned[i], true);
+                (, EntrySplit memory t) = _processEntryWhole(s, orphaned[i]);
                 _foldSplit(toTreasury, t);
             }
             unchecked { ++i; }
@@ -1255,6 +1532,15 @@ function _dayPoolHalves(
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed || e.user == address(0)) return (expired, 0);
         if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0);
+        // #1351 re-land stopgap (deleted in slice 2d when the sweep becomes a
+        // per-day consumer): an entry with ANY per-day accounting — a settled
+        // legacy slice or walked armed days (`rewardEntryClaimNextDay != 0`) —
+        // must not be reaped whole-window: the O(1) split still prices the
+        // days the walk already paid, so a whole reap would double-credit
+        // them. Left to its owner's claim; the countdown pauses (the view
+        // mirror applies the same gate). Unreachable while `D*` is unarmed —
+        // nothing writes the cursor before arming.
+        if (s.rewardEntryClaimNextDay[id] != 0) return (expired, 0);
         if (!_entryClaimable(s, e)) return (expired, 0);
         if (e.startDay >= e.endDay) return (expired, 0);
 
@@ -1478,7 +1764,7 @@ function _dayPoolHalves(
             // covered by the conservative-estimate caveat above (Codex #1317).
             if (elapsed > hSec) elapsed = hSec;
         } else if (
-            !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, e)
+            !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, id, e)
         ) {
             // Fold in the pending interval a sweep-now would credit — but
             // ONLY while the entry is claim-executable at this block (owner
@@ -1522,10 +1808,13 @@ function _dayPoolHalves(
     ///      as the estimate caveat documented on {rewardEntryExpiry}.
     function _entryExecutableNow(
         LibVaipakam.Storage storage s,
+        uint256 id,
         LibVaipakam.RewardEntry storage e
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
+        // Mirrors {sweepExpiredEntry}'s part-claimed stopgap (see there).
+        if (s.rewardEntryClaimNextDay[id] != 0) return false;
         (EntrySplit memory toUser, , , ) = _entryPriceCore(s, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
         return
@@ -1797,14 +2086,103 @@ function _dayPoolHalves(
             && e.side == LibVaipakam.RewardSide.Borrower;
     }
 
-    /// @dev Process (or preview) a single reward entry. When `mutate`,
-    ///      flips `processed = true` and returns the routed amounts;
-    ///      otherwise returns the pending amount for the user side only
-    ///      (treasury never "previews").
+    /// @dev The CLAIM-path entry settle. For an entry with no armed tail this
+    ///      is the whole-window settle ({_processEntryWhole}); for a `D*`-
+    ///      spanning entry it settles ONLY the pre-`D*` (legacy) slice —
+    ///      derived O(1) from the regime-separation identity
+    ///      `legacy = total − recycled − armedFresh` (pre-`D*` days contribute
+    ///      0 to both the recycled and armed cumulatives) — and stamps
+    ///      `rewardEntryClaimNextDay = D*` as the settlement record. The
+    ///      ShareOfPool walk owns the armed days per-day from there and flips
+    ///      `processed` when its cursor reaches `endDay`.
+    ///
+    ///      This split is DEFINITIONAL, not a caller-chosen mode (the parked
+    ///      2c's `deferArmed` flag is deliberately not re-landed): the entry
+    ///      path never pays an armed day, so the D1 `(user, side, day)` charge
+    ///      and the loan-side cap — both armed-scoped — are entirely the
+    ///      walk's business here. No cap stamp, no forfeit armed-day accrual:
+    ///      {_persistDay} grows the day union per walked day.
+    ///
+    ///      The first cursor write happens ONLY here (legacy settled) or in
+    ///      the walk of an entry with no legacy slice — which is why
+    ///      {_shareOfPoolWorklist}'s `cursor != 0 || startDay >= D*`
+    ///      eligibility is exact with no second marker.
     function _processEntry(
         LibVaipakam.Storage storage s,
-        uint256 id,
-        bool mutate
+        uint256 id
+    )
+        private
+        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
+    {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed) return (toUser, toTreasury);
+
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom == 0 || e.endDay <= armedFrom) {
+            // No armed tail — the whole window IS the legacy slice.
+            return _processEntryWhole(s, id);
+        }
+
+        // Extend the cumulative RPN so pricing can see the window — BEFORE
+        // any walk-ownership early return, because the day walk consumes the
+        // rows this advance materializes: an entry the walk owns outright
+        // still needs its days' RPN rows built here, exactly as the parked
+        // 2c's defer path did. The whole-window `endDay - 1` need is
+        // deliberately kept (not clipped to `D* - 1`): it reuses the ONE
+        // pricing gate unchanged, and costs only the finalization lag of the
+        // armed tail — the walk could not run before those days finalize
+        // anyway. May not reach `need` if the globals are not finalized yet —
+        // the core then prices 0 and the entry stays retryable, unstamped,
+        // and walk-ineligible.
+        if (_entryClaimable(s, e) && e.startDay < e.endDay) {
+            uint256 need = e.endDay - 1;
+            if (e.side == LibVaipakam.RewardSide.Lender) {
+                if (s.cumLenderCursor < need) advanceCumLenderThrough(need);
+            } else {
+                if (s.cumBorrowerCursor < need) advanceCumBorrowerThrough(need);
+            }
+        }
+
+        if (s.rewardEntryClaimNextDay[id] != 0 || e.startDay >= armedFrom) {
+            // Legacy slice already settled (cursor written), or the entry has
+            // no legacy slice at all — the walk owns everything that remains.
+            return (toUser, toTreasury);
+        }
+
+        EntryPriceState memory st;
+        (, , , st) = _entryPriceCore(s, e);
+        if (!st.priced) {
+            // A zero-value window will never pay on either regime — retire it.
+            if (st.emptyWindow) e.processed = true;
+            return (toUser, toTreasury);
+        }
+
+        // The legacy slice is ALL fresh by the regime identity.
+        uint256 legacy =
+            st.rawSplit.total - st.rawSplit.recycled - st.rawSplit.armedFresh;
+        if (st.forfeit) {
+            toTreasury.total = legacy;
+        } else {
+            toUser.total = legacy;
+        }
+        // Settlement record: the walk starts at `D*`. NOT `processed` — the
+        // armed tail is still owed.
+        s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
+    }
+
+    /// @dev The WHOLE-WINDOW entry settle: flips `processed = true` and
+    ///      returns the routed amounts. Used directly by the loan-close
+    ///      forfeit sweeps ({closeLoanEntries} / the orphaned-forfeit sweep),
+    ///      which settle a forfeited entry's full window O(1) at terminal —
+    ///      deferring a defaulted counterparty's armed days to a claim walk
+    ///      they will never run would strand them. The armed forfeit
+    ///      deliberately bypasses the D1 day charge here: it is a treasury
+    ///      reclaim, not user extraction, so skipping the charge only leaves
+    ///      the user MORE of their own daily ceiling — leniency, not a
+    ///      bypass.
+    function _processEntryWhole(
+        LibVaipakam.Storage storage s,
+        uint256 id
     )
         private
         returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
@@ -1834,13 +2212,7 @@ function _dayPoolHalves(
             // An empty or zero-value window will never pay — retire it so it
             // stops being rescanned. A cursor-behind entry is NOT retired: it
             // can still pay once the globals finalize.
-            if (mutate && st.emptyWindow) e.processed = true;
-            return (toUser, toTreasury);
-        }
-        if (!mutate) {
-            // Preview-through-the-settle-path: report the routed split without
-            // persisting. (The read-only entry point is {_previewEntryReward};
-            // this branch serves callers already holding a mutating frame.)
+            if (st.emptyWindow) e.processed = true;
             return (toUser, toTreasury);
         }
 
@@ -2164,7 +2536,18 @@ function _dayPoolHalves(
             LoanSideCapCharge memory c
         )
     {
-        userSplit = split;
+        // An explicit COPY, never `userSplit = split` — that would ALIAS the
+        // caller's memory, and the trim below would silently rewrite the raw
+        // split every consumer downstream of the core reads
+        // ({EntryPriceState.rawSplit}). Latent while only the forfeit branch
+        // (which never runs the cap) consumed the raw split; the legacy-slice
+        // derivation in {_processEntry} reads it on the PAYABLE branch and
+        // was shorted by exactly the capped-off amount.
+        userSplit = EntrySplit({
+            total: split.total,
+            recycled: split.recycled,
+            armedFresh: split.armedFresh
+        });
         uint256 armedReward = split.armedFresh + split.recycled; // post-`D*` reward
         if (armedReward == 0) return (userSplit, recycleRelease, c); // pre-cutover ⇒ dark
         uint256 loanId = e.loanId;
@@ -2806,6 +3189,22 @@ function _dayPoolHalves(
         uint256 recycled;
     }
 
+    /// @dev Per-claim walk state, threaded by reference through both side
+    ///      walks.
+    /// @param daysLeft Days this CALL may still process, shared across both
+    ///        side walks. `MAX_INTERACTION_CLAIM_DAYS` bounds the per-call gas
+    ///        envelope, so it has to be a per-call budget: a counter local to
+    ///        {_walkSideDays} would let a claimant with both lender- and
+    ///        borrower-side entries process the full allowance TWICE in one
+    ///        transaction, doubling the envelope the constant exists to cap
+    ///        (Codex #1404 r3). Threaded by reference for the same reason the
+    ///        pool budget is — a shared allowance cannot be a local.
+    struct WalkCtx {
+        PoolBudget pool;
+        bool advanced;
+        uint256 daysLeft;
+    }
+
     /// @notice One entry's share of a priced day.
     /// @param amount             VPFI attributed to this entry.
     /// @param loanSideChargeable True  ⇒ the caller MUST add `amount` to
@@ -2822,6 +3221,30 @@ function _dayPoolHalves(
     struct DaySlice {
         uint256 amount;
         bool loanSideChargeable;
+    }
+
+    /// @dev Where an entry's ShareOfPool day walk starts.
+    ///
+    ///      An UNSET cursor resolves to `max(startDay, D*)`, not `startDay`:
+    ///      under the #1351 hybrid the pre-`D*` portion of a spanning entry
+    ///      is paid by the O(1) window product, so the day walk owns only the
+    ///      armed days. Resolving it here — rather than letting a caller
+    ///      pre-seed storage — keeps the equality check in
+    ///      {processUserSideDay} a genuine double-pay guard.
+    ///
+    ///      With `D*` unarmed (`armedFrom == 0`) this is just `startDay`; no
+    ///      day is ShareOfPool then, so the primitive is unreachable anyway.
+    function _shareOfPoolCursorDay(
+        LibVaipakam.Storage storage s,
+        uint256 entryId,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (uint256) {
+        uint256 nd = s.rewardEntryClaimNextDay[entryId];
+        if (nd != 0) return nd;
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        uint256 start = e.startDay;
+        if (armedFrom == 0 || armedFrom <= start) return start;
+        return armedFrom;
     }
 
     /// @dev Price every entry in the set against the loan-side cap for day `d`.

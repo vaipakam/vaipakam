@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -81,6 +82,16 @@ contract LoanSideRewardCapTest is SetupTest {
         _mut().setDayPoolStampRaw(dayId, uint128(freshHalf * 2), 0);
         _mut().setKnownGlobalDailyInterest(dayId, global, 0, true);
         _mut().setDayCapThreshold18(dayId, type(uint256).max); // #1008 off
+        // #1351 slice 2c — an armed day is now CLAIMED via the ShareOfPool day
+        // walk, which fail-closes without an explicit mode stamp. Production
+        // stamps mode + pool + `C` atomically in `finalizeDay` (slice 2a); this
+        // harness seeds days directly, so it must stamp the mode too.
+        _mut().setDayCapModeRaw(dayId, 1); // ShareOfPool
+        // `C` is left NON-BINDING on purpose: this suite is about the LOAN-SIDE
+        // ceiling. An unseeded `C` is 0, which is a legitimate ShareOfPool dust
+        // day that pays nothing — every assertion below would then pass
+        // vacuously at a zero payout.
+        _mut().setDayUserSideCapRaw(dayId, type(uint256).max);
         deltaRpn = (freshHalf * 1e18) / global;
     }
 
@@ -98,6 +109,8 @@ contract LoanSideRewardCapTest is SetupTest {
         );
         _mut().setKnownGlobalDailyInterest(dayId, global, 0, true);
         _mut().setDayCapThreshold18(dayId, type(uint256).max); // #1008 off
+        _mut().setDayCapModeRaw(dayId, 1); // ShareOfPool (see {_seedArmedDay})
+        _mut().setDayUserSideCapRaw(dayId, type(uint256).max); // isolate loan-side
     }
 
     /// @dev Stamp a fee-entitlement record carrying a known loan-side ceiling.
@@ -143,7 +156,7 @@ contract LoanSideRewardCapTest is SetupTest {
 
         uint256 balBefore = vpfi.balanceOf(rewardLender);
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, 0.5e18, "claim trimmed to the loan-side ceiling");
         assertEq(vpfi.balanceOf(rewardLender) - balBefore, 0.5e18, "paid out");
@@ -161,7 +174,7 @@ contract LoanSideRewardCapTest is SetupTest {
         _stampCap({openDays: 4, capOpen: 3e18});
 
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 1.5e18, "cap prorated to min(days,openDays)/openDays");
     }
 
@@ -177,7 +190,7 @@ contract LoanSideRewardCapTest is SetupTest {
         _stampCap({openDays: 2, capOpen: 0.5e18});
 
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         // Unarmed days derive the pool from halfPoolForDay(), so the raw reward
         // is whatever that pool yields — the load-bearing assertion is only that
         // the 0.5e18 loan-side ceiling did NOT bite (paid strictly exceeds it).
@@ -201,7 +214,7 @@ contract LoanSideRewardCapTest is SetupTest {
         _stampCap({openDays: 2, capOpen: 1.2e18});
 
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 1.2e18, "shared lifetime ceiling across the two entries");
     }
 
@@ -218,7 +231,7 @@ contract LoanSideRewardCapTest is SetupTest {
         // reward-ineligibility (a canonical feed-fail origination) is enforced
         // upstream by not creating reward entries at all (Codex #1371 r1 P1 ×2).
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 2e18, "unstamped loan earns full reward (cap skips, not zeroes)");
     }
 
@@ -250,7 +263,7 @@ contract LoanSideRewardCapTest is SetupTest {
         // entry is processed and its armed-fresh commitment retired, so a solo
         // zero-payout entry is not stranded/retried forever (Codex #1371 r6).
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 0, "stamped dust loan capped to 0 (claim clears it, no revert)");
     }
 
@@ -284,7 +297,7 @@ contract LoanSideRewardCapTest is SetupTest {
             })
         );
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 0.098e18, "cap derived from cStarOpen + default haircut for a legacy record");
     }
 
@@ -306,7 +319,7 @@ contract LoanSideRewardCapTest is SetupTest {
         uint256 day1 = _lens().getInteractionHalfPoolForDay(1);
 
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         // Total = uncapped day-1 reward + capped day-2 slice (0.05e18).
         assertEq(paid, day1 + 0.05e18, "pre-cutover day uncapped; only armed day capped");
     }
@@ -327,7 +340,7 @@ contract LoanSideRewardCapTest is SetupTest {
         _stampCap({openDays: 1, capOpen: 0.5e18});
 
         vm.prank(rewardLender);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 0.5e18, "whole armed reward (fresh + recycled) capped to the ceiling");
     }
 
@@ -344,6 +357,6 @@ contract LoanSideRewardCapTest is SetupTest {
         _mut().setDailyLenderInterest(1, rewardLender, 100e18, 100e18);
         vm.prank(rewardLender);
         vm.expectRevert();
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 }
