@@ -1778,77 +1778,48 @@ function _dayPoolHalves(
     {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed) return (toUser, toTreasury);
-        // #1002 (S4) — an entry is claimable/sweepable ONLY once the loan is
-        // actually over, not merely because the calendar passed maturity. See
-        // {_entryClaimable}: either the entry was explicitly closed (window
-        // finalized by closeLoan / lender-sale) OR its loan has reached a
-        // terminal status. `endDay` is purely the accrual bound now.
-        if (!_entryClaimable(s, e)) return (toUser, toTreasury);
-        if (e.startDay >= e.endDay) {
-            if (mutate) e.processed = true;
-            return (toUser, toTreasury);
-        }
 
-        // Need cumRPN populated through endDay - 1 for the matching side.
-        uint256 need = e.endDay - 1;
-        uint256 cursor;
-        if (e.side == LibVaipakam.RewardSide.Lender) {
-            cursor = s.cumLenderCursor;
-            if (cursor < need) {
-                // Try to extend; may not be possible if globals not finalized.
-                cursor = advanceCumLenderThrough(need);
-            }
-            if (cursor < need) return (toUser, toTreasury);
-        } else {
-            cursor = s.cumBorrowerCursor;
-            if (cursor < need) {
-                cursor = advanceCumBorrowerThrough(need);
-            }
-            if (cursor < need) return (toUser, toTreasury);
-        }
-
-        // #1008 (S13, Option B) — read the CAPPED cumulative so the §4 daily
-        // cap is applied per day (baked at finalization) while the claim stays
-        // O(1). `cumMin*Rpn18` == `cum*Rpn18` on days the cap was disabled.
-        // PR-3c — the RECYCLED capped component rides the same window
-        // delta; mixed pre/post-cutover windows slice correctly by
-        // construction (pre-arming days contribute 0 to the recycled
-        // cumulative), satisfying the redesign's D* day-slicing rule
-        // without a per-day loop.
-        EntrySplit memory split = _entryWindowSplit(s, e);
-        if (split.total == 0) {
-            if (mutate) e.processed = true;
-            return (toUser, toTreasury);
-        }
-
-        if (mutate) e.processed = true;
-        // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
-        // forfeit derived from an unclosed liquidation/default (so a liquidated
-        // borrower can't collect via the {_entryClaimable} loan-terminal
-        // fallback).
-        if (e.forfeited || _entryTerminalForfeit(s, e)) {
-            // #1353 (M2 PR-5c) — the loan-side cap bounds reward PAID TO A USER,
-            // never a forfeit: a forfeited reward recycles to the bucket (it is
-            // NOT emitted to the side), so it is not trimmed here (Codex #1371
-            // r2). But its armed days STILL count toward the per-(loanId, side)
-            // day union, so a mid-loan lender sale (whose outgoing slice is
-            // forfeited by `transferLenderEntry`) does not understate the
-            // incoming lender's cap proration (rev-15 union rule; Codex #1371 r7).
-            if (mutate) _accrueForfeitArmedDays(s, e, split);
-            toTreasury = split;
-        } else {
-            // #1353 (M2 PR-5c) — bound the WHOLE armed (post-`D*`) reward
-            // (`armedFresh + recycled`) to the per-(loanId, side) lifetime
-            // budget. `armedFresh` is left whole for full commitment retirement
-            // (payout shrinks like a pool-truncated fresh share); the capped-off
-            // recycled is routed to the treasury channel as a pure commitment
-            // RELEASE. A solo fully-capped entry leaves the facet a commitment to
-            // retire (no revert — Codex #1371 r6/r7). DARK until `D*`.
-            if (mutate) {
-                (toUser, toTreasury) = _applyLoanSideCap(s, e, split);
+        // The ONE write a view caller cannot make, and the only reason this is
+        // a wrapper rather than a mode flag on {_entryPriceCore}: extend the
+        // cumulative RPN so the core can price the whole window. May not reach
+        // `need` if the globals are not finalized yet — the core then prices 0
+        // and the entry stays retryable.
+        if (_entryClaimable(s, e) && e.startDay < e.endDay) {
+            uint256 need = e.endDay - 1;
+            if (e.side == LibVaipakam.RewardSide.Lender) {
+                if (s.cumLenderCursor < need) advanceCumLenderThrough(need);
             } else {
-                toUser = split;
+                if (s.cumBorrowerCursor < need) advanceCumBorrowerThrough(need);
             }
+        }
+
+        LoanSideCapCharge memory c;
+        EntryPriceState memory st;
+        (toUser, toTreasury, c, st) = _entryPriceCore(s, e);
+
+        if (!st.priced) {
+            // An empty or zero-value window will never pay — retire it so it
+            // stops being rescanned. A cursor-behind entry is NOT retired: it
+            // can still pay once the globals finalize.
+            if (mutate && st.emptyWindow) e.processed = true;
+            return (toUser, toTreasury);
+        }
+        if (!mutate) {
+            // Preview-through-the-settle-path: report the routed split without
+            // persisting. (The read-only entry point is {_previewEntryReward};
+            // this branch serves callers already holding a mutating frame.)
+            return (toUser, toTreasury);
+        }
+
+        e.processed = true;
+        if (st.forfeit) {
+            _accrueForfeitArmedDays(s, e, st.rawSplit);
+            return (toUser, toTreasury);
+        }
+        if (c.stamped) {
+            uint8 sideW = uint8(e.side);
+            s.loanSideRewardedDays[e.loanId][sideW] = c.daysIncl;
+            s.loanSideRewardPaidVpfi[e.loanId][sideW] = c.newPaid;
         }
     }
 
@@ -1906,35 +1877,109 @@ function _dayPoolHalves(
         split.armedFresh = armedCombined - recycled;
     }
 
-    /// @dev View-only variant of the entry processing path (no advance).
-    ///      #1008 (S13) — reads the CAPPED cumulative (`cumMin*Rpn18`), so it is
-    ///      exactly the claim value once the cursor has reached `endDay-1`. As a
-    ///      view it cannot advance the cursor, so on a not-yet-advanced finalized
-    ///      day it returns 0 (under-reports, never over-reports — Codex #1147 r8 L3).
-    function _previewEntryReward(
+    /// @dev #1351 slice 2d-0 — THE entry pricing arithmetic AND its routing.
+    ///      One implementation, read by both the settling claim
+    ///      ({_processEntry}) and the read-only preview ({_previewEntryReward}).
+    ///
+    ///      Deliberately NOT "one function with a DryRun/Settle flag": the two
+    ///      callers differ in something a runtime flag cannot express — the
+    ///      claim ADVANCES the cumulative cursor to reach `endDay - 1`, and a
+    ///      `view` preview is forbidden from writing at all. So the split is
+    ///      view-core + settle-wrapper: the wrapper advances the cursor and
+    ///      persists, the core computes and routes. Everything downstream of
+    ///      the cursor — the claimability gate, the window split, the forfeit
+    ///      routing, the loan-side cap — is shared, so a preview cannot promise
+    ///      what a claim will not pay.
+    ///
+    ///      The cursor difference stays visible and intended: on a finalized day
+    ///      the claim has not advanced through yet, the core prices 0 for a view
+    ///      caller. It UNDER-reports, never over-reports (#1147 r8 L3).
+    /// @return toUser      What the user is owed (0 for a forfeit).
+    /// @return toTreasury  The forfeit's whole split, or the capped-off recycled
+    ///                     of a capped user split — both routed to treasury.
+    /// @return c           What a settling caller persists for the loan-side
+    ///                     cap. `stamped == false` ⇒ nothing to persist.
+    /// @return st          Which settle-only side effects apply.
+    struct EntryPriceState {
+        bool priced;         // a split was produced
+        bool emptyWindow;    // settle marks `processed`: nothing will ever pay
+        bool forfeit;        // routed to treasury, and NOT loan-side capped
+        EntrySplit rawSplit; // pre-cap split, needed by the forfeit day accrual
+    }
+
+    function _entryPriceCore(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e
-    ) private view returns (uint256 reward) {
-        // #1002 (S4) — preview mirrors the claim gate: no reward until the loan
-        // is actually over (matches {_processEntry} / {_entryClaimable}).
-        if (!_entryClaimable(s, e)) return 0;
-        if (e.startDay >= e.endDay) return 0;
+    )
+        private
+        view
+        returns (
+            EntrySplit memory toUser,
+            EntrySplit memory toTreasury,
+            LoanSideCapCharge memory c,
+            EntryPriceState memory st
+        )
+    {
+        // #1002 (S4) — claimable only once the loan is actually over, not
+        // merely because the calendar passed maturity.
+        if (!_entryClaimable(s, e)) return (toUser, toTreasury, c, st);
+        if (e.startDay >= e.endDay) {
+            st.emptyWindow = true;
+            return (toUser, toTreasury, c, st);
+        }
+        // The cumulative RPN must be populated through `endDay - 1`. A settling
+        // caller advances it first; a view caller cannot, and prices 0.
         uint256 need = e.endDay - 1;
         if (
             e.side == LibVaipakam.RewardSide.Lender
                 ? s.cumLenderCursor < need
                 : s.cumBorrowerCursor < need
-        ) return 0;
-        // #1353 (M2 PR-5c) — preview the CLAIM value EXACTLY: build the same
-        // {EntrySplit} the mutating path routes and apply the identical
-        // armed-fresh trim (read-only). Matching the claim is load-bearing — the
-        // expiry funding gate reads this via {userClaimFundingNeed}, and a
-        // preview that diverged from the claim (e.g. an over-trim on a spanning
-        // entry) could advance the expiry clock on a reward the claim would not
-        // actually pay (Codex #1371 r2). DARK until `D*` is armed.
+        ) return (toUser, toTreasury, c, st);
+
+        // #1008 (S13, Option B) — the CAPPED cumulative, so the §4 daily cap is
+        // applied per day (baked at finalization) while this stays O(1).
+        // PR-3c — mixed pre/post-cutover windows slice by construction:
+        // pre-arming days contribute 0 to the recycled + armed cumulatives.
         EntrySplit memory split = _entryWindowSplit(s, e);
-        if (split.total == 0) return 0;
-        return _loanSideCapPreviewTotal(s, e, split);
+        if (split.total == 0) {
+            st.emptyWindow = true;
+            return (toUser, toTreasury, c, st);
+        }
+        st.priced = true;
+        st.rawSplit = split;
+
+        // #1061 P2 — route to treasury on an explicit forfeit OR a terminal
+        // forfeit derived from an unclosed liquidation/default, so a liquidated
+        // borrower cannot collect via the loan-terminal claimability fallback.
+        if (e.forfeited || _entryTerminalForfeit(s, e)) {
+            // #1353 (M2 PR-5c) — the loan-side cap bounds reward PAID TO A USER,
+            // never a forfeit: a forfeit recycles to the bucket rather than being
+            // emitted to the side, so it is not trimmed (Codex #1371 r2). Its
+            // armed days still join the per-(loanId, side) union — the settle
+            // wrapper accrues them.
+            st.forfeit = true;
+            toTreasury = split;
+            return (toUser, toTreasury, c, st);
+        }
+        (toUser, toTreasury, c) = _loanSideCapCompute(s, e, split);
+    }
+
+    /// @dev Read-only entry pricing — {_entryPriceCore} with no writes at all.
+    ///      As a view it cannot advance the cursor, so on a finalized day the
+    ///      claim has not yet advanced through it returns 0: it UNDER-reports,
+    ///      never over-reports (#1147 r8 L3).
+    ///
+    ///      Matching the claim is load-bearing — the expiry funding gate reads
+    ///      this via {userClaimFundingNeed}, and a preview that diverged could
+    ///      advance the expiry clock on a reward the claim would not actually
+    ///      pay (Codex #1371 r2). It now matches BY CONSTRUCTION rather than by
+    ///      keeping a second implementation in step.
+    function _previewEntryReward(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (uint256 reward) {
+        (EntrySplit memory toUser, , , ) = _entryPriceCore(s, e);
+        return toUser.total;
     }
 
     // ─── #1353 (M2 PR-5c) — loan-side interaction-reward cap ─────────────────
@@ -2063,31 +2108,32 @@ function _dayPoolHalves(
         return (capOpen * daysCounted) / openDays;
     }
 
-    /// @dev MUTATING loan-side cap — bounds an entry's WHOLE post-`D*` armed
-    ///      reward (`armedFresh + recycled`) to the remaining per-(loanId, side)
-    ///      lifetime budget and persists the paid / armed-day accumulators. The
-    ///      ceiling `½ × C* × (1 − m)` bounds the total post-cutover per-side
-    ///      payout, so the RECYCLED portion is capped too, not just the fresh one
-    ///      (Codex #1371 r7). The capped-off amount is PARTITIONED:
-    ///        • capped-off fresh — `armedFresh` is left WHOLE on `userSplit` so
-    ///          the facet retires the full fresh commitment (`consumeArmedFresh`)
-    ///          while the payout `total` shrinks (retired-not-paid, like a
-    ///          pool-truncated fresh share);
-    ///        • capped-off recycled — routed out via the returned `recycleRelease`
-    ///          split so the facet RELEASES its commitment
-    ///          (`LibVpfiRecycle.releaseCommitment`) — no payout AND no bucket
-    ///          credit (no `Ā` inflation, so no expiry-funding-gate ripple).
-    ///      Both are empty of a cap effect (DARK) when the entry has no armed
-    ///      reward or the loan is UNSTAMPED (`openDays == 0`), so an unstamped
-    ///      loan is never zeroed. Fresh is paid before recycled.
-    function _applyLoanSideCap(
+    /// @dev #1351 slice 2d-0 — the loan-side cap's ARITHMETIC, with no writes.
+    ///      {_applyLoanSideCap} is this plus its two stores, and the preview
+    ///      path reads it directly. One implementation, so a preview cannot
+    ///      promise what a claim will not pay: the guarantee the preview's
+    ///      natspec calls load-bearing now holds by construction rather than by
+    ///      keeping a hand-mirrored copy in step.
+    /// @return userSplit      What the user is paid, trimmed to the cap.
+    /// @return recycleRelease Capped-off recycled, routed out as a pure
+    ///                        commitment RELEASE (no payout, no bucket credit).
+    /// @return c              What {_applyLoanSideCap} would persist.
+    function _loanSideCapCompute(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardEntry storage e,
         EntrySplit memory split
-    ) private returns (EntrySplit memory userSplit, EntrySplit memory recycleRelease) {
+    )
+        private
+        view
+        returns (
+            EntrySplit memory userSplit,
+            EntrySplit memory recycleRelease,
+            LoanSideCapCharge memory c
+        )
+    {
         userSplit = split;
         uint256 armedReward = split.armedFresh + split.recycled; // post-`D*` reward
-        if (armedReward == 0) return (userSplit, recycleRelease); // pre-cutover only ⇒ dark
+        if (armedReward == 0) return (userSplit, recycleRelease, c); // pre-cutover ⇒ dark
         uint256 loanId = e.loanId;
         // The STAMP marker is `openDays != 0` — the stamp always writes
         // `openDays >= 1`, whereas a genuinely-priced dust loan can have BOTH
@@ -2107,21 +2153,22 @@ function _dayPoolHalves(
             // (user, side, day) share cap on their local claim, not here. The
             // arming-time enforcement is a deploy-assert (PR-9 #1356) coupled
             // with the joint cutover.
-            return (userSplit, recycleRelease);
+            return (userSplit, recycleRelease, c);
         }
         uint8 side = uint8(e.side);
         uint256 daysIncl =
             s.loanSideRewardedDays[loanId][side] + _entryArmedDays(s, e);
         // The armed-day union grows monotonically whether or not the split trims.
-        s.loanSideRewardedDays[loanId][side] = daysIncl;
+        c.stamped = true;
+        c.daysIncl = daysIncl;
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
         uint256 remaining = capEff > paid ? capEff - paid : 0;
         if (armedReward <= remaining) {
-            s.loanSideRewardPaidVpfi[loanId][side] = paid + armedReward;
-            return (userSplit, recycleRelease); // nothing capped
+            c.newPaid = paid + armedReward;
+            return (userSplit, recycleRelease, c); // nothing capped
         }
-        s.loanSideRewardPaidVpfi[loanId][side] = paid + remaining;
+        c.newPaid = paid + remaining;
         // Pay fresh first, then recycled, up to `remaining`.
         uint256 paidArmedFresh =
             split.armedFresh <= remaining ? split.armedFresh : remaining;
@@ -2137,34 +2184,6 @@ function _dayPoolHalves(
         // only releases the commitment and credits nothing).
         recycleRelease.total = cappedRecycled;
         recycleRelease.recycled = cappedRecycled;
-    }
-
-    /// @dev READ-ONLY loan-side cap for the preview path — returns the CLAIM's
-    ///      trimmed user `total` for `split` without persisting, so the preview
-    ///      exactly matches what the mutating claim would pay (load-bearing for
-    ///      the expiry funding gate). Bounds the WHOLE armed reward
-    ///      (`armedFresh + recycled`) like the claim. Skips unstamped loans and
-    ///      entries with no armed reward, matching the claim's dark behaviour.
-    function _loanSideCapPreviewTotal(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.RewardEntry storage e,
-        EntrySplit memory split
-    ) private view returns (uint256) {
-        uint256 armedReward = split.armedFresh + split.recycled;
-        if (armedReward == 0) return split.total;
-        uint256 loanId = e.loanId;
-        // Unstamped marker is `openDays == 0` (see {_applyLoanSideCap}); a
-        // stamped zero-`C*` dust loan is capped, not skipped (Codex #1371 r5).
-        if (s.feeEntitlementByLoanId[loanId].openDays == 0) return split.total;
-        uint8 side = uint8(e.side);
-        uint256 daysIncl =
-            s.loanSideRewardedDays[loanId][side] + _entryArmedDays(s, e);
-        uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
-        uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
-        uint256 remaining = capEff > paid ? capEff - paid : 0;
-        return armedReward > remaining
-            ? split.total - (armedReward - remaining)
-            : split.total;
     }
 
     /// @dev Allocate a fresh RewardEntry and push it into the user's
@@ -2714,6 +2733,18 @@ function _dayPoolHalves(
     ///      commitment. Finalize reserves the whole day's committable amount,
     ///      while a D1 day can close under-claimed; only a day-level view can
     ///      see that residue, so it belongs to the 2d sweep.
+    /// @dev #1351 slice 2d-0 — what a SETTLING caller persists for the
+    ///      loan-side cap, returned by the view-mode {_loanSideCapCompute} so
+    ///      the settle path stores it without recomputing, and so the whole
+    ///      write set is visible in one place. `stamped == false` is a loan
+    ///      carrying no fee-entitlement stamp: the cap does not apply and
+    ///      nothing is written.
+    struct LoanSideCapCharge {
+        bool stamped;
+        uint256 daysIncl;
+        uint256 newPaid;
+    }
+
     struct DayCharge {
         EntrySplit toUser;
         EntrySplit toTreasury;
