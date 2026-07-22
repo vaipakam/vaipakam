@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -106,12 +107,12 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice)
         );
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // Un-flag → the identical claim now succeeds (gate was the only blocker).
         m.setFlagged(alice, false);
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertGt(paid, 0, "clean wallet claims normally once un-flagged");
     }
 
@@ -158,7 +159,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         uint256 balBefore = vpfi.balanceOf(alice);
         vm.prank(alice);
-        (uint256 paid, uint256 fromDay, uint256 toDay) = _facet().claimInteractionRewards();
+        (uint256 paid, uint256 fromDay, uint256 toDay) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "paid == halfPool(1)");
         assertEq(fromDay, 1, "window starts after the never-claimed sentinel");
@@ -177,9 +178,9 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         uint256 expectedB = (half * 30e18) / 100e18;
 
         vm.prank(alice);
-        (uint256 paidA,,) = _facet().claimInteractionRewards();
+        (uint256 paidA,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         vm.prank(bob);
-        (uint256 paidB,,) = _facet().claimInteractionRewards();
+        (uint256 paidB,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paidA, expectedA, "alice 70% share");
         assertEq(paidB, expectedB, "bob 30% share");
@@ -198,7 +199,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         uint256 expected = _halfPool(1) * 2;
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, expected, "both halves combined");
     }
 
@@ -210,7 +211,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         uint256 preview = _previewAmount(alice);
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, preview, "preview == paid");
     }
 
@@ -225,13 +226,13 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 36 days + 1);
 
         vm.prank(alice);
-        (uint256 paid1, uint256 from1, uint256 to1) = _facet().claimInteractionRewards();
+        (uint256 paid1, uint256 from1, uint256 to1) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(from1, 1, "first window starts at 1");
         assertEq(to1, LibVaipakam.MAX_INTERACTION_CLAIM_DAYS, "first window ends at day MAX");
         assertEq(paid1, half0 * LibVaipakam.MAX_INTERACTION_CLAIM_DAYS, "first batch = 30 days");
 
         vm.prank(alice);
-        (uint256 paid2, uint256 from2, uint256 to2) = _facet().claimInteractionRewards();
+        (uint256 paid2, uint256 from2, uint256 to2) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(from2, LibVaipakam.MAX_INTERACTION_CLAIM_DAYS + 1, "second window starts at 31");
         assertEq(to2, 35, "up to day 35");
         assertEq(paid2, half0 * 5, "second batch covers 5 days");
@@ -242,11 +243,11 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 2 days + 1);
 
         vm.prank(alice);
-        _facet().claimInteractionRewards(); // advances cursor to 1
+        RewardClaimFacet(address(diamond)).claimInteractionRewards(); // advances cursor to 1
 
         vm.prank(alice);
         vm.expectRevert(NoInteractionRewardsToClaim.selector);
-        _facet().claimInteractionRewards(); // last=1, lastFinalized=1 → revert
+        RewardClaimFacet(address(diamond)).claimInteractionRewards(); // last=1, lastFinalized=1 → revert
     }
 
     // ─── Pool-cap enforcement ────────────────────────────────────────────────
@@ -260,7 +261,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         uint256 balBefore = vpfi.balanceOf(alice);
         vm.prank(alice);
-        (uint256 paid,,) = _facet().claimInteractionRewards();
+        (uint256 paid,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, 1 ether, "truncated to remaining");
         assertEq(vpfi.balanceOf(alice), balBefore + 1 ether, "transfer matches truncation");
@@ -276,7 +277,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         vm.prank(alice);
         vm.expectRevert(InteractionPoolExhausted.selector);
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
     // ─── Idempotency / state hygiene ─────────────────────────────────────────
@@ -287,14 +288,14 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 2 days + 1);
 
         vm.prank(alice);
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         (uint256 userL, , uint256 totalL, ) = _lens().getInteractionDayEntry(1, alice);
         assertEq(userL, 0, "alice counter cleared");
         assertEq(totalL, 100e18, "total preserved for bob's claim");
 
         vm.prank(bob);
-        (uint256 paidB,,) = _facet().claimInteractionRewards();
+        (uint256 paidB,,) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paidB, (_halfPool(1) * 60e18) / 100e18, "bob's slice intact");
     }
 
@@ -310,7 +311,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 184 days + 1);
 
         vm.prank(alice);
-        (uint256 paid, uint256 fromDay, uint256 toDay) = _facet().claimInteractionRewards();
+        (uint256 paid, uint256 fromDay, uint256 toDay) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(fromDay, 182, "window starts right after cursor");
         assertEq(toDay, 183, "covers both sides of the band boundary");
         assertEq(paid, _halfPool(182) + _halfPool(183), "per-day rates respected");
@@ -339,7 +340,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(
             abi.encodeWithSelector(InteractionDayGlobalNotFinalized.selector, 1)
         );
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
     /// @notice Preview must mirror the claim gate — return all-zeros while
@@ -372,7 +373,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         uint256 expected = _halfPool(1) + _halfPool(2);
         vm.prank(alice);
-        (uint256 paid, uint256 fromDay, uint256 toDay) = _facet()
+        (uint256 paid, uint256 fromDay, uint256 toDay) = RewardClaimFacet(address(diamond))
             .claimInteractionRewards();
 
         assertEq(fromDay, 1, "walk starts at 1");
@@ -403,13 +404,13 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         // First claim: cursor 0 → 2, pays halfPool(1)+halfPool(2).
         vm.prank(alice);
-        _facet().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // Now pretend the day-3 broadcast lands. alice claims again.
         _mut().setKnownGlobalDailyInterest(3, 1e18, 0, true);
 
         vm.prank(alice);
-        (uint256 paid2, uint256 from2, uint256 to2) = _facet()
+        (uint256 paid2, uint256 from2, uint256 to2) = RewardClaimFacet(address(diamond))
             .claimInteractionRewards();
         assertEq(from2, 3, "window restarts right after old cursor");
         assertEq(to2, 3, "only the newly finalized day");
@@ -453,7 +454,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         vm.warp(block.timestamp + 6 days + 1);
 
         vm.prank(alice);
-        (uint256 paid, uint256 fromDay, uint256 toDay) = _facet()
+        (uint256 paid, uint256 fromDay, uint256 toDay) = RewardClaimFacet(address(diamond))
             .claimInteractionRewards();
 
         assertEq(fromDay, 1, "walk starts at cursor + 1");

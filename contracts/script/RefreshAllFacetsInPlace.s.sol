@@ -36,6 +36,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -148,7 +149,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 67;
+    uint256 internal constant EXPECTED_FACETS = 68;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -356,6 +357,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "interactionRewardsFacet",
             address(new InteractionRewardsFacet()),
             _getInteractionRewardsSelectors()
+        );
+        // #1351 slice 2c — the CLAIM entry points moved off
+        // InteractionRewardsFacet (EIP-170). This script only Replace/Adds the
+        // selectors it lists and NEVER removes omitted ones, so without this
+        // item an in-place refresh of a pre-split diamond would leave
+        // `claimInteractionRewards*` routed at the OLD implementation while
+        // every other reward facet moved forward — users silently claiming
+        // through stale code that bypasses the ShareOfPool walk entirely.
+        items[67] = Item(
+            "rewardClaimFacet",
+            address(new RewardClaimFacet()),
+            _getRewardClaimFacetSelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         items[27] = Item(

@@ -84,6 +84,7 @@ FACETS=(
   "EarlyWithdrawalFacet"
   "VaultFactoryFacet"
   "InteractionRewardsFacet"
+  "RewardClaimFacet"
   "InteractionRewardsLensFacet"
   "LegalFacet"
   "LoanFacet"

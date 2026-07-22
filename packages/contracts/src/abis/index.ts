@@ -74,6 +74,8 @@ import MirrorTierReceiverFacetABI from './MirrorTierReceiverFacet.json';
 // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
 import ProtocolBroadcastFacetABI from './ProtocolBroadcastFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
+// #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
+import RewardClaimFacetABI from './RewardClaimFacet.json';
 // #1306 follow-up — read-only lens split off InteractionRewardsFacet.
 import InteractionRewardsLensFacetABI from './InteractionRewardsLensFacet.json';
 // #687-A removed the cross-chain VPFI buy contracts (VpfiBuyAdapter /
@@ -168,6 +170,7 @@ export {
   MirrorTierReceiverFacetABI,
   ProtocolBroadcastFacetABI,
   InteractionRewardsFacetABI,
+  RewardClaimFacetABI,
   InteractionRewardsLensFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
@@ -255,6 +258,8 @@ export const DIAMOND_ABI = [
   ...MirrorTierReceiverFacetABI,
   ...ProtocolBroadcastFacetABI,
   ...InteractionRewardsFacetABI,
+  // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
+  ...RewardClaimFacetABI,
   ...InteractionRewardsLensFacetABI,
   ...RewardReporterFacetABI,
   ...RewardAggregatorFacetABI,

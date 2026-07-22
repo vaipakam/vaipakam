@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {RewardClaimFacet} from "../../src/facets/RewardClaimFacet.sol";
+import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
@@ -54,8 +56,14 @@ contract InteractionRewardsInvariant is Test {
         // lens facet; cut it into this standalone diamond too.
         InteractionRewardsLensFacet interactionLens = new InteractionRewardsLensFacet();
         TestMutatorFacet mutator = new TestMutatorFacet();
+        // #1351 slice 2c (Codex #1404 r5) — the claim entry points moved out of
+        // InteractionRewardsFacet into their own facet for EIP-170 headroom.
+        // Cut it in, or `claim()` below hits `FunctionDoesNotExist`, the handler
+        // swallows it, and the paidOut/balance invariants silently stop
+        // exercising the claim path at all.
+        RewardClaimFacet rewardClaim = new RewardClaimFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(ac),
             action: IDiamondCut.FacetCutAction.Add,
@@ -85,6 +93,11 @@ contract InteractionRewardsInvariant is Test {
             facetAddress: address(interactionLens),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getInteractionRewardsLensFacetSelectors()
+        });
+        cuts[6] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardClaim),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helper.getRewardClaimFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -156,6 +169,28 @@ contract InteractionRewardsInvariant is Test {
         uint256 paidOut = InteractionRewardsLensFacet(address(diamond))
             .getInteractionPoolPaidOut();
         assertEq(sum, paidOut, "user wallets != paidOut");
+    }
+
+    /// @dev #1351 slice 2c (Codex #1404 r5) — ROUTING guard, not a property.
+    ///      Every handler action is wrapped in `try/catch`, so a claim that
+    ///      cannot even be ROUTED — the facet missing from this standalone
+    ///      diamond's cut, or a renamed selector — is swallowed whole and the
+    ///      invariants above still report green while asserting nothing about
+    ///      the claim path. That is exactly how splitting the claim out into
+    ///      RewardClaimFacet went unnoticed here.
+    ///
+    ///      Asserted DETERMINISTICALLY rather than as an `afterInvariant`
+    ///      coverage count: the fuzzer shrinks a failing run to a minimal call
+    ///      sequence, and a "at least one claim succeeded" assertion is trivially
+    ///      violated by any sequence that happens not to call `claim` — it fails
+    ///      on shrinking, not on the defect. Instead, prove routing directly:
+    ///      at day 0 a routed claim reaches the facet's own guard and reverts
+    ///      `NoInteractionRewardsToClaim`. An UNROUTED call reverts
+    ///      `FunctionDoesNotExist` instead, and this fails.
+    function test_ClaimIsRoutableInThisHarness() public {
+        vm.prank(handler.actorAt(0));
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 }
 
@@ -248,7 +283,7 @@ contract InteractionHandler is Test {
     function claim(uint256 actorSeed) external {
         address user = actors[actorSeed % 3];
         vm.prank(user);
-        try InteractionRewardsFacet(diamond).claimInteractionRewards() {
+        try RewardClaimFacet(diamond).claimInteractionRewards() {
             claims++;
         } catch {}
         _tick();
