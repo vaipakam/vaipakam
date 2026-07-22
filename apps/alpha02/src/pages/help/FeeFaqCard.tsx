@@ -8,7 +8,8 @@
  * answer is never blank and the live governance-tuned values hydrate in
  * when the read resolves.
  */
-import { useProtocolFees, bpsToPercentText } from '../../data/fees';
+import { useProtocolFees } from '../../data/fees';
+import { formatBpsAsPercent } from '../../lib/format';
 import { copy } from '../../content/copy';
 
 export default function FeeFaqCard() {
@@ -20,8 +21,8 @@ export default function FeeFaqCard() {
   // until the live values are confirmed, then the exact percentages.
   const answer = fees.ready
     ? copy.fees.faqAnswer(
-        bpsToPercentText(fees.loanInitiationFeeBps),
-        bpsToPercentText(fees.treasuryFeeBps),
+        formatBpsAsPercent(fees.loanInitiationFeeBps),
+        formatBpsAsPercent(fees.treasuryFeeBps),
       )
     : copy.fees.faqAnswerGeneric;
   return (

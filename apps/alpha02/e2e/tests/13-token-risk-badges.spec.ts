@@ -189,6 +189,12 @@ test('a hard-flagged offer wears "Risk flagged" on the book and is excluded from
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row.getByText('Risk flagged')).toBeVisible({ timeout: 30_000 });
 
+  // Human-units rule (user directive 2026-07-22): the advanced detail
+  // line quotes the rate as PERCENT ("rate 9%" for this suite's 9%
+  // lender offer) — raw "900 bps" must never appear as visible text.
+  await expect(row).toContainText('rate 9%');
+  await expect(row).not.toContainText('bps');
+
   // Guided matcher: the offer is withheld from the top 5, and the
   // list says how many were hidden.
   await openGuidedMatches(viewer.page, BADGE_BASE);

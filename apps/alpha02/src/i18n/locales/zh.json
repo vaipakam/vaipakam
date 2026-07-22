@@ -1103,7 +1103,8 @@
       "rentalListing": "NFT 租赁",
       "yearly": "年化",
       "expiresLabel": "{{date}} 过期",
-      "rateBand": "利率区间 {{min}}–{{max}} bps",
+      "rateBand": "利率区间 {{min}}–{{max}}",
+      "rateInline": "利率 {{pct}}",
       "staleList": "此列表上次更新于 {{age}} 前，可能落后 — 可能有未显示的新报价。请稍后再查看。",
       "perDayInline": "{{amount}} {{symbol}}/天"
     },

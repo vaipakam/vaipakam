@@ -1103,7 +1103,8 @@
       "rentalListing": "تأجير NFT",
       "yearly": "سنوي",
       "expiresLabel": "ينتهي {{date}}",
-      "rateBand": "rate band {{min}}–{{max}} bps",
+      "rateBand": "rate band {{min}}–{{max}}",
+      "rateInline": "rate {{pct}}",
       "staleList": "تم تحديث هذه القائمة قبل {{age}} وقد تكون متأخرة — قد توجد عروض جديدة لا تظهر بعد. تحقق قريبا.",
       "perDayInline": "{{amount}} {{symbol}}/يوم"
     },

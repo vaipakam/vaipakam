@@ -77,10 +77,6 @@ export function useProtocolFees(): ProtocolFees {
   };
 }
 
-export function bpsToPercentText(bps: number): string {
-  return `${Number((bps / 100).toFixed(2))}%`;
-}
-
 /** Direct LIVE read for submit paths — the hook above caches for five
  *  minutes, which is fine for display but not for the moment of
  *  signing/approving: governance can retune fees or lower the duration

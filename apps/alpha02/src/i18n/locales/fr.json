@@ -1103,7 +1103,8 @@
       "rentalListing": "Location de NFT",
       "yearly": "annuel",
       "expiresLabel": "expire le {{date}}",
-      "rateBand": "fourchette de taux {{min}}–{{max}} bps",
+      "rateBand": "fourchette de taux {{min}}–{{max}}",
+      "rateInline": "taux {{pct}}",
       "staleList": "Cette liste a été mise à jour il y a {{age}} et peut être en retard — de nouvelles offres peuvent exister sans être affichées. Revenez bientôt.",
       "perDayInline": "{{amount}} {{symbol}}/jour"
     },

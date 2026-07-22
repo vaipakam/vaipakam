@@ -1103,7 +1103,8 @@
       "rentalListing": "NFT 대여",
       "yearly": "연간",
       "expiresLabel": "{{date}}에 expires",
-      "rateBand": "rate band {{min}}–{{max}} bps",
+      "rateBand": "rate band {{min}}–{{max}}",
+      "rateInline": "rate {{pct}}",
       "staleList": "이 list는 {{age}} 전에 마지막으로 update되어 뒤처질 수 있습니다. 표시되지 않는 새 offers가 있을 수 있습니다. 잠시 후 확인하세요.",
       "perDayInline": "{{amount}} {{symbol}}/일"
     },

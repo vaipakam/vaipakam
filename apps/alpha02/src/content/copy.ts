@@ -1753,7 +1753,10 @@ const copySource = {
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
     // indexer cursor has stalled, on every market-list surface.
-    rateBand: tmpl('rate band {{min}}–{{max}} bps', ['min', 'max']),
+    // Human-units rule (2026-07-22): {{min}}/{{max}}/{{pct}} receive
+    // PRE-FORMATTED percent strings ("9%"), never raw bps numbers.
+    rateBand: tmpl('rate band {{min}}–{{max}}', ['min', 'max']),
+    rateInline: tmpl('rate {{pct}}', ['pct']),
     staleList: tmpl(
 
         `This list last updated {{age}} ago and may be behind — new offers may exist that aren’t shown yet. Check back shortly.`,

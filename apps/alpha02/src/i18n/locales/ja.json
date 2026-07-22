@@ -1103,7 +1103,8 @@
       "rentalListing": "NFT レンタル",
       "yearly": "年率",
       "expiresLabel": "{{date}} に期限切れ",
-      "rateBand": "利率帯 {{min}}–{{max}} bps",
+      "rateBand": "利率帯 {{min}}–{{max}}",
+      "rateInline": "利率 {{pct}}",
       "staleList": "このリストの最終更新は {{age}} 前で、遅れている可能性があります — 表示されていない新しいオファーがあるかもしれません。しばらくして確認してください。",
       "perDayInline": "{{amount}} {{symbol}}/日"
     },
