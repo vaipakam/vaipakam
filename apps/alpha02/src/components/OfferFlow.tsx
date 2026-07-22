@@ -48,7 +48,7 @@ import {
   useTokenMeta,
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
-import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
+import { useProtocolFees, readLiveProtocolFees } from '../data/fees';
 import { useGraceLabel } from '../data/protocol';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
@@ -845,8 +845,8 @@ export function OfferFlow({ side }: { side: Side }) {
     );
   }, [grace.label]);
 
-  const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
-  const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
+  const lifPct = formatBpsAsPercent(fees.loanInitiationFeeBps);
+  const yieldPct = formatBpsAsPercent(fees.treasuryFeeBps);
 
   // #1028 item 2 — advisory pre-sign dry run of the EXACT calldata
   // the submit will send. Post mode only: the accept path's calldata

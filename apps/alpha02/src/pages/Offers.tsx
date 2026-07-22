@@ -7,9 +7,12 @@
  *
  * Advanced mode reveals power controls IN PLACE (H1: switching mode
  * never navigates): side filter, rate/duration sorting, an asset-
- * address filter, and a per-row detail line with the exact bps, the
+ * address filter, and a per-row detail line with the exact rate, the
  * offer id, expiry, and range bounds. Basic mode keeps the plain
- * newest-first list.
+ * newest-first list. Rates render as percent EVERYWHERE — integer
+ * bps divide into at most two decimal places, so the percent form
+ * is lossless and raw "N bps" never appears as visible text (user
+ * directive 2026-07-22; spec: WebsiteReadme "human units").
  *
  * Empty-state honesty rule (audit F-20260702-001): "no offers" is
  * only said when the indexer POSITIVELY returned zero offers; a
@@ -134,13 +137,13 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
       }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
-  // to see before clicking through — id, bps, expiry, range bounds.
+  // to see before clicking through — id, rate, expiry, range bounds.
   const advancedBits: string[] = [];
   if (isAdvanced) {
     advancedBits.push(`offer #${offer.offerId}`);
     if (!isRentalListing) {
       const bps = isLending ? offer.interestRateBps : offer.interestRateBpsMax;
-      advancedBits.push(`${bps} bps`);
+      advancedBits.push(copy.offers.rateInline(formatBpsAsPercent(bps)));
       // Range offers: a lender can post a size band, a borrower a rate
       // band — direct accept binds one end, matching can fill within.
       if (isLending && offer.amount !== offer.amountMax && meta.data) {
@@ -152,7 +155,10 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
       // design — a zero floor is still a real band, so don't suppress it.
       if (!isLending && offer.interestRateBpsMax !== offer.interestRateBps) {
         advancedBits.push(
-          copy.offers.rateBand(offer.interestRateBps, offer.interestRateBpsMax),
+          copy.offers.rateBand(
+            formatBpsAsPercent(offer.interestRateBps),
+            formatBpsAsPercent(offer.interestRateBpsMax),
+          ),
         );
       }
       // Always state the flag both ways — on rows where it's absent an

@@ -67,7 +67,7 @@ import {
   totalRentalPrepay,
   useRentalBufferBps,
 } from '../data/protocol';
-import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
+import { useProtocolFees, readLiveProtocolFees } from '../data/fees';
 import { readVpfiTokenLive, useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
@@ -83,7 +83,12 @@ import {
   type OfferFormState,
 } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
-import { formatDurationDays, formatTokenAmount, shortAddress } from '../lib/format';
+import {
+  formatBpsAsPercent,
+  formatDurationDays,
+  formatTokenAmount,
+  shortAddress,
+} from '../lib/format';
 import { captureTxError } from '../lib/errors';
 import { WindowedRowList } from '../lib/visibleWindow';
 import { AssetPicker } from '../components/AssetPicker';
@@ -94,10 +99,6 @@ import { StepNav } from '../components/StepNav';
 import { useEligibility } from '../components/useEligibility';
 
 type Path = 'own' | 'want' | null;
-
-function bufferPct(bufferBps: number): string {
-  return `${Number((bufferBps / 100).toFixed(2))}%`;
-}
 
 // ---------------------------------------------------------------- N1
 function ListNftFlow() {
@@ -284,7 +285,7 @@ function ListNftFlow() {
       youLock: copy.rent.receiptListYouLock(nftStr),
       youMayOwe: copy.rent.nothing,
       youCanLose: `${copy.rent.listYouCanLose} ${copy.rent.notDebt}`,
-      fees: copy.fees.lenderRentalFee(bpsToPercentText(fees.treasuryFeeBps)),
+      fees: copy.fees.lenderRentalFee(formatBpsAsPercent(fees.treasuryFeeBps)),
       whenThisEnds: copy.rent.listWhenEnds,
     };
   }, [
@@ -519,7 +520,7 @@ function ListNftFlow() {
               }}
             />
             <span className="field-hint">
-              {copy.rent.bufferNote(bufferPct(bufferBps))}
+              {copy.rent.bufferNote(formatBpsAsPercent(bufferBps))}
             </span>
           </div>
           <div className="field">
@@ -904,9 +905,9 @@ function RentNftFlow() {
     const durationStr = formatDurationDays(selected.durationDays);
     return {
       youReceive: `${copy.rent.receiptRentYouReceive(nftStr, durationStr)} ${copy.rent.custodyNote}`,
-      youLock: copy.rent.receiptRentYouLock(totalStr, bufferPct(bufferBps)),
+      youLock: copy.rent.receiptRentYouLock(totalStr, formatBpsAsPercent(bufferBps)),
       youMayOwe: `${copy.rent.rentYouMayOwe} ${copy.rent.notDebt}`,
-      youCanLose: copy.rent.receiptRentYouCanLose(bufferPct(bufferBps)),
+      youCanLose: copy.rent.receiptRentYouCanLose(formatBpsAsPercent(bufferBps)),
       fees: copy.rent.rentFeesNote,
       whenThisEnds: copy.rent.receiptRentWhenEnds(durationStr),
     };

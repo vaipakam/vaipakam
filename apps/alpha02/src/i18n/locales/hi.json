@@ -1103,7 +1103,8 @@
       "rentalListing": "NFT rental",
       "yearly": "yearly",
       "expiresLabel": "{{date}} को expires",
-      "rateBand": "rate band {{min}}–{{max}} bps",
+      "rateBand": "rate band {{min}}–{{max}}",
+      "rateInline": "rate {{pct}}",
       "staleList": "यह list {{age}} पहले updated हुई थी और पीछे हो सकती है — नए offers मौजूद हो सकते हैं जो अभी दिखते नहीं। थोड़ी देर बाद check करें।",
       "perDayInline": "{{amount}} {{symbol}}/दिन"
     },

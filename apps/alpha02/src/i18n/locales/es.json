@@ -1103,7 +1103,8 @@
       "rentalListing": "Alquiler de NFT",
       "yearly": "anual",
       "expiresLabel": "expira {{date}}",
-      "rateBand": "banda de tasa {{min}}–{{max}} bps",
+      "rateBand": "banda de tasa {{min}}–{{max}}",
+      "rateInline": "tasa {{pct}}",
       "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve.",
       "perDayInline": "{{amount}} {{symbol}}/día"
     },
