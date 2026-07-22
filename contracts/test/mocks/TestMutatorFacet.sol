@@ -800,6 +800,18 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().userSideDayPaidVpfi[user][side][d];
     }
 
+    /// @dev #1351 slice 2c — expose the aggregate claim funding need. It is the
+    ///      only observable of `_userForfeitFresh`, whose over-estimate silently
+    ///      pauses the expiry accrual clock rather than reverting anything. Not
+    ///      a view: it advances the user's side cursors first, exactly as the
+    ///      production path does.
+    function userClaimFundingNeedRaw(address user) external returns (uint256) {
+        return LibInteractionRewards.userClaimFundingNeed(
+            LibVaipakam.storageSlot(),
+            user
+        );
+    }
+
     /// @dev #1351 slice 2b — seed the lender RPN row + cursor directly so a
     ///      unit test can price a day without driving the lazy claim-path
     ///      accrual. Sets `cumLenderRpn18[d-1] = prevCum` and
@@ -840,6 +852,13 @@ contract TestMutatorFacet {
     /// @dev #1351 slice 2b — set an entry's D1 claim cursor directly.
     function setRewardEntryClaimNextDayRaw(uint256 id, uint64 nextDay) external {
         LibVaipakam.storageSlot().rewardEntryClaimNextDay[id] = nextDay;
+    }
+
+    /// @dev #1351 slice 2c — stamp the "pre-`D*` legacy slice already settled"
+    ///      marker directly, so tests can express a part-claimed entry without
+    ///      driving a full chunked claim.
+    function setRewardEntryLegacySettledRaw(uint256 id, bool v) external {
+        LibVaipakam.storageSlot().rewardEntryLegacySettled[id] = v;
     }
 
     function setDayCapModeRaw(uint256 d, uint8 mode) external {

@@ -438,6 +438,37 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(outRBefore, outRAfter, "recycled commitment untouched");
     }
 
+    /// @dev #1351 slice 2c — `_userForfeitFresh` sums FORFEITED entries at their
+    ///      whole-window fresh face value to size the aggregate claim funding
+    ///      need. Once a chunked claim can settle a forfeited entry's pre-`D*`
+    ///      legacy slice to treasury and stamp `rewardEntryLegacySettled`,
+    ///      counting that slice a second time OVERSTATES the need — which makes
+    ///      `_entryExecutableNow` read false and silently pauses the expiry
+    ///      accrual clock. Nothing reverts, so only the number itself shows it.
+    ///
+    ///      Found by sweeping every caller of `_entryWindowSplit` rather than by
+    ///      review: this function is not in the slice's diff — the slice changed
+    ///      the invariants it depends on, not its text.
+    function testForfeitFundingNeedDropsTheAlreadySettledLegacySlice() public {
+        _armAndFinalize(5, 700 ether);
+        // Entry spans day 4 (pre-`D*`, legacy) + day 5 (armed), and is forfeited.
+        uint256 id = _seedEntry(alice, 48, 4, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+
+        uint256 needBefore = _mut().userClaimFundingNeedRaw(alice);
+        assertGt(needBefore, 0, "an unsettled forfeited entry needs funding");
+
+        // A chunked claim settles the legacy slice and stamps the marker.
+        _mut().setRewardEntryLegacySettledRaw(id, true);
+
+        uint256 needAfter = _mut().userClaimFundingNeedRaw(alice);
+        assertLt(
+            needAfter,
+            needBefore,
+            "settled legacy slice must stop counting toward the funding need"
+        );
+    }
+
     // ─── 4c. RL-3 Codex r2 — zero-credit expiry defers, never burns ──────────
 
     function testExpirySweepDefersAtFullFreshExhaustion() public {

@@ -1354,7 +1354,23 @@ function _dayPoolHalves(
                 (e.forfeited || _entryTerminalForfeit(s, e))
             ) {
                 EntrySplit memory sp = _entryWindowSplit(s, e);
-                fresh += sp.total - sp.recycled;
+                // `total - recycled` is the WHOLE window's fresh face value:
+                // the pre-`D*` legacy slice plus `armedFresh`.
+                //
+                // #1351 slice 2c — but a chunked claim may already have settled
+                // this forfeited entry's legacy slice to treasury and stamped
+                // `rewardEntryLegacySettled`. Counting it again overstates the
+                // funding need, which makes `_entryExecutableNow` read false and
+                // silently PAUSES the expiry accrual clock — wrong in the safe
+                // direction, but wrong. Once the legacy slice is settled, only
+                // `armedFresh` is still owed.
+                //
+                // Still an over-estimate for armed days the walk has ALREADY
+                // paid (`userSideDayPaidVpfi`); pricing those needs the day-walk
+                // twin, which slice 2d-0 builds and routes every caller through.
+                fresh += s.rewardEntryLegacySettled[ids[i]]
+                    ? sp.armedFresh
+                    : sp.total - sp.recycled;
             }
             unchecked { ++i; }
         }
