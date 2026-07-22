@@ -497,4 +497,73 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         assertGt(paid, 0.25e18, "both regimes genuinely pay");
         assertEq(pre, paid, "preview == claim across the cutover");
     }
+
+    /// @dev Codex #1410 r1 P2 — same-side entries ending on different days:
+    ///      the DryRun's memory cursors have no `processed` flag, so once the
+    ///      shorter entry completes, a later shared day must not re-admit it
+    ///      (the primitive's window check would revert the WHOLE preview).
+    ///      Against the pre-fix code this test reverts inside `_preview()`.
+    function test_PreviewSurvivesStaggeredEntryEnds() public {
+        _armedDay(1, type(uint256).max);
+        _armedDay(2, type(uint256).max);
+        _armedDay(3, type(uint256).max);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(3);
+        uint64 LOAN2 = LOAN + 9;
+        _loanSideOpenFor(LOAN2, 3);
+        _entry(1, 2); // short: day 1 only
+        uint256 longId = _mut().pushRewardEntry(
+            alice, LOAN2, LibVaipakam.RewardSide.Lender, 1e18, 1
+        );
+        _mut().closeRewardEntryRaw(longId, 4); // long: days 1-3
+
+        _mut().userClaimFundingNeedRaw(alice);
+        uint256 pre = _preview();
+        uint256 paid = _claim();
+        assertGt(paid, 0, "staggered pair genuinely pays");
+        assertEq(pre, paid, "preview survives a completed shorter sibling");
+    }
+
+    /// @dev Codex #1410 r1 P2 — a spanning entry whose whole remaining window
+    ///      prices to ZERO is retired by the claim's entry path without ever
+    ///      entering the walk, so the preview must not spend simulated day
+    ///      allowance on it. Against the pre-fix code the DryRun walks the
+    ///      retired entry's zero days first and crowds the real entry out of
+    ///      the allowance — preview fails LOW (28 days vs the claim's 30).
+    function test_PreviewSkipsEntriesTheClaimRetiresEmpty() public {
+        uint256 chunk = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        _legacyDay(1);
+        for (uint256 d = 2; d <= chunk + 4; d++) {
+            _armedDay(d, type(uint256).max); // days 2..chunk+4
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(2); // D* = 2
+        _loanSideOpen(uint32(chunk + 4));
+        // Zero-value spanning entry (perDay 0) over day 1 (legacy) + 2-3
+        // (armed): its remaining window prices to 0 and the claim retires it.
+        uint256 emptyId = _mut().pushRewardEntry(
+            alice, LOAN, LibVaipakam.RewardSide.Lender, 0, 1
+        );
+        _mut().closeRewardEntryRaw(emptyId, 4);
+        // A long all-armed entry that needs the WHOLE day allowance.
+        uint64 LOAN2 = LOAN + 9;
+        _loanSideOpenFor(LOAN2, uint32(chunk + 4));
+        uint256 longId = _mut().pushRewardEntry(
+            alice, LOAN2, LibVaipakam.RewardSide.Lender, 1e18, 4
+        );
+        _mut().closeRewardEntryRaw(longId, uint32(4 + chunk + 1));
+
+        _mut().userClaimFundingNeedRaw(alice);
+        uint256 pre = _preview();
+        uint256 paid = _claim();
+        assertEq(
+            paid,
+            chunk * 1e18,
+            "claim spends the whole allowance on real value"
+        );
+        assertEq(
+            pre,
+            paid,
+            "no allowance burnt previewing a retired-empty entry"
+        );
+    }
 }

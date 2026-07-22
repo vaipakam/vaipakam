@@ -1138,7 +1138,15 @@ function _dayPoolHalves(
                     (
                         includeSettleableLegacy &&
                         e.endDay != 0 &&
-                        cum >= e.endDay - 1
+                        cum >= e.endDay - 1 &&
+                        // Codex #1410 r1 P2 — mirror the claim's empty-window
+                        // retire: a spanning entry whose whole remaining
+                        // window prices to zero is marked processed by
+                        // {_processEntry} WITHOUT entering the walk, so the
+                        // preview must not spend simulated day allowance on
+                        // it (that would crowd out later entries and
+                        // under-report).
+                        _entryPricesNonEmpty(s, id, e)
                     )
                 ) &&
                 _entryClaimable(s, e) &&
@@ -1578,7 +1586,7 @@ function _dayPoolHalves(
             if (d == type(uint256).max) break;
 
             (uint256[] memory set, uint256[] memory setCur) =
-                _dryEntriesAtDay(work, cur, d);
+                _dryEntriesAtDay(s, work, cur, d);
             dry.setCursors = setCur;
 
             (DayCharge memory charge, DaySlice[] memory slices) =
@@ -1612,25 +1620,35 @@ function _dayPoolHalves(
     }
 
     /// @dev The joint set at simulated day `d`, with its aligned cursors.
+    ///      A COMPLETED simulated entry (`cur == its endDay`) is excluded
+    ///      (Codex #1410 r1 P2): memory cursors have no `processed` flag, so
+    ///      when a longer sibling later reaches the shorter entry's endDay,
+    ///      the equality alone would re-admit the finished entry and the
+    ///      primitive's window check would revert the whole preview. The
+    ///      settling walk is immune — {_persistDay} flips `processed` and
+    ///      {_entriesAtDay} filters on it.
     function _dryEntriesAtDay(
+        LibVaipakam.Storage storage s,
         uint256[] memory work,
         uint256[] memory cur,
         uint256 d
     )
         private
-        pure
+        view
         returns (uint256[] memory set, uint256[] memory setCur)
     {
         uint256 m;
         for (uint256 i; i < work.length; ) {
-            if (cur[i] == d) { unchecked { ++m; } }
+            if (cur[i] == d && d < s.rewardEntries[work[i]].endDay) {
+                unchecked { ++m; }
+            }
             unchecked { ++i; }
         }
         set = new uint256[](m);
         setCur = new uint256[](m);
         uint256 k;
         for (uint256 i; i < work.length; ) {
-            if (cur[i] == d) {
+            if (cur[i] == d && d < s.rewardEntries[work[i]].endDay) {
                 set[k] = work[i];
                 setCur[k] = cur[i];
                 unchecked { ++k; }
@@ -3588,6 +3606,18 @@ function _dayPoolHalves(
     struct DaySlice {
         uint256 amount;
         bool loanSideChargeable;
+    }
+
+    /// @dev Whether the core prices the entry's remaining window at a
+    ///      nonzero value — the DryRun admission mirror of the claim's
+    ///      empty-window retire (see {_shareOfPoolWorklist}).
+    function _entryPricesNonEmpty(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        (, , , EntryPriceState memory st) = _entryPriceCore(s, id, e);
+        return st.priced;
     }
 
     /// @dev Where an entry's ShareOfPool day walk starts.
