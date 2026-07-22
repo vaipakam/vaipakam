@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {RewardClaimFacet} from "../../src/facets/RewardClaimFacet.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
@@ -248,7 +249,7 @@ contract InteractionHandler is Test {
     function claim(uint256 actorSeed) external {
         address user = actors[actorSeed % 3];
         vm.prank(user);
-        try InteractionRewardsFacet(diamond).claimInteractionRewards() {
+        try RewardClaimFacet(diamond).claimInteractionRewards() {
             claims++;
         } catch {}
         _tick();

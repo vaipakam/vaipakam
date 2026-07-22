@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -106,7 +107,7 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     function testInteractionClaimRevertsBeforeLaunch() public {
         vm.prank(lender);
         vm.expectRevert(InteractionEmissionsNotStarted.selector);
-        _interaction().claimInteractionRewards();
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
     function testInteractionScheduleBands() public {

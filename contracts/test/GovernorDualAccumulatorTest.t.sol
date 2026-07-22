@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -193,7 +194,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 bucketBefore = _cfg().getRecycleBucket();
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
 
@@ -287,7 +288,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         _seedEntry(alice, 43, 5, 6);
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
         assertApproxEqAbs(
@@ -320,7 +321,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         _seedEntry(alice, 44, 4, 6); // days 4 + 5
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
 

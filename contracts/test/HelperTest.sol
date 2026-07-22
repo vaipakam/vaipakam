@@ -69,6 +69,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -1797,24 +1798,36 @@ contract HelperTest {
         // RL-3 reads getRewardEntryExpiry + getUserRewardEntryIds) moved to
         // {InteractionRewardsLensFacet}. This facet keeps the mutating surface
         // + the RL-3 (#1305) claim-horizon sweep.
-        selectors = new bytes4[](11);
-        selectors[0] = InteractionRewardsFacet.claimInteractionRewards.selector;
-        selectors[1] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
-        selectors[2] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
-        selectors[3] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
+        // #1351 slice 2c — the two CLAIM entry points moved to
+        // {RewardClaimFacet} (EIP-170).
+        selectors = new bytes4[](9);
+        selectors[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
+        selectors[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
+        selectors[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
         // #969 / S5 — diamond-internal reward-lifecycle hooks for PrecloseFacet.
-        selectors[4] = InteractionRewardsFacet.precloseRewardClose.selector;
-        selectors[5] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
+        selectors[3] = InteractionRewardsFacet.precloseRewardClose.selector;
+        selectors[4] = InteractionRewardsFacet.precloseRewardTransferObligation.selector;
         // #1067 / S13 Part 2 — diamond-internal terminal reward-close hooks
         // (self-only; fired best-effort by the terminal facets).
-        selectors[6] = InteractionRewardsFacet.liquidationRewardClose.selector;
-        selectors[7] = InteractionRewardsFacet.terminalRewardClose.selector;
-        selectors[8] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
-        // RL-1 — explicit-delivery claim (vault default / wallet opt-out).
-        selectors[9] = InteractionRewardsFacet.claimInteractionRewardsTo.selector;
+        selectors[5] = InteractionRewardsFacet.liquidationRewardClose.selector;
+        selectors[6] = InteractionRewardsFacet.terminalRewardClose.selector;
+        selectors[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
         // views live on the lens facet).
-        selectors[10] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
+        selectors[8] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
+        return selectors;
+    }
+
+    /// @dev #1351 slice 2c — the CLAIM entry points, split onto their own facet
+    ///      so the ShareOfPool day walk has EIP-170 room.
+    function getRewardClaimFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = RewardClaimFacet.claimInteractionRewards.selector;
+        selectors[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
         return selectors;
     }
 

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 
@@ -38,14 +39,14 @@ contract ClaimingContractWallet {
         returns (uint256 paid)
     {
         (paid, , ) =
-            InteractionRewardsFacet(diamond).claimInteractionRewards();
+            RewardClaimFacet(diamond).claimInteractionRewards();
     }
 
     function claimToVault(address diamond)
         external
         returns (uint256 paid)
     {
-        (paid, , ) = InteractionRewardsFacet(diamond)
+        (paid, , ) = RewardClaimFacet(diamond)
             .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
     }
 }
@@ -157,7 +158,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         emit RewardDeliveredToVault(alice, expected, today);
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "full half-pool paid");
         assertEq(vpfi.balanceOf(alice), 0, "wallet NOT paid on vault delivery");
@@ -179,7 +180,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         uint256 expected = _seedClaimable(alice);
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
         );
 
@@ -196,7 +197,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         uint256 expected = _seedClaimable(alice);
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewardsTo(
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Vault
         );
 
@@ -213,7 +214,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         uint256 expected = _seedClaimable(alice);
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "claim availability unchanged");
         assertEq(vpfi.balanceOf(alice), expected, "wallet fallback paid");
@@ -233,7 +234,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         _mut().setMandatoryVaultVersionRaw(type(uint256).max);
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "claim availability unchanged");
         assertEq(vpfi.balanceOf(alice), expected, "wallet fallback paid");
@@ -291,7 +292,7 @@ contract InteractionRewardVaultDeliveryTest is SetupTest, IVaipakamErrors {
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         vm.prank(alice);
-        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         assertEq(paid, expected, "claim availability unchanged");
         assertEq(vpfi.balanceOf(alice), expected, "wallet paid exactly once");
