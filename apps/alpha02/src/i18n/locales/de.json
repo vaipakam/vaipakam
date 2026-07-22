@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "Diese Angebote können sich nicht mehr kreuzen — das Buch hat sich bewegt, bevor der Match gesendet wurde. Es wurde nichts gesendet.",
         "matchingDisabled": "Das Angebots-Matching wurde soeben von der Protokoll-Governance deaktiviert, daher kann dieser Match gerade nicht gesendet werden. Es wurde nichts gesendet.",
         "amount": "{{amount}} {{symbol}} würde gematcht.",
-        "matchable": "Matchbar bei {{rate}}"
+        "matchable": "Matchbar bei {{rate}}",
+        "pairTitle": "{{rate}} bps · Angebote #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "Signiert",
@@ -1166,6 +1167,7 @@
         "accept": "Order ausführen",
         "accepting": "Wird ausgeführt…",
         "accepted": "Signierte Order ausgeführt — der Kredit ist live.",
+        "close": "Schließen",
         "payCollateral": "Sie sperren {{amount}} {{symbol}} als Sicherheit und erhalten den Kreditbetrag.",
         "payPrincipal": "Sie finanzieren den Kreditbetrag von {{amount}} {{symbol}}.",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "Prüfen und akzeptieren Sie zuerst die Risikohinweise und Bedingungen — bei einer gaslosen Order hält Ihre Signatur diese Einwilligung fest.",
         "gaslessPosted": "Signierte Order ins Buch gestellt — kein Gas verbraucht. Sie wird ausgeführt, sobald ein Taker sie annimmt.",
         "gaslessUnavailable": "Wir konnten das Orderbuch gerade nicht erreichen — die Order wurde NICHT gepostet. Bitte versuchen Sie es gleich noch einmal.",
+        "legLoanAsset": "Kredit-Asset",
+        "legCollateral": "Sicherheit",
         "blockNetwork": "Zum Veröffentlichen in ein unterstütztes Netzwerk wechseln.",
         "blockNoMarket": "Wählen Sie zuerst im Header einen Markt.",
         "blockAmount": "Geben Sie oben den Betrag ein.",
@@ -1293,6 +1297,9 @@
         "amend": "Ändern",
         "amendTitle": "Direkt anpassen — gleiches Angebot, gleiche Position, eine Transaktion.",
         "amendLoadFailed": "Wir konnten die Live-Werte dieses Angebots nicht lesen, und eine Änderung muss von ihnen ausgehen. Bitte versuchen Sie es erneut.",
+        "readingValues": "Live-Werte des Angebots werden gelesen…",
+        "rateUnit": "in bps on-chain gespeichert",
+        "close": "Schließen",
         "amendMinAmount": "Mindestbetrag",
         "amendMaxAmount": "Höchstbetrag",
         "amendAmountAon": "Betrag (alles oder nichts)",
@@ -1331,6 +1338,9 @@
         "notPriced": "Keine Auto-Liquidation",
         "manage": "Verwalten",
         "allPositions": "Alle Positionen →",
+        "daysLeft": "{{days}} T übrig",
+        "daysOverdue": "{{days}} T überfällig",
+        "partialRepayOk": " · Teilrückzahlung möglich",
         "loading": "Ihre Positionen werden geladen…"
       },
       "bookLoading": "Orderbuch wird geladen…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "Markt laden",
       "marketsLoading": "Märkte werden geladen…",
       "oneSidedBook": "einseitiges Buch",
+      "lastFillTitle": "{{bps}} bps · Kredit #{{loanId}}",
+      "tapeLoading": "Letzte Ausführungen werden geladen…",
+      "tapeRowTitle": "{{bps}} bps · Kredit #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps quotierte Mitte",
+      "ladderMid": "Mitte {{rate}}",
+      "ladderSpread": " · Spread {{spread}}",
+      "loanStatus": {
+        "active": "aktiv",
+        "repaid": "zurückgezahlt",
+        "defaulted": "ausgefallen",
+        "liquidated": "liquidiert",
+        "settled": "abgewickelt",
+        "fallback_pending": "wird abgewickelt",
+        "internal_matched": "gematcht"
+      },
       "healthLtvTitle": "Gesundheitsfaktor {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps (quotiert, nicht ausgeführt)",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} Angebote{{ownMark}} — antippen, um diesen Satz vorauszufüllen",

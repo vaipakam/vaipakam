@@ -446,14 +446,14 @@ export function OrderTicket({
   const collateralSec = useTokenSecurity(readChain.chainId, pair?.collateralAsset);
   const securityLegs = [
     {
-      leg: 'loan asset',
+      leg: copy.desk.ticket.legLoanAsset,
       needed:
         pair !== null && needsSecurityCheck(readChain.chainId, pair.lendingAsset),
       verdict: lendingSec.data,
       errored: lendingSec.isError,
     },
     {
-      leg: 'collateral',
+      leg: copy.desk.ticket.legCollateral,
       needed:
         pair !== null &&
         needsSecurityCheck(readChain.chainId, pair.collateralAsset),

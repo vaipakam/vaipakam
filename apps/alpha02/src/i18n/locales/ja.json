@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "これらのオファーはもうクロスできません — マッチ送信前にブックが動きました。何も送信されていません。",
         "matchingDisabled": "オファーマッチングはプロトコルガバナンスにより先ほどオフにされたため、このマッチは現在送信できません。何も送信されていません。",
         "amount": "{{amount}} {{symbol}} がマッチします。",
-        "matchable": "{{rate}} でマッチ可能"
+        "matchable": "{{rate}} でマッチ可能",
+        "pairTitle": "{{rate}} bps · オファー #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "署名済み",
@@ -1166,6 +1167,7 @@
         "accept": "注文を fill",
         "accepting": "Fill 中…",
         "accepted": "署名済み注文を fill しました — ローンはライブです。",
+        "close": "閉じる",
         "payCollateral": "{{amount}} {{symbol}} を担保としてロックし、ローン元本を受け取ります。",
         "payPrincipal": "{{amount}} {{symbol}} のローン元本を拠出します。",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "まずリスク開示と条件を確認し、承諾してください — gasless 注文では、あなたの署名がその同意を記録します。",
         "gaslessPosted": "署名済み注文をブックに投稿しました — gas は使っていません。taker が受け入れると fill されます。",
         "gaslessUnavailable": "現在注文ブックに到達できませんでした — 注文は投稿されていません。少し待って再試行してください。",
+        "legLoanAsset": "ローン資産",
+        "legCollateral": "担保",
         "blockNetwork": "投稿するには対応ネットワークに切り替えてください。",
         "blockNoMarket": "まずヘッダーで市場を選んでください。",
         "blockAmount": "上に金額を入力してください。",
@@ -1293,6 +1297,9 @@
         "amend": "修正",
         "amendTitle": "その場で修正 — 同じオファー、同じポジション、1 回のトランザクション。",
         "amendLoadFailed": "このオファーのライブ値を読み取れませんでした。修正はそれらの値から始める必要があります。再試行してください。",
+        "readingValues": "オファーのライブ値を読み込み中…",
+        "rateUnit": "bps でオンチェーンに保存",
+        "close": "閉じる",
         "amendMinAmount": "最小金額",
         "amendMaxAmount": "最大金額",
         "amendAmountAon": "金額（all-or-nothing）",
@@ -1331,6 +1338,9 @@
         "notPriced": "自動清算なし",
         "manage": "管理",
         "allPositions": "すべてのポジション →",
+        "daysLeft": "残り {{days}}日",
+        "daysOverdue": "{{days}}日 超過",
+        "partialRepayOk": " · 一部返済可",
         "loading": "ポジションを読み込み中…"
       },
       "bookLoading": "オーダーブックを読み込み中…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "市場を読み込む",
       "marketsLoading": "市場を読み込み中…",
       "oneSidedBook": "片側だけのブック",
+      "lastFillTitle": "{{bps}} bps · ローン #{{loanId}}",
+      "tapeLoading": "直近約定を読み込み中…",
+      "tapeRowTitle": "{{bps}} bps · ローン #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps 気配仲値",
+      "ladderMid": "仲値 {{rate}}",
+      "ladderSpread": " · スプレッド {{spread}}",
+      "loanStatus": {
+        "active": "アクティブ",
+        "repaid": "返済済み",
+        "defaulted": "デフォルト",
+        "liquidated": "清算済み",
+        "settled": "決済済み",
+        "fallback_pending": "決済中",
+        "internal_matched": "マッチ済み"
+      },
       "healthLtvTitle": "ヘルスファクター {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps（提示値、未実行）",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} 件のオファー{{ownMark}} — タップしてこの利率を入力",

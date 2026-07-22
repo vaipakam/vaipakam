@@ -209,23 +209,9 @@ const BASELINE = {
   //     extracted into the copy catalog in the #1393 burn-down; only the
   //     release-stage badge (a proper noun, not localized) remains.
   'src/components/AppShell.tsx': { alpha: 1 }, // release-stage badge, not localized
-  // --- Advanced Rate-Desk surface: its own i18n pass (status-enum
-  //     vocabulary must be localized first). Grandfathered here.
-  'src/components/desk/DeskHeader.tsx': { 'bps · loan #': 1 },
-  'src/components/desk/HistoryPanel.tsx': { 'Loan #': 1 },
-  'src/components/desk/MatchBand.tsx': { 'bps · offers # × #': 1 },
-  'src/components/desk/OpenOrdersPanel.tsx': { 'Reading the offer’s live values…': 1, Close: 1 },
-  // securityLegs leg labels interpolated into the security banner (#1360).
-  'src/components/desk/OrderTicket.tsx': { 'loan asset': 1, collateral: 1 },
-  'src/components/desk/PositionsPanel.tsx': {
-    'Loan #': 1,
-    'd left': 1,
-    'd overdue': 1,
-    '· partial repay OK': 1,
-  },
-  'src/components/desk/RateLadder.tsx': { 'bps quoted mid': 1, mid: 1, '· spread': 1 },
-  'src/components/desk/SignedFillConfirm.tsx': { Close: 1 },
-  'src/components/desk/TapePanel.tsx': { 'Loading recent fills…': 1, 'bps · loan # ·': 1 },
+  // The advanced Rate-Desk surface was burned down into copy.desk.* in
+  // the desk i18n pass — its baseline entries are gone (a new hardcoded
+  // string there now fails CI outright).
   // --- Developer diagnostic rendered inside the crash UI (not copy).
   'src/components/ErrorBoundary.tsx': { 'Component stack:': 1 },
 };

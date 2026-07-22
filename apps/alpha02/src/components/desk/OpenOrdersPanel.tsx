@@ -457,8 +457,8 @@ function AmendForm({
     return (
       <div className="card" style={{ marginTop: 8 }}>
         <p className="muted cluster" style={{ alignItems: 'center', gap: 6 }}>
-          <LoaderCircle size={14} className="spin" aria-hidden /> Reading the
-          offer’s live values…
+          <LoaderCircle size={14} className="spin" aria-hidden />{' '}
+          {text.readingValues}
         </p>
       </div>
     );
@@ -487,8 +487,8 @@ function AmendForm({
     ...(isAon
       ? []
       : ([['amountMax', text.amendMaxAmount, lendingMeta.data?.symbol ?? '']] as AmendInput[])),
-    ['rate', text.amendRate, 'bps stored on-chain'],
-    ['rateMax', text.amendRateMax, 'bps stored on-chain'],
+    ['rate', text.amendRate, text.rateUnit],
+    ['rateMax', text.amendRateMax, text.rateUnit],
     ['collateral', text.amendCollateral, collateralMeta.data?.symbol ?? ''],
     // Lender collateral is single-value — the field above drives both.
     ...(isLenderRow
@@ -555,7 +555,7 @@ function AmendForm({
           onClick={onDone}
           disabled={busy !== null}
         >
-          Close
+          {text.close}
         </button>
         {needsApproval ? (
           <button

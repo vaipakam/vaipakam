@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "这些报价已无法交叉 — 发送匹配前订单簿已移动。没有发送任何内容。",
         "matchingDisabled": "报价匹配刚被协议治理关闭，因此此匹配当前无法发送。没有发送任何内容。",
         "amount": "{{amount}} {{symbol}} 将被匹配。",
-        "matchable": "可按 {{rate}} 匹配"
+        "matchable": "可按 {{rate}} 匹配",
+        "pairTitle": "{{rate}} bps · 报价 #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "已签名",
@@ -1166,6 +1167,7 @@
         "accept": "Fill 订单",
         "accepting": "执行中…",
         "accepted": "签名订单已 fill — 贷款已 live。",
+        "close": "关闭",
         "payCollateral": "你锁定 {{amount}} {{symbol}} 作为抵押品，并收到贷款本金。",
         "payPrincipal": "你提供 {{amount}} {{symbol}} 的贷款本金。",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "请先审核并接受风险披露和条款 — 对 gasless 订单，您的签名就是记录该同意的方式。",
         "gaslessPosted": "签名订单已发布到簿 — 未花费 gas。taker 接受时会 fill。",
         "gaslessUnavailable": "当前无法访问订单簿 — 订单未发布。请稍后重试。",
+        "legLoanAsset": "贷款资产",
+        "legCollateral": "抵押品",
         "blockNetwork": "切换到支持的网络以发布。",
         "blockNoMarket": "请先在页头选择市场。",
         "blockAmount": "请在上方输入金额。",
@@ -1293,6 +1297,9 @@
         "amend": "修改",
         "amendTitle": "原地修改 — 同一报价、同一持仓、一笔交易。",
         "amendLoadFailed": "无法读取此报价的实时值，而修改必须从这些值开始。请重试。",
+        "readingValues": "正在读取报价的实时数值…",
+        "rateUnit": "以 bps 存储在链上",
+        "close": "关闭",
         "amendMinAmount": "最小金额",
         "amendMaxAmount": "最大金额",
         "amendAmountAon": "金额（all-or-nothing）",
@@ -1331,6 +1338,9 @@
         "notPriced": "无自动清算",
         "manage": "管理",
         "allPositions": "全部持仓 →",
+        "daysLeft": "剩 {{days}} 天",
+        "daysOverdue": "逾期 {{days}} 天",
+        "partialRepayOk": " · 支持部分还款",
         "loading": "正在加载您的持仓…"
       },
       "bookLoading": "正在加载订单簿…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "加载市场",
       "marketsLoading": "正在加载市场…",
       "oneSidedBook": "单边订单簿",
+      "lastFillTitle": "{{bps}} bps · 贷款 #{{loanId}}",
+      "tapeLoading": "正在加载最近成交…",
+      "tapeRowTitle": "{{bps}} bps · 贷款 #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps 报价中间价",
+      "ladderMid": "中间价 {{rate}}",
+      "ladderSpread": " · 价差 {{spread}}",
+      "loanStatus": {
+        "active": "活跃",
+        "repaid": "已还款",
+        "defaulted": "已违约",
+        "liquidated": "已清算",
+        "settled": "已结算",
+        "fallback_pending": "结算中",
+        "internal_matched": "已匹配"
+      },
       "healthLtvTitle": "健康因子 {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps（报价，未执行）",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} 个报价{{ownMark}} — 点击预填此利率",

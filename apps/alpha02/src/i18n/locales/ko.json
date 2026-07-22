@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "이 오퍼들은 더 이상 교차될 수 없습니다 — 매칭이 전송되기 전에 오더북이 변동했습니다. 아무것도 전송되지 않았습니다.",
         "matchingDisabled": "오퍼 매칭이 방금 프로토콜 거버넌스에 의해 꺼져, 지금은 이 매칭을 전송할 수 없습니다. 아무것도 전송되지 않았습니다.",
         "amount": "{{amount}} {{symbol}}가 match됩니다.",
-        "matchable": "{{rate}}에서 matchable"
+        "matchable": "{{rate}}에서 matchable",
+        "pairTitle": "{{rate}} bps · 오퍼 #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "서명됨",
@@ -1166,6 +1167,7 @@
         "accept": "주문 체결",
         "accepting": "체결 중…",
         "accepted": "서명 주문이 체결되었습니다 — 대출이 활성화되었습니다.",
+        "close": "닫기",
         "payCollateral": "{{amount}} {{symbol}}를 collateral로 lock하고 loan principal을 받습니다.",
         "payPrincipal": "{{amount}} {{symbol}} loan principal을 fund합니다.",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "먼저 위험 고지와 약관을 검토하고 동의하세요 — 가스리스 주문에서는 서명이 그 동의를 기록합니다.",
         "gaslessPosted": "서명된 주문이 오퍼북에 게시되었습니다 — 가스가 소비되지 않았습니다. 테이커가 수락하면 체결됩니다.",
         "gaslessUnavailable": "지금 오퍼북에 연결할 수 없었습니다 — 주문이 게시되지 않았습니다. 잠시 후 다시 시도하세요.",
+        "legLoanAsset": "대출 자산",
+        "legCollateral": "담보",
         "blockNetwork": "등록하려면 지원되는 네트워크로 전환하세요.",
         "blockNoMarket": "먼저 헤더에서 마켓을 선택하세요.",
         "blockAmount": "위에 금액을 입력하세요.",
@@ -1293,6 +1297,9 @@
         "amend": "수정",
         "amendTitle": "그 자리에서 수정 — 같은 오퍼, 같은 포지션, 트랜잭션 한 번.",
         "amendLoadFailed": "이 오퍼의 실시간 값을 읽을 수 없었고, 수정은 그 값에서 시작해야 합니다. 다시 시도해 주세요.",
+        "readingValues": "오퍼의 실시간 값을 읽는 중…",
+        "rateUnit": "bps로 온체인에 저장됨",
+        "close": "닫기",
         "amendMinAmount": "최소 금액",
         "amendMaxAmount": "최대 금액",
         "amendAmountAon": "금액 (전부 또는 전무)",
@@ -1331,6 +1338,9 @@
         "notPriced": "자동 청산 없음",
         "manage": "관리",
         "allPositions": "모든 포지션 →",
+        "daysLeft": "{{days}}일 남음",
+        "daysOverdue": "{{days}}일 연체",
+        "partialRepayOk": " · 부분 상환 가능",
         "loading": "포지션 불러오는 중…"
       },
       "bookLoading": "오더북 불러오는 중…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "시장 불러오기",
       "marketsLoading": "시장 불러오는 중…",
       "oneSidedBook": "한쪽만 있는 장부",
+      "lastFillTitle": "{{bps}} bps · 대출 #{{loanId}}",
+      "tapeLoading": "최근 체결 불러오는 중…",
+      "tapeRowTitle": "{{bps}} bps · 대출 #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps 호가 중간값",
+      "ladderMid": "중간값 {{rate}}",
+      "ladderSpread": " · 스프레드 {{spread}}",
+      "loanStatus": {
+        "active": "active",
+        "repaid": "repaid",
+        "defaulted": "defaulted",
+        "liquidated": "liquidated",
+        "settled": "settled",
+        "fallback_pending": "settling",
+        "internal_matched": "matched"
+      },
       "healthLtvTitle": "health factor {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps(quoted, 실행되지 않음)",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} offers{{ownMark}} — 이 rate를 pre-fill하려면 탭하세요",
