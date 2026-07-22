@@ -39,12 +39,14 @@ deploy.
   navigation to `alpha02.vaipakam.com` returns `net::ERR_CONNECTION_RESET` on
   both direct egress and via the agent proxy (the sandbox gateway resets
   Chromium's TLS; `curl` succeeds because it is an allow-listed tool path).
-  This is exactly the class the `e2e/live/README.md` `LIVE_PROXY_SETUP`
-  undici-shim exists for. **Action for the operator:** run the committed
-  browser drive (or the scratch capture `live-desk-i18n-capture.mjs`) from an
-  operator machine / a `LIVE_PROXY_SETUP`-shimmed run to eyeball each locale's
-  desk rendering — the semantic findings below are the checklist to eyeball
-  against.
+  This is exactly the class the `apps/alpha02/e2e/live/README.md`
+  `LIVE_PROXY_SETUP` undici-shim exists for. **Action for the operator:** run
+  the committed read-only driver
+  `apps/alpha02/e2e/live/live-desk-i18n-capture.mjs` (added in this PR — it
+  seeds each locale, loads `/desk`, and screenshots + scrapes the rendered
+  `copy.desk.*` text into `shots/desk-i18n/`) from an operator machine or a
+  `LIVE_PROXY_SETUP`-shimmed run to eyeball each locale's desk rendering — the
+  semantic findings below are the checklist to eyeball against.
 
 The translation-quality findings themselves do **not** depend on the browser
 render — they are a review of the shipped bundle text against intended meaning,
@@ -302,7 +304,8 @@ regression, not a fix. That check **overturned several of the initial
 recommendations** above (kept where the flagged term was actually the
 bundle's dominant/established choice). What shipped:
 
-**Applied — idiom/consistency fixes (18 keys, 5 locales):**
+**Applied — idiom/consistency fixes (20 locale values, 5 locales — 1 ar + 7
+de + 5 es + 5 fr + 2 ta):**
 
 - **fr** — desk **mid** term `milieu` → **`cours moyen`** (the French market
   term). Fixed *all five* occurrences together for consistency: the market
@@ -310,9 +313,11 @@ bundle's dominant/established choice). What shipped:
   `ladderMidTitle` / `ladderMid`. (`milieu` was used nowhere else, so this is
   a complete, self-contained terminology fix.)
 - **de** — desk **mid** term `Mitte` → **`Mittelkurs`** (standard German
-  exchange term) across `quotedMid` (×2) + `ladderMidTitle` / `ladderMid`;
-  and the day chips' opaque `T` → **`Tg.`** (de spells `Tage`/`Tag`
-  everywhere else — `T` matched nothing).
+  exchange term) across `quotedMid` (×2), the chart `quotedMidHint` (which had
+  used a *different* literal, `quotierte Buchmitte`, so the dashed-line label
+  and its hint now agree), and `ladderMidTitle` / `ladderMid`; and the day
+  chips' opaque `T` → **`Tg.`** (de spells `Tage`/`Tag` everywhere else — `T`
+  matched nothing).
 - **es** — desk **mid** term `medio` (ambiguous: half/average) → **`punto
   medio`** across `quotedMid` (×2) + `quotedMidHint` + `ladderMidTitle` /
   `ladderMid`. (Left `saldo promedio` / `promedio` untouched — that's

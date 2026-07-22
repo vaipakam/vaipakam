@@ -1181,7 +1181,7 @@
         "unavailable": "Der Zinsverlauf konnte gerade nicht geladen werden.",
         "retry": "Erneut versuchen",
         "quotedMid": "quotierter Mittelkurs",
-        "quotedMidHint": "Gestrichelte Linie = die aktuell quotierte Buchmitte — eine ruhende Quotierung, kein ausgeführter Zinssatz.",
+        "quotedMidHint": "Gestrichelte Linie = der aktuell quotierte Mittelkurs — eine ruhende Quotierung, kein ausgeführter Zinssatz.",
         "truncatedNote": "Lange Historie — angezeigt werden nur die neuesten Ausführungen. Die ältesten Kerzen werden nicht gezeichnet.",
         "intervalLabel": "Intervall",
         "rangeLabel": "Bereich",
