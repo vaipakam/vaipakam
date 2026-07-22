@@ -1382,18 +1382,14 @@ function _dayPoolHalves(
                     EntrySplit memory toTreasury,
                     ,
                     EntryPriceState memory st
-                ) = _entryPriceCore(s, e);
+                ) = _entryPriceCore(s, ids[i], e);
                 if (st.forfeit) {
-                    // A stamped cursor means the pre-`D*` legacy slice has
-                    // already been settled to treasury by a chunked claim —
-                    // counting it again would OVERSTATE the need and silently
-                    // pause the expiry accrual clock (Codex #1404 r6). The
-                    // armed remainder is bounded by the whole armed share
-                    // (already-walked days overstate slightly — the safe,
-                    // sufficient-bound direction this gate documents).
-                    fresh += s.rewardEntryClaimNextDay[ids[i]] != 0
-                        ? toTreasury.armedFresh
-                        : toTreasury.total - toTreasury.recycled;
+                    // The core prices the REMAINING window (slice 2d), so
+                    // this is EXACT for a part-claimed entry: a settled
+                    // legacy slice or already-walked days no longer count,
+                    // closing the Codex #1404 r6 overstatement outright
+                    // rather than by an upper bound.
+                    fresh += toTreasury.total - toTreasury.recycled;
                 }
             }
             unchecked { ++i; }
@@ -1423,7 +1419,7 @@ function _dayPoolHalves(
                 && _entryClaimable(s, e)
             ) {
                 // #1008 (S13) — cap is baked into cumMin; no feed read here.
-                userTotal += _previewEntryReward(s, e);
+                userTotal += _previewEntryReward(s, ids[i], e);
             }
             unchecked { ++i; }
         }
@@ -1532,15 +1528,6 @@ function _dayPoolHalves(
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed || e.user == address(0)) return (expired, 0);
         if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0);
-        // #1351 re-land stopgap (deleted in slice 2d when the sweep becomes a
-        // per-day consumer): an entry with ANY per-day accounting — a settled
-        // legacy slice or walked armed days (`rewardEntryClaimNextDay != 0`) —
-        // must not be reaped whole-window: the O(1) split still prices the
-        // days the walk already paid, so a whole reap would double-credit
-        // them. Left to its owner's claim; the countdown pauses (the view
-        // mirror applies the same gate). Unreachable while `D*` is unarmed —
-        // nothing writes the cursor before arming.
-        if (s.rewardEntryClaimNextDay[id] != 0) return (expired, 0);
         if (!_entryClaimable(s, e)) return (expired, 0);
         if (e.startDay >= e.endDay) return (expired, 0);
 
@@ -1562,7 +1549,7 @@ function _dayPoolHalves(
             ,
             ,
             EntryPriceState memory st
-        ) = _entryPriceCore(s, e);
+        ) = _entryPriceCore(s, id, e);
         // A zero-value window prices nothing, pays nothing, and — once the
         // cursor covers it — can never grow: there is no clock to run for it.
         if (!st.priced) return (expired, 0);
@@ -1570,7 +1557,11 @@ function _dayPoolHalves(
         // reward recycles to the bucket rather than being paid to the side, so
         // like a forfeit it is exempt from the loan-side cap (Codex #1371 r2).
         // The EXECUTABLE gate instead tests the pool-capped USER split — what
-        // a claim would actually pay ({_poolCappedPayable}).
+        // a claim would actually pay ({_poolCappedPayable}). Slice 2d: the
+        // core prices the REMAINING window, so a part-claimed entry is reaped
+        // for exactly its unsettled days — never a double-credit of days the
+        // walk already paid (which is why the interim part-claimed stopgap
+        // could be deleted rather than refined).
         EntrySplit memory split_ = st.rawSplit;
         uint256 freshShare = split_.total - split_.recycled;
         // Claim-EXECUTABLE gate: the accumulator only advances while the
@@ -1813,9 +1804,7 @@ function _dayPoolHalves(
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
-        // Mirrors {sweepExpiredEntry}'s part-claimed stopgap (see there).
-        if (s.rewardEntryClaimNextDay[id] != 0) return false;
-        (EntrySplit memory toUser, , , ) = _entryPriceCore(s, e);
+        (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
@@ -2150,7 +2139,7 @@ function _dayPoolHalves(
         }
 
         EntryPriceState memory st;
-        (, , , st) = _entryPriceCore(s, e);
+        (, , , st) = _entryPriceCore(s, id, e);
         if (!st.priced) {
             // A zero-value window will never pay on either regime — retire it.
             if (st.emptyWindow) e.processed = true;
@@ -2206,7 +2195,7 @@ function _dayPoolHalves(
 
         LoanSideCapCharge memory c;
         EntryPriceState memory st;
-        (toUser, toTreasury, c, st) = _entryPriceCore(s, e);
+        (toUser, toTreasury, c, st) = _entryPriceCore(s, id, e);
 
         if (!st.priced) {
             // An empty or zero-value window will never pay — retire it so it
@@ -2218,7 +2207,7 @@ function _dayPoolHalves(
 
         e.processed = true;
         if (st.forfeit) {
-            _accrueForfeitArmedDays(s, e, st.rawSplit);
+            _accrueForfeitArmedDays(s, id, e, st.rawSplit);
             return (toUser, toTreasury);
         }
         if (c.stamped) {
@@ -2233,9 +2222,10 @@ function _dayPoolHalves(
     ///      windows slice correctly by construction: pre-arming days
     ///      contribute 0 to both the recycled and armed cumulatives
     ///      (the redesign's D* day-slicing rule with no per-day loop).
-    function _entryWindowSplit(
+    function _entryWindowSplitFrom(
         LibVaipakam.Storage storage s,
-        LibVaipakam.RewardEntry storage e
+        LibVaipakam.RewardEntry storage e,
+        uint256 fromDay
     ) private view returns (EntrySplit memory split) {
         uint256 cumEnd;
         uint256 cumStart;
@@ -2244,25 +2234,25 @@ function _dayPoolHalves(
         uint256 cumArmEnd;
         uint256 cumArmStart;
         uint256 endD = e.endDay - 1;
-        bool hasStart = e.startDay != 0;
+        bool hasStart = fromDay != 0;
         if (e.side == LibVaipakam.RewardSide.Lender) {
             cumEnd = s.cumMinLenderRpn18[endD];
-            cumStart = hasStart ? s.cumMinLenderRpn18[e.startDay - 1] : 0;
+            cumStart = hasStart ? s.cumMinLenderRpn18[fromDay - 1] : 0;
             cumRecEnd = s.cumMinRecycledLenderRpn18[endD];
             cumRecStart =
-                hasStart ? s.cumMinRecycledLenderRpn18[e.startDay - 1] : 0;
+                hasStart ? s.cumMinRecycledLenderRpn18[fromDay - 1] : 0;
             cumArmEnd = s.cumMinArmedLenderRpn18[endD];
             cumArmStart =
-                hasStart ? s.cumMinArmedLenderRpn18[e.startDay - 1] : 0;
+                hasStart ? s.cumMinArmedLenderRpn18[fromDay - 1] : 0;
         } else {
             cumEnd = s.cumMinBorrowerRpn18[endD];
-            cumStart = hasStart ? s.cumMinBorrowerRpn18[e.startDay - 1] : 0;
+            cumStart = hasStart ? s.cumMinBorrowerRpn18[fromDay - 1] : 0;
             cumRecEnd = s.cumMinRecycledBorrowerRpn18[endD];
             cumRecStart =
-                hasStart ? s.cumMinRecycledBorrowerRpn18[e.startDay - 1] : 0;
+                hasStart ? s.cumMinRecycledBorrowerRpn18[fromDay - 1] : 0;
             cumArmEnd = s.cumMinArmedBorrowerRpn18[endD];
             cumArmStart =
-                hasStart ? s.cumMinArmedBorrowerRpn18[e.startDay - 1] : 0;
+                hasStart ? s.cumMinArmedBorrowerRpn18[fromDay - 1] : 0;
         }
         if (cumEnd <= cumStart) return split;
 
@@ -2314,6 +2304,7 @@ function _dayPoolHalves(
 
     function _entryPriceCore(
         LibVaipakam.Storage storage s,
+        uint256 id,
         LibVaipakam.RewardEntry storage e
     )
         private
@@ -2341,11 +2332,23 @@ function _dayPoolHalves(
                 : s.cumBorrowerCursor < need
         ) return (toUser, toTreasury, c, st);
 
+        // #1351 slice 2d — the core prices the REMAINING window. A stamped
+        // claim cursor means everything before it has been settled — the
+        // legacy slice by the entry path, walked armed days by the day walk —
+        // so pricing from the cursor makes every consumer (sweep, close-path
+        // settle, preview, funding need) exact for a part-claimed entry with
+        // no per-entry paid ledger and no second marker. With the cursor
+        // unset this is the whole window, byte-identical to the pre-2d
+        // behaviour (and to every current deploy — nothing writes the cursor
+        // while `D*` is unarmed).
+        //
         // #1008 (S13, Option B) — the CAPPED cumulative, so the §4 daily cap is
         // applied per day (baked at finalization) while this stays O(1).
         // PR-3c — mixed pre/post-cutover windows slice by construction:
         // pre-arming days contribute 0 to the recycled + armed cumulatives.
-        EntrySplit memory split = _entryWindowSplit(s, e);
+        uint256 from = s.rewardEntryClaimNextDay[id];
+        if (from == 0) from = e.startDay;
+        EntrySplit memory split = _entryWindowSplitFrom(s, e, from);
         if (split.total == 0) {
             st.emptyWindow = true;
             return (toUser, toTreasury, c, st);
@@ -2381,9 +2384,10 @@ function _dayPoolHalves(
     ///      keeping a second implementation in step.
     function _previewEntryReward(
         LibVaipakam.Storage storage s,
+        uint256 id,
         LibVaipakam.RewardEntry storage e
     ) private view returns (uint256 reward) {
-        (EntrySplit memory toUser, , , ) = _entryPriceCore(s, e);
+        (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         return toUser.total;
     }
 
@@ -2448,6 +2452,23 @@ function _dayPoolHalves(
         return e.endDay > firstArmed ? e.endDay - firstArmed : 0;
     }
 
+    /// @dev Slice 2d — {_entryArmedDays} for the entry's REMAINING window: the
+    ///      armed days at or past the claim cursor. Equal to the whole count
+    ///      while the cursor is unset.
+    function _entryArmedDaysFrom(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (uint256) {
+        uint256 armedFrom = s.governorCommitArmedFromDay; // D*; 0 ⇒ unarmed
+        uint256 cursor = s.rewardEntryClaimNextDay[id];
+        uint256 start = cursor != 0
+            ? cursor
+            : (e.startDay == 0 ? 1 : e.startDay);
+        uint256 firstArmed = start > armedFrom ? start : armedFrom;
+        return e.endDay > firstArmed ? e.endDay - firstArmed : 0;
+    }
+
     /// @dev #1353 (M2 PR-5c) — accrue a FORFEITED entry's armed days into the
     ///      per-(loanId, side) day union (a forfeit is not paid to the side and
     ///      never consumes the paid budget, but its window is part of the loan's
@@ -2456,6 +2477,7 @@ function _dayPoolHalves(
     ///      #1371 r7). Same STAMP/armed guards as {_applyLoanSideCap}.
     function _accrueForfeitArmedDays(
         LibVaipakam.Storage storage s,
+        uint256 id,
         LibVaipakam.RewardEntry storage e,
         EntrySplit memory split
     ) private {
@@ -2463,7 +2485,10 @@ function _dayPoolHalves(
         uint256 loanId = e.loanId;
         if (s.feeEntitlementByLoanId[loanId].openDays == 0) return; // unstamped
         uint8 side = uint8(e.side);
-        s.loanSideRewardedDays[loanId][side] += _entryArmedDays(s, e);
+        // Slice 2d — only the REMAINING armed days: each day the walk already
+        // settled grew the union by 1 in {_persistDay}, so accruing the whole
+        // window here would double-count them in the proration denominator.
+        s.loanSideRewardedDays[loanId][side] += _entryArmedDaysFrom(s, id, e);
     }
 
     /// @dev Effective per-side lifetime reward ceiling for `loanId` once

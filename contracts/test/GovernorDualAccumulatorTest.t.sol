@@ -397,45 +397,67 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
-    /// @dev #1351 slice 2c (Codex #1404 r4) — expiry prices the WHOLE window in
-    ///      one product, which has no memory of what a claim already paid. Once
-    ///      2c let a ShareOfPool entry be claimed a CHUNK at a time, expiring a
-    ///      part-claimed entry would recycle those same days a second time, at
-    ///      full window value.
+    /// @dev #1351 slice 2d — the expiry sweep prices the REMAINING window
+    ///      (the core prices from the claim cursor), so:
     ///
-    ///      {testExpiryIsAllOrNothingAtNearExhaustion} above is this test's
-    ///      CONTROL: identical setup, entry never walked, and it credits the
-    ///      full `floor5 / 2 + recycled5 / 2` once headroom is restored. The
-    ///      only difference here is the claim cursor, so a credit of 0 is
-    ///      attributable to the walk-touched gate and nothing else.
-    function testExpiryDefersAnEntryAClaimHasAlreadyWalked() public {
+    ///      1. A FULLY walked entry (`cursor == endDay`) has nothing left —
+    ///         the sweep credits 0 and never re-recycles the walked days.
+    ///      2. A PART-claimed spanning entry is reaped for EXACTLY its
+    ///         unsettled suffix — proven by a TWIN: bob's armed-only entry
+    ///         over the identical remaining day, never touched by a walk,
+    ///         must reap the identical credit.
+    ///
+    ///      Discrimination on the twin equality: the pre-2d whole-window
+    ///      sweep fails it HIGH (alice's reap re-credits her settled day 4);
+    ///      the interim #1408 part-claimed stopgap fails it at ZERO (no reap
+    ///      at all). Either failure flags a regression on this boundary.
+    function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
         assertGt(floor5, 0, "armed day has a fresh floor");
 
-        uint256 id = _seedEntry(alice, 47, 5, 6);
-        uint256[] memory ids = new uint256[](1);
-        ids[0] = id;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
-        _accrueExec(ids, 180 days + 90 days - 7 days);
+        // Case 1 — fully walked: nothing remains, nothing is credited.
+        uint256 walked = _seedEntry(alice, 47, 5, 6);
+        uint256[] memory one = new uint256[](1);
+        one[0] = walked;
+        _facet().sweepExpiredInteractionRewards(one); // stamp the clock
+        _accrueExec(one, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setRewardEntryClaimNextDayRaw(walked, 6);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(one),
+            0,
+            "a fully walked entry has no remaining value to reap"
+        );
+
+        // Case 2 — part-claimed spanning entry vs its armed-only twin.
+        address bob = makeAddr("suffixTwin");
+        uint256 spanning = _seedEntry(alice, 48, 4, 6); // day 4 legacy + day 5
+        uint256 twin = _seedEntry(bob, 49, 5, 6); //      day 5 only
+        // A chunked claim settled alice's legacy slice; the cursor write IS
+        // the record — her remaining window is exactly bob's whole window.
+        _mut().setRewardEntryClaimNextDayRaw(spanning, 5);
+
+        uint256[] memory pair = new uint256[](2);
+        pair[0] = spanning;
+        pair[1] = twin;
+        _facet().sweepExpiredInteractionRewards(pair); // stamp both clocks
+        _accrueExec(pair, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
 
-        // Full pool headroom: nothing but the gate can hold the sweep back.
-        _mut().setInteractionPoolPaidOut(0);
-        // A chunked claim has already walked into this entry's days.
-        _mut().setRewardEntryClaimNextDayRaw(id, 6);
-
-        (, uint256 outFBefore, uint256 outRBefore, ) =
-            _agg().getGovernorCommitState();
+        uint256[] memory a = new uint256[](1);
+        a[0] = spanning;
+        uint256[] memory b = new uint256[](1);
+        b[0] = twin;
+        uint256 creditSpanning = _facet().sweepExpiredInteractionRewards(a);
+        uint256 creditTwin = _facet().sweepExpiredInteractionRewards(b);
+        assertGt(creditTwin, 0, "the twin's armed day is genuinely reapable");
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
-            0,
-            "a part-claimed entry is left to its owner, never reaped whole"
+            creditSpanning,
+            creditTwin,
+            "a part-claimed entry reaps EXACTLY its remaining window"
         );
-        (, uint256 outFAfter, uint256 outRAfter, ) =
-            _agg().getGovernorCommitState();
-        assertEq(outFBefore, outFAfter, "armed fresh commitment untouched");
-        assertEq(outRBefore, outRAfter, "recycled commitment untouched");
     }
 
     /// @dev #1351 — `_userForfeitFresh` sums FORFEITED entries at their
