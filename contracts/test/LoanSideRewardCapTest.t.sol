@@ -81,6 +81,16 @@ contract LoanSideRewardCapTest is SetupTest {
         _mut().setDayPoolStampRaw(dayId, uint128(freshHalf * 2), 0);
         _mut().setKnownGlobalDailyInterest(dayId, global, 0, true);
         _mut().setDayCapThreshold18(dayId, type(uint256).max); // #1008 off
+        // #1351 slice 2c — an armed day is now CLAIMED via the ShareOfPool day
+        // walk, which fail-closes without an explicit mode stamp. Production
+        // stamps mode + pool + `C` atomically in `finalizeDay` (slice 2a); this
+        // harness seeds days directly, so it must stamp the mode too.
+        _mut().setDayCapModeRaw(dayId, 1); // ShareOfPool
+        // `C` is left NON-BINDING on purpose: this suite is about the LOAN-SIDE
+        // ceiling. An unseeded `C` is 0, which is a legitimate ShareOfPool dust
+        // day that pays nothing — every assertion below would then pass
+        // vacuously at a zero payout.
+        _mut().setDayUserSideCapRaw(dayId, type(uint256).max);
         deltaRpn = (freshHalf * 1e18) / global;
     }
 
@@ -98,6 +108,8 @@ contract LoanSideRewardCapTest is SetupTest {
         );
         _mut().setKnownGlobalDailyInterest(dayId, global, 0, true);
         _mut().setDayCapThreshold18(dayId, type(uint256).max); // #1008 off
+        _mut().setDayCapModeRaw(dayId, 1); // ShareOfPool (see {_seedArmedDay})
+        _mut().setDayUserSideCapRaw(dayId, type(uint256).max); // isolate loan-side
     }
 
     /// @dev Stamp a fee-entitlement record carrying a known loan-side ceiling.

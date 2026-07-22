@@ -137,6 +137,20 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRecycledCreditedByDayRaw(armDay, creditedPerWindow);
         _finalize(armDay);
         (, floor_, recycled, , ) = _agg().getDayPoolStamp(armDay);
+        // #1351 slice 2c — `finalizeDay` also stamps the D1 `(user, side, day)`
+        // ceiling (20% of the side half by default), and an armed day is now
+        // CLAIMED through the ShareOfPool day walk that enforces it. This suite
+        // is about the DUAL ACCUMULATOR — the fresh/recycled split, the bucket
+        // debit and the commitment retirement — and its entries deliberately
+        // sweep the WHOLE side pool, which the D1 ceiling would trim to 20%.
+        //
+        // Every assertion here would still pass if simply scaled by 0.2, which
+        // is exactly why that is the wrong fix: the suite would keep passing
+        // while silently testing two mechanisms at once, and a later change to
+        // the share-cap default would break it for reasons that have nothing to
+        // do with the accumulator. Neutralise the ceiling instead; it has its
+        // own coverage in ShareOfPoolDayPrimitiveTest.
+        _mut().setDayUserSideCapRaw(armDay, type(uint256).max);
     }
 
     /// @dev Lender entry sweeping the WHOLE lender side of days
@@ -294,6 +308,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRecycledCreditedByDayRaw(5, 700 ether);
         _finalize(4);
         _finalize(5);
+        // #1351 slice 2c — neutralise day 5's D1 ceiling for the same reason as
+        // {_armAndFinalize}: this test is about the pre/post-arming SLICE, and
+        // the entry deliberately sweeps the whole lender side. Day 4 needs no
+        // override — it is pre-arming, so it is paid by the O(1) window product
+        // and the D1 ceiling does not apply to it at all.
+        _mut().setDayUserSideCapRaw(5, type(uint256).max);
         (, uint256 floor4, uint256 recycled4, , ) = _agg().getDayPoolStamp(4);
         (, uint256 floor5, uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
         assertGt(recycled5, 0, "armed day recycled term");

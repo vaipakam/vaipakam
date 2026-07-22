@@ -1092,10 +1092,19 @@ function _dayPoolHalves(
             _foldSplit(toUser, charge.toUser);
             _foldSplit(toTreasury, charge.toTreasury);
             // `cappedOff` moves no tokens but MUST reach the facet so the
-            // commitments retire — fold its fresh into the user leg's
-            // `armedFresh` (which is exactly what `consumeArmedFresh` consumes)
-            // and its recycled into the treasury leg (a pure release).
+            // commitments retire. Fold it EXACTLY as `_applyLoanSideCap` shapes
+            // its own two legs, because the facet's arithmetic depends on that
+            // shape:
+            //   • fresh  -> `toUser.armedFresh` ONLY, never `total`. That
+            //     mirrors `userSplit` keeping `armedFresh` whole while `total`
+            //     sheds the capped-off fresh, and it is what feeds
+            //     `consumeArmedFresh` the full commitment.
+            //   • recycled -> BOTH `toTreasury.total` and `.recycled`, mirroring
+            //     `recycleRelease` where the two are equal. Folding it into
+            //     `.recycled` alone underflows the facet's
+            //     `freshTreasury = treasuryDelta - forfeitRecycled`.
             toUser.armedFresh += charge.cappedOff.armedFresh;
+            toTreasury.total += charge.cappedOff.recycled;
             toTreasury.recycled += charge.cappedOff.recycled;
 
             unchecked { ++daysUsed; }
