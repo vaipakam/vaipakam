@@ -178,7 +178,8 @@ contract RewardClaimFacet is
         // consumption can split fresh-vs-recycled below.
         (
             LibInteractionRewards.EntrySplit memory userSplit,
-            LibInteractionRewards.EntrySplit memory forfeitSplit
+            LibInteractionRewards.EntrySplit memory forfeitSplit,
+            bool walkAdvanced
         ) = LibInteractionRewards.claimForUserEntries(msg.sender);
         uint256 entryReward = userSplit.total;
         uint256 treasuryDelta = forfeitSplit.total;
@@ -224,11 +225,18 @@ contract RewardClaimFacet is
         // commitment to retire — otherwise fall through to a valid zero-payout
         // claim that clears the entry and retires its commitment. (Inlined, no
         // extra local, to stay within the at-viaIR-budget claim frame.)
+        // #1351 slice 2c (Codex #1404 P2) — `!walkAdvanced` is part of the
+        // guard. A ShareOfPool walk can legitimately advance ZERO-PAY days (a
+        // `C == 0` dust day, or a ceiling already consumed by an earlier
+        // entry). `_persistDay` has already written those cursors, so reverting
+        // here would ROLL BACK real progress and the claimant would retry the
+        // same zero-pay day forever, never reaching the payable days behind it.
         if (
             pending == 0 &&
             treasuryDelta == 0 &&
             userSplit.armedFresh == 0 &&
-            forfeitSplit.armedFresh == 0
+            forfeitSplit.armedFresh == 0 &&
+            !walkAdvanced
         ) {
             // No legacy claim possible AND nothing to sweep — surface the
             // same waiting / empty states the prior API used.

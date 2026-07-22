@@ -969,9 +969,22 @@ function _dayPoolHalves(
      *                    routes the fresh share to the recycle bucket and
      *                    releases the recycled share's commitment).
      */
+    /// @return toUser     Aggregate reward routed to the claimant.
+    /// @return toTreasury Aggregate reward routed to the treasury channel.
+    /// @return advancedAnyDay True ⇒ the ShareOfPool walk advanced at least one
+    ///         day. Codex #1404 P2: a walk can legitimately advance ZERO-PAY
+    ///         days (a `C == 0` dust day, or a ceiling already consumed by an
+    ///         earlier entry). That is real, persisted progress, so the facet's
+    ///         "nothing to claim" revert must not roll it back — otherwise the
+    ///         claimant retries the same zero-pay day forever and can never
+    ///         reach the payable days behind it.
     function claimForUserEntries(address user)
         internal
-        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
+        returns (
+            EntrySplit memory toUser,
+            EntrySplit memory toTreasury,
+            bool advancedAnyDay
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage ids = s.userRewardEntryIds[user];
@@ -993,10 +1006,21 @@ function _dayPoolHalves(
 
         // #1351 slice 2c — the loop above paid every entry's pre-`D*` portion
         // O(1); the armed days are priced per-day against the D1 ceiling here.
-        (EntrySplit memory wu, EntrySplit memory wt) =
-            _walkShareOfPoolDays(s, user);
+        //
+        // Codex #1404 P2 — the walk's FRESH budget is net of the legacy fresh
+        // this claim has ALREADY committed above. Both draw on the same 69M
+        // pool, and the facet scales the aggregate down if it overruns; without
+        // this the walk would price days against a budget the legacy leg has
+        // already spoken for, then persist cursors and D1 charges for value the
+        // scaler never actually transfers — retiring the commitment while
+        // dropping the payout.
+        uint256 legacyFresh =
+            (toUser.total - toUser.recycled) + (toTreasury.total - toTreasury.recycled);
+        (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
+            _walkShareOfPoolDays(s, user, legacyFresh);
         _foldSplit(toUser, wu);
         _foldSplit(toTreasury, wt);
+        advancedAnyDay = walked;
     }
 
     /// @dev #1351 (M2 PR-2, slice 2c) — the ShareOfPool day walk.
@@ -1014,11 +1038,27 @@ function _dayPoolHalves(
     ///      double-pays.
     function _walkShareOfPoolDays(
         LibVaipakam.Storage storage s,
-        address user
-    ) private returns (EntrySplit memory toUser, EntrySplit memory toTreasury) {
-        if (s.governorCommitArmedFromDay == 0) return (toUser, toTreasury);
-        PoolBudget memory pool =
-            PoolBudget({fresh: poolRemaining(), recycled: s.recycleBucket});
+        address user,
+        uint256 legacyFreshReserved
+    )
+        private
+        returns (
+            EntrySplit memory toUser,
+            EntrySplit memory toTreasury,
+            bool advancedAnyDay
+        )
+    {
+        if (s.governorCommitArmedFromDay == 0) {
+            return (toUser, toTreasury, false);
+        }
+        uint256 freshLeft = poolRemaining();
+        freshLeft = freshLeft > legacyFreshReserved
+            ? freshLeft - legacyFreshReserved
+            : 0;
+        WalkCtx memory ctx = WalkCtx({
+            pool: PoolBudget({fresh: freshLeft, recycled: s.recycleBucket}),
+            advanced: false
+        });
 
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
@@ -1026,10 +1066,11 @@ function _dayPoolHalves(
                 : LibVaipakam.RewardSide.Borrower;
             uint256[] memory work = _shareOfPoolWorklist(s, user, side);
             if (work.length != 0) {
-                _walkSideDays(s, user, side, work, pool, toUser, toTreasury);
+                _walkSideDays(s, user, side, work, ctx, toUser, toTreasury);
             }
             unchecked { ++sideIdx; }
         }
+        advancedAnyDay = ctx.advanced;
     }
 
     /// @dev Entries of `user` on `side` that still owe ShareOfPool days.
@@ -1069,7 +1110,7 @@ function _dayPoolHalves(
         address user,
         LibVaipakam.RewardSide side,
         uint256[] memory work,
-        PoolBudget memory pool,
+        WalkCtx memory ctx,
         EntrySplit memory toUser,
         EntrySplit memory toTreasury
     ) private {
@@ -1081,14 +1122,15 @@ function _dayPoolHalves(
             if (set.length == 0) break;
 
             (DayCharge memory charge, DaySlice[] memory slices) =
-                processUserSideDay(user, d, set, pool);
+                processUserSideDay(user, d, set, ctx.pool);
             // Not advanced ⇒ pool shortage or an unready RPN row. Nothing was
             // charged, so STOP rather than spin: the day stays retryable.
             if (!charge.advanced) break;
 
             _persistDay(s, user, side, d, set, slices);
-            pool.fresh -= charge.toUser.armedFresh + charge.toTreasury.armedFresh;
-            pool.recycled -= charge.toUser.recycled;
+            ctx.pool.fresh -=
+                charge.toUser.armedFresh + charge.toTreasury.armedFresh;
+            ctx.pool.recycled -= charge.toUser.recycled;
             _foldSplit(toUser, charge.toUser);
             _foldSplit(toTreasury, charge.toTreasury);
             // `cappedOff` moves no tokens but MUST reach the facet so the
@@ -1107,6 +1149,7 @@ function _dayPoolHalves(
             toTreasury.total += charge.cappedOff.recycled;
             toTreasury.recycled += charge.cappedOff.recycled;
 
+            ctx.advanced = true;
             unchecked { ++daysUsed; }
         }
     }
@@ -2038,16 +2081,35 @@ function _dayPoolHalves(
         // `endDay`.
         uint256 armedPortion = split.armedFresh + split.recycled;
         if (mutate && deferArmed && armedPortion != 0) {
-            EntrySplit memory legacyOnly;
-            legacyOnly.total = split.total - armedPortion; // pre-`D*` fresh only
-            // Loan-side cap and forfeit-day accrual are the WALK's job here —
-            // applying them now would double-count against the per-day path.
-            if (legacyOnly.total != 0) {
-                if (_isForfeited(s, e)) {
-                    toTreasury = legacyOnly;
-                } else {
-                    toUser = legacyOnly;
+            // Codex #1404 P1 — pay the pre-`D*` slice EXACTLY ONCE.
+            //
+            // `_entryWindowSplit` is a pure function of the cumulative series
+            // and the entry window: it carries NO memory of prior claims. So if
+            // the armed tail doesn't finish this call (chunk limit, unready day,
+            // pool shortage) the entry stays unprocessed and the next claim
+            // re-enters here and pays the legacy slice AGAIN — every retry,
+            // until the tail completes. That drains the fresh pool past the
+            // entry's entitlement.
+            //
+            // The claim cursor is the marker: it is 0 only before the entry has
+            // ever been touched by the ShareOfPool path, so stamping it at its
+            // resolved start both records "legacy settled" and seeds the walk
+            // with the same value {_shareOfPoolCursorDay} would have derived.
+            // No new storage, and the two cannot drift apart.
+            if (s.rewardEntryClaimNextDay[id] == 0) {
+                EntrySplit memory legacyOnly;
+                legacyOnly.total = split.total - armedPortion; // pre-`D*` fresh
+                // Loan-side cap and forfeit-day accrual are the WALK's job —
+                // applying them now would double-count against the per-day path.
+                if (legacyOnly.total != 0) {
+                    if (_isForfeited(s, e)) {
+                        toTreasury = legacyOnly;
+                    } else {
+                        toUser = legacyOnly;
+                    }
                 }
+                s.rewardEntryClaimNextDay[id] =
+                    SafeCast.toUint64(_shareOfPoolCursorDay(s, id, e));
             }
             return (toUser, toTreasury);
         }
@@ -2962,6 +3024,18 @@ function _dayPoolHalves(
     struct PoolBudget {
         uint256 fresh;
         uint256 recycled;
+    }
+
+    /// @dev #1351 slice 2c — the day walk's mutable context, passed by
+    ///      reference. Bundling the budget with the progress flag keeps
+    ///      {_walkSideDays} under the viaIR stack ceiling: one reference
+    ///      parameter replaces a parameter plus a return value.
+    /// @param pool     Remaining budget, debited as days are paid.
+    /// @param advanced True once ANY day advanced — including a zero-pay day,
+    ///        which is still persisted progress the facet must not roll back.
+    struct WalkCtx {
+        PoolBudget pool;
+        bool advanced;
     }
 
     /// @notice One entry's share of a priced day.

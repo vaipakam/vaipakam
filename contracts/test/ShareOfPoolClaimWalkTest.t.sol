@@ -200,4 +200,69 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
 
         assertEq(_claim(), 0.4e18, "day 1 pays 0; the walk still reaches day 2");
     }
+
+    // ── Codex #1404 round-1 regressions ─────────────────────────────────────
+
+    /// @dev Codex #1404 **P1** — the pre-`D*` slice must be paid EXACTLY ONCE.
+    ///
+    ///      `_entryWindowSplit` is a pure function of the cumulative series and
+    ///      the entry window; it remembers nothing about prior claims. So if the
+    ///      armed tail does not finish in one call, the next claim re-entered
+    ///      the deferral branch and paid the legacy slice AGAIN — every retry,
+    ///      draining the fresh pool past the entry's entitlement.
+    ///
+    ///      Neither of the tests above caught it: the chunked one has no
+    ///      pre-`D*` portion, and the spanning one claims only once. This is
+    ///      the missing combination — spanning entry AND a multi-call tail.
+    function test_LegacySliceIsPaidOnceAcrossRetries() public {
+        uint256 chunk = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        uint256 lastArmed = 1 + chunk + 3; // tail deliberately exceeds one chunk
+        _legacyDay(1);
+        for (uint256 d = 2; d <= lastArmed; ) {
+            _armedDay(d, 0.5e18);
+            unchecked { ++d; }
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(2); // D* = 2
+        _loanSideOpen(uint32(lastArmed));
+        _entry(1, uint32(lastArmed + 1));
+
+        uint256 first = _claim();
+        uint256 second = _claim();
+
+        // The legacy day is priced from the real emission schedule, so it is
+        // orders of magnitude larger than an armed day's 0.5e18 ceiling —
+        // a re-paid legacy slice is unmistakable in `second`.
+        assertGt(first, 1 ether, "first claim includes the legacy slice");
+        assertEq(
+            second,
+            3 * 0.5e18,
+            "second claim is armed-tail ONLY - no legacy re-pay"
+        );
+    }
+
+    /// @dev Codex #1404 **P2** — a walk that advances only ZERO-PAY days has
+    ///      still made persisted progress, so the claim must not revert and
+    ///      roll those cursors back. Before the fix the "nothing to claim"
+    ///      guard fired, the cursor advance was reverted, and the claimant
+    ///      retried the same dust day forever — never reaching payable days
+    ///      behind it.
+    function test_ZeroPayWalkCommitsItsProgressInsteadOfReverting() public {
+        _armedDay(1, 0); // legitimate `C == 0` dust day: pays nothing
+        _armedDay(2, 0.4e18); // payable, but only reachable past day 1
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+
+        // Must NOT revert: the dust day's advance is real, persisted progress.
+        uint256 paid = _claim();
+
+        // Whether day 2 lands in this same call or the next, the claimant must
+        // end up able to collect it — the failure mode is being stuck forever.
+        if (paid == 0) {
+            uint256 next = _claim();
+            assertEq(next, 0.4e18, "the dust day did not block day 2");
+        } else {
+            assertEq(paid, 0.4e18, "dust day advanced; day 2 paid in-call");
+        }
+    }
 }
