@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "Ces offres ne peuvent plus se croiser — le carnet a bougé avant l'envoi du matching. Rien n'a été envoyé.",
         "matchingDisabled": "Le matching d'offres vient d'être désactivé par la gouvernance du protocole, ce matching ne peut donc pas être envoyé maintenant. Rien n'a été envoyé.",
         "amount": "{{amount}} {{symbol}} serait apparié.",
-        "matchable": "Appariable à {{rate}}"
+        "matchable": "Appariable à {{rate}}",
+        "pairTitle": "{{rate}} bps · offres #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "Signé",
@@ -1166,6 +1167,7 @@
         "accept": "Remplir l'ordre",
         "accepting": "Remplissage…",
         "accepted": "Ordre signé rempli — le prêt est live.",
+        "close": "Fermer",
         "payCollateral": "Vous verrouillez {{amount}} {{symbol}} en garantie et recevez le principal du prêt.",
         "payPrincipal": "Vous financez le principal du prêt de {{amount}} {{symbol}}.",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "Examinez et acceptez d'abord les informations de risque et les conditions — pour un ordre gasless, votre signature enregistre ce consentement.",
         "gaslessPosted": "Ordre signé publié dans le carnet — aucun gas dépensé. Il se remplit lorsqu'un taker l'accepte.",
         "gaslessUnavailable": "Impossible de joindre le carnet d'ordres pour le moment — l'ordre n'a PAS été publié. Réessayez dans un instant.",
+        "legLoanAsset": "actif du prêt",
+        "legCollateral": "garantie",
         "blockNetwork": "Passez à un réseau pris en charge pour publier.",
         "blockNoMarket": "Choisissez d'abord un marché dans l'en-tête.",
         "blockAmount": "Entrez le montant ci-dessus.",
@@ -1293,6 +1297,9 @@
         "amend": "Modifier",
         "amendTitle": "Modifier en place — même offre, même position, une transaction.",
         "amendLoadFailed": "Impossible de lire les valeurs live de cette offre, et la modification doit commencer depuis ces valeurs. Réessayez.",
+        "readingValues": "Lecture des valeurs en direct de l’offre…",
+        "rateUnit": "bps stockés on-chain",
+        "close": "Fermer",
         "amendMinAmount": "Montant min",
         "amendMaxAmount": "Montant max",
         "amendAmountAon": "Montant (tout-ou-rien)",
@@ -1331,6 +1338,9 @@
         "notPriced": "Pas de liquidation auto",
         "manage": "Gérer",
         "allPositions": "Toutes les positions →",
+        "daysLeft": "{{days}} j restants",
+        "daysOverdue": "{{days}} j de retard",
+        "partialRepayOk": " · remboursement partiel possible",
         "loading": "Chargement de vos positions…"
       },
       "bookLoading": "Chargement du carnet d’ordres…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "Charger le marché",
       "marketsLoading": "Chargement des marchés…",
       "oneSidedBook": "carnet à un seul côté",
+      "lastFillTitle": "{{bps}} bps · prêt #{{loanId}}",
+      "tapeLoading": "Chargement des exécutions récentes…",
+      "tapeRowTitle": "{{bps}} bps · prêt #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps milieu coté",
+      "ladderMid": "milieu {{rate}}",
+      "ladderSpread": " · spread {{spread}}",
+      "loanStatus": {
+        "active": "actif",
+        "repaid": "remboursé",
+        "defaulted": "en défaut",
+        "liquidated": "liquidé",
+        "settled": "réglé",
+        "fallback_pending": "en cours de règlement",
+        "internal_matched": "apparié"
+      },
       "healthLtvTitle": "Facteur de santé {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps (coté, non exécuté)",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} offres{{ownMark}} — toucher pour préremplir ce taux",
@@ -1441,7 +1466,8 @@
       "publicClientUnavailable": "Client public indisponible",
       "walletClientUnavailable": "Client wallet indisponible",
       "walletConnectFirst": "Connectez d’abord un wallet sur un réseau pris en charge.",
-      "walletNotConnected": "Wallet non connecté"
+      "walletNotConnected": "Wallet non connecté",
+      "requiredAssetFallback": "l’actif requis"
     },
     "fees": {
       "lateFee": "Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%.",

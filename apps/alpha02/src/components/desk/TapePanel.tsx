@@ -34,8 +34,8 @@ export function TapePanel({
       <h2 className="card-title">{copy.desk.tapeTitle}</h2>
       {loading ? (
         <p className="muted cluster" style={{ alignItems: 'center', gap: 6 }}>
-          <LoaderCircle size={14} className="spin" aria-hidden /> Loading recent
-          fills…
+          <LoaderCircle size={14} className="spin" aria-hidden />{' '}
+          {copy.desk.tapeLoading}
         </p>
       ) : fills === null || fills === undefined ? (
         <UnavailableState body={copy.desk.tapeUnavailable} />
@@ -47,7 +47,11 @@ export function TapePanel({
             <div
               key={f.loanId}
               className="desk-tape-row"
-              title={`${f.interestRateBps} bps · loan #${f.loanId} · ${f.status}`}
+              title={copy.desk.tapeRowTitle(
+                f.interestRateBps,
+                f.loanId,
+                copy.desk.loanStatus[f.status],
+              )}
             >
               <span>{formatBpsAsPercent(f.interestRateBps)}</span>
               <span>

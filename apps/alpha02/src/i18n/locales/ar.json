@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "لم يعد بإمكان هذه العروض التقاطع — تحرّك الدفتر قبل إرسال المطابقة. لم يُرسَل شيء.",
         "matchingDisabled": "أوقفت حوكمة البروتوكول مطابقة العروض للتو، لذا لا يمكن إرسال هذه المطابقة الآن. لم يُرسَل شيء.",
         "amount": "سيتم match لـ {{amount}} {{symbol}}.",
-        "matchable": "قابل للمطابقة عند {{rate}}"
+        "matchable": "قابل للمطابقة عند {{rate}}",
+        "pairTitle": "{{rate}} bps · عروض #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "موقّع",
@@ -1166,6 +1167,7 @@
         "accept": "تنفيذ الأمر",
         "accepting": "جارٍ التنفيذ…",
         "accepted": "تم تنفيذ الأمر الموقّع — القرض نشط.",
+        "close": "إغلاق",
         "payCollateral": "تقفل {{amount}} {{symbol}} كـ collateral وتتلقى loan principal.",
         "payPrincipal": "تمول loan principal بقيمة {{amount}} {{symbol}}.",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "راجع واقبل إفصاحات المخاطر والشروط أولًا — بالنسبة للأمر بدون غاز، توقيعك هو ما يسجّل تلك الموافقة.",
         "gaslessPosted": "نُشر الأمر الموقّع على الدفتر — بلا رسوم غاز. يُنفَّذ عندما يقبله متلقٍّ.",
         "gaslessUnavailable": "تعذّر علينا الوصول إلى دفتر الأوامر الآن — لم يُنشر الأمر. يرجى المحاولة مرة أخرى بعد لحظة.",
+        "legLoanAsset": "أصل القرض",
+        "legCollateral": "الضمان",
         "blockNetwork": "بدّل إلى شبكة مدعومة للنشر.",
         "blockNoMarket": "اختر سوقًا من الأعلى أولًا.",
         "blockAmount": "أدخل المبلغ أعلاه.",
@@ -1293,6 +1297,9 @@
         "amend": "تعديل",
         "amendTitle": "عدّل في مكانه — نفس العرض، نفس المركز، معاملة واحدة.",
         "amendLoadFailed": "تعذّر علينا قراءة القيم الحية لهذا العرض، والتعديل يجب أن يبدأ منها. يرجى المحاولة مرة أخرى.",
+        "readingValues": "جارٍ قراءة القيم الحية للعرض…",
+        "rateUnit": "مخزّن كـ bps على السلسلة",
+        "close": "إغلاق",
         "amendMinAmount": "الحد الأدنى للمبلغ",
         "amendMaxAmount": "الحد الأقصى للمبلغ",
         "amendAmountAon": "المبلغ (الكل أو لا شيء)",
@@ -1331,6 +1338,9 @@
         "notPriced": "لا تصفية تلقائية",
         "manage": "إدارة",
         "allPositions": "كل المراكز →",
+        "daysLeft": "{{days}} يوم متبقٍ",
+        "daysOverdue": "{{days}} يوم تأخير",
+        "partialRepayOk": " · السداد الجزئي متاح",
         "loading": "جارٍ تحميل مراكزك…"
       },
       "bookLoading": "جارٍ تحميل دفتر الأوامر…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "تحميل السوق",
       "marketsLoading": "جارٍ تحميل الأسواق…",
       "oneSidedBook": "دفتر من جانب واحد",
+      "lastFillTitle": "{{bps}} bps · قرض #{{loanId}}",
+      "tapeLoading": "جارٍ تحميل عمليات التنفيذ الأخيرة…",
+      "tapeRowTitle": "{{bps}} bps · قرض #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps متوسط السعر المعروض",
+      "ladderMid": "الوسط {{rate}}",
+      "ladderSpread": " · الفارق {{spread}}",
+      "loanStatus": {
+        "active": "نشط",
+        "repaid": "مسدد",
+        "defaulted": "متعثر",
+        "liquidated": "مُصفّى",
+        "settled": "مُسوّى",
+        "fallback_pending": "قيد التسوية",
+        "internal_matched": "مُطابَق"
+      },
       "healthLtvTitle": "Health factor {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps (quoted، غير منفذ)",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} عروض{{ownMark}} — اضغط لتعبئة هذا rate",
@@ -1441,7 +1466,8 @@
       "publicClientUnavailable": "Public client غير متاح",
       "walletClientUnavailable": "Wallet client غير متاح",
       "walletConnectFirst": "صل محفظة على شبكة مدعومة أولا.",
-      "walletNotConnected": "المحفظة غير متصلة"
+      "walletNotConnected": "المحفظة غير متصلة",
+      "requiredAssetFallback": "الأصل المطلوب"
     },
     "fees": {
       "lateFee": "يضيف السداد المتأخر 1% من المبلغ المستحق بعد اليوم الأول، ويزيد 0.5% يوميًا، بحد أقصى 5%.",

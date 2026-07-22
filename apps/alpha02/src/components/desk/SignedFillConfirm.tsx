@@ -401,7 +401,7 @@ export function SignedFillConfirm({
           onClick={onDone}
           disabled={busy}
         >
-          Close
+          {text.close}
         </button>
         {filledHash === null ? (
           <button

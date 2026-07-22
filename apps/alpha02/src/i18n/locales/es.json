@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "Estas ofertas ya no pueden cruzarse — el libro se movió antes de que se enviara el emparejamiento. No se envió nada.",
         "matchingDisabled": "El emparejamiento de ofertas acaba de ser desactivado por la gobernanza del protocolo, así que este emparejamiento no puede enviarse ahora mismo. No se envió nada.",
         "amount": "{{amount}} {{symbol}} se emparejaría.",
-        "matchable": "Emparejable a {{rate}}"
+        "matchable": "Emparejable a {{rate}}",
+        "pairTitle": "{{rate}} bps · ofertas #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "Firmada",
@@ -1166,6 +1167,7 @@
         "accept": "Llenar orden",
         "accepting": "Llenando…",
         "accepted": "Orden firmada llenada — el préstamo está activo.",
+        "close": "Cerrar",
         "payCollateral": "Bloqueas {{amount}} {{symbol}} como garantía y recibes el principal del préstamo.",
         "payPrincipal": "Financias el principal del préstamo de {{amount}} {{symbol}}.",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "Revisa y acepta primero los avisos de riesgo y términos — para una orden sin gas, tu firma es lo que registra ese consentimiento.",
         "gaslessPosted": "Orden firmada publicada en el libro — sin gastar gas. Se llena cuando un tomador la acepta.",
         "gaslessUnavailable": "No pudimos llegar al libro de órdenes ahora mismo — la orden NO se publicó. Inténtalo de nuevo en un momento.",
+        "legLoanAsset": "activo del préstamo",
+        "legCollateral": "garantía",
         "blockNetwork": "Cambia a una red compatible para publicar.",
         "blockNoMarket": "Elige primero un mercado en el encabezado.",
         "blockAmount": "Introduce el monto arriba.",
@@ -1293,6 +1297,9 @@
         "amend": "Modificar",
         "amendTitle": "Modificar en el lugar — misma oferta, misma posición, una transacción.",
         "amendLoadFailed": "No pudimos leer los valores en vivo de esta oferta, y modificar debe empezar desde ellos. Inténtalo de nuevo.",
+        "readingValues": "Leyendo los valores en vivo de la oferta…",
+        "rateUnit": "bps almacenados on-chain",
+        "close": "Cerrar",
         "amendMinAmount": "Monto mínimo",
         "amendMaxAmount": "Monto máximo",
         "amendAmountAon": "Monto (todo o nada)",
@@ -1331,6 +1338,9 @@
         "notPriced": "Sin liquidación automática",
         "manage": "Gestionar",
         "allPositions": "Todas las posiciones →",
+        "daysLeft": "{{days}} d restantes",
+        "daysOverdue": "{{days}} d de retraso",
+        "partialRepayOk": " · reembolso parcial permitido",
         "loading": "Cargando tus posiciones…"
       },
       "bookLoading": "Cargando el libro de órdenes…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "Cargar mercado",
       "marketsLoading": "Cargando mercados…",
       "oneSidedBook": "libro de un solo lado",
+      "lastFillTitle": "{{bps}} bps · préstamo #{{loanId}}",
+      "tapeLoading": "Cargando ejecuciones recientes…",
+      "tapeRowTitle": "{{bps}} bps · préstamo #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps medio cotizado",
+      "ladderMid": "medio {{rate}}",
+      "ladderSpread": " · spread {{spread}}",
+      "loanStatus": {
+        "active": "activo",
+        "repaid": "reembolsado",
+        "defaulted": "en default",
+        "liquidated": "liquidado",
+        "settled": "saldado",
+        "fallback_pending": "saldándose",
+        "internal_matched": "emparejado"
+      },
       "healthLtvTitle": "Factor de salud {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps (cotizado, no ejecutado)",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} ofertas{{ownMark}} — toca para prerellenar esta tasa",
@@ -1441,7 +1466,8 @@
       "publicClientUnavailable": "Cliente público no disponible",
       "walletClientUnavailable": "Cliente de billetera no disponible",
       "walletConnectFirst": "Conecta primero una billetera en una red admitida.",
-      "walletNotConnected": "Billetera no conectada"
+      "walletNotConnected": "Billetera no conectada",
+      "requiredAssetFallback": "el activo requerido"
     },
     "fees": {
       "lateFee": "El pago atrasado añade 1% del monto pendiente después del primer día, crece 0.5% por día y tiene tope de 5%.",

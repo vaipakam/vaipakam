@@ -1148,7 +1148,8 @@
         "noLongerMatchable": "ये offers अब cross नहीं कर सकते — match भेजने से पहले book move हो गया। कुछ भेजा नहीं गया।",
         "matchingDisabled": "Offer matching अभी protocol governance ने switch off किया है, इसलिए यह match अभी send नहीं हो सकता। कुछ भेजा नहीं गया।",
         "amount": "{{amount}} {{symbol}} match होगा।",
-        "matchable": "{{rate}} पर matchable"
+        "matchable": "{{rate}} पर matchable",
+        "pairTitle": "{{rate}} bps · offers #{{lenderId}} × #{{borrowerId}}"
       },
       "signed": {
         "badge": "Signed",
@@ -1166,6 +1167,7 @@
         "accept": "Order fill करें",
         "accepting": "Filling…",
         "accepted": "Signed order filled — loan live है।",
+        "close": "Close",
         "payCollateral": "आप {{amount}} {{symbol}} collateral के रूप में lock करते हैं और loan principal receive करते हैं।",
         "payPrincipal": "आप {{amount}} {{symbol}} loan principal fund करते हैं।",
         "rateLine": "{{rate}} APR · {{days}}"
@@ -1254,6 +1256,8 @@
         "gaslessConsentRequired": "पहले risk disclosures और terms review करके accept करें — gasless order के लिए आपकी signature ही वह consent record करती है।",
         "gaslessPosted": "Signed order book पर posted — gas spent नहीं। Taker accept करेगा तो fill होगा।",
         "gaslessUnavailable": "अभी order book reach नहीं कर सके — order post नहीं हुआ। थोड़ी देर में try करें।",
+        "legLoanAsset": "loan asset",
+        "legCollateral": "collateral",
         "blockNetwork": "Post करने के लिए supported network पर switch करें।",
         "blockNoMarket": "पहले header में market चुनें।",
         "blockAmount": "ऊपर amount enter करें।",
@@ -1293,6 +1297,9 @@
         "amend": "Amend",
         "amendTitle": "In place amend — same offer, same position, one transaction।",
         "amendLoadFailed": "इस offer के live values read नहीं कर सके, और amending उन्हीं से start होनी चाहिए। Please try again.",
+        "readingValues": "offer के live values पढ़े जा रहे हैं…",
+        "rateUnit": "bps में on-chain संग्रहीत",
+        "close": "Close",
         "amendMinAmount": "Min amount",
         "amendMaxAmount": "Max amount",
         "amendAmountAon": "राशि (all-or-nothing)",
@@ -1331,6 +1338,9 @@
         "notPriced": "Auto-liquidation नहीं",
         "manage": "Manage",
         "allPositions": "सभी positions →",
+        "daysLeft": "{{days}}d शेष",
+        "daysOverdue": "{{days}}d अतिदेय",
+        "partialRepayOk": " · partial repay OK",
         "loading": "आपकी positions लोड हो रही हैं…"
       },
       "bookLoading": "order book लोड हो रही है…",
@@ -1338,6 +1348,21 @@
       "loadMarket": "Market लोड करें",
       "marketsLoading": "Markets लोड हो रहे हैं…",
       "oneSidedBook": "एक-sided book",
+      "lastFillTitle": "{{bps}} bps · loan #{{loanId}}",
+      "tapeLoading": "हाल के fills लोड हो रहे हैं…",
+      "tapeRowTitle": "{{bps}} bps · loan #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps quoted mid",
+      "ladderMid": "mid {{rate}}",
+      "ladderSpread": " · spread {{spread}}",
+      "loanStatus": {
+        "active": "active",
+        "repaid": "repaid",
+        "defaulted": "defaulted",
+        "liquidated": "liquidated",
+        "settled": "settled",
+        "fallback_pending": "settling",
+        "internal_matched": "matched"
+      },
       "healthLtvTitle": "Health factor {{ratio}} · LTV {{ltv}}",
       "midQuotedTitle": "{{bps}} bps (quoted, executed नहीं)",
       "rateLadderTitle_few": "{{rate}} bps · {{count}} offers{{ownMark}} — यह rate pre-fill करने के लिए tap करें",
@@ -1441,7 +1466,8 @@
       "publicClientUnavailable": "Public client available नहीं",
       "walletClientUnavailable": "Wallet client available नहीं",
       "walletConnectFirst": "पहले supported network पर wallet connect करें।",
-      "walletNotConnected": "Wallet connected नहीं"
+      "walletNotConnected": "Wallet connected नहीं",
+      "requiredAssetFallback": "आवश्यक asset"
     },
     "fees": {
       "lateFee": "Late repayment day one के बाद outstanding amount का 1% जोड़ता है, 0.5% per day बढ़ता है, 5% cap के साथ।",

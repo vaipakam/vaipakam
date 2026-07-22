@@ -1124,6 +1124,21 @@
       "bookLoading": "Loading the order book…",
       "cumHeadingTitle": "Cumulative depth from the top of the side",
       "oneSidedBook": "one-sided book",
+      "lastFillTitle": "{{bps}} bps · loan #{{loanId}}",
+      "tapeLoading": "Loading recent fills…",
+      "tapeRowTitle": "{{bps}} bps · loan #{{loanId}} · {{status}}",
+      "ladderMidTitle": "{{bps}} bps quoted mid",
+      "ladderMid": "mid {{rate}}",
+      "ladderSpread": " · spread {{spread}}",
+      "loanStatus": {
+        "active": "active",
+        "repaid": "repaid",
+        "defaulted": "defaulted",
+        "liquidated": "liquidated",
+        "settled": "settled",
+        "fallback_pending": "settling",
+        "internal_matched": "matched"
+      },
       "title": "Rate Desk",
       "lede": "The order book for one market — read the rates, post or amend limit-rate offers, and watch your open orders and positions in one place.",
       "marketLabel": "Market",
@@ -1158,6 +1173,7 @@
       "tapeUnavailable": "We couldn’t load recent fills right now.",
       "match": {
         "matchable": "Matchable at {{rate}}",
+        "pairTitle": "{{rate}} bps · offers #{{lenderId}} × #{{borrowerId}}",
         "body": "These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee — you pay the network gas to execute it.",
         "amount": "{{amount}} {{symbol}} would match.",
         "execute": "Execute match",
@@ -1184,7 +1200,8 @@
         "riskBlocked": "This deployment’s risk-access rules block one side of this order right now — the maker or your wallet needs an on-chain access level or standing consent this compact confirm can’t collect. Nothing was sent or approved.",
         "accept": "Fill order",
         "accepting": "Filling…",
-        "accepted": "Signed order filled — the loan is live."
+        "accepted": "Signed order filled — the loan is live.",
+        "close": "Close"
       },
       "chart": {
         "title": "Executed rates",
@@ -1279,6 +1296,8 @@
         "gaslessFundsWarn": "Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.",
         "gaslessRejected": "The book rejected this order ({{reason}}). Nothing was posted.",
         "gaslessUnavailable": "We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.",
+        "legLoanAsset": "loan asset",
+        "legCollateral": "collateral",
         "securityBlocked": "Posting is held: an independent security check flags the {{leg}} ({{reasons}}).",
         "securityUnknown": "Posting is held until the independent security check for the {{leg}} succeeds.",
         "blockNetwork": "Switch to a supported network to post.",
@@ -1313,6 +1332,9 @@
         "amend": "Amend",
         "amendTitle": "Amend in place — same offer, same position, one transaction.",
         "amendLoadFailed": "We couldn’t read this offer’s live values, and amending must start from them. Please try again.",
+        "readingValues": "Reading the offer’s live values…",
+        "rateUnit": "bps stored on-chain",
+        "close": "Close",
         "amendMinAmount": "Min amount",
         "amendMaxAmount": "Max amount",
         "amendAmountAon": "Amount (all-or-nothing)",
@@ -1347,7 +1369,10 @@
         "health": "Health",
         "notPriced": "No auto-liquidation",
         "manage": "Manage",
-        "allPositions": "All positions →"
+        "allPositions": "All positions →",
+        "daysLeft": "{{days}}d left",
+        "daysOverdue": "{{days}}d overdue",
+        "partialRepayOk": " · partial repay OK"
       }
     },
     "vpfi": {
@@ -1423,6 +1448,7 @@
     "errors": {
       "needMore": "You need more {{asset}} to continue.",
       "needMoreBy": "You need about {{shortBy}} more {{asset}} to continue.",
+      "requiredAssetFallback": "the required asset",
       "partialOverPrincipal": "That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.",
       "notAToken": "That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.",
       "walletConnectFirst": "Connect a wallet on a supported network first.",

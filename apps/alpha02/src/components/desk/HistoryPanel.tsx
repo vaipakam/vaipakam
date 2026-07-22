@@ -42,7 +42,7 @@ function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
         <span className="row-title">
           {/* Position-id link convention — same target the Positions
               panel and alert deep links use. */}
-          <Link to={`/positions/${loan.loanId}`}>Loan #{loan.loanId}</Link>{' '}
+          <Link to={`/positions/${loan.loanId}`}>{copy.activity.loanRef(loan.loanId)}</Link>{' '}
           · {pairLabel} · {formatDurationDays(loan.durationDays)} ·{' '}
           <span title={`${loan.interestRateBps} bps`}>
             {formatBpsAsPercent(loan.interestRateBps)}

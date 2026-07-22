@@ -272,7 +272,7 @@ export function DeskHeader({
           {lastFill ? (
             <span
               className="desk-stat-value"
-              title={`${lastFill.interestRateBps} bps · loan #${lastFill.loanId}`}
+              title={copy.desk.lastFillTitle(lastFill.interestRateBps, lastFill.loanId)}
             >
               {formatBpsAsPercent(lastFill.interestRateBps)} ·{' '}
               {formatTimeAgo(lastFill.startAt)}

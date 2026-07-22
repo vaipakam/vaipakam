@@ -68,8 +68,8 @@ export async function assertErc20BalanceLive(opts: {
     }
     throw new Error(
       shortBy
-        ? copy.errors.needMoreBy(shortBy, opts.symbol ?? 'the required asset')
-        : copy.errors.needMore(opts.symbol ?? 'the required asset'),
+        ? copy.errors.needMoreBy(shortBy, opts.symbol ?? copy.errors.requiredAssetFallback)
+        : copy.errors.needMore(opts.symbol ?? copy.errors.requiredAssetFallback),
     );
   }
 }

@@ -74,9 +74,9 @@ function PositionRow({ loan }: { loan: PositionLoan }) {
         </span>
         <br />
         <span className="row-sub">
-          Loan #{loan.loanId} ·{' '}
-          {remaining >= 0 ? `${remaining}d left` : `${-remaining}d overdue`}
-          {loan.allowsPartialRepay ? ' · partial repay OK' : ''}
+          {copy.activity.loanRef(loan.loanId)} ·{' '}
+          {remaining >= 0 ? text.daysLeft(remaining) : text.daysOverdue(-remaining)}
+          {loan.allowsPartialRepay ? text.partialRepayOk : ''}
         </span>
       </span>
       <span className="cluster" style={{ gap: 8, alignItems: 'center' }}>

@@ -315,16 +315,16 @@ export function RateLadder({
           ))}
 
           <div className="desk-mid-row" title={
-            ladder.midBps != null ? `${ladder.midBps} bps quoted mid` : undefined
+            ladder.midBps != null ? copy.desk.ladderMidTitle(ladder.midBps) : undefined
           }>
             {ladder.midBps != null
-              ? `mid ${formatBpsAsPercent(ladder.midBps)}${
+              ? `${copy.desk.ladderMid(formatBpsAsPercent(ladder.midBps))}${
                   ladder.spreadBps != null
-                    ? ` · spread ${
+                    ? copy.desk.ladderSpread(
                         ladder.spreadBps < 0
                           ? `${formatBpsAsPercent(Math.abs(ladder.spreadBps))} (${copy.desk.crossed})`
-                          : formatBpsAsPercent(ladder.spreadBps)
-                      }`
+                          : formatBpsAsPercent(ladder.spreadBps),
+                      )
                     : ''
                 }`
               : copy.desk.oneSidedBook}

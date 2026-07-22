@@ -1788,6 +1788,30 @@ const copySource = {
     bookLoading: 'Loading the order book…',
     cumHeadingTitle: 'Cumulative depth from the top of the side',
     oneSidedBook: 'one-sided book',
+    // --- Rate-Desk tooltip / row scaffolds (i18n burn-down). Each
+    //     composes a raw bps figure with a loan id or status; the words
+    //     around the numbers are what need translating.
+    lastFillTitle: tmpl('{{bps}} bps · loan #{{loanId}}', ['bps', 'loanId']),
+    tapeLoading: 'Loading recent fills…',
+    tapeRowTitle: tmpl('{{bps}} bps · loan #{{loanId}} · {{status}}', ['bps', 'loanId', 'status']),
+    ladderMidTitle: tmpl('{{bps}} bps quoted mid', ['bps']),
+    // The desk mid-row: "mid {rate}" plus an optional " · spread {spread}"
+    // suffix — two pieces so the connector translates without the render
+    // code rebuilding the whole string.
+    ladderMid: tmpl('mid {{rate}}', ['rate']),
+    ladderSpread: tmpl(' · spread {{spread}}', ['spread']),
+    // Raw indexer loan-status → localized label for the tape tooltip —
+    // the one desk surface that shows the unmapped lifecycle status
+    // (Positions / History collapse it through loanStateLabel instead).
+    loanStatus: {
+      active: 'active',
+      repaid: 'repaid',
+      defaulted: 'defaulted',
+      liquidated: 'liquidated',
+      settled: 'settled',
+      fallback_pending: 'settling',
+      internal_matched: 'matched',
+    },
     title: 'Rate Desk',
     lede: 'The order book for one market — read the rates, post or amend limit-rate offers, and watch your open orders and positions in one place.',
     marketLabel: 'Market',
@@ -1833,6 +1857,10 @@ const copySource = {
     // fail) and the partial-fill master flag is on.
     match: {
       matchable: tmpl(`Matchable at {{rate}}`, ['rate']),
+      pairTitle: tmpl(
+        '{{rate}} bps · offers #{{lenderId}} × #{{borrowerId}}',
+        ['rate', 'lenderId', 'borrowerId'],
+      ),
       body: 'These top-of-book offers can cross. Anyone can execute this match and earn the matcher fee — you pay the network gas to execute it.',
       amount: tmpl(
         `{{amount}} {{symbol}} would match.`,
@@ -1893,6 +1921,7 @@ const copySource = {
       accept: 'Fill order',
       accepting: 'Filling…',
       accepted: 'Signed order filled — the loan is live.',
+      close: 'Close',
     },
     chart: {
       title: 'Executed rates',
@@ -2025,6 +2054,11 @@ const copySource = {
       ),
       gaslessUnavailable:
         'We couldn’t reach the order book right now — the order was NOT posted. Please try again in a moment.',
+      // Leg labels interpolated into securityBlocked / securityUnknown
+      // (#1360). Display-only — the ticket never matches on these, so
+      // localizing them carries no gate-recheck hazard.
+      legLoanAsset: 'loan asset',
+      legCollateral: 'collateral',
       securityBlocked: tmpl(
         `Posting is held: an independent security check flags the {{leg}} ({{reasons}}).`,
         ['leg', 'reasons'],
@@ -2098,6 +2132,12 @@ const copySource = {
       amendTitle: 'Amend in place — same offer, same position, one transaction.',
       amendLoadFailed:
         'We couldn’t read this offer’s live values, and amending must start from them. Please try again.',
+      // Shown while the amend form reads the offer's current values.
+      readingValues: 'Reading the offer’s live values…',
+      // Unit hint on the rate / rate-max amend inputs.
+      rateUnit: 'bps stored on-chain',
+      // The amend form's dismiss button.
+      close: 'Close',
       amendMinAmount: 'Min amount',
       amendMaxAmount: 'Max amount',
       amendAmountAon: 'Amount (all-or-nothing)',
@@ -2144,6 +2184,11 @@ const copySource = {
       notPriced: 'No auto-liquidation',
       manage: 'Manage',
       allPositions: 'All positions →',
+      // Row sub-line: remaining-days and partial-repay marker. "d" is the
+      // day-unit abbreviation and stays put; the surrounding words move.
+      daysLeft: tmpl('{{days}}d left', ['days']),
+      daysOverdue: tmpl('{{days}}d overdue', ['days']),
+      partialRepayOk: ' · partial repay OK',
     },
   },
 
@@ -2264,6 +2309,9 @@ const copySource = {
       `You need about {{shortBy}} more {{asset}} to continue.`,
       ['shortBy', 'asset'],
     ),
+    // Fallback name for the {{asset}} slot in needMore(By) when the token's
+    // on-chain symbol can't be read (preflights.ts).
+    requiredAssetFallback: 'the required asset',
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:

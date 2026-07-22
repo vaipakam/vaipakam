@@ -219,7 +219,7 @@ export function MatchBand({
     <div
       className="desk-match-band"
       role="status"
-      title={`${p.matchRateBps} bps · offers #${pair.lenderOfferId} × #${pair.borrowerOfferId}`}
+      title={text.pairTitle(p.matchRateBps, pair.lenderOfferId, pair.borrowerOfferId)}
     >
       <span className="desk-match-band-main">
         <Zap size={14} aria-hidden />
