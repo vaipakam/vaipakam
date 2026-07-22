@@ -39,6 +39,22 @@ step's blast radius contained — had the claim's change been applied to the swe
 without giving it the matching machinery, a forfeited reward could have been
 left stranded with nothing able to collect it.
 
+**One claim's day allowance now covers both roles together.** A participant who
+both lends and borrows works through a single per-claim allowance of days rather
+than a separate full allowance for each role. The allowance exists to keep any
+one claim from growing too large to run; splitting it by role let a claim be
+twice the intended size. Anyone whose catch-up now spans an extra claim simply
+claims again — the leftover days are recorded as unclaimed, not lost.
+
+**A part-collected reward is no longer reclaimable by expiry.** Rewards left
+uncollected past the optional expiry horizon are reclaimed in one step, using a
+calculation that has no memory of what was already paid out. Now that a long
+reward can be collected across several claims, that would have counted the
+already-collected days a second time. Such rewards are therefore left to their
+owner to finish collecting, rather than being reclaimed. Rewards nobody has
+started collecting are unaffected and expire exactly as before. The expiry
+horizon is off by default, so nothing in use today is affected.
+
 **Where the claim lives has moved.** The claim entry points now sit in their own
 component. This is purely a size constraint — contracts have a hard byte limit
 and the day-by-day logic did not fit alongside everything else. The claim and

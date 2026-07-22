@@ -1067,7 +1067,8 @@ function _dayPoolHalves(
             : 0;
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({fresh: freshLeft, recycled: s.recycleBucket}),
-            advanced: false
+            advanced: false,
+            daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
         });
 
         for (uint8 sideIdx; sideIdx < 2; ) {
@@ -1132,8 +1133,7 @@ function _dayPoolHalves(
         EntrySplit memory toUser,
         EntrySplit memory toTreasury
     ) private {
-        uint256 daysUsed;
-        while (daysUsed < LibVaipakam.MAX_INTERACTION_CLAIM_DAYS) {
+        while (ctx.daysLeft != 0) {
             uint256 d = _lowestPendingDay(s, work);
             if (d == type(uint256).max) break;
             uint256[] memory set = _entriesAtDay(s, work, d);
@@ -1168,7 +1168,7 @@ function _dayPoolHalves(
             toTreasury.recycled += charge.cappedOff.recycled;
 
             ctx.advanced = true;
-            unchecked { ++daysUsed; }
+            unchecked { --ctx.daysLeft; }
         }
     }
 
@@ -1512,6 +1512,28 @@ function _dayPoolHalves(
         }
 
         EntrySplit memory split_ = _entryWindowSplit(s, e);
+        // #1351 slice 2c (Codex #1404 r4) — expiry prices the WHOLE window in
+        // one O(1) product, which has no memory of what a claim already paid.
+        // Once 2c let a claim settle a ShareOfPool entry a CHUNK at a time,
+        // that became a double-count: the walk stamps `rewardEntryClaimNextDay`
+        // / `rewardEntryLegacySettled` and charges `userSideDayPaidVpfi` for
+        // the days it paid, and expiring the entry afterwards would recycle
+        // those same days again at full window value.
+        //
+        // Gated on WALK-TOUCHED entries specifically, not on armed entries at
+        // large: an armed entry no claim has walked is still priced correctly
+        // by the window product, and deferring it would regress the shipped
+        // all-or-nothing near-exhaustion behaviour (#1317). Re-pricing expiry
+        // against the per-day `C[d]` ceiling for untouched armed entries is a
+        // separate question — it changes what the recycle bucket is credited,
+        // not just when — and belongs with the day-walk twin in slice 2d.
+        // {_entryExecutableNow} mirrors this gate — keep the two in step.
+        if (
+            s.rewardEntryClaimNextDay[id] != 0 ||
+            s.rewardEntryLegacySettled[id]
+        ) {
+            return (expired, 0);
+        }
         uint256 freshShare = split_.total - split_.recycled;
         // Claim-EXECUTABLE gate: the accumulator only advances while the
         // CLAIMANT could actually claim right now. The claim is ATOMIC-
@@ -1711,7 +1733,7 @@ function _dayPoolHalves(
             // covered by the conservative-estimate caveat above (Codex #1317).
             if (elapsed > hSec) elapsed = hSec;
         } else if (
-            !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, e)
+            !s.rewardEntryObsBlocked[id] && _entryExecutableNow(s, id, e)
         ) {
             // Fold in the pending interval a sweep-now would credit — but
             // ONLY while the entry is claim-executable at this block (owner
@@ -1755,10 +1777,20 @@ function _dayPoolHalves(
     ///      as the estimate caveat documented on {rewardEntryExpiry}.
     function _entryExecutableNow(
         LibVaipakam.Storage storage s,
+        uint256 id,
         LibVaipakam.RewardEntry storage e
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
+        // Mirror {sweepExpiredEntry}'s walk-touched deferral: a sweep-now of a
+        // partly-claimed entry returns early and credits nothing, so the view
+        // must not claim the heartbeat interval would accrue.
+        if (
+            s.rewardEntryClaimNextDay[id] != 0 ||
+            s.rewardEntryLegacySettled[id]
+        ) {
+            return false;
+        }
         EntrySplit memory split_ = _entryWindowSplit(s, e);
         uint256 freshShare = split_.total - split_.recycled;
         uint256 poolReserved =
@@ -3054,9 +3086,18 @@ function _dayPoolHalves(
     /// @param pool     Remaining budget, debited as days are paid.
     /// @param advanced True once ANY day advanced — including a zero-pay day,
     ///        which is still persisted progress the facet must not roll back.
+    /// @param daysLeft Days this CALL may still process, shared across both
+    ///        side walks. `MAX_INTERACTION_CLAIM_DAYS` bounds the per-call gas
+    ///        envelope, so it has to be a per-call budget: a counter local to
+    ///        {_walkSideDays} would let a claimant with both lender- and
+    ///        borrower-side entries process the full allowance TWICE in one
+    ///        transaction, doubling the envelope the constant exists to cap
+    ///        (Codex #1404 r3). Threaded by reference for the same reason the
+    ///        pool budget is — a shared allowance cannot be a local.
     struct WalkCtx {
         PoolBudget pool;
         bool advanced;
+        uint256 daysLeft;
     }
 
     /// @notice One entry's share of a priced day.

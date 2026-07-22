@@ -397,6 +397,47 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev #1351 slice 2c (Codex #1404 r4) — expiry prices the WHOLE window in
+    ///      one product, which has no memory of what a claim already paid. Once
+    ///      2c let a ShareOfPool entry be claimed a CHUNK at a time, expiring a
+    ///      part-claimed entry would recycle those same days a second time, at
+    ///      full window value.
+    ///
+    ///      {testExpiryIsAllOrNothingAtNearExhaustion} above is this test's
+    ///      CONTROL: identical setup, entry never walked, and it credits the
+    ///      full `floor5 / 2 + recycled5 / 2` once headroom is restored. The
+    ///      only difference here is the claim cursor, so a credit of 0 is
+    ///      attributable to the walk-touched gate and nothing else.
+    function testExpiryDefersAnEntryAClaimHasAlreadyWalked() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+
+        uint256 id = _seedEntry(alice, 47, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // Full pool headroom: nothing but the gate can hold the sweep back.
+        _mut().setInteractionPoolPaidOut(0);
+        // A chunked claim has already walked into this entry's days.
+        _mut().setRewardEntryClaimNextDayRaw(id, 6);
+
+        (, uint256 outFBefore, uint256 outRBefore, ) =
+            _agg().getGovernorCommitState();
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "a part-claimed entry is left to its owner, never reaped whole"
+        );
+        (, uint256 outFAfter, uint256 outRAfter, ) =
+            _agg().getGovernorCommitState();
+        assertEq(outFBefore, outFAfter, "armed fresh commitment untouched");
+        assertEq(outRBefore, outRAfter, "recycled commitment untouched");
+    }
+
     // ─── 4c. RL-3 Codex r2 — zero-credit expiry defers, never burns ──────────
 
     function testExpirySweepDefersAtFullFreshExhaustion() public {

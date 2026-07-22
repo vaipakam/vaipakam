@@ -330,4 +330,65 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
             "cumulative paid-out never exceeds the 69M cap"
         );
     }
+
+    // ── The per-call day allowance is shared by BOTH sides ───────────────────
+
+    /// @dev `MAX_INTERACTION_CLAIM_DAYS` bounds the GAS a single claim can
+    ///      burn, so it has to be a per-CALL allowance. When the counter lived
+    ///      inside the per-side walk, a claimant holding both lender- and
+    ///      borrower-side entries got the full allowance TWICE in one
+    ///      transaction — exactly double the envelope the constant exists to
+    ///      cap (Codex #1404 r3).
+    ///
+    ///      The two sides are given DISJOINT day ranges, 20 days each, so 40
+    ///      days of work exist against an allowance of 30. A shared counter
+    ///      pays 30; a per-side counter pays all 40.
+    function test_ClaimDayAllowanceIsSharedAcrossBothSides() public {
+        uint256 perDayCap = 0.01e18;
+        // Lender side owns days 1..20, borrower side days 21..40.
+        for (uint256 d = 1; d <= 20; ++d) _armedLenderDay(d, perDayCap);
+        for (uint256 d = 21; d <= 40; ++d) _armedBorrowerDay(d, perDayCap);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(40);
+
+        _entry(1, 21); // lender, days 1..20
+        uint256 bid = _mut().pushRewardEntry(
+            alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 21
+        );
+        _mut().closeRewardEntryRaw(bid, 41); // borrower, days 21..40
+
+        uint256 paid = _claim();
+
+        // THE discriminating assertion: 30 days of ceiling, not 40. With a
+        // per-side counter the lender walk takes its 20 and the borrower walk
+        // starts a FRESH allowance, taking all 20 of its own.
+        assertEq(
+            paid,
+            30 * perDayCap,
+            "one claim must not exceed the shared per-call day allowance"
+        );
+        // And the overflow really is deferred, not dropped: the last borrower
+        // days stay unpaid and retryable.
+        assertEq(
+            _mut().userSideDayPaidRaw(alice, 1, 40),
+            0,
+            "days beyond the allowance stay unclaimed for the next call"
+        );
+    }
+
+    /// @dev Lender-side armed day. Same shape as {_armedDay}; named explicitly
+    ///      now that the suite also seeds borrower-side days.
+    function _armedLenderDay(uint256 d, uint256 cap) internal {
+        _armedDay(d, cap);
+    }
+
+    /// @dev Borrower-side twin of {_armedDay}: the global denominator sits on
+    ///      the BORROWER leg so the borrower side has a pool to share.
+    function _armedBorrowerDay(uint256 d, uint256 cap) internal {
+        _mut().setDayPoolStampRaw(d, uint128(2e18), 0); // freshHalf = 1e18
+        _mut().setKnownGlobalDailyInterest(d, 0, 1e18, true);
+        _mut().setDayCapThreshold18(d, type(uint256).max); // #1008 off
+        _mut().setDayCapModeRaw(d, 1); // ShareOfPool
+        _mut().setDayUserSideCapRaw(d, cap);
+    }
 }

@@ -282,6 +282,21 @@ contract RewardClaimFacet is
         // promised steady state. Truncation therefore scales only the
         // fresh shares. (The legacy window reward is fresh by
         // construction — pre-cutover math.)
+        // #1351 slice 2c (Codex #1404 r4) — why truncating AFTER the legacy
+        // legs have committed their consumption is sound, and why reverting
+        // instead would be strictly worse:
+        //
+        // The scaled-off remainder is FRESH by construction (the window leg is
+        // pre-cutover math; the entry legacy slice is the pre-`D*` portion, and
+        // pre-`D*` days contribute to neither armed cumulative). `remaining` is
+        // `CAP - interactionPoolPaidOut - rewardBudgetRemittedGlobal`, and BOTH
+        // subtrahends are append-only (`+=`) — so `remaining` is monotone
+        // NON-INCREASING and the fresh pool never refills. A remainder trimmed
+        // here is therefore unfundable forever, whether or not the consumption
+        // markers were written: there is no future state that could pay it.
+        // Reverting instead would leave the claimant with nothing at all rather
+        // than a pro-rata share of what is left, and would permanently brick
+        // the claim once the pool is spent. Truncate-and-consume is correct.
         uint256 freshPending = pending - paidRecycled;
         uint256 freshTreasury = treasuryDelta - forfeitRecycled;
         uint256 freshSpend = freshPending + freshTreasury;
