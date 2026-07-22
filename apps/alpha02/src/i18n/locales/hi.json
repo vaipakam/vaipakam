@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "Public client available नहीं",
       "walletClientUnavailable": "Wallet client available नहीं",
       "walletConnectFirst": "पहले supported network पर wallet connect करें।",
-      "walletNotConnected": "Wallet connected नहीं"
+      "walletNotConnected": "Wallet connected नहीं",
+      "requiredAssetFallback": "आवश्यक asset"
     },
     "fees": {
       "lateFee": "Late repayment day one के बाद outstanding amount का 1% जोड़ता है, 0.5% per day बढ़ता है, 5% cap के साथ।",

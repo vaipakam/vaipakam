@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "Public client غير متاح",
       "walletClientUnavailable": "Wallet client غير متاح",
       "walletConnectFirst": "صل محفظة على شبكة مدعومة أولا.",
-      "walletNotConnected": "المحفظة غير متصلة"
+      "walletNotConnected": "المحفظة غير متصلة",
+      "requiredAssetFallback": "الأصل المطلوب"
     },
     "fees": {
       "lateFee": "يضيف السداد المتأخر 1% من المبلغ المستحق بعد اليوم الأول، ويزيد 0.5% يوميًا، بحد أقصى 5%.",

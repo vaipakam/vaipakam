@@ -2264,6 +2264,9 @@ const copySource = {
       `You need about {{shortBy}} more {{asset}} to continue.`,
       ['shortBy', 'asset'],
     ),
+    // Fallback name for the {{asset}} slot in needMore(By) when the token's
+    // on-chain symbol can't be read (preflights.ts).
+    requiredAssetFallback: 'the required asset',
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:

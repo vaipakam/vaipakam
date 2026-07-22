@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "Public client 不可用",
       "walletClientUnavailable": "Wallet client 不可用",
       "walletConnectFirst": "请先在支持的网络上连接钱包。",
-      "walletNotConnected": "钱包未连接"
+      "walletNotConnected": "钱包未连接",
+      "requiredAssetFallback": "所需资产"
     },
     "fees": {
       "lateFee": "逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。",

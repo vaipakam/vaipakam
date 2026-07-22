@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "Public Client nicht verfügbar",
       "walletClientUnavailable": "Wallet Client nicht verfügbar",
       "walletConnectFirst": "Verbinden Sie zuerst eine Wallet auf einem unterstützten Netzwerk.",
-      "walletNotConnected": "Wallet nicht verbunden"
+      "walletNotConnected": "Wallet nicht verbunden",
+      "requiredAssetFallback": "das erforderliche Asset"
     },
     "fees": {
       "lateFee": "Bei verspäteter Rückzahlung kommen nach dem ersten Tag 1% des ausstehenden Betrags hinzu; der Aufschlag wächst um 0.5% pro Tag und ist bei 5% gedeckelt.",

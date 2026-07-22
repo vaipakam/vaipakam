@@ -228,12 +228,6 @@ const BASELINE = {
   'src/components/desk/TapePanel.tsx': { 'Loading recent fills…': 1, 'bps · loan # ·': 1 },
   // --- Developer diagnostic rendered inside the crash UI (not copy).
   'src/components/ErrorBoundary.tsx': { 'Component stack:': 1 },
-  // --- .ts helper fallback-arg strings (copy-call-arg scan, #1398). The
-  //     'the required asset' symbol fallback in preflights.ts is
-  //     interpolated into copy.errors.needMore(By) when the token symbol
-  //     is unknown — the same {{leg}}/fallback-label class as the desk
-  //     entries above. Extract with the #1360 fallback-label work.
-  'src/contracts/preflights.ts': { 'the required asset': 2 },
 };
 
 /** Collapse interpolations + whitespace to inspect only the STATIC text

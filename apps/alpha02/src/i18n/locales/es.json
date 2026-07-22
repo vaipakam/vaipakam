@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "Cliente público no disponible",
       "walletClientUnavailable": "Cliente de billetera no disponible",
       "walletConnectFirst": "Conecta primero una billetera en una red admitida.",
-      "walletNotConnected": "Billetera no conectada"
+      "walletNotConnected": "Billetera no conectada",
+      "requiredAssetFallback": "el activo requerido"
     },
     "fees": {
       "lateFee": "El pago atrasado añade 1% del monto pendiente después del primer día, crece 0.5% por día y tiene tope de 5%.",

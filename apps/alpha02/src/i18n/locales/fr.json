@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "Client public indisponible",
       "walletClientUnavailable": "Client wallet indisponible",
       "walletConnectFirst": "Connectez d’abord un wallet sur un réseau pris en charge.",
-      "walletNotConnected": "Wallet non connecté"
+      "walletNotConnected": "Wallet non connecté",
+      "requiredAssetFallback": "l’actif requis"
     },
     "fees": {
       "lateFee": "Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%.",

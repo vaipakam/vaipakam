@@ -1423,6 +1423,7 @@
     "errors": {
       "needMore": "You need more {{asset}} to continue.",
       "needMoreBy": "You need about {{shortBy}} more {{asset}} to continue.",
+      "requiredAssetFallback": "the required asset",
       "partialOverPrincipal": "That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.",
       "notAToken": "That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.",
       "walletConnectFirst": "Connect a wallet on a supported network first.",

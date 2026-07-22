@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "public client を利用できません",
       "walletClientUnavailable": "wallet client を利用できません",
       "walletConnectFirst": "先に対応ネットワーク上のウォレットを接続してください。",
-      "walletNotConnected": "ウォレットが接続されていません"
+      "walletNotConnected": "ウォレットが接続されていません",
+      "requiredAssetFallback": "必要な資産"
     },
     "fees": {
       "lateFee": "遅延返済では、1 日目以降に未払い額の 1% が追加され、1 日あたり 0.5% 増加し、上限は 5% です。",

@@ -1441,7 +1441,8 @@
       "publicClientUnavailable": "public client를 사용할 수 없습니다",
       "walletClientUnavailable": "wallet client를 사용할 수 없습니다",
       "walletConnectFirst": "먼저 supported network에서 wallet을 연결하세요.",
-      "walletNotConnected": "wallet이 연결되지 않았습니다"
+      "walletNotConnected": "wallet이 연결되지 않았습니다",
+      "requiredAssetFallback": "필요한 자산"
     },
     "fees": {
       "lateFee": "연체 상환은 첫날 이후 미상환 금액의 1%가 추가되며, 하루에 0.5%씩 증가하고 최대 5%까지 부과됩니다.",
