@@ -20,8 +20,12 @@ import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol"
 ///           mode-less day as Legacy would price it with a DISABLED cap);
 ///         - refuse a transfer set that mixes users/sides or includes a day the
 ///           entry doesn't cover (the budget is keyed off the FIRST entry);
-///         - pool shortage is ALL-OR-NOTHING and must NOT advance (advancing on
-///           a partial pay would silently forfeit the remainder);
+///         - the pool boundary is PER LEG (#1351 slice 2d-0): a RECYCLED
+///           shortfall defers (the bucket refills, the day stays retryable),
+///           while a FRESH shortfall is TERMINAL — the 69M headroom is
+///           monotone non-increasing, so the day pays what headroom allows,
+///           advances, and retires the trimmed remainder (deferring it would
+///           be a permanent livelock);
 ///         - a 0-slice day that is legitimately exhausted MUST advance, so the
 ///           walk makes progress instead of spinning;
 ///         - dust never pushes a slice past its `cEff` (that would breach the
@@ -240,19 +244,138 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         );
     }
 
-    // ─── Pool shortage: all-or-nothing, no advance ───────────────────────────
+    // ─── Per-leg pool boundary: fresh = TERMINAL, recycled = DEFER (2d-0) ───
 
-    /// @dev A pool that cannot cover the day's budget pays NOTHING and does NOT
-    ///      advance, so the day stays retryable. Advancing on a partial pay
-    ///      would silently forfeit the remainder (v1 keeps no partial-day
-    ///      accounting).
-    function test_PoolShortagePaysNothingAndDoesNotAdvance() public {
+    /// @dev DISCRIMINATION (fresh leg): the 69M fresh headroom is monotone
+    ///      non-increasing (`interactionPoolPaidOut` and
+    ///      `rewardBudgetRemittedGlobal` are append-only), so a fresh
+    ///      shortfall can never be funded later — deferring it parks the
+    ///      cursor forever. The day must pay exactly the remaining headroom,
+    ///      ADVANCE, and retire the trimmed remainder via
+    ///      `cappedOff.armedFresh`. Against the pre-2d-0 all-or-nothing rule
+    ///      this test fails on `advanced` (the old code deferred) — that
+    ///      failure was observed and is the recorded discrimination.
+    function test_FreshShortfallIsTerminalTruncateAndConsume() public {
         uint256 id = _entry(alice, LOAN_A, 1 ether);
+        // Reference price at an ample pool (view — persists nothing).
+        (LibInteractionRewards.DayCharge memory full, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+        uint256 priced = full.toUser.total;
+        assertGt(priced, 1 wei, "non-vacuous: prices more than the pool holds");
+        assertEq(full.toUser.recycled, 0, "setup stamps an all-fresh day");
+
+        (
+            LibInteractionRewards.DayCharge memory ch,
+            LibInteractionRewards.DaySlice[] memory sl
+        ) = _mut().processUserSideDayRaw(alice, DAY, _ids(id), 1 wei, 0);
+        assertTrue(ch.advanced, "fresh exhaustion is TERMINAL - must advance");
+        assertEq(ch.toUser.total, 1 wei, "pays exactly the remaining headroom");
+        assertEq(ch.toUser.armedFresh, 1 wei, "fresh drawn == pool.fresh");
+        assertEq(sl[0].amount, 1 wei, "slice reflects the truncated transfer");
+        assertEq(ch.freshShortfall, priced - 1 wei, "shortfall = priced - drawn");
+        assertEq(
+            ch.cappedOff.armedFresh,
+            priced - 1 wei,
+            "shortfall retires its commitment via cappedOff"
+        );
+    }
+
+    /// @dev End-of-programme: a FULLY exhausted fresh pool still advances with
+    ///      a 0 slice — the walk terminates instead of spinning on a budget
+    ///      that can never grow.
+    function test_ZeroFreshPoolAdvancesTerminallyWithZeroSlice() public {
+        uint256 id = _entry(alice, LOAN_A, 1 ether);
+        (LibInteractionRewards.DayCharge memory full, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+        assertGt(full.toUser.armedFresh, 0, "non-vacuous: day is fresh-funded");
+
         (LibInteractionRewards.DayCharge memory ch, ) =
-            _mut().processUserSideDayRaw(alice, DAY, _ids(id), 1 wei, 0);
-        assertEq(ch.toUser.total, 0, "no user payout on pool shortage");
-        assertEq(ch.toTreasury.total, 0, "no treasury payout on pool shortage");
-        assertFalse(ch.advanced, "must NOT advance - day stays retryable");
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), 0, 0);
+        assertTrue(ch.advanced, "exhausted fresh pool must still advance");
+        assertEq(ch.toUser.total, 0, "nothing left to pay");
+        assertEq(ch.freshShortfall, full.toUser.armedFresh, "everything trims");
+        assertEq(ch.cappedOff.armedFresh, full.toUser.armedFresh);
+    }
+
+    /// @dev DISCRIMINATION PAIR (recycled leg): the recycle bucket is a real
+    ///      held balance that REFILLS (`LibVpfiRecycle.credit`), so a recycled
+    ///      shortfall DEFERS — all-or-nothing, no advance, day retryable.
+    ///      This side of the pair also passes against the pre-2d-0 code; its
+    ///      role is to pin the defer semantics so the terminal rule can never
+    ///      silently spread to the recycled leg.
+    function test_RecycledShortfallDefersAndStaysRetryable() public {
+        _mut().setDayPoolStampRaw(DAY, 0, uint128(1000 ether)); // all-recycled
+        uint256 id = _entry(alice, LOAN_A, 1 ether);
+        (LibInteractionRewards.DayCharge memory full, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+        assertGt(full.toUser.recycled, 0, "non-vacuous: day is recycled-funded");
+
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, 0);
+        assertFalse(ch.advanced, "recycled shortfall DEFERS - bucket refills");
+        assertEq(ch.toUser.total, 0, "no partial pay on a deferred day");
+        assertEq(ch.toTreasury.total, 0);
+        assertEq(ch.freshShortfall, 0, "nothing terminally trimmed on a defer");
+    }
+
+    /// @dev A mixed-funding day short on fresh only: the recycled component
+    ///      pays WHOLE while fresh trims to headroom — the per-leg rule is per
+    ///      leg, not per day.
+    function test_MixedDayFreshTrimsWhileRecycledPaysWhole() public {
+        _mut().setDayPoolStampRaw(DAY, uint128(500 ether), uint128(500 ether));
+        uint256 id = _entry(alice, LOAN_A, 1 ether);
+        (LibInteractionRewards.DayCharge memory full, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), _MAX, _MAX);
+        assertGt(full.toUser.recycled, 0, "non-vacuous: recycled component");
+        assertGt(full.toUser.armedFresh, 1, "non-vacuous: fresh component");
+
+        uint256 freshBudget = full.toUser.armedFresh / 2;
+        (LibInteractionRewards.DayCharge memory ch, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(id), freshBudget, _MAX);
+        assertTrue(ch.advanced, "fresh-short mixed day is terminal");
+        assertEq(
+            ch.toUser.recycled,
+            full.toUser.recycled,
+            "recycled untouched by the fresh trim"
+        );
+        assertEq(ch.toUser.armedFresh, freshBudget, "fresh drawn == headroom");
+        assertEq(
+            ch.freshShortfall,
+            full.toUser.armedFresh - freshBudget,
+            "shortfall is exactly the untrimmable fresh"
+        );
+        assertEq(ch.toUser.total, full.toUser.recycled + freshBudget);
+    }
+
+    /// @dev CLAIMANT PRIORITY: at terminal exhaustion the USER leg draws fresh
+    ///      first; the forfeit leg's absorption (an internal recycle-bucket
+    ///      credit) trims to the remainder. A budget sized to the user leg
+    ///      exactly must pay the claimant in full and trim the forfeit to 0.
+    function test_TerminalTrimPaysClaimantBeforeForfeitAbsorption() public {
+        uint256 a = _entry(alice, LOAN_A, 1 ether); // payable
+        uint256 b = _entry(alice, LOAN_B, 1 ether); // forfeited
+        _mut().setRewardEntryForfeitedRaw(b);
+        (LibInteractionRewards.DayCharge memory full, ) =
+            _mut().processUserSideDayRaw(alice, DAY, _ids(a, b), _MAX, _MAX);
+        assertGt(full.toUser.armedFresh, 0, "non-vacuous: user leg fresh");
+        assertGt(full.toTreasury.armedFresh, 0, "non-vacuous: forfeit fresh");
+
+        (LibInteractionRewards.DayCharge memory ch, ) = _mut()
+            .processUserSideDayRaw(
+                alice, DAY, _ids(a, b), full.toUser.armedFresh, _MAX
+            );
+        assertTrue(ch.advanced, "terminal trim advances");
+        assertEq(
+            ch.toUser.armedFresh,
+            full.toUser.armedFresh,
+            "user leg is paid in full FIRST"
+        );
+        assertEq(
+            ch.toTreasury.armedFresh,
+            0,
+            "forfeit absorption trims to the remainder"
+        );
+        assertEq(ch.freshShortfall, full.toTreasury.armedFresh);
     }
 
     // ─── 0-slice advance policy ──────────────────────────────────────────────
@@ -426,15 +549,20 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         );
     }
 
-    /// @dev Codex #1399 r6 P2 — the pool check must use the EXACT leg totals,
-    ///      not a split of `budget`. Each leg floors its recycled share
-    ///      independently and derives fresh by subtraction, so a set holding
-    ///      both payable and forfeited entries can draw a wei or two more fresh
-    ///      than a single split of `budget` predicts.
+    /// @dev Codex #1399 r6 P2 — the pool accounting must use the EXACT leg
+    ///      totals, not a split of `budget`. Each leg floors its recycled
+    ///      share independently and derives fresh by subtraction, so a set
+    ///      holding both payable and forfeited entries can draw a wei or two
+    ///      more fresh than a single split of `budget` predicts.
     ///
-    ///      Characterised by measurement: fund fresh at exactly what the legs
-    ///      will draw (advances), then one wei less (must not). A check built
-    ///      on `budget` would pass at the lower figure.
+    ///      Characterised by measurement, per leg (#1351 slice 2d-0 semantics):
+    ///      - FRESH funded at exactly what the legs draw trims NOTHING; one
+    ///        wei less still advances (terminal rule) but draws EXACTLY the
+    ///        pool and trims EXACTLY the missing wei — only exact leg totals
+    ///        make the trim exactly 1.
+    ///      - RECYCLED keeps the literal all-or-nothing: exactly enough
+    ///        advances, one wei less must NOT. A check built on `budget`
+    ///        would pass at the lower figure.
     function test_PoolCheckUsesExactLegTotalsNotABudgetSplit() public {
         _mut().setDayPoolStampRaw(DAY, uint128(600 ether), uint128(400 ether));
         _stampLoanCap(LOAN_A, 100_000 ether);
@@ -448,18 +576,42 @@ contract ShareOfPoolDayPrimitiveTest is SetupTest {
         assertGt(probe.toTreasury.total, 0, "both legs are live (non-vacuous)");
 
         uint256 freshNeed = probe.toUser.armedFresh + probe.toTreasury.armedFresh;
+        uint256 recycledNeed = probe.toUser.recycled;
+        assertGt(recycledNeed, 0, "recycled leg is live (non-vacuous)");
 
         (LibInteractionRewards.DayCharge memory exact, ) = _mut()
             .processUserSideDayRaw(
                 alice, DAY, _ids(clean, gone), freshNeed, _MAX
             );
         assertTrue(exact.advanced, "exactly enough fresh advances");
+        assertEq(exact.freshShortfall, 0, "exact fresh trims nothing");
 
         (LibInteractionRewards.DayCharge memory short, ) = _mut()
             .processUserSideDayRaw(
                 alice, DAY, _ids(clean, gone), freshNeed - 1, _MAX
             );
-        assertFalse(short.advanced, "one wei short must NOT advance");
+        assertTrue(short.advanced, "one wei short of fresh is TERMINAL (2d-0)");
+        assertEq(
+            short.toUser.armedFresh + short.toTreasury.armedFresh,
+            freshNeed - 1,
+            "draws EXACTLY the pool, never a wei more"
+        );
+        assertEq(short.freshShortfall, 1, "trim is exactly the missing wei");
+
+        (LibInteractionRewards.DayCharge memory rExact, ) = _mut()
+            .processUserSideDayRaw(
+                alice, DAY, _ids(clean, gone), _MAX, recycledNeed
+            );
+        assertTrue(rExact.advanced, "exactly enough recycled advances");
+
+        (LibInteractionRewards.DayCharge memory rShort, ) = _mut()
+            .processUserSideDayRaw(
+                alice, DAY, _ids(clean, gone), _MAX, recycledNeed - 1
+            );
+        assertFalse(
+            rShort.advanced,
+            "one wei short of recycled must NOT advance"
+        );
     }
 
     /// @dev Codex #1399 r6 P3 — dust ties break on the lowest ENTRY ID, so the
