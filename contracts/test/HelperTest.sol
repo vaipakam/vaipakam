@@ -86,8 +86,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](129);
+        selectors = new bytes4[](130);
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
+        selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
