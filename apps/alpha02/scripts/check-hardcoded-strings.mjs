@@ -407,7 +407,12 @@ function propKey(name, sf) {
 export function analyzeSource(rel, src, opts = {}) {
   const callArgsOnly = opts.callArgsOnly === true;
   const findings = [];
-  const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // Parse .ts as TS and .tsx as TSX: under TSX rules the TS-only
+  // angle-bracket forms (`<T>(x) => x`, `<string>x` type assertions) are
+  // mis-read as JSX, which corrupts the tree and drops later `copy.*`
+  // calls in the same file (Codex #1402). Kind follows the file extension.
+  const scriptKind = rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, scriptKind);
 
   // SCOPE-AWARE aliasing of a `copy.*` branch — the established desk
   // pattern `const text = copy.desk.ticket` (and `const seo = copy.seo`).

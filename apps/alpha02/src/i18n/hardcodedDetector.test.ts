@@ -408,4 +408,20 @@ describe('AST hardcoded-string detector (#1365)', () => {
     const src2 = "export function f(){ return fmt('Some words here'); }";
     expect((analyzeSource('fixture.ts', src2, { callArgsOnly: true }) as Array<{ s: string }>)).toEqual([]);
   });
+
+  it('parses .ts with TS-only angle-bracket syntax (not TSX)', () => {
+    // Under TSX rules `<T>(x)=>x` / `<string>x` are mis-read as JSX, which
+    // corrupts the tree and drops later copy.* calls. Parsing .ts as TS
+    // keeps them visible. `fixture.ts` (no `.tsx`) selects the TS kind.
+    const generic =
+      "const id = <T>(x: T): T => x;\nexport function f(){ return copy.errors.needMore('bad fallback'); }";
+    expect(
+      (analyzeSource('fixture.ts', generic, { callArgsOnly: true }) as Array<{ s: string }>).map((f) => f.s),
+    ).toContain('bad fallback');
+    const assertion =
+      "const y = <string>someVal;\nexport function g(){ return copy.errors.needMore('missed fallback'); }";
+    expect(
+      (analyzeSource('fixture.ts', assertion, { callArgsOnly: true }) as Array<{ s: string }>).map((f) => f.s),
+    ).toContain('missed fallback');
+  });
 });
