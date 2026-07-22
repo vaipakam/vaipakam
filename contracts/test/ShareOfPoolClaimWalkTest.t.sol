@@ -566,4 +566,31 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
             "no allowance burnt previewing a retired-empty entry"
         );
     }
+
+    /// @dev Codex #1410 r2 — the DryRun carries the REAL recycle bucket: a
+    ///      recycled-funded day the live walk would defer (bucket short) must
+    ///      not be previewed as payable. The fresh side deliberately stays
+    ///      unbounded (payment-time truncation, the documented upper-bound
+    ///      axis). Against the unbounded-recycled code this fails HIGH,
+    ///      previewing the full recycled value the claim defers.
+    function test_PreviewHonorsTheRealRecycledBucket() public {
+        // One armed day funded from the RECYCLED half only.
+        _mut().setDayPoolStampRaw(1, 0, uint128(2e18)); // recycledHalf 1e18
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 0, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1); // ShareOfPool
+        _mut().setDayUserSideCapRaw(1, type(uint256).max);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        _mut().userClaimFundingNeedRaw(alice);
+
+        // Bucket ample: the day previews (non-vacuous control).
+        _mut().setRecycleBucketRaw(10e18);
+        assertGt(_preview(), 0, "bucket-ample control previews the day");
+
+        // Bucket short: the live walk defers the day; so must the preview.
+        _mut().setRecycleBucketRaw(0);
+        assertEq(_preview(), 0, "bucket-short day is deferred, not previewed");
+    }
 }

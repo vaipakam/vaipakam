@@ -1546,6 +1546,17 @@ function _dayPoolHalves(
     ) private view returns (uint256 userTotal) {
         if (s.governorCommitArmedFromDay == 0) return 0;
         uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        // Codex #1410 r2 — the RECYCLED budget is the REAL bucket, shared
+        // across both sides and depleted per day exactly as the live walk's
+        // ctx.pool is: a recycled shortfall DEFERS a day and stops the side
+        // (walk behaviour the preview must mirror). FRESH stays unbounded on
+        // purpose — the 69M truncation is payment-time behaviour (the facet
+        // scaler / the terminal trim), the one documented axis on which the
+        // preview stays an upper bound.
+        PoolBudget memory pool = PoolBudget({
+            fresh: type(uint256).max,
+            recycled: s.recycleBucket
+        });
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
                 ? LibVaipakam.RewardSide.Lender
@@ -1554,7 +1565,7 @@ function _dayPoolHalves(
                 _shareOfPoolWorklist(s, user, side, true);
             if (work.length != 0) {
                 (uint256 paid, uint256 spent) =
-                    _dryRunSideDays(s, user, work, daysLeft);
+                    _dryRunSideDays(s, user, work, daysLeft, pool);
                 userTotal += paid;
                 daysLeft -= spent;
             }
@@ -1570,7 +1581,8 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         address user,
         uint256[] memory work,
-        uint256 daysLeft
+        uint256 daysLeft,
+        PoolBudget memory pool
     ) private view returns (uint256 userTotal, uint256 daysSpent) {
         uint256[] memory cur = new uint256[](work.length);
         for (uint256 i; i < work.length; ) {
@@ -1590,9 +1602,10 @@ function _dayPoolHalves(
             dry.setCursors = setCur;
 
             (DayCharge memory charge, DaySlice[] memory slices) =
-                processUserSideDay(user, d, set, _unboundedPool(), dry);
+                processUserSideDay(user, d, set, pool, dry);
             if (!charge.advanced) break;
 
+            pool.recycled -= charge.toUser.recycled;
             userTotal += charge.toUser.total;
             _dryFoldDay(s, dry.loanSide, set, slices);
             // Advance the simulated cursors of the set members.
@@ -1675,14 +1688,6 @@ function _dayPoolHalves(
             );
             unchecked { ++i; }
         }
-    }
-
-    /// @dev The DryRun's deliberately unbounded pool — see
-    ///      {previewForUserEntries} for why the preview stays uncapped by
-    ///      the 69M / bucket budgets.
-    function _unboundedPool() private pure returns (PoolBudget memory p) {
-        p.fresh = type(uint256).max;
-        p.recycled = type(uint256).max;
     }
 
     /**

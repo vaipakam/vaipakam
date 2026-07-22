@@ -34,9 +34,11 @@ direction — against the previous per-reward preview: two rewards sharing a
 day, a backlog stopped mid-allowance, and a reward spanning the regime
 changeover.
 
-**Deliberately unchanged.** The preview still does not subtract the global
-reward budget's remaining headroom — it remains an upper bound that the
-claim itself truncates at payment time, which the funds-availability
-safety check relies on directionally.
+**Deliberately unchanged, on one axis only.** The preview does honour the
+recycled pot's real balance — a day the claim would postpone for a short
+recycled pot is not shown as payable — because that postponement is the
+payment walk's own behaviour. What the preview still does not subtract is
+the global reward budget's remaining lifetime headroom: on that one axis it
+remains an upper bound that the claim itself truncates at payment time.
 
 Part of #1351. Umbrella: #1349.
