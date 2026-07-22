@@ -86,7 +86,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](127);
+        selectors = new bytes4[](128);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -310,6 +310,7 @@ contract HelperTest {
         selectors[124] = TestMutatorFacet.setRewardEntryClaimNextDayRaw.selector;
         selectors[125] = TestMutatorFacet.seedCumBorrowerDayRaw.selector;
         selectors[126] = TestMutatorFacet.setRewardEntryEndDayRaw.selector;
+        selectors[127] = TestMutatorFacet.userSideDayPaidRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,

@@ -789,6 +789,17 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().userSideDayPaidVpfi[user][side][d] = amount;
     }
 
+
+    /// @dev #1351 slice 2c — read the D1 paid map, so a test can assert what
+    ///      the walk actually CHARGED, not merely what was transferred.
+    function userSideDayPaidRaw(address user, uint8 side, uint256 d)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().userSideDayPaidVpfi[user][side][d];
+    }
+
     /// @dev #1351 slice 2b — seed the lender RPN row + cursor directly so a
     ///      unit test can price a day without driving the lazy claim-path
     ///      accrual. Sets `cumLenderRpn18[d-1] = prevCum` and

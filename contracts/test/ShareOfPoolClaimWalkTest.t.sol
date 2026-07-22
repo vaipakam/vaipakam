@@ -6,6 +6,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -264,5 +265,69 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         } else {
             assertEq(paid, 0.4e18, "dust day advanced; day 2 paid in-call");
         }
+    }
+
+    /// @dev Codex #1404 r2 root fix — PROVES the threaded budget rather than
+    ///      arguing it. This is the case the earlier tests could not reach:
+    ///      the pool driven to near-exhaustion with BOTH legs live at once —
+    ///      a legacy daily-WINDOW claim and a ShareOfPool day walk.
+    ///
+    ///      Before the fix each leg priced itself against the full
+    ///      `poolRemaining()`, so together they could commit more than the pool
+    ///      held: the facet's scale-down then landed AFTER the walk had already
+    ///      persisted cursors and D1 charges, permanently dropping part of one
+    ///      leg while it stayed marked claimed.
+    ///
+    ///      The invariant that must hold no matter how the two legs divide it:
+    ///      the claim can never transfer more than the pool had left, and the
+    ///      cumulative paid-out counter can never exceed the 69M cap.
+    function test_WindowAndWalkShareOneBudgetUnderExhaustion() public {
+        _legacyDay(1); // pre-cutover -> the WINDOW leg
+        _armedDay(2, 0.4e18); // armed -> the WALK leg
+        _mut().setGovernorCommitArmedFromDayRaw(2);
+        _loanSideOpen(2);
+
+        // Give alice a day-1 WINDOW-leg entitlement, and an ARMED-ONLY entry.
+        //
+        // The entry must NOT span the cutover: a spanning entry's own
+        // entry-path legacy slice would exhaust the budget on its own, in both
+        // the fixed and unfixed code, and the test would prove nothing about
+        // the window leg. Isolating it is what makes this discriminate.
+        _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
+        _entry(2, 3); // armed day only
+
+        // Squeeze the pool so the two legs TOGETHER cannot both be paid in full.
+        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
+        // Chosen so the walk's day WOULD fit on its own (0.4e18 <= 0.5e18) but
+        // cannot once the window leg's much larger claim is accounted for. That
+        // is what makes this test DISCRIMINATE: at a smaller headroom the
+        // walk's own all-or-nothing rule would refuse anyway and the test would
+        // pass with or without the root fix.
+        uint256 headroom = 0.5e18;
+        _mut().setInteractionPoolPaidOut(cap - headroom);
+
+        uint256 balBefore = vpfi.balanceOf(alice);
+        uint256 paid = _claim();
+        uint256 delivered = vpfi.balanceOf(alice) - balBefore;
+
+        assertEq(paid, delivered, "reported payout equals tokens actually moved");
+        assertLe(delivered, headroom, "never transfers more than the pool held");
+        // THE discriminating assertion. Without the threaded budget the walk
+        // sees the full `poolRemaining()`, funds day 2 (0.4e18 fits in 0.5e18),
+        // ADVANCES it and charges the D1 paid map — and only afterwards does
+        // the facet scale the aggregate down, dropping value already recorded
+        // as claimed. With one shared budget the window leg has already spoken
+        // for the headroom, so the walk is never funded and charges nothing.
+        assertEq(
+            _mut().userSideDayPaidRaw(alice, 0, 2),
+            0,
+            "walk must not charge against headroom the window leg already spent"
+        );
+        assertLe(
+            InteractionRewardsLensFacet(address(diamond))
+                .getInteractionPoolPaidOut(),
+            cap,
+            "cumulative paid-out never exceeds the 69M cap"
+        );
     }
 }
