@@ -1352,7 +1352,7 @@
       "tapeLoading": "جارٍ تحميل عمليات التنفيذ الأخيرة…",
       "tapeRowTitle": "{{bps}} bps · قرض #{{loanId}} · {{status}}",
       "ladderMidTitle": "{{bps}} bps متوسط السعر المعروض",
-      "ladderMid": "الوسط {{rate}}",
+      "ladderMid": "متوسط {{rate}}",
       "ladderSpread": " · الفارق {{spread}}",
       "loanStatus": {
         "active": "نشط",
