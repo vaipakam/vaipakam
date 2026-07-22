@@ -776,7 +776,8 @@ contract TestMutatorFacet {
             LibInteractionRewards.PoolBudget({
                 fresh: poolFresh,
                 recycled: poolRecycled
-            })
+            }),
+            LibInteractionRewards._noDryRun()
         );
     }
 

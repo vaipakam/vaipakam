@@ -391,4 +391,110 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _mut().setDayCapModeRaw(d, 1); // ShareOfPool
         _mut().setDayUserSideCapRaw(d, cap);
     }
+
+    // ── #1351 slice 2e — preview parity with the walk ────────────────────────
+
+    function _preview() internal view returns (uint256 amount) {
+        (amount, , ) = InteractionRewardsLensFacet(address(diamond))
+            .previewInteractionRewards(alice);
+    }
+
+    /// @dev {_loanSideOpen} for an arbitrary loan id.
+    function _loanSideOpenFor(uint64 loanId, uint32 openDays) internal {
+        _mut().setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: openDays,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+    }
+
+    /// @dev DISCRIMINATION (criterion 3a): two entries sharing a `(side, day)`
+    ///      preview as ONE claim would pay — the D1 ceiling is per
+    ///      `(user, side, day)` ACROSS entries, and the pre-2e per-entry
+    ///      preview (which never saw the shared ceiling) would report ~2× the
+    ///      ceiling here. The load-bearing assertion is exact equality with
+    ///      the REAL claim's payout.
+    function test_PreviewMatchesClaimOnASharedDay() public {
+        _armedDay(1, 1e18); // ceiling 1e18; each entry alone contributes 1e18
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        uint64 LOAN2 = LOAN + 9;
+        _loanSideOpenFor(LOAN2, 1);
+        _entry(1, 2);
+        uint256 b = _mut().pushRewardEntry(
+            alice, LOAN2, LibVaipakam.RewardSide.Lender, 1e18, 1
+        );
+        _mut().closeRewardEntryRaw(b, 2);
+
+        // Materialize the cumulative RPN rows the way production does before
+        // any preview that matters: the funding-need path advances the side
+        // cursors ({userClaimFundingNeed}); a cold view cannot, and the
+        // preview then under-reports 0 by the same convention as the core.
+        _mut().userClaimFundingNeedRaw(alice);
+        uint256 pre = _preview();
+        uint256 paid = _claim();
+        assertGt(paid, 0, "the shared day genuinely pays");
+        assertLt(paid, 2e18, "non-vacuous: the shared ceiling actually binds");
+        assertEq(pre, paid, "preview == claim on a shared (side, day)");
+    }
+
+    /// @dev DISCRIMINATION (criterion 3b): the preview is chunk-bounded like
+    ///      the claim — a long armed window previews exactly what THIS claim
+    ///      call pays, and the next chunk appears only after the walk
+    ///      advances. The pre-2e preview reported the whole window at once.
+    function test_PreviewIsChunkBoundedLikeTheClaim() public {
+        uint256 chunk = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        uint256 total = chunk + 10;
+        for (uint256 d = 1; d <= total; d++) {
+            _armedDay(d, type(uint256).max);
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(uint32(total));
+        _entry(1, uint32(total + 1));
+
+        // Materialize the cumulative RPN rows the way production does before
+        // any preview that matters: the funding-need path advances the side
+        // cursors ({userClaimFundingNeed}); a cold view cannot, and the
+        // preview then under-reports 0 by the same convention as the core.
+        _mut().userClaimFundingNeedRaw(alice);
+        uint256 pre = _preview();
+        uint256 paid = _claim();
+        assertEq(paid, chunk * 1e18, "one claim pays exactly the chunk");
+        assertEq(pre, paid, "preview == this claim's chunk, not the window");
+
+        uint256 pre2 = _preview();
+        uint256 paid2 = _claim();
+        assertEq(paid2, 10 * 1e18, "second claim pays the remainder");
+        assertEq(pre2, paid2, "preview follows the walk's persisted cursor");
+    }
+
+    /// @dev DISCRIMINATION (criterion 3c): a window spanning `D*` previews as
+    ///      the claim decomposes it — the legacy slice by the O(1) product
+    ///      plus the armed days under their ceiling — with neither half
+    ///      dropped nor counted twice.
+    function test_PreviewMatchesClaimAcrossTheCutover() public {
+        _legacyDay(1);
+        _armedDay(2, 0.25e18);
+        _mut().setGovernorCommitArmedFromDayRaw(2); // D* = 2
+        _loanSideOpen(2);
+        _entry(1, 3);
+
+        // Materialize the cumulative RPN rows the way production does before
+        // any preview that matters: the funding-need path advances the side
+        // cursors ({userClaimFundingNeed}); a cold view cannot, and the
+        // preview then under-reports 0 by the same convention as the core.
+        _mut().userClaimFundingNeedRaw(alice);
+        uint256 pre = _preview();
+        uint256 paid = _claim();
+        assertGt(paid, 0.25e18, "both regimes genuinely pay");
+        assertEq(pre, paid, "preview == claim across the cutover");
+    }
 }
