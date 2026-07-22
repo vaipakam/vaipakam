@@ -293,54 +293,85 @@ should retain**, which is the one cross-cutting decision this locale needs.
 
 ---
 
-## Consolidated action list
+## Resolution — applied 2026-07-22 (this PR)
 
-**Should alter (semantic risk / wrong term) — 🔴**
+Before applying any change, every flagged term was checked against how the
+**same concept is already rendered elsewhere in that bundle** — because an
+"idiomatic" fix that disagrees with the bundle's established word is a
+regression, not a fix. That check **overturned several of the initial
+recommendations** above (kept where the flagged term was actually the
+bundle's dominant/established choice). What shipped:
 
-1. **ta** `match.pairTitle` + `orders.readingValues`: `சலுகை` → proper
-   "offer/order" term (currently reads as "discount/concession").
-2. **ta** `orders.rateUnit`: `சங்கிலியில்` → on-chain translit
-   (`ஆன்-செயின்`) — currently "in the physical chain".
-3. **fr** `ladderMidTitle` + `ladderMid`: `milieu` → `cours moyen` (French
-   market term for mid price).
-4. **es** `loanStatus.defaulted`: `en default` (Anglicism) → `en mora`.
+**Applied — idiom/consistency fixes (18 keys, 5 locales):**
 
-**Improve (acceptable but not idiomatic) — ⚠️**
+- **fr** — desk **mid** term `milieu` → **`cours moyen`** (the French market
+  term). Fixed *all five* occurrences together for consistency: the market
+  header `quotedMid`, the chart `quotedMid` + `quotedMidHint`, and the new
+  `ladderMidTitle` / `ladderMid`. (`milieu` was used nowhere else, so this is
+  a complete, self-contained terminology fix.)
+- **de** — desk **mid** term `Mitte` → **`Mittelkurs`** (standard German
+  exchange term) across `quotedMid` (×2) + `ladderMidTitle` / `ladderMid`;
+  and the day chips' opaque `T` → **`Tg.`** (de spells `Tage`/`Tag`
+  everywhere else — `T` matched nothing).
+- **es** — desk **mid** term `medio` (ambiguous: half/average) → **`punto
+  medio`** across `quotedMid` (×2) + `quotedMidHint` + `ladderMidTitle` /
+  `ladderMid`. (Left `saldo promedio` / `promedio` untouched — that's
+  "average", a different word.)
+- **ar** — `ladderMid` `الوسط` → **`متوسط`**, matching this bundle's own
+  `quotedMid` = `متوسط السعر المعروض`.
+- **ta** — `orders.rateUnit` `சங்கிலியில்` ("in the physical chain") →
+  **`ஆன்-செயினில்`** (the on-chain transliteration this bundle uses 26×
+  elsewhere — the old value was the *only* physical-chain use in the file);
+  and `orders.readingValues` `சலுகை` → **`வாய்ப்பு`** to match its immediate
+  sibling `orders.amendLoadFailed`, which already uses `வாய்ப்பு` for the
+  same "offer" in the same block (a local inconsistency).
 
-5. **de** `ladderMidTitle`/`ladderMid`: `Mitte` → `Mittelkurs`.
-6. **de** `positions.daysLeft`/`daysOverdue`: day abbrev `T` → `Tg.`/`d`.
-7. **ja** `positions.daysOverdue`: `超過` → `延滞`.
-8. **ar** `ladderMid`: `الوسط` → `متوسط` (consistency with the title).
-9. **es** `ladderMidTitle`/`ladderMid`: `medio` → `punto medio` (optional).
-10. **ta** native review of mid/spread coinages + defaulted/liquidated status.
+**Deliberately NOT changed (the established-vocab check reversed the initial call):**
 
-**Posture decisions to confirm (not defects) — 🔵**
+- **es `loanStatus.defaulted` = `en default`** — kept. It matches the
+  app-wide `loanState.defaulted` = `En default`. "en mora" is more correct
+  Spanish, but changing only the desk would clash with the badge; a switch to
+  `en mora` is an **app-wide loanState decision**, tracked as a follow-up, not
+  a desk-local edit.
+- **ja `positions.daysOverdue` = `超過`** — kept. ja's *dominant* overdue term
+  is `超過` (`loanState.pastDue` = `期限超過`, grace-fee note = `期日超過`);
+  `延滞` is the 1× outlier. `超過` is the consistent choice.
+- **ko `loanStatus.*` (English)** — kept. Matches ko `loanState` (English).
+  Intentional code-switch, now confirmed.
+- **hi desk English retention** (`loanStatus.*`, `ladderMid/Title/Spread`,
+  `Close`, leg labels, `partial repay OK`) — kept. hi's English-jargon
+  retention is **consistent app-wide**: `diagnostics.close` = "Close",
+  `desk.quotedMid` = "Quoted mid", `loanState` = English. Localizing only the
+  desk would make it *more* Hindi than the rest of the hi app. hi's Hindi-ised
+  status words that *do* exist (`अतिदेय` overdue, `शेष` left, `संग्रहीत`
+  stored) are already correct. Decision: leave hi consistent; a Hindi-isation
+  pass, if wanted, is a **whole-bundle** decision, not a desk-only one.
+- **zh** — no change; already idiomatic and internally consistent.
 
-11. **ko** — English `loanStatus.*` in the tape tooltip (consistent with ko
-    `loanState`; confirm desired for the desk).
-12. **hi** — the locale retains the most English of the set; specifically
-    decide on `Close`, `partial repay OK`, and the fully-English
-    `ladderMidTitle`. Localize the basic-vocab ones (`Close`,
-    `partial repay OK`) unless there's a reason to keep them English.
+**Deferred to follow-up issues (out of scope for a desk-local wording fix):**
 
-**Cross-cutting**
+1. **ta "offer" term is split app-wide** — `சலுகை` (concession/discount) is
+   used **125×** for "offer", `வாய்ப்பு` (opportunity) **45×** (incl.
+   `chrome.nav.offers`). The desk `match.pairTitle` keeps `சலுகை` because its
+   sibling `match.counterpartyBlocked` uses it too — flipping 2 of 125 keys
+   would worsen local consistency. **Unify ta's offer term bundle-wide** in a
+   dedicated pass.
+2. **es `en default` → `en mora`** app-wide (loanState + desk), if the team
+   wants the more correct register.
+3. **Arabic (and others) day-chip plurals** — the `{{days}}` chips use a
+   `days` param that deliberately sidesteps CLDR plurals; a future plural pass
+   would fix Arabic number–noun agreement (`يوم` vs `أيام`).
 
-13. **zh / ta / etc.** — verify the word chosen for "offer/order"
-    (`报价`/`சலுகை`/`Angebote`/`ofertas`/…) is consistent with how `offer`
-    is rendered elsewhere in each bundle, so the desk doesn't introduce a
-    second term for the same concept.
-
-**Arabic plural (future):** the `{{days}}` day chips use a `days` param that
-deliberately sidesteps CLDR plurals; Arabic (and others) would benefit from a
-future plural pass if these chips get more prominence.
+Placeholder parity re-verified across all 9 locales (0 mismatches); the i18n
+vitest suite is green. No source/`copy.ts`/`en.json` change — locale JSON
+values only, so key parity and the hardcoded detector are unaffected.
 
 ---
 
 ## Next step
 
-These are wording refinements, not regressions — the extraction itself is
-correct and live. Fold the 🔴 items (and any 🔵 posture decisions the user
-makes) into a follow-up i18n wording PR, per-locale, re-running
-`pnpm i18n:template` parity + the detector. The operator browser walk
-(blocked in this sandbox) should eyeball each locale's desk against the
-table above when convenient.
+The desk-local wording is now idiomatic and internally consistent per locale.
+The three deferred items are tracked as follow-ups (ta offer-term unification
+is the highest-value one). The operator browser walk (blocked in this sandbox —
+see the verification note above) should eyeball each locale's desk against the
+per-language tables when convenient.
