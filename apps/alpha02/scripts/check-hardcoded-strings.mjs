@@ -228,6 +228,12 @@ const BASELINE = {
   'src/components/desk/TapePanel.tsx': { 'Loading recent fills…': 1, 'bps · loan # ·': 1 },
   // --- Developer diagnostic rendered inside the crash UI (not copy).
   'src/components/ErrorBoundary.tsx': { 'Component stack:': 1 },
+  // --- .ts helper fallback-arg strings (copy-call-arg scan, #1398). The
+  //     'the required asset' symbol fallback in preflights.ts is
+  //     interpolated into copy.errors.needMore(By) when the token symbol
+  //     is unknown — the same {{leg}}/fallback-label class as the desk
+  //     entries above. Extract with the #1360 fallback-label work.
+  'src/contracts/preflights.ts': { 'the required asset': 2 },
 };
 
 /** Collapse interpolations + whitespace to inspect only the STATIC text
@@ -390,10 +396,23 @@ function propKey(name, sf) {
  * (glossary-filtered, but NOT baseline-filtered). Pure and side-effect
  * free — the CLI applies the BASELINE ratchet on top; the unit test
  * calls this directly on fixtures. `rel` is only used to label findings.
+ *
+ * `opts.callArgsOnly` (used for `.ts` HELPERS, #1398) restricts the scan
+ * to check 5 — hardcoded string args to a `copy.*` template call. `.ts`
+ * files have no JSX, and the object-key scan (check 4) would flag the
+ * catalog / config / label-map objects that fill `.ts` wholesale, so
+ * those checks run for `.tsx` only. The alias/scope resolution still runs
+ * (the copy-arg scan depends on it).
  */
-export function analyzeSource(rel, src) {
+export function analyzeSource(rel, src, opts = {}) {
+  const callArgsOnly = opts.callArgsOnly === true;
   const findings = [];
-  const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // Parse .ts as TS and .tsx as TSX: under TSX rules the TS-only
+  // angle-bracket forms (`<T>(x) => x`, `<string>x` type assertions) are
+  // mis-read as JSX, which corrupts the tree and drops later `copy.*`
+  // calls in the same file (Codex #1402). Kind follows the file extension.
+  const scriptKind = rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, scriptKind);
 
   // SCOPE-AWARE aliasing of a `copy.*` branch — the established desk
   // pattern `const text = copy.desk.ticket` (and `const seo = copy.seo`).
@@ -465,49 +484,55 @@ export function analyzeSource(rel, src) {
         for (const nm of collectBindingNames(node.name)) declareInScope(nm, initCopy);
       }
     }
-    // 1. JSX text children.
-    if (ts.isJsxText(node)) {
-      if (node.text.trim()) report(node, node.text);
-    }
-    // 2. Literal expressions used directly as a JSX child.
-    else if (ts.isJsxExpression(node) && node.expression) {
-      const parent = node.parent;
-      if (parent && (ts.isJsxElement(parent) || ts.isJsxFragment(parent))) {
-        reportExpr(node, node.expression);
+    // Checks 1-4 (rendered JSX positions + object-literal copy keys) run
+    // for .tsx only. In .ts helpers there is no JSX, and the object-key
+    // scan would flag the catalog / config / label-map objects wholesale
+    // — so `.ts` runs ONLY the copy-call-arg scan below (#1398).
+    if (!callArgsOnly) {
+      // 1. JSX text children.
+      if (ts.isJsxText(node)) {
+        if (node.text.trim()) report(node, node.text);
       }
-    }
-    // 3. User-visible JSX attributes.
-    else if (ts.isJsxAttribute(node) && node.initializer) {
-      const name = node.name.getText(sf);
-      if (isUiName(name, UI_ATTRS)) {
-        const init = node.initializer;
-        if (ts.isStringLiteral(init)) report(node, init.text);
-        else if (ts.isJsxExpression(init) && init.expression) {
-          reportExpr(node, init.expression);
+      // 2. Literal expressions used directly as a JSX child.
+      else if (ts.isJsxExpression(node) && node.expression) {
+        const parent = node.parent;
+        if (parent && (ts.isJsxElement(parent) || ts.isJsxFragment(parent))) {
+          reportExpr(node, node.expression);
+        }
+      }
+      // 3. User-visible JSX attributes.
+      else if (ts.isJsxAttribute(node) && node.initializer) {
+        const name = node.name.getText(sf);
+        if (isUiName(name, UI_ATTRS)) {
+          const init = node.initializer;
+          if (ts.isStringLiteral(init)) report(node, init.text);
+          else if (ts.isJsxExpression(init) && init.expression) {
+            reportExpr(node, init.expression);
+          }
+        }
+      }
+      // 4. User-visible object-literal properties (row/option copy, and
+      //    spread attributes `{...{ placeholder: '…' }}`, whose object
+      //    property is reached here too).
+      else if (ts.isPropertyAssignment(node)) {
+        const key = propKey(node.name, sf);
+        // Check BOTH copy-key sets: an object property carries visible copy
+        // whether the object is a data/option record (UI_KEYS) or a spread
+        // prop bag `{...{ children: '…', steps: […] }}` (UI_ATTRS names —
+        // children / steps / aria-* — reach this node too).
+        if (key && (isUiName(key, UI_KEYS) || isUiName(key, UI_ATTRS))) {
+          reportExpr(node, node.initializer);
         }
       }
     }
-    // 4. User-visible object-literal properties (row/option copy, and
-    //    spread attributes `{...{ placeholder: '…' }}`, whose object
-    //    property is reached here too).
-    else if (ts.isPropertyAssignment(node)) {
-      const key = propKey(node.name, sf);
-      // Check BOTH copy-key sets: an object property carries visible copy
-      // whether the object is a data/option record (UI_KEYS) or a spread
-      // prop bag `{...{ children: '…', steps: […] }}` (UI_ATTRS names —
-      // children / steps / aria-* — reach this node too).
-      if (key && (isUiName(key, UI_KEYS) || isUiName(key, UI_ATTRS))) {
-        reportExpr(node, node.initializer);
-      }
-    }
-    // 5. ANY `copy.*` call, wherever it sits — a hardcoded string arg
-    //    (`copy.tokenSecurity.gateUnknown('prepayment token')`) is a
-    //    user-facing interpolation value even when the call is built
-    //    before render (thrown then shown in an error banner, assigned
-    //    to a variable, etc.). Visiting every node means this catches
-    //    the call in or out of a rendered position; only `copy.*`
-    //    callees are scanned, so ordinary calls stay untouched.
-    else if (ts.isCallExpression(node) && resolveCopyRoot(accessRoot(node.expression))) {
+    // 5. ANY `copy.*` call, wherever it sits (both .tsx and .ts) — a
+    //    hardcoded string arg (`copy.tokenSecurity.gateUnknown('prepayment
+    //    token')`) is a user-facing interpolation value even when the call
+    //    is built before render (thrown then shown in an error banner,
+    //    assigned to a variable, etc.). Visiting every node catches the
+    //    call in or out of a rendered position; only `copy.*` callees are
+    //    scanned, so ordinary calls stay untouched.
+    if (ts.isCallExpression(node) && resolveCopyRoot(accessRoot(node.expression))) {
       for (const arg of node.arguments) {
         for (const part of renderedStatic(arg)) report(node, part);
       }
@@ -551,11 +576,26 @@ export function analyzeSource(rel, src) {
   return findings;
 }
 
+// The catalog itself is the English source of truth every locale
+// translates FROM, so it is never scanned (it holds no `copy.*` calls
+// anyway; excluded for clarity + safety).
+const COPY_CATALOG = join(SRC, 'content', 'copy.ts');
+
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) walk(p, out);
     else if (name.endsWith('.tsx')) out.push(p);
+    // `.ts` helpers are scanned in copy-call-arg-only mode (#1398).
+    // Skip declaration files, tests, and the catalog source.
+    else if (
+      name.endsWith('.ts') &&
+      !name.endsWith('.d.ts') &&
+      !name.endsWith('.test.ts') &&
+      p !== COPY_CATALOG
+    ) {
+      out.push(p);
+    }
   }
   return out;
 }
@@ -573,7 +613,9 @@ function runCli() {
   const perFile = new Map();
   for (const file of walk(SRC)) {
     const rel = relative(ROOT, file).split('\\').join('/');
-    const found = analyzeSource(rel, readFileSync(file, 'utf8'));
+    // `.ts` (not `.tsx`) → copy-call-arg-only scan (#1398).
+    const callArgsOnly = rel.endsWith('.ts');
+    const found = analyzeSource(rel, readFileSync(file, 'utf8'), { callArgsOnly });
     const byString = new Map();
     for (const f of found) {
       const arr = byString.get(f.s) || [];
