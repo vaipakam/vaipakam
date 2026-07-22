@@ -379,4 +379,33 @@ describe('AST hardcoded-string detector (#1365)', () => {
     expect(strings("const X = () => <>{items.map(i => <div>{i.n}</div>)}</>;")).toEqual([]);
     expect(strings("const X = () => <>{items.map(i => i.name)}</>;")).toEqual([]);
   });
+
+  // --- .ts helper copy-call-arg-only mode (#1398) ---
+
+  it('flags a hardcoded copy.* arg in .ts callArgsOnly mode', () => {
+    const src = "export function f(sym?: string) { return copy.errors.needMore(sym ?? 'the required asset'); }";
+    const out = (analyzeSource('fixture.ts', src, { callArgsOnly: true }) as Array<{ s: string }>).map((f) => f.s);
+    expect(out).toContain('the required asset');
+  });
+
+  it('does NOT run the JSX / object-key scans in .ts callArgsOnly mode', () => {
+    // A .ts helper is full of catalog/config/label-map objects with UI-ish
+    // keys; the object-key scan (check 4) must NOT fire there — only the
+    // copy.* call-arg scan does. So a bare `{ label: 'Newest first' }` (no
+    // copy.* call) yields nothing in callArgsOnly mode.
+    const src = "export const opts = [{ value: 'n', label: 'Newest first', message: 'A whole sentence here' }];";
+    const out = (analyzeSource('fixture.ts', src, { callArgsOnly: true }) as Array<{ s: string }>).map((f) => f.s);
+    expect(out).toEqual([]);
+    // The same object DOES flag in the default (.tsx) mode.
+    expect(strings(src)).toContain('Newest first');
+  });
+
+  it('resolves copy aliases in .ts callArgsOnly mode', () => {
+    const src = "const e = copy.errors; export function f(){ return e.needMore('the required asset'); }";
+    const out = (analyzeSource('fixture.ts', src, { callArgsOnly: true }) as Array<{ s: string }>).map((f) => f.s);
+    expect(out).toContain('the required asset');
+    // A non-copy call stays clean.
+    const src2 = "export function f(){ return fmt('Some words here'); }";
+    expect((analyzeSource('fixture.ts', src2, { callArgsOnly: true }) as Array<{ s: string }>)).toEqual([]);
+  });
 });
