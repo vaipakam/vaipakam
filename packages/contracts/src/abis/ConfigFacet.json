@@ -49,6 +49,74 @@
   },
   {
     "type": "function",
+    "name": "getChainDailyRecycledCredit",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "credit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accepted",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainRecycledLedger",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "reportedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "consumedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "availRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attrDayPlus1",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cumulativeAtAttr",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDepthTierConfigBundle",
     "inputs": [],
     "outputs": [
@@ -582,6 +650,19 @@
       },
       {
         "name": "tariffK",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRecycleCreditedCumulative",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
