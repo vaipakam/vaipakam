@@ -1437,12 +1437,20 @@ function _dayPoolHalves(
     ///      sweep-hosting facet over EIP-170 for a gate that only needs a
     ///      sufficient bound.
     /// @return userTotal     Upper bound on the aggregate user payout.
-    /// @return recycledTotal  The RECYCLED share of that bound — the quantity
-    ///                        the drought gate compares to the live bucket
-    ///                        (Codex #1410 r6: per-entry bucket checks pass
-    ///                        individually while a joint same-day set's
-    ///                        combined recycled exceeds the bucket, so the
-    ///                        drought test must be AGGREGATE).
+    /// @return recycledTotal  The RAW (pre-loan-side-cap) recycled share —
+    ///                        the quantity the drought gate compares to the
+    ///                        live bucket. AGGREGATE (Codex #1410 r6: joint
+    ///                        same-day sets defer on the combined draw) and
+    ///                        RAW (Codex #1410 r8: the cap is fresh-first
+    ///                        over the aggregate window, so the CAPPED
+    ///                        recycled can read 0 while the per-day walk
+    ///                        still draws from the bucket on its first day).
+    ///                        Raw >= any actual cumulative walk draw, so the
+    ///                        gate can never fail open; over-detection only
+    ///                        pauses, the documented safe direction.
+    ///                        Forfeited entries stay excluded — their
+    ///                        recycled leg is a pure commitment release that
+    ///                        never draws the bucket (the r9 asymmetry).
     function _userEntriesUpperBound(
         LibVaipakam.Storage storage s,
         address user
@@ -1458,9 +1466,14 @@ function _dayPoolHalves(
                 && !_entryTerminalForfeit(s, e)
                 && _entryClaimable(s, e)
             ) {
-                (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
+                (
+                    EntrySplit memory toUser,
+                    ,
+                    ,
+                    EntryPriceState memory st
+                ) = _entryPriceCore(s, id, e);
                 userTotal += toUser.total;
-                recycledTotal += toUser.recycled;
+                recycledTotal += st.rawSplit.recycled;
             }
             unchecked { ++i; }
         }

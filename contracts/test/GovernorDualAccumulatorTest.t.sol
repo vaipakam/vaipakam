@@ -496,6 +496,53 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1410 r8 P1 — the drought sum must use the RAW recycled
+    ///      share: the loan-side cap is fresh-first over the aggregate
+    ///      window, so a capped entry's CAPPED recycled can read 0 while the
+    ///      per-day walk still draws the bucket on its first day — a
+    ///      capped-sum gate fails open and accrues (and reaps) through the
+    ///      drought. Raw >= any actual cumulative walk draw, so the raw gate
+    ///      can never fail open; over-detection only pauses (safe).
+    function testDroughtGateUsesRawRecycledUnderLoanSideCap() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day 5 carries a recycled component");
+
+        uint256 id = _seedEntry(alice, 57, 5, 6);
+        // Cap small enough that the aggregate fresh-first trim consumes the
+        // whole headroom from fresh alone: the CAPPED recycled share reads 0
+        // while the raw recycled share stays nonzero.
+        _mut().setFeeEntitlementRaw(
+            57,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: uint128(floor5 / 8)
+            })
+        );
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+
+        _mut().setRecycleBucketRaw(0); // drought
+        assertEq(
+            _accrueExec(ids, 180 days + 90 days + 14 days),
+            0,
+            "nothing reaps during the drought"
+        );
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after refill - the clock was paused"
+        );
+    }
+
     /// @dev Codex #1410 r7 P1 — the sweep must ADVANCE the user's cursors
     ///      before testing the aggregate drought. A longer sibling whose last
     ///      day is not yet advanced-through prices 0 in the upper bound, so a
