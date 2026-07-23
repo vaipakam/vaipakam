@@ -496,6 +496,41 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1410 r6 — the drought gate is AGGREGATE: two same-day
+    ///      recycled entries whose bucket covers EACH alone but not BOTH
+    ///      still defer jointly (the walk's per-day check is against the
+    ///      user's joint draw), so the clock must pause for both. Against the
+    ///      per-entry gate this fails with an instant post-refill reap.
+    function testDroughtGateIsAggregateAcrossEntries() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day carries a recycled component");
+
+        uint256 a = _seedEntry(alice, 51, 5, 6);
+        uint256 b = _seedEntry(alice, 52, 5, 6);
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = a;
+        ids[1] = b;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp both clocks
+
+        // Bucket covers each entry's recycled slice alone, NOT both: the
+        // joint day defers, the claim reverts, both clocks must pause.
+        uint256 each = recycled5 / 2; // two equal-perDay entries split the day
+        _mut().setRecycleBucketRaw(each + each / 2);
+        assertEq(
+            _accrueExec(ids, 180 days + 90 days + 14 days),
+            0,
+            "nothing reaps while the JOINT draw exceeds the bucket"
+        );
+
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after the drought - both clocks were paused"
+        );
+    }
+
     /// @dev #1351 — `_userForfeitFresh` sums FORFEITED entries at their
     ///      whole-window fresh face value to size the aggregate claim funding
     ///      need. Once a chunked claim settles a forfeited entry's pre-`D*`

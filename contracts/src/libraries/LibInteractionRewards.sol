@@ -1305,7 +1305,7 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        pending = _userEntriesUpperBound(s, user);
+        (pending, ) = _userEntriesUpperBound(s, user);
         (uint256 today, bool active) = currentDayOrZero();
         if (!active || today == 0) return pending;
         uint256 last = s.interactionLastClaimedDay[user];
@@ -1436,10 +1436,17 @@ function _dayPoolHalves(
     ///      preview inlines the whole DryRun walk, which would push the
     ///      sweep-hosting facet over EIP-170 for a gate that only needs a
     ///      sufficient bound.
+    /// @return userTotal     Upper bound on the aggregate user payout.
+    /// @return recycledTotal  The RECYCLED share of that bound — the quantity
+    ///                        the drought gate compares to the live bucket
+    ///                        (Codex #1410 r6: per-entry bucket checks pass
+    ///                        individually while a joint same-day set's
+    ///                        combined recycled exceeds the bucket, so the
+    ///                        drought test must be AGGREGATE).
     function _userEntriesUpperBound(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 userTotal) {
+    ) private view returns (uint256 userTotal, uint256 recycledTotal) {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         for (uint256 i = 0; i < len; ) {
@@ -1451,7 +1458,9 @@ function _dayPoolHalves(
                 && !_entryTerminalForfeit(s, e)
                 && _entryClaimable(s, e)
             ) {
-                userTotal += _previewEntryReward(s, id, e);
+                (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
+                userTotal += toUser.total;
+                recycledTotal += toUser.recycled;
             }
             unchecked { ++i; }
         }
@@ -1469,11 +1478,11 @@ function _dayPoolHalves(
     ///      current deploy (`D*` unarmed ⇒ the walk leg is empty and the
     ///      whole window is the legacy leg).
     ///
-    ///      Deliberately still UNCAPPED by the 69M pool / recycled-bucket
-    ///      budgets (the DryRun walks with an unbounded pool): the preview's
-    ///      documented contract is an upper bound the claim then
-    ///      pool-truncates ({userClaimPendingUncapped}), and the funding gate
-    ///      relies on that direction.
+    ///      The DryRun honours the LIVE recycled bucket (a day the walk
+    ///      would defer for a short bucket is not previewed — Codex #1410
+    ///      r2); it stays deliberately uncapped ONLY by the 69M lifetime
+    ///      headroom, the payment-time truncation axis on which the preview
+    ///      remains an upper bound ({userClaimPendingUncapped}).
     function previewForUserEntries(address user)
         internal
         view
@@ -1849,7 +1858,8 @@ function _dayPoolHalves(
         //   2. the owner is sanctioned (the claim path rejects them),
         //   3. the protocol is paused (every claim reverts under the pause),
         //   4. the balance can't cover the user's whole aggregate claim.
-        bool executable = _poolCappedPayable(toUser) != 0 &&
+        bool executable = !_recycledDrought(s, e.user) &&
+            _poolCappedPayable(toUser) != 0 &&
             !LibVaipakam.isSanctionedAddress(e.user) &&
             !LibPausable.paused() &&
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
@@ -2069,6 +2079,7 @@ function _dayPoolHalves(
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
+        if (_recycledDrought(s, e.user)) return false; // clock pauses (r6)
         (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
         return
@@ -2088,23 +2099,29 @@ function _dayPoolHalves(
     ///      capped-off share must not keep an expiry clock running on value
     ///      no claim will ever move (dark until `D*` arms; identical to the
     ///      raw split on every current deploy).
+    /// @dev Codex #1410 r4+r6 — the recycled-bucket DROUGHT gate, AGGREGATE
+    ///      by construction: the walk's recycled check is all-or-nothing per
+    ///      day against the user's JOINT set, so per-entry bucket checks pass
+    ///      individually while the combined draw still defers the day and the
+    ///      claim reverts. When the user's aggregate remaining recycled
+    ///      exceeds the live bucket, at least one of their days will defer
+    ///      and an O(1) gate cannot tell which value survives — so the expiry
+    ///      clock pauses outright. Over-pausing only DELAYS the reap
+    ///      (claimant-protective; the claim path stays open and each partial
+    ///      collection shrinks the aggregate until the gate unpauses).
+    function _recycledDrought(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (bool) {
+        (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
+        return recycledTotal > s.recycleBucket;
+    }
+
     function _poolCappedPayable(
         EntrySplit memory toUser
     ) private view returns (uint256) {
         uint256 freshShare = toUser.total - toUser.recycled;
         uint256 room = poolRemaining();
-        // Codex #1410 r4 — a RECYCLED share beyond the live bucket pauses
-        // the clock outright: the walk's recycled check is ALL-OR-NOTHING per
-        // day (a short day defers WHOLE, fresh included), so at least one of
-        // this entry's days will defer and an O(1) whole-window gate cannot
-        // tell which value survives. Counting anything here could run the
-        // expiry clock — and eventually reap — while the claimant's claim
-        // reverts. Pausing instead is the safe direction the gate documents:
-        // it only DELAYS the reap, and the clock resumes when the bucket
-        // refills.
-        if (toUser.recycled > LibVaipakam.storageSlot().recycleBucket) {
-            return 0;
-        }
         return (freshShare < room ? freshShare : room) + toUser.recycled;
     }
 
