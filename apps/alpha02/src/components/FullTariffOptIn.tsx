@@ -25,8 +25,12 @@ import type { Address } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { isAssetIlliquidLive } from '../contracts/preflights';
-import { useCStarQuote, useFeeEntitlementConfig } from '../data/tariff';
-import { useVpfi, VPFI_DECIMALS } from '../data/vpfi';
+import {
+  useChargeableVpfi,
+  useCStarQuote,
+  useFeeEntitlementConfig,
+} from '../data/tariff';
+import { VPFI_DECIMALS } from '../data/vpfi';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
 import { isPlainDecimal } from '../lib/errors';
 
@@ -98,7 +102,10 @@ export function FullTariffOptIn({
         failClosed: true,
       }),
   });
-  const vpfi = useVpfi();
+  // Codex #1412 r6 — the CHARGEABLE balance (raw tracked − encumbered,
+  // what the Full charge actually draws), not the tier-derived free
+  // balance, which nets frozen proceeds and would cry wolf.
+  const chargeable = useChargeableVpfi();
   // Full is known-unavailable for this loan: quote errored / resolved
   // unpriceable, or the principal read as illiquid (or unknowable).
   const fullBlocked =
@@ -113,6 +120,14 @@ export function FullTariffOptIn({
   // Ceiling text field — seeded from the FIRST live quote, then owned
   // by the user (a refreshed quote must never overwrite an edit).
   const [ceilingText, setCeilingText] = useState<string | null>(null);
+
+  // Codex #1412 r6 — the ceiling belongs to ONE quoted loan: when the
+  // quote inputs change (another offer selected into the same mounted
+  // instance), drop the text so the seed re-runs for the new quote —
+  // otherwise offer B could sign offer A's stale/edited ceiling.
+  useEffect(() => {
+    setCeilingText(null);
+  }, [lendingAsset, principal, durationDays]);
 
   const quoted = quote.data?.numeraireOk === true ? quote.data.cStar : undefined;
   const suggestedCeiling =
@@ -166,7 +181,7 @@ export function FullTariffOptIn({
   // control always keeps rendering — see the blocked mark above.
   if (!value.full && (!config.enabled || fullBlocked)) return null;
 
-  const freeVpfi = vpfi.data?.freeBalance;
+  const freeVpfi = chargeable.data;
   const balanceShort =
     value.full &&
     quoted !== undefined &&

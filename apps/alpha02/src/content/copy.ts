@@ -2246,6 +2246,8 @@ const copySource = {
     makerNote:
       'While this is on, an accepted fill opens the loan with your Full opt-in: the tariff is charged from your vault at that moment, within your ceiling, for a deeper discount on your own side’s fees.',
     armEnableLabel: 'Opt this offer into the Full tariff',
+    makerLenderMatchCaveat:
+      'On a lending offer, your Full opt-in applies when someone accepts your offer directly. A matched fill from the order book currently opens without it — your vault is not charged there and no deeper discount applies to that loan.',
     armDarkNote:
       'The Full tariff option is currently switched off protocol-wide. You can clear an existing opt-in here; new opt-ins are unavailable until it is switched on.',
     armSave: 'Save',

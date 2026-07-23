@@ -26,8 +26,12 @@ import { parseUnits } from 'viem';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
-import { useCStarQuote, useFeeEntitlementConfig } from '../../data/tariff';
-import { useVpfi, VPFI_DECIMALS } from '../../data/vpfi';
+import {
+  useChargeableVpfi,
+  useCStarQuote,
+  useFeeEntitlementConfig,
+} from '../../data/tariff';
+import { VPFI_DECIMALS } from '../../data/vpfi';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
@@ -676,15 +680,17 @@ function FullTariffArmForm({
   // settled affirmatively; clears never need any of it.
   const armAllowed =
     config.enabled && quoted !== undefined && liquidity.data === false;
-  // Codex #1412 r4 — the MAKER's own free vault VPFI vs the quote: a
+  // Codex #1412 r4/r6 — the MAKER's own CHARGEABLE vault VPFI vs the
+  // quote (raw tracked − encumbered, what the Full charge draws — the
+  // tier-derived balance nets frozen proceeds and would cry wolf). A
   // strict Full armed on an under-funded vault makes every later fill
   // revert with nothing the taker can see. Warning-tier (the balance
   // at FILL time is what the chain judges; the maker may fund later).
-  const vpfi = useVpfi();
+  const chargeable = useChargeableVpfi();
   const makerBalanceShort =
     quoted !== undefined &&
-    vpfi.data !== undefined &&
-    vpfi.data.freeBalance < quoted;
+    chargeable.data !== undefined &&
+    chargeable.data < quoted;
 
   const [fields, setFields] = useState<{
     seededFor: number;
@@ -811,6 +817,18 @@ function FullTariffArmForm({
         {copy.tariff.makerNote} {copy.tariff.dualFeeNote}{' '}
         {copy.tariff.nonRefundNote}
       </p>
+      {offer.offerType === 0 ? (
+        // Codex #1412 r6 — the matched-fill path charges the tariff
+        // against the BORROWER offer id and ignores a counterparty
+        // lender offer's creatorFull (#1366 r3 P2, contract follow-up
+        // #1369-adjacent). Until that lands, a lender's Full applies
+        // only to DIRECT accepts — say so, or the makerNote overpromises.
+        <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>
+          <span className="banner-body">
+            {copy.tariff.makerLenderMatchCaveat}
+          </span>
+        </div>
+      ) : null}
       <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
         {
           // Codex #1412 r4 (P3) — an errored quote reports UNAVAILABLE
@@ -826,14 +844,14 @@ function FullTariffArmForm({
                   )
         }
       </p>
-      {makerBalanceShort && quoted !== undefined && vpfi.data ? (
+      {makerBalanceShort && quoted !== undefined && chargeable.data !== undefined ? (
         <p
           className="muted"
           role="alert"
           style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
         >
           {copy.tariff.balanceShort(
-            formatTokenAmount(vpfi.data.freeBalance, VPFI_DECIMALS),
+            formatTokenAmount(chargeable.data, VPFI_DECIMALS),
             formatTokenAmount(quoted, VPFI_DECIMALS),
           )}
         </p>

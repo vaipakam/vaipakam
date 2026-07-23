@@ -148,6 +148,54 @@ export function useCStarQuote(input: {
   });
 }
 
+/**
+ * Codex #1412 r6 — the CHARGEABLE free vault VPFI for tariff-sufficiency
+ * warnings: raw protocol-tracked balance minus encumbrance, mirroring
+ * `LibFeeEntitlement.freeVpfiBalance`. The tier-derived `useVpfi()`
+ * balance nets out frozen proceeds and would understate what the Full
+ * charge can actually draw.
+ */
+export function useChargeableVpfi() {
+  const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+
+  return useQuery({
+    queryKey: ['chargeableVpfi', readChain.chainId, address?.toLowerCase()],
+    enabled: Boolean(publicClient) && Boolean(address),
+    staleTime: 30_000,
+    queryFn: async (): Promise<bigint> => {
+      const read = <T,>(functionName: string, args: readonly unknown[] = []) =>
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName,
+          args: args as unknown[],
+        }) as Promise<T>;
+      const token = await read<Address>('getVPFIToken');
+      if (token.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+        return 0n;
+      }
+      const tracked = await read<bigint>('getProtocolTrackedVaultBalance', [
+        address!,
+        token,
+      ]);
+      const encumbered = await read<bigint>('getEncumbered', [
+        address!,
+        token,
+        0n,
+      ]).catch((err) => {
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (isRevert) return 0n;
+        throw err;
+      });
+      return tracked > encumbered ? tracked - encumbered : 0n;
+    },
+  });
+}
+
 export interface FeeEntitlementRecord {
   borrowerMode: number;
   lenderMode: number;

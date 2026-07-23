@@ -22,10 +22,15 @@ non-refundable, priced on the loan's full term at open. Loan Details
 shows the stamped per-party fee modes and absorbed tariffs once a party
 actually paid Full, warns before an early close that none of the tariff
 comes back, and notes on the lender's sale surfaces that the Full fee
-mode travels with the position NFT to a buyer. Every one of these
-surfaces is hidden while the on-chain kill-switch is off — the deployed
-posture until the M2 joint cutover — because a Full authorization
-presented while the feature is dark fails on chain.
+mode travels with the position NFT to a buyer. While the on-chain
+kill-switch is off — the deployed posture until the M2 joint cutover —
+no new opt-in can be collected anywhere, because a Full authorization
+presented while the feature is dark fails on chain. One recovery
+surface deliberately remains in that state: the creator of a standing
+offer that is already armed with Full can still open the offer's tariff
+form to clear the commitment (a strict armed offer is otherwise
+unfillable while dark); that form only permits clearing there, never
+arming.
 
 The whole surface is exercised on the CI Anvil fork
 (`e2e/tests/24-full-tariff.spec.ts`): the dark default renders no
