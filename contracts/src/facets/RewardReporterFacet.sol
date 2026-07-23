@@ -11,6 +11,20 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+/// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening sender shape, the
+///         `closeDay` fallback target when the bound messenger has not been
+///         upgraded to the six-argument surface yet. Both messenger
+///         generations expose it (the pre-#1222 build natively, the widened
+///         build via its legacy overload).
+interface IRewardMessengerLegacySend {
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        address payable refundAddress
+    ) external payable;
+}
+
 /**
  * @title RewardReporterFacet
  * @author Vaipakam Developer Team
@@ -194,14 +208,31 @@ contract RewardReporterFacet is
             );
 
             // Forward full msg.value; messenger refunds the caller directly.
-            IRewardMessenger(messenger).sendChainReport{value: msg.value}(
+            // Codex #1413 r3 — rollout shim: an upgraded mirror diamond in
+            // front of a not-yet-upgraded messenger falls back to the legacy
+            // four-argument send (recycled figures simply don't travel until
+            // the messenger is current), so the permissionless day-close
+            // never reverts through the upgrade window. A failed six-argument
+            // attempt returns its full value before the fallback re-forwards
+            // it; a genuine shared failure (paused, underfunded fee) still
+            // surfaces as the fallback's revert.
+            try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
                 dayId,
                 lenderNumeraire18,
                 borrowerNumeraire18,
                 recycledCumulative18,
                 recycledForDay18,
                 payable(msg.sender)
-            );
+            ) {} catch {
+                IRewardMessengerLegacySend(messenger).sendChainReport{
+                    value: msg.value
+                }(
+                    dayId,
+                    lenderNumeraire18,
+                    borrowerNumeraire18,
+                    payable(msg.sender)
+                );
+            }
         }
     }
 

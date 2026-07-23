@@ -44,6 +44,23 @@ contract MockRewardDiamond {
         ++reportCount;
     }
 
+    /// Codex #1413 r3 — the legacy ingress overload the production facet
+    /// also keeps: a decoded four-word wire report dispatches THIS selector.
+    function onChainReportReceived(
+        uint32 src,
+        uint256 day,
+        uint256 l,
+        uint256 b
+    ) external {
+        lastReportChain = src;
+        lastReportDay = day;
+        lastReportLender = l;
+        lastReportBorrower = b;
+        lastReportRecycledCum = 0;
+        lastReportRecycledForDay = 0;
+        ++reportCount;
+    }
+
     function onRewardBroadcastReceived(
         uint256 day,
         uint256 l,
@@ -107,6 +124,27 @@ contract MockRewardDiamond {
     }
 
     receive() external payable {}
+}
+
+/// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 Base diamond: only
+///         the four-argument ingress exists. Proves the messenger routes a
+///         legacy wire report to the legacy selector (and that the six-word
+///         shape genuinely requires the widened diamond).
+contract MockLegacyOnlyRewardDiamond {
+    uint256 public lastReportChain;
+    uint256 public lastReportDay;
+    uint256 public reportCount;
+
+    function onChainReportReceived(
+        uint32 src,
+        uint256 day,
+        uint256,
+        uint256
+    ) external {
+        lastReportChain = src;
+        lastReportDay = day;
+        ++reportCount;
+    }
 }
 
 /**
@@ -276,6 +314,42 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
         assertEq(diamondBase.lastReportRecycledCum(), 0, "no recycled figures travel");
         assertEq(diamondBase.lastReportRecycledForDay(), 0, "no recycled figures travel");
+    }
+
+    /// Codex #1413 r3 — a LEGACY wire report dispatches the LEGACY ingress
+    /// selector, so an upgraded messenger in front of a PRE-#1222 Base
+    /// diamond (which only exposes the four-argument ingress) keeps
+    /// delivering in-flight legacy reports through the rollout window.
+    function test_Report_LegacyWire_DispatchesLegacyIngressSelector() public {
+        // A diamond stub exposing ONLY the pre-#1222 four-argument ingress.
+        MockLegacyOnlyRewardDiamond legacyDiamond =
+            new MockLegacyOnlyRewardDiamond();
+        vm.prank(owner);
+        rewardBase.setDiamond(address(legacyDiamond));
+
+        vm.prank(address(messengerBase));
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(REPORT, uint256(7), uint256(11 ether), uint256(3 ether)),
+            _empty()
+        );
+        assertEq(legacyDiamond.reportCount(), 1, "legacy diamond got the report");
+        assertEq(legacyDiamond.lastReportDay(), 7);
+
+        // The six-word shape genuinely needs the widened diamond — the
+        // legacy-only stub reverts it (missing selector), proving the
+        // dispatch is by wire shape, not a blanket downgrade.
+        vm.prank(address(messengerBase));
+        vm.expectRevert();
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(
+                REPORT, uint256(8), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
+            ),
+            _empty()
+        );
     }
 
     /// #1222 M3 B1 — a five-word report is neither the legacy nor the current

@@ -12,6 +12,33 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
+/// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 mirror messenger:
+///         only the legacy four-argument send surface exists. Proves the
+///         upgraded reporter's `closeDay` falls back to it instead of
+///         reverting through the diamond-first rollout window.
+contract LegacyOnlyRewardMessenger {
+    uint256 public lastSendDay;
+    uint256 public lastSendLenderNumeraire18;
+    uint256 public lastSendBorrowerNumeraire18;
+    address public lastSendRefund;
+    uint256 public sendCount;
+
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        address payable refundAddress
+    ) external payable {
+        lastSendDay = dayId;
+        lastSendLenderNumeraire18 = lenderNumeraire18;
+        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
+        lastSendRefund = refundAddress;
+        sendCount += 1;
+    }
+
+    receive() external payable {}
+}
+
 /// @title CrossChainRewardPlumbingTest
 /// @notice Production-readiness coverage for the cross-chain interaction-
 ///         reward mesh (docs/TokenomicsTechSpec.md §4a). Exercises every
@@ -1070,6 +1097,33 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         assertEq(messenger.lastSendRecycledCumulative18(), 123e18, "cumulative rides the report");
         assertEq(messenger.lastSendRecycledForDay18(), 7e18, "closing day's bucket rides the report");
+    }
+
+    /// Codex #1413 r3 — an upgraded mirror diamond in front of a
+    /// NOT-yet-upgraded messenger (legacy four-argument surface only) falls
+    /// back to the legacy send instead of reverting the permissionless
+    /// day-close through the rollout window.
+    function testCloseDayMirrorFallsBackToLegacyMessenger() public {
+        _configureMirror(CHAIN_ARB);
+        LegacyOnlyRewardMessenger legacyMessenger =
+            new LegacyOnlyRewardMessenger();
+        _rep().setRewardMessenger(address(legacyMessenger));
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        _mut().setRecycleCreditedCumulativeRaw(123e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        _rep().closeDay{value: 0.3 ether}(1);
+
+        assertEq(legacyMessenger.sendCount(), 1, "fell back to the legacy send");
+        assertEq(legacyMessenger.lastSendDay(), 1);
+        assertEq(legacyMessenger.lastSendLenderNumeraire18(), 25e18);
+        assertEq(legacyMessenger.lastSendRefund(), alice, "refund beneficiary kept");
     }
 
     /// Base's own `closeDay` records its recycled figures into the SAME

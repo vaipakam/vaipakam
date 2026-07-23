@@ -26,6 +26,22 @@ interface IRewardAggregatorIngress {
     ) external;
 }
 
+/// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening ingress shape. A
+///         decoded LEGACY report is forwarded through this selector, which
+///         both diamond generations expose (the pre-#1222 facet natively,
+///         the widened facet via its rollout overload), so an upgraded
+///         messenger in front of a not-yet-cut Base diamond keeps
+///         delivering in-flight legacy reports instead of reverting them
+///         into a grace-zeroed day.
+interface IRewardAggregatorIngressLegacy {
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
+    ) external;
+}
+
 /// @dev Mirror-side Diamond ingress for an inbound BROADCAST.
 interface IRewardReporterIngress {
     function onRewardBroadcastReceived(
@@ -788,32 +804,40 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            uint256 dayId;
-            uint256 a;
-            uint256 b;
-            uint256 recycledCum;
-            uint256 recycledForDay;
             if (len == REPORT_PAYLOAD_SIZE) {
-                (, dayId, a, b, recycledCum, recycledForDay) = abi.decode(
+                (
+                    ,
+                    uint256 dayId,
+                    uint256 a,
+                    uint256 b,
+                    uint256 recycledCum,
+                    uint256 recycledForDay
+                ) = abi.decode(
                     payload,
                     (uint8, uint256, uint256, uint256, uint256, uint256)
                 );
+                emit ReportReceived(sourceChainId, dayId, a, b);
+                IRewardAggregatorIngress(diamond).onChainReportReceived(
+                    SafeCast.toUint32(sourceChainId),
+                    dayId,
+                    a,
+                    b,
+                    recycledCum,
+                    recycledForDay
+                );
             } else {
                 // Legacy pre-#1222 four-word report (a delayed delivery or a
-                // not-yet-upgraded mirror): recycled fields absent — zero
-                // advances nothing in the per-chain ledger.
-                (, dayId, a, b) =
+                // not-yet-upgraded mirror): forwarded through the LEGACY
+                // ingress selector, which both diamond generations expose
+                // (Codex #1413 r3) — dispatching by wire shape keeps every
+                // diamond/messenger upgrade-order combination live.
+                (, uint256 dayId, uint256 a, uint256 b) =
                     abi.decode(payload, (uint8, uint256, uint256, uint256));
+                emit ReportReceived(sourceChainId, dayId, a, b);
+                IRewardAggregatorIngressLegacy(diamond).onChainReportReceived(
+                    SafeCast.toUint32(sourceChainId), dayId, a, b
+                );
             }
-            emit ReportReceived(sourceChainId, dayId, a, b);
-            IRewardAggregatorIngress(diamond).onChainReportReceived(
-                SafeCast.toUint32(sourceChainId),
-                dayId,
-                a,
-                b,
-                recycledCum,
-                recycledForDay
-            );
         } else if (msgType == MSG_TYPE_BROADCAST) {
             if (len != BROADCAST_PAYLOAD_SIZE) {
                 revert PayloadSizeMismatch(len, BROADCAST_PAYLOAD_SIZE);
