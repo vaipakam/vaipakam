@@ -356,6 +356,82 @@ export function useAcceptTermsSigning() {
       const lendingAsset = o.lendingAsset as Address;
       const collateralAsset = o.collateralAsset as Address;
 
+      // Codex #1412 r4 — a stored STRICT creator Full that cannot
+      // complete dooms the accept AFTER the taker signs and approves
+      // (`_fullTariffShouldRun` routes the tariff even while the kill
+      // switch is off). Preflight the deterministic killers — switch
+      // off, unpriceable/illiquid principal, quote over the creator's
+      // ceiling, creator vault short — and abort BEFORE any wallet
+      // prompt. Fail OPEN on transport/missing-selector failures: the
+      // contract enforces regardless; this only saves the taker a
+      // wasted signature + approval. (A pre-#1347 offer struct has no
+      // creatorFull field ⇒ the check self-skips on old deploys.)
+      if (
+        Boolean(o.creatorFull) &&
+        !Boolean(o.creatorAllowFullDowngrade) &&
+        isERC20 &&
+        !saleLoan
+      ) {
+        try {
+          const [enabled] = (await publicClient.readContract({
+            address: diamondAddr,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getFeeEntitlementConfig',
+          })) as readonly [boolean, bigint, bigint];
+          let blocked = !enabled;
+          let cStar = 0n;
+          if (!blocked) {
+            const [q, numeraireOk] = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'quoteCStar',
+              args: [lendingAsset, roleAmount, o.durationDays as bigint],
+            })) as readonly [bigint, boolean];
+            cStar = q;
+            const lendingIlliquidNow = await isAssetIlliquidLive({
+              publicClient,
+              diamondAddress: diamondAddr,
+              asset: lendingAsset,
+              failClosed: false,
+            });
+            blocked =
+              !numeraireOk ||
+              lendingIlliquidNow ||
+              cStar > (o.creatorMaxCStar as bigint);
+          }
+          if (!blocked) {
+            const vpfiToken = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getVPFIToken',
+            })) as Address;
+            const [, tracked] = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getTrackedVPFIDiscountTier',
+              args: [o.creator as Address],
+            })) as readonly [bigint, bigint, bigint];
+            const encumbered = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getEncumbered',
+              args: [o.creator as Address, vpfiToken, 0n],
+            })) as bigint;
+            const free = tracked > encumbered ? tracked - encumbered : 0n;
+            blocked = free < cStar;
+          }
+          if (blocked) throw new Error(copy.tariff.creatorFullBlocked);
+        } catch (e) {
+          if (
+            e instanceof Error &&
+            e.message === copy.tariff.creatorFullBlocked
+          ) {
+            throw e;
+          }
+          // Transport / selector-shaped failure — proceed; enforced on-chain.
+        }
+      }
+
       const terms: AcceptTerms = {
         acceptor: address,
         offerCreator: o.creator as Address,

@@ -2215,6 +2215,11 @@ const copySource = {
       'This loan’s tariff can’t be quoted right now, so the Full option isn’t available for it.',
     fullUnavailableNow:
       'The Full option isn’t available for this loan right now — it can’t complete at open, so it can’t be authorized.',
+    creatorFullBlocked:
+      'This offer carries its creator’s Full tariff commitment, which can’t complete right now, so the acceptance would be rejected on-chain. Try again later or choose another offer.',
+    saleDisclosureChecking: 'Checking this position’s fee records…',
+    saleDisclosureFailed:
+      'We couldn’t read this position’s fee records right now — the sale options return once the check succeeds.',
     dualFeeNote:
       'Full never replaces the normal fees — the loan’s asset fees still apply in full. Paying the tariff adds an extra 10% discount on your own side’s fees, on top of any vault-holding discount, up to the overall 50% cap.',
     nonRefundNote:

@@ -1999,8 +1999,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ) : loanLive.data.chainNow <
           loanLive.data.live.startTime +
             loanLive.data.live.durationDays * 86_400n ? (
+          feeEnt.data === undefined ? (
+            // Codex #1412 r4 (P3) — the travels-with-the-NFT note is
+            // part of the sale disclosure set for a Full-stamped
+            // position, so the sale CTAs hold until the fee-
+            // entitlement read settles (or shows its failed state) —
+            // same rule as the borrower preclose disclosure.
+            <section className="card">
+              <p className="muted" style={{ margin: 0 }}>
+                {feeEnt.isError
+                  ? copy.tariff.saleDisclosureFailed
+                  : copy.tariff.saleDisclosureChecking}
+              </p>
+            </section>
+          ) : (
           <>
-          {feeEnt.data?.lenderMode === FEE_MODE_FULL ? (
+          {feeEnt.data.lenderMode === FEE_MODE_FULL ? (
             // #1355 / Codex #1412 r2 — the Full fee mode is loan-scoped
             // and keyed to the position's current holder, so a sale
             // carries it to the buyer. Said BEFORE both sale surfaces
@@ -2059,6 +2073,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             )}
           </section>
           </>
+          )
         ) : null
       ) : null}
 

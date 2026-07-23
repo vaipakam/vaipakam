@@ -27,7 +27,7 @@ import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
 import { useCStarQuote, useFeeEntitlementConfig } from '../../data/tariff';
-import { VPFI_DECIMALS } from '../../data/vpfi';
+import { useVpfi, VPFI_DECIMALS } from '../../data/vpfi';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
@@ -676,6 +676,15 @@ function FullTariffArmForm({
   // settled affirmatively; clears never need any of it.
   const armAllowed =
     config.enabled && quoted !== undefined && liquidity.data === false;
+  // Codex #1412 r4 — the MAKER's own free vault VPFI vs the quote: a
+  // strict Full armed on an under-funded vault makes every later fill
+  // revert with nothing the taker can see. Warning-tier (the balance
+  // at FILL time is what the chain judges; the maker may fund later).
+  const vpfi = useVpfi();
+  const makerBalanceShort =
+    quoted !== undefined &&
+    vpfi.data !== undefined &&
+    vpfi.data.freeBalance < quoted;
 
   const [fields, setFields] = useState<{
     seededFor: number;
@@ -803,12 +812,32 @@ function FullTariffArmForm({
         {copy.tariff.nonRefundNote}
       </p>
       <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
-        {quote.data === undefined
-          ? copy.tariff.quoteLoading
-          : quote.data.numeraireOk
-            ? copy.tariff.quoteLine(formatTokenAmount(quote.data.cStar, VPFI_DECIMALS))
-            : copy.tariff.quoteUnavailable}
+        {
+          // Codex #1412 r4 (P3) — an errored quote reports UNAVAILABLE
+          // first: never an indefinite "loading", never a stale figure.
+          quote.isError
+            ? copy.tariff.fullUnavailableNow
+            : quote.data === undefined
+              ? copy.tariff.quoteLoading
+              : !quote.data.numeraireOk || liquidity.isError || liquidity.data === true
+                ? copy.tariff.fullUnavailableNow
+                : copy.tariff.quoteLine(
+                    formatTokenAmount(quote.data.cStar, VPFI_DECIMALS),
+                  )
+        }
       </p>
+      {makerBalanceShort && quoted !== undefined && vpfi.data ? (
+        <p
+          className="muted"
+          role="alert"
+          style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
+        >
+          {copy.tariff.balanceShort(
+            formatTokenAmount(vpfi.data.freeBalance, VPFI_DECIMALS),
+            formatTokenAmount(quoted, VPFI_DECIMALS),
+          )}
+        </p>
+      ) : null}
       {!config.enabled ? (
         // Codex #1412 r1 — while the feature is dark the form stays
         // reachable so an ALREADY-ARMED offer can be cleared (a strict
