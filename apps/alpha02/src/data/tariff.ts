@@ -25,6 +25,11 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+} from 'viem';
 import type { Address } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -56,7 +61,13 @@ export function useFeeEntitlementConfig(): FeeEntitlementConfig {
   const { data } = useQuery({
     queryKey: ['feeEntitlementConfig', readChain.chainId],
     enabled: Boolean(publicClient),
-    staleTime: 5 * 60_000,
+    // Codex #1412 r2 — the kill-switch gates whether the app may
+    // COLLECT Full authorizations, so it must track a mid-session ops
+    // flip: signal-aware ~30s cadence (same as useVpfi), not a
+    // five-minute static freshness. The contract still enforces
+    // regardless; this keeps the surface honest live.
+    staleTime: 25_000,
+    refetchInterval: signalAware(30_000),
     queryFn: async () => {
       const [enabled, kPerLifYear, rewardHaircutBps] =
         (await publicClient!.readContract({
@@ -154,12 +165,7 @@ export function useFeeEntitlement(loanId: number | undefined) {
     enabled: Boolean(publicClient) && loanId !== undefined,
     staleTime: 60_000,
     queryFn: async (): Promise<FeeEntitlementRecord> => {
-      const fe = (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getFeeEntitlement',
-        args: [BigInt(loanId!)],
-      })) as {
+      let fe: {
         borrowerMode: number;
         lenderMode: number;
         openDays: number;
@@ -167,6 +173,34 @@ export function useFeeEntitlement(loanId: number | undefined) {
         lenderTariffPaid: bigint;
         cStarOpen: bigint;
       };
+      try {
+        fe = (await publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getFeeEntitlement',
+          args: [BigInt(loanId!)],
+        })) as typeof fe;
+      } catch (err) {
+        // Codex #1412 r2 — a REVERT / zero-data means the selector is
+        // absent (a dark / pre-M2 Diamond): equivalent to "no tariff
+        // record", so consumers (incl. the preclose disclosure gate)
+        // must not strand on it. A transport failure is NOT knowledge
+        // — rethrow so the gate holds in its checking/failed state.
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (!isRevert) throw err;
+        return {
+          borrowerMode: 0,
+          lenderMode: 0,
+          openDays: 0,
+          borrowerTariffPaid: 0n,
+          lenderTariffPaid: 0n,
+          cStarOpen: 0n,
+          stamped: false,
+        };
+      }
       return {
         borrowerMode: Number(fe.borrowerMode),
         lenderMode: Number(fe.lenderMode),

@@ -629,17 +629,23 @@ function FullTariffArmForm({
         functionName: 'getOffer',
         args: [BigInt(offer.offerId)],
       })) as Record<string, unknown>;
+      const amount = BigInt((o.amount as bigint) ?? 0n);
+      const amountMax = BigInt((o.amountMax as bigint) ?? 0n);
       return {
         creatorFull: Boolean(o.creatorFull),
         creatorMaxCStar: BigInt((o.creatorMaxCStar as bigint) ?? 0n),
         creatorAllowFullDowngrade: Boolean(o.creatorAllowFullDowngrade),
+        // Codex #1412 r2 — the LIVE principal ceiling (an amend on
+        // another device / a lagging indexer row must not misprice
+        // the suggested maxCStar).
+        principalCeiling: amountMax > amount ? amountMax : amount,
       };
     },
   });
 
   const quote = useCStarQuote({
     lendingAsset: offer.lendingAsset as `0x${string}`,
-    principal: BigInt(offer.amountMax || '0'),
+    principal: live.data?.principalCeiling,
     durationDays: offer.durationDays,
   });
   const quoted = quote.data?.numeraireOk === true ? quote.data.cStar : undefined;
@@ -654,7 +660,14 @@ function FullTariffArmForm({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
-  if (fields === null && live.data !== undefined) {
+  // Codex #1412 r2 (P3) — seed only once BOTH the live offer AND the
+  // quote have settled (either priced or known-unpriceable), so the
+  // advertised +10% suggestion can't be lost to a quote that lands
+  // after the faster getOffer read. A degenerate zero-principal row
+  // never quotes (the hook stays disabled) — seed empty then.
+  const quoteSettled =
+    quote.data !== undefined || live.data?.principalCeiling === 0n;
+  if (fields === null && live.data !== undefined && quoteSettled) {
     const suggested =
       quoted !== undefined ? quoted + quoted / 10n : undefined;
     setFields({
@@ -710,6 +723,18 @@ function FullTariffArmForm({
     }
     setBusy(true);
     try {
+      // Codex #1412 r2 — same stale-row preflight as cancel/amend: an
+      // offer accepted or cancelled while the cached row is still
+      // visible must fail HERE, not as a mined revert.
+      if (publicClient) {
+        await assertRowActionStillValid({
+          publicClient,
+          diamond: readChain.diamondAddress,
+          account: offer.creator as `0x${string}`,
+          functionName: 'setOfferCreatorFullTariff',
+          args: [BigInt(offer.offerId), fields.full, ceiling, fields.allowDowngrade],
+        });
+      }
       await write('setOfferCreatorFullTariff', [
         BigInt(offer.offerId),
         fields.full,

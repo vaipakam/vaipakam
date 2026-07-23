@@ -2000,6 +2000,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           loanLive.data.live.startTime +
             loanLive.data.live.durationDays * 86_400n ? (
           <>
+          {feeEnt.data?.lenderMode === FEE_MODE_FULL ? (
+            // #1355 / Codex #1412 r2 — the Full fee mode is loan-scoped
+            // and keyed to the position's current holder, so a sale
+            // carries it to the buyer. Said BEFORE both sale surfaces
+            // (the instant early-exit sale below completes inside its
+            // own card, so a note after it would arrive too late).
+            <div className="banner banner-info" role="note">
+              <span className="banner-body">{copy.tariff.nftTravelNote}</span>
+            </div>
+          ) : null}
           <EarlyExitFlow
             row={row}
             live={loanLive.data.live}
@@ -2017,14 +2027,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             busy={busy}
             setBusy={setBusy}
           />
-          {feeEnt.data?.lenderMode === FEE_MODE_FULL ? (
-            // #1355 — the Full fee mode is loan-scoped and keyed to the
-            // position's current holder, so a sale carries it to the
-            // buyer. Said on the sale surfaces, before listing.
-            <div className="banner banner-info" role="note">
-              <span className="banner-body">{copy.tariff.nftTravelNote}</span>
-            </div>
-          ) : null}
           <section className="card">
             {loanSaleListingEnabled(readChain.chainId) ? (
               <LoanSaleFlow

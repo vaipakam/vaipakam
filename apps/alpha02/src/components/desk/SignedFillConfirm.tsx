@@ -50,6 +50,7 @@ import {
 import { captureTxError } from '../../lib/errors';
 import { flowDisabled } from '../../lib/killSwitch';
 import {
+  signedOfferCeiling,
   signedOfferTypedMessage,
   signedOrderTimeWindowsOpen,
   type SignedRowMeta,
@@ -380,7 +381,11 @@ export function SignedFillConfirm({
         // #1355 — ERC-20 fills only (a rental order bears no tariff).
         <FullTariffOptIn
           lendingAsset={o.lendingAsset as `0x${string}`}
-          principal={headlineAmount}
+          // Codex #1412 r2 — the order's PRINCIPAL ceiling, via the
+          // same helper the fill affordance uses: a single-value
+          // lender order's `amountMax == 0` sentinel would otherwise
+          // zero the quote and dead-end the card.
+          principal={signedOfferCeiling(o)}
           durationDays={Number(o.durationDays)}
           value={fullTariff}
           onChange={(v) => {
