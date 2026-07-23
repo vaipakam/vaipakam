@@ -89,21 +89,30 @@ library LibMeshFunding {
     }
 
     /**
-     * @notice Resolve + stamp the armed day's per-chain recycled funding and
-     *         make both reservations. Returns the funded global total — the
-     *         value the day-pool stamp records as `recycledBudget`.
+     * @notice Resolve + stamp the armed day's per-chain funding PROJECTION.
+     *         B2-a records-only: no ledger is written besides the per-day
+     *         stamps — the live day-pool stamp, both outstanding-commitment
+     *         ledgers, and every claim/remit consumer keep the Phase-A′
+     *         global figures until B2-b flips them to these records (Codex
+     *         #1414 r1). Returns the projected funded global total.
      * @param  dayId         Day being finalized (denominators final).
      * @param  coupledTarget The absorption-coupled target `Ā × (1 − m)` —
      *                       NOT pre-capped by Base's fundable balance; the
      *                       per-chain availabilities are the funding bound.
      * @param  freshHalf     The day's per-side fresh floor (for the #1008
      *                       combined-cap in the committable computation).
+     * @param  availBase     Base's commitment- and keeper-netted fundable
+     *                       balance, captured BEFORE the day's own Phase-A′
+     *                       reservation (the projection models funding the
+     *                       day, so the day's own commit must not net
+     *                       itself out).
      */
     function resolveAndStampDayFunding(
         LibVaipakam.Storage storage s,
         uint256 dayId,
         uint256 coupledTarget,
-        uint256 freshHalf
+        uint256 freshHalf,
+        uint256 availBase
     ) internal returns (uint256 fundedGlobal) {
         uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
         uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
@@ -118,11 +127,6 @@ library LibMeshFunding {
 
         uint32 baseId = uint32(block.chainid);
         uint256 targetHalf = coupledTarget / 2;
-
-        // Base's availability: the commitment- and keeper-netted fundable
-        // balance (same figure the Phase-A′ sizing used) — NOT the raw B1
-        // ledger, which does not net the keeper earmark.
-        uint256 availBase = _fundableBase(s);
 
         // ── Pass 1: per-chain targets + own-bucket funding ────────────────
         uint256 totalShortfall;
@@ -193,9 +197,7 @@ library LibMeshFunding {
             fundedGlobal += c.fundedLender + c.fundedBorrower;
         }
 
-        _stampAndReserve(
-            s, dayId, work, baseId, availBase, freshHalf, gLender, gBorrower
-        );
+        _stampProjection(s, dayId, work, baseId, freshHalf, gLender, gBorrower);
     }
 
     /// @dev Shared read-only context for the per-chain stamp step (one
@@ -208,16 +210,15 @@ library LibMeshFunding {
         uint256 t;
     }
 
-    /// @dev Stamp every chain's funding record and make the split
-    ///      reservations (separated from the resolution passes for stack
-    ///      headroom under viaIR; the per-chain body lives in its own frame
-    ///      for the same reason).
-    function _stampAndReserve(
+    /// @dev Stamp every chain's funding record with its projected
+    ///      reservation split (separated from the resolution passes for
+    ///      stack headroom under viaIR; the per-chain body lives in its own
+    ///      frame for the same reason).
+    function _stampProjection(
         LibVaipakam.Storage storage s,
         uint256 dayId,
         ChainWork[] memory work,
         uint32 baseId,
-        uint256 availBase,
         uint256 freshHalf,
         uint256 gLender,
         uint256 gBorrower
@@ -229,23 +230,19 @@ library LibMeshFunding {
             gBorrower: gBorrower,
             t: s.dayCapThreshold18[dayId]
         });
-        uint256 baseReserve;
         for (uint256 i; i < work.length; ++i) {
-            baseReserve += _stampOne(s, dayId, work[i], ctx);
+            _stampOne(s, dayId, work[i], ctx);
         }
-        // Ceil-dust trim on the Base side too.
-        if (baseReserve > availBase) baseReserve = availBase;
-        if (baseReserve != 0) s.outstandingCommitRecycled += baseReserve;
     }
 
-    /// @dev One chain's stamp + reservation. Returns the share to reserve
-    ///      against Base's global outstanding ledger.
+    /// @dev One chain's projection stamp + event.
     function _stampOne(
         LibVaipakam.Storage storage s,
         uint256 dayId,
         ChainWork memory c,
         StampCtx memory ctx
-    ) private returns (uint256 reservedBase) {
+    ) private {
+        uint256 reservedBase;
         uint256 equivL = c.chainLender == 0
             ? 0
             : Math.mulDiv(c.fundedLender, ctx.gLender, c.chainLender);
@@ -269,18 +266,16 @@ library LibMeshFunding {
             // Everything Base-funded — one ledger.
             reservedBase = commit;
         } else if (c.fundedLender + c.fundedBorrower != 0) {
-            // Attribute the capped commit pro-rata local-vs-top-up, and
-            // trim the local share's ceil-dust against the availability
-            // that actually backs it (reservations never exceed what
-            // exists).
+            // PROJECTED reservation split (B2-a records-only — the event
+            // carries it; the actual ledger writes arm in B2-b): the
+            // capped commit attributed pro-rata local-vs-top-up, the
+            // local share's ceil-dust trimmed against the availability
+            // that actually backs it.
             reservedLocal = Math.mulDiv(
                 commit, localTotal, c.fundedLender + c.fundedBorrower
             );
             if (reservedLocal > c.avail) reservedLocal = c.avail;
             reservedBase = commit - reservedLocal;
-            if (reservedLocal != 0) {
-                s.chainOutstandingRecycledCommit[c.chainId] += reservedLocal;
-            }
         }
 
         s.chainDayRecycledFunding[dayId][c.chainId] = LibVaipakam
@@ -322,19 +317,6 @@ library LibMeshFunding {
         uint256 d = dF + dR;
         uint256 mR = d <= t ? dR : Math.mulDiv(t, dR, d);
         return Math.ceilDiv(mR * chainSide, 1e18);
-    }
-
-    /// @dev Base's fundable balance: bucket net of the global outstanding
-    ///      recycled commitments and the RL-4 keeper earmark (the same
-    ///      figure the Phase-A′ sizing used).
-    function _fundableBase(LibVaipakam.Storage storage s)
-        private
-        view
-        returns (uint256)
-    {
-        uint256 bucket = s.recycleBucket;
-        uint256 netted = s.outstandingCommitRecycled + s.recycleKeeperBudget;
-        return bucket > netted ? bucket - netted : 0;
     }
 
     /// @dev A mirror's availability from the B1 ledger, net of what Base has

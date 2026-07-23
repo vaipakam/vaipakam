@@ -17,19 +17,25 @@ funded slices — identical to the previous single-pool sizing on a
 single-chain deployment.
 
 Each chain's funded figures are stamped per day: the per-side funded
-budgets (the binding caps), the side-specific global-equivalent
-numerators that make the existing claim math pay exactly the funded
-amount on that chain, and the slice the chain will be instructed to
-consume from its own bucket. Reservations split by funding source —
-mirror-locally-funded slices reserve against that chain's availability
-in a per-chain outstanding ledger, canonical-funded shares (own slice
-plus every top-up) reserve in the global outstanding ledger — both at
-the capped committable amounts, dust-trimmed so reservations can never
-exceed what exists. The absorption average itself now folds in every
-mirror's accepted day credits alongside the canonical chain's own
-series (counted once, never twice).
+budgets (the binding caps once consumed), the side-specific
+global-equivalent numerators that make the existing claim math pay
+exactly the funded amount on that chain, and the slice the chain will
+be instructed to consume from its own bucket. The intended reservation
+split — mirror-locally-funded slices against that chain's
+availability, canonical-funded shares (own slice plus every top-up)
+against the global ledger, both at capped committable amounts with
+rounding dust trimmed — is computed and published per chain alongside
+the stamp. The absorption average now folds in every mirror's accepted
+day credits alongside the canonical chain's own series, accumulated at
+report-acceptance time so a later change to the configured chain set
+can never rewrite an already-accepted day (a review finding).
 
-Nothing is broadcast or consumed from these records yet: the next
-stage ships each chain its own funded figures and consumption
-instructions, and the netting stage sizes remittances against them.
-Pre-cutover days are untouched. Part of #1222.
+Deliberately, this stage changes NO live figure: the day's stamped
+recycled budget, both outstanding-commitment ledgers, and every
+claim/remittance consumer keep the previous single-pool values
+byte-for-byte — a review round established that publishing the summed
+per-chain figure while consumers still distribute it pro-rata would
+move armed-day rewards and bucket consumption to the wrong chains, so
+the resolution rides as pure records until the next stage flips the
+consumers and arms the per-chain reservation ledger together.
+Part of #1222.

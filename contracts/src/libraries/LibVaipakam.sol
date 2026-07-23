@@ -5489,6 +5489,13 @@ library LibVaipakam {
         //   attribution write, and the view's "genuine zero vs no report
         //   yet" discriminator.
         mapping(uint256 => mapping(uint32 => bool)) chainRecycledDayAccepted;
+        // Per-day Σ of accepted MIRROR day credits (Base's own excluded —
+        //   its credit lives in the local `recycledCreditedByDay`),
+        //   accumulated at ACCEPTANCE time so the Ā fold is O(1) per day
+        //   and immune to later `expectedSourceChainIds` edits (Codex
+        //   #1414 r1: folding history through the mutable list would let
+        //   an ops change rewrite already-accepted credits).
+        mapping(uint256 => uint256) dayMirrorRecycledCredit;
         // ─── #1222 M3 B2-a — two-pass per-chain funding resolution ─────────
         // APPEND-ONLY TAIL. Records-only in B2-a: written at ARMED-day
         // finalization; the broadcast (B2-b) ships each chain its own

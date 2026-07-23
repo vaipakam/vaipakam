@@ -504,34 +504,20 @@ contract RewardAggregatorFacet is
     ) internal {
         uint256 w = LibVaipakam.RECYCLE_TRAILING_WINDOW_DAYS;
         uint256 credited;
-        {
-            // #1222 M3 B2-a — Ā's feed under the mesh: Base's own raw local
-            // series (first-party, unclamped — exactly the pre-mesh feed)
-            // PLUS every MIRROR's accepted day credits from the B1 ledger.
-            // The exclude-Base rule is load-bearing: Base's day credit is
-            // recorded BOTH locally and under its chain id in
-            // `chainDailyRecycledCredit`, so summing the per-chain map
-            // unfiltered would double-count it.
-            uint32[] storage expected = s.expectedSourceChainIds;
-            uint256 n = expected.length;
-            uint32 baseId = uint32(block.chainid);
-            for (uint256 i; i < w; ) {
-                if (dayId >= i) {
-                    uint256 d = dayId - i;
-                    credited += s.recycledCreditedByDay[d];
-                    for (uint256 j; j < n; ) {
-                        uint32 chainId = expected[j];
-                        if (chainId != baseId) {
-                            credited += s.chainDailyRecycledCredit[d][chainId];
-                        }
-                        unchecked {
-                            ++j;
-                        }
-                    }
-                }
-                unchecked {
-                    ++i;
-                }
+        // #1222 M3 B2-a — Ā's feed under the mesh: Base's own raw local
+        // series (first-party, unclamped — exactly the pre-mesh feed) PLUS
+        // the per-day MIRROR credit accumulator, which is written once at
+        // report ACCEPTANCE (clamped, Base excluded) so the fold is O(1)
+        // per day and a later `expectedSourceChainIds` edit can never
+        // rewrite an already-accepted day (Codex #1414 r1).
+        for (uint256 i; i < w; ) {
+            if (dayId >= i) {
+                uint256 d = dayId - i;
+                credited += s.recycledCreditedByDay[d]
+                    + s.dayMirrorRecycledCredit[d];
+            }
+            unchecked {
+                ++i;
             }
         }
         uint256 aBar = credited / w;
@@ -551,34 +537,13 @@ contract RewardAggregatorFacet is
             : freshAvailable;
 
         uint256 marginBps = LibVaipakam.cfgRecycleMarginBps();
+        // Net of outstanding recycled commitments AND the keeper earmark, so a
+        // carved keeper share is never re-sized into a reward budget (#1344).
+        uint256 fundable = _recycleFundable(s);
         uint256 coupled = (aBar * (10_000 - marginBps)) / 10_000;
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        bool armed = armedFrom != 0 && dayId >= armedFrom;
-        uint256 recycledBudget;
-        if (schedule == 0) {
-            // A day with no emission schedule stamps zero — recycling must
-            // never make otherwise-unrewarded activity rewardable.
-        } else if (armed) {
-            // #1222 M3 B2-a — Phase B′: the two-pass per-chain funding
-            // resolution. Global Ā sizes the TARGET; each chain's B1-ledger
-            // availability bounds the reality; Base's own slice reserves
-            // before top-ups draw from its remaining fundable balance. The
-            // resolver stamps every chain's funded figures + makes BOTH
-            // recycled reservations (mirror-local per-chain, Base-funded
-            // global) internally; the returned Σ funded is the global
-            // stamp — identical to the Phase-A′ `min(fundable, coupled)`
-            // on a single-chain deploy.
-            recycledBudget = LibMeshFunding.resolveAndStampDayFunding(
-                s, dayId, coupled, scheduleFloor / 2
-            );
-        } else {
-            // Pre-cutover (records-only) — the Phase-A′ single-pool sizing,
-            // net of outstanding recycled commitments AND the keeper
-            // earmark, so a carved keeper share is never re-sized into a
-            // reward budget (#1344).
-            uint256 fundable = _recycleFundable(s);
-            recycledBudget = fundable < coupled ? fundable : coupled;
-        }
+        uint256 recycledBudget = schedule == 0
+            ? 0
+            : (fundable < coupled ? fundable : coupled);
 
         s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
             scheduleFloor: uint128(scheduleFloor),
@@ -601,16 +566,35 @@ contract RewardAggregatorFacet is
         // reserving the raw halves would strand the unclaimable remainder
         // in `outstandingCommit*` and shrink every later day's
         // availability for value no user can draw.
-        // #1222 M3 B2-a — the FRESH reservation only: the recycled
-        // reservations were made inside the funding resolver above, split
-        // between the per-chain and global ledgers by funding source
-        // (reserving the global recycled committable here too would
-        // double-reserve every mirror-funded slice against Base's bucket).
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        bool armed = armedFrom != 0 && dayId >= armedFrom;
         if (armed) {
-            (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
-                s, dayId, scheduleFloor / 2, 0
-            );
+            (uint256 commitFresh, uint256 commitRecycled) =
+                LibInteractionRewards.committableForDay(
+                    s,
+                    dayId,
+                    scheduleFloor / 2,
+                    recycledBudget / 2
+                );
             s.outstandingCommitFresh += commitFresh;
+            s.outstandingCommitRecycled += commitRecycled;
+        }
+
+        // #1222 M3 B2-a — Phase B′ two-pass funding PROJECTION (armed days,
+        // schedule days only). Global Ā sizes the TARGET; each chain's
+        // B1-ledger availability bounds the reality; Base's own slice funds
+        // before top-ups draw from its remaining fundable balance. In B2-a
+        // these stamps are PURE RECORDS: the live stamp, the reservations
+        // above, and every claim/remit consumer keep the Phase-A′ global
+        // figures byte-for-byte (Codex #1414 r1 — switching the aggregate
+        // while consumers still distribute it pro-rata would move armed-day
+        // rewards and bucket consumption to the wrong chains). B2-b flips
+        // the consumers to the per-chain stamps and arms the per-chain
+        // reservation ledger in the same change.
+        if (armed && schedule != 0) {
+            LibMeshFunding.resolveAndStampDayFunding(
+                s, dayId, coupled, scheduleFloor / 2, fundable
+            );
         }
 
         emit GovernorDayPoolStamped(

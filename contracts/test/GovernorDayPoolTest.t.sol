@@ -371,22 +371,19 @@ contract GovernorDayPoolTest is SetupTest {
         );
         assertApproxEqAbs(recycled5, 95 ether, 2, "mesh total matches coupled");
 
-        // Reservation split: ARB's local 40 into the per-chain ledger;
-        // everything Base-funded (its own slice + the top-up) into the
-        // global outstanding.
-        uint256 arbLocal = _agg().getChainOutstandingRecycledCommit(CHAIN_ARB);
-        assertApproxEqAbs(arbLocal, 40 ether, 1e15, "mirror-local reserved per-chain");
+        // B2-a records-only (Codex #1414 r1): the LIVE ledgers stay
+        // Phase-A' byte-for-byte — the global outstanding reserves the
+        // whole capped budget exactly as before, and the per-chain ledger
+        // is untouched until B2-b flips the consumers. The projected
+        // split rides the ChainDayFundingStamped event only.
         (, , uint256 outR, ) = _agg().getGovernorCommitState();
         assertApproxEqAbs(
-            outR,
-            55 ether,
-            1e15,
-            "Base reserves own slice + top-up only"
+            outR, 95 ether, 100, "Phase-A' global reservation unchanged"
         );
         assertEq(
-            _agg().getChainOutstandingRecycledCommit(CHAIN_BASE),
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
             0,
-            "Base never uses the per-chain ledger"
+            "per-chain reservation ledger arms in B2-b"
         );
 
         // Equiv halves make the per-side global-denominator math yield the
@@ -476,20 +473,19 @@ contract GovernorDayPoolTest is SetupTest {
         assertEq(recycled5, 95 ether, "Phase-A' sizing unchanged");
     }
 
-    /// Next-day availability nets the mirror's per-chain reservation out:
-    /// a slice reserved on day 5 cannot fund day 6 again.
-    function testMirrorAvailabilityNetsPriorReservations() public {
+    /// B2-a is RECORDS-ONLY end to end: across two armed days the live
+    /// ledgers move exactly as Phase-A' (global reservations only), the
+    /// per-chain reservation ledger never moves, and each day's projection
+    /// stamps independently (per-day what-ifs until B2-b arms the
+    /// consumption + reservation side).
+    function testProjectionLeavesLiveLedgersPhaseA() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
         _mut().setRecycledCreditedByDayRaw(5, 700 ether);
         _mut().setGovernorCommitArmedFromDayRaw(5);
         _finalizeWithArbRecycled(5, 40 ether, 0);
 
-        uint256 arbReserved =
-            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB);
-        assertApproxEqAbs(arbReserved, 40 ether, 1e15, "day-5 reservation");
+        (, , uint256 outRAfter5, ) = _agg().getGovernorCommitState();
 
-        // Day 6: ARB reports the SAME cumulative (no new credits) — its
-        // availability is now ~0, so its slice is entirely Base-topped-up.
         _mut().setRecycledCreditedByDayRaw(6, 700 ether);
         messenger.deliverChainReport(CHAIN_BASE, 6, 10e18, 5e18);
         messenger.deliverChainReportRecycled(
@@ -497,12 +493,16 @@ contract GovernorDayPoolTest is SetupTest {
         );
         _agg().finalizeDay(6);
 
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
+            0,
+            "per-chain ledger never moves in B2-a"
+        );
+        (, , uint256 outRAfter6, ) = _agg().getGovernorCommitState();
+        assertGt(outRAfter6, outRAfter5, "global Phase-A' reservations continue");
+
         LibVaipakam.ChainDayFunding memory arb6 =
             _agg().getChainDayRecycledFunding(6, CHAIN_ARB);
-        assertLe(
-            arb6.recycleConsume,
-            1e15,
-            "no local consumption left - reserved slice not re-lent"
-        );
+        assertTrue(arb6.stamped, "each armed day projects independently");
     }
 }
