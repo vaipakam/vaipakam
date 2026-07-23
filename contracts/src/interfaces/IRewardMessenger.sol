@@ -65,6 +65,8 @@ interface IRewardMessenger {
         uint256 dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
         address payable refundAddress
     ) external payable;
 
@@ -105,7 +107,9 @@ interface IRewardMessenger {
     function quoteSendChainReport(
         uint256 dayId,
         uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18
     ) external view returns (uint256 nativeFee);
 
     /// @notice Quote the native CCIP fee SUM for a Base→mirrors broadcast.

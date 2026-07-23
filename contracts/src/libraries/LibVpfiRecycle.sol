@@ -113,6 +113,11 @@ library LibVpfiRecycle {
         if (!active) dayId = 0;
         s.recycleBucket = needed;
         s.recycledCreditedByDay[dayId] += amount;
+        // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
+        // reported mirror→Base on each day-close so Base's per-chain
+        // availability ledger self-heals across missed reports. Counts
+        // inflow, never the live balance, so it never decrements on consume.
+        s.recycleCreditedCumulative += amount;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
     }
 
@@ -183,5 +188,130 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled =
             outstanding > amount ? outstanding - amount : 0;
         emit RewardCommitmentReleased(uint8(source), refId, amount);
+    }
+
+    // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────
+
+    /// @notice Base's per-chain recycled ledger advanced for `sourceChainId`
+    ///         (a mirror day-close report, or Base's own local close).
+    /// @param  sourceChainId       Reporting chain.
+    /// @param  dayId               Schedule day the report closes.
+    /// @param  cumulative          The chain's reported monotonic cumulative
+    ///                             recycle-bucket credits (availability).
+    /// @param  forDayReported      The chain's claimed credit total for
+    ///                             `dayId` (its `recycledCreditedByDay`).
+    /// @param  dayCreditAccepted   The clamped credit actually attributed to
+    ///                             `dayId` (0 when clamped away or when the
+    ///                             attribution baseline was unavailable —
+    ///                             availability still self-heals via
+    ///                             `cumulative`).
+    /// @custom:event-category informational/reward-transport
+    event ChainRecycledReported(
+        uint32 indexed sourceChainId,
+        uint256 indexed dayId,
+        uint256 cumulative,
+        uint256 forDayReported,
+        uint256 dayCreditAccepted
+    );
+
+    /**
+     * @notice #1222 M3 B1 — record a chain's day-close recycled report into
+     *         Base's per-chain ledger: the AVAILABILITY cumulative and the
+     *         clamped per-day `Ā` attribution. Called by the reporter (Base's
+     *         own local close) and the aggregator ingress (a mirror report),
+     *         so both paths write identically.
+     * @dev    Two independent ledgers per report:
+     *
+     *         AVAILABILITY — `chainReportedRecycled[c]` only ever advances
+     *         (a late/reordered report carrying a stale cumulative can never
+     *         walk it backwards), and a missed report self-heals on the next
+     *         one because the value is a cumulative, not a delta.
+     *
+     *         DAY ATTRIBUTION — the plan's consistency clamp: a day's
+     *         accepted credit never exceeds the cumulative increase over the
+     *         clamp baseline, so a mirror bug can't feed `Ā` credit the
+     *         availability ledger doesn't back. Baseline selection (the
+     *         "nearest lower-day accepted cumulative snapshot" option from
+     *         the M3 plan — chosen over a hold/retry cursor because
+     *         `closeDay`/`finalizeDay` are permissionless and skippable, so
+     *         a no-gap cursor could wedge every later report behind a quiet
+     *         day nobody closed):
+     *           - `dayId` above the attribution ratchet (in-order, gaps
+     *             allowed): baseline = the ratchet's cumulative snapshot.
+     *             Skipped days' deltas fold into the headroom; the chain's
+     *             own `forDayReported` binds the credit, so an honest chain
+     *             is exact.
+     *           - `dayId` at/below the ratchet (a DELAYED earlier day whose
+     *             later sibling was accepted first — the canonical CCIP
+     *             reorder): baseline = day `dayId − 1`'s stored snapshot when
+     *             that day was accepted, which is exact; otherwise the
+     *             baseline is unknowable without an unbounded walk and the
+     *             day credit is conservatively 0 (availability unaffected).
+     *         Truly-late days never reach here at all — the ingress rejects
+     *         reports for finalized days — so no finalization hook is
+     *         needed. Residual (accepted) looseness: across a reorder
+     *         window a MALICIOUS mirror could attribute one delta to two
+     *         days; `Ā` only sizes budgets and B2's
+     *         `min(target, availRecycled)` funding re-bounds everything
+     *         against the availability ledger, which stays exact.
+     *
+     *         Idempotent per `(dayId, chain)` via the acceptance marker —
+     *         upstream duplicate guards make a second call unreachable
+     *         today, but the marker keeps the ledger safe under any future
+     *         re-delivery path.
+     */
+    function recordChainRecycled(
+        LibVaipakam.Storage storage s,
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 cumulative,
+        uint256 forDayReported
+    ) internal {
+        // AVAILABILITY — monotonic self-healing ratchet.
+        if (cumulative > s.chainReportedRecycled[sourceChainId]) {
+            s.chainReportedRecycled[sourceChainId] = cumulative;
+        }
+
+        // DAY ATTRIBUTION — once per (day, chain).
+        if (s.chainRecycledDayAccepted[dayId][sourceChainId]) return;
+
+        uint256 attrPlus1 = s.chainRecycledAttrDayPlus1[sourceChainId];
+        uint256 baseline;
+        bool haveBaseline;
+        if (dayId + 1 > attrPlus1) {
+            // In-order (or gap-jumping ahead): clamp against the ratchet.
+            baseline = s.chainRecycledCumAtAttr[sourceChainId];
+            haveBaseline = true;
+        } else if (
+            dayId >= 1 && s.chainRecycledDayAccepted[dayId - 1][sourceChainId]
+        ) {
+            // Delayed earlier day with an accepted adjacent predecessor:
+            // exact baseline from that day's stored snapshot.
+            baseline = s.chainRecycledCumAtDay[dayId - 1][sourceChainId];
+            haveBaseline = true;
+        }
+
+        uint256 accepted;
+        if (haveBaseline && cumulative > baseline) {
+            uint256 headroom = cumulative - baseline;
+            accepted = forDayReported < headroom ? forDayReported : headroom;
+        }
+
+        // Snapshot floored at the baseline: a buggy mirror reporting a
+        // DECREASING cumulative must not inflate the next day's headroom.
+        uint256 snap = cumulative > baseline ? cumulative : baseline;
+        s.chainRecycledDayAccepted[dayId][sourceChainId] = true;
+        s.chainRecycledCumAtDay[dayId][sourceChainId] = snap;
+        if (accepted != 0) {
+            s.chainDailyRecycledCredit[dayId][sourceChainId] = accepted;
+        }
+        if (dayId + 1 > attrPlus1) {
+            s.chainRecycledAttrDayPlus1[sourceChainId] = dayId + 1;
+            s.chainRecycledCumAtAttr[sourceChainId] = snap;
+        }
+
+        emit ChainRecycledReported(
+            sourceChainId, dayId, cumulative, forDayReported, accepted
+        );
     }
 }

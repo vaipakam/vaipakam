@@ -18,6 +18,9 @@ contract MockRewardDiamond {
     uint256 public lastReportLender;
     uint256 public lastReportBorrower;
     uint256 public reportCount;
+    // #1222 M3 B1 — recycled-field spies.
+    uint256 public lastReportRecycledCum;
+    uint256 public lastReportRecycledForDay;
 
     uint256 public lastBcastDay;
     uint256 public lastBcastLender;
@@ -28,12 +31,16 @@ contract MockRewardDiamond {
         uint32 src,
         uint256 day,
         uint256 l,
-        uint256 b
+        uint256 b,
+        uint256 recycledCum,
+        uint256 recycledForDay
     ) external {
         lastReportChain = src;
         lastReportDay = day;
         lastReportLender = l;
         lastReportBorrower = b;
+        lastReportRecycledCum = recycledCum;
+        lastReportRecycledForDay = recycledForDay;
         ++reportCount;
     }
 
@@ -212,7 +219,12 @@ contract VaipakamRewardFlowTest is Test {
     function test_Report_MirrorToBase() public {
         vm.prank(address(diamondMirror));
         rewardMirror.sendChainReport{value: fee}(
-            42, 1_000 ether, 500 ether, payable(address(diamondMirror))
+            42,
+            1_000 ether,
+            500 ether,
+            77 ether,
+            7 ether,
+            payable(address(diamondMirror))
         );
         assertEq(router.pendingCount(), 1, "report captured");
 
@@ -223,6 +235,47 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastReportDay(), 42, "dayId");
         assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
         assertEq(diamondBase.lastReportBorrower(), 500 ether, "borrower numeraire");
+        // #1222 M3 B1 — the recycled pair rides the same six-word report.
+        assertEq(diamondBase.lastReportRecycledCum(), 77 ether, "recycled cumulative");
+        assertEq(diamondBase.lastReportRecycledForDay(), 7 ether, "recycled for-day");
+    }
+
+    /// #1222 M3 B1 — Base keeps ACCEPTING the legacy four-word report shape
+    /// (a delayed CCIP delivery or a not-yet-upgraded mirror): recycled
+    /// fields decode as zero, everything else lands unchanged.
+    function test_Report_LegacyFourWordShape_StillAccepted() public {
+        vm.prank(address(messengerBase));
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(REPORT, uint256(42), uint256(1_000 ether), uint256(500 ether)),
+            _empty()
+        );
+
+        assertEq(diamondBase.reportCount(), 1, "legacy report accepted");
+        assertEq(diamondBase.lastReportDay(), 42, "dayId");
+        assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
+        assertEq(diamondBase.lastReportRecycledCum(), 0, "recycled cum defaults 0");
+        assertEq(diamondBase.lastReportRecycledForDay(), 0, "recycled for-day defaults 0");
+    }
+
+    /// #1222 M3 B1 — a five-word report is neither the legacy nor the current
+    /// shape: rejected as a padded/truncated packet.
+    function test_Report_FiveWordShape_Rejected() public {
+        bytes memory padded = abi.encode(
+            REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(1 ether)
+        );
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                uint256(5 * 32),
+                uint256(6 * 32)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR, address(rewardMirror), padded, _empty()
+        );
     }
 
     // ─── BROADCAST: Base → mirror ───────────────────────────────────────────
@@ -248,7 +301,7 @@ contract VaipakamRewardFlowTest is Test {
     function test_SendChainReport_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
-        rewardMirror.sendChainReport{value: fee}(1, 0, 0, payable(owner));
+        rewardMirror.sendChainReport{value: fee}(1, 0, 0, 0, 0, payable(owner));
     }
 
     function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
@@ -315,7 +368,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 short.length,
-                uint256(128)
+                uint256(192)
             )
         );
         rewardBase.onCrossChainMessage(
@@ -342,7 +395,7 @@ contract VaipakamRewardFlowTest is Test {
 
     function test_Quotes() public view {
         assertEq(
-            rewardMirror.quoteSendChainReport(1, 0, 0), fee, "report quote"
+            rewardMirror.quoteSendChainReport(1, 0, 0, 0, 0), fee, "report quote"
         );
         // One broadcast destination → one fee.
         assertEq(
@@ -357,7 +410,9 @@ contract VaipakamRewardFlowTest is Test {
         rewardMirror.pause();
         vm.prank(address(diamondMirror));
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
-        rewardMirror.sendChainReport{value: fee}(1, 0, 0, payable(address(diamondMirror)));
+        rewardMirror.sendChainReport{value: fee}(
+            1, 0, 0, 0, 0, payable(address(diamondMirror))
+        );
     }
 
     // ─── Lossy chain-id cast guard (Codex review) ───────────────────────────
@@ -523,7 +578,7 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertOnInvalidSize() public {
-        // A 3-word payload — not in {2, 4, 8}. The outer size gate
+        // A 3-word payload — not in {2, 4, 6, 8}. The outer size gate
         // catches it before decode.
         bytes memory threeWords = abi.encode(REPORT, uint256(1), uint256(2));
         vm.prank(address(messengerMirror));
@@ -531,7 +586,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 threeWords.length,
-                uint256(4 * 32)
+                uint256(6 * 32)
             )
         );
         rewardMirror.onCrossChainMessage(

@@ -717,6 +717,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycledCreditedByDay[dayId] = amount;
     }
 
+    /// @notice #1222 M3 B1 test-only — seed this chain's monotonic
+    ///         cumulative recycled-credit counter (the figure `closeDay`
+    ///         reports to Base) without driving real bucket credits.
+    function setRecycleCreditedCumulativeRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().recycleCreditedCumulative = amount;
+    }
+
     /// @notice Governor PR-3b test-only — arm commitment reservation from
     ///         `dayId` (production arms this via the PR-3c cutover).
     function setGovernorCommitArmedFromDayRaw(uint256 dayId) external {

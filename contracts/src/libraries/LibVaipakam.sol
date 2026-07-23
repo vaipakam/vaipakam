@@ -5440,6 +5440,57 @@ library LibVaipakam {
         //   is marked processed once it passes `endDay`. A pool shortage must
         //   NOT advance this (the day is all-or-nothing and stays retryable).
         mapping(uint256 => uint64) rewardEntryClaimNextDay;
+        // ─── #1222 M3 B1 — cross-chain recycled ledger (mesh netting) ──────
+        // APPEND-ONLY TAIL. Records-only in B1: Base learns, per chain, how
+        // much recycled VPFI exists (availability) and which day it was
+        // absorbed on (Ā attribution); nothing reads these for funding until
+        // B2 folds them into the day-pool sizing and B3 nets remittances
+        // against them.
+        //
+        // `recycleCreditedCumulative` — LOCAL, every chain: monotonic
+        //   cumulative of every recycle-bucket CREDIT ever made on this chain
+        //   (incremented in `LibVpfiRecycle.credit`, never decremented — it
+        //   counts inflow, not the live balance). Reported on every day-close
+        //   so Base's availability ledger self-heals across missed reports.
+        uint256 recycleCreditedCumulative;
+        // `chainReportedRecycled` — BASE-ONLY per-chain availability ledger:
+        //   the highest cumulative ever accepted from chain `c` (Base's own
+        //   under its chain id). Monotonic-guarded on write; a stale or
+        //   reordered report can never walk it backwards.
+        //   `availRecycled[c] = chainReportedRecycled[c] −
+        //   chainConsumedRecycled[c]` is what B2/B3 funding and netting draw
+        //   against — the HARD backstop bounding every day-credit clamp.
+        mapping(uint32 => uint256) chainReportedRecycled;
+        // `chainConsumedRecycled` — BASE-ONLY: cumulative recycled Base has
+        //   INSTRUCTED chain `c` to consume (B2 `recycleConsume` +
+        //   `keeperAllocate`, B3 netting, C2 repatriation). Declared with the
+        //   ledger so the block reads as one unit; written from B2 on. Always
+        //   `≤ chainReportedRecycled[c]`.
+        mapping(uint32 => uint256) chainConsumedRecycled;
+        // Day-attribution ratchet, per chain, for the clamped `credited[d]`
+        //   feed (`Ā`'s per-day attribution — see
+        //   `LibVpfiRecycle.recordChainRecycled` for the acceptance rules).
+        //   `chainRecycledAttrDayPlus1[c]` = highest ATTRIBUTED dayId + 1
+        //   (0 = never attributed — dayId 0 is a real schedule day, so the
+        //   +1 encoding is load-bearing); `chainRecycledCumAtAttr[c]` = the
+        //   cumulative snapshot at that acceptance, the clamp baseline for
+        //   the next in-order day.
+        mapping(uint32 => uint256) chainRecycledAttrDayPlus1;
+        mapping(uint32 => uint256) chainRecycledCumAtAttr;
+        // Accepted (clamped) per-day recycled credit, `[dayId][chainId]` —
+        //   the mesh half of the `credited[d]` feed. B1 records it; B2 folds
+        //   it into `Ā`. Base's OWN day credit is recorded here too (under
+        //   its chain id), so the B2 fold must source `Ā` from this map
+        //   exclusively OR exclude Base — never sum it with the local
+        //   `recycledCreditedByDay` for the same day (double count).
+        mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledCredit;
+        // Per accepted day: the cumulative snapshot (floored at the baseline
+        //   it was clamped against) + acceptance marker, `[dayId][chainId]`.
+        //   The snapshot is what makes a DELAYED earlier day exact: day `d`
+        //   arriving after `d+1` clamps against `chainRecycledCumAtDay[d−1]`
+        //   instead of the already-ratcheted attr baseline.
+        mapping(uint256 => mapping(uint32 => uint256)) chainRecycledCumAtDay;
+        mapping(uint256 => mapping(uint32 => bool)) chainRecycledDayAccepted;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

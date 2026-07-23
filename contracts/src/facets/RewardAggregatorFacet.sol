@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -184,12 +185,20 @@ contract RewardAggregatorFacet is
      * @param dayId          Day being reported.
      * @param lenderNumeraire18    Mirror's local lender USD-18 for `dayId`.
      * @param borrowerNumeraire18  Mirror's local borrower USD-18 for `dayId`.
+     * @param recycledCumulative18 Mirror's monotonic cumulative recycle-bucket
+     *                             credits (#1222 B1 availability ledger; zero
+     *                             on a legacy four-word report).
+     * @param recycledForDay18     Mirror's claimed recycle credit total for
+     *                             `dayId` (#1222 B1 `Ā` attribution; clamped
+     *                             against the cumulative increase on write).
      */
     function onChainReportReceived(
         uint32 sourceChainId,
         uint256 dayId,
         uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18
     ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -201,6 +210,11 @@ contract RewardAggregatorFacet is
 
         s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
         s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
+        // #1222 M3 B1 — advance Base's per-chain recycled ledger (monotonic
+        // availability + clamped day attribution) from the mirror's report.
+        LibVpfiRecycle.recordChainRecycled(
+            s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
+        );
         s.chainDailyReported[dayId][sourceChainId] = true;
         uint32 count;
         unchecked {

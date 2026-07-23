@@ -2218,7 +2218,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](89);
+        s = new bytes4[](92);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2402,6 +2402,10 @@ contract DeployDiamond is Script {
         // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
         s[87] = ConfigFacet.setRewardHaircutBps.selector;
         s[88] = ConfigFacet.setUserSideShareCapBps.selector;
+        // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
+        s[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
+        s[90] = ConfigFacet.getChainRecycledLedger.selector;
+        s[91] = ConfigFacet.getChainDailyRecycledCredit.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

@@ -8,6 +8,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
@@ -144,13 +145,28 @@ contract RewardReporterFacet is
 
         uint256 lenderNumeraire18 = s.totalLenderInterestNumeraire18[dayId];
         uint256 borrowerNumeraire18 = s.totalBorrowerInterestNumeraire18[dayId];
+        // #1222 M3 B1 — this chain's recycled figures ride the same day-close:
+        // the MONOTONIC cumulative (Base's availability ledger self-heals from
+        // it across missed reports) and the day-bucketed credit total for the
+        // closing day (`Ā`'s per-day attribution). `dayId` is strictly past,
+        // so its `recycledCreditedByDay` bucket is complete.
+        uint256 recycledCumulative18 = s.recycleCreditedCumulative;
+        uint256 recycledForDay18 = s.recycledCreditedByDay[dayId];
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
 
         if (s.isCanonicalRewardChain) {
             // Base writes directly — no cross-chain hop for its own numbers.
             uint32 chainId = uint32(block.chainid);
-            _recordChainReportLocal(s, dayId, chainId, lenderNumeraire18, borrowerNumeraire18);
+            _recordChainReportLocal(
+                s,
+                dayId,
+                chainId,
+                lenderNumeraire18,
+                borrowerNumeraire18,
+                recycledCumulative18,
+                recycledForDay18
+            );
             emit ChainInterestReported(
                 dayId,
                 chainId,
@@ -182,6 +198,8 @@ contract RewardReporterFacet is
                 dayId,
                 lenderNumeraire18,
                 borrowerNumeraire18,
+                recycledCumulative18,
+                recycledForDay18,
                 payable(msg.sender)
             );
         }
@@ -198,10 +216,18 @@ contract RewardReporterFacet is
         uint256 dayId,
         uint32 sourceChainId,
         uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18
     ) internal {
         s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
         s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
+        // #1222 M3 B1 — Base records its OWN chain in the per-chain recycled
+        // ledger through the same helper the mirror ingress uses, so both
+        // paths write identically and B2/B3's netting sees one uniform ledger.
+        LibVpfiRecycle.recordChainRecycled(
+            s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
+        );
         if (!s.chainDailyReported[dayId][sourceChainId]) {
             s.chainDailyReported[dayId][sourceChainId] = true;
             unchecked {

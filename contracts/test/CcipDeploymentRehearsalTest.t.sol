@@ -41,9 +41,14 @@ contract MockRehearsalDiamond {
         vpfi = vpfi_;
     }
 
-    function onChainReportReceived(uint32 src, uint256 day, uint256, uint256)
-        external
-    {
+    function onChainReportReceived(
+        uint32 src,
+        uint256 day,
+        uint256,
+        uint256,
+        uint256,
+        uint256
+    ) external {
         lastReportChain = src;
         lastReportDay = day;
         ++reportCount;
@@ -362,7 +367,7 @@ contract CcipDeploymentRehearsalTest is Test {
         // REPORT — mirror → Base.
         vm.prank(address(diamondMirror));
         rewardMirror.sendChainReport{value: fee}(
-            42, 1_000 ether, 500 ether, payable(address(diamondMirror))
+            42, 1_000 ether, 500 ether, 0, 0, payable(address(diamondMirror))
         );
         router.deliver(0, SEL_MIRROR);
         assertEq(diamondBase.reportCount(), 1, "Base aggregator got the report");
