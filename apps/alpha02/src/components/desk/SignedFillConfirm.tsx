@@ -42,6 +42,11 @@ import {
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { ConsentLabel } from '../ConsentLabel';
+import {
+  FullTariffOptIn,
+  FULL_TARIFF_OFF,
+  type FullTariffChoice,
+} from '../FullTariffOptIn';
 import { captureTxError } from '../../lib/errors';
 import { flowDisabled } from '../../lib/killSwitch';
 import {
@@ -92,6 +97,9 @@ export function SignedFillConfirm({
   const payMeta = isLenderOrder ? collateralMeta : lendingMeta;
 
   const [consent, setConsent] = useState(false);
+  // #1355 — the TAKER's own Full VPFI tariff opt-in for this fill (the
+  // maker of a signed order cannot opt in — #1369).
+  const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filledHash, setFilledHash] = useState<string | null>(null);
@@ -233,6 +241,8 @@ export function SignedFillConfirm({
       const { payload, orderHash } = await signTerms.sign({
         order: o,
         consent,
+        // #1355 — undefined (⇒ non-Full) unless the taker engaged it.
+        fullTariff: fullTariff.full ? fullTariff : undefined,
       });
       // Classic Diamond allowance for the taker's leg (no Permit2 lane
       // on this path — see the header note).
@@ -365,6 +375,17 @@ export function SignedFillConfirm({
             )
           : '…'}
       </p>
+
+      {Number(o.assetType) === 0 ? (
+        // #1355 — ERC-20 fills only (a rental order bears no tariff).
+        <FullTariffOptIn
+          lendingAsset={o.lendingAsset as `0x${string}`}
+          principal={headlineAmount}
+          durationDays={Number(o.durationDays)}
+          value={fullTariff}
+          onChange={setFullTariff}
+        />
+      ) : null}
 
       <label
         className="cluster"

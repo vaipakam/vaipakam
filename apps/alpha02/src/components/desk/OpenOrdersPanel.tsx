@@ -25,7 +25,9 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseUnits } from 'viem';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
-import { useDiamondWrite } from '../../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
+import { useCStarQuote, useFeeEntitlementConfig } from '../../data/tariff';
+import { VPFI_DECIMALS } from '../../data/vpfi';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
@@ -593,6 +595,227 @@ function AmendForm({
   );
 }
 
+/**
+ * #1355 — the CREATOR's Full VPFI tariff opt-in on a standing offer.
+ * The opt-in is not a create-time param: the contract arms it
+ * post-create via `ProfileFacet.setOfferCreatorFullTariff` (creator-
+ * gated, pre-accept), so this inline form is the arming surface. It
+ * seeds from a LIVE `getOffer` read (the durable signed artifact the
+ * fill charges against), never the indexer row. Ceiling suggestion is
+ * quoted against `amountMax` — the largest fill the offer permits —
+ * so the ceiling covers any partial fill.
+ */
+function FullTariffArmForm({
+  offer,
+  onDone,
+}: {
+  offer: IndexedOffer;
+  onDone: () => void;
+}) {
+  const { onSupportedChain, readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+
+  const live = useQuery({
+    queryKey: ['offerFullTariff', readChain.chainId, offer.offerId],
+    enabled: Boolean(publicClient),
+    staleTime: 0,
+    queryFn: async () => {
+      const o = (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOffer',
+        args: [BigInt(offer.offerId)],
+      })) as Record<string, unknown>;
+      return {
+        creatorFull: Boolean(o.creatorFull),
+        creatorMaxCStar: BigInt((o.creatorMaxCStar as bigint) ?? 0n),
+        creatorAllowFullDowngrade: Boolean(o.creatorAllowFullDowngrade),
+      };
+    },
+  });
+
+  const quote = useCStarQuote({
+    lendingAsset: offer.lendingAsset as `0x${string}`,
+    principal: BigInt(offer.amountMax || '0'),
+    durationDays: offer.durationDays,
+  });
+  const quoted = quote.data?.numeraireOk === true ? quote.data.cStar : undefined;
+
+  const [fields, setFields] = useState<{
+    seededFor: number;
+    full: boolean;
+    ceiling: string;
+    allowDowngrade: boolean;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  if (fields === null && live.data !== undefined) {
+    const suggested =
+      quoted !== undefined ? quoted + quoted / 10n : undefined;
+    setFields({
+      seededFor: offer.offerId,
+      full: live.data.creatorFull,
+      ceiling:
+        live.data.creatorMaxCStar > 0n
+          ? exactAmountString(live.data.creatorMaxCStar, VPFI_DECIMALS)
+          : suggested !== undefined
+            ? exactAmountString(suggested, VPFI_DECIMALS)
+            : '',
+      allowDowngrade: live.data.creatorAllowFullDowngrade,
+    });
+  }
+
+  async function save() {
+    if (!fields) return;
+    setError(null);
+    setSaved(null);
+    let ceiling = 0n;
+    if (fields.full) {
+      if (!isPlainDecimal(fields.ceiling)) {
+        setError(copy.tariff.maxCStarRequired);
+        return;
+      }
+      try {
+        ceiling = parseUnits(fields.ceiling, VPFI_DECIMALS);
+      } catch {
+        setError(copy.tariff.maxCStarRequired);
+        return;
+      }
+      if (ceiling <= 0n) {
+        setError(copy.tariff.maxCStarRequired);
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await write('setOfferCreatorFullTariff', [
+        BigInt(offer.offerId),
+        fields.full,
+        ceiling,
+        fields.allowDowngrade,
+      ]);
+      setSaved(fields.full ? copy.tariff.armSaved : copy.tariff.armClearedSaved);
+      void queryClient.invalidateQueries({
+        queryKey: ['offerFullTariff', readChain.chainId, offer.offerId],
+      });
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (fields === null) {
+    return (
+      <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.85rem' }}>
+        {copy.tariff.quoteLoading}
+      </p>
+    );
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 8, padding: 12 }}>
+      <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem' }}>
+        {copy.tariff.armTitle}
+      </p>
+      <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+        {copy.tariff.makerNote} {copy.tariff.dualFeeNote}{' '}
+        {copy.tariff.nonRefundNote}
+      </p>
+      <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+        {quote.data === undefined
+          ? copy.tariff.quoteLoading
+          : quote.data.numeraireOk
+            ? copy.tariff.quoteLine(formatTokenAmount(quote.data.cStar, VPFI_DECIMALS))
+            : copy.tariff.quoteUnavailable}
+      </p>
+      <label
+        className="cluster"
+        style={{ marginTop: 8, fontSize: '0.9rem', alignItems: 'flex-start' }}
+      >
+        <input
+          type="checkbox"
+          checked={fields.full}
+          onChange={(e) => setFields({ ...fields, full: e.target.checked })}
+          style={{ marginTop: 3 }}
+        />
+        <span>{copy.tariff.armEnableLabel}</span>
+      </label>
+      {fields.full ? (
+        <>
+          <label style={{ display: 'block', marginTop: 8, fontSize: '0.85rem' }}>
+            {copy.tariff.maxCStarLabel}
+            <input
+              type="text"
+              inputMode="decimal"
+              value={fields.ceiling}
+              onChange={(e) => setFields({ ...fields, ceiling: e.target.value })}
+              style={{ display: 'block', marginTop: 4, width: '100%' }}
+            />
+          </label>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
+            {copy.tariff.maxCStarHelp}
+          </p>
+          <label
+            className="cluster"
+            style={{ marginTop: 8, fontSize: '0.85rem', alignItems: 'flex-start' }}
+          >
+            <input
+              type="checkbox"
+              checked={fields.allowDowngrade}
+              onChange={(e) =>
+                setFields({ ...fields, allowDowngrade: e.target.checked })
+              }
+              style={{ marginTop: 3 }}
+            />
+            <span>{copy.tariff.downgradeLabel}</span>
+          </label>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
+            {fields.allowDowngrade
+              ? copy.tariff.downgradeHelpAllow
+              : copy.tariff.downgradeHelpStrict}
+          </p>
+        </>
+      ) : null}
+      {error ? (
+        <p
+          role="alert"
+          style={{ margin: '6px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
+        >
+          {error}
+        </p>
+      ) : null}
+      {saved ? (
+        <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.85rem' }}>
+          {saved}
+        </p>
+      ) : null}
+      <div className="cluster" style={{ marginTop: 8, gap: 8 }}>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={!onSupportedChain || busy}
+          onClick={() => void save()}
+        >
+          {busy ? copy.tariff.armSaving : copy.tariff.armSave}
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          disabled={busy}
+          onClick={onDone}
+        >
+          {copy.offerFlow.back}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OrderRow({ offer }: { offer: IndexedOffer }) {
   const { address, onSupportedChain, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -600,11 +823,18 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   const queryClient = useQueryClient();
   const meta = useTokenMeta(offer.lendingAsset);
   const [amending, setAmending] = useState(false);
+  const [armingTariff, setArmingTariff] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const feeEntitlement = useFeeEntitlementConfig();
 
   const isCreator =
     Boolean(address) && offer.creator.toLowerCase() === address!.toLowerCase();
+  // #1355 — the creator's Full-tariff arming surface: ERC-20 offers
+  // only (rentals bear no tariff), and only while the feature is
+  // live-enabled on chain (dark ⇒ no surface).
+  const canArmTariff =
+    isCreator && feeEntitlement.enabled && offer.assetType === AssetType.ERC20;
   const isLending = offer.offerType === 0;
   const rateBps = isLending ? offer.interestRateBps : offer.interestRateBpsMax;
   const filled = BigInt(offer.amountFilled || '0');
@@ -786,6 +1016,16 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
             >
               <Pencil size={14} aria-hidden /> {text.amend}
             </button>
+            {canArmTariff ? (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                title={copy.tariff.armTitle}
+                onClick={() => setArmingTariff((a) => !a)}
+              >
+                {copy.tariff.armButton}
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -804,6 +1044,12 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
       </div>
       {amending && isCreator ? (
         <AmendForm offer={offer} onDone={() => setAmending(false)} />
+      ) : null}
+      {armingTariff && canArmTariff ? (
+        <FullTariffArmForm
+          offer={offer}
+          onDone={() => setArmingTariff(false)}
+        />
       ) : null}
     </div>
   );

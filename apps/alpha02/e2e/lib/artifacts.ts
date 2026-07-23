@@ -40,6 +40,9 @@ export function loadDiamondAbi(): Abi {
 
 export interface DeploymentSlice {
   diamond: `0x${string}`;
+  /** Testnet admin/deployer — holds ADMIN_ROLE on the forked Diamond
+   *  (testnets stay deployer-owned; #1355 flips config through it). */
+  admin: `0x${string}`;
   weth?: `0x${string}`;
   testnetMocks?: Record<string, string>;
 }

@@ -316,6 +316,36 @@ Thin-market honesty rules apply.
 - Withdrawals cap at free balance, not total balance.
 - Discount consent is explicit and visually prominent.
 
+### Full VPFI Tariff Opt-In
+
+- Each party opts their OWN side into the Full tariff at the moment their
+  authorization is signed: the acceptor on the accept review (classic accept
+  and desk signed-order fill alike), and a standing-offer creator on their own
+  open offer after posting. Nobody can opt a counterparty in, and a
+  signed-order maker has no opt-in surface until the gasless order shape
+  carries one.
+- The opt-in surface exists only while the on-chain fee-entitlement feature is
+  enabled. While the feature is off (the launch posture), no Full control
+  renders anywhere — a Full authorization presented while the feature is off
+  fails on chain, so the app must not invite one.
+- An engaged opt-in shows a live tariff quote for the prospective loan and
+  requires an authorization ceiling before it can be signed. The ceiling is
+  pre-filled from the quote with small headroom and remains user-editable; the
+  charge at loan open can never exceed it.
+- The user chooses explicitly between the two failure postures: reject the
+  whole acceptance if the tariff cannot complete, or open the loan without
+  Full (and without any tariff charge) in that case. The consequence of the
+  current choice is stated next to it.
+- The copy is dual-fee honest: the tariff never replaces or waives the loan's
+  asset fees — it adds a deeper discount on the payer's own side's fees, up to
+  the overall cap — and it is non-refundable, priced on the loan's full term
+  at open. No purchase, price, or yield framing is used.
+- A vault balance below the quoted tariff is warned about before signing.
+- Loan Details shows the stamped per-party fee modes and each Full party's
+  absorbed tariff once a party actually paid Full; the early-close surface
+  warns that none of a paid tariff comes back; and the lender's sale surfaces
+  note that the Full fee mode travels with the position NFT to a buyer.
+
 ## Token Safety
 
 - Curated tokens are treated as pre-vetted.

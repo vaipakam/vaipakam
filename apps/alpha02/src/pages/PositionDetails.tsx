@@ -22,6 +22,8 @@ import {
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { useLoan } from '../data/hooks';
+import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
+import { VPFI_DECIMALS } from '../data/vpfi';
 import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
 import { formatRemaining, useGraceSeconds } from '../data/grace';
@@ -91,9 +93,20 @@ export function PositionDetails() {
   return <PositionDetailsInner key={loanIdParam ?? 'none'} loanIdParam={loanIdParam} />;
 }
 
+/** #1355 — user-facing word for a stamped `FeeEntitlementMode`. */
+function feeModeWord(mode: number): string {
+  if (mode === FEE_MODE_FULL) return copy.tariff.modeFull;
+  if (mode === FEE_MODE_HOLD_ONLY) return copy.tariff.modeHold;
+  return copy.tariff.modeNone;
+}
+
 function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined }) {
   const loanId = Number(loanIdParam);
   const loan = useLoan(Number.isFinite(loanId) ? loanId : undefined);
+  // #1355 — the loan's stamped fee-entitlement record (per-party VPFI
+  // fee modes + absorbed tariffs). Zero-default for a loan that never
+  // touched the tariff path; the display keys off the Full stamps.
+  const feeEnt = useFeeEntitlement(Number.isFinite(loanId) ? loanId : undefined);
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -1452,6 +1465,41 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   )}
             </dd>
           </div>
+          {!isRental &&
+          feeEnt.data?.stamped &&
+          (feeEnt.data.borrowerMode === FEE_MODE_FULL ||
+            feeEnt.data.lenderMode === FEE_MODE_FULL) ? (
+            // #1355 — per-party VPFI fee-mode stamps + absorbed
+            // tariffs. Rendered only when a party actually paid the
+            // Full tariff — the default HoldOnly/None stamps carry no
+            // information a user acts on here.
+            <div className="receipt-row">
+              <dt>{copy.tariff.sectionTitle}</dt>
+              <dd>
+                {copy.tariff.borrowerModeLabel}:{' '}
+                {feeModeWord(feeEnt.data.borrowerMode)}
+                {feeEnt.data.borrowerTariffPaid > 0n
+                  ? ` (${copy.tariff.tariffPaidLine(
+                      formatTokenAmount(feeEnt.data.borrowerTariffPaid, VPFI_DECIMALS),
+                    )})`
+                  : ''}
+                {' · '}
+                {copy.tariff.lenderModeLabel}:{' '}
+                {feeModeWord(feeEnt.data.lenderMode)}
+                {feeEnt.data.lenderTariffPaid > 0n
+                  ? ` (${copy.tariff.tariffPaidLine(
+                      formatTokenAmount(feeEnt.data.lenderTariffPaid, VPFI_DECIMALS),
+                    )})`
+                  : ''}
+                {feeEnt.data.lenderMode === FEE_MODE_FULL ? (
+                  <>
+                    {' '}
+                    <span className="muted">{copy.tariff.nftTravelNote}</span>
+                  </>
+                ) : null}
+              </dd>
+            </div>
+          ) : null}
           {isAdvanced && (role === 'borrower' || role === 'lender') ? (
             // Position control travels with this NFT — the id links
             // to the verifier so its holder can prove (or a buyer can
@@ -1805,6 +1853,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? copy.preclose.fullTermNote
               : copy.preclose.proRataNote}
           </p>
+          {feeEnt.data &&
+          (feeEnt.data.borrowerTariffPaid > 0n ||
+            feeEnt.data.lenderTariffPaid > 0n) ? (
+            // #1355 — a paid Full tariff was priced on the whole term
+            // at open; an early close refunds none of it. Said HERE,
+            // before the confirm surface opens.
+            <div className="banner banner-info" role="note">
+              <span className="banner-body">
+                {copy.tariff.precloseNoRefundWarn}
+              </span>
+            </div>
+          ) : null}
           {livePastDue ? (
             // #1235 — in the grace window the close stays open but the
             // quoted figure now carries the repay-parity late fee, and
@@ -1952,6 +2012,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             busy={busy}
             setBusy={setBusy}
           />
+          {feeEnt.data?.lenderMode === FEE_MODE_FULL ? (
+            // #1355 — the Full fee mode is loan-scoped and keyed to the
+            // position's current holder, so a sale carries it to the
+            // buyer. Said on the sale surfaces, before listing.
+            <div className="banner banner-info" role="note">
+              <span className="banner-body">{copy.tariff.nftTravelNote}</span>
+            </div>
+          ) : null}
           <section className="card">
             {loanSaleListingEnabled(readChain.chainId) ? (
               <LoanSaleFlow

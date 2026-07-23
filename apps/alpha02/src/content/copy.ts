@@ -2195,6 +2195,66 @@ const copySource = {
     },
   },
 
+  // #1355 — the Full VPFI fee-entitlement tariff surface. Copy rules
+  // (RL-6 §A.4 + rev-15 frozen wording): Full is a FEE-DISCOUNT
+  // mechanism, described as deterministic bookkeeping over fees — never
+  // yield, income, or a VPFI purchase/price; it NEVER waives the asset
+  // fees (dual-fee honesty); and the tariff is non-refundable, priced
+  // on the full term at open.
+  tariff: {
+    // ── The opt-in control on accept / fill review screens ──
+    optInTitle: 'Full VPFI tariff (optional)',
+    optInLabel:
+      'Pay this loan’s Full VPFI tariff from my Vaipakam Vault for a deeper discount on my own side’s fees.',
+    quoteLine: tmpl(
+      'Current tariff quote: {{amount}} VPFI — non-refundable, priced on the loan’s full term.',
+      ['amount'],
+    ),
+    quoteLoading: 'Fetching the tariff quote…',
+    quoteUnavailable:
+      'This loan’s tariff can’t be quoted right now, so the Full option isn’t available for it.',
+    dualFeeNote:
+      'Full never replaces the normal fees — the loan’s asset fees still apply in full. Paying the tariff adds an extra 10% discount on your own side’s fees, on top of any vault-holding discount, up to the overall 50% cap.',
+    nonRefundNote:
+      'The tariff is priced on the loan’s full term when it opens and is not refunded if the loan closes early.',
+    maxCStarLabel: 'Highest tariff I authorize (VPFI)',
+    maxCStarHelp:
+      'The exact tariff is re-priced at the moment the loan opens; it can never exceed this ceiling. Set it a little above the quote so a small move between now and then doesn’t block you.',
+    maxCStarRequired:
+      'Set the highest tariff you authorize (in VPFI) before opting in — a Full opt-in without a ceiling can’t be signed.',
+    balanceShort: tmpl(
+      'Your vault holds {{balance}} VPFI free — below the {{needed}} VPFI quote, so the Full opt-in would fail when the loan opens.',
+      ['balance', 'needed'],
+    ),
+    downgradeLabel: 'If the Full tariff can’t complete, open the loan without it',
+    downgradeHelpAllow:
+      'If the tariff can’t be charged when the loan opens (above your ceiling, vault balance short, or the option switched off), the loan still opens — without Full, and without charging any tariff.',
+    downgradeHelpStrict:
+      'If the tariff can’t be charged when the loan opens, the whole acceptance is rejected and nothing moves. Tick the box above if you’d rather the loan open without Full in that case.',
+    // ── Maker-side control on standing offers ──
+    armButton: 'Full tariff',
+    armTitle: 'Full VPFI tariff on this offer',
+    makerNote:
+      'While this is on, an accepted fill opens the loan with your Full opt-in: the tariff is charged from your vault at that moment, within your ceiling, for a deeper discount on your own side’s fees.',
+    armEnableLabel: 'Opt this offer into the Full tariff',
+    armSave: 'Save',
+    armSaving: 'Saving…',
+    armSaved: 'Saved — the offer now carries your Full opt-in.',
+    armClearedSaved: 'Saved — the offer no longer carries a Full opt-in.',
+    // ── Loan Details / Claim Center display ──
+    sectionTitle: 'VPFI fee modes on this loan',
+    borrowerModeLabel: 'Borrower',
+    lenderModeLabel: 'Lender',
+    modeNone: 'standard fees',
+    modeHold: 'vault-holding discount',
+    modeFull: 'Full tariff paid',
+    tariffPaidLine: tmpl('{{amount}} VPFI tariff absorbed', ['amount']),
+    precloseNoRefundWarn:
+      'This loan carries a paid Full tariff. It was priced on the full term when the loan opened and is not refunded on an early close.',
+    nftTravelNote:
+      'The lender’s Full fee mode is tied to the position itself — it travels with the position NFT to a buyer of this position.',
+  },
+
   vpfi: {
     nothing: 'Nothing.',
     // Interpolated receipt / hint lines (extracted from Vpfi.tsx inline
