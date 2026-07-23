@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibMeshFunding} from "../libraries/LibMeshFunding.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -453,6 +454,30 @@ contract RewardAggregatorFacet is
         uint256 marginBps
     );
 
+    /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
+    ///         day (zeroes with `stamped == false` pre-cutover or for a
+    ///         never-funded chain). `keeperAllocate` is always 0 until B2-b.
+    function getChainDayRecycledFunding(uint256 dayId, uint32 chainId)
+        external
+        view
+        returns (LibVaipakam.ChainDayFunding memory)
+    {
+        return LibVaipakam.storageSlot().chainDayRecycledFunding[dayId][chainId];
+    }
+
+    /// @notice #1222 M3 B2-a — a mirror chain's outstanding recycled
+    ///         commitments (mirror-locally-funded slices reserved at
+    ///         armed-day finalization; consumed/released from B2-b on).
+    ///         Always 0 for Base — its funded shares reserve into the
+    ///         global outstanding ledger.
+    function getChainOutstandingRecycledCommit(uint32 chainId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().chainOutstandingRecycledCommit[chainId];
+    }
+
     /// @dev Governor PR-3b (#1217 §3.1) — compute + stamp the day's pool
     ///      composition at finalization (write-once; the finalize entry
     ///      points already guard replay via `dailyGlobalFinalized`):
@@ -479,12 +504,34 @@ contract RewardAggregatorFacet is
     ) internal {
         uint256 w = LibVaipakam.RECYCLE_TRAILING_WINDOW_DAYS;
         uint256 credited;
-        for (uint256 i; i < w; ) {
-            if (dayId >= i) {
-                credited += s.recycledCreditedByDay[dayId - i];
-            }
-            unchecked {
-                ++i;
+        {
+            // #1222 M3 B2-a — Ā's feed under the mesh: Base's own raw local
+            // series (first-party, unclamped — exactly the pre-mesh feed)
+            // PLUS every MIRROR's accepted day credits from the B1 ledger.
+            // The exclude-Base rule is load-bearing: Base's day credit is
+            // recorded BOTH locally and under its chain id in
+            // `chainDailyRecycledCredit`, so summing the per-chain map
+            // unfiltered would double-count it.
+            uint32[] storage expected = s.expectedSourceChainIds;
+            uint256 n = expected.length;
+            uint32 baseId = uint32(block.chainid);
+            for (uint256 i; i < w; ) {
+                if (dayId >= i) {
+                    uint256 d = dayId - i;
+                    credited += s.recycledCreditedByDay[d];
+                    for (uint256 j; j < n; ) {
+                        uint32 chainId = expected[j];
+                        if (chainId != baseId) {
+                            credited += s.chainDailyRecycledCredit[d][chainId];
+                        }
+                        unchecked {
+                            ++j;
+                        }
+                    }
+                }
+                unchecked {
+                    ++i;
+                }
             }
         }
         uint256 aBar = credited / w;
@@ -504,13 +551,34 @@ contract RewardAggregatorFacet is
             : freshAvailable;
 
         uint256 marginBps = LibVaipakam.cfgRecycleMarginBps();
-        // Net of outstanding recycled commitments AND the keeper earmark, so a
-        // carved keeper share is never re-sized into a reward budget (#1344).
-        uint256 fundable = _recycleFundable(s);
         uint256 coupled = (aBar * (10_000 - marginBps)) / 10_000;
-        uint256 recycledBudget = schedule == 0
-            ? 0
-            : (fundable < coupled ? fundable : coupled);
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        bool armed = armedFrom != 0 && dayId >= armedFrom;
+        uint256 recycledBudget;
+        if (schedule == 0) {
+            // A day with no emission schedule stamps zero — recycling must
+            // never make otherwise-unrewarded activity rewardable.
+        } else if (armed) {
+            // #1222 M3 B2-a — Phase B′: the two-pass per-chain funding
+            // resolution. Global Ā sizes the TARGET; each chain's B1-ledger
+            // availability bounds the reality; Base's own slice reserves
+            // before top-ups draw from its remaining fundable balance. The
+            // resolver stamps every chain's funded figures + makes BOTH
+            // recycled reservations (mirror-local per-chain, Base-funded
+            // global) internally; the returned Σ funded is the global
+            // stamp — identical to the Phase-A′ `min(fundable, coupled)`
+            // on a single-chain deploy.
+            recycledBudget = LibMeshFunding.resolveAndStampDayFunding(
+                s, dayId, coupled, scheduleFloor / 2
+            );
+        } else {
+            // Pre-cutover (records-only) — the Phase-A′ single-pool sizing,
+            // net of outstanding recycled commitments AND the keeper
+            // earmark, so a carved keeper share is never re-sized into a
+            // reward budget (#1344).
+            uint256 fundable = _recycleFundable(s);
+            recycledBudget = fundable < coupled ? fundable : coupled;
+        }
 
         s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
             scheduleFloor: uint128(scheduleFloor),
@@ -533,17 +601,16 @@ contract RewardAggregatorFacet is
         // reserving the raw halves would strand the unclaimable remainder
         // in `outstandingCommit*` and shrink every later day's
         // availability for value no user can draw.
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        if (armedFrom != 0 && dayId >= armedFrom) {
-            (uint256 commitFresh, uint256 commitRecycled) =
-                LibInteractionRewards.committableForDay(
-                    s,
-                    dayId,
-                    scheduleFloor / 2,
-                    recycledBudget / 2
-                );
+        // #1222 M3 B2-a — the FRESH reservation only: the recycled
+        // reservations were made inside the funding resolver above, split
+        // between the per-chain and global ledgers by funding source
+        // (reserving the global recycled committable here too would
+        // double-reserve every mirror-funded slice against Base's bucket).
+        if (armed) {
+            (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
+                s, dayId, scheduleFloor / 2, 0
+            );
             s.outstandingCommitFresh += commitFresh;
-            s.outstandingCommitRecycled += commitRecycled;
         }
 
         emit GovernorDayPoolStamped(

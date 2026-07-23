@@ -72,6 +72,86 @@
   },
   {
     "type": "function",
+    "name": "getChainDayRecycledFunding",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.ChainDayFunding",
+        "components": [
+          {
+            "name": "fundedLender",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "fundedBorrower",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lenderHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrowerHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycleConsume",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "keeperAllocate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stamped",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainOutstandingRecycledCommit",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getChainReport",
     "inputs": [
       {
@@ -388,6 +468,55 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ChainDayFundingStamped",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "fundedLender",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fundedBorrower",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycleConsume",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservedLocal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservedBase",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

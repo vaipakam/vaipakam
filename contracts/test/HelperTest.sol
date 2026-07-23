@@ -1895,7 +1895,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](19);
+        // #1222 (M3 B2-a) — two-pass funding transparency reads.
+        selectors[17] =
+            RewardAggregatorFacet.getChainDayRecycledFunding.selector;
+        selectors[18] =
+            RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
         // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
         // legacy four-word rollout shim): pin both signatures explicitly.
         selectors[0] = bytes4(
