@@ -1858,12 +1858,24 @@ function _dayPoolHalves(
         //   2. the owner is sanctioned (the claim path rejects them),
         //   3. the protocol is paused (every claim reverts under the pause),
         //   4. the balance can't cover the user's whole aggregate claim.
+        // Codex #1410 r7 P1 — advance ALL the user's cursors BEFORE the
+        // aggregate drought test. A sibling entry whose `endDay - 1` still
+        // lies beyond the cumulative cursor prices 0 in the upper bound, so
+        // on the first sweep touch after its days finalize the drought gate
+        // would miss its recycled draw and credit an interval the real claim
+        // (which advances first, then defers the joint day) could not serve.
+        // The funding-need call performs exactly that advance, so it is
+        // hoisted ahead of the gate rather than left to short-circuit order.
+        // (The read-only countdown mirror cannot advance and keeps its
+        // documented optimistic-estimate caveat; this sweep is the
+        // authority.)
+        uint256 fundingNeed = userClaimFundingNeed(s, e.user);
         bool executable = !_recycledDrought(s, e.user) &&
             _poolCappedPayable(toUser) != 0 &&
             !LibVaipakam.isSanctionedAddress(e.user) &&
             !LibPausable.paused() &&
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            userClaimFundingNeed(s, e.user);
+            fundingNeed;
 
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 

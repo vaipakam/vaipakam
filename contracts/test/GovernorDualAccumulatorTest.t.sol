@@ -496,6 +496,59 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1410 r7 P1 — the sweep must ADVANCE the user's cursors
+    ///      before testing the aggregate drought. A longer sibling whose last
+    ///      day is not yet advanced-through prices 0 in the upper bound, so a
+    ///      pre-advance drought test misses its recycled draw on the first
+    ///      touch after that day finalizes and credits an interval the real
+    ///      claim (advance first, then defer the joint day) could not serve.
+    ///      Against the pre-fix ordering this fails by crediting + reaping on
+    ///      that touch; the follow-up refill assert catches even a
+    ///      backing-deferred variant of the same credit.
+    function testDroughtGateAdvancesCursorsFirst() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day 5 carries a recycled component");
+
+        uint256 shorter = _seedEntry(alice, 55, 5, 6);
+        uint256 longer = _seedEntry(alice, 56, 5, 7); // day 6 unfinalized yet
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = shorter;
+        ids[1] = longer;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clocks
+
+        // Bucket covers the shorter's day-5 slice alone, not the joint draw.
+        uint256 each = recycled5 / 2;
+        _mut().setRecycleBucketRaw(each + each / 2);
+
+        // LEGITIMATE accrual to just under the threshold: with day 6 not yet
+        // finalized the longer sibling prices 0 for claim and gate alike, so
+        // the bucket genuinely covers everything payable and the claim works.
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+
+        // Day 6 finalizes mid-drought: the sibling's recycled draw now
+        // exists, but only an ADVANCE reveals it to the gate.
+        _mut().setRecycledCreditedByDayRaw(6, 700 ether);
+        _finalize(6);
+        _mut().setDayUserSideCapRaw(6, type(uint256).max);
+
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "the touch advances, sees the joint drought, and pauses - no reap"
+        );
+
+        // The drought interval must never have been credited: even with the
+        // bucket refilled, the window still has to be finished the honest way.
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after refill - the drought interval was dropped"
+        );
+    }
+
     /// @dev Codex #1410 r6 — the drought gate is AGGREGATE: two same-day
     ///      recycled entries whose bucket covers EACH alone but not BOTH
     ///      still defer jointly (the walk's per-day check is against the
