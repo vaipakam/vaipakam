@@ -325,7 +325,11 @@ else
   # keys reach writeFacet through a variable (`items[i].key`) — harvesting
   # only the literal writeFacet calls would let a typo'd refresh key bypass
   # the hard gate entirely (Codex #1411 r1).
-  WRITTEN_KEYS="$(grep -rhoE '(writeFacet|Item)\(\s*"[A-Za-z0-9]+"' "$SCRIPT_DIR" --include='*.s.sol' \
+  # Newline-tolerant (Codex #1411 r2): several refresh entries wrap the
+  # key onto the line after `Item(`, so the sources are flattened before
+  # matching — a single-line grep silently omitted those keys.
+  WRITTEN_KEYS="$(cat "$SCRIPT_DIR"/*.s.sol | tr '\n' ' ' \
+    | grep -oE '(writeFacet|Item)\(\s*"[A-Za-z0-9]+"' \
     | sed -E 's/.*"([A-Za-z0-9]+)".*/\1/' | sort -u)"
   TYPED_KEYS="$(grep -oE '^[[:space:]]+[A-Za-z0-9]+Facet\?' "$DEPLOYMENTS_TS" \
     | sed -E 's/[[:space:]]+//; s/\?//' | sort -u)"
