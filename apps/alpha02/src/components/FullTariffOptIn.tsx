@@ -91,6 +91,20 @@ export function FullTariffOptIn({
     }
   }, [ceilingText]);
 
+  // Codex #1412 r1 — a Full choice must never outlive the conditions
+  // it was made under. If the kill-switch reads OFF after a live read
+  // (a mid-session disable), or the quote resolves unpriceable after
+  // the user ticked Full during loading, clear the choice: otherwise
+  // the control hides while the parent still passes a stale
+  // `full: true` to the signer — a hidden authorization that can only
+  // revert or silently downgrade at accept time.
+  useEffect(() => {
+    if (!value.full) return;
+    const wentDark = config.ready && !config.enabled;
+    const unpriceable = quote.data !== undefined && !quote.data.numeraireOk;
+    if (wentDark || unpriceable) onChange(FULL_TARIFF_OFF);
+  }, [config.ready, config.enabled, quote.data, value.full, onChange, value]);
+
   // Keep the parent's `maxCStar` in lockstep with the edited ceiling —
   // an unparseable edit propagates as 0n, which the signer refuses, so
   // a submit can never race the user's typing into a stale ceiling.

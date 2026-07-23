@@ -2490,7 +2490,18 @@ export function OfferFlow({ side }: { side: Side }) {
                 principal={offerPrincipal(selected)}
                 durationDays={selected.durationDays}
                 value={fullTariff}
-                onChange={setFullTariff}
+                onChange={(v) => {
+                  setFullTariff(v);
+                  // Codex #1412 r1 — a tariff edit changes the terms
+                  // the accept signature will carry, so an already-
+                  // given consent no longer covers them: clear it,
+                  // same as every other disclosure-driving edit.
+                  setForm((f) =>
+                    f.riskAndTermsConsent
+                      ? { ...f, riskAndTermsConsent: false }
+                      : f,
+                  );
+                }}
               />
             ) : null}
             <label

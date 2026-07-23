@@ -383,7 +383,12 @@ export function SignedFillConfirm({
           principal={headlineAmount}
           durationDays={Number(o.durationDays)}
           value={fullTariff}
-          onChange={setFullTariff}
+          onChange={(v) => {
+            setFullTariff(v);
+            // Codex #1412 r1 — a tariff edit changes the signed
+            // terms, so a prior consent no longer covers them.
+            setConsent(false);
+          }}
         />
       ) : null}
 

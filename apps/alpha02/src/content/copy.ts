@@ -2237,6 +2237,8 @@ const copySource = {
     makerNote:
       'While this is on, an accepted fill opens the loan with your Full opt-in: the tariff is charged from your vault at that moment, within your ceiling, for a deeper discount on your own side’s fees.',
     armEnableLabel: 'Opt this offer into the Full tariff',
+    armDarkNote:
+      'The Full tariff option is currently switched off protocol-wide. You can clear an existing opt-in here; new opt-ins are unavailable until it is switched on.',
     armSave: 'Save',
     armSaving: 'Saving…',
     armSaved: 'Saved — the offer now carries your Full opt-in.',

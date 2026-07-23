@@ -616,6 +616,7 @@ function FullTariffArmForm({
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
+  const config = useFeeEntitlementConfig();
 
   const live = useQuery({
     queryKey: ['offerFullTariff', readChain.chainId, offer.offerId],
@@ -675,6 +676,23 @@ function FullTariffArmForm({
     setSaved(null);
     let ceiling = 0n;
     if (fields.full) {
+      // Codex #1412 r1 — never STORE a Full opt-in the UI already
+      // knows can't complete: while the feature is dark only clears
+      // may save, and an unpriceable (or still-loading) quote blocks
+      // arming — a stored Full on an unpriceable asset makes every
+      // later accept revert or silently downgrade.
+      if (!config.enabled) {
+        setError(copy.tariff.armDarkNote);
+        return;
+      }
+      if (quote.data?.numeraireOk !== true) {
+        setError(
+          quote.data === undefined
+            ? copy.tariff.quoteLoading
+            : copy.tariff.quoteUnavailable,
+        );
+        return;
+      }
       if (!isPlainDecimal(fields.ceiling)) {
         setError(copy.tariff.maxCStarRequired);
         return;
@@ -733,6 +751,15 @@ function FullTariffArmForm({
             ? copy.tariff.quoteLine(formatTokenAmount(quote.data.cStar, VPFI_DECIMALS))
             : copy.tariff.quoteUnavailable}
       </p>
+      {!config.enabled ? (
+        // Codex #1412 r1 — while the feature is dark the form stays
+        // reachable so an ALREADY-ARMED offer can be cleared (a strict
+        // armed offer is unfillable while dark), but new opt-ins are
+        // blocked: the checkbox below can only be unticked.
+        <div className="banner banner-info" role="note" style={{ marginTop: 8 }}>
+          <span className="banner-body">{copy.tariff.armDarkNote}</span>
+        </div>
+      ) : null}
       <label
         className="cluster"
         style={{ marginTop: 8, fontSize: '0.9rem', alignItems: 'flex-start' }}
@@ -740,6 +767,7 @@ function FullTariffArmForm({
         <input
           type="checkbox"
           checked={fields.full}
+          disabled={!config.enabled && !fields.full}
           onChange={(e) => setFields({ ...fields, full: e.target.checked })}
           style={{ marginTop: 3 }}
         />
@@ -798,7 +826,14 @@ function FullTariffArmForm({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          disabled={!onSupportedChain || busy}
+          disabled={
+            !onSupportedChain ||
+            busy ||
+            // Codex #1412 r1 — arming needs the feature live AND a
+            // successful quote; clears (full unticked) always save.
+            (fields.full &&
+              (!config.enabled || quote.data?.numeraireOk !== true))
+          }
           onClick={() => void save()}
         >
           {busy ? copy.tariff.armSaving : copy.tariff.armSave}
@@ -830,11 +865,37 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
 
   const isCreator =
     Boolean(address) && offer.creator.toLowerCase() === address!.toLowerCase();
+  // Codex #1412 r1 — while the feature is dark, an offer that was
+  // armed BEFORE the switch went off still needs its clear path (a
+  // strict armed offer is unfillable while dark). Read the live flag
+  // only in that narrow case, so the common dark posture costs no
+  // extra RPC unless the row is the creator's own ERC-20 offer.
+  const armedWhileDark = useQuery({
+    queryKey: ['offerFullTariffArmed', readChain.chainId, offer.offerId],
+    enabled:
+      Boolean(publicClient) &&
+      isCreator &&
+      feeEntitlement.ready &&
+      !feeEntitlement.enabled &&
+      offer.assetType === AssetType.ERC20,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const o = (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOffer',
+        args: [BigInt(offer.offerId)],
+      })) as Record<string, unknown>;
+      return Boolean(o.creatorFull);
+    },
+  });
   // #1355 — the creator's Full-tariff arming surface: ERC-20 offers
-  // only (rentals bear no tariff), and only while the feature is
-  // live-enabled on chain (dark ⇒ no surface).
+  // only (rentals bear no tariff). Live-enabled feature ⇒ full form;
+  // dark ⇒ only when the offer is actually armed (clear path).
   const canArmTariff =
-    isCreator && feeEntitlement.enabled && offer.assetType === AssetType.ERC20;
+    isCreator &&
+    offer.assetType === AssetType.ERC20 &&
+    (feeEntitlement.enabled || armedWhileDark.data === true);
   const isLending = offer.offerType === 0;
   const rateBps = isLending ? offer.interestRateBps : offer.interestRateBpsMax;
   const filled = BigInt(offer.amountFilled || '0');

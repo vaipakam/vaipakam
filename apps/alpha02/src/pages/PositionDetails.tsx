@@ -1833,11 +1833,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       principal &&
       !(sanctions.ready && sanctions.flagged) ? (
-        !loanLive.data || !sanctions.ready ? (
+        !loanLive.data || !sanctions.ready || feeEnt.data === undefined ? (
+          // Codex #1412 r1 — the fee-entitlement read is part of the
+          // preclose disclosure set (a paid Full tariff is NOT
+          // refunded on an early close), so the close-early surface
+          // holds in the checking/failed state until that read is
+          // known, exactly like the live-loan and sanctions reads.
           <section className="card">
             <h3>{copy.preclose.title}</h3>
             <p className="muted">
-              {loanLive.isError
+              {loanLive.isError || feeEnt.isError
                 ? copy.preclose.checkFailed
                 : copy.preclose.checking}
             </p>
