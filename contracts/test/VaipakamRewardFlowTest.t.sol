@@ -259,6 +259,25 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastReportRecycledForDay(), 0, "recycled for-day defaults 0");
     }
 
+    /// Codex #1413 r1 — the LEGACY four-argument sender overload stays
+    /// callable (a not-yet-upgraded mirror diamond on an upgraded
+    /// messenger) and emits the legacy four-word payload, which every Base
+    /// version accepts.
+    function test_Report_LegacySenderOverload_StillWorks() public {
+        vm.prank(address(diamondMirror));
+        rewardMirror.sendChainReport{value: fee}(
+            42, 1_000 ether, 500 ether, payable(address(diamondMirror))
+        );
+        assertEq(router.pendingCount(), 1, "legacy send captured");
+
+        router.deliver(0, SEL_MIRROR);
+
+        assertEq(diamondBase.reportCount(), 1, "Base accepted the legacy report");
+        assertEq(diamondBase.lastReportLender(), 1_000 ether, "lender numeraire");
+        assertEq(diamondBase.lastReportRecycledCum(), 0, "no recycled figures travel");
+        assertEq(diamondBase.lastReportRecycledForDay(), 0, "no recycled figures travel");
+    }
+
     /// #1222 M3 B1 — a five-word report is neither the legacy nor the current
     /// shape: rejected as a padded/truncated packet.
     function test_Report_FiveWordShape_Rejected() public {

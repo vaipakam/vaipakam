@@ -262,9 +262,14 @@ contract ConfigureRewardReporter is Script {
         );
 
         // (2a) IRewardMessenger.quoteSendChainReport selector present?
+        // #1222 M3 B1 (Codex #1413 r1) — the widened five-argument shape:
+        // calldata must match the selector's arity or the probe rejects a
+        // correctly upgraded messenger.
         (bool ok1, bytes memory ret1) = candidate.staticcall(
             abi.encodeWithSelector(
                 IRewardMessenger.quoteSendChainReport.selector,
+                uint256(0),
+                uint256(0),
                 uint256(0),
                 uint256(0),
                 uint256(0)

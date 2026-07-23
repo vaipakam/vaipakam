@@ -404,6 +404,36 @@ contract VaipakamRewardMessenger is
         );
     }
 
+    /// @notice LEGACY sender overload (pre-#1222 four-argument shape),
+    ///         kept so a mirror's diamond and messenger proxies need not
+    ///         upgrade atomically (Codex #1413 r1): a not-yet-upgraded
+    ///         diamond calling the old selector on an upgraded messenger
+    ///         keeps working through the rollout window. Emits the legacy
+    ///         FOUR-word payload — accepted by every Base messenger
+    ///         version, old or new — so the mirror-side upgrade order is
+    ///         fully decoupled from Base's. Recycled figures simply don't
+    ///         travel until the mirror's diamond upgrades to the six-word
+    ///         sender.
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        address payable refundAddress
+    ) external payable onlyDiamond whenNotPaused nonReentrant {
+        if (messenger == address(0)) revert MessengerNotSet();
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPORT, dayId, lenderNumeraire18, borrowerNumeraire18
+        );
+        bytes32 messageId =
+            _dispatch(baseChainId, payload, msg.value, refundAddress);
+
+        emit ReportSent(
+            messageId, dayId, lenderNumeraire18, borrowerNumeraire18
+        );
+    }
+
     /// @notice Broadcast the finalised global denominator from Base to
     ///         every configured mirror.
     /// @dev Diamond-only. `msg.value` must cover the SUM of the per-lane

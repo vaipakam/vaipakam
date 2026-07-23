@@ -282,9 +282,13 @@ library LibVpfiRecycle {
             // In-order (or gap-jumping ahead): clamp against the ratchet.
             baseline = s.chainRecycledCumAtAttr[sourceChainId];
             haveBaseline = true;
-        } else if (
-            dayId >= 1 && s.chainRecycledDayAccepted[dayId - 1][sourceChainId]
-        ) {
+        } else if (dayId == 0) {
+            // Delayed day 0 (Codex #1413 r1): nothing precedes the first
+            // schedule day, so the zero baseline is sound and exact — the
+            // day-0 bucket (which also collects pre-launch credits) must
+            // not be dropped just because day 1+ was delivered first.
+            haveBaseline = true;
+        } else if (s.chainRecycledDayAccepted[dayId - 1][sourceChainId]) {
             // Delayed earlier day with an accepted adjacent predecessor:
             // exact baseline from that day's stored snapshot.
             baseline = s.chainRecycledCumAtDay[dayId - 1][sourceChainId];

@@ -945,6 +945,28 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(cumAtAttr, 180e18);
     }
 
+    /// Codex #1413 r1 — a DELAYED day 0 (day 1+ delivered first) has a
+    /// sound zero baseline: nothing precedes the first schedule day, so its
+    /// attribution (which also collects pre-launch credits) must not be
+    /// dropped.
+    function testRecycledLedgerDelayedDayZeroKeepsAttribution() public {
+        _configureCanonical();
+
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 20e18);
+        // Day 0 arrives late: cumulative 60 at its close, all 60 credited
+        // in the day-0 bucket.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 0, 1e18, 0, 60e18, 60e18);
+
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(0, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 60e18, "day-0 attribution kept via the zero baseline");
+        (uint256 reported, , , uint256 attrPlus1, ) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18, "stale cumulative did not regress availability");
+        assertEq(attrPlus1, 2, "ratchet undisturbed");
+    }
+
     /// A late day whose adjacent predecessor was never accepted has no
     /// sound clamp baseline: the day credit is conservatively dropped
     /// (availability still self-heals from the cumulative).
