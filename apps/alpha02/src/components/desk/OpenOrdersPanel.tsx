@@ -25,12 +25,19 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseUnits } from 'viem';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
-import { useDiamondWrite } from '../../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
+import {
+  useChargeableVpfi,
+  useCStarQuote,
+  useFeeEntitlementConfig,
+} from '../../data/tariff';
+import { VPFI_DECIMALS } from '../../data/vpfi';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
   assertRowActionStillValid,
+  isAssetIlliquidLive,
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
@@ -593,6 +600,363 @@ function AmendForm({
   );
 }
 
+/**
+ * #1355 — the CREATOR's Full VPFI tariff opt-in on a standing offer.
+ * The opt-in is not a create-time param: the contract arms it
+ * post-create via `ProfileFacet.setOfferCreatorFullTariff` (creator-
+ * gated, pre-accept), so this inline form is the arming surface. It
+ * seeds from a LIVE `getOffer` read (the durable signed artifact the
+ * fill charges against), never the indexer row. Ceiling suggestion is
+ * quoted against `amountMax` — the largest fill the offer permits —
+ * so the ceiling covers any partial fill.
+ */
+function FullTariffArmForm({
+  offer,
+  onDone,
+}: {
+  offer: IndexedOffer;
+  onDone: () => void;
+}) {
+  const { onSupportedChain, readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+  const config = useFeeEntitlementConfig();
+
+  const live = useQuery({
+    queryKey: ['offerFullTariff', readChain.chainId, offer.offerId],
+    enabled: Boolean(publicClient),
+    staleTime: 0,
+    queryFn: async () => {
+      const o = (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOffer',
+        args: [BigInt(offer.offerId)],
+      })) as Record<string, unknown>;
+      const amount = BigInt((o.amount as bigint) ?? 0n);
+      const amountMax = BigInt((o.amountMax as bigint) ?? 0n);
+      return {
+        creatorFull: Boolean(o.creatorFull),
+        creatorMaxCStar: BigInt((o.creatorMaxCStar as bigint) ?? 0n),
+        creatorAllowFullDowngrade: Boolean(o.creatorAllowFullDowngrade),
+        // Codex #1412 r2 — the LIVE principal ceiling (an amend on
+        // another device / a lagging indexer row must not misprice
+        // the suggested maxCStar).
+        principalCeiling: amountMax > amount ? amountMax : amount,
+      };
+    },
+  });
+
+  const quote = useCStarQuote({
+    lendingAsset: offer.lendingAsset as `0x${string}`,
+    principal: live.data?.principalCeiling,
+    durationDays: offer.durationDays,
+  });
+  // Codex #1412 r3 — an ILLIQUID principal fails a Full opt-in on
+  // chain even when priceable; arming gates on the live verdict, and
+  // a failed read blocks (failClosed throws → isError).
+  const liquidity = useQuery({
+    queryKey: [
+      'principalLiquidity',
+      readChain.chainId,
+      offer.lendingAsset.toLowerCase(),
+    ],
+    enabled: config.enabled && Boolean(publicClient),
+    staleTime: 30_000,
+    queryFn: () =>
+      isAssetIlliquidLive({
+        publicClient: publicClient!,
+        diamondAddress: readChain.diamondAddress,
+        asset: offer.lendingAsset,
+        failClosed: true,
+      }),
+  });
+  const quoted =
+    !quote.isError && quote.data?.numeraireOk === true
+      ? quote.data.cStar
+      : undefined;
+  // Arming (saving full=true) needs the feature live AND both reads
+  // settled affirmatively; clears never need any of it.
+  const armAllowed =
+    config.enabled && quoted !== undefined && liquidity.data === false;
+  // Codex #1412 r4/r6 — the MAKER's own CHARGEABLE vault VPFI vs the
+  // quote (raw tracked − encumbered, what the Full charge draws — the
+  // tier-derived balance nets frozen proceeds and would cry wolf). A
+  // strict Full armed on an under-funded vault makes every later fill
+  // revert with nothing the taker can see. Warning-tier (the balance
+  // at FILL time is what the chain judges; the maker may fund later).
+  const chargeable = useChargeableVpfi();
+  const makerBalanceShort =
+    quoted !== undefined &&
+    chargeable.data !== undefined &&
+    chargeable.data < quoted;
+
+  const [fields, setFields] = useState<{
+    seededFor: number;
+    full: boolean;
+    ceiling: string;
+    allowDowngrade: boolean;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  // Codex #1412 r2 (P3) — seed only once BOTH the live offer AND the
+  // quote have settled (either priced or known-unpriceable), so the
+  // advertised +10% suggestion can't be lost to a quote that lands
+  // after the faster getOffer read. A degenerate zero-principal row
+  // never quotes (the hook stays disabled) — seed empty then.
+  // Codex #1412 r3 — while DARK the only action is clearing, which
+  // needs no quote: seed from the live offer immediately, or a failing
+  // quote read would strand an armed offer unclearable.
+  const quoteSettled =
+    quote.data !== undefined ||
+    quote.isError ||
+    live.data?.principalCeiling === 0n ||
+    !config.enabled;
+  if (fields === null && live.data !== undefined && quoteSettled) {
+    const suggested =
+      quoted !== undefined ? quoted + quoted / 10n : undefined;
+    setFields({
+      seededFor: offer.offerId,
+      full: live.data.creatorFull,
+      ceiling:
+        live.data.creatorMaxCStar > 0n
+          ? exactAmountString(live.data.creatorMaxCStar, VPFI_DECIMALS)
+          : suggested !== undefined
+            ? exactAmountString(suggested, VPFI_DECIMALS)
+            : '',
+      allowDowngrade: live.data.creatorAllowFullDowngrade,
+    });
+  }
+
+  async function save() {
+    if (!fields) return;
+    setError(null);
+    setSaved(null);
+    let ceiling = 0n;
+    if (fields.full) {
+      // Codex #1412 r1/r3 — never STORE a Full opt-in the UI already
+      // knows can't complete: while the feature is dark only clears
+      // may save, and arming needs the quote AND the principal-
+      // liquidity read settled affirmatively (an unpriceable OR
+      // illiquid principal fails Full on chain).
+      if (!config.enabled) {
+        setError(copy.tariff.armDarkNote);
+        return;
+      }
+      if (!armAllowed) {
+        setError(
+          quote.data === undefined && !quote.isError
+            ? copy.tariff.quoteLoading
+            : copy.tariff.fullUnavailableNow,
+        );
+        return;
+      }
+      if (!isPlainDecimal(fields.ceiling)) {
+        setError(copy.tariff.maxCStarRequired);
+        return;
+      }
+      try {
+        ceiling = parseUnits(fields.ceiling, VPFI_DECIMALS);
+      } catch {
+        setError(copy.tariff.maxCStarRequired);
+        return;
+      }
+      if (ceiling <= 0n) {
+        setError(copy.tariff.maxCStarRequired);
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      // Codex #1412 r2 — same stale-row preflight as cancel/amend: an
+      // offer accepted or cancelled while the cached row is still
+      // visible must fail HERE, not as a mined revert.
+      if (publicClient) {
+        await assertRowActionStillValid({
+          publicClient,
+          diamond: readChain.diamondAddress,
+          account: offer.creator as `0x${string}`,
+          functionName: 'setOfferCreatorFullTariff',
+          args: [BigInt(offer.offerId), fields.full, ceiling, fields.allowDowngrade],
+        });
+      }
+      await write('setOfferCreatorFullTariff', [
+        BigInt(offer.offerId),
+        fields.full,
+        ceiling,
+        fields.allowDowngrade,
+      ]);
+      setSaved(fields.full ? copy.tariff.armSaved : copy.tariff.armClearedSaved);
+      void queryClient.invalidateQueries({
+        queryKey: ['offerFullTariff', readChain.chainId, offer.offerId],
+      });
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (fields === null) {
+    return (
+      <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.85rem' }}>
+        {copy.tariff.quoteLoading}
+      </p>
+    );
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 8, padding: 12 }}>
+      <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem' }}>
+        {copy.tariff.armTitle}
+      </p>
+      <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+        {copy.tariff.makerNote} {copy.tariff.dualFeeNote}{' '}
+        {copy.tariff.nonRefundNote}
+      </p>
+      {offer.offerType === 0 ? (
+        // Codex #1412 r6 — the matched-fill path charges the tariff
+        // against the BORROWER offer id and ignores a counterparty
+        // lender offer's creatorFull (#1366 r3 P2, contract follow-up
+        // #1369-adjacent). Until that lands, a lender's Full applies
+        // only to DIRECT accepts — say so, or the makerNote overpromises.
+        <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>
+          <span className="banner-body">
+            {copy.tariff.makerLenderMatchCaveat}
+          </span>
+        </div>
+      ) : null}
+      <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+        {
+          // Codex #1412 r4 (P3) — an errored quote reports UNAVAILABLE
+          // first: never an indefinite "loading", never a stale figure.
+          quote.isError
+            ? copy.tariff.fullUnavailableNow
+            : quote.data === undefined
+              ? copy.tariff.quoteLoading
+              : !quote.data.numeraireOk || liquidity.isError || liquidity.data === true
+                ? copy.tariff.fullUnavailableNow
+                : copy.tariff.quoteLine(
+                    formatTokenAmount(quote.data.cStar, VPFI_DECIMALS),
+                  )
+        }
+      </p>
+      {makerBalanceShort && quoted !== undefined && chargeable.data !== undefined ? (
+        <p
+          className="muted"
+          role="alert"
+          style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
+        >
+          {copy.tariff.balanceShort(
+            formatTokenAmount(chargeable.data, VPFI_DECIMALS),
+            formatTokenAmount(quoted, VPFI_DECIMALS),
+          )}
+        </p>
+      ) : null}
+      {!config.enabled ? (
+        // Codex #1412 r1 — while the feature is dark the form stays
+        // reachable so an ALREADY-ARMED offer can be cleared (a strict
+        // armed offer is unfillable while dark), but new opt-ins are
+        // blocked: the checkbox below can only be unticked.
+        <div className="banner banner-info" role="note" style={{ marginTop: 8 }}>
+          <span className="banner-body">{copy.tariff.armDarkNote}</span>
+        </div>
+      ) : null}
+      <label
+        className="cluster"
+        style={{ marginTop: 8, fontSize: '0.9rem', alignItems: 'flex-start' }}
+      >
+        <input
+          type="checkbox"
+          checked={fields.full}
+          // Ticking ON needs arming to be possible; unticking always is.
+          disabled={!fields.full && !armAllowed}
+          onChange={(e) => setFields({ ...fields, full: e.target.checked })}
+          style={{ marginTop: 3 }}
+        />
+        <span>{copy.tariff.armEnableLabel}</span>
+      </label>
+      {fields.full ? (
+        <>
+          <label style={{ display: 'block', marginTop: 8, fontSize: '0.85rem' }}>
+            {copy.tariff.maxCStarLabel}
+            <input
+              type="text"
+              inputMode="decimal"
+              value={fields.ceiling}
+              onChange={(e) => setFields({ ...fields, ceiling: e.target.value })}
+              style={{ display: 'block', marginTop: 4, width: '100%' }}
+            />
+          </label>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
+            {copy.tariff.maxCStarHelp}
+          </p>
+          <label
+            className="cluster"
+            style={{ marginTop: 8, fontSize: '0.85rem', alignItems: 'flex-start' }}
+          >
+            <input
+              type="checkbox"
+              checked={fields.allowDowngrade}
+              onChange={(e) =>
+                setFields({ ...fields, allowDowngrade: e.target.checked })
+              }
+              style={{ marginTop: 3 }}
+            />
+            <span>{copy.tariff.downgradeLabel}</span>
+          </label>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
+            {fields.allowDowngrade
+              ? copy.tariff.downgradeHelpAllow
+              : copy.tariff.downgradeHelpStrict}
+          </p>
+        </>
+      ) : null}
+      {error ? (
+        <p
+          role="alert"
+          style={{ margin: '6px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
+        >
+          {error}
+        </p>
+      ) : null}
+      {saved ? (
+        <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.85rem' }}>
+          {saved}
+        </p>
+      ) : null}
+      <div className="cluster" style={{ marginTop: 8, gap: 8 }}>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={
+            !onSupportedChain ||
+            busy ||
+            // Codex #1412 r1/r3 — arming needs the feature live AND
+            // both reads affirmative; clears (full unticked) always
+            // save.
+            (fields.full && !armAllowed)
+          }
+          onClick={() => void save()}
+        >
+          {busy ? copy.tariff.armSaving : copy.tariff.armSave}
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          disabled={busy}
+          onClick={onDone}
+        >
+          {copy.offerFlow.back}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OrderRow({ offer }: { offer: IndexedOffer }) {
   const { address, onSupportedChain, readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -600,11 +964,44 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
   const queryClient = useQueryClient();
   const meta = useTokenMeta(offer.lendingAsset);
   const [amending, setAmending] = useState(false);
+  const [armingTariff, setArmingTariff] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const feeEntitlement = useFeeEntitlementConfig();
 
   const isCreator =
     Boolean(address) && offer.creator.toLowerCase() === address!.toLowerCase();
+  // Codex #1412 r1 — while the feature is dark, an offer that was
+  // armed BEFORE the switch went off still needs its clear path (a
+  // strict armed offer is unfillable while dark). Read the live flag
+  // only in that narrow case, so the common dark posture costs no
+  // extra RPC unless the row is the creator's own ERC-20 offer.
+  const armedWhileDark = useQuery({
+    queryKey: ['offerFullTariffArmed', readChain.chainId, offer.offerId],
+    enabled:
+      Boolean(publicClient) &&
+      isCreator &&
+      feeEntitlement.ready &&
+      !feeEntitlement.enabled &&
+      offer.assetType === AssetType.ERC20,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const o = (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOffer',
+        args: [BigInt(offer.offerId)],
+      })) as Record<string, unknown>;
+      return Boolean(o.creatorFull);
+    },
+  });
+  // #1355 — the creator's Full-tariff arming surface: ERC-20 offers
+  // only (rentals bear no tariff). Live-enabled feature ⇒ full form;
+  // dark ⇒ only when the offer is actually armed (clear path).
+  const canArmTariff =
+    isCreator &&
+    offer.assetType === AssetType.ERC20 &&
+    (feeEntitlement.enabled || armedWhileDark.data === true);
   const isLending = offer.offerType === 0;
   const rateBps = isLending ? offer.interestRateBps : offer.interestRateBpsMax;
   const filled = BigInt(offer.amountFilled || '0');
@@ -786,6 +1183,16 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
             >
               <Pencil size={14} aria-hidden /> {text.amend}
             </button>
+            {canArmTariff ? (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                title={copy.tariff.armTitle}
+                onClick={() => setArmingTariff((a) => !a)}
+              >
+                {copy.tariff.armButton}
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -804,6 +1211,12 @@ function OrderRow({ offer }: { offer: IndexedOffer }) {
       </div>
       {amending && isCreator ? (
         <AmendForm offer={offer} onDone={() => setAmending(false)} />
+      ) : null}
+      {armingTariff && canArmTariff ? (
+        <FullTariffArmForm
+          offer={offer}
+          onDone={() => setArmingTariff(false)}
+        />
       ) : null}
     </div>
   );

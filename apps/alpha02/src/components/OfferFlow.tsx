@@ -86,6 +86,11 @@ import {
 } from '../lib/errors';
 import { copy } from '../content/copy';
 import { ConsentLabel } from './ConsentLabel';
+import {
+  FullTariffOptIn,
+  FULL_TARIFF_OFF,
+  type FullTariffChoice,
+} from './FullTariffOptIn';
 import { flowDisabled } from '../lib/killSwitch';
 import {
   fetchTokenSecurity,
@@ -277,6 +282,14 @@ export function OfferFlow({ side }: { side: Side }) {
   const [step, setStep] = useState<FlowStep>('details');
   const [mode, setMode] = useState<FlowMode>('post');
   const [selected, setSelected] = useState<IndexedOffer | null>(null);
+  // #1355 — the acceptor's own Full VPFI tariff opt-in for THIS accept.
+  // Deliberately OUTSIDE `form` (the post/accept shared struct): it is
+  // scoped to the selected offer and must reset with it.
+  const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
+  const selectedOfferId = selected?.offerId;
+  useEffect(() => {
+    setFullTariff(FULL_TARIFF_OFF);
+  }, [selectedOfferId]);
   const [form, setForm] = useState<OfferFormState>({
     ...initialOfferForm,
     offerType: side,
@@ -1700,6 +1713,9 @@ export function OfferFlow({ side }: { side: Side }) {
       signed = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
         consent: form.riskAndTermsConsent,
+        // #1355 — the review screen's Full tariff opt-in. Undefined
+        // (⇒ non-Full) unless the user engaged the control.
+        fullTariff: fullTariff.full ? fullTariff : undefined,
         expected: {
           lendingAsset: selected.lendingAsset,
           collateralAsset: selected.collateralAsset,
@@ -2460,6 +2476,33 @@ export function OfferFlow({ side }: { side: Side }) {
                   </ol>
                 </span>
               </div>
+            ) : null}
+            {mode === 'accept' &&
+            selected &&
+            selected.assetType === AssetType.ERC20 &&
+            !acceptIsLoanSale ? (
+              // #1355 — the acceptor's Full VPFI tariff opt-in. Only on
+              // ERC-20 loan accepts: rentals bear no tariff, and a
+              // sale-vehicle accept's loan already paid its fees at the
+              // original origination (the contract skips both).
+              <FullTariffOptIn
+                lendingAsset={selected.lendingAsset as `0x${string}`}
+                principal={offerPrincipal(selected)}
+                durationDays={selected.durationDays}
+                value={fullTariff}
+                onChange={(v) => {
+                  setFullTariff(v);
+                  // Codex #1412 r1 — a tariff edit changes the terms
+                  // the accept signature will carry, so an already-
+                  // given consent no longer covers them: clear it,
+                  // same as every other disclosure-driving edit.
+                  setForm((f) =>
+                    f.riskAndTermsConsent
+                      ? { ...f, riskAndTermsConsent: false }
+                      : f,
+                  );
+                }}
+              />
             ) : null}
             <label
               className="cluster"

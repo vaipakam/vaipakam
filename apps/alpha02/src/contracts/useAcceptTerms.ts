@@ -141,6 +141,18 @@ export function useAcceptTermsSigning() {
       offerId: bigint;
       /** The single mandatory risk-and-terms consent checkbox. */
       consent: boolean;
+      /** #1355 — the acceptor's OWN Full VPFI tariff opt-in (pulls the
+       *  quoted `C*` from the acceptor's vault at fill). Omitted ⇒
+       *  non-Full, the pre-#1347 behaviour. `maxCStar` is MANDATORY
+       *  when opting in — the contract reverts a Full authorization
+       *  without a ceiling (`FullTariffMaxCStarRequired`), so a zero
+       *  ceiling fails HERE, before the wallet prompt. */
+      fullTariff?: {
+        full: boolean;
+        maxCStar: bigint;
+        allowDowngrade: boolean;
+        blocked?: boolean;
+      };
       /** The terms the user REVIEWED (from the indexer row). Compared
        *  against the canonical terms BEFORE the wallet is asked to
        *  sign — the signature is the acknowledgement, so the user must
@@ -175,6 +187,7 @@ export function useAcceptTermsSigning() {
       }
       if (!walletClient) throw new Error(copy.errors.walletClientUnavailable);
       if (!publicClient) throw new Error(copy.errors.noRpcClient);
+      const fullTariff = resolveFullTariffInput(input.fullTariff);
 
       const diamondAddr = walletChain.diamondAddress;
 
@@ -344,6 +357,86 @@ export function useAcceptTermsSigning() {
       const lendingAsset = o.lendingAsset as Address;
       const collateralAsset = o.collateralAsset as Address;
 
+      // Codex #1412 r4 — a stored STRICT creator Full that cannot
+      // complete dooms the accept AFTER the taker signs and approves
+      // (`_fullTariffShouldRun` routes the tariff even while the kill
+      // switch is off). Preflight the deterministic killers — switch
+      // off, unpriceable/illiquid principal, quote over the creator's
+      // ceiling, creator vault short — and abort BEFORE any wallet
+      // prompt. Fail OPEN on transport/missing-selector failures: the
+      // contract enforces regardless; this only saves the taker a
+      // wasted signature + approval. (A pre-#1347 offer struct has no
+      // creatorFull field ⇒ the check self-skips on old deploys.)
+      if (
+        Boolean(o.creatorFull) &&
+        !Boolean(o.creatorAllowFullDowngrade) &&
+        isERC20 &&
+        !saleLoan
+      ) {
+        try {
+          const [enabled] = (await publicClient.readContract({
+            address: diamondAddr,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getFeeEntitlementConfig',
+          })) as readonly [boolean, bigint, bigint];
+          let blocked = !enabled;
+          let cStar = 0n;
+          if (!blocked) {
+            const [q, numeraireOk] = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'quoteCStar',
+              args: [lendingAsset, roleAmount, o.durationDays as bigint],
+            })) as readonly [bigint, boolean];
+            cStar = q;
+            const lendingIlliquidNow = await isAssetIlliquidLive({
+              publicClient,
+              diamondAddress: diamondAddr,
+              asset: lendingAsset,
+              failClosed: false,
+            });
+            blocked =
+              !numeraireOk ||
+              lendingIlliquidNow ||
+              cStar > (o.creatorMaxCStar as bigint);
+          }
+          if (!blocked) {
+            const vpfiToken = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getVPFIToken',
+            })) as Address;
+            // Codex #1412 r5 — the RAW protocol-tracked balance, not
+            // the tier stamp: the tier read already nets out frozen
+            // proceeds, so subtracting encumbrance from it would
+            // double-count and block accepts the chain would allow.
+            const tracked = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getProtocolTrackedVaultBalance',
+              args: [o.creator as Address, vpfiToken],
+            })) as bigint;
+            const encumbered = (await publicClient.readContract({
+              address: diamondAddr,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getEncumbered',
+              args: [o.creator as Address, vpfiToken, 0n],
+            })) as bigint;
+            const free = tracked > encumbered ? tracked - encumbered : 0n;
+            blocked = free < cStar;
+          }
+          if (blocked) throw new Error(copy.tariff.creatorFullBlocked);
+        } catch (e) {
+          if (
+            e instanceof Error &&
+            e.message === copy.tariff.creatorFullBlocked
+          ) {
+            throw e;
+          }
+          // Transport / selector-shaped failure — proceed; enforced on-chain.
+        }
+      }
+
       const terms: AcceptTerms = {
         acceptor: address,
         offerCreator: o.creator as Address,
@@ -385,10 +478,9 @@ export function useAcceptTermsSigning() {
         nonce: randomNonce(),
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
-        // #1347 — non-Full accept (Full-tariff opt-in UI ships in PR-8 #1355).
-        acceptorFull: false,
-        acceptorMaxCStar: 0n,
-        acceptorAllowFullDowngrade: false,
+        // #1355 — the acceptor's Full VPFI tariff opt-in, from the
+        // review screen's control (absent ⇒ non-Full).
+        ...fullTariff,
       };
 
       // The signed terms acknowledge BOTH assets as potentially
@@ -546,12 +638,23 @@ export function useSignedOfferAcceptTermsSigning() {
       order: SignedOrderWire;
       /** The single mandatory risk-and-terms consent checkbox. */
       consent: boolean;
+      /** #1355 — the TAKER's own Full VPFI tariff opt-in (see the
+       *  direct signer's doc). The MAKER of a signed order cannot opt
+       *  in at all (#1369) — there is no post-create moment to arm the
+       *  offer, so the maker side always resolves non-Full. */
+      fullTariff?: {
+        full: boolean;
+        maxCStar: bigint;
+        allowDowngrade: boolean;
+        blocked?: boolean;
+      };
     }): Promise<{ payload: AcceptTermsPayload; orderHash: Hex }> => {
       if (!address || !walletChain) {
         throw new Error(copy.errors.walletConnectFirst);
       }
       if (!walletClient) throw new Error(copy.errors.walletClientUnavailable);
       if (!publicClient) throw new Error(copy.errors.noRpcClient);
+      const fullTariff = resolveFullTariffInput(input.fullTariff);
 
       const diamondAddr = walletChain.diamondAddress;
       const o = input.order;
@@ -679,10 +782,8 @@ export function useSignedOfferAcceptTermsSigning() {
         nonce: randomNonce(),
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
-        // #1347 — non-Full accept (Full-tariff opt-in UI ships in PR-8 #1355).
-        acceptorFull: false,
-        acceptorMaxCStar: 0n,
-        acceptorAllowFullDowngrade: false,
+        // #1355 — the taker's Full VPFI tariff opt-in (absent ⇒ non-Full).
+        ...fullTariff,
       };
 
       const signature = (await walletClient.signTypedData({
@@ -704,6 +805,48 @@ export function useSignedOfferAcceptTermsSigning() {
   );
 
   return { sign };
+}
+
+/** #1355 — normalize a caller's Full-tariff opt-in into the three
+ *  signed terms fields. A Full opt-in with a zero `maxCStar` ceiling
+ *  fails HERE (mirroring the contract's `FullTariffMaxCStarRequired`)
+ *  so a malformed control can never reach the wallet prompt, and a
+ *  non-Full choice signs hard zeros — never a leftover ceiling. */
+function resolveFullTariffInput(
+  fullTariff:
+    | {
+        full: boolean;
+        maxCStar: bigint;
+        allowDowngrade: boolean;
+        blocked?: boolean;
+      }
+    | undefined,
+): Pick<
+  AcceptTerms,
+  'acceptorFull' | 'acceptorMaxCStar' | 'acceptorAllowFullDowngrade'
+> {
+  if (!fullTariff?.full) {
+    return {
+      acceptorFull: false,
+      acceptorMaxCStar: 0n,
+      acceptorAllowFullDowngrade: false,
+    };
+  }
+  // Codex #1412 r5 — an engaged-but-BLOCKED Full (kill-switch off,
+  // quote/liquidity unavailable) refuses to sign: the user's "Full or
+  // reject" intent may only become a non-Full accept via their own
+  // explicit untick, never via a silent drop.
+  if (fullTariff.blocked) {
+    throw new Error(copy.tariff.fullUnavailableNow);
+  }
+  if (fullTariff.maxCStar <= 0n) {
+    throw new Error(copy.tariff.maxCStarRequired);
+  }
+  return {
+    acceptorFull: true,
+    acceptorMaxCStar: fullTariff.maxCStar,
+    acceptorAllowFullDowngrade: fullTariff.allowDowngrade,
+  };
 }
 
 function randomNonce(): bigint {

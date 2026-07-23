@@ -22,6 +22,10 @@ export const CHAIN_ID = 84532;
 const deployment = loadDeployment(CHAIN_ID);
 
 export const DIAMOND = deployment.diamond;
+/** The testnet admin/deployer — testnets stay deployer-owned, so this
+ *  account holds ADMIN_ROLE on the forked Diamond (#1355 spec flips
+ *  the fee-entitlement kill-switch through it). */
+export const ADMIN = deployment.admin as `0x${string}`;
 export const WETH = deployment.weth as `0x${string}`;
 export const MOCKS = deployment.testnetMocks;
 if (!MOCKS) {

@@ -1,0 +1,267 @@
+/**
+ * Full VPFI fee-entitlement tariff reads (#1355 / M2 PR-8).
+ *
+ * Three read surfaces back the Full opt-in UI:
+ *  - `useFeeEntitlementConfig` — the kill-switch + live tariff constants.
+ *    The whole opt-in surface renders ONLY while `enabled` is true: with
+ *    the flag off a presented Full authorization is a FAILED opt-in on
+ *    chain (revert unless that party pre-allowed a downgrade), so
+ *    showing the control while dark could only produce reverts or
+ *    silent downgrades the user never wanted.
+ *  - `useCStarQuote` — the live notional `C*` for a prospective loan.
+ *    `numeraireOk === false` means the list LIF can't be priced; a Full
+ *    opt-in on such a loan fails on chain, so the UI must disable the
+ *    opt-in rather than let the user sign one.
+ *  - `useFeeEntitlement` — a settled loan's stamped record (per-party
+ *    modes + absorbed tariffs) for the Loan Details display. A loan
+ *    that never touched the tariff/discount path is UNSTAMPED, which
+ *    the contract identifies by `openDays == 0` (the stamp always
+ *    writes `openDays >= 1`) — never by `cStarOpen == 0`, which is a
+ *    legitimate stamped value for a reward-ineligible loan.
+ *
+ * The quote is display-tier: the value the chain charges at fill is
+ * re-derived there, and the signed `maxCStar` ceiling — not this quote
+ * — is what bounds the pull from the user's vault.
+ */
+import { useQuery } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+} from 'viem';
+import type { Address } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { useActiveChain } from '../chain/useActiveChain';
+import { signalAware } from '../chain/railHealth';
+
+/** Mirrors `LibVaipakam.FeeEntitlementMode`. */
+export const FEE_MODE_NONE = 0;
+export const FEE_MODE_HOLD_ONLY = 1;
+export const FEE_MODE_FULL = 2;
+
+export interface FeeEntitlementConfig {
+  enabled: boolean;
+  kPerLifYear: bigint;
+  rewardHaircutBps: number;
+  /** True once the values are live-read (not the dark default). */
+  ready: boolean;
+}
+
+/**
+ * The Full-tariff kill-switch + constants. Defaults to DISABLED while
+ * the read is in flight or failing — the safe side: the opt-in surface
+ * stays hidden rather than inviting an authorization the chain would
+ * reject.
+ */
+export function useFeeEntitlementConfig(): FeeEntitlementConfig {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+
+  const { data, isError } = useQuery({
+    queryKey: ['feeEntitlementConfig', readChain.chainId],
+    enabled: Boolean(publicClient),
+    // Codex #1412 r2 — the kill-switch gates whether the app may
+    // COLLECT Full authorizations, so it must track a mid-session ops
+    // flip: signal-aware ~30s cadence (same as useVpfi), not a
+    // five-minute static freshness. The contract still enforces
+    // regardless; this keeps the surface honest live.
+    staleTime: 25_000,
+    refetchInterval: signalAware(30_000),
+    queryFn: async () => {
+      const [enabled, kPerLifYear, rewardHaircutBps] =
+        (await publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getFeeEntitlementConfig',
+        })) as readonly [boolean, bigint, bigint];
+      return {
+        enabled,
+        kPerLifYear,
+        rewardHaircutBps: Number(rewardHaircutBps),
+      };
+    },
+  });
+
+  return {
+    // Codex #1412 r3 — FAIL CLOSED on a refetch error: TanStack keeps
+    // the last data through a failed background refetch, so a cached
+    // `enabled: true` must not keep collecting Full authorizations
+    // while the current switch state can't be confirmed.
+    enabled: !isError && (data?.enabled ?? false),
+    kPerLifYear: data?.kPerLifYear ?? 0n,
+    rewardHaircutBps: data?.rewardHaircutBps ?? 0,
+    ready: data !== undefined && !isError,
+  };
+}
+
+export interface CStarQuote {
+  /** Notional tariff per Full party, VPFI wei (18-dec). */
+  cStar: bigint;
+  /** False ⇒ the list LIF can't be priced — Full would fail on chain. */
+  numeraireOk: boolean;
+}
+
+/**
+ * Live `C*` quote for a prospective loan. Refetches on the shared
+ * signal-aware cadence so the figure tracks oracle moves while the
+ * review screen is open; the signed `maxCStar` ceiling protects the
+ * user against moves between the last quote and the fill.
+ */
+export function useCStarQuote(input: {
+  lendingAsset: Address | undefined;
+  principal: bigint | undefined;
+  durationDays: number | undefined;
+  /** Gate the read off entirely (e.g. while the feature is dark). */
+  enabled?: boolean;
+}) {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const on =
+    (input.enabled ?? true) &&
+    Boolean(publicClient) &&
+    Boolean(input.lendingAsset) &&
+    input.principal !== undefined &&
+    input.principal > 0n &&
+    input.durationDays !== undefined &&
+    input.durationDays > 0;
+
+  return useQuery({
+    queryKey: [
+      'cStarQuote',
+      readChain.chainId,
+      input.lendingAsset?.toLowerCase(),
+      input.principal?.toString(),
+      input.durationDays,
+    ],
+    enabled: on,
+    refetchInterval: signalAware(30_000),
+    queryFn: async (): Promise<CStarQuote> => {
+      const [cStar, numeraireOk] = (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'quoteCStar',
+        args: [input.lendingAsset!, input.principal!, BigInt(input.durationDays!)],
+      })) as readonly [bigint, boolean];
+      return { cStar, numeraireOk };
+    },
+  });
+}
+
+/**
+ * Codex #1412 r6 — the CHARGEABLE free vault VPFI for tariff-sufficiency
+ * warnings: raw protocol-tracked balance minus encumbrance, mirroring
+ * `LibFeeEntitlement.freeVpfiBalance`. The tier-derived `useVpfi()`
+ * balance nets out frozen proceeds and would understate what the Full
+ * charge can actually draw.
+ */
+export function useChargeableVpfi() {
+  const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+
+  return useQuery({
+    queryKey: ['chargeableVpfi', readChain.chainId, address?.toLowerCase()],
+    enabled: Boolean(publicClient) && Boolean(address),
+    staleTime: 30_000,
+    queryFn: async (): Promise<bigint> => {
+      const read = <T,>(functionName: string, args: readonly unknown[] = []) =>
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName,
+          args: args as unknown[],
+        }) as Promise<T>;
+      const token = await read<Address>('getVPFIToken');
+      if (token.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+        return 0n;
+      }
+      const tracked = await read<bigint>('getProtocolTrackedVaultBalance', [
+        address!,
+        token,
+      ]);
+      const encumbered = await read<bigint>('getEncumbered', [
+        address!,
+        token,
+        0n,
+      ]).catch((err) => {
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (isRevert) return 0n;
+        throw err;
+      });
+      return tracked > encumbered ? tracked - encumbered : 0n;
+    },
+  });
+}
+
+export interface FeeEntitlementRecord {
+  borrowerMode: number;
+  lenderMode: number;
+  openDays: number;
+  borrowerTariffPaid: bigint;
+  lenderTariffPaid: bigint;
+  cStarOpen: bigint;
+  /** True iff the loan carries a stamp at all (`openDays >= 1`). */
+  stamped: boolean;
+}
+
+/** A loan's stamped fee-entitlement record (Loan Details display). */
+export function useFeeEntitlement(loanId: number | undefined) {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+
+  return useQuery({
+    queryKey: ['feeEntitlement', readChain.chainId, loanId],
+    enabled: Boolean(publicClient) && loanId !== undefined,
+    staleTime: 60_000,
+    queryFn: async (): Promise<FeeEntitlementRecord> => {
+      let fe: {
+        borrowerMode: number;
+        lenderMode: number;
+        openDays: number;
+        borrowerTariffPaid: bigint;
+        lenderTariffPaid: bigint;
+        cStarOpen: bigint;
+      };
+      try {
+        fe = (await publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getFeeEntitlement',
+          args: [BigInt(loanId!)],
+        })) as typeof fe;
+      } catch (err) {
+        // Codex #1412 r2 — a REVERT / zero-data means the selector is
+        // absent (a dark / pre-M2 Diamond): equivalent to "no tariff
+        // record", so consumers (incl. the preclose disclosure gate)
+        // must not strand on it. A transport failure is NOT knowledge
+        // — rethrow so the gate holds in its checking/failed state.
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (!isRevert) throw err;
+        return {
+          borrowerMode: 0,
+          lenderMode: 0,
+          openDays: 0,
+          borrowerTariffPaid: 0n,
+          lenderTariffPaid: 0n,
+          cStarOpen: 0n,
+          stamped: false,
+        };
+      }
+      return {
+        borrowerMode: Number(fe.borrowerMode),
+        lenderMode: Number(fe.lenderMode),
+        openDays: Number(fe.openDays),
+        borrowerTariffPaid: fe.borrowerTariffPaid,
+        lenderTariffPaid: fe.lenderTariffPaid,
+        cStarOpen: fe.cStarOpen,
+        stamped: Number(fe.openDays) >= 1,
+      };
+    },
+  });
+}
