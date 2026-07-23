@@ -103,12 +103,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "attrDayPlus1",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cumulativeAtAttr",
+        "name": "attributedCumulative",
         "type": "uint256",
         "internalType": "uint256"
       }

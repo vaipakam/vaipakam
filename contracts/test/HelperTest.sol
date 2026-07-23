@@ -1895,8 +1895,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
-        selectors[0] = RewardAggregatorFacet.onChainReportReceived.selector;
+        selectors = new bytes4[](17);
+        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
+        // legacy four-word rollout shim): pin both signatures explicitly.
+        selectors[0] = bytes4(
+            keccak256(
+                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
+            )
+        );
+        selectors[16] = bytes4(
+            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
+        );
         selectors[1] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
         selectors[3] = RewardAggregatorFacet.broadcastGlobal.selector;

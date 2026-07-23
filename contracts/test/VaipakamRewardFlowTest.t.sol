@@ -416,6 +416,11 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(
             rewardMirror.quoteSendChainReport(1, 0, 0, 0, 0), fee, "report quote"
         );
+        // Codex #1413 r2 — the legacy three-argument quote overload stays
+        // callable for old-ABI callers during the rollout window.
+        assertEq(
+            rewardMirror.quoteSendChainReport(1, 0, 0), fee, "legacy report quote"
+        );
         // One broadcast destination → one fee.
         assertEq(
             rewardBase.quoteBroadcastGlobal(1, 0, 0), fee, "broadcast quote"

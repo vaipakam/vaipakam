@@ -856,71 +856,66 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         return ConfigFacet(address(diamond));
     }
 
-    /// In-order acceptance: the day credit is the chain's claimed for-day
-    /// figure when the cumulative increase backs it, and is CLAMPED to that
-    /// increase when it does not.
-    function testRecycledLedgerInOrderAcceptClampsToCumulativeDelta() public {
+    /// The aggregate consistency clamp (Codex #1413 r2 form): a day's
+    /// accepted credit never exceeds `reported − attributed`, so total
+    /// attributed credit can never exceed the availability the chain
+    /// reported.
+    function testRecycledLedgerClampBoundsAttributionByReported() public {
         _configureCanonical();
 
         // Day 1 — honest report: forDay 40 backed by a 100 cumulative.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 40e18);
-        (uint256 reported, , uint256 avail, uint256 attrPlus1, uint256 cumAtAttr) =
+        (uint256 reported, , uint256 avail, uint256 attributed) =
             _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "availability cumulative");
         assertEq(avail, 100e18, "nothing consumed yet");
-        assertEq(attrPlus1, 2, "attributed through day 1");
-        assertEq(cumAtAttr, 100e18, "baseline advanced to day-1 cumulative");
+        assertEq(attributed, 40e18, "honest for-day accepted in full");
         (uint256 credit, bool accepted) =
             _cfg().getChainDailyRecycledCredit(1, CHAIN_ARB);
         assertTrue(accepted);
-        assertEq(credit, 40e18, "honest for-day accepted in full");
+        assertEq(credit, 40e18);
 
-        // Day 2 — over-claimed report: forDay 90 but the cumulative only
-        // grew by 50 → clamped, so Ā can never be fed credit the
-        // availability ledger does not back.
-        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 90e18);
+        // Day 2 — over-claimed: forDay 120 but only 110 of unattributed
+        // backing exists (150 reported − 40 attributed) → clamped, so Ā can
+        // never be fed credit the availability ledger does not back.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 120e18);
         (credit, accepted) = _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
         assertTrue(accepted);
-        assertEq(credit, 50e18, "day credit clamped to the cumulative delta");
-        (reported, , , attrPlus1, cumAtAttr) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(credit, 110e18, "day credit clamped to unattributed backing");
+        (reported, , , attributed) = _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 150e18);
-        assertEq(attrPlus1, 3);
-        assertEq(cumAtAttr, 150e18);
+        assertEq(attributed, 150e18, "attributed never exceeds reported");
     }
 
     /// A stale (smaller) cumulative can never walk the availability ledger
-    /// backwards, and yields zero day credit (no headroom over the
-    /// baseline) — the snapshot stays floored at the baseline so the NEXT
-    /// day's clamp headroom is not inflated.
+    /// backwards, and headroom is measured against the RATCHETED total —
+    /// never against the buggy lower value.
     function testRecycledLedgerCumulativeNeverRegresses() public {
         _configureCanonical();
 
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
-        // A buggy mirror reports a DECREASED cumulative for day 2.
+        // A buggy mirror reports a DECREASED cumulative for day 2; its
+        // honest 10 for-day still fits the ratcheted backing.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 80e18, 10e18);
 
-        (uint256 reported, , , , uint256 cumAtAttr) =
+        (uint256 reported, , , uint256 attributed) =
             _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "availability never regresses");
-        assertEq(cumAtAttr, 100e18, "attr baseline floored, not lowered");
-        (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
-        assertTrue(accepted);
-        assertEq(credit, 0, "no headroom over the baseline");
+        assertEq(attributed, 20e18, "backed day credit still attributes");
 
-        // Day 3 heals: cumulative 130 → headroom is 30 over the floored
-        // baseline (NOT 50 over the buggy day-2 value).
+        // Day 3 heals the cumulative; its full for-day is backed.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 130e18, 50e18);
-        (credit, ) = _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
-        assertEq(credit, 30e18, "headroom measured from the floored baseline");
+        (uint256 credit, ) = _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+        assertEq(credit, 50e18, "headroom measured from the ratcheted total");
+        (reported, , , attributed) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 130e18);
+        assertEq(attributed, 70e18);
     }
 
     /// The M3-plan-mandated DELAYED-DAY case: day D's report arriving after
-    /// a later day was accepted still gets its exact credit, clamped against
-    /// day D−1's stored cumulative snapshot — never against the later
-    /// (higher) ratcheted baseline that would permanently under-credit the
-    /// chain.
+    /// a later day was accepted still gets its exact credit — the baseline
+    /// advances only by accepted credit, so D's unclaimed delta is still in
+    /// the headroom regardless of delivery order.
     function testRecycledLedgerDelayedEarlierDayGetsExactCredit() public {
         _configureCanonical();
 
@@ -935,20 +930,17 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         (uint256 credit, bool accepted) =
             _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
         assertTrue(accepted);
-        assertEq(credit, 50e18, "delayed day clamped against day-1 snapshot -> exact");
+        assertEq(credit, 50e18, "delayed day attributes exactly");
 
-        // The ratchet was NOT disturbed by the late acceptance.
-        (uint256 reported, , , uint256 attrPlus1, uint256 cumAtAttr) =
+        (uint256 reported, , , uint256 attributed) =
             _cfg().getChainRecycledLedger(CHAIN_ARB);
-        assertEq(reported, 180e18);
-        assertEq(attrPlus1, 4, "still attributed through day 3");
-        assertEq(cumAtAttr, 180e18);
+        assertEq(reported, 180e18, "stale cumulative did not regress availability");
+        assertEq(attributed, 100e18, "20 + 30 + 50, all exact");
     }
 
-    /// Codex #1413 r1 — a DELAYED day 0 (day 1+ delivered first) has a
-    /// sound zero baseline: nothing precedes the first schedule day, so its
-    /// attribution (which also collects pre-launch credits) must not be
-    /// dropped.
+    /// Codex #1413 r1 — a DELAYED day 0 (day 1+ delivered first) still
+    /// attributes: its (pre-launch-inclusive) bucket is backed by the
+    /// reported cumulative like any other day.
     function testRecycledLedgerDelayedDayZeroKeepsAttribution() public {
         _configureCanonical();
 
@@ -960,33 +952,59 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         (uint256 credit, bool accepted) =
             _cfg().getChainDailyRecycledCredit(0, CHAIN_ARB);
         assertTrue(accepted);
-        assertEq(credit, 60e18, "day-0 attribution kept via the zero baseline");
-        (uint256 reported, , , uint256 attrPlus1, ) =
+        assertEq(credit, 60e18, "day-0 attribution kept");
+        (uint256 reported, , , uint256 attributed) =
             _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "stale cumulative did not regress availability");
-        assertEq(attrPlus1, 2, "ratchet undisturbed");
+        assertEq(attributed, 80e18);
     }
 
-    /// A late day whose adjacent predecessor was never accepted has no
-    /// sound clamp baseline: the day credit is conservatively dropped
-    /// (availability still self-heals from the cumulative).
-    function testRecycledLedgerLateDayWithoutPredecessorDropsAttribution()
+    /// Codex #1413 r2 — the LATE CLOSE of a quiet day reports the LIVE
+    /// lifetime cumulative next to a zero old-day bucket. The baseline
+    /// advances only by accepted credit, so the later day whose credits
+    /// that cumulative already includes keeps its full attribution (a
+    /// baseline ratcheted to the reported cumulative would zero it).
+    function testRecycledLedgerLateQuietDayCloseDoesNotStealAttribution()
         public
     {
+        _configureCanonical();
+
+        // Day 3 credited 100; quiet day 2 is closed LATE, so its report
+        // carries the live cumulative (100) with a zero day-2 bucket.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 100e18, 0);
+        // Day 3's own report then claims its 100.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 100e18, 100e18);
+
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 100e18, "day-3 credit not stolen by the quiet-day close");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18);
+        assertEq(attributed, 100e18);
+    }
+
+    /// A late day preceded by an unreported gap still attributes exactly —
+    /// order independence means no "dropped attribution" cases exist for an
+    /// honest chain.
+    function testRecycledLedgerLateDayAfterGapStillAttributes() public {
         _configureCanonical();
 
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
         // Day 4 jumps ahead (days 2-3 never reported yet).
         messenger.deliverChainReportRecycled(CHAIN_ARB, 4, 1e18, 0, 200e18, 20e18);
-        // Day 3 arrives late — day 2 was never accepted, so no baseline.
+        // Day 3 arrives late — its 30 is still backed by unattributed total.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 180e18, 30e18);
 
         (uint256 credit, bool accepted) =
             _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
         assertTrue(accepted, "report processed");
-        assertEq(credit, 0, "no baseline -> attribution conservatively dropped");
-        (uint256 reported, , , , ) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(credit, 30e18, "late gap day attributes exactly");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 200e18, "availability unaffected");
+        assertEq(attributed, 60e18);
     }
 
     /// A legacy four-word report (recycled fields absent → zeros) advances
@@ -997,15 +1015,40 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
         messenger.deliverChainReport(CHAIN_ARB, 2, 1e18, 0); // legacy shape
 
-        (uint256 reported, , , uint256 attrPlus1, uint256 cumAtAttr) =
+        (uint256 reported, , , uint256 attributed) =
             _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "zero cumulative advances nothing");
-        assertEq(attrPlus1, 3, "day still marked attributed");
-        assertEq(cumAtAttr, 100e18, "baseline carried forward");
+        assertEq(attributed, 10e18, "zero for-day attributes nothing");
         (uint256 credit, bool accepted) =
             _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
-        assertTrue(accepted);
+        assertTrue(accepted, "day still marked processed");
         assertEq(credit, 0);
+    }
+
+    /// Codex #1413 r2 — the LEGACY four-argument ingress overload stays
+    /// live (an already-deployed messenger delivering in-flight legacy
+    /// reports through Base's upgraded diamond) and forwards zero recycled
+    /// figures. Same trust gate as the six-argument shape.
+    function testLegacyIngressOverloadAcceptsAndAdvancesNothing() public {
+        _configureCanonical();
+
+        vm.prank(address(messenger));
+        RewardAggregatorFacet(address(diamond)).onChainReportReceived(
+            CHAIN_ARB, 1, 25e18, 15e18
+        );
+
+        assertTrue(_agg().isChainReported(1, CHAIN_ARB), "interest recorded");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 0, "no recycled figures travel on the legacy shape");
+        assertEq(attributed, 0);
+
+        // Same auth gate as the six-argument shape.
+        vm.prank(alice);
+        vm.expectRevert(NotAuthorizedRewardMessenger.selector);
+        RewardAggregatorFacet(address(diamond)).onChainReportReceived(
+            CHAIN_OP, 1, 1e18, 1e18
+        );
     }
 
     /// Mirror `closeDay` forwards the recycled pair (cumulative + the
@@ -1045,14 +1088,14 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         _rep().closeDay(1);
 
-        (uint256 reported, , uint256 avail, uint256 attrPlus1, ) =
+        (uint256 reported, , uint256 avail, uint256 attributed) =
             _cfg().getChainRecycledLedger(CHAIN_BASE);
         assertEq(reported, 55e18, "own cumulative recorded under own chain id");
         assertEq(avail, 55e18);
-        assertEq(attrPlus1, 2);
+        assertEq(attributed, 5e18, "own day credit attributed");
         (uint256 credit, bool accepted) =
             _cfg().getChainDailyRecycledCredit(1, CHAIN_BASE);
         assertTrue(accepted);
-        assertEq(credit, 5e18, "own day credit attributed");
+        assertEq(credit, 5e18);
     }
 }

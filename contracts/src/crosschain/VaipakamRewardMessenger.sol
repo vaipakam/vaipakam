@@ -535,6 +535,25 @@ contract VaipakamRewardMessenger is
         );
     }
 
+    /// @notice LEGACY quote overload (pre-#1222 three-argument shape) —
+    ///         quotes the legacy FOUR-word payload the legacy
+    ///         {sendChainReport} overload dispatches, so a not-yet-upgraded
+    ///         mirror diamond (or a keeper on the old ABI) can still price
+    ///         `closeDay` during the rollout window (Codex #1413 r2).
+    function quoteSendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
+    ) external view returns (uint256 nativeFee) {
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPORT, dayId, lenderNumeraire18, borrowerNumeraire18
+        );
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            baseChainId, payload, _noTokens(), destGasLimit
+        );
+    }
+
     // ─── Sender side — T-087 Sub 2.B tier-push surface ──────────────────────
 
     /// @notice T-087 Sub 2.B — Base → every configured mirror per-user

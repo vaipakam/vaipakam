@@ -1198,11 +1198,9 @@ contract ConfigFacet is DiamondAccessControl {
     ///                              to consume (written from B2 on).
     /// @return availRecycled        `reported − consumed` — what mesh
     ///                              funding/netting may draw against.
-    /// @return attrDayPlus1         Day-attribution ratchet: highest
-    ///                              attributed dayId + 1 (0 = none yet).
-    /// @return cumulativeAtAttr     Cumulative snapshot at that acceptance —
-    ///                              the clamp baseline for the next in-order
-    ///                              day.
+    /// @return attributedCumulative Σ of accepted per-day credits — the
+    ///                              attribution clamp baseline; always
+    ///                              `≤ reportedCumulative`.
     function getChainRecycledLedger(uint32 chainId)
         external
         view
@@ -1210,8 +1208,7 @@ contract ConfigFacet is DiamondAccessControl {
             uint256 reportedCumulative,
             uint256 consumedCumulative,
             uint256 availRecycled,
-            uint256 attrDayPlus1,
-            uint256 cumulativeAtAttr
+            uint256 attributedCumulative
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1220,8 +1217,7 @@ contract ConfigFacet is DiamondAccessControl {
         availRecycled = reportedCumulative > consumedCumulative
             ? reportedCumulative - consumedCumulative
             : 0;
-        attrDayPlus1 = s.chainRecycledAttrDayPlus1[chainId];
-        cumulativeAtAttr = s.chainRecycledCumAtAttr[chainId];
+        attributedCumulative = s.chainAttributedRecycled[chainId];
     }
 
     /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has

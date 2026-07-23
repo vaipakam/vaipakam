@@ -200,6 +200,45 @@ contract RewardAggregatorFacet is
         uint256 recycledCumulative18,
         uint256 recycledForDay18
     ) external onlyRewardMessenger onlyCanonical {
+        _ingestChainReport(
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18
+        );
+    }
+
+    /// @notice LEGACY ingress overload (pre-#1222 four-argument shape),
+    ///         kept so Base's diamond cut and its messenger's proxy upgrade
+    ///         need not land in one atomic batch (Codex #1413 r2): an
+    ///         already-deployed messenger delivering in-flight legacy
+    ///         reports keeps hitting a live selector through the rollout
+    ///         window instead of reverting — a reverted delivery could let
+    ///         the grace clock finalize that chain's day as zero. Forwards
+    ///         zero recycled figures, which advance nothing in the ledger.
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18
+    ) external onlyRewardMessenger onlyCanonical {
+        _ingestChainReport(
+            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0
+        );
+    }
+
+    /// @dev Shared body of the two ingress overloads — gates run in the
+    ///      external wrappers, the write path is identical.
+    function _ingestChainReport(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18
+    ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();

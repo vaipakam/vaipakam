@@ -5467,16 +5467,17 @@ library LibVaipakam {
         //   ledger so the block reads as one unit; written from B2 on. Always
         //   `≤ chainReportedRecycled[c]`.
         mapping(uint32 => uint256) chainConsumedRecycled;
-        // Day-attribution ratchet, per chain, for the clamped `credited[d]`
-        //   feed (`Ā`'s per-day attribution — see
-        //   `LibVpfiRecycle.recordChainRecycled` for the acceptance rules).
-        //   `chainRecycledAttrDayPlus1[c]` = highest ATTRIBUTED dayId + 1
-        //   (0 = never attributed — dayId 0 is a real schedule day, so the
-        //   +1 encoding is load-bearing); `chainRecycledCumAtAttr[c]` = the
-        //   cumulative snapshot at that acceptance, the clamp baseline for
-        //   the next in-order day.
-        mapping(uint32 => uint256) chainRecycledAttrDayPlus1;
-        mapping(uint32 => uint256) chainRecycledCumAtAttr;
+        // Day-attribution accumulator, per chain, for the clamped
+        //   `credited[d]` feed (`Ā`'s per-day attribution — see
+        //   `LibVpfiRecycle.recordChainRecycled` for the acceptance rule).
+        //   `chainAttributedRecycled[c]` = Σ of every accepted day credit —
+        //   the clamp baseline advances ONLY by accepted credit (Codex
+        //   #1413 r2), never to the reported cumulative, so the standing
+        //   invariant is `chainAttributedRecycled[c] ≤
+        //   chainReportedRecycled[c]`: total attributed `Ā` credit can never
+        //   exceed the availability the chain actually reported, in ANY
+        //   report ordering (delayed days, gaps, late quiet-day closes).
+        mapping(uint32 => uint256) chainAttributedRecycled;
         // Accepted (clamped) per-day recycled credit, `[dayId][chainId]` —
         //   the mesh half of the `credited[d]` feed. B1 records it; B2 folds
         //   it into `Ā`. Base's OWN day credit is recorded here too (under
@@ -5484,12 +5485,9 @@ library LibVaipakam {
         //   exclusively OR exclude Base — never sum it with the local
         //   `recycledCreditedByDay` for the same day (double count).
         mapping(uint256 => mapping(uint32 => uint256)) chainDailyRecycledCredit;
-        // Per accepted day: the cumulative snapshot (floored at the baseline
-        //   it was clamped against) + acceptance marker, `[dayId][chainId]`.
-        //   The snapshot is what makes a DELAYED earlier day exact: day `d`
-        //   arriving after `d+1` clamps against `chainRecycledCumAtDay[d−1]`
-        //   instead of the already-ratcheted attr baseline.
-        mapping(uint256 => mapping(uint32 => uint256)) chainRecycledCumAtDay;
+        // Acceptance marker per `[dayId][chainId]` — idempotency for the
+        //   attribution write, and the view's "genuine zero vs no report
+        //   yet" discriminator.
         mapping(uint256 => mapping(uint32 => bool)) chainRecycledDayAccepted;
     }
 

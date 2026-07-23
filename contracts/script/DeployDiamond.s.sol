@@ -2466,8 +2466,18 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
-        s[0] = RewardAggregatorFacet.onChainReportReceived.selector;
+        s = new bytes4[](17);
+        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
+        // legacy four-word rollout shim), so `.selector` on the bare name
+        // is ambiguous; pin both signatures explicitly.
+        s[0] = bytes4(
+            keccak256(
+                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
+            )
+        );
+        s[16] = bytes4(
+            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
+        );
         s[1] = RewardAggregatorFacet.finalizeDay.selector;
         s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
         s[3] = RewardAggregatorFacet.broadcastGlobal.selector;
