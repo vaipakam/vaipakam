@@ -6,10 +6,38 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+
+/// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 mirror messenger:
+///         only the legacy four-argument send surface exists. Proves the
+///         upgraded reporter's `closeDay` falls back to it instead of
+///         reverting through the diamond-first rollout window.
+contract LegacyOnlyRewardMessenger {
+    uint256 public lastSendDay;
+    uint256 public lastSendLenderNumeraire18;
+    uint256 public lastSendBorrowerNumeraire18;
+    address public lastSendRefund;
+    uint256 public sendCount;
+
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        address payable refundAddress
+    ) external payable {
+        lastSendDay = dayId;
+        lastSendLenderNumeraire18 = lenderNumeraire18;
+        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
+        lastSendRefund = refundAddress;
+        sendCount += 1;
+    }
+
+    receive() external payable {}
+}
 
 /// @title CrossChainRewardPlumbingTest
 /// @notice Production-readiness coverage for the cross-chain interaction-
@@ -330,7 +358,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _configureCanonical();
         vm.prank(alice);
         vm.expectRevert(NotAuthorizedRewardMessenger.selector);
-        _agg().onChainReportReceived(CHAIN_ARB, 1, 10e18, 5e18);
+        _agg().onChainReportReceived(CHAIN_ARB, 1, 10e18, 5e18, 0, 0);
     }
 
     function testOnChainReportRevertsOnNonCanonical() public {
@@ -845,5 +873,337 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _agg().broadcastGlobal(1);
         assertEq(messenger.broadcastCount(), 1);
         assertEq(messenger.lastBroadcastLenderNumeraire18(), 70e18);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // #1222 M3 B1 — per-chain recycled ledger (availability + Ā attribution)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function _cfg() internal view returns (ConfigFacet) {
+        return ConfigFacet(address(diamond));
+    }
+
+    /// The aggregate consistency clamp (Codex #1413 r2 form): a day's
+    /// accepted credit never exceeds `reported − attributed`, so total
+    /// attributed credit can never exceed the availability the chain
+    /// reported.
+    function testRecycledLedgerClampBoundsAttributionByReported() public {
+        _configureCanonical();
+
+        // Day 1 — honest report: forDay 40 backed by a 100 cumulative.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 40e18);
+        (uint256 reported, , uint256 avail, uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18, "availability cumulative");
+        assertEq(avail, 100e18, "nothing consumed yet");
+        assertEq(attributed, 40e18, "honest for-day accepted in full");
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(1, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 40e18);
+
+        // Day 2 — over-claimed: forDay 120 but only 110 of unattributed
+        // backing exists (150 reported − 40 attributed) → clamped, so Ā can
+        // never be fed credit the availability ledger does not back.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 120e18);
+        (credit, accepted) = _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 110e18, "day credit clamped to unattributed backing");
+        (reported, , , attributed) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 150e18);
+        assertEq(attributed, 150e18, "attributed never exceeds reported");
+    }
+
+    /// A stale (smaller) cumulative can never walk the availability ledger
+    /// backwards, and headroom is measured against the RATCHETED total —
+    /// never against the buggy lower value.
+    function testRecycledLedgerCumulativeNeverRegresses() public {
+        _configureCanonical();
+
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
+        // A buggy mirror reports a DECREASED cumulative for day 2; its
+        // honest 10 for-day still fits the ratcheted backing.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 80e18, 10e18);
+
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18, "availability never regresses");
+        assertEq(attributed, 20e18, "backed day credit still attributes");
+
+        // Day 3 heals the cumulative; its full for-day is backed.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 130e18, 50e18);
+        (uint256 credit, ) = _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+        assertEq(credit, 50e18, "headroom measured from the ratcheted total");
+        (reported, , , attributed) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 130e18);
+        assertEq(attributed, 70e18);
+    }
+
+    /// The M3-plan-mandated DELAYED-DAY case: day D's report arriving after
+    /// a later day was accepted still gets its exact credit — the baseline
+    /// advances only by accepted credit, so D's unclaimed delta is still in
+    /// the headroom regardless of delivery order.
+    function testRecycledLedgerDelayedEarlierDayGetsExactCredit() public {
+        _configureCanonical();
+
+        // Day 1 in order; day 2's CCIP delivery is delayed; day 3 lands.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 20e18);
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 180e18, 30e18);
+
+        // Day 2 arrives late (day 2 is not finalized). Its honest figures:
+        // cumulative 150, forDay 50 — exactly the 100→150 delta.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 50e18);
+
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 50e18, "delayed day attributes exactly");
+
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 180e18, "stale cumulative did not regress availability");
+        assertEq(attributed, 100e18, "20 + 30 + 50, all exact");
+    }
+
+    /// Codex #1413 r1 — a DELAYED day 0 (day 1+ delivered first) still
+    /// attributes: its (pre-launch-inclusive) bucket is backed by the
+    /// reported cumulative like any other day.
+    function testRecycledLedgerDelayedDayZeroKeepsAttribution() public {
+        _configureCanonical();
+
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 20e18);
+        // Day 0 arrives late: cumulative 60 at its close, all 60 credited
+        // in the day-0 bucket.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 0, 1e18, 0, 60e18, 60e18);
+
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(0, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 60e18, "day-0 attribution kept");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18, "stale cumulative did not regress availability");
+        assertEq(attributed, 80e18);
+    }
+
+    /// Codex #1413 r2 — the LATE CLOSE of a quiet day reports the LIVE
+    /// lifetime cumulative next to a zero old-day bucket. The baseline
+    /// advances only by accepted credit, so the later day whose credits
+    /// that cumulative already includes keeps its full attribution (a
+    /// baseline ratcheted to the reported cumulative would zero it).
+    function testRecycledLedgerLateQuietDayCloseDoesNotStealAttribution()
+        public
+    {
+        _configureCanonical();
+
+        // Day 3 credited 100; quiet day 2 is closed LATE, so its report
+        // carries the live cumulative (100) with a zero day-2 bucket.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 100e18, 0);
+        // Day 3's own report then claims its 100.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 100e18, 100e18);
+
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+        assertTrue(accepted);
+        assertEq(credit, 100e18, "day-3 credit not stolen by the quiet-day close");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18);
+        assertEq(attributed, 100e18);
+    }
+
+    /// A late day preceded by an unreported gap still attributes exactly —
+    /// order independence means no "dropped attribution" cases exist for an
+    /// honest chain.
+    function testRecycledLedgerLateDayAfterGapStillAttributes() public {
+        _configureCanonical();
+
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
+        // Day 4 jumps ahead (days 2-3 never reported yet).
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 4, 1e18, 0, 200e18, 20e18);
+        // Day 3 arrives late — its 30 is still backed by unattributed total.
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 180e18, 30e18);
+
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+        assertTrue(accepted, "report processed");
+        assertEq(credit, 30e18, "late gap day attributes exactly");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 200e18, "availability unaffected");
+        assertEq(attributed, 60e18);
+    }
+
+    /// A legacy four-word report (recycled fields absent → zeros) advances
+    /// nothing in the ledger but still marks the day processed.
+    function testRecycledLedgerLegacyZerosAdvanceNothing() public {
+        _configureCanonical();
+
+        messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 10e18);
+        messenger.deliverChainReport(CHAIN_ARB, 2, 1e18, 0); // legacy shape
+
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 100e18, "zero cumulative advances nothing");
+        assertEq(attributed, 10e18, "zero for-day attributes nothing");
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
+        assertTrue(accepted, "day still marked processed");
+        assertEq(credit, 0);
+    }
+
+    /// Codex #1413 r2 — the LEGACY four-argument ingress overload stays
+    /// live (an already-deployed messenger delivering in-flight legacy
+    /// reports through Base's upgraded diamond) and forwards zero recycled
+    /// figures. Same trust gate as the six-argument shape.
+    function testLegacyIngressOverloadAcceptsAndAdvancesNothing() public {
+        _configureCanonical();
+
+        vm.prank(address(messenger));
+        RewardAggregatorFacet(address(diamond)).onChainReportReceived(
+            CHAIN_ARB, 1, 25e18, 15e18
+        );
+
+        assertTrue(_agg().isChainReported(1, CHAIN_ARB), "interest recorded");
+        (uint256 reported, , , uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 0, "no recycled figures travel on the legacy shape");
+        assertEq(attributed, 0);
+
+        // Same auth gate as the six-argument shape.
+        vm.prank(alice);
+        vm.expectRevert(NotAuthorizedRewardMessenger.selector);
+        RewardAggregatorFacet(address(diamond)).onChainReportReceived(
+            CHAIN_OP, 1, 1e18, 1e18
+        );
+    }
+
+    /// Codex #1413 r5 — a diamond refreshed in place over live pre-#1222
+    /// state (bucket populated, new cumulative slot zero) reports its
+    /// pre-upgrade absorption: the cumulative floors on
+    /// `recycleBucket + paidOutRecycled`, so B2/B3 never permanently
+    /// ignore VPFI absorbed before the cut. No migration step needed.
+    function testCloseDayReportsPreUpgradeFloorCumulative() public {
+        _configureMirror(CHAIN_ARB);
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        // Pre-upgrade state: bucket holds 50 absorbed VPFI; the new
+        // cumulative slot was never written.
+        _mut().setRecycleBucketRaw(50e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        assertEq(
+            _cfg().getRecycleCreditedCumulative(),
+            50e18,
+            "view floors on pre-upgrade custody"
+        );
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        _rep().closeDay{value: 0.3 ether}(1);
+
+        assertEq(
+            messenger.lastSendRecycledCumulative18(),
+            50e18,
+            "report carries the pre-upgrade absorption"
+        );
+    }
+
+    /// Mirror `closeDay` forwards the recycled pair (cumulative + the
+    /// closing day's credited bucket) alongside the interest figures.
+    function testCloseDayMirrorForwardsRecycledFigures() public {
+        _configureMirror(CHAIN_ARB);
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        _mut().setRecycleCreditedCumulativeRaw(123e18);
+        _mut().setRecycledCreditedByDayRaw(1, 7e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        _rep().closeDay{value: 0.3 ether}(1);
+
+        assertEq(messenger.lastSendRecycledCumulative18(), 123e18, "cumulative rides the report");
+        assertEq(messenger.lastSendRecycledForDay18(), 7e18, "closing day's bucket rides the report");
+    }
+
+    /// Codex #1413 r3 — an upgraded mirror diamond in front of a
+    /// NOT-yet-upgraded messenger (legacy four-argument surface only) falls
+    /// back to the legacy send instead of reverting the permissionless
+    /// day-close through the rollout window.
+    function testCloseDayMirrorFallsBackToLegacyMessenger() public {
+        _configureMirror(CHAIN_ARB);
+        LegacyOnlyRewardMessenger legacyMessenger =
+            new LegacyOnlyRewardMessenger();
+        _rep().setRewardMessenger(address(legacyMessenger));
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        _mut().setRecycleCreditedCumulativeRaw(123e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        _rep().closeDay{value: 0.3 ether}(1);
+
+        assertEq(legacyMessenger.sendCount(), 1, "fell back to the legacy send");
+        assertEq(legacyMessenger.lastSendDay(), 1);
+        assertEq(legacyMessenger.lastSendLenderNumeraire18(), 25e18);
+        assertEq(legacyMessenger.lastSendRefund(), alice, "refund beneficiary kept");
+    }
+
+    /// Codex #1413 r4 — a REASONED six-argument send failure (fee shortfall,
+    /// pause) bubbles unchanged; only the missing-selector (empty-revert)
+    /// shape downgrades to the legacy send. Downgrading a real failure would
+    /// permanently strip the day's recycled fields.
+    function testCloseDayMirrorReasonedSendFailureBubbles() public {
+        _configureMirror(CHAIN_ARB);
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        messenger.setRevertOnSend(true);
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(bytes("MockMessenger: send revert"));
+        _rep().closeDay{value: 0.3 ether}(1);
+    }
+
+    /// Base's own `closeDay` records its recycled figures into the SAME
+    /// per-chain ledger (under its own chain id) that mirror reports feed —
+    /// one uniform ledger for B2/B3's netting.
+    function testCloseDayCanonicalRecordsOwnLedger() public {
+        _configureCanonical();
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 40e18, 40e18);
+        _mut().setKnownGlobalSet(1, false);
+        _mut().setRecycleCreditedCumulativeRaw(55e18);
+        _mut().setRecycledCreditedByDayRaw(1, 5e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        _rep().closeDay(1);
+
+        (uint256 reported, , uint256 avail, uint256 attributed) =
+            _cfg().getChainRecycledLedger(CHAIN_BASE);
+        assertEq(reported, 55e18, "own cumulative recorded under own chain id");
+        assertEq(avail, 55e18);
+        assertEq(attributed, 5e18, "own day credit attributed");
+        (uint256 credit, bool accepted) =
+            _cfg().getChainDailyRecycledCredit(1, CHAIN_BASE);
+        assertTrue(accepted);
+        assertEq(credit, 5e18);
     }
 }

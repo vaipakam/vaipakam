@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -1178,6 +1179,65 @@ contract ConfigFacet is DiamondAccessControl {
         returns (uint256)
     {
         return LibVaipakam.storageSlot().recycledCreditedByDay[dayId];
+    }
+
+    /// @notice #1222 M3 B1 — this chain's monotonic cumulative of every
+    ///         recycle-bucket credit ever made locally (inflow counter; never
+    ///         decrements on consume), including the pre-upgrade floor on a
+    ///         diamond refreshed over live pre-#1222 state. The figure a
+    ///         mirror reports to Base on each day-close so the per-chain
+    ///         availability ledger self-heals across missed reports.
+    function getRecycleCreditedCumulative() external view returns (uint256) {
+        return LibVpfiRecycle.creditedCumulative(LibVaipakam.storageSlot());
+    }
+
+    /// @notice #1222 M3 B1 — Base's per-chain recycled ledger for `chainId`
+    ///         (Base's own figures live under its chain id). Zeros on
+    ///         mirrors and for never-reported chains.
+    /// @return reportedCumulative   Highest cumulative accepted from the
+    ///                              chain (availability, monotonic).
+    /// @return consumedCumulative   Cumulative Base has instructed the chain
+    ///                              to consume (written from B2 on).
+    /// @return availRecycled        `reported − consumed` — what mesh
+    ///                              funding/netting may draw against.
+    /// @return attributedCumulative Σ of accepted per-day credits — the
+    ///                              attribution clamp baseline; always
+    ///                              `≤ reportedCumulative`.
+    function getChainRecycledLedger(uint32 chainId)
+        external
+        view
+        returns (
+            uint256 reportedCumulative,
+            uint256 consumedCumulative,
+            uint256 availRecycled,
+            uint256 attributedCumulative
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        reportedCumulative = s.chainReportedRecycled[chainId];
+        consumedCumulative = s.chainConsumedRecycled[chainId];
+        availRecycled = reportedCumulative > consumedCumulative
+            ? reportedCumulative - consumedCumulative
+            : 0;
+        attributedCumulative = s.chainAttributedRecycled[chainId];
+    }
+
+    /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has
+    ///         attributed to `(dayId, chainId)` — the mesh half of the
+    ///         `credited[D]` feed that B2 folds into `Ā`.
+    /// @return credit   VPFI wei attributed (0 when unaccepted or clamped
+    ///                  away).
+    /// @return accepted True once the chain's report for the day was
+    ///                  processed (distinguishes a genuine zero credit from
+    ///                  "no report yet").
+    function getChainDailyRecycledCredit(uint256 dayId, uint32 chainId)
+        external
+        view
+        returns (uint256 credit, bool accepted)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        credit = s.chainDailyRecycledCredit[dayId][chainId];
+        accepted = s.chainRecycledDayAccepted[dayId][chainId];
     }
 
     /**

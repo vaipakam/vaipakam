@@ -262,19 +262,37 @@ contract ConfigureRewardReporter is Script {
         );
 
         // (2a) IRewardMessenger.quoteSendChainReport selector present?
+        // #1222 M3 B1 (Codex #1413 r1/r4) — accept EITHER generation: the
+        // widened five-argument shape, or the pre-#1222 three-argument
+        // shape (a diamond-first rollout legitimately re-runs this spell
+        // against a still-bound legacy messenger, whose legacy send/quote
+        // surface `closeDay` can still use).
         (bool ok1, bytes memory ret1) = candidate.staticcall(
             abi.encodeWithSelector(
                 IRewardMessenger.quoteSendChainReport.selector,
                 uint256(0),
                 uint256(0),
+                uint256(0),
+                uint256(0),
                 uint256(0)
             )
         );
+        if (!(ok1 || ret1.length > 0)) {
+            (ok1, ret1) = candidate.staticcall(
+                abi.encodeWithSignature(
+                    "quoteSendChainReport(uint256,uint256,uint256)",
+                    uint256(0),
+                    uint256(0),
+                    uint256(0)
+                )
+            );
+        }
         require(
             ok1 || ret1.length > 0,
             "ConfigureRewardReporter: rewardMessenger candidate does not implement "
-            "IRewardMessenger.quoteSendChainReport (likely BuybackRemittanceReceiver or another "
-            "non-messenger contract bound to the same Diamond)"
+            "IRewardMessenger.quoteSendChainReport in either generation (likely "
+            "BuybackRemittanceReceiver or another non-messenger contract bound to "
+            "the same Diamond)"
         );
 
         // (2b) IRewardMessenger.quoteBroadcastGlobal selector present?

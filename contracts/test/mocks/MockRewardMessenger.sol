@@ -32,6 +32,9 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public lastSendDay;
     uint256 public lastSendLenderNumeraire18;
     uint256 public lastSendBorrowerNumeraire18;
+    // #1222 M3 B1 — recycled-report spies.
+    uint256 public lastSendRecycledCumulative18;
+    uint256 public lastSendRecycledForDay18;
     address public lastSendRefund;
     uint256 public lastSendValue;
     uint256 public sendCount;
@@ -76,6 +79,8 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
         address payable refundAddress
     ) external payable override {
         require(msg.sender == diamond, "MockMessenger: only diamond");
@@ -83,6 +88,8 @@ contract MockRewardMessenger is IRewardMessenger {
         lastSendDay = dayId;
         lastSendLenderNumeraire18 = lenderNumeraire18;
         lastSendBorrowerNumeraire18 = borrowerNumeraire18;
+        lastSendRecycledCumulative18 = recycledCumulative18;
+        lastSendRecycledForDay18 = recycledForDay18;
         lastSendRefund = refundAddress;
         lastSendValue = msg.value;
         sendCount += 1;
@@ -116,6 +123,8 @@ contract MockRewardMessenger is IRewardMessenger {
     function quoteSendChainReport(
         uint256,
         uint256,
+        uint256,
+        uint256,
         uint256
     ) external view override returns (uint256) {
         return quoteNative;
@@ -140,11 +149,35 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
     ) external {
+        // Legacy four-word shape: recycled fields absent → delivered as zero
+        // (matches the production messenger's legacy-decode path).
         RewardAggregatorFacet(diamond).onChainReportReceived(
             sourceChainId,
             dayId,
             lenderNumeraire18,
-            borrowerNumeraire18
+            borrowerNumeraire18,
+            0,
+            0
+        );
+    }
+
+    /// @notice #1222 M3 B1 — deliver a report carrying the recycled fields
+    ///         (exercises Base's per-chain availability + attribution ledger).
+    function deliverChainReportRecycled(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18
+    ) external {
+        RewardAggregatorFacet(diamond).onChainReportReceived(
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18
         );
     }
 

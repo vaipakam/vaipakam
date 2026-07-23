@@ -86,9 +86,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](130);
+        selectors = new bytes4[](131);
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
+        // #1222 M3 B1 — seed the reported recycled cumulative.
+        selectors[130] = TestMutatorFacet.setRecycleCreditedCumulativeRaw.selector;
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -1574,7 +1576,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](89);
+        selectors = new bytes4[](92);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1724,6 +1726,10 @@ contract HelperTest {
         // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
         selectors[87] = ConfigFacet.setRewardHaircutBps.selector;
         selectors[88] = ConfigFacet.setUserSideShareCapBps.selector;
+        // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
+        selectors[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
+        selectors[90] = ConfigFacet.getChainRecycledLedger.selector;
+        selectors[91] = ConfigFacet.getChainDailyRecycledCredit.selector;
         return selectors;
     }
 
@@ -1889,8 +1895,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
-        selectors[0] = RewardAggregatorFacet.onChainReportReceived.selector;
+        selectors = new bytes4[](17);
+        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
+        // legacy four-word rollout shim): pin both signatures explicitly.
+        selectors[0] = bytes4(
+            keccak256(
+                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
+            )
+        );
+        selectors[16] = bytes4(
+            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
+        );
         selectors[1] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
         selectors[3] = RewardAggregatorFacet.broadcastGlobal.selector;

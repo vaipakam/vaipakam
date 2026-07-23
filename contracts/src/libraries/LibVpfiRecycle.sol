@@ -111,9 +111,44 @@ library LibVpfiRecycle {
         if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active) dayId = 0;
+        // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
+        // reported mirror→Base on each day-close so Base's per-chain
+        // availability ledger self-heals across missed reports. Counts
+        // inflow, never the live balance, so it never decrements on consume.
+        // Reading through {creditedCumulative} folds in the pre-upgrade
+        // floor, so the first post-refresh credit self-heals the counter —
+        // and MUST be read BEFORE the bucket write below, or this credit
+        // would be double-counted through the floor.
+        uint256 cumulativeBefore = creditedCumulative(s);
         s.recycleBucket = needed;
         s.recycledCreditedByDay[dayId] += amount;
+        s.recycleCreditedCumulative = cumulativeBefore + amount;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
+    }
+
+    /**
+     * @notice #1222 M3 B1 (Codex #1413 r5) — this chain's lifetime recycled
+     *         credit total, with the in-place-refresh seed folded in. The
+     *         stored counter starts at zero on a diamond refreshed over live
+     *         pre-#1222 state, but the true lifetime total is derivable:
+     *         `credit` only ever adds to the bucket and `consume` only ever
+     *         moves bucket → `paidOutRecycled`, so `recycleBucket +
+     *         paidOutRecycled` IS the historical Σ of credits (exact up to
+     *         the consume path's documented wei-scale cap-trim dust, which
+     *         can only overstate). Flooring the stored counter on that sum
+     *         means the first report after an upgrade already carries the
+     *         pre-upgrade absorption — B2/B3 funding never permanently
+     *         ignores VPFI absorbed before the cut, with no migration or
+     *         admin seeding step.
+     */
+    function creditedCumulative(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 stored = s.recycleCreditedCumulative;
+        uint256 preUpgradeFloor = s.recycleBucket + s.paidOutRecycled;
+        return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
     }
 
     /// @notice PR-3c — emitted when a recycled payout leaves the bucket
@@ -183,5 +218,104 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled =
             outstanding > amount ? outstanding - amount : 0;
         emit RewardCommitmentReleased(uint8(source), refId, amount);
+    }
+
+    // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────
+
+    /// @notice Base's per-chain recycled ledger advanced for `sourceChainId`
+    ///         (a mirror day-close report, or Base's own local close).
+    /// @param  sourceChainId       Reporting chain.
+    /// @param  dayId               Schedule day the report closes.
+    /// @param  cumulative          The chain's reported monotonic cumulative
+    ///                             recycle-bucket credits (availability).
+    /// @param  forDayReported      The chain's claimed credit total for
+    ///                             `dayId` (its `recycledCreditedByDay`).
+    /// @param  dayCreditAccepted   The clamped credit actually attributed to
+    ///                             `dayId` (0 when clamped away or when the
+    ///                             attribution baseline was unavailable —
+    ///                             availability still self-heals via
+    ///                             `cumulative`).
+    /// @custom:event-category informational/reward-transport
+    event ChainRecycledReported(
+        uint32 indexed sourceChainId,
+        uint256 indexed dayId,
+        uint256 cumulative,
+        uint256 forDayReported,
+        uint256 dayCreditAccepted
+    );
+
+    /**
+     * @notice #1222 M3 B1 — record a chain's day-close recycled report into
+     *         Base's per-chain ledger: the AVAILABILITY cumulative and the
+     *         clamped per-day `Ā` attribution. Called by the reporter (Base's
+     *         own local close) and the aggregator ingress (a mirror report),
+     *         so both paths write identically.
+     * @dev    Two ledgers per report:
+     *
+     *         AVAILABILITY — `chainReportedRecycled[c]` only ever advances
+     *         (a late/reordered report carrying a stale cumulative can never
+     *         walk it backwards), and a missed report self-heals on the next
+     *         one because the value is a cumulative, not a delta.
+     *
+     *         DAY ATTRIBUTION — the consistency clamp, aggregate form
+     *         (Codex #1413 r2): the clamp baseline is the running sum of
+     *         ACCEPTED day credits (`chainAttributedRecycled[c]`), never the
+     *         reported cumulative, so a day's accepted credit is
+     *         `min(forDayReported, reported − attributed)`. This enforces
+     *         the intended invariant directly — total attributed `Ā` credit
+     *         never exceeds the availability the chain reported — and is
+     *         ORDER-INDEPENDENT: delayed days, gap-jumping days, a delayed
+     *         day 0, and a late close of a quiet day (whose report carries
+     *         the LIVE lifetime cumulative next to a small old-day bucket)
+     *         all attribute exactly for an honest chain, because credit not
+     *         yet claimed by its own day simply stays in the headroom. A
+     *         per-report-delta clamp (the plan's sketch) fails that last
+     *         case — ratcheting the baseline to the live cumulative on a
+     *         quiet-day close would zero the headroom of the days whose
+     *         credit that cumulative already includes. Trade-off, accepted:
+     *         a buggy/malicious mirror can shift credit BETWEEN its own
+     *         days within the aggregate bound (never exceed it); `Ā` only
+     *         sizes budgets, and B2's `min(target, availRecycled)` funding
+     *         re-bounds everything against the availability ledger.
+     *
+     *         Truly-late days never reach here at all — the ingress rejects
+     *         reports for finalized days. Idempotent per `(dayId, chain)`
+     *         via the acceptance marker — upstream duplicate guards make a
+     *         second call unreachable today, but the marker keeps the
+     *         ledger safe under any future re-delivery path.
+     */
+    function recordChainRecycled(
+        LibVaipakam.Storage storage s,
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 cumulative,
+        uint256 forDayReported
+    ) internal {
+        // AVAILABILITY — monotonic self-healing ratchet.
+        uint256 reported = s.chainReportedRecycled[sourceChainId];
+        if (cumulative > reported) {
+            reported = cumulative;
+            s.chainReportedRecycled[sourceChainId] = cumulative;
+        }
+
+        // DAY ATTRIBUTION — once per (day, chain).
+        if (s.chainRecycledDayAccepted[dayId][sourceChainId]) return;
+
+        uint256 attributed = s.chainAttributedRecycled[sourceChainId];
+        uint256 accepted;
+        if (reported > attributed) {
+            uint256 headroom = reported - attributed;
+            accepted = forDayReported < headroom ? forDayReported : headroom;
+        }
+
+        s.chainRecycledDayAccepted[dayId][sourceChainId] = true;
+        if (accepted != 0) {
+            s.chainDailyRecycledCredit[dayId][sourceChainId] = accepted;
+            s.chainAttributedRecycled[sourceChainId] = attributed + accepted;
+        }
+
+        emit ChainRecycledReported(
+            sourceChainId, dayId, cumulative, forDayReported, accepted
+        );
     }
 }

@@ -2218,7 +2218,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](89);
+        s = new bytes4[](92);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2402,6 +2402,10 @@ contract DeployDiamond is Script {
         // #1353 (M2 PR-5c) — loan-side reward-cap haircut knob.
         s[87] = ConfigFacet.setRewardHaircutBps.selector;
         s[88] = ConfigFacet.setUserSideShareCapBps.selector;
+        // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
+        s[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
+        s[90] = ConfigFacet.getChainRecycledLedger.selector;
+        s[91] = ConfigFacet.getChainDailyRecycledCredit.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config
@@ -2462,8 +2466,18 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
-        s[0] = RewardAggregatorFacet.onChainReportReceived.selector;
+        s = new bytes4[](17);
+        // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
+        // legacy four-word rollout shim), so `.selector` on the bare name
+        // is ambiguous; pin both signatures explicitly.
+        s[0] = bytes4(
+            keccak256(
+                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
+            )
+        );
+        s[16] = bytes4(
+            keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
+        );
         s[1] = RewardAggregatorFacet.finalizeDay.selector;
         s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
         s[3] = RewardAggregatorFacet.broadcastGlobal.selector;

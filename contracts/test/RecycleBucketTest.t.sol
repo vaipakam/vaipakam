@@ -151,6 +151,13 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
             bucket,
             "day-bucketed credited[D] recorded on the claim day"
         );
+        // #1222 M3 B1 — the credit chokepoint also advances the monotonic
+        // cumulative this chain reports to Base on every day-close.
+        assertEq(
+            _cfg().getRecycleCreditedCumulative(),
+            bucket,
+            "reported cumulative advances with every credit"
+        );
         assertEq(
             vpfi.balanceOf(treasuryRecipient),
             0,
