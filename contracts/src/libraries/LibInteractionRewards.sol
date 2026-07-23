@@ -1077,7 +1077,8 @@ function _dayPoolHalves(
             LibVaipakam.RewardSide side = sideIdx == 0
                 ? LibVaipakam.RewardSide.Lender
                 : LibVaipakam.RewardSide.Borrower;
-            uint256[] memory work = _shareOfPoolWorklist(s, user, side);
+            uint256[] memory work =
+                _shareOfPoolWorklist(s, user, side, false);
             if (work.length != 0) {
                 _walkSideDays(s, user, side, work, ctx, toUser, toTreasury);
             }
@@ -1100,12 +1101,27 @@ function _dayPoolHalves(
     ///      slice at all), so `cursor != 0 || startDay >= D*` is exactly
     ///      "the pre-`D*` slice is settled or empty" — the two facts cannot
     ///      disagree because they are one fact.
+    /// @param includeSettleableLegacy DryRun only (#1351 slice 2e). The
+    ///        settling claim runs its entry loop FIRST, so by the time it
+    ///        builds this worklist every spanning entry whose legacy slice
+    ///        could settle has its cursor stamped and is admitted by the
+    ///        cursor rule. A view preview cannot run that loop, so it admits
+    ///        the same population by predicate instead: an unsettled spanning
+    ///        entry whose side cumulative already covers `endDay - 1` is one
+    ///        the claim WOULD settle-and-stamp this tx. Settling callers pass
+    ///        false — for them the predicate would admit an entry whose
+    ///        legacy slice has NOT yet been paid, exactly the stranding the
+    ///        cursor rule exists to prevent.
     function _shareOfPoolWorklist(
         LibVaipakam.Storage storage s,
         address user,
-        LibVaipakam.RewardSide side
+        LibVaipakam.RewardSide side,
+        bool includeSettleableLegacy
     ) private view returns (uint256[] memory work) {
         uint256 armedFrom = s.governorCommitArmedFromDay;
+        uint256 cum = side == LibVaipakam.RewardSide.Lender
+            ? s.cumLenderCursor
+            : s.cumBorrowerCursor;
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         uint256[] memory buf = new uint256[](len);
@@ -1118,7 +1134,20 @@ function _dayPoolHalves(
                 e.side == side &&
                 (
                     s.rewardEntryClaimNextDay[id] != 0 ||
-                    e.startDay >= armedFrom
+                    e.startDay >= armedFrom ||
+                    (
+                        includeSettleableLegacy &&
+                        e.endDay != 0 &&
+                        cum >= e.endDay - 1 &&
+                        // Codex #1410 r1 P2 — mirror the claim's empty-window
+                        // retire: a spanning entry whose whole remaining
+                        // window prices to zero is marked processed by
+                        // {_processEntry} WITHOUT entering the walk, so the
+                        // preview must not spend simulated day allowance on
+                        // it (that would crowd out later entries and
+                        // under-report).
+                        _entryPricesNonEmpty(s, id, e)
+                    )
                 ) &&
                 _entryClaimable(s, e) &&
                 _shareOfPoolCursorDay(s, id, e) < e.endDay
@@ -1152,7 +1181,7 @@ function _dayPoolHalves(
             if (set.length == 0) break;
 
             (DayCharge memory charge, DaySlice[] memory slices) =
-                processUserSideDay(user, d, set, ctx.pool);
+                processUserSideDay(user, d, set, ctx.pool, _noDryRun());
             // Not advanced ⇒ a recycled-bucket shortfall or an unready RPN
             // row — both legitimately transient (#1351 2d-0: the bucket
             // refills; the row finalizes). Nothing was charged, so STOP
@@ -1276,7 +1305,7 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        pending = previewForUserEntries(user);
+        (pending, ) = _userEntriesUpperBound(s, user);
         (uint256 today, bool active) = currentDayOrZero();
         if (!active || today == 0) return pending;
         uint256 last = s.interactionLastClaimedDay[user];
@@ -1396,7 +1425,77 @@ function _dayPoolHalves(
         }
     }
 
+    /// @dev #1351 slice 2e — the CHEAP per-entry sum: each entry's
+    ///      remaining-window core price, independently. A guaranteed UPPER
+    ///      BOUND on what a claim transfers (the D1 shared-day ceiling, the
+    ///      per-call day chunk, and the pool truncation only ever reduce it),
+    ///      which is precisely the contract the funding gates need
+    ///      ({userClaimPendingUncapped}: `balance >= bound` ⇒ the aggregate
+    ///      claim is funded, the sweep never reaps unfairly). Deliberately a
+    ///      DIFFERENT quantity from {previewForUserEntries} — the walk-exact
+    ///      preview inlines the whole DryRun walk, which would push the
+    ///      sweep-hosting facet over EIP-170 for a gate that only needs a
+    ///      sufficient bound.
+    /// @return userTotal     Upper bound on the aggregate user payout.
+    /// @return recycledTotal  The RAW (pre-loan-side-cap) recycled share —
+    ///                        the quantity the drought gate compares to the
+    ///                        live bucket. AGGREGATE (Codex #1410 r6: joint
+    ///                        same-day sets defer on the combined draw) and
+    ///                        RAW (Codex #1410 r8: the cap is fresh-first
+    ///                        over the aggregate window, so the CAPPED
+    ///                        recycled can read 0 while the per-day walk
+    ///                        still draws from the bucket on its first day).
+    ///                        Raw >= any actual cumulative walk draw, so the
+    ///                        gate can never fail open; over-detection only
+    ///                        pauses, the documented safe direction.
+    ///                        Forfeited entries stay excluded — their
+    ///                        recycled leg is a pure commitment release that
+    ///                        never draws the bucket (the r9 asymmetry).
+    function _userEntriesUpperBound(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 userTotal, uint256 recycledTotal) {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        for (uint256 i = 0; i < len; ) {
+            uint256 id = ids[i];
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+            if (
+                !e.processed
+                && !e.forfeited
+                && !_entryTerminalForfeit(s, e)
+                && _entryClaimable(s, e)
+            ) {
+                (
+                    EntrySplit memory toUser,
+                    ,
+                    ,
+                    EntryPriceState memory st
+                ) = _entryPriceCore(s, id, e);
+                userTotal += toUser.total;
+                recycledTotal += st.rawSplit.recycled;
+            }
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice View-only preview of {claimForUserEntries}.
+    /// @dev #1351 slice 2e — decomposed EXACTLY as the claim is: the entry
+    ///      path's pre-`D*` legacy legs (O(1) per entry), plus a DryRun of
+    ///      the ShareOfPool day walk for the armed days
+    ///      ({_dryRunShareOfPoolDays}). Before this, each armed entry
+    ///      previewed its own capped value independently, which ignored the
+    ///      D1 `(user, side, day)` ceiling SHARED across entries and the
+    ///      per-call day-chunk bound — two entries on one day previewed
+    ///      2×C-ish while the claim would pay ≤ C. Identical on every
+    ///      current deploy (`D*` unarmed ⇒ the walk leg is empty and the
+    ///      whole window is the legacy leg).
+    ///
+    ///      The DryRun honours the LIVE recycled bucket (a day the walk
+    ///      would defer for a short bucket is not previewed — Codex #1410
+    ///      r2); it stays deliberately uncapped ONLY by the 69M lifetime
+    ///      headroom, the payment-time truncation axis on which the preview
+    ///      remains an upper bound ({userClaimPendingUncapped}).
     function previewForUserEntries(address user)
         internal
         view
@@ -1405,6 +1504,7 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
+        uint256 armedFrom = s.governorCommitArmedFromDay;
 
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
@@ -1419,8 +1519,195 @@ function _dayPoolHalves(
                 && _entryClaimable(s, e)
             ) {
                 // #1008 (S13) — cap is baked into cumMin; no feed read here.
-                userTotal += _previewEntryReward(s, ids[i], e);
+                userTotal += _previewEntryLeg(s, id, e, armedFrom);
             }
+            unchecked { ++i; }
+        }
+        userTotal += _dryRunShareOfPoolDays(s, user);
+    }
+
+    /// @dev The ENTRY-PATH leg of one entry's preview — what {_processEntry}
+    ///      itself would pay, excluding anything the day walk owns:
+    ///      - no armed tail (or unarmed deploy): the whole remaining window;
+    ///      - unsettled spanning entry: the pre-`D*` legacy slice, by the
+    ///        same regime identity the settle uses;
+    ///      - cursor stamped or all-armed: 0 — the walk owns what remains,
+    ///        and {_dryRunShareOfPoolDays} prices it.
+    function _previewEntryLeg(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e,
+        uint256 armedFrom
+    ) private view returns (uint256) {
+        if (armedFrom == 0 || e.endDay <= armedFrom) {
+            return _previewEntryReward(s, id, e);
+        }
+        if (s.rewardEntryClaimNextDay[id] != 0 || e.startDay >= armedFrom) {
+            return 0; // the walk owns everything that remains
+        }
+        (, , , EntryPriceState memory st) = _entryPriceCore(s, id, e);
+        if (!st.priced) return 0;
+        return
+            st.rawSplit.total - st.rawSplit.recycled - st.rawSplit.armedFresh;
+    }
+
+    /// @dev #1351 slice 2e — a VIEW DryRun of {_walkShareOfPoolDays}: same
+    ///      worklist, same per-day pricing ({processUserSideDay}), same
+    ///      shared day-chunk allowance — but cursors advance in MEMORY and
+    ///      each day's loan-side charge folds into a {LoanSideCarry} overlay
+    ///      instead of storage. One pricing implementation; the preview
+    ///      cannot promise what the walk would not pay.
+    ///
+    ///      Walks with an UNBOUNDED pool on purpose — see
+    ///      {previewForUserEntries}. A day the walk would defer for a
+    ///      transient reason (unfinalized RPN row) stops the side here
+    ///      exactly as it stops the real walk.
+    function _dryRunShareOfPoolDays(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 userTotal) {
+        if (s.governorCommitArmedFromDay == 0) return 0;
+        uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        // Codex #1410 r2 — the RECYCLED budget is the REAL bucket, shared
+        // across both sides and depleted per day exactly as the live walk's
+        // ctx.pool is: a recycled shortfall DEFERS a day and stops the side
+        // (walk behaviour the preview must mirror). FRESH stays unbounded on
+        // purpose — the 69M truncation is payment-time behaviour (the facet
+        // scaler / the terminal trim), the one documented axis on which the
+        // preview stays an upper bound.
+        PoolBudget memory pool = PoolBudget({
+            fresh: type(uint256).max,
+            recycled: s.recycleBucket
+        });
+        for (uint8 sideIdx; sideIdx < 2; ) {
+            LibVaipakam.RewardSide side = sideIdx == 0
+                ? LibVaipakam.RewardSide.Lender
+                : LibVaipakam.RewardSide.Borrower;
+            uint256[] memory work =
+                _shareOfPoolWorklist(s, user, side, true);
+            if (work.length != 0) {
+                (uint256 paid, uint256 spent) =
+                    _dryRunSideDays(s, user, work, daysLeft, pool);
+                userTotal += paid;
+                daysLeft -= spent;
+            }
+            unchecked { ++sideIdx; }
+        }
+    }
+
+    /// @dev One side of the DryRun: simulate the day loop over `work` with
+    ///      memory cursors + the loan-side carry. Returns what the walk
+    ///      would pay the user and how many days of the shared allowance it
+    ///      would consume.
+    function _dryRunSideDays(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256[] memory work,
+        uint256 daysLeft,
+        PoolBudget memory pool
+    ) private view returns (uint256 userTotal, uint256 daysSpent) {
+        uint256[] memory cur = new uint256[](work.length);
+        for (uint256 i; i < work.length; ) {
+            cur[i] = _shareOfPoolCursorDay(s, work[i], s.rewardEntries[work[i]]);
+            unchecked { ++i; }
+        }
+        DryRunState memory dry;
+        dry.active = true;
+        dry.loanSide = new LoanSideCarry[](work.length);
+
+        while (daysSpent < daysLeft) {
+            uint256 d = _dryLowestDay(s, work, cur);
+            if (d == type(uint256).max) break;
+
+            (uint256[] memory set, uint256[] memory setCur) =
+                _dryEntriesAtDay(s, work, cur, d);
+            dry.setCursors = setCur;
+
+            (DayCharge memory charge, DaySlice[] memory slices) =
+                processUserSideDay(user, d, set, pool, dry);
+            if (!charge.advanced) break;
+
+            pool.recycled -= charge.toUser.recycled;
+            userTotal += charge.toUser.total;
+            _dryFoldDay(s, dry.loanSide, set, slices);
+            // Advance the simulated cursors of the set members.
+            for (uint256 i; i < work.length; ) {
+                if (cur[i] == d) cur[i] = d + 1;
+                unchecked { ++i; }
+            }
+            unchecked { ++daysSpent; }
+        }
+    }
+
+    /// @dev Lowest simulated pending day; `max` when the side is done.
+    function _dryLowestDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory work,
+        uint256[] memory cur
+    ) private view returns (uint256 d) {
+        d = type(uint256).max;
+        for (uint256 i; i < work.length; ) {
+            if (cur[i] < s.rewardEntries[work[i]].endDay && cur[i] < d) {
+                d = cur[i];
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev The joint set at simulated day `d`, with its aligned cursors.
+    ///      A COMPLETED simulated entry (`cur == its endDay`) is excluded
+    ///      (Codex #1410 r1 P2): memory cursors have no `processed` flag, so
+    ///      when a longer sibling later reaches the shorter entry's endDay,
+    ///      the equality alone would re-admit the finished entry and the
+    ///      primitive's window check would revert the whole preview. The
+    ///      settling walk is immune — {_persistDay} flips `processed` and
+    ///      {_entriesAtDay} filters on it.
+    function _dryEntriesAtDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory work,
+        uint256[] memory cur,
+        uint256 d
+    )
+        private
+        view
+        returns (uint256[] memory set, uint256[] memory setCur)
+    {
+        uint256 m;
+        for (uint256 i; i < work.length; ) {
+            if (cur[i] == d && d < s.rewardEntries[work[i]].endDay) {
+                unchecked { ++m; }
+            }
+            unchecked { ++i; }
+        }
+        set = new uint256[](m);
+        setCur = new uint256[](m);
+        uint256 k;
+        for (uint256 i; i < work.length; ) {
+            if (cur[i] == d && d < s.rewardEntries[work[i]].endDay) {
+                set[k] = work[i];
+                setCur[k] = cur[i];
+                unchecked { ++k; }
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Fold one previewed day into the carry exactly as {_persistDay}
+    ///      would have written it: paid deltas for chargeable slices, +1
+    ///      armed day per entry's loan either way (the rev-15 union rule).
+    function _dryFoldDay(
+        LibVaipakam.Storage storage s,
+        LoanSideCarry[] memory carry,
+        uint256[] memory set,
+        DaySlice[] memory slices
+    ) private view {
+        for (uint256 i; i < set.length; ) {
+            _carryCharge(
+                carry,
+                s.rewardEntries[set[i]].loanId,
+                slices[i].loanSideChargeable ? slices[i].amount : 0,
+                1
+            );
             unchecked { ++i; }
         }
     }
@@ -1584,11 +1871,24 @@ function _dayPoolHalves(
         //   2. the owner is sanctioned (the claim path rejects them),
         //   3. the protocol is paused (every claim reverts under the pause),
         //   4. the balance can't cover the user's whole aggregate claim.
-        bool executable = _poolCappedPayable(toUser) != 0 &&
+        // Codex #1410 r7 P1 — advance ALL the user's cursors BEFORE the
+        // aggregate drought test. A sibling entry whose `endDay - 1` still
+        // lies beyond the cumulative cursor prices 0 in the upper bound, so
+        // on the first sweep touch after its days finalize the drought gate
+        // would miss its recycled draw and credit an interval the real claim
+        // (which advances first, then defers the joint day) could not serve.
+        // The funding-need call performs exactly that advance, so it is
+        // hoisted ahead of the gate rather than left to short-circuit order.
+        // (The read-only countdown mirror cannot advance and keeps its
+        // documented optimistic-estimate caveat; this sweep is the
+        // authority.)
+        uint256 fundingNeed = userClaimFundingNeed(s, e.user);
+        bool executable = !_recycledDrought(s, e.user) &&
+            _poolCappedPayable(toUser) != 0 &&
             !LibVaipakam.isSanctionedAddress(e.user) &&
             !LibPausable.paused() &&
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            userClaimFundingNeed(s, e.user);
+            fundingNeed;
 
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 
@@ -1804,6 +2104,7 @@ function _dayPoolHalves(
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
+        if (_recycledDrought(s, e.user)) return false; // clock pauses (r6)
         (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
         return
@@ -1823,6 +2124,24 @@ function _dayPoolHalves(
     ///      capped-off share must not keep an expiry clock running on value
     ///      no claim will ever move (dark until `D*` arms; identical to the
     ///      raw split on every current deploy).
+    /// @dev Codex #1410 r4+r6 — the recycled-bucket DROUGHT gate, AGGREGATE
+    ///      by construction: the walk's recycled check is all-or-nothing per
+    ///      day against the user's JOINT set, so per-entry bucket checks pass
+    ///      individually while the combined draw still defers the day and the
+    ///      claim reverts. When the user's aggregate remaining recycled
+    ///      exceeds the live bucket, at least one of their days will defer
+    ///      and an O(1) gate cannot tell which value survives — so the expiry
+    ///      clock pauses outright. Over-pausing only DELAYS the reap
+    ///      (claimant-protective; the claim path stays open and each partial
+    ///      collection shrinks the aggregate until the gate unpauses).
+    function _recycledDrought(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (bool) {
+        (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
+        return recycledTotal > s.recycleBucket;
+    }
+
     function _poolCappedPayable(
         EntrySplit memory toUser
     ) private view returns (uint256) {
@@ -2993,7 +3312,8 @@ function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.RewardSide side,
-        uint256 rewardedDaysIncl
+        uint256 rewardedDaysIncl,
+        uint256 paidExtra
     ) private view returns (uint256) {
         // #1351 (Codex #1399 P2) — an UNSTAMPED loan carries NO loan-side cap;
         // it is NOT a zero cap. This mirrors `_applyLoanSideCap`, which returns
@@ -3006,7 +3326,10 @@ function _dayPoolHalves(
             return type(uint256).max;
         }
         uint256 capEff = _loanSideRewardCapEff(s, loanId, rewardedDaysIncl);
-        uint256 paid = s.loanSideRewardPaidVpfi[loanId][uint8(side)];
+        // `paidExtra` is the DryRun carry — what earlier previewed days of
+        // this call would already have paid this loan-side (0 when settling).
+        uint256 paid =
+            s.loanSideRewardPaidVpfi[loanId][uint8(side)] + paidExtra;
         return capEff > paid ? capEff - paid : 0;
     }
 
@@ -3238,6 +3561,94 @@ function _dayPoolHalves(
         uint256 daysLeft;
     }
 
+    /// @notice #1351 slice 2e — one loan's in-memory loan-side deltas during
+    ///         a VIEW (DryRun) walk: what earlier previewed days of THIS call
+    ///         would have written to `loanSideRewardPaidVpfi` /
+    ///         `loanSideRewardedDays` had they settled. Without it, a
+    ///         multi-day preview prices every day against pre-walk storage
+    ///         and the loan-side proration/budget drifts from what the real
+    ///         walk would charge.
+    struct LoanSideCarry {
+        uint256 loanId;
+        uint256 paidDelta;
+        uint256 daysDelta;
+        bool used;
+    }
+
+    /// @notice #1351 slice 2e — the DryRun overlay a VIEW walk threads
+    ///         through {processUserSideDay}. Settling callers pass
+    ///         {_noDryRun}: `active == false` makes every lookup fall through
+    ///         to storage, so the settle path is bit-identical with or
+    ///         without this parameter.
+    /// @param loanSide   Per-loan deltas accumulated by earlier previewed days.
+    /// @param setCursors The simulated claim cursor of each entry in the
+    ///                   CURRENT call's `entryIds`, index-aligned. Storage
+    ///                   cursors go stale the moment a DryRun advances past
+    ///                   its first day, so the double-pay equality guard must
+    ///                   check the simulated position instead.
+    struct DryRunState {
+        bool active;
+        LoanSideCarry[] loanSide;
+        uint256[] setCursors;
+    }
+
+    /// @dev The inert overlay settling callers pass. Internal so the test
+    ///      mutator's raw wrapper can construct it too.
+    function _noDryRun() internal pure returns (DryRunState memory d) {
+        d.loanSide = new LoanSideCarry[](0);
+        d.setCursors = new uint256[](0);
+    }
+
+    /// @dev Find `loanId`'s carry slot; `type(uint256).max` when absent.
+    function _carryIdx(
+        LoanSideCarry[] memory carry,
+        uint256 loanId
+    ) private pure returns (uint256) {
+        for (uint256 i; i < carry.length; ) {
+            if (carry[i].used && carry[i].loanId == loanId) return i;
+            unchecked { ++i; }
+        }
+        return type(uint256).max;
+    }
+
+    function _carryPaid(
+        LoanSideCarry[] memory carry,
+        uint256 loanId
+    ) private pure returns (uint256) {
+        uint256 i = _carryIdx(carry, loanId);
+        return i == type(uint256).max ? 0 : carry[i].paidDelta;
+    }
+
+    function _carryDays(
+        LoanSideCarry[] memory carry,
+        uint256 loanId
+    ) private pure returns (uint256) {
+        uint256 i = _carryIdx(carry, loanId);
+        return i == type(uint256).max ? 0 : carry[i].daysDelta;
+    }
+
+    /// @dev Accumulate one previewed day's charge for `loanId` (find-or-claim
+    ///      a slot; the array is pre-sized to the worklist length, so a slot
+    ///      always exists).
+    function _carryCharge(
+        LoanSideCarry[] memory carry,
+        uint256 loanId,
+        uint256 paidDelta,
+        uint256 daysDelta
+    ) private pure {
+        uint256 i = _carryIdx(carry, loanId);
+        if (i == type(uint256).max) {
+            for (i = 0; i < carry.length; ) {
+                if (!carry[i].used) break;
+                unchecked { ++i; }
+            }
+            carry[i].used = true;
+            carry[i].loanId = loanId;
+        }
+        carry[i].paidDelta += paidDelta;
+        carry[i].daysDelta += daysDelta;
+    }
+
     /// @notice One entry's share of a priced day.
     /// @param amount             VPFI attributed to this entry.
     /// @param loanSideChargeable True  ⇒ the caller MUST add `amount` to
@@ -3254,6 +3665,18 @@ function _dayPoolHalves(
     struct DaySlice {
         uint256 amount;
         bool loanSideChargeable;
+    }
+
+    /// @dev Whether the core prices the entry's remaining window at a
+    ///      nonzero value — the DryRun admission mirror of the claim's
+    ///      empty-window retire (see {_shareOfPoolWorklist}).
+    function _entryPricesNonEmpty(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (bool) {
+        (, , , EntryPriceState memory st) = _entryPriceCore(s, id, e);
+        return st.priced;
     }
 
     /// @dev Where an entry's ShareOfPool day walk starts.
@@ -3294,7 +3717,8 @@ function _dayPoolHalves(
         LibVaipakam.RewardSide side,
         uint256 d,
         uint256 freshDaily,
-        uint256 recycledDaily
+        uint256 recycledDaily,
+        DryRunState memory dry
     )
         private
         view
@@ -3349,7 +3773,10 @@ function _dayPoolHalves(
                     s,
                     e.loanId,
                     side,
-                    s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
+                    s.loanSideRewardedDays[e.loanId][uint8(side)] +
+                        _carryDays(dry.loanSide, e.loanId) +
+                        1,
+                    _carryPaid(dry.loanSide, e.loanId)
                 );
                 if (v <= lsr) {
                     cEff[i] = v;
@@ -3554,7 +3981,8 @@ function _dayPoolHalves(
         address user,
         uint256 d,
         uint256[] memory entryIds,
-        PoolBudget memory pool
+        PoolBudget memory pool,
+        DryRunState memory dry
     ) internal view returns (DayCharge memory charge, DaySlice[] memory slices) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 n = entryIds.length;
@@ -3593,7 +4021,13 @@ function _dayPoolHalves(
             // entry that already advanced past `d` and get it priced a SECOND
             // time out of any unsaturated `C`, and the loan-side proration
             // (recomputed from `stored + 1`) would not catch it.
-            uint256 nd = s.rewardEntryClaimNextDay[entryIds[i]];
+            // #1351 slice 2e — a DryRun's storage cursors go stale the
+            // moment it advances past its first simulated day, so the guard
+            // checks the caller's SIMULATED cursor instead (index-aligned,
+            // always resolved). Settling callers keep the storage read.
+            uint256 nd = dry.active
+                ? dry.setCursors[i]
+                : s.rewardEntryClaimNextDay[entryIds[i]];
             if ((nd == 0 ? uint256(v.startDay) : nd) != d) {
                 revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
             }
@@ -3672,7 +4106,7 @@ function _dayPoolHalves(
             uint256 rawPay,
             EntrySplit memory capped
         ) = _priceEntriesForDay(
-            s, entryIds, slices, side, d, freshDaily, recycledDaily
+            s, entryIds, slices, side, d, freshDaily, recycledDaily, dry
         );
 
         // Legitimately nothing to pay (zero weights / loan-side exhausted):

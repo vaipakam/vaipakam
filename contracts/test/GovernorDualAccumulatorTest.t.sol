@@ -460,6 +460,177 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1410 r4 — the expiry clock PAUSES through a recycled-
+    ///      bucket drought. The walk defers a recycled-short day WHOLE (fresh
+    ///      included), the claim then reverts, and a gate that still counted
+    ///      the entry payable would accrue — and, once the bucket refills,
+    ///      instantly reap — a reward its owner genuinely could not collect
+    ///      during the drought. Against the pre-fix gate the final assert
+    ///      fails with an instant nonzero reap.
+    function testCountdownPausesThroughRecycledBucketDrought() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day carries a recycled component");
+
+        uint256 id = _seedEntry(alice, 50, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+
+        // DROUGHT: drain the bucket, then serve MORE than the whole
+        // window + notice under heartbeat sweeps.
+        _mut().setRecycleBucketRaw(0);
+        assertEq(
+            _accrueExec(ids, 180 days + 90 days + 14 days),
+            0,
+            "nothing reaps during the drought"
+        );
+
+        // Bucket refills: no time may have accrued through the drought, so
+        // there must be NO instant reap — the window has to be re-served.
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after the drought - the clock was paused"
+        );
+    }
+
+    /// @dev Codex #1410 r8 P1 — the drought sum must use the RAW recycled
+    ///      share: the loan-side cap is fresh-first over the aggregate
+    ///      window, so a capped entry's CAPPED recycled can read 0 while the
+    ///      per-day walk still draws the bucket on its first day — a
+    ///      capped-sum gate fails open and accrues (and reaps) through the
+    ///      drought. Raw >= any actual cumulative walk draw, so the raw gate
+    ///      can never fail open; over-detection only pauses (safe).
+    function testDroughtGateUsesRawRecycledUnderLoanSideCap() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day 5 carries a recycled component");
+
+        uint256 id = _seedEntry(alice, 57, 5, 6);
+        // Cap small enough that the aggregate fresh-first trim consumes the
+        // whole headroom from fresh alone: the CAPPED recycled share reads 0
+        // while the raw recycled share stays nonzero.
+        _mut().setFeeEntitlementRaw(
+            57,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: uint128(floor5 / 8)
+            })
+        );
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+
+        _mut().setRecycleBucketRaw(0); // drought
+        assertEq(
+            _accrueExec(ids, 180 days + 90 days + 14 days),
+            0,
+            "nothing reaps during the drought"
+        );
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after refill - the clock was paused"
+        );
+    }
+
+    /// @dev Codex #1410 r7 P1 — the sweep must ADVANCE the user's cursors
+    ///      before testing the aggregate drought. A longer sibling whose last
+    ///      day is not yet advanced-through prices 0 in the upper bound, so a
+    ///      pre-advance drought test misses its recycled draw on the first
+    ///      touch after that day finalizes and credits an interval the real
+    ///      claim (advance first, then defer the joint day) could not serve.
+    ///      Against the pre-fix ordering this fails by crediting + reaping on
+    ///      that touch; the follow-up refill assert catches even a
+    ///      backing-deferred variant of the same credit.
+    function testDroughtGateAdvancesCursorsFirst() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day 5 carries a recycled component");
+
+        uint256 shorter = _seedEntry(alice, 55, 5, 6);
+        uint256 longer = _seedEntry(alice, 56, 5, 7); // day 6 unfinalized yet
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = shorter;
+        ids[1] = longer;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clocks
+
+        // Bucket covers the shorter's day-5 slice alone, not the joint draw.
+        uint256 each = recycled5 / 2;
+        _mut().setRecycleBucketRaw(each + each / 2);
+
+        // LEGITIMATE accrual to just under the threshold: with day 6 not yet
+        // finalized the longer sibling prices 0 for claim and gate alike, so
+        // the bucket genuinely covers everything payable and the claim works.
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+
+        // Day 6 finalizes mid-drought: the sibling's recycled draw now
+        // exists, but only an ADVANCE reveals it to the gate.
+        _mut().setRecycledCreditedByDayRaw(6, 700 ether);
+        _finalize(6);
+        _mut().setDayUserSideCapRaw(6, type(uint256).max);
+
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "the touch advances, sees the joint drought, and pauses - no reap"
+        );
+
+        // The drought interval must never have been credited: even with the
+        // bucket refilled, the window still has to be finished the honest way.
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after refill - the drought interval was dropped"
+        );
+    }
+
+    /// @dev Codex #1410 r6 — the drought gate is AGGREGATE: two same-day
+    ///      recycled entries whose bucket covers EACH alone but not BOTH
+    ///      still defer jointly (the walk's per-day check is against the
+    ///      user's joint draw), so the clock must pause for both. Against the
+    ///      per-entry gate this fails with an instant post-refill reap.
+    function testDroughtGateIsAggregateAcrossEntries() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day carries a recycled component");
+
+        uint256 a = _seedEntry(alice, 51, 5, 6);
+        uint256 b = _seedEntry(alice, 52, 5, 6);
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = a;
+        ids[1] = b;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp both clocks
+
+        // Bucket covers each entry's recycled slice alone, NOT both: the
+        // joint day defers, the claim reverts, both clocks must pause.
+        uint256 each = recycled5 / 2; // two equal-perDay entries split the day
+        _mut().setRecycleBucketRaw(each + each / 2);
+        assertEq(
+            _accrueExec(ids, 180 days + 90 days + 14 days),
+            0,
+            "nothing reaps while the JOINT draw exceeds the bucket"
+        );
+
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after the drought - both clocks were paused"
+        );
+    }
+
     /// @dev #1351 — `_userForfeitFresh` sums FORFEITED entries at their
     ///      whole-window fresh face value to size the aggregate claim funding
     ///      need. Once a chunked claim settles a forfeited entry's pre-`D*`
