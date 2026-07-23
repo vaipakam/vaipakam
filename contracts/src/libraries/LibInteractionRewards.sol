@@ -2093,6 +2093,18 @@ function _dayPoolHalves(
     ) private view returns (uint256) {
         uint256 freshShare = toUser.total - toUser.recycled;
         uint256 room = poolRemaining();
+        // Codex #1410 r4 — a RECYCLED share beyond the live bucket pauses
+        // the clock outright: the walk's recycled check is ALL-OR-NOTHING per
+        // day (a short day defers WHOLE, fresh included), so at least one of
+        // this entry's days will defer and an O(1) whole-window gate cannot
+        // tell which value survives. Counting anything here could run the
+        // expiry clock — and eventually reap — while the claimant's claim
+        // reverts. Pausing instead is the safe direction the gate documents:
+        // it only DELAYS the reap, and the clock resumes when the bucket
+        // refills.
+        if (toUser.recycled > LibVaipakam.storageSlot().recycleBucket) {
+            return 0;
+        }
         return (freshShare < room ? freshShare : room) + toUser.recycled;
     }
 

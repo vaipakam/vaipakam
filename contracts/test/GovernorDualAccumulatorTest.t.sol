@@ -460,6 +460,42 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1410 r4 — the expiry clock PAUSES through a recycled-
+    ///      bucket drought. The walk defers a recycled-short day WHOLE (fresh
+    ///      included), the claim then reverts, and a gate that still counted
+    ///      the entry payable would accrue — and, once the bucket refills,
+    ///      instantly reap — a reward its owner genuinely could not collect
+    ///      during the drought. Against the pre-fix gate the final assert
+    ///      fails with an instant nonzero reap.
+    function testCountdownPausesThroughRecycledBucketDrought() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "day carries a recycled component");
+
+        uint256 id = _seedEntry(alice, 50, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+
+        // DROUGHT: drain the bucket, then serve MORE than the whole
+        // window + notice under heartbeat sweeps.
+        _mut().setRecycleBucketRaw(0);
+        assertEq(
+            _accrueExec(ids, 180 days + 90 days + 14 days),
+            0,
+            "nothing reaps during the drought"
+        );
+
+        // Bucket refills: no time may have accrued through the drought, so
+        // there must be NO instant reap — the window has to be re-served.
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        assertEq(
+            _facet().sweepExpiredInteractionRewards(ids),
+            0,
+            "no instant reap after the drought - the clock was paused"
+        );
+    }
+
     /// @dev #1351 — `_userForfeitFresh` sums FORFEITED entries at their
     ///      whole-window fresh face value to size the aggregate claim funding
     ///      need. Once a chunked claim settles a forfeited entry's pre-`D*`
