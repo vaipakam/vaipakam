@@ -306,6 +306,49 @@ else
     "$SCRIPT_DIR/exportAbis.sh"
 fi
 
+# ── [4b] deployments.json facet-key drift (#1356) ────────────────────
+# Every facet key a deploy script writes into addresses.json
+# (`Deployments.writeFacet("<key>", ...)`) must exist as a typed field on
+# the TS `Deployment` type — an untyped key is invisible to every consumer
+# of `@vaipakam/contracts/deployments` (frontend + the three Workers), so
+# the deploy would record an address nobody can read. Hard failure.
+# The reverse direction (typed keys no script writes) is advisory: some
+# fields are written by chain-specific tooling outside script/*.s.sol.
+echo
+echo "[predeploy 4b] deploy-script facet keys match the TS Deployment type"
+DEPLOYMENTS_TS="$REPO_ROOT/packages/contracts/src/deployments.ts"
+if [ ! -f "$DEPLOYMENTS_TS" ]; then
+  echo "  · $DEPLOYMENTS_TS not present, skipping"
+else
+  # Two call shapes write facet keys: literal `writeFacet("<key>", ...)`
+  # AND the in-place refresh path's `Item("<key>", ...)` entries, whose
+  # keys reach writeFacet through a variable (`items[i].key`) — harvesting
+  # only the literal writeFacet calls would let a typo'd refresh key bypass
+  # the hard gate entirely (Codex #1411 r1).
+  # Newline-tolerant (Codex #1411 r2): several refresh entries wrap the
+  # key onto the line after `Item(`, so the sources are flattened before
+  # matching — a single-line grep silently omitted those keys.
+  WRITTEN_KEYS="$(cat "$SCRIPT_DIR"/*.s.sol | tr '\n' ' ' \
+    | grep -oE '(writeFacet|Item)\(\s*"[A-Za-z0-9]+"' \
+    | sed -E 's/.*"([A-Za-z0-9]+)".*/\1/' | sort -u)"
+  TYPED_KEYS="$(grep -oE '^[[:space:]]+[A-Za-z0-9]+Facet\?' "$DEPLOYMENTS_TS" \
+    | sed -E 's/[[:space:]]+//; s/\?//' | sort -u)"
+  MISSING="$(comm -23 <(printf '%s\n' "$WRITTEN_KEYS") <(printf '%s\n' "$TYPED_KEYS") || true)"
+  if [ -n "$MISSING" ]; then
+    echo "  ✗ facet keys written by deploy scripts but MISSING from the TS type:" >&2
+    printf '      %s\n' $MISSING >&2
+    echo "    add them to packages/contracts/src/deployments.ts (Deployment type)" >&2
+    FAIL=1
+  else
+    echo "  ✓ every written facet key is typed on Deployment"
+  fi
+  UNWRITTEN="$(comm -13 <(printf '%s\n' "$WRITTEN_KEYS") <(printf '%s\n' "$TYPED_KEYS") || true)"
+  if [ -n "$UNWRITTEN" ]; then
+    echo "  · advisory — typed facet keys no script/*.s.sol writes:"
+    printf '      %s\n' $UNWRITTEN
+  fi
+fi
+
 # ── Verdict ───────────────────────────────────────────────────────────
 echo
 if [ "$FAIL" -ne 0 ]; then

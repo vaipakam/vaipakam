@@ -10,6 +10,11 @@ import {OwnershipFacet} from "../../src/facets/OwnershipFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
+import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
+import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
+import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
+import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 
 /**
  * @title  DeployDiamondIntegrationTest
@@ -323,5 +328,77 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         // false, not revert.
         bool skip = vm.envOr("DEPLOY_SKIP_ARTIFACTS_UNSET_SENTINEL", false);
         assertFalse(skip, "envOr should return false for an unset key");
+    }
+
+    // ─── #1356 (M2 PR-9) — retail deploy guardrails ───────────────────
+
+    /// @notice #1356 — a FRESH deploy lands in exactly the M2 dark/default
+    ///         state the runbook assumes. Each assert is an accidental-set
+    ///         alarm for a knob that must only ever move through its M7
+    ///         ceremony (pre-live: green-field asserts, no migration
+    ///         variants — owner 2026-07-18):
+    ///
+    ///         1. The VPFI peg is UNSET (`vpfiDiscountWeiPerVpfi == 0`) —
+    ///            the retail deploy never prices VPFI; an accidentally-set
+    ///            peg would arm the VPFI-payment discount path.
+    ///         2. New-origination fees resolve to the rev-8 freeze:
+    ///            LIF 20 bps / yield (treasury) fee 200 bps.
+    ///         3. `feeEntitlementEnabled == false` — the joint-cutover gate
+    ///            (#1351 + #1353 + #1354 + `D*` armed) as a deploy assert,
+    ///            and the Full-tariff coefficient sits at its bounded
+    ///            default.
+    ///         4. The governor is UNARMED (`armedFromDay == 0`) — arming is
+    ///            an M7 ceremony gated on M1b + (Base-only rewards OR M3).
+    ///         5. The retired ETH·day tariff knob still reads its default —
+    ///            it is unwired for Phase-1 absorption (#1350 supersession)
+    ///            and a moved value would mean someone set a dead knob.
+    function test_DeployedDiamond_RetailGuardrails_M2Defaults() public {
+        (address diamond, address _deployAdmin,) = _deploy(true);
+
+        (uint256 weiPerVpfi, ) =
+            VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
+        assertEq(weiPerVpfi, 0, "VPFI peg must be UNSET on a fresh deploy");
+
+        assertEq(
+            ConfigFacet(diamond).getLoanInitiationFeeBps(),
+            20,
+            "LIF default must resolve to 20 bps (rev-8 fee freeze)"
+        );
+        assertEq(
+            ConfigFacet(diamond).getTreasuryFeeBps(),
+            200,
+            "yield-fee default must resolve to 200 bps (rev-8 fee freeze)"
+        );
+
+        // Codex #1411 r1 — the effective getter is
+        // `feeEntitlementEnabled && isCanonicalVpfiChain`, and a fresh deploy
+        // is not yet canonical, so asserting the getter cold would pass even
+        // with the RAW flag accidentally set. Canonicalize first (as the
+        // post-deploy ConfigureVPFIToken step does) so the assert observes
+        // the raw flag.
+        vm.prank(_deployAdmin);
+        VPFITokenFacet(diamond).setCanonicalVPFIChain(true);
+        (bool feeEntitlementEnabled, uint256 kPerLifYear, ) =
+            ConfigFacet(diamond).getFeeEntitlementConfig();
+        assertFalse(
+            feeEntitlementEnabled,
+            "feeEntitlementEnabled must be OFF until the joint M2 cutover"
+        );
+        assertEq(
+            kPerLifYear,
+            LibVaipakam.TARIFF_K_PER_LIF_YEAR_DEFAULT,
+            "Full-tariff K must sit at its bounded default"
+        );
+
+        (uint256 armedFromDay, , , ) =
+            RewardAggregatorFacet(diamond).getGovernorCommitState();
+        assertEq(armedFromDay, 0, "governor must be UNARMED (M7 ceremony)");
+
+        (, uint256 tariffK) = ConfigFacet(diamond).getRecycleConfig();
+        assertEq(
+            tariffK,
+            LibVaipakam.RECYCLE_TARIFF_K_DEFAULT,
+            "retired ETH-day knob must read its default (dead-knob alarm)"
+        );
     }
 }
