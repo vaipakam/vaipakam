@@ -212,10 +212,14 @@ contract RewardReporterFacet is
             // front of a not-yet-upgraded messenger falls back to the legacy
             // four-argument send (recycled figures simply don't travel until
             // the messenger is current), so the permissionless day-close
-            // never reverts through the upgrade window. A failed six-argument
-            // attempt returns its full value before the fallback re-forwards
-            // it; a genuine shared failure (paused, underfunded fee) still
-            // surfaces as the fallback's revert.
+            // never reverts through the upgrade window. Codex r4 P1 — the
+            // fallback fires ONLY on the missing-selector shape (a pre-#1222
+            // messenger has no receive path for the unknown selector and
+            // reverts with EMPTY data); every reasoned failure — paused,
+            // InsufficientFee from a caller who quoted the legacy shape —
+            // bubbles unchanged, because downgrading a current messenger's
+            // real failure to a legacy send would permanently strip the
+            // day's recycled fields (`chainReportSentAt` blocks a resend).
             try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
                 dayId,
                 lenderNumeraire18,
@@ -223,7 +227,14 @@ contract RewardReporterFacet is
                 recycledCumulative18,
                 recycledForDay18,
                 payable(msg.sender)
-            ) {} catch {
+            ) {} catch (bytes memory reason) {
+                if (reason.length != 0) {
+                    assembly ("memory-safe") {
+                        revert(add(reason, 0x20), mload(reason))
+                    }
+                }
+                // A failed six-argument attempt returned its full value;
+                // the fallback re-forwards it.
                 IRewardMessengerLegacySend(messenger).sendChainReport{
                     value: msg.value
                 }(

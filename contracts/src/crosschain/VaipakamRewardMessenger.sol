@@ -26,6 +26,13 @@ interface IRewardAggregatorIngress {
     ) external;
 }
 
+/// @notice #1222 M3 B1 (Codex #1413 r4) — the Diamond fallback's
+///         unknown-selector error, matched to recognize a not-yet-cut Base
+///         diamond when the widened ingress call fails.
+interface IDiamondFallback {
+    error FunctionDoesNotExist();
+}
+
 /// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening ingress shape. A
 ///         decoded LEGACY report is forwarded through this selector, which
 ///         both diamond generations expose (the pre-#1222 facet natively,
@@ -817,14 +824,44 @@ contract VaipakamRewardMessenger is
                     (uint8, uint256, uint256, uint256, uint256, uint256)
                 );
                 emit ReportReceived(sourceChainId, dayId, a, b);
-                IRewardAggregatorIngress(diamond).onChainReportReceived(
+                // Codex #1413 r4 — rollout shim for the messenger-first Base
+                // upgrade: a not-yet-cut diamond reverts the widened ingress
+                // selector with `FunctionDoesNotExist()`; ONLY that shape
+                // (or an empty missing-selector revert) downgrades to the
+                // legacy ingress — the recycled figures are dropped for the
+                // window rather than the whole report failing toward a
+                // grace-zeroed day. Every reasoned ingress failure
+                // (duplicate, finalized, unexpected chain) bubbles.
+                try IRewardAggregatorIngress(diamond).onChainReportReceived(
                     SafeCast.toUint32(sourceChainId),
                     dayId,
                     a,
                     b,
                     recycledCum,
                     recycledForDay
-                );
+                ) {} catch (bytes memory reason) {
+                    bytes4 reasonSelector;
+                    if (reason.length >= 4) {
+                        assembly ("memory-safe") {
+                            reasonSelector := mload(add(reason, 0x20))
+                        }
+                    }
+                    bool missingSelector = reason.length == 0
+                        || (
+                            reason.length == 4
+                                && reasonSelector
+                                    == IDiamondFallback.FunctionDoesNotExist.selector
+                        );
+                    if (!missingSelector) {
+                        assembly ("memory-safe") {
+                            revert(add(reason, 0x20), mload(reason))
+                        }
+                    }
+                    IRewardAggregatorIngressLegacy(diamond)
+                        .onChainReportReceived(
+                        SafeCast.toUint32(sourceChainId), dayId, a, b
+                    );
+                }
             } else {
                 // Legacy pre-#1222 four-word report (a delayed delivery or a
                 // not-yet-upgraded mirror): forwarded through the LEGACY

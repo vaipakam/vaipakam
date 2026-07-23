@@ -1126,6 +1126,26 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(legacyMessenger.lastSendRefund(), alice, "refund beneficiary kept");
     }
 
+    /// Codex #1413 r4 — a REASONED six-argument send failure (fee shortfall,
+    /// pause) bubbles unchanged; only the missing-selector (empty-revert)
+    /// shape downgrades to the legacy send. Downgrading a real failure would
+    /// permanently strip the day's recycled fields.
+    function testCloseDayMirrorReasonedSendFailureBubbles() public {
+        _configureMirror(CHAIN_ARB);
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        messenger.setRevertOnSend(true);
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        vm.expectRevert(bytes("MockMessenger: send revert"));
+        _rep().closeDay{value: 0.3 ether}(1);
+    }
+
     /// Base's own `closeDay` records its recycled figures into the SAME
     /// per-chain ledger (under its own chain id) that mirror reports feed —
     /// one uniform ledger for B2/B3's netting.

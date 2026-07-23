@@ -147,6 +147,32 @@ contract MockLegacyOnlyRewardDiamond {
     }
 }
 
+/// @notice Codex #1413 r4 — a diamond stub whose WIDENED ingress reverts
+///         with a reasoned custom error: the messenger must bubble it, never
+///         downgrade to the legacy selector.
+contract MockRevertingRewardDiamond {
+    error DuplicateReport();
+
+    uint256 public legacyCalls;
+
+    function onChainReportReceived(
+        uint32,
+        uint256,
+        uint256,
+        uint256,
+        uint256,
+        uint256
+    ) external pure {
+        revert DuplicateReport();
+    }
+
+    function onChainReportReceived(uint32, uint256, uint256, uint256)
+        external
+    {
+        ++legacyCalls;
+    }
+}
+
 /**
  * @title VaipakamRewardFlowTest
  * @notice T-068 Phase 4 — end-to-end tests for the CCIP reward flow.
@@ -337,19 +363,42 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(legacyDiamond.reportCount(), 1, "legacy diamond got the report");
         assertEq(legacyDiamond.lastReportDay(), 7);
 
-        // The six-word shape genuinely needs the widened diamond — the
-        // legacy-only stub reverts it (missing selector), proving the
-        // dispatch is by wire shape, not a blanket downgrade.
+        // Codex r4 — a SIX-word report against the legacy-only diamond
+        // downgrades to the legacy ingress selector (recycled figures
+        // dropped for the window) instead of failing toward a grace-zeroed
+        // day: the missing-selector revert is recognized, nothing else is.
         vm.prank(address(messengerBase));
-        vm.expectRevert();
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
             abi.encode(
-                REPORT, uint256(8), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
+                REPORT, uint256(8), uint256(1 ether), uint256(1 ether), uint256(9 ether), uint256(9 ether)
             ),
             _empty()
         );
+        assertEq(legacyDiamond.reportCount(), 2, "six-word report downgraded, not lost");
+        assertEq(legacyDiamond.lastReportDay(), 8);
+    }
+
+    /// Codex #1413 r4 — a REASONED ingress failure must NOT downgrade: only
+    /// the missing-selector shape does. A reverting widened ingress with a
+    /// custom error bubbles unchanged.
+    function test_Report_ReasonedIngressFailureBubbles() public {
+        MockRevertingRewardDiamond revDiamond = new MockRevertingRewardDiamond();
+        vm.prank(owner);
+        rewardBase.setDiamond(address(revDiamond));
+
+        vm.prank(address(messengerBase));
+        vm.expectRevert(MockRevertingRewardDiamond.DuplicateReport.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(
+                REPORT, uint256(9), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
+            ),
+            _empty()
+        );
+        assertEq(revDiamond.legacyCalls(), 0, "no downgrade on a reasoned failure");
     }
 
     /// #1222 M3 B1 — a five-word report is neither the legacy nor the current
