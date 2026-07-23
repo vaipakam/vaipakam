@@ -34,6 +34,13 @@ export interface FullTariffChoice {
   full: boolean;
   maxCStar: bigint;
   allowDowngrade: boolean;
+  /** Codex #1412 r5 — set by the control when an ENGAGED Full can no
+   *  longer complete (kill-switch off, quote/liquidity unavailable).
+   *  The choice is preserved — never silently cleared — and the
+   *  signer refuses to sign while it is set, so the user's "Full or
+   *  reject" intent can only become a non-Full accept by their own
+   *  explicit untick. Never part of the signed message. */
+  blocked?: boolean;
 }
 
 export const FULL_TARIFF_OFF: FullTariffChoice = {
@@ -128,18 +135,19 @@ export function FullTariffOptIn({
     }
   }, [ceilingText]);
 
-  // Codex #1412 r1/r3 — a Full choice must never outlive the
-  // conditions it was made under. If the kill-switch no longer reads
-  // enabled (mid-session disable, or a refetch error — the config
-  // hook fails closed), or the loan becomes known-unable to complete
-  // Full (unpriceable, illiquid, or those reads erroring), clear the
-  // choice: otherwise the control hides while the parent still passes
-  // a stale `full: true` to the signer — a hidden authorization that
-  // can only revert or silently downgrade at accept time.
+  // Codex #1412 r1/r3/r5 — an ENGAGED Full whose conditions break
+  // (kill-switch off / refetch error / unpriceable / illiquid) is
+  // marked BLOCKED, never silently cleared: the card stays visible
+  // with the unavailable notice, the signer refuses to sign while the
+  // mark is set, and only the user's explicit untick turns their
+  // "Full or reject" intent into a non-Full accept.
+  const engagedBlocked = !config.enabled || fullBlocked;
   useEffect(() => {
     if (!value.full) return;
-    if (!config.enabled || fullBlocked) onChange(FULL_TARIFF_OFF);
-  }, [config.enabled, fullBlocked, value.full, onChange, value]);
+    if (Boolean(value.blocked) !== engagedBlocked) {
+      onChange({ ...value, blocked: engagedBlocked });
+    }
+  }, [engagedBlocked, value, onChange]);
 
   // Keep the parent's `maxCStar` in lockstep with the edited ceiling —
   // an unparseable edit propagates as 0n, which the signer refuses, so
@@ -153,10 +161,10 @@ export function FullTariffOptIn({
     }
   }, [ceiling, onChange, value]);
 
-  // Feature dark, or the control was never engaged and this loan is
-  // known-unable to complete Full → no surface at all.
-  if (!config.enabled) return null;
-  if (!value.full && fullBlocked) return null;
+  // No surface while the control is UNENGAGED and unavailable (dark
+  // feature, or this loan known-unable to complete Full). An ENGAGED
+  // control always keeps rendering — see the blocked mark above.
+  if (!value.full && (!config.enabled || fullBlocked)) return null;
 
   const freeVpfi = vpfi.data?.freeBalance;
   const balanceShort =
@@ -211,6 +219,13 @@ export function FullTariffOptIn({
               )
             : copy.tariff.quoteUnavailable}
       </p>
+      {value.full && engagedBlocked ? (
+        <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
+          <span className="banner-body">
+            {copy.tariff.fullUnavailableNow} {copy.tariff.engagedUnavailableHint}
+          </span>
+        </div>
+      ) : null}
       {value.full ? (
         <>
           <p className="muted" style={{ margin: '6px 0 0', fontSize: '0.85rem' }}>

@@ -151,6 +151,7 @@ export function useAcceptTermsSigning() {
         full: boolean;
         maxCStar: bigint;
         allowDowngrade: boolean;
+        blocked?: boolean;
       };
       /** The terms the user REVIEWED (from the indexer row). Compared
        *  against the canonical terms BEFORE the wallet is asked to
@@ -405,12 +406,16 @@ export function useAcceptTermsSigning() {
               abi: DIAMOND_ABI_VIEM,
               functionName: 'getVPFIToken',
             })) as Address;
-            const [, tracked] = (await publicClient.readContract({
+            // Codex #1412 r5 — the RAW protocol-tracked balance, not
+            // the tier stamp: the tier read already nets out frozen
+            // proceeds, so subtracting encumbrance from it would
+            // double-count and block accepts the chain would allow.
+            const tracked = (await publicClient.readContract({
               address: diamondAddr,
               abi: DIAMOND_ABI_VIEM,
-              functionName: 'getTrackedVPFIDiscountTier',
-              args: [o.creator as Address],
-            })) as readonly [bigint, bigint, bigint];
+              functionName: 'getProtocolTrackedVaultBalance',
+              args: [o.creator as Address, vpfiToken],
+            })) as bigint;
             const encumbered = (await publicClient.readContract({
               address: diamondAddr,
               abi: DIAMOND_ABI_VIEM,
@@ -641,6 +646,7 @@ export function useSignedOfferAcceptTermsSigning() {
         full: boolean;
         maxCStar: bigint;
         allowDowngrade: boolean;
+        blocked?: boolean;
       };
     }): Promise<{ payload: AcceptTermsPayload; orderHash: Hex }> => {
       if (!address || !walletChain) {
@@ -808,7 +814,12 @@ export function useSignedOfferAcceptTermsSigning() {
  *  non-Full choice signs hard zeros — never a leftover ceiling. */
 function resolveFullTariffInput(
   fullTariff:
-    | { full: boolean; maxCStar: bigint; allowDowngrade: boolean }
+    | {
+        full: boolean;
+        maxCStar: bigint;
+        allowDowngrade: boolean;
+        blocked?: boolean;
+      }
     | undefined,
 ): Pick<
   AcceptTerms,
@@ -820,6 +831,13 @@ function resolveFullTariffInput(
       acceptorMaxCStar: 0n,
       acceptorAllowFullDowngrade: false,
     };
+  }
+  // Codex #1412 r5 — an engaged-but-BLOCKED Full (kill-switch off,
+  // quote/liquidity unavailable) refuses to sign: the user's "Full or
+  // reject" intent may only become a non-Full accept via their own
+  // explicit untick, never via a silent drop.
+  if (fullTariff.blocked) {
+    throw new Error(copy.tariff.fullUnavailableNow);
   }
   if (fullTariff.maxCStar <= 0n) {
     throw new Error(copy.tariff.maxCStarRequired);

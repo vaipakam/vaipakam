@@ -324,10 +324,14 @@ Thin-market honesty rules apply.
   open offer after posting. Nobody can opt a counterparty in, and a
   signed-order maker has no opt-in surface until the gasless order shape
   carries one.
-- The opt-in surface exists only while the on-chain fee-entitlement feature is
-  enabled. While the feature is off (the launch posture), no Full control
-  renders anywhere — a Full authorization presented while the feature is off
-  fails on chain, so the app must not invite one.
+- New Full opt-ins can be collected only while the on-chain fee-entitlement
+  feature is enabled. While the feature is off (the launch posture), no
+  opt-in control renders — a Full authorization presented while the feature
+  is off fails on chain, so the app must not invite one. One recovery
+  surface deliberately remains while off: the creator of a standing offer
+  that is ALREADY armed with Full can still reach the offer's tariff form to
+  clear that commitment (a strict armed offer is otherwise unfillable while
+  the feature is off); the form only permits clearing there, never arming.
 - An engaged opt-in shows a live tariff quote for the prospective loan and
   requires an authorization ceiling before it can be signed. The ceiling is
   pre-filled from the quote with small headroom and remains user-editable; the

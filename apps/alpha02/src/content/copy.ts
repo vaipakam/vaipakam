@@ -2215,6 +2215,8 @@ const copySource = {
       'This loan’s tariff can’t be quoted right now, so the Full option isn’t available for it.',
     fullUnavailableNow:
       'The Full option isn’t available for this loan right now — it can’t complete at open, so it can’t be authorized.',
+    engagedUnavailableHint:
+      'To continue, untick the option above — the acceptance then proceeds without it — or try again once it’s available.',
     creatorFullBlocked:
       'This offer carries its creator’s Full tariff commitment, which can’t complete right now, so the acceptance would be rejected on-chain. Try again later or choose another offer.',
     saleDisclosureChecking: 'Checking this position’s fee records…',
