@@ -2213,6 +2213,8 @@ const copySource = {
     quoteLoading: 'Fetching the tariff quote…',
     quoteUnavailable:
       'This loan’s tariff can’t be quoted right now, so the Full option isn’t available for it.',
+    fullUnavailableNow:
+      'The Full option isn’t available for this loan right now — it can’t complete at open, so it can’t be authorized.',
     dualFeeNote:
       'Full never replaces the normal fees — the loan’s asset fees still apply in full. Paying the tariff adds an extra 10% discount on your own side’s fees, on top of any vault-holding discount, up to the overall 50% cap.',
     nonRefundNote:

@@ -18,9 +18,13 @@
  * it to any value they actually authorize).
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
 import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 import { copy } from '../content/copy';
+import { useActiveChain } from '../chain/useActiveChain';
+import { isAssetIlliquidLive } from '../contracts/preflights';
 import { useCStarQuote, useFeeEntitlementConfig } from '../data/tariff';
 import { useVpfi, VPFI_DECIMALS } from '../data/vpfi';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
@@ -58,13 +62,46 @@ export function FullTariffOptIn({
   onChange: (v: FullTariffChoice) => void;
 }) {
   const config = useFeeEntitlementConfig();
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   const quote = useCStarQuote({
     lendingAsset,
     principal,
     durationDays,
     enabled: config.enabled,
   });
+  // Codex #1412 r3 — the contract treats an ILLIQUID principal as a
+  // failed Full opt-in even when it is priceable (`numeraireOk` true),
+  // so the surface gates on the live liquidity verdict too. failClosed
+  // throws on a read failure → isError → treated as blocked below (an
+  // unknown must never render as "liquid, Full available").
+  const liquidity = useQuery({
+    queryKey: [
+      'principalLiquidity',
+      readChain.chainId,
+      lendingAsset?.toLowerCase(),
+    ],
+    enabled: config.enabled && Boolean(publicClient) && Boolean(lendingAsset),
+    staleTime: 30_000,
+    queryFn: () =>
+      isAssetIlliquidLive({
+        publicClient: publicClient!,
+        diamondAddress: readChain.diamondAddress,
+        asset: lendingAsset!,
+        failClosed: true,
+      }),
+  });
   const vpfi = useVpfi();
+  // Full is known-unavailable for this loan: quote errored / resolved
+  // unpriceable, or the principal read as illiquid (or unknowable).
+  const fullBlocked =
+    quote.isError ||
+    (quote.data !== undefined && !quote.data.numeraireOk) ||
+    liquidity.isError ||
+    liquidity.data === true;
+  // Both reads settled AFFIRMATIVELY — only then may Full be ticked.
+  const fullOfferable =
+    quote.data?.numeraireOk === true && liquidity.data === false;
 
   // Ceiling text field — seeded from the FIRST live quote, then owned
   // by the user (a refreshed quote must never overwrite an edit).
@@ -91,19 +128,18 @@ export function FullTariffOptIn({
     }
   }, [ceilingText]);
 
-  // Codex #1412 r1 — a Full choice must never outlive the conditions
-  // it was made under. If the kill-switch reads OFF after a live read
-  // (a mid-session disable), or the quote resolves unpriceable after
-  // the user ticked Full during loading, clear the choice: otherwise
-  // the control hides while the parent still passes a stale
-  // `full: true` to the signer — a hidden authorization that can only
-  // revert or silently downgrade at accept time.
+  // Codex #1412 r1/r3 — a Full choice must never outlive the
+  // conditions it was made under. If the kill-switch no longer reads
+  // enabled (mid-session disable, or a refetch error — the config
+  // hook fails closed), or the loan becomes known-unable to complete
+  // Full (unpriceable, illiquid, or those reads erroring), clear the
+  // choice: otherwise the control hides while the parent still passes
+  // a stale `full: true` to the signer — a hidden authorization that
+  // can only revert or silently downgrade at accept time.
   useEffect(() => {
     if (!value.full) return;
-    const wentDark = config.ready && !config.enabled;
-    const unpriceable = quote.data !== undefined && !quote.data.numeraireOk;
-    if (wentDark || unpriceable) onChange(FULL_TARIFF_OFF);
-  }, [config.ready, config.enabled, quote.data, value.full, onChange, value]);
+    if (!config.enabled || fullBlocked) onChange(FULL_TARIFF_OFF);
+  }, [config.enabled, fullBlocked, value.full, onChange, value]);
 
   // Keep the parent's `maxCStar` in lockstep with the edited ceiling —
   // an unparseable edit propagates as 0n, which the signer refuses, so
@@ -117,10 +153,10 @@ export function FullTariffOptIn({
     }
   }, [ceiling, onChange, value]);
 
-  // Feature dark, or the control was never engaged and this loan can't
-  // quote → no surface at all.
+  // Feature dark, or the control was never engaged and this loan is
+  // known-unable to complete Full → no surface at all.
   if (!config.enabled) return null;
-  if (!value.full && quote.data && !quote.data.numeraireOk) return null;
+  if (!value.full && fullBlocked) return null;
 
   const freeVpfi = vpfi.data?.freeBalance;
   const balanceShort =
@@ -147,6 +183,10 @@ export function FullTariffOptIn({
         <input
           type="checkbox"
           checked={value.full}
+          // Codex #1412 r3 — Full can only be TICKED once both the
+          // quote and the principal-liquidity read settle
+          // affirmatively; unticking is always allowed.
+          disabled={!value.full && !fullOfferable}
           onChange={(e) =>
             onChange(
               e.target.checked

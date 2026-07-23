@@ -58,7 +58,7 @@ export function useFeeEntitlementConfig(): FeeEntitlementConfig {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ['feeEntitlementConfig', readChain.chainId],
     enabled: Boolean(publicClient),
     // Codex #1412 r2 — the kill-switch gates whether the app may
@@ -84,10 +84,14 @@ export function useFeeEntitlementConfig(): FeeEntitlementConfig {
   });
 
   return {
-    enabled: data?.enabled ?? false,
+    // Codex #1412 r3 — FAIL CLOSED on a refetch error: TanStack keeps
+    // the last data through a failed background refetch, so a cached
+    // `enabled: true` must not keep collecting Full authorizations
+    // while the current switch state can't be confirmed.
+    enabled: !isError && (data?.enabled ?? false),
     kPerLifYear: data?.kPerLifYear ?? 0n,
     rewardHaircutBps: data?.rewardHaircutBps ?? 0,
-    ready: data !== undefined,
+    ready: data !== undefined && !isError,
   };
 }
 

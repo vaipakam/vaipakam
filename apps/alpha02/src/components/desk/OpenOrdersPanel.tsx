@@ -33,6 +33,7 @@ import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
   assertRowActionStillValid,
+  isAssetIlliquidLive,
 } from '../../contracts/preflights';
 import { assertWalletNotSanctionedLive } from '../../data/sanctions';
 import { CANCEL_COOLDOWN_SECONDS } from '../../contracts/loanLive';
@@ -648,7 +649,33 @@ function FullTariffArmForm({
     principal: live.data?.principalCeiling,
     durationDays: offer.durationDays,
   });
-  const quoted = quote.data?.numeraireOk === true ? quote.data.cStar : undefined;
+  // Codex #1412 r3 — an ILLIQUID principal fails a Full opt-in on
+  // chain even when priceable; arming gates on the live verdict, and
+  // a failed read blocks (failClosed throws → isError).
+  const liquidity = useQuery({
+    queryKey: [
+      'principalLiquidity',
+      readChain.chainId,
+      offer.lendingAsset.toLowerCase(),
+    ],
+    enabled: config.enabled && Boolean(publicClient),
+    staleTime: 30_000,
+    queryFn: () =>
+      isAssetIlliquidLive({
+        publicClient: publicClient!,
+        diamondAddress: readChain.diamondAddress,
+        asset: offer.lendingAsset,
+        failClosed: true,
+      }),
+  });
+  const quoted =
+    !quote.isError && quote.data?.numeraireOk === true
+      ? quote.data.cStar
+      : undefined;
+  // Arming (saving full=true) needs the feature live AND both reads
+  // settled affirmatively; clears never need any of it.
+  const armAllowed =
+    config.enabled && quoted !== undefined && liquidity.data === false;
 
   const [fields, setFields] = useState<{
     seededFor: number;
@@ -665,8 +692,14 @@ function FullTariffArmForm({
   // advertised +10% suggestion can't be lost to a quote that lands
   // after the faster getOffer read. A degenerate zero-principal row
   // never quotes (the hook stays disabled) — seed empty then.
+  // Codex #1412 r3 — while DARK the only action is clearing, which
+  // needs no quote: seed from the live offer immediately, or a failing
+  // quote read would strand an armed offer unclearable.
   const quoteSettled =
-    quote.data !== undefined || live.data?.principalCeiling === 0n;
+    quote.data !== undefined ||
+    quote.isError ||
+    live.data?.principalCeiling === 0n ||
+    !config.enabled;
   if (fields === null && live.data !== undefined && quoteSettled) {
     const suggested =
       quoted !== undefined ? quoted + quoted / 10n : undefined;
@@ -689,20 +722,20 @@ function FullTariffArmForm({
     setSaved(null);
     let ceiling = 0n;
     if (fields.full) {
-      // Codex #1412 r1 — never STORE a Full opt-in the UI already
+      // Codex #1412 r1/r3 — never STORE a Full opt-in the UI already
       // knows can't complete: while the feature is dark only clears
-      // may save, and an unpriceable (or still-loading) quote blocks
-      // arming — a stored Full on an unpriceable asset makes every
-      // later accept revert or silently downgrade.
+      // may save, and arming needs the quote AND the principal-
+      // liquidity read settled affirmatively (an unpriceable OR
+      // illiquid principal fails Full on chain).
       if (!config.enabled) {
         setError(copy.tariff.armDarkNote);
         return;
       }
-      if (quote.data?.numeraireOk !== true) {
+      if (!armAllowed) {
         setError(
-          quote.data === undefined
+          quote.data === undefined && !quote.isError
             ? copy.tariff.quoteLoading
-            : copy.tariff.quoteUnavailable,
+            : copy.tariff.fullUnavailableNow,
         );
         return;
       }
@@ -792,7 +825,8 @@ function FullTariffArmForm({
         <input
           type="checkbox"
           checked={fields.full}
-          disabled={!config.enabled && !fields.full}
+          // Ticking ON needs arming to be possible; unticking always is.
+          disabled={!fields.full && !armAllowed}
           onChange={(e) => setFields({ ...fields, full: e.target.checked })}
           style={{ marginTop: 3 }}
         />
@@ -854,10 +888,10 @@ function FullTariffArmForm({
           disabled={
             !onSupportedChain ||
             busy ||
-            // Codex #1412 r1 — arming needs the feature live AND a
-            // successful quote; clears (full unticked) always save.
-            (fields.full &&
-              (!config.enabled || quote.data?.numeraireOk !== true))
+            // Codex #1412 r1/r3 — arming needs the feature live AND
+            // both reads affirmative; clears (full unticked) always
+            // save.
+            (fields.full && !armAllowed)
           }
           onClick={() => void save()}
         >
