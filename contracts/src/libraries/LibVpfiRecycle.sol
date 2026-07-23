@@ -111,14 +111,44 @@ library LibVpfiRecycle {
         if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active) dayId = 0;
-        s.recycleBucket = needed;
-        s.recycledCreditedByDay[dayId] += amount;
         // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
         // reported mirror→Base on each day-close so Base's per-chain
         // availability ledger self-heals across missed reports. Counts
         // inflow, never the live balance, so it never decrements on consume.
-        s.recycleCreditedCumulative += amount;
+        // Reading through {creditedCumulative} folds in the pre-upgrade
+        // floor, so the first post-refresh credit self-heals the counter —
+        // and MUST be read BEFORE the bucket write below, or this credit
+        // would be double-counted through the floor.
+        uint256 cumulativeBefore = creditedCumulative(s);
+        s.recycleBucket = needed;
+        s.recycledCreditedByDay[dayId] += amount;
+        s.recycleCreditedCumulative = cumulativeBefore + amount;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
+    }
+
+    /**
+     * @notice #1222 M3 B1 (Codex #1413 r5) — this chain's lifetime recycled
+     *         credit total, with the in-place-refresh seed folded in. The
+     *         stored counter starts at zero on a diamond refreshed over live
+     *         pre-#1222 state, but the true lifetime total is derivable:
+     *         `credit` only ever adds to the bucket and `consume` only ever
+     *         moves bucket → `paidOutRecycled`, so `recycleBucket +
+     *         paidOutRecycled` IS the historical Σ of credits (exact up to
+     *         the consume path's documented wei-scale cap-trim dust, which
+     *         can only overstate). Flooring the stored counter on that sum
+     *         means the first report after an upgrade already carries the
+     *         pre-upgrade absorption — B2/B3 funding never permanently
+     *         ignores VPFI absorbed before the cut, with no migration or
+     *         admin seeding step.
+     */
+    function creditedCumulative(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 stored = s.recycleCreditedCumulative;
+        uint256 preUpgradeFloor = s.recycleBucket + s.paidOutRecycled;
+        return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
     }
 
     /// @notice PR-3c — emitted when a recycled payout leaves the bucket

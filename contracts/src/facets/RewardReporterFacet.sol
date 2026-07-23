@@ -163,8 +163,10 @@ contract RewardReporterFacet is
         // the MONOTONIC cumulative (Base's availability ledger self-heals from
         // it across missed reports) and the day-bucketed credit total for the
         // closing day (`Ā`'s per-day attribution). `dayId` is strictly past,
-        // so its `recycledCreditedByDay` bucket is complete.
-        uint256 recycledCumulative18 = s.recycleCreditedCumulative;
+        // so its `recycledCreditedByDay` bucket is complete. Read through the
+        // library helper so a diamond refreshed over live pre-#1222 state
+        // reports its pre-upgrade absorption too (Codex #1413 r5).
+        uint256 recycledCumulative18 = LibVpfiRecycle.creditedCumulative(s);
         uint256 recycledForDay18 = s.recycledCreditedByDay[dayId];
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);

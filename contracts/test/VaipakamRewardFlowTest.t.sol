@@ -131,6 +131,8 @@ contract MockRewardDiamond {
 ///         legacy wire report to the legacy selector (and that the six-word
 ///         shape genuinely requires the widened diamond).
 contract MockLegacyOnlyRewardDiamond {
+    error FunctionDoesNotExist();
+
     uint256 public lastReportChain;
     uint256 public lastReportDay;
     uint256 public reportCount;
@@ -144,6 +146,27 @@ contract MockLegacyOnlyRewardDiamond {
         lastReportChain = src;
         lastReportDay = day;
         ++reportCount;
+    }
+
+    /// Mimic the production Diamond's fallback: an unrouted selector
+    /// reverts with the explicit error, never empty data — the ONLY shape
+    /// the messenger's r5 downgrade gate accepts.
+    fallback() external payable {
+        revert FunctionDoesNotExist();
+    }
+}
+
+/// @notice Codex #1413 r5 — a stub whose widened-ingress call reverts with
+///         EMPTY data (no such selector, no diamond-style fallback): the
+///         OOG-analog shape. The messenger must NOT downgrade — only the
+///         diamond's explicit FunctionDoesNotExist() qualifies.
+contract MockEmptyRevertingRewardDiamond {
+    uint256 public legacyCalls;
+
+    function onChainReportReceived(uint32, uint256, uint256, uint256)
+        external
+    {
+        ++legacyCalls;
     }
 }
 
@@ -378,6 +401,28 @@ contract VaipakamRewardFlowTest is Test {
         );
         assertEq(legacyDiamond.reportCount(), 2, "six-word report downgraded, not lost");
         assertEq(legacyDiamond.lastReportDay(), 8);
+    }
+
+    /// Codex #1413 r5 — an EMPTY ingress revert (the OOG-analog: the real
+    /// diamond's missing-selector path always carries FunctionDoesNotExist)
+    /// must NOT downgrade — the report stays failed/retryable.
+    function test_Report_EmptyRevertIngressDoesNotDowngrade() public {
+        MockEmptyRevertingRewardDiamond stub =
+            new MockEmptyRevertingRewardDiamond();
+        vm.prank(owner);
+        rewardBase.setDiamond(address(stub));
+
+        vm.prank(address(messengerBase));
+        vm.expectRevert();
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(
+                REPORT, uint256(9), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0)
+            ),
+            _empty()
+        );
+        assertEq(stub.legacyCalls(), 0, "no downgrade on an empty revert");
     }
 
     /// Codex #1413 r4 — a REASONED ingress failure must NOT downgrade: only

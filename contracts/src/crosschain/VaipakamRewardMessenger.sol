@@ -824,14 +824,17 @@ contract VaipakamRewardMessenger is
                     (uint8, uint256, uint256, uint256, uint256, uint256)
                 );
                 emit ReportReceived(sourceChainId, dayId, a, b);
-                // Codex #1413 r4 — rollout shim for the messenger-first Base
-                // upgrade: a not-yet-cut diamond reverts the widened ingress
-                // selector with `FunctionDoesNotExist()`; ONLY that shape
-                // (or an empty missing-selector revert) downgrades to the
-                // legacy ingress — the recycled figures are dropped for the
-                // window rather than the whole report failing toward a
-                // grace-zeroed day. Every reasoned ingress failure
-                // (duplicate, finalized, unexpected chain) bubbles.
+                // Codex #1413 r4/r5 — rollout shim for the messenger-first
+                // Base upgrade: a not-yet-cut diamond reverts the widened
+                // ingress selector with `FunctionDoesNotExist()`, and ONLY
+                // that exact shape downgrades to the legacy ingress — the
+                // recycled figures are dropped for the window rather than
+                // the whole report failing toward a grace-zeroed day. Empty
+                // returndata is NOT accepted here (r5): the diamond's
+                // missing-selector path always carries the error, so an
+                // empty revert can only be an OOG-class failure, which must
+                // stay failed/retryable. Every reasoned ingress failure
+                // (duplicate, finalized, unexpected chain) bubbles too.
                 try IRewardAggregatorIngress(diamond).onChainReportReceived(
                     SafeCast.toUint32(sourceChainId),
                     dayId,
@@ -846,12 +849,9 @@ contract VaipakamRewardMessenger is
                             reasonSelector := mload(add(reason, 0x20))
                         }
                     }
-                    bool missingSelector = reason.length == 0
-                        || (
-                            reason.length == 4
-                                && reasonSelector
-                                    == IDiamondFallback.FunctionDoesNotExist.selector
-                        );
+                    bool missingSelector = reason.length == 4
+                        && reasonSelector
+                            == IDiamondFallback.FunctionDoesNotExist.selector;
                     if (!missingSelector) {
                         assembly ("memory-safe") {
                             revert(add(reason, 0x20), mload(reason))

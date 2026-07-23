@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -1182,11 +1183,12 @@ contract ConfigFacet is DiamondAccessControl {
 
     /// @notice #1222 M3 B1 — this chain's monotonic cumulative of every
     ///         recycle-bucket credit ever made locally (inflow counter; never
-    ///         decrements on consume). The figure a mirror reports to Base on
-    ///         each day-close so the per-chain availability ledger self-heals
-    ///         across missed reports.
+    ///         decrements on consume), including the pre-upgrade floor on a
+    ///         diamond refreshed over live pre-#1222 state. The figure a
+    ///         mirror reports to Base on each day-close so the per-chain
+    ///         availability ledger self-heals across missed reports.
     function getRecycleCreditedCumulative() external view returns (uint256) {
-        return LibVaipakam.storageSlot().recycleCreditedCumulative;
+        return LibVpfiRecycle.creditedCumulative(LibVaipakam.storageSlot());
     }
 
     /// @notice #1222 M3 B1 — Base's per-chain recycled ledger for `chainId`

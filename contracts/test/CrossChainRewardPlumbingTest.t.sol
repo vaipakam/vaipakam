@@ -1078,6 +1078,40 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// Codex #1413 r5 — a diamond refreshed in place over live pre-#1222
+    /// state (bucket populated, new cumulative slot zero) reports its
+    /// pre-upgrade absorption: the cumulative floors on
+    /// `recycleBucket + paidOutRecycled`, so B2/B3 never permanently
+    /// ignore VPFI absorbed before the cut. No migration step needed.
+    function testCloseDayReportsPreUpgradeFloorCumulative() public {
+        _configureMirror(CHAIN_ARB);
+        InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
+            block.timestamp
+        );
+        _mut().setDailyLenderInterest(1, alice, 25e18, 25e18);
+        _mut().setKnownGlobalSet(1, false);
+        // Pre-upgrade state: bucket holds 50 absorbed VPFI; the new
+        // cumulative slot was never written.
+        _mut().setRecycleBucketRaw(50e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        assertEq(
+            _cfg().getRecycleCreditedCumulative(),
+            50e18,
+            "view floors on pre-upgrade custody"
+        );
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        _rep().closeDay{value: 0.3 ether}(1);
+
+        assertEq(
+            messenger.lastSendRecycledCumulative18(),
+            50e18,
+            "report carries the pre-upgrade absorption"
+        );
+    }
+
     /// Mirror `closeDay` forwards the recycled pair (cumulative + the
     /// closing day's credited bucket) alongside the interest figures.
     function testCloseDayMirrorForwardsRecycledFigures() public {
