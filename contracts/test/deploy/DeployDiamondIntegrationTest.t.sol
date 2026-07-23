@@ -14,6 +14,7 @@ import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 
 /**
  * @title  DeployDiamondIntegrationTest
@@ -352,7 +353,7 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///            it is unwired for Phase-1 absorption (#1350 supersession)
     ///            and a moved value would mean someone set a dead knob.
     function test_DeployedDiamond_RetailGuardrails_M2Defaults() public {
-        (address diamond,,) = _deploy(true);
+        (address diamond, address _deployAdmin,) = _deploy(true);
 
         (uint256 weiPerVpfi, ) =
             VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
@@ -369,6 +370,14 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
             "yield-fee default must resolve to 200 bps (rev-8 fee freeze)"
         );
 
+        // Codex #1411 r1 — the effective getter is
+        // `feeEntitlementEnabled && isCanonicalVpfiChain`, and a fresh deploy
+        // is not yet canonical, so asserting the getter cold would pass even
+        // with the RAW flag accidentally set. Canonicalize first (as the
+        // post-deploy ConfigureVPFIToken step does) so the assert observes
+        // the raw flag.
+        vm.prank(_deployAdmin);
+        VPFITokenFacet(diamond).setCanonicalVPFIChain(true);
         (bool feeEntitlementEnabled, uint256 kPerLifYear, ) =
             ConfigFacet(diamond).getFeeEntitlementConfig();
         assertFalse(

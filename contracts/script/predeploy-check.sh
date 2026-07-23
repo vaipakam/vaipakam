@@ -320,7 +320,12 @@ DEPLOYMENTS_TS="$REPO_ROOT/packages/contracts/src/deployments.ts"
 if [ ! -f "$DEPLOYMENTS_TS" ]; then
   echo "  · $DEPLOYMENTS_TS not present, skipping"
 else
-  WRITTEN_KEYS="$(grep -rhoE 'writeFacet\(\s*"[A-Za-z0-9]+"' "$SCRIPT_DIR" --include='*.s.sol' \
+  # Two call shapes write facet keys: literal `writeFacet("<key>", ...)`
+  # AND the in-place refresh path's `Item("<key>", ...)` entries, whose
+  # keys reach writeFacet through a variable (`items[i].key`) — harvesting
+  # only the literal writeFacet calls would let a typo'd refresh key bypass
+  # the hard gate entirely (Codex #1411 r1).
+  WRITTEN_KEYS="$(grep -rhoE '(writeFacet|Item)\(\s*"[A-Za-z0-9]+"' "$SCRIPT_DIR" --include='*.s.sol' \
     | sed -E 's/.*"([A-Za-z0-9]+)".*/\1/' | sort -u)"
   TYPED_KEYS="$(grep -oE '^[[:space:]]+[A-Za-z0-9]+Facet\?' "$DEPLOYMENTS_TS" \
     | sed -E 's/[[:space:]]+//; s/\?//' | sort -u)"
