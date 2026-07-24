@@ -2144,9 +2144,11 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
+        // #1222 M3 B2-b — per-destination V2 broadcast ingress.
+        s[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
         s[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — a chain's own identity is
         // `block.chainid`, no longer a settable endpoint id.
@@ -2466,10 +2468,13 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](21);
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         s[17] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
         s[18] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
+        // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter.
+        s[19] = RewardAggregatorFacet.getDayUserSideCaps.selector;
+        s[20] = RewardAggregatorFacet.getMirrorRemitFundedRecycledPaid.selector;
         // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
         // legacy four-word rollout shim), so `.selector` on the bare name
         // is ambiguous; pin both signatures explicitly.

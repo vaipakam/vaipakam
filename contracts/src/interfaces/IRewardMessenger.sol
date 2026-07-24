@@ -1,6 +1,37 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+/// @notice #1222 M3 B2-b — one destination's flattened V2 broadcast, as
+///         encoded on the kind-5 wire (after the `uint8` kind tag) and as
+///         delivered to the mirror Diamond ingress. All-static struct on
+///         purpose: `abi.encode(kind, struct)` / `abi.decode(payload[32:],
+///         (RewardBroadcastV2))` keep the encode/decode symmetric with no
+///         hand-maintained word list.
+struct RewardBroadcastV2 {
+    uint256 dayId;
+    uint256 globalLenderNumeraire18;
+    uint256 globalBorrowerNumeraire18;
+    uint8 capMode;
+    uint256 capPayloadLender;
+    uint256 capPayloadBorrower;
+    uint256 armedFromDay;
+    uint256 freshLenderHalf;
+    uint256 freshBorrowerHalf;
+    uint256 recycledLenderHalfEquiv;
+    uint256 recycledBorrowerHalfEquiv;
+    uint256 recycleConsume;
+    uint256 keeperAllocate;
+    uint256 destChainId;
+}
+
+/// @notice #1222 M3 B2-b — mirror-side Diamond ingress for an inbound V2
+///         broadcast (`RewardReporterFacet.onRewardBroadcastV2Received`).
+interface IRewardReporterIngressV2 {
+    function onRewardBroadcastV2Received(
+        RewardBroadcastV2 calldata b
+    ) external;
+}
+
 /**
  * @title IRewardMessenger
  * @author Vaipakam Developer Team
@@ -122,4 +153,72 @@ interface IRewardMessenger {
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18
     ) external view returns (uint256 nativeFee);
+
+    // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────
+
+    /// @notice The day-shared half of a V2 broadcast — identical for every
+    ///         destination.
+    /// @dev `capMode` mirrors `LibVaipakam.CapMode` (0 = LegacyEthRatio,
+    ///      1 = ShareOfPool). Legacy mode: `capPayloadLender` carries the
+    ///      §4 threshold, `capPayloadBorrower` is 0. ShareOfPool mode: the
+    ///      two payloads are the day's per-SIDE D1 ceilings, computed on
+    ///      Base from the GLOBAL figures and applied verbatim by mirrors
+    ///      (never recomputed — config drift).
+    struct BroadcastV2Shared {
+        uint256 dayId;
+        uint256 globalLenderNumeraire18;
+        uint256 globalBorrowerNumeraire18;
+        uint8 capMode;
+        uint256 capPayloadLender;
+        uint256 capPayloadBorrower;
+        uint256 armedFromDay;
+    }
+
+    /// @notice One destination's funded figures for a V2 broadcast.
+    /// @dev All value fields uint256 on purpose (plan §M3 storage-width
+    ///      rule — the global-equivalent halves can legitimately dwarf the
+    ///      daily pool on thin chains). `destChainId` is embedded in the
+    ///      payload as the replay-stable binding: the mirror rejects any
+    ///      packet whose `destChainId != block.chainid`, so positional
+    ///      alignment to the mutable destination list is never relied on.
+    struct BroadcastV2PerDest {
+        uint256 destChainId;
+        uint256 freshLenderHalf;
+        uint256 freshBorrowerHalf;
+        uint256 recycledLenderHalfEquiv;
+        uint256 recycledBorrowerHalfEquiv;
+        uint256 recycleConsume;
+        uint256 keeperAllocate;
+    }
+
+    /// @notice Broadcast day `shared.dayId` with PER-DESTINATION funded
+    ///         figures — one kind-5 CCIP payload per configured mirror,
+    ///         each carrying that chain's own values (a shared payload
+    ///         would have every mirror accruing against the same halves
+    ///         even when a chain's slice was trimmed).
+    /// @dev Diamond-only. `dests` must cover the messenger's configured
+    ///      destination set exactly (matched by chain id, order-free).
+    ///      `msg.value` must cover the SUM of per-lane quotes; the
+    ///      remainder refunds.
+    function broadcastDayV2(
+        BroadcastV2Shared calldata shared,
+        BroadcastV2PerDest[] calldata dests,
+        address payable refundAddress
+    ) external payable;
+
+    /// @notice Quote the native CCIP fee SUM for a {broadcastDayV2}.
+    function quoteBroadcastDayV2(
+        BroadcastV2Shared calldata shared,
+        BroadcastV2PerDest[] calldata dests
+    ) external view returns (uint256 nativeFee);
+
+    /// @notice The configured broadcast destination chain ids — read by the
+    ///         aggregator facet to assemble the per-destination array (and
+    ///         used as the V2-capability probe: missing on a pre-B2-b
+    ///         messenger proxy, so the facet falls back to the legacy
+    ///         kind-2 send on the resulting empty revert).
+    function getBroadcastDestinations()
+        external
+        view
+        returns (uint256[] memory);
 }

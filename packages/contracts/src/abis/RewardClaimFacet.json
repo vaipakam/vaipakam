@@ -84,6 +84,25 @@
   },
   {
     "type": "event",
+    "name": "MirrorRecycledClaimFunded",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardCommitmentReleased",
     "inputs": [
       {
@@ -197,6 +216,17 @@
     "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BroadcastDestinationMismatch",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

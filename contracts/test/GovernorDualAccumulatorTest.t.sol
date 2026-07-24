@@ -15,6 +15,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 
 /**
  * @title  GovernorDualAccumulatorTest
@@ -725,6 +726,71 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(recycled7, 18 ether, "recycled = 2x half");
         (uint256 armed, , , ) = _agg().getGovernorCommitState();
         assertEq(armed, 7, "arming day travels in-band");
+    }
+
+    /// #1222 M3 B2-b — a MIRROR's recycled claim legs never debit its local
+    /// bucket: the bucket surrendered its instructed slice ONCE at V2
+    /// arrival; claim funding beyond that is remitted (and counted). The
+    /// pre-B2-b behaviour debited the full recycled payout at claim, which
+    /// silently drained the mirror bucket for value Base had already
+    /// accounted — this test fails against that code on both assertions.
+    function testMirrorClaimSkipsLocalBucketDebit() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(1_000 ether);
+
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: 5,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1, // ShareOfPool
+                // Neutralise the D1 ceiling — same rationale as
+                // {_armAndFinalize}'s cap seed: this test is about the
+                // bucket, not the share cap.
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 100 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 50 ether,
+                recycleConsume: 30 ether,
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+        assertEq(
+            _cfg().getRecycleBucket(),
+            970 ether,
+            "arrival surrenders exactly the instructed slice"
+        );
+
+        _seedEntry(alice, 42, 5, 6); // whole lender side of day 5
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        assertApproxEqAbs(
+            paid, 150 ether, 1e6, "fresh 100 + recycled 50 lender halves"
+        );
+        assertEq(
+            _cfg().getRecycleBucket(),
+            970 ether,
+            "the claim never touches the mirror bucket"
+        );
+        assertApproxEqAbs(
+            _agg().getMirrorRemitFundedRecycledPaid(),
+            50 ether,
+            1e6,
+            "skipped debit stays visible for reconciliation"
+        );
     }
 
     // ─── 6. Arming guards ────────────────────────────────────────────────────

@@ -327,7 +327,10 @@ contract RewardClaimFacet is
             userSplit.armedFresh + forfeitSplit.armedFresh
         );
         if (paidRecycled > 0) {
-            LibVpfiRecycle.consume(paidRecycled);
+            // #1222 M3 B2-b — role-gated: Base debits its bucket (reserved
+            // at finalize); a mirror's bucket already surrendered its
+            // instructed slice at broadcast arrival, so no second debit.
+            LibVpfiRecycle.consumeClaimRecycled(paidRecycled);
         }
 
         if (paid > 0) {

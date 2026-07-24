@@ -86,11 +86,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](131);
+        selectors = new bytes4[](132);
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.
         selectors[130] = TestMutatorFacet.setRecycleCreditedCumulativeRaw.selector;
+        // #1222 M3 B2-b — threshold read for the V2-ingress atomicity tests.
+        selectors[131] = TestMutatorFacet.dayCapThreshold18Raw.selector;
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -1873,9 +1875,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
+        // #1222 M3 B2-b — per-destination V2 broadcast ingress.
+        selectors[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
         selectors[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;
@@ -1895,12 +1899,16 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](21);
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         selectors[17] =
             RewardAggregatorFacet.getChainDayRecycledFunding.selector;
         selectors[18] =
             RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
+        // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter.
+        selectors[19] = RewardAggregatorFacet.getDayUserSideCaps.selector;
+        selectors[20] =
+            RewardAggregatorFacet.getMirrorRemitFundedRecycledPaid.selector;
         // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
         // legacy four-word rollout shim): pin both signatures explicitly.
         selectors[0] = bytes4(

@@ -200,6 +200,53 @@ library LibVpfiRecycle {
         emit VpfiRecycleConsumed(amount, dayId);
     }
 
+    /// @notice #1222 M3 B2-b — emitted on a MIRROR when a recycled claim
+    ///         leg is paid without a local bucket debit (the bucket already
+    ///         surrendered its instructed slice at broadcast arrival; the
+    ///         remainder is remit-funded from Base).
+    /// @custom:event-category informational/reward-governor
+    event MirrorRecycledClaimFunded(uint256 amount, uint256 dayId);
+
+    /**
+     * @notice #1222 M3 B2-b — the CLAIM-side recycled consumption
+     *         chokepoint, role-gated by chain:
+     *
+     *         - CANONICAL (`baseChainId == 0`): identical to {consume} —
+     *           Base claims draw Base's bucket against the reservation made
+     *           at armed-day finalization.
+     *         - MIRROR: NO bucket debit. The mirror's bucket surrendered
+     *           its instructed `recycleConsume` slice once, at broadcast-V2
+     *           arrival (consume-on-arrival, ledger-symmetric with Base's
+     *           finalize-time `chainConsumedRecycled[c]` mark), so a
+     *           claim's recycled leg is funded by that surrender plus
+     *           remitted VPFI — debiting again would drain the mirror
+     *           bucket for value Base already accounted, silently stealing
+     *           availability from every later day's funding. The counter
+     *           keeps the skipped amounts visible for B2-d reconciliation.
+     *
+     *         Remittance keeps calling {consume} directly (Base-side,
+     *         bucket-backed by construction).
+     *
+     *         Role test: a chain is a MIRROR when it is explicitly
+     *         non-canonical AND has a canonical chain configured — the same
+     *         pair `closeDay`'s fork rests on. An unconfigured deployment
+     *         (both defaults) behaves canonically, so single-chain deploys
+     *         and tests keep today's consume-at-claim semantics.
+     */
+    function consumeClaimRecycled(uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.isCanonicalRewardChain && s.baseChainId != 0) {
+            s.mirrorRemitFundedRecycledPaid += amount;
+            (uint256 dayId, bool active) =
+                LibInteractionRewards.currentDayOrZero();
+            if (!active) dayId = 0;
+            emit MirrorRecycledClaimFunded(amount, dayId);
+            return;
+        }
+        consume(amount);
+    }
+
     /**
      * @notice PR-3c — release a RECYCLED-funded commitment without
      *         consumption (forfeit / RL-3 expiry of a recycled-funded

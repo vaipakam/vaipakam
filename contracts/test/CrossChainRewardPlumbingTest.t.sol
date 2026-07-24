@@ -11,6 +11,8 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 /// @notice Codex #1413 r3 — a stand-in for a PRE-#1222 mirror messenger:
 ///         only the legacy four-argument send surface exists. Proves the
@@ -607,8 +609,15 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _agg().broadcastGlobal(1);
     }
 
+    /// @dev B2-b — the trigger now assembles the kind-5 per-destination
+    ///      broadcast (one entry per configured mirror) with the shared
+    ///      consensus fields; the legacy kind-2 spy must stay untouched.
     function testBroadcastForwardsFinalizedPairToMessenger() public {
         _configureCanonical();
+        uint256[] memory dests = new uint256[](2);
+        dests[0] = CHAIN_ARB;
+        dests[1] = CHAIN_OP;
+        messenger.setBroadcastDestinations(dests);
         messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
         messenger.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
         messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
@@ -618,12 +627,55 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         _agg().broadcastGlobal{value: 0.2 ether}(1);
 
-        assertEq(messenger.broadcastCount(), 1, "one broadcast");
+        assertEq(messenger.broadcastV2Count(), 1, "one V2 broadcast");
+        assertEq(messenger.broadcastCount(), 0, "legacy send not used");
+        (uint256 vDay, uint256 vGL, uint256 vGB, , , , ) =
+            messenger.lastV2Shared();
+        assertEq(vDay, 1);
+        assertEq(vGL, 15e18);
+        assertEq(vGB, 6e18);
+        assertEq(messenger.lastV2DestsLength(), 2, "one entry per mirror");
+        assertEq(messenger.lastBroadcastRefund(), alice);
+        assertEq(messenger.lastBroadcastValue(), 0.2 ether);
+    }
+
+    /// @dev B2-b rollout shim — a pre-B2-b messenger proxy has no V2
+    ///      selector (empty revert), so the SAME facet trigger falls back
+    ///      to the legacy kind-2 send with the full composition payload.
+    function testBroadcastFallsBackToLegacySendOnPreB2bMessenger() public {
+        _configureCanonical();
+        messenger.setV2Unsupported(true);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
+        _agg().finalizeDay(1);
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        _agg().broadcastGlobal{value: 0.2 ether}(1);
+
+        assertEq(messenger.broadcastV2Count(), 0, "V2 send unavailable");
+        assertEq(messenger.broadcastCount(), 1, "legacy fallback used");
         assertEq(messenger.lastBroadcastDay(), 1);
         assertEq(messenger.lastBroadcastLenderNumeraire18(), 15e18);
         assertEq(messenger.lastBroadcastBorrowerNumeraire18(), 6e18);
         assertEq(messenger.lastBroadcastRefund(), alice);
         assertEq(messenger.lastBroadcastValue(), 0.2 ether);
+    }
+
+    /// @dev B2-b — a REASONED messenger revert must bubble, never trip the
+    ///      legacy fallback (only the missing-selector empty revert may).
+    function testBroadcastReasonedRevertBubblesWithoutFallback() public {
+        _configureCanonical();
+        messenger.setRevertOnBroadcast(true);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
+        _agg().finalizeDay(1);
+
+        vm.expectRevert(bytes("MockMessenger: broadcast revert"));
+        _agg().broadcastGlobal(1);
+        assertEq(messenger.broadcastCount(), 0, "no legacy fallback");
     }
 
     function testBroadcastIsRetryFriendly() public {
@@ -636,7 +688,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _agg().broadcastGlobal(1);
         _agg().broadcastGlobal(1);
         _agg().broadcastGlobal(1);
-        assertEq(messenger.broadcastCount(), 3, "three retries allowed");
+        assertEq(messenger.broadcastV2Count(), 3, "three retries allowed");
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -869,10 +921,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(kgLender, 70e18, "lender denominator visible to claimants");
         assertEq(kgBorrower, 0);
 
-        // 5. Broadcast would ship the pair to every peer (here: counted only).
+        // 5. Broadcast would ship the pair to every peer (here: counted
+        //    only — B2-b sends the kind-5 per-destination shape).
         _agg().broadcastGlobal(1);
-        assertEq(messenger.broadcastCount(), 1);
-        assertEq(messenger.lastBroadcastLenderNumeraire18(), 70e18);
+        assertEq(messenger.broadcastV2Count(), 1);
+        (, uint256 vGL, , , , , ) = messenger.lastV2Shared();
+        assertEq(vGL, 70e18);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1205,5 +1259,154 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
             _cfg().getChainDailyRecycledCredit(1, CHAIN_BASE);
         assertTrue(accepted);
         assertEq(credit, 5e18);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // #1222 M3 B2-b — onRewardBroadcastV2Received (mirror-side V2 ingress)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function _v2Packet(uint256 destChainId)
+        internal
+        pure
+        returns (RewardBroadcastV2 memory b)
+    {
+        b = RewardBroadcastV2({
+            dayId: 3,
+            globalLenderNumeraire18: 30e18,
+            globalBorrowerNumeraire18: 15e18,
+            capMode: uint8(LibVaipakam.CapMode.ShareOfPool),
+            capPayloadLender: 11e18,
+            capPayloadBorrower: 7e18,
+            armedFromDay: 2,
+            freshLenderHalf: 20e18,
+            freshBorrowerHalf: 20e18,
+            recycledLenderHalfEquiv: 9e18,
+            recycledBorrowerHalfEquiv: 4e18,
+            recycleConsume: 5e18,
+            keeperAllocate: 0,
+            destChainId: destChainId
+        });
+    }
+
+    /// One arrival applies everything: consensus pair, cap family (mode +
+    /// per-side ceilings + legacy threshold disabled), the chain's own
+    /// funding stamp, the in-band arming day, AND the consume-on-arrival
+    /// bucket surrender — the mirror-side half of Base's finalize-time
+    /// `chainConsumedRecycled` mark.
+    function testBroadcastV2AppliesConsensusCapFamilyStampAndConsume() public {
+        _configureMirror(CHAIN_ARB);
+        _mut().setRecycleBucketRaw(12e18);
+
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+
+        (uint256 gl, uint256 gb, bool isSet) =
+            _rep().getKnownGlobalInterestNumeraire18(3);
+        assertTrue(isSet, "consensus pair set");
+        assertEq(gl, 30e18);
+        assertEq(gb, 15e18);
+
+        assertEq(_mut().dayCapModeRaw(3), 1, "ShareOfPool mode stamped");
+        assertEq(
+            _mut().dayCapThreshold18Raw(3),
+            type(uint256).max,
+            "legacy threshold disabled atomically with the mode"
+        );
+        (uint256 cL, uint256 cB) = _agg().getDayUserSideCaps(3);
+        assertEq(cL, 11e18, "per-side lender ceiling verbatim");
+        assertEq(cB, 7e18, "per-side borrower ceiling verbatim");
+
+        LibVaipakam.ChainDayFunding memory f =
+            _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
+        assertTrue(f.stamped, "own funding stamp written");
+        assertEq(f.freshLenderHalf, 20e18);
+        assertEq(f.lenderHalfEquiv, 9e18);
+        assertEq(f.borrowerHalfEquiv, 4e18);
+        assertEq(f.recycleConsume, 5e18);
+
+        (uint256 armedFrom, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedFrom, 2, "arming day travels in-band");
+
+        assertEq(
+            _cfg().getRecycleBucket(),
+            7e18,
+            "bucket surrendered the instructed slice on arrival"
+        );
+    }
+
+    /// Whole-day idempotency covers the bucket debit: a re-delivered packet
+    /// is a no-op (CCIP can duplicate), and any diverging field reverts.
+    function testBroadcastV2ReplayIsIdempotentAndNeverDoubleConsumes() public {
+        _configureMirror(CHAIN_ARB);
+        _mut().setRecycleBucketRaw(12e18);
+
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        assertEq(_cfg().getRecycleBucket(), 7e18, "no double surrender");
+
+        RewardBroadcastV2 memory diverged = _v2Packet(CHAIN_ARB);
+        diverged.recycleConsume = 6e18;
+        vm.expectRevert(IVaipakamErrors.KnownGlobalAlreadySet.selector);
+        messenger.deliverBroadcastV2(diverged);
+    }
+
+    /// The embedded destination id is the replay-stable binding: a packet
+    /// built for another chain must never apply its figures here.
+    function testBroadcastV2RejectsWrongDestination() public {
+        _configureMirror(CHAIN_ARB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.BroadcastDestinationMismatch.selector,
+                uint256(CHAIN_OP)
+            )
+        );
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_OP));
+    }
+
+    function testBroadcastV2RevertsWhenNotMessenger() public {
+        _configureMirror(CHAIN_ARB);
+        vm.prank(alice);
+        vm.expectRevert(NotAuthorizedRewardMessenger.selector);
+        _rep().onRewardBroadcastV2Received(_v2Packet(CHAIN_ARB));
+    }
+
+    /// Mixed-generation day: a delayed legacy kind-2 already set the
+    /// consensus pair — an agreeing V2 layers its records on top; a
+    /// disagreeing one is rejected.
+    function testBroadcastV2LayersOverLegacyDeliveryWhenAgreeing() public {
+        _configureMirror(CHAIN_ARB);
+        _mut().setRecycleBucketRaw(12e18);
+        messenger.deliverBroadcast(3, 30e18, 15e18, type(uint256).max);
+
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        LibVaipakam.ChainDayFunding memory f =
+            _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
+        assertTrue(f.stamped, "V2 records layered over legacy consensus");
+        assertEq(_cfg().getRecycleBucket(), 7e18, "surrender applied once");
+
+        messenger.deliverBroadcast(4, 1e18, 1e18, type(uint256).max);
+        RewardBroadcastV2 memory divergent = _v2Packet(CHAIN_ARB);
+        divergent.dayId = 4;
+        vm.expectRevert(IVaipakamErrors.KnownGlobalAlreadySet.selector);
+        messenger.deliverBroadcastV2(divergent);
+    }
+
+    /// Legacy-mode packets (pre-cutover days) carry the §4 threshold in the
+    /// lender payload slot and touch neither the mode nor the ceilings.
+    function testBroadcastV2LegacyCapModeStoresThresholdOnly() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV2 memory b = _v2Packet(CHAIN_ARB);
+        b.capMode = uint8(LibVaipakam.CapMode.LegacyEthRatio);
+        b.capPayloadLender = 123e18;
+        b.capPayloadBorrower = 0;
+        b.recycleConsume = 0;
+        b.armedFromDay = 0;
+
+        messenger.deliverBroadcastV2(b);
+
+        assertEq(_mut().dayCapThreshold18Raw(3), 123e18, "threshold verbatim");
+        assertEq(_mut().dayCapModeRaw(3), 0, "mode untouched pre-cutover");
+        (uint256 cL, uint256 cB) = _agg().getDayUserSideCaps(3);
+        assertEq(cL, 0);
+        assertEq(cB, 0);
     }
 }

@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
@@ -357,10 +358,14 @@ contract GovernorDayPoolTest is SetupTest {
             1e15,
             "Base funded its own slice"
         );
-        // ARB consumed its own 40 locally; the ~23.33 shortfall is
-        // Base-topped-up and arrives via remittance instead.
-        assertEq(arb.recycleConsume, 40 ether, "mirror consumes its own bucket");
-        assertEq(arb.keeperAllocate, 0, "keeper allocation is B2-b");
+        // B2-b: `recycleConsume` is the capped-committable LOCAL share
+        // (pro-rata floor of the chain's capped commit), availability-
+        // trimmed — a hair under the raw 40 local funding, never over it.
+        assertApproxEqAbs(
+            arb.recycleConsume, 40 ether, 1e6, "mirror consumes ~its bucket"
+        );
+        assertLe(arb.recycleConsume, 40 ether, "never over availability");
+        assertEq(arb.keeperAllocate, 0, "keeper allocation still reserved");
         // Σ funded is the global stamp.
         assertApproxEqAbs(
             arb.fundedLender + arb.fundedBorrower + base.fundedLender
@@ -371,19 +376,29 @@ contract GovernorDayPoolTest is SetupTest {
         );
         assertApproxEqAbs(recycled5, 95 ether, 2, "mesh total matches coupled");
 
-        // B2-a records-only (Codex #1414 r1): the LIVE ledgers stay
-        // Phase-A' byte-for-byte — the global outstanding reserves the
-        // whole capped budget exactly as before, and the per-chain ledger
-        // is untouched until B2-b flips the consumers. The projected
-        // split rides the ChainDayFundingStamped event only.
+        // B2-b LIVE ledgers, split by funding source: ARB's locally-funded
+        // share is booked as consumed on its per-chain ledger at
+        // finalization (the broadcast instructs the mirror to surrender
+        // the same figure), while the GLOBAL outstanding reserves ONLY the
+        // Base-funded shares (Base's own slice + the ~23.33 top-up) — not
+        // the Phase-A' whole-budget ~95.
+        (, uint256 consumedArb, , ) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(
+            consumedArb,
+            arb.recycleConsume,
+            "mirror-local share booked consumed at finalize"
+        );
         (, , uint256 outR, ) = _agg().getGovernorCommitState();
         assertApproxEqAbs(
-            outR, 95 ether, 100, "Phase-A' global reservation unchanged"
+            outR,
+            55 ether,
+            1e6,
+            "global outstanding = Base-funded shares only"
         );
         assertEq(
             _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
             0,
-            "per-chain reservation ledger arms in B2-b"
+            "per-chain outstanding stays for B2-d in-flight reservations"
         );
 
         // Equiv halves make the per-side global-denominator math yield the
@@ -473,16 +488,24 @@ contract GovernorDayPoolTest is SetupTest {
         assertEq(recycled5, 95 ether, "Phase-A' sizing unchanged");
     }
 
-    /// B2-a is RECORDS-ONLY end to end: across two armed days the live
-    /// ledgers move exactly as Phase-A' (global reservations only), the
-    /// per-chain reservation ledger never moves, and each day's projection
-    /// stamps independently (per-day what-ifs until B2-b arms the
-    /// consumption + reservation side).
-    function testProjectionLeavesLiveLedgersPhaseA() public {
+    /// B2-b LIVE across two armed days: day 5 consumes ARB's whole
+    /// availability (booked on its per-chain ledger), so on day 6 the SAME
+    /// reported cumulative backs nothing — ARB's slice is then entirely
+    /// Base-funded (its `recycleConsume` is 0 and the global outstanding
+    /// takes the whole day-6 commit). The per-chain consumption genuinely
+    /// nets availability forward, never re-spending the same bucket.
+    function testConsumedMirrorAvailabilityNetsOutOfNextDay() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
         _mut().setRecycledCreditedByDayRaw(5, 700 ether);
         _mut().setGovernorCommitArmedFromDayRaw(5);
         _finalizeWithArbRecycled(5, 40 ether, 0);
+
+        LibVaipakam.ChainDayFunding memory arb5 =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        (, uint256 consumedAfter5, uint256 availAfter5, ) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(consumedAfter5, arb5.recycleConsume, "day-5 local share consumed");
+        assertApproxEqAbs(availAfter5, 0, 1e6, "availability nearly exhausted");
 
         (, , uint256 outRAfter5, ) = _agg().getGovernorCommitState();
 
@@ -493,16 +516,67 @@ contract GovernorDayPoolTest is SetupTest {
         );
         _agg().finalizeDay(6);
 
-        assertEq(
-            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
-            0,
-            "per-chain ledger never moves in B2-a"
-        );
-        (, , uint256 outRAfter6, ) = _agg().getGovernorCommitState();
-        assertGt(outRAfter6, outRAfter5, "global Phase-A' reservations continue");
-
         LibVaipakam.ChainDayFunding memory arb6 =
             _agg().getChainDayRecycledFunding(6, CHAIN_ARB);
-        assertTrue(arb6.stamped, "each armed day projects independently");
+        assertTrue(arb6.stamped, "each armed day stamps independently");
+        // Reported cumulative is still 40 and 40-dust is already consumed:
+        // ARB can fund almost nothing locally on day 6.
+        assertApproxEqAbs(
+            arb6.recycleConsume, 0, 1e6, "no local funding left on day 6"
+        );
+        (, uint256 consumedAfter6, , ) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(
+            consumedAfter6,
+            consumedAfter5 + arb6.recycleConsume,
+            "consumption only advances by day-6's residual local share"
+        );
+        // Day 6's commit is (almost) entirely Base-funded → the global
+        // outstanding grows by ~the WHOLE day-6 budget. (Day 6's coupled
+        // target is 190: the 7-day Ā window now holds both 700-credits,
+        // so Ā = 200 and coupled = 190.)
+        (, , uint256 outRAfter6, ) = _agg().getGovernorCommitState();
+        assertApproxEqAbs(
+            outRAfter6 - outRAfter5,
+            190 ether,
+            1e6,
+            "day-6 reservation lands on the global ledger"
+        );
+    }
+
+    /// B2-b remit netting: the remittance quote for a mirror ships ONLY the
+    /// Base-funded recycled share — the mirror-locally-funded slice already
+    /// sits on the mirror (surrendered at broadcast arrival). Discriminated
+    /// by running the identical day twice from a snapshot: with ARB local
+    /// availability the quote is smaller than without it by exactly ARB's
+    /// consume figure (pre-B2-b both quotes were equal).
+    function testRemitSizingShipsOnlyBaseFundedRecycledShare() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        uint256 snap = vm.snapshotState();
+
+        // A — ARB funds 40 locally.
+        _finalizeWithArbRecycled(5, 40 ether, 0);
+        uint256 consumeA = _agg()
+            .getChainDayRecycledFunding(5, CHAIN_ARB).recycleConsume;
+        uint256[] memory dayIds = new uint256[](1);
+        dayIds[0] = 5;
+        (uint256 totalA, ) = RewardRemittanceFacet(address(diamond))
+            .quoteRewardBudget(CHAIN_ARB, dayIds);
+
+        // B — identical day, ARB reports no recycled availability: the
+        // whole funded slice is Base-funded and ships in full.
+        vm.revertToState(snap);
+        _finalize(5);
+        (uint256 totalB, ) = RewardRemittanceFacet(address(diamond))
+            .quoteRewardBudget(CHAIN_ARB, dayIds);
+
+        assertGt(consumeA, 0, "scenario A must have a local share");
+        assertApproxEqAbs(
+            totalB - totalA,
+            consumeA,
+            1e6,
+            "remit ships the slice minus the mirror-local share"
+        );
     }
 }

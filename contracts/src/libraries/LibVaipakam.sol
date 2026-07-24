@@ -5423,6 +5423,10 @@ library LibVaipakam {
         // The D1 ceiling `C[d] = sideHalf[d] × userSideShareCapBps / BPS`, in
         //   VPFI 1e18 wei — an ABSOLUTE per-(user, side, day) amount, NOT an
         //   entry-scaled ratio. May legitimately be 0 on dust days.
+        //   RETIRED by #1222 M3 B2-b (layout slot kept): the per-SIDE pair
+        //   `dayUserSideCapLenderVpfi18` / `dayUserSideCapBorrowerVpfi18`
+        //   in the B2-b tail supersedes this single value — no armed day
+        //   can predate the flip, so nothing reads it any more.
         mapping(uint256 => uint256) dayUserSideCapVpfi18;
         // Durable remaining-budget ledger: VPFI already routed for
         //   `(user, side, day)` — counting payouts to the USER *and* treasury
@@ -5516,6 +5520,28 @@ library LibVaipakam {
         //   GLOBAL `outstandingCommitRecycled` instead — one bucket, one
         //   ledger, never both for the same VPFI.
         mapping(uint32 => uint256) chainOutstandingRecycledCommit;
+        // ─── #1222 M3 B2-b — broadcast V2 + consumer flip ──────────────────
+        // APPEND-ONLY TAIL.
+        //
+        // Mirror-side whole-day idempotency stamp for the V2 broadcast
+        //   ingress: covers EVERY bucket-touching field, so a re-delivered
+        //   kind-5 packet can never double-apply the consume-on-arrival
+        //   debit or the per-chain funding stamp.
+        mapping(uint256 => bool) broadcastV2Applied;
+        // Per-SIDE D1 ceilings for armed days (supersede the single
+        //   `dayUserSideCapVpfi18` post-`D*`): under per-chain funding the
+        //   GLOBAL per-side pools genuinely differ (Σ fundedLender_c ≠
+        //   Σ fundedBorrower_c when demand weights force different
+        //   funding), so one shared C would cap one side against the
+        //   other's pool. Computed on Base from the GLOBAL figures and
+        //   broadcast verbatim (mirrors never recompute — config drift).
+        mapping(uint256 => uint256) dayUserSideCapLenderVpfi18;
+        mapping(uint256 => uint256) dayUserSideCapBorrowerVpfi18;
+        // MIRROR-ONLY counter: recycled claim legs paid WITHOUT a local
+        //   bucket debit (the bucket already surrendered its instructed
+        //   slice at broadcast arrival; the remainder is remit-funded).
+        //   Informational — reconciliation visibility for B2-d.
+        uint256 mirrorRemitFundedRecycledPaid;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -5527,10 +5553,17 @@ library LibVaipakam {
     ///      numerators (`fundedSide_c × globalSide / chainSide_c`, floor)
     ///      that make the existing per-side numerator/global-denominator
     ///      claim math yield exactly the funded budget on that chain.
-    ///      `recycleConsume` is the slice funded from the chain's OWN bucket
-    ///      (Base instructs the mirror to consume it locally; the remainder
-    ///      arrives via remittance); `keeperAllocate` is reserved for the
-    ///      B2-b keeper allocation (always 0 in B2-a).
+    ///      `recycleConsume` is the capped-committable share funded from the
+    ///      chain's OWN bucket (B2-b: the exact figure Base books into
+    ///      `chainConsumedRecycled[c]` at finalization and the mirror debits
+    ///      from its bucket at broadcast arrival — same number, both
+    ///      ledgers; the remainder arrives via remittance); `keeperAllocate`
+    ///      is reserved for the per-chain keeper allocation (0-valued until
+    ///      that resolution exists). `freshLenderHalf`/`freshBorrowerHalf`
+    ///      (B2-b append) are the per-side FRESH floors this chain prices
+    ///      with — the global `scheduleFloor/2` on both sides until a
+    ///      per-chain fresh trim mechanism exists (plan §M3: per-dest
+    ///      per-side "whenever a fresh trim binds; global value otherwise").
     struct ChainDayFunding {
         uint256 fundedLender;
         uint256 fundedBorrower;
@@ -5539,6 +5572,8 @@ library LibVaipakam {
         uint256 recycleConsume;
         uint256 keeperAllocate;
         bool stamped;
+        uint256 freshLenderHalf;
+        uint256 freshBorrowerHalf;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

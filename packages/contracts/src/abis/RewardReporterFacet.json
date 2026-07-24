@@ -175,6 +175,91 @@
   },
   {
     "type": "function",
+    "name": "onRewardBroadcastV2Received",
+    "inputs": [
+      {
+        "name": "b",
+        "type": "tuple",
+        "internalType": "struct RewardBroadcastV2",
+        "components": [
+          {
+            "name": "dayId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "globalLenderNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "globalBorrowerNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capMode",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "capPayloadLender",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capPayloadBorrower",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "armedFromDay",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshLenderHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshBorrowerHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledLenderHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledBorrowerHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycleConsume",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "keeperAllocate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "destChainId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setBaseChainId",
     "inputs": [
       {
@@ -326,6 +411,25 @@
   },
   {
     "type": "event",
+    "name": "RewardBroadcastV2Applied",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycleConsume",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RewardReporterConfigUpdated",
     "inputs": [
       {
@@ -345,6 +449,25 @@
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycleConsumed",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -380,6 +503,17 @@
     "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BroadcastDestinationMismatch",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

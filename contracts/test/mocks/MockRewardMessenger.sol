@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {IRewardMessenger} from "../../src/interfaces/IRewardMessenger.sol";
+import {
+    IRewardMessenger,
+    RewardBroadcastV2
+} from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 
@@ -52,10 +55,20 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public lastBroadcastValue;
     uint256 public broadcastCount;
 
+    // ─── #1222 M3 B2-b — V2 broadcast spies + destination config ──────────
+    uint256[] internal destsConfig;
+    IRewardMessenger.BroadcastV2Shared public lastV2Shared;
+    IRewardMessenger.BroadcastV2PerDest[] public lastV2Dests;
+    uint256 public broadcastV2Count;
+
     // ─── Knobs ─────────────────────────────────────────────────────────────
     uint256 public quoteNative;
     bool public revertOnSend;
     bool public revertOnBroadcast;
+    /// @notice B2-b — simulate a pre-B2-b messenger proxy: the V2 send
+    ///         reverts EMPTY (missing selector), which must trip the
+    ///         facet's legacy-fallback shim.
+    bool public v2Unsupported;
 
     constructor(address diamond_) {
         diamond = diamond_;
@@ -71,6 +84,18 @@ contract MockRewardMessenger is IRewardMessenger {
 
     function setRevertOnBroadcast(bool v) external {
         revertOnBroadcast = v;
+    }
+
+    function setV2Unsupported(bool v) external {
+        v2Unsupported = v;
+    }
+
+    function setBroadcastDestinations(uint256[] calldata d) external {
+        destsConfig = d;
+    }
+
+    function lastV2DestsLength() external view returns (uint256) {
+        return lastV2Dests.length;
     }
 
     // ─── IRewardMessenger — sender-side (called by Diamond) ───────────────
@@ -136,6 +161,54 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256
     ) external view override returns (uint256) {
         return quoteNative;
+    }
+
+    // ─── #1222 M3 B2-b — V2 broadcast surface ─────────────────────────────
+
+    function broadcastDayV2(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV2PerDest[] calldata dests,
+        address payable refundAddress
+    ) external payable override {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (v2Unsupported) {
+            // Missing-selector analog: revert with EMPTY returndata.
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
+        lastV2Shared = shared;
+        delete lastV2Dests;
+        for (uint256 i; i < dests.length; ++i) {
+            lastV2Dests.push(dests[i]);
+        }
+        lastBroadcastDay = shared.dayId;
+        lastBroadcastRefund = refundAddress;
+        lastBroadcastValue = msg.value;
+        broadcastV2Count += 1;
+    }
+
+    function quoteBroadcastDayV2(
+        IRewardMessenger.BroadcastV2Shared calldata,
+        IRewardMessenger.BroadcastV2PerDest[] calldata
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    function getBroadcastDestinations()
+        external
+        view
+        override
+        returns (uint256[] memory)
+    {
+        return destsConfig;
+    }
+
+    /// @notice B2-b — simulate a kind-5 delivery landing on the mirror
+    ///         reporter ingress.
+    function deliverBroadcastV2(RewardBroadcastV2 calldata b) external {
+        RewardReporterFacet(diamond).onRewardBroadcastV2Received(b);
     }
 
     // ─── Receive-side: simulate a CCIP delivery landing on the Diamond ────

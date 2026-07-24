@@ -125,6 +125,16 @@
             "name": "stamped",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "freshLenderHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshBorrowerHalf",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -268,6 +278,30 @@
   },
   {
     "type": "function",
+    "name": "getDayUserSideCaps",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lenderCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getExpectedSourceChainIds",
     "inputs": [],
     "outputs": [
@@ -301,6 +335,19 @@
       },
       {
         "name": "paidOutRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getMirrorRemitFundedRecycledPaid",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -795,6 +842,17 @@
     "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BroadcastDestinationMismatch",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
