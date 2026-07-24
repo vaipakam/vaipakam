@@ -351,7 +351,10 @@ contract RewardClaimFacet is
                 );
             }
             if (forfeitRecycled > 0) {
-                LibVpfiRecycle.releaseCommitment(
+                // #1222 M3 B2-b — mirror-aware: on a mirror the surrendered
+                // slice must be restored to availability, not treated as a
+                // no-op commitment release (Codex #1417 r5).
+                LibVpfiRecycle.releaseForfeitedRecycled(
                     LibVpfiRecycle.RecycleSource.ForfeitedReward,
                     0,
                     forfeitRecycled

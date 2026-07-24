@@ -703,6 +703,82 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(got[0], id, "id matches the entry");
     }
 
+    /// Codex #1417 r5 — on a MIRROR a forfeited recycled slice must be
+    /// RESTORED to bucket availability (the bucket surrendered it at V2
+    /// arrival), not treated as a no-op commitment release. The fresh share
+    /// still credits as genuine absorption (feeds Ā); the recycled share
+    /// returns to the bucket + cumulative but is EXCLUDED from the
+    /// day-bucketed Ā feed (already Ā-counted on Base). Pre-fix the recycled
+    /// slice stranded — the bucket rose by the fresh share ONLY.
+    function testMirrorForfeitRestoresRecycledToAvailability() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(200 ether);
+
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: 5,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1,
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 100 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 50 ether,
+                recycleConsume: 60 ether,
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+
+        uint256 id = _seedEntry(alice, 88, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(88, id);
+
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        uint256 cumBefore = _cfg().getRecycleCreditedCumulative();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        uint256 dayCreditBefore = _cfg().getRecycledCreditedByDay(today);
+
+        vm.prank(makeAddr("keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(88);
+        assertGt(swept, 0, "sweep yields a reward");
+
+        // MIRROR restore: the WHOLE sweep returns to the bucket — the fresh
+        // share via the absorption credit, the recycled share via the new
+        // restore path.
+        assertApproxEqAbs(
+            _cfg().getRecycleBucket() - bucketBefore,
+            swept,
+            1e6,
+            "mirror restores both fresh AND recycled to the bucket"
+        );
+        // ...but the day-bucketed Ā feed carries the FRESH share ONLY; the
+        // recycled restore is Ā-excluded. `0 < delta < swept` proves both a
+        // non-zero recycled component (the gate is exercised) and its
+        // exclusion.
+        uint256 dayCreditDelta =
+            _cfg().getRecycledCreditedByDay(today) - dayCreditBefore;
+        assertGt(dayCreditDelta, 0, "fresh share feeds credited[D]");
+        assertLt(dayCreditDelta, swept, "recycled restore excluded from credited[D]");
+        // Cumulative availability self-heals by the whole sweep, so the next
+        // B1 report re-offers it to Base.
+        assertApproxEqAbs(
+            _cfg().getRecycleCreditedCumulative() - cumBefore,
+            swept,
+            1e6,
+            "cumulative restored by the whole sweep"
+        );
+    }
+
     // ─── 5. Composition broadcast to a mirror ────────────────────────────────
 
     function testMirrorStoresBroadcastCompositionAndArming() public {
