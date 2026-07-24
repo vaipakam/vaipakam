@@ -496,10 +496,11 @@ contract RewardReporterFacet is
             s.governorCommitArmedFromDay = b.armedFromDay;
         }
 
-        if (b.recycleConsume != 0) {
-            LibVpfiRecycle.consume(b.recycleConsume);
-        }
-
+        // #1222 M3 B2-b (re-slice): the mirror does NOT consume its bucket on
+        // arrival — `recycleConsume` rides the wire as 0 today and mirror
+        // local consumption arms in B2-d, once the delivered-backing ledger
+        // makes it safe. The stamp is stored (above) so B2-d can price/arm
+        // against it; nothing debits the bucket here.
         s.broadcastV2Applied[b.dayId] = true;
         emit RewardBroadcastV2Applied(b.dayId, b.recycleConsume);
         emit KnownGlobalInterestSet(

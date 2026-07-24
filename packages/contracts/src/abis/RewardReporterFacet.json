@@ -454,25 +454,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "VpfiRecycleConsumed",
-    "inputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [

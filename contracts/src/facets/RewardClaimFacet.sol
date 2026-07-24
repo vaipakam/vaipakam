@@ -327,10 +327,7 @@ contract RewardClaimFacet is
             userSplit.armedFresh + forfeitSplit.armedFresh
         );
         if (paidRecycled > 0) {
-            // #1222 M3 B2-b — role-gated: Base debits its bucket (reserved
-            // at finalize); a mirror's bucket already surrendered its
-            // instructed slice at broadcast arrival, so no second debit.
-            LibVpfiRecycle.consumeClaimRecycled(paidRecycled);
+            LibVpfiRecycle.consume(paidRecycled);
         }
 
         if (paid > 0) {
@@ -351,10 +348,7 @@ contract RewardClaimFacet is
                 );
             }
             if (forfeitRecycled > 0) {
-                // #1222 M3 B2-b — mirror-aware: on a mirror the surrendered
-                // slice must be restored to availability, not treated as a
-                // no-op commitment release (Codex #1417 r5).
-                LibVpfiRecycle.releaseForfeitedRecycled(
+                LibVpfiRecycle.releaseCommitment(
                     LibVpfiRecycle.RecycleSource.ForfeitedReward,
                     0,
                     forfeitRecycled

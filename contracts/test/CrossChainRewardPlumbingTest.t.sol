@@ -1321,12 +1321,15 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         });
     }
 
-    /// One arrival applies everything: consensus pair, cap family (mode +
-    /// per-side ceilings + legacy threshold disabled), the chain's own
-    /// funding stamp, the in-band arming day, AND the consume-on-arrival
-    /// bucket surrender — the mirror-side half of Base's finalize-time
-    /// `chainConsumedRecycled` mark.
-    function testBroadcastV2AppliesConsensusCapFamilyStampAndConsume() public {
+    /// One arrival applies the STORE-ONLY ingress: consensus pair, cap
+    /// family (mode + per-side ceilings + legacy threshold disabled), the
+    /// chain's own funding stamp (including the wire's `recycleConsume`,
+    /// stored for B2-d to arm against), and the in-band arming day. The
+    /// B2-b re-slice does NOT consume the mirror bucket on arrival —
+    /// mirror-local consumption arms in B2-d — so the bucket is untouched.
+    function testBroadcastV2AppliesConsensusCapFamilyAndStampNoConsume()
+        public
+    {
         _configureMirror(CHAIN_ARB);
         _mut().setRecycleBucketRaw(12e18);
 
@@ -1354,27 +1357,27 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(f.freshLenderHalf, 20e18);
         assertEq(f.lenderHalfEquiv, 9e18);
         assertEq(f.borrowerHalfEquiv, 4e18);
-        assertEq(f.recycleConsume, 5e18);
+        assertEq(f.recycleConsume, 5e18, "wire recycleConsume stored for B2-d");
 
         (uint256 armedFrom, , , ) = _agg().getGovernorCommitState();
         assertEq(armedFrom, 2, "arming day travels in-band");
 
         assertEq(
             _cfg().getRecycleBucket(),
-            7e18,
-            "bucket surrendered the instructed slice on arrival"
+            12e18,
+            "bucket untouched - mirror consumption arms in B2-d"
         );
     }
 
-    /// Whole-day idempotency covers the bucket debit: a re-delivered packet
-    /// is a no-op (CCIP can duplicate), and any diverging field reverts.
-    function testBroadcastV2ReplayIsIdempotentAndNeverDoubleConsumes() public {
+    /// Whole-day idempotency: a re-delivered packet is a no-op (CCIP can
+    /// duplicate), and any diverging stamped field reverts.
+    function testBroadcastV2ReplayIsIdempotent() public {
         _configureMirror(CHAIN_ARB);
         _mut().setRecycleBucketRaw(12e18);
 
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
-        assertEq(_cfg().getRecycleBucket(), 7e18, "no double surrender");
+        assertEq(_cfg().getRecycleBucket(), 12e18, "bucket never touched");
 
         RewardBroadcastV2 memory diverged = _v2Packet(CHAIN_ARB);
         diverged.recycleConsume = 6e18;
@@ -1414,7 +1417,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         LibVaipakam.ChainDayFunding memory f =
             _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
         assertTrue(f.stamped, "V2 records layered over legacy consensus");
-        assertEq(_cfg().getRecycleBucket(), 7e18, "surrender applied once");
+        assertEq(_cfg().getRecycleBucket(), 12e18, "bucket untouched (store-only)");
 
         messenger.deliverBroadcast(4, 1e18, 1e18, type(uint256).max);
         RewardBroadcastV2 memory divergent = _v2Packet(CHAIN_ARB);

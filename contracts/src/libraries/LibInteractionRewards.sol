@@ -234,7 +234,6 @@ library LibInteractionRewards {
         uint256 borrowerFreshHalf;
         uint256 lenderRecycledHalf;
         uint256 borrowerRecycledHalf;
-        uint256 recycleConsume;
         {
             uint256 armedFrom = s.governorCommitArmedFromDay;
             if (armedFrom != 0 && dayId >= armedFrom) {
@@ -250,7 +249,6 @@ library LibInteractionRewards {
                     borrowerFreshHalf = f.freshBorrowerHalf;
                     lenderRecycledHalf = f.lenderHalfEquiv;
                     borrowerRecycledHalf = f.borrowerHalfEquiv;
-                    recycleConsume = f.recycleConsume;
                 } else {
                     // Mesh-skipped armed day (no coupled target / no
                     // demand): the broadcast shipped this destination the
@@ -310,17 +308,10 @@ library LibInteractionRewards {
             budgetFresh += f;
             budgetRecycled += r;
         }
-        // #1222 M3 B2-b — the mirror-locally-funded share never ships: the
-        // mirror already holds those tokens and surrendered its bucket
-        // slice at broadcast arrival, so the remittance carries only the
-        // Base-funded remainder (Base's bucket is debited for exactly what
-        // leaves it). Zero for Base's own stamp (its shares are all
-        // Base-funded) and pre-cutover days.
-        if (recycleConsume != 0) {
-            budgetRecycled = budgetRecycled > recycleConsume
-                ? budgetRecycled - recycleConsume
-                : 0;
-        }
+        // #1222 M3 B2-b (re-slice) — Base funds the WHOLE mesh budget until
+        // B2-d, so the remittance ships each mirror its entire recycled
+        // slice (no local-surrender netting yet). B2-d subtracts the
+        // mirror-locally-funded share once consume-on-arrival is armed.
     }
 
     /// @dev One side's capped per-chain budget, split fresh/recycled with
@@ -1120,7 +1111,7 @@ library LibInteractionRewards {
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({
                 fresh: freshLeft,
-                recycled: _claimRecycledLiquidity(s)
+                recycled: s.recycleBucket
             }),
             advanced: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
@@ -1630,7 +1621,7 @@ library LibInteractionRewards {
         // preview stays an upper bound.
         PoolBudget memory pool = PoolBudget({
             fresh: type(uint256).max,
-            recycled: _claimRecycledLiquidity(s)
+            recycled: s.recycleBucket
         });
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
@@ -2187,21 +2178,12 @@ library LibInteractionRewards {
     ///      clock pauses outright. Over-pausing only DELAYS the reap
     ///      (claimant-protective; the claim path stays open and each partial
     ///      collection shrinks the aggregate until the gate unpauses).
-    ///
-    ///      #1222 M3 B2-b (Codex #1417 r4) — prices against the SAME
-    ///      mirror-aware liquidity source the walk/preview use, not the raw
-    ///      bucket: on a mirror the recycled claim liquidity is unbounded
-    ///      (funded by the surrendered slice + remittances, never the local
-    ///      bucket), so there is NO recycled drought and the expiry clock
-    ///      must keep running — otherwise a V2 broadcast draining the local
-    ///      bucket would freeze the reap of dormant mirror rewards
-    ///      indefinitely, even though those rewards are freely claimable.
     function _recycledDrought(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (bool) {
         (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
-        return recycledTotal > _claimRecycledLiquidity(s);
+        return recycledTotal > s.recycleBucket;
     }
 
     function _poolCappedPayable(
@@ -3331,35 +3313,6 @@ library LibInteractionRewards {
     // the whole point of the `(user, side, day)` domain is a SINGLE absolute
     // ceiling, and two independent code paths spending against it would
     // reintroduce exactly the double-pay this cap exists to stop.
-
-    /// @dev #1222 M3 B2-b (Codex #1417 r3) — the recycled-liquidity figure
-    ///      the claim walk's per-day DEFER gate prices against, by chain
-    ///      role:
-    ///
-    ///      - CANONICAL: the live bucket, as always — the gate protects a
-    ///        real held balance that refills, and a shortfall defers.
-    ///      - MIRROR: UNBOUNDED. The mirror's bucket surrendered its
-    ///        instructed slice at broadcast arrival (consume-on-arrival),
-    ///        so on a mirror the bucket is NOT the claim-funding source
-    ///        any more — gating on it would livelock every recycled claim
-    ///        the moment a day's surrender drains it, waiting on a balance
-    ///        that is never meant to refill for this purpose. Mirror
-    ///        payouts are bounded by the funded budgets (the equivalent-
-    ///        numerator construction) and physically by the Diamond's VPFI
-    ///        balance (surrendered slice + remitted funding — the same
-    ///        bounded pre-funding float the remittance path has always run
-    ///        on, #776). B2-e's remit-ingress labeling will tighten this
-    ///        to a tracked remitted-recycled allowance.
-    ///
-    ///      Used by BOTH the live walk and the dry-run preview so the two
-    ///      can never diverge on the gate.
-    function _claimRecycledLiquidity(
-        LibVaipakam.Storage storage s
-    ) private view returns (uint256) {
-        return LibVaipakam.isMirrorRewardChain(s)
-            ? type(uint256).max
-            : s.recycleBucket;
-    }
 
     /// @dev The RPN row for `d` is materialized only up to the side's cursor.
     ///      Reading `cumRpn[d]` past it would either underflow or read an unset

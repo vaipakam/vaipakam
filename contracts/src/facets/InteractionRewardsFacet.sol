@@ -121,8 +121,7 @@ contract InteractionRewardsFacet is
             );
         }
         if (sweepSplit.recycled > 0) {
-            // #1222 M3 B2-b — mirror-aware restore (Codex #1417 r5).
-            LibVpfiRecycle.releaseForfeitedRecycled(
+            LibVpfiRecycle.releaseCommitment(
                 LibVpfiRecycle.RecycleSource.ForfeitedReward,
                 loanId,
                 sweepSplit.recycled
@@ -225,8 +224,7 @@ contract InteractionRewardsFacet is
             );
         }
         if (recycledTotal > 0) {
-            // #1222 M3 B2-b — mirror-aware restore (Codex #1417 r5).
-            LibVpfiRecycle.releaseForfeitedRecycled(
+            LibVpfiRecycle.releaseCommitment(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,
                 0,
                 recycledTotal

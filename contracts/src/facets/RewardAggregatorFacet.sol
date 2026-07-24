@@ -1022,17 +1022,6 @@ contract RewardAggregatorFacet is
         );
     }
 
-    /// @notice #1222 M3 B2-b — MIRROR-side transparency counter: recycled
-    ///         claim legs paid without a local bucket debit (funded by the
-    ///         broadcast-arrival surrender + remitted VPFI). Always 0 on
-    ///         Base.
-    function getMirrorRemitFundedRecycledPaid()
-        external
-        view
-        returns (uint256)
-    {
-        return LibVaipakam.storageSlot().mirrorRemitFundedRecycledPaid;
-    }
 
     /// @notice Governor PR-3c (#1217) — arm commitment reservation +
     ///         consume-at-claim from `dayId` forward (the D* cutover).

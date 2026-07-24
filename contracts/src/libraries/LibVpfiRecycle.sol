@@ -200,52 +200,6 @@ library LibVpfiRecycle {
         emit VpfiRecycleConsumed(amount, dayId);
     }
 
-    /// @notice #1222 M3 B2-b — emitted on a MIRROR when a recycled claim
-    ///         leg is paid without a local bucket debit (the bucket already
-    ///         surrendered its instructed slice at broadcast arrival; the
-    ///         remainder is remit-funded from Base).
-    /// @custom:event-category informational/reward-governor
-    event MirrorRecycledClaimFunded(uint256 amount, uint256 dayId);
-
-    /**
-     * @notice #1222 M3 B2-b — the CLAIM-side recycled consumption
-     *         chokepoint, role-gated by chain:
-     *
-     *         - CANONICAL (`baseChainId == 0`): identical to {consume} —
-     *           Base claims draw Base's bucket against the reservation made
-     *           at armed-day finalization.
-     *         - MIRROR: NO bucket debit. The mirror's bucket surrendered
-     *           its instructed `recycleConsume` slice once, at broadcast-V2
-     *           arrival (consume-on-arrival, ledger-symmetric with Base's
-     *           finalize-time `chainConsumedRecycled[c]` mark), so a
-     *           claim's recycled leg is funded by that surrender plus
-     *           remitted VPFI — debiting again would drain the mirror
-     *           bucket for value Base already accounted, silently stealing
-     *           availability from every later day's funding. The counter
-     *           keeps the skipped amounts visible for B2-d reconciliation.
-     *
-     *         Remittance keeps calling {consume} directly (Base-side,
-     *         bucket-backed by construction).
-     *
-     *         Role test: a chain is a MIRROR when it is explicitly
-     *         non-canonical AND has a canonical chain configured — the same
-     *         pair `closeDay`'s fork rests on. An unconfigured deployment
-     *         (both defaults) behaves canonically, so single-chain deploys
-     *         and tests keep today's consume-at-claim semantics.
-     */
-    function consumeClaimRecycled(uint256 amount) internal {
-        if (amount == 0) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (LibVaipakam.isMirrorRewardChain(s)) {
-            s.mirrorRemitFundedRecycledPaid += amount;
-            (uint256 dayId, bool active) =
-                LibInteractionRewards.currentDayOrZero();
-            if (!active) dayId = 0;
-            emit MirrorRecycledClaimFunded(amount, dayId);
-            return;
-        }
-        consume(amount);
-    }
 
     /**
      * @notice PR-3c — release a RECYCLED-funded commitment without
@@ -265,72 +219,6 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled =
             outstanding > amount ? outstanding - amount : 0;
         emit RewardCommitmentReleased(uint8(source), refId, amount);
-    }
-
-    /// @notice #1222 M3 B2-b — emitted when a MIRROR restores a
-    ///         forfeited/expired recycled slice to bucket AVAILABILITY (the
-    ///         tokens were surrendered from the bucket at V2 broadcast
-    ///         arrival, so a forfeit can't be a pure commitment release).
-    ///         Distinct from {VpfiRecycled} because it does NOT feed the
-    ///         day-bucketed Ā series — those tokens were Ā-counted once on
-    ///         Base when first absorbed.
-    /// @custom:event-category informational/reward-governor
-    event MirrorRecycledRestoredToAvailability(
-        uint8 indexed source,
-        uint256 indexed refId,
-        uint256 amount
-    );
-
-    /**
-     * @notice #1222 M3 B2-b (Codex #1417 r5) — release a
-     *         RECYCLED-funded forfeit/expiry slice, chain-role-aware:
-     *
-     *         - CANONICAL: a pure {releaseCommitment} — the tokens never
-     *           physically left the bucket (they were committed, not
-     *           consumed), so dropping the outstanding commitment restores
-     *           `fundable` with zero new credit. Unchanged.
-     *         - MIRROR: the recycled slice was already surrendered from the
-     *           bucket at V2 broadcast arrival (consume-on-arrival), and a
-     *           mirror holds NO local outstanding commitment to release — so
-     *           `releaseCommitment` would be a no-op and the forfeited VPFI
-     *           would strand outside the recycle ledger (Codex #1417 r5).
-     *           Instead RESTORE it to availability: bucket balance (the VPFI
-     *           is physically still in the Diamond — a ledger-only move) +
-     *           the monotonic cumulative, so the next B1 report re-offers
-     *           the availability to Base for future funding. Deliberately
-     *           does NOT feed `recycledCreditedByDay` (the day-bucketed Ā
-     *           series): these tokens were Ā-counted once on Base when first
-     *           absorbed, and re-counting them on the mirror would let one
-     *           protocol receipt inflate future budgets on every forfeit
-     *           (governor §4 / #1331 Ā-feed exclusion for remitted-recycled).
-     *
-     *         Safe to restore the full amount on a mirror (forfeit +
-     *         D1-capped-off): each mirror user's recycled draw is
-     *         independently bounded by that user's funded equivalent-half
-     *         share, so one user's unpaid slice is never redrawn by another
-     *         (unlike the canonical day-pool, where a refused share stays
-     *         drawable — handled there by {releaseCommitment} keeping it in
-     *         the bucket).
-     */
-    function releaseForfeitedRecycled(
-        RecycleSource source,
-        uint256 refId,
-        uint256 amount
-    ) internal {
-        if (amount == 0) return;
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!LibVaipakam.isMirrorRewardChain(s)) {
-            releaseCommitment(source, refId, amount);
-            return;
-        }
-        // Capture the cumulative BEFORE the bucket write — the migration-free
-        // floor `creditedCumulative = max(stored, bucket + paidOut)` would
-        // otherwise already include `amount` and double-count it (the #1413
-        // r5 pattern).
-        uint256 cumulativeBefore = creditedCumulative(s);
-        s.recycleBucket += amount;
-        s.recycleCreditedCumulative = cumulativeBefore + amount;
-        emit MirrorRecycledRestoredToAvailability(uint8(source), refId, amount);
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

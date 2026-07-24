@@ -5520,13 +5520,14 @@ library LibVaipakam {
         //   GLOBAL `outstandingCommitRecycled` instead — one bucket, one
         //   ledger, never both for the same VPFI.
         mapping(uint32 => uint256) chainOutstandingRecycledCommit;
-        // ─── #1222 M3 B2-b — broadcast V2 + consumer flip ──────────────────
+        // ─── #1222 M3 B2-b — broadcast V2 + canonical consumer flip ─────────
         // APPEND-ONLY TAIL.
         //
         // Mirror-side whole-day idempotency stamp for the V2 broadcast
-        //   ingress: covers EVERY bucket-touching field, so a re-delivered
-        //   kind-5 packet can never double-apply the consume-on-arrival
-        //   debit or the per-chain funding stamp.
+        //   ingress: covers every stamped field, so a re-delivered kind-5
+        //   packet can never double-apply the per-chain funding stamp or
+        //   the cap-family write. (Mirror bucket consumption arms in B2-d;
+        //   in B2-b the ingress is store-only.)
         mapping(uint256 => bool) broadcastV2Applied;
         // Per-SIDE D1 ceilings for armed days (supersede the single
         //   `dayUserSideCapVpfi18` post-`D*`): under per-chain funding the
@@ -5537,11 +5538,6 @@ library LibVaipakam {
         //   broadcast verbatim (mirrors never recompute — config drift).
         mapping(uint256 => uint256) dayUserSideCapLenderVpfi18;
         mapping(uint256 => uint256) dayUserSideCapBorrowerVpfi18;
-        // MIRROR-ONLY counter: recycled claim legs paid WITHOUT a local
-        //   bucket debit (the bucket already surrendered its instructed
-        //   slice at broadcast arrival; the remainder is remit-funded).
-        //   Informational — reconciliation visibility for B2-d.
-        uint256 mirrorRemitFundedRecycledPaid;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -7951,18 +7947,6 @@ library LibVaipakam {
     /// when it connects; the public Terms of Service carries one
     /// generic disclosure line about restricted access.
     ///
-    /// @notice #1222 M3 B2-b — TRUE when this chain is a reward-mesh
-    ///         MIRROR: explicitly non-canonical AND a canonical chain is
-    ///         configured. The same pair `RewardReporterFacet.closeDay`
-    ///         forks on; an unconfigured deployment (both defaults)
-    ///         behaves canonically, so single-chain deploys keep the
-    ///         canonical claim semantics.
-    function isMirrorRewardChain(
-        Storage storage s
-    ) internal view returns (bool) {
-        return !s.isCanonicalRewardChain && s.baseChainId != 0;
-    }
-
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;

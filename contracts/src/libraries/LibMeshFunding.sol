@@ -42,25 +42,27 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         funded budgets remaining the binding caps (scaling dust can never
  *         over-pay).
  *
- *         RESERVATION IDENTITY (one bucket, one ledger, never both — LIVE
- *         from B2-b): mirror-locally-funded slices are booked into that
- *         chain's `chainConsumedRecycled[c]` at finalization — the
- *         instruction is irrevocable from the stamp onward, and Base can
- *         never observe mirror claim-level consumption, so an
- *         outstanding→consumed conversion later would only leak; the
- *         mirror debits its own bucket by the SAME figure exactly once at
- *         broadcast-V2 arrival (consume-on-arrival). Base-funded shares
- *         (Base's own slice + every top-up) reserve into the GLOBAL
- *         `outstandingCommitRecycled`, consumed at Base claims and at
- *         remit — both sides at the #1008-capped COMMITTABLE amounts
- *         (Codex #1315 P1: reserving raw stamps strands unclaimable
- *         remainders), with the ceil-dust trimmed against the availability
- *         actually backing it (reservations can never exceed what exists).
+ *         B2-b RE-SLICE (Codex #1417 r6): mirror LOCAL funding + the
+ *         consume-on-arrival symmetry are DEFERRED to B2-d, where the
+ *         delivered-backing ledger (a mirror's surrendered slice + received
+ *         remittances) makes mirror-side consumption safe. A mirror funding
+ *         its slice from its own bucket before the backing remittance has
+ *         arrived would let pre-remittance claims cannibalise other reward
+ *         ledgers and report phantom availability to Base — so until B2-d,
+ *         Base funds the WHOLE mesh budget (`avail = 0` on every mirror).
+ *         The two passes therefore degenerate to "Base funds all": the
+ *         whole capped commit is Base-funded and reserves into the GLOBAL
+ *         `outstandingCommitRecycled` (consumed at Base claims + remit), so
+ *         the live `recycledBudget` stamp and the global reservation stay
+ *         numerically identical to the pre-mesh single-pool
+ *         `min(fundable, coupled)`. `recycleConsume` rides the wire as 0.
  *
- *         B2-b makes the stamps LIVE: the day's `recycledBudget` stamp is
- *         the funded Σ, the broadcast ships each destination its own
- *         figures, and the claim/remit consumers price from the per-chain
- *         records; B3 nets remittances against them.
+ *         What B2-b DOES make live: each chain gets its own funded per-day
+ *         stamp (per-side fresh floors + global-equivalent recycled halves),
+ *         Base prices its OWN claims + remittances from its stamp (never the
+ *         aggregate), and the per-destination V2 broadcast ships every
+ *         mirror its stamp + cap family so the shape is ready for B2-d to
+ *         arm mirror consumption against.
  */
 library LibMeshFunding {
     /// @notice Emitted once per (armed day, chain) with the funded stamp.
@@ -111,14 +113,15 @@ library LibMeshFunding {
     }
 
     /**
-     * @notice Resolve + stamp + ARM the armed day's per-chain funding
-     *         (LIVE from B2-b): writes the per-(day,chain) stamps, books
-     *         each mirror's locally-funded capped commit into
-     *         `chainConsumedRecycled[c]`, and returns the global totals
-     *         the aggregator stamps and reserves (the Phase-A′ global
-     *         reservation is replaced by this split — Codex #1414 r1: the
-     *         Σ-stamp, the consumer flip, and the reservation split are
-     *         only correct together).
+     * @notice Resolve + stamp the armed day's per-chain funding: writes the
+     *         per-(day,chain) stamps and returns the global totals the
+     *         aggregator stamps and reserves. In the B2-b re-slice every
+     *         mirror funds 0 locally (see the library header), so the whole
+     *         commit is Base-funded and `reservedBase == Σ commit` — the
+     *         aggregator's global reservation therefore stays numerically
+     *         identical to the pre-mesh `min(fundable, coupled)` while each
+     *         chain still gets its own claimable stamp. B2-d turns on mirror
+     *         local funding + the consume-on-arrival symmetry together.
      * @param  dayId         Day being finalized (denominators final).
      * @param  coupledTarget The absorption-coupled target `Ā × (1 − m)` —
      *                       NOT pre-capped by Base's fundable balance; the
@@ -176,9 +179,17 @@ library LibMeshFunding {
             }
             uint256 targetTotal = c.targetLender + c.targetBorrower;
 
-            c.avail = c.chainId == baseId
-                ? availBase
-                : _availMirror(s, c.chainId);
+            // #1222 M3 B2-b (re-slice, Codex #1417 r6): mirror LOCAL funding
+            // + consumption is deferred to B2-d, where the delivered-backing
+            // ledger (surrender + received remits) makes it safe. Until then
+            // Base funds the WHOLE mesh budget (mirrors contribute zero local
+            // availability), so nothing instructs a mirror to consume its own
+            // bucket before the backing remittance has arrived. This
+            // degenerates the two pass funding to "Base funds all": the live
+            // `recycledBudget` and the global reservation stay numerically
+            // identical to the pre-mesh single-pool `min(fundable, coupled)`,
+            // while each chain still gets its own funded stamp for pricing.
+            c.avail = c.chainId == baseId ? availBase : 0;
 
             if (targetTotal <= c.avail) {
                 c.localLender = c.targetLender;
@@ -292,34 +303,14 @@ library LibMeshFunding {
                 ctx.freshHalf, equivB, ctx.gBorrower, c.chainBorrower, ctx.t
             );
 
-        uint256 reservedLocal;
-        if (c.chainId == ctx.baseId) {
-            // Everything Base-funded — one ledger.
-            reservedBase = commit;
-        } else if (c.fundedLender + c.fundedBorrower != 0) {
-            // Reservation split (LIVE from B2-b): the capped commit
-            // attributed pro-rata local-vs-top-up, the local share's
-            // ceil-dust trimmed against the availability that actually
-            // backs it.
-            reservedLocal = Math.mulDiv(
-                commit,
-                c.localLender + c.localBorrower,
-                c.fundedLender + c.fundedBorrower
-            );
-            if (reservedLocal > c.avail) reservedLocal = c.avail;
-            reservedBase = commit - reservedLocal;
-            // ARM: the locally-funded share is booked as consumed NOW —
-            // the instruction to the mirror is irrevocable from this stamp
-            // onward (the broadcast is a permissionless, replayable
-            // transport of it), and Base never observes mirror claim-level
-            // consumption, so a deferred outstanding→consumed conversion
-            // could only leak availability. The mirror debits its own
-            // bucket by this same figure exactly once, at broadcast-V2
-            // arrival.
-            if (reservedLocal != 0) {
-                s.chainConsumedRecycled[c.chainId] += reservedLocal;
-            }
-        }
+        // #1222 M3 B2-b (re-slice): with mirror local availability deferred
+        // to B2-d, `localLender/localBorrower` are 0 on every mirror, so the
+        // whole capped commit is Base-funded and reserves into the GLOBAL
+        // ledger — no per-chain `chainConsumedRecycled` booking and no
+        // `recycleConsume` instruction is enacted yet. The wire field
+        // `recycleConsume` therefore rides as 0 in B2-b; B2-d turns on local
+        // funding + the consume-on-arrival symmetry together.
+        reservedBase = commit;
 
         s.chainDayRecycledFunding[dayId][c.chainId] = LibVaipakam
             .ChainDayFunding({
@@ -327,10 +318,8 @@ library LibMeshFunding {
             fundedBorrower: c.fundedBorrower,
             lenderHalfEquiv: equivL,
             borrowerHalfEquiv: equivB,
-            // B2-b — the mirror's consume instruction IS the reservedLocal
-            // figure (capped-committable local share, availability-trimmed)
-            // so both ledgers book the identical number.
-            recycleConsume: reservedLocal,
+            // 0 until B2-d enacts mirror-local funding (see above).
+            recycleConsume: 0,
             keeperAllocate: 0,
             stamped: true,
             // Per-side fresh floors: the global value on both sides until a
@@ -348,8 +337,10 @@ library LibMeshFunding {
             c.chainId,
             c.fundedLender,
             c.fundedBorrower,
-            reservedLocal,
-            reservedLocal,
+            // recycleConsume + reservedLocal are 0 until B2-d; the whole
+            // capped commit is Base-funded.
+            0,
+            0,
             reservedBase
         );
         return reservedBase;
@@ -373,19 +364,5 @@ library LibMeshFunding {
         uint256 d = dF + dR;
         uint256 mR = d <= t ? dR : Math.mulDiv(t, dR, d);
         return Math.ceilDiv(mR * chainSide, 1e18);
-    }
-
-    /// @dev A mirror's availability from the B1 ledger, net of what Base has
-    ///      already instructed it to consume and its own outstanding
-    ///      mirror-local reservations.
-    function _availMirror(LibVaipakam.Storage storage s, uint32 chainId)
-        private
-        view
-        returns (uint256)
-    {
-        uint256 reported = s.chainReportedRecycled[chainId];
-        uint256 netted = s.chainConsumedRecycled[chainId]
-            + s.chainOutstandingRecycledCommit[chainId];
-        return reported > netted ? reported - netted : 0;
     }
 }
