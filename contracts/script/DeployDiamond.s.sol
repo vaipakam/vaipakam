@@ -2466,7 +2466,10 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](19);
+        // #1222 (M3 B2-a) — two-pass funding transparency reads.
+        s[17] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
+        s[18] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
         // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
         // legacy four-word rollout shim), so `.selector` on the bare name
         // is ambiguous; pin both signatures explicitly.

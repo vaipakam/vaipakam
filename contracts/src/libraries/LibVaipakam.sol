@@ -5489,6 +5489,56 @@ library LibVaipakam {
         //   attribution write, and the view's "genuine zero vs no report
         //   yet" discriminator.
         mapping(uint256 => mapping(uint32 => bool)) chainRecycledDayAccepted;
+        // Per-day Σ of accepted MIRROR day credits (Base's own excluded —
+        //   its credit lives in the local `recycledCreditedByDay`),
+        //   accumulated at ACCEPTANCE time so the Ā fold is O(1) per day
+        //   and immune to later `expectedSourceChainIds` edits (Codex
+        //   #1414 r1: folding history through the mutable list would let
+        //   an ops change rewrite already-accepted credits).
+        mapping(uint256 => uint256) dayMirrorRecycledCredit;
+        // ─── #1222 M3 B2-a — two-pass per-chain funding resolution ─────────
+        // APPEND-ONLY TAIL. Records-only in B2-a: written at ARMED-day
+        // finalization; the broadcast (B2-b) ships each chain its own
+        // funded figures and the consumption instructions from here.
+        //
+        // Per-(dayId, chainId) funded stamp — see {LibMeshFunding}. All
+        //   uint256 on purpose (the plan's storage-width rule): the
+        //   global-equivalent halves scale funded budgets by `1/p_c,side`,
+        //   so a thin chain's tiny nonzero side weight legitimately
+        //   produces values far above the actual daily pool.
+        mapping(uint256 => mapping(uint32 => ChainDayFunding))
+            chainDayRecycledFunding;
+        // Per-chain outstanding recycled commitments for MIRROR-LOCALLY
+        //   funded slices (`localFunded_c` on mirror chains): reserved at
+        //   armed-day finalization, netted out of that chain's availability
+        //   for later days, consumed/released from B2-b on. Base-funded
+        //   shares (Base's own slice + every top-up) reserve into the
+        //   GLOBAL `outstandingCommitRecycled` instead — one bucket, one
+        //   ledger, never both for the same VPFI.
+        mapping(uint32 => uint256) chainOutstandingRecycledCommit;
+    }
+
+    /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
+    ///         armed day, stamped at finalization by the two-pass funding
+    ///         resolution (governor §3.1 Phase B′ + completion-plan §M3).
+    /// @dev `fundedLender`/`fundedBorrower` are the chain's per-side funded
+    ///      recycled budgets (the binding caps at claim/remit);
+    ///      `lenderHalfEquiv`/`borrowerHalfEquiv` are the global-equivalent
+    ///      numerators (`fundedSide_c × globalSide / chainSide_c`, floor)
+    ///      that make the existing per-side numerator/global-denominator
+    ///      claim math yield exactly the funded budget on that chain.
+    ///      `recycleConsume` is the slice funded from the chain's OWN bucket
+    ///      (Base instructs the mirror to consume it locally; the remainder
+    ///      arrives via remittance); `keeperAllocate` is reserved for the
+    ///      B2-b keeper allocation (always 0 in B2-a).
+    struct ChainDayFunding {
+        uint256 fundedLender;
+        uint256 fundedBorrower;
+        uint256 lenderHalfEquiv;
+        uint256 borrowerHalfEquiv;
+        uint256 recycleConsume;
+        uint256 keeperAllocate;
+        bool stamped;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

@@ -1240,6 +1240,12 @@ contract ConfigFacet is DiamondAccessControl {
         accepted = s.chainRecycledDayAccepted[dayId][chainId];
     }
 
+    // #1222 M3 B2-a — the two-pass funding transparency reads
+    // (`getChainDayRecycledFunding` / `getChainOutstandingRecycledCommit`)
+    // live on {RewardAggregatorFacet} next to `getDayPoolStamp`: they are
+    // Base-side finalization records, and ConfigFacet sits at the EIP-170
+    // ceiling.
+
     /**
      * @notice T-032 / Recycling M1 (#1346) — read the live notification-
      *         tariff config in one RPC. Frontend reads this to render the

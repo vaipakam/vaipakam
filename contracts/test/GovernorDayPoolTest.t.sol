@@ -305,4 +305,204 @@ contract GovernorDayPoolTest is SetupTest {
         assertEq(outF, 0, "pre-arming day reserves nothing (fresh)");
         assertEq(outR2, 0, "pre-arming day reserves nothing (recycled)");
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // #1222 M3 B2-a — two-pass per-chain funding resolution (armed days)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// @dev Deliver coverage where ARB's report carries recycled figures.
+    function _finalizeWithArbRecycled(
+        uint256 dayId,
+        uint256 arbCumulative,
+        uint256 arbForDay
+    ) internal {
+        messenger.deliverChainReport(CHAIN_BASE, dayId, 10e18, 5e18);
+        messenger.deliverChainReportRecycled(
+            CHAIN_ARB, dayId, 20e18, 10e18, arbCumulative, arbForDay
+        );
+        _agg().finalizeDay(dayId);
+    }
+
+    /// Armed day, mirror with its own recycled availability: the mirror's
+    /// slice funds from its OWN bucket first (`recycleConsume` = local),
+    /// only the shortfall tops up from Base, Σ funded = the global stamp,
+    /// and the reservations split by funding source (mirror-local into the
+    /// per-chain ledger, Base-funded into the global outstanding).
+    function testArmedTwoPassFundsMirrorLocallyFirst() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether); // Ā=100, coupled=95
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        // ARB has 40 VPFI of reported recycled availability.
+        _finalizeWithArbRecycled(5, 40 ether, 0);
+
+        (, , uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        LibVaipakam.ChainDayFunding memory base =
+            _agg().getChainDayRecycledFunding(5, CHAIN_BASE);
+
+        assertTrue(arb.stamped && base.stamped, "both chains stamped");
+        // Demand weights: ARB carries 2/3 of both sides, Base 1/3.
+        // coupled 95 → targets: ARB ≈ 63.33, Base ≈ 31.67.
+        assertApproxEqAbs(
+            arb.fundedLender + arb.fundedBorrower,
+            63.333e18,
+            1e15,
+            "ARB funded to its full target"
+        );
+        assertApproxEqAbs(
+            base.fundedLender + base.fundedBorrower,
+            31.666e18,
+            1e15,
+            "Base funded its own slice"
+        );
+        // ARB consumed its own 40 locally; the ~23.33 shortfall is
+        // Base-topped-up and arrives via remittance instead.
+        assertEq(arb.recycleConsume, 40 ether, "mirror consumes its own bucket");
+        assertEq(arb.keeperAllocate, 0, "keeper allocation is B2-b");
+        // Σ funded is the global stamp.
+        assertApproxEqAbs(
+            arb.fundedLender + arb.fundedBorrower + base.fundedLender
+                + base.fundedBorrower,
+            recycled5,
+            2,
+            "global stamp = sum of funded slices"
+        );
+        assertApproxEqAbs(recycled5, 95 ether, 2, "mesh total matches coupled");
+
+        // B2-a records-only (Codex #1414 r1): the LIVE ledgers stay
+        // Phase-A' byte-for-byte — the global outstanding reserves the
+        // whole capped budget exactly as before, and the per-chain ledger
+        // is untouched until B2-b flips the consumers. The projected
+        // split rides the ChainDayFundingStamped event only.
+        (, , uint256 outR, ) = _agg().getGovernorCommitState();
+        assertApproxEqAbs(
+            outR, 95 ether, 100, "Phase-A' global reservation unchanged"
+        );
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
+            0,
+            "per-chain reservation ledger arms in B2-b"
+        );
+
+        // Equiv halves make the per-side global-denominator math yield the
+        // funded budget: equivL = fundedL x gL / chainL.
+        assertApproxEqAbs(
+            arb.lenderHalfEquiv,
+            (arb.fundedLender * 30e18) / 20e18,
+            2,
+            "lender equiv half"
+        );
+        assertApproxEqAbs(
+            arb.borrowerHalfEquiv,
+            (arb.fundedBorrower * 15e18) / 10e18,
+            2,
+            "borrower equiv half"
+        );
+    }
+
+    /// Base tops up from its REMAINING availability only: with a small Base
+    /// bucket, the top-up pool is `availBase − Base's own slice`, so mirror
+    /// funding is bounded by `local + remainder` — never a double-commit of
+    /// the same bucket.
+    function testArmedTopUpDrawsFromRemainingBaseAvailabilityOnly() public {
+        // Base bucket 40: its own slice ≈ 31.67 reserves first; only ~8.33
+        // remains for ARB's ~63.33 target (ARB has zero local availability).
+        _mut().setRecycleBucketRaw(40 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        _finalize(5);
+
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        LibVaipakam.ChainDayFunding memory base =
+            _agg().getChainDayRecycledFunding(5, CHAIN_BASE);
+        assertApproxEqAbs(
+            base.fundedLender + base.fundedBorrower,
+            31.666e18,
+            1e15,
+            "Base slice reserved first"
+        );
+        assertApproxEqAbs(
+            arb.fundedLender + arb.fundedBorrower,
+            8.333e18,
+            1e15,
+            "mirror gets only the remainder"
+        );
+        (, , uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
+        assertApproxEqAbs(recycled5, 40 ether, 2, "total bounded by real availability");
+    }
+
+    /// The Ā feed under the mesh: mirror day credits (B1 ledger) join
+    /// Base's raw local series — and Base is EXCLUDED from the per-chain
+    /// fold, because its own day credit is recorded in both places.
+    function testTrailingAverageIncludesMirrorDayCredits() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        // Base local: 350 on day 4. ARB: 350 accepted for day 4 via its
+        // day-close report (cumulative backs it).
+        _mut().setRecycledCreditedByDayRaw(4, 350 ether);
+        messenger.deliverChainReportRecycled(
+            CHAIN_ARB, 4, 1e18, 0, 350 ether, 350 ether
+        );
+
+        _finalize(5);
+
+        (, , , uint256 aBar, ) = _agg().getDayPoolStamp(5);
+        assertEq(aBar, 100 ether, "(350 local + 350 mirror) / 7");
+    }
+
+    /// Unarmed days never touch the mesh machinery: no funding stamps, no
+    /// per-chain reservations, Phase-A' sizing unchanged.
+    function testUnarmedDayStampsNoChainFunding() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+
+        _finalizeWithArbRecycled(5, 40 ether, 0);
+
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        assertFalse(arb.stamped, "no funding stamp pre-cutover");
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
+            0,
+            "no per-chain reservation pre-cutover"
+        );
+        (, , uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
+        assertEq(recycled5, 95 ether, "Phase-A' sizing unchanged");
+    }
+
+    /// B2-a is RECORDS-ONLY end to end: across two armed days the live
+    /// ledgers move exactly as Phase-A' (global reservations only), the
+    /// per-chain reservation ledger never moves, and each day's projection
+    /// stamps independently (per-day what-ifs until B2-b arms the
+    /// consumption + reservation side).
+    function testProjectionLeavesLiveLedgersPhaseA() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalizeWithArbRecycled(5, 40 ether, 0);
+
+        (, , uint256 outRAfter5, ) = _agg().getGovernorCommitState();
+
+        _mut().setRecycledCreditedByDayRaw(6, 700 ether);
+        messenger.deliverChainReport(CHAIN_BASE, 6, 10e18, 5e18);
+        messenger.deliverChainReportRecycled(
+            CHAIN_ARB, 6, 20e18, 10e18, 40 ether, 0
+        );
+        _agg().finalizeDay(6);
+
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
+            0,
+            "per-chain ledger never moves in B2-a"
+        );
+        (, , uint256 outRAfter6, ) = _agg().getGovernorCommitState();
+        assertGt(outRAfter6, outRAfter5, "global Phase-A' reservations continue");
+
+        LibVaipakam.ChainDayFunding memory arb6 =
+            _agg().getChainDayRecycledFunding(6, CHAIN_ARB);
+        assertTrue(arb6.stamped, "each armed day projects independently");
+    }
 }
