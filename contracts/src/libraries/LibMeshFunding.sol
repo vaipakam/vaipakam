@@ -98,6 +98,7 @@ library LibMeshFunding {
     /// @dev Per-chain working state for the two passes (memory).
     struct ChainWork {
         uint32 chainId;
+        bool included;
         uint256 chainLender;
         uint256 chainBorrower;
         uint256 targetLender;
@@ -164,7 +165,8 @@ library LibMeshFunding {
                 s.chainDailyBorrowerInterestNumeraire18[dayId][c.chainId];
             // Demand weights only count chains folded into the finalized
             // denominator — a zeroed/missing chain gets no slice.
-            if (s.chainDailyIncluded[dayId][c.chainId]) {
+            c.included = s.chainDailyIncluded[dayId][c.chainId];
+            if (c.included) {
                 c.targetLender = gLender == 0
                     ? 0
                     : Math.mulDiv(targetHalf, c.chainLender, gLender);
@@ -332,9 +334,14 @@ library LibMeshFunding {
             keeperAllocate: 0,
             stamped: true,
             // Per-side fresh floors: the global value on both sides until a
-            // per-chain fresh trim mechanism exists (plan §M3).
-            freshLenderHalf: ctx.freshHalf,
-            freshBorrowerHalf: ctx.freshHalf
+            // per-chain fresh trim mechanism exists (plan §M3) — but ZERO
+            // for a chain excluded from the finalized denominator (Codex
+            // #1417 r2 P1): its numerators are not in the globals, so a
+            // fresh half would let its users accrue against a denominator
+            // that excludes them while the remit sizing (which gates on
+            // inclusion) funds them nothing.
+            freshLenderHalf: c.included ? ctx.freshHalf : 0,
+            freshBorrowerHalf: c.included ? ctx.freshHalf : 0
         });
         emit ChainDayFundingStamped(
             dayId,

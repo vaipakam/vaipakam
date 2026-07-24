@@ -638,12 +638,18 @@ contract RewardAggregatorFacet is
         uint256 dayId,
         uint256 freshHalf
     ) private {
+        uint32 baseId = uint32(block.chainid);
         LibVaipakam.ChainDayFunding storage f =
-            s.chainDayRecycledFunding[dayId][uint32(block.chainid)];
+            s.chainDayRecycledFunding[dayId][baseId];
         if (f.stamped) return;
         f.stamped = true;
-        f.freshLenderHalf = freshHalf;
-        f.freshBorrowerHalf = freshHalf;
+        // Codex #1417 r2 P1 — inclusion gate applies to Base's own stamp
+        // too: a grace/force-finalized day that zeroed Base's report must
+        // not let Base-side claims accrue fresh halves either.
+        if (s.chainDailyIncluded[dayId][baseId]) {
+            f.freshLenderHalf = freshHalf;
+            f.freshBorrowerHalf = freshHalf;
+        }
     }
 
     /// @notice RL-4 (#1306, ratified §10.3) — emitted when the allocation
@@ -955,6 +961,13 @@ contract RewardAggregatorFacet is
                 recycleConsume: f.recycleConsume,
                 keeperAllocate: f.keeperAllocate
             });
+        }
+        // Codex #1417 r2 P1 — a destination excluded from the finalized
+        // denominator (grace/force-finalized without its report) gets ZERO
+        // halves: its numerators are not in the globals, so any nonzero
+        // half would let its users accrue unremittable rewards.
+        if (!s.chainDailyIncluded[dayId][uint32(destChainId)]) {
+            floorHalf = 0;
         }
         return IRewardMessenger.BroadcastV2PerDest({
             destChainId: destChainId,

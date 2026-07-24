@@ -543,6 +543,39 @@ contract GovernorDayPoolTest is SetupTest {
         );
     }
 
+    /// Codex #1417 r2 P1 — a chain EXCLUDED from the finalized denominator
+    /// (here: ARB missing on a force-finalized day) must get ZERO halves in
+    /// its funding stamp: its numerators are not in the globals, so a
+    /// nonzero fresh half would let its users accrue rewards the remit
+    /// sizing (inclusion-gated) will never fund. The included chain keeps
+    /// its fresh floor. Fails against the unconditional-stamp code.
+    function testExcludedChainGetsZeroHalvesOnForcedDay() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        // Only Base reports day 5; ARB never does — force-finalize.
+        messenger.deliverChainReport(CHAIN_BASE, 5, 10e18, 5e18);
+        _agg().forceFinalizeDay(5);
+
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        assertTrue(arb.stamped, "excluded chain still stamped (no halt)");
+        assertEq(arb.freshLenderHalf, 0, "no fresh half for an excluded chain");
+        assertEq(arb.freshBorrowerHalf, 0);
+        assertEq(arb.lenderHalfEquiv, 0, "no recycled slice either");
+        assertEq(arb.recycleConsume, 0, "no consume instruction");
+
+        LibVaipakam.ChainDayFunding memory base =
+            _agg().getChainDayRecycledFunding(5, CHAIN_BASE);
+        (, uint256 floor5, , , ) = _agg().getDayPoolStamp(5);
+        assertEq(
+            base.freshLenderHalf,
+            floor5 / 2,
+            "included chain keeps its fresh floor"
+        );
+    }
+
     /// B2-b remit netting: the remittance quote for a mirror ships ONLY the
     /// Base-funded recycled share — the mirror-locally-funded slice already
     /// sits on the mirror (surrendered at broadcast arrival). Discriminated
