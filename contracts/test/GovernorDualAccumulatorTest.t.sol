@@ -844,6 +844,60 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(_cfg().getRecycleBucket(), 0, "bucket untouched by the claim");
     }
 
+    /// Codex #1417 r4 — the expiry-clock DROUGHT gate must use the same
+    /// mirror-aware liquidity source, not the raw bucket. After a V2
+    /// broadcast drains a mirror's bucket, dormant-reward reaping must not
+    /// freeze: pre-fix the drained bucket made `_recycledDrought` true, so
+    /// the first sweep observed the entry non-executable and never stamped
+    /// the horizon clock — the reward could never expire. Post-fix the
+    /// clock starts normally.
+    function testMirrorExpiryClockRunsWithBucketDrained() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(30 ether);
+        _cfg().setRewardClaimHorizonDays(180); // activate the RL-3 horizon
+
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: 5,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1,
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 100 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 50 ether,
+                recycleConsume: 30 ether, // drains the whole bucket
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+        assertEq(_cfg().getRecycleBucket(), 0, "bucket fully drained");
+
+        // A dormant entry WITH recycled need (day-5 lender side) — so the
+        // aggregate drought gate is genuinely exercised, not vacuously 0.
+        uint256 id = _seedEntry(alice, 44, 5, 6);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _facet().sweepExpiredInteractionRewards(ids); // observe + stamp
+
+        (uint64 firstClaimableAt, ) = _lens().getRewardEntryExpiry(id);
+        assertGt(
+            firstClaimableAt,
+            0,
+            "expiry clock started despite the drained mirror bucket"
+        );
+    }
+
     // ─── 6. Arming guards ────────────────────────────────────────────────────
 
     function testArmingIsFutureOnlyAndOneShot() public {

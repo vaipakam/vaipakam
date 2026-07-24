@@ -2187,12 +2187,21 @@ library LibInteractionRewards {
     ///      clock pauses outright. Over-pausing only DELAYS the reap
     ///      (claimant-protective; the claim path stays open and each partial
     ///      collection shrinks the aggregate until the gate unpauses).
+    ///
+    ///      #1222 M3 B2-b (Codex #1417 r4) — prices against the SAME
+    ///      mirror-aware liquidity source the walk/preview use, not the raw
+    ///      bucket: on a mirror the recycled claim liquidity is unbounded
+    ///      (funded by the surrendered slice + remittances, never the local
+    ///      bucket), so there is NO recycled drought and the expiry clock
+    ///      must keep running — otherwise a V2 broadcast draining the local
+    ///      bucket would freeze the reap of dormant mirror rewards
+    ///      indefinitely, even though those rewards are freely claimable.
     function _recycledDrought(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (bool) {
         (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
-        return recycledTotal > s.recycleBucket;
+        return recycledTotal > _claimRecycledLiquidity(s);
     }
 
     function _poolCappedPayable(
