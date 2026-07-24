@@ -793,6 +793,57 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// Codex #1417 r3 — the walk's recycled DEFER gate must not price a
+    /// MIRROR's claims against its local bucket: after consume-on-arrival
+    /// drains it, the bucket is not the funding source (the surrendered
+    /// slice + remittances are). Here the arrival surrender takes the
+    /// bucket to ZERO and the claim must still pay in full — against the
+    /// pre-fix code the recycled legs defer forever on the empty bucket.
+    function testMirrorClaimPaysWithBucketDrainedToZero() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(30 ether);
+
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: 5,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1,
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 100 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 50 ether,
+                recycleConsume: 30 ether, // the WHOLE bucket
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+        assertEq(_cfg().getRecycleBucket(), 0, "bucket fully surrendered");
+
+        _seedEntry(alice, 43, 5, 6);
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        assertApproxEqAbs(
+            paid,
+            150 ether,
+            1e6,
+            "recycled legs pay despite the drained bucket"
+        );
+        assertEq(_cfg().getRecycleBucket(), 0, "bucket untouched by the claim");
+    }
+
     // ─── 6. Arming guards ────────────────────────────────────────────────────
 
     function testArmingIsFutureOnlyAndOneShot() public {

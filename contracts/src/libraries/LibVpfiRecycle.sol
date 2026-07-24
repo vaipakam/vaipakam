@@ -236,7 +236,7 @@ library LibVpfiRecycle {
     function consumeClaimRecycled(uint256 amount) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.isCanonicalRewardChain && s.baseChainId != 0) {
+        if (LibVaipakam.isMirrorRewardChain(s)) {
             s.mirrorRemitFundedRecycledPaid += amount;
             (uint256 dayId, bool active) =
                 LibInteractionRewards.currentDayOrZero();

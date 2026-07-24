@@ -7951,6 +7951,18 @@ library LibVaipakam {
     /// when it connects; the public Terms of Service carries one
     /// generic disclosure line about restricted access.
     ///
+    /// @notice #1222 M3 B2-b — TRUE when this chain is a reward-mesh
+    ///         MIRROR: explicitly non-canonical AND a canonical chain is
+    ///         configured. The same pair `RewardReporterFacet.closeDay`
+    ///         forks on; an unconfigured deployment (both defaults)
+    ///         behaves canonically, so single-chain deploys keep the
+    ///         canonical claim semantics.
+    function isMirrorRewardChain(
+        Storage storage s
+    ) internal view returns (bool) {
+        return !s.isCanonicalRewardChain && s.baseChainId != 0;
+    }
+
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;

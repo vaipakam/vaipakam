@@ -1118,7 +1118,10 @@ library LibInteractionRewards {
             ? freshBudget - legacyFreshReserved
             : 0;
         WalkCtx memory ctx = WalkCtx({
-            pool: PoolBudget({fresh: freshLeft, recycled: s.recycleBucket}),
+            pool: PoolBudget({
+                fresh: freshLeft,
+                recycled: _claimRecycledLiquidity(s)
+            }),
             advanced: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
         });
@@ -1627,7 +1630,7 @@ library LibInteractionRewards {
         // preview stays an upper bound.
         PoolBudget memory pool = PoolBudget({
             fresh: type(uint256).max,
-            recycled: s.recycleBucket
+            recycled: _claimRecycledLiquidity(s)
         });
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
@@ -3319,6 +3322,35 @@ library LibInteractionRewards {
     // the whole point of the `(user, side, day)` domain is a SINGLE absolute
     // ceiling, and two independent code paths spending against it would
     // reintroduce exactly the double-pay this cap exists to stop.
+
+    /// @dev #1222 M3 B2-b (Codex #1417 r3) — the recycled-liquidity figure
+    ///      the claim walk's per-day DEFER gate prices against, by chain
+    ///      role:
+    ///
+    ///      - CANONICAL: the live bucket, as always — the gate protects a
+    ///        real held balance that refills, and a shortfall defers.
+    ///      - MIRROR: UNBOUNDED. The mirror's bucket surrendered its
+    ///        instructed slice at broadcast arrival (consume-on-arrival),
+    ///        so on a mirror the bucket is NOT the claim-funding source
+    ///        any more — gating on it would livelock every recycled claim
+    ///        the moment a day's surrender drains it, waiting on a balance
+    ///        that is never meant to refill for this purpose. Mirror
+    ///        payouts are bounded by the funded budgets (the equivalent-
+    ///        numerator construction) and physically by the Diamond's VPFI
+    ///        balance (surrendered slice + remitted funding — the same
+    ///        bounded pre-funding float the remittance path has always run
+    ///        on, #776). B2-e's remit-ingress labeling will tighten this
+    ///        to a tracked remitted-recycled allowance.
+    ///
+    ///      Used by BOTH the live walk and the dry-run preview so the two
+    ///      can never diverge on the gate.
+    function _claimRecycledLiquidity(
+        LibVaipakam.Storage storage s
+    ) private view returns (uint256) {
+        return LibVaipakam.isMirrorRewardChain(s)
+            ? type(uint256).max
+            : s.recycleBucket;
+    }
 
     /// @dev The RPN row for `d` is materialized only up to the side's cursor.
     ///      Reading `cumRpn[d]` past it would either underflow or read an unset
