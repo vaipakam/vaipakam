@@ -157,6 +157,12 @@ library LibMeshFunding {
         uint256 targetHalf = coupledTarget / 2;
 
         // ── Pass 1: per-chain targets + own-bucket funding ────────────────
+        // NB: `ChainWork memory c = work[i]` ALIASES the array element — a
+        // memory struct is a reference type in Solidity, so `c.field = …`
+        // writes THROUGH to `work[i]`; pass 2 and `_stampAndArm` read the
+        // same mutated elements. (Verified by the two-pass funding tests,
+        // which read back non-zero funded figures from the resulting
+        // stamps; not a copy.)
         uint256 totalShortfall;
         uint256 baseLocalTotal;
         for (uint256 i; i < n; ++i) {

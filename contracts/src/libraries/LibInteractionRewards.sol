@@ -845,10 +845,26 @@ library LibInteractionRewards {
     ///      broadcast) HALTS the cursor — the same fail-closed wait the
     ///      `knownGlobalSet` gate already applies, so a claim can never
     ///      price an armed day from the wrong pool.
+    ///
+    ///      #1222 M3 B2-b (re-slice, Codex #1417 r7) — this per-chain
+    ///      pricing is CANONICAL-ONLY. On a MIRROR an armed day HALTS
+    ///      (fail-closed), because mirror-side recycled consumption is
+    ///      deferred to B2-d: the mirror's recycled funding arrives by
+    ///      remittance (which never credits the local recycle bucket), so
+    ///      pricing the stamp's recycled equivalents here and then debiting
+    ///      the local bucket at claim (`LibVpfiRecycle.consume`) would
+    ///      either brick a correctly-remitted claim on an empty bucket or
+    ///      cannibalise a mirror's own local recycled balance — the exact
+    ///      mirror consumption the re-slice defers. Base never arms until
+    ///      the full mesh (incl. B2-d) is deployed, so no mirror ever
+    ///      actually reaches an armed day in the B2-b window; the halt is
+    ///      the safety backstop that makes that a code invariant, not just
+    ///      an operational one.
     /// @return freshHalf    This side's fresh pool for day `d`.
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
-    /// @return halt         True ⇒ armed day without a stamp: stop advancing.
+    /// @return halt         True ⇒ armed day not priceable here: stop
+    ///                      advancing (no stamp yet, OR a mirror pre-B2-d).
     function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardSide side,
@@ -859,6 +875,8 @@ library LibInteractionRewards {
         returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
     {
         if (_isArmedDay(s, d)) {
+            // Mirror armed-day pricing is deferred to B2-d — halt (see above).
+            if (LibVaipakam.isMirrorRewardChain(s)) return (0, 0, true);
             LibVaipakam.ChainDayFunding storage f =
                 s.chainDayRecycledFunding[d][uint32(block.chainid)];
             if (!f.stamped) return (0, 0, true);
