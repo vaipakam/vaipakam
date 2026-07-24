@@ -244,6 +244,12 @@ interface IVaipakamErrors {
     ///         different value.
     error KnownGlobalAlreadySet();
 
+    /// @notice #1222 M3 B2-b — a V2 broadcast packet's embedded destination
+    ///         chain id does not match this chain (a delayed delivery after
+    ///         a destination-list edit, or a governance replay, must never
+    ///         apply another chain's funded figures here).
+    error BroadcastDestinationMismatch(uint256 destChainId);
+
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
     ///         governance. Exit paths (repay / liquidate / claim / withdraw)

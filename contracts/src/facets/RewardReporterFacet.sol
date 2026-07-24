@@ -6,7 +6,10 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
-import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
+import {
+    IRewardMessenger,
+    RewardBroadcastV2
+} from "../interfaces/IRewardMessenger.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -366,6 +369,160 @@ contract RewardReporterFacet is
             globalLenderNumeraire18,
             globalBorrowerNumeraire18
         );
+    }
+
+    /// @notice #1222 M3 B2-b — a V2 broadcast was applied on this mirror:
+    ///         the consensus pair + cap family landed, the chain's own
+    ///         funded stamp was written, and the local recycle bucket
+    ///         surrendered its instructed slice (consume-on-arrival).
+    /// @custom:event-category informational/reward-governor
+    event RewardBroadcastV2Applied(
+        uint256 indexed dayId,
+        uint256 recycleConsume
+    );
+
+    /**
+     * @notice #1222 M3 B2-b — trusted ingress for the per-destination V2
+     *         broadcast: Base's finalized consensus fields plus THIS
+     *         chain's own funded figures for `dayId`.
+     * @dev Messenger-gated. Applies, in order:
+     *
+     *      1. Replay-stable binding — the packet's embedded `destChainId`
+     *         must equal `block.chainid` (a delayed delivery after a
+     *         destination-list edit or a governance replay must never
+     *         apply another chain's figures here).
+     *      2. Whole-day idempotency — the first application sets
+     *         `broadcastV2Applied[dayId]`; a re-delivered packet must
+     *         match EVERY applied field (revert on divergence) and is
+     *         otherwise a no-op, so the consume-on-arrival debit can
+     *         never run twice.
+     *      3. Consensus pair — written, or verified against a value a
+     *         legacy kind-2 delivery already set (mixed-generation days).
+     *      4. Cap family, atomic with the mode (#1351 2a pairing):
+     *         ShareOfPool ⇒ legacy threshold disabled (max) + the
+     *         per-side D1 ceilings, verbatim from Base; Legacy ⇒ the §4
+     *         threshold verbatim.
+     *      5. The chain's own `ChainDayFunding` stamp — what the armed-day
+     *         accumulators price with. (`fundedLender`/`fundedBorrower`
+     *         stay 0 here: they are Base-side records; the equivalent
+     *         halves already encode the funded budgets exactly.)
+     *      6. `armedFromDay` — forward-only, as in the legacy ingress.
+     *      7. Consume-on-arrival — the local bucket surrenders
+     *         `recycleConsume` exactly once, mirroring the
+     *         `chainConsumedRecycled[c]` mark Base booked at finalization
+     *         (same figure, both ledgers).
+     */
+    function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
+        {
+            revert NotAuthorizedRewardMessenger();
+        }
+        if (b.destChainId != block.chainid) {
+            revert BroadcastDestinationMismatch(b.destChainId);
+        }
+
+        uint32 selfId = uint32(block.chainid);
+        if (s.broadcastV2Applied[b.dayId]) {
+            LibVaipakam.ChainDayFunding storage prior =
+                s.chainDayRecycledFunding[b.dayId][selfId];
+            if (
+                s.knownGlobalLenderInterestNumeraire18[b.dayId]
+                    != b.globalLenderNumeraire18
+                    || s.knownGlobalBorrowerInterestNumeraire18[b.dayId]
+                        != b.globalBorrowerNumeraire18
+                    || !_capFamilyMatches(s, b)
+                    || prior.freshLenderHalf != b.freshLenderHalf
+                    || prior.freshBorrowerHalf != b.freshBorrowerHalf
+                    || prior.lenderHalfEquiv != b.recycledLenderHalfEquiv
+                    || prior.borrowerHalfEquiv != b.recycledBorrowerHalfEquiv
+                    || prior.recycleConsume != b.recycleConsume
+                    || prior.keeperAllocate != b.keeperAllocate
+            ) {
+                revert KnownGlobalAlreadySet();
+            }
+            return;
+        }
+
+        // Mixed-generation same-day: a legacy kind-2 delivery may already
+        // have set the consensus pair — this packet must agree, then its
+        // V2-only records layer on top.
+        if (s.knownGlobalSet[b.dayId]) {
+            if (
+                s.knownGlobalLenderInterestNumeraire18[b.dayId]
+                    != b.globalLenderNumeraire18
+                    || s.knownGlobalBorrowerInterestNumeraire18[b.dayId]
+                        != b.globalBorrowerNumeraire18
+            ) {
+                revert KnownGlobalAlreadySet();
+            }
+        } else {
+            s.knownGlobalLenderInterestNumeraire18[b.dayId] =
+                b.globalLenderNumeraire18;
+            s.knownGlobalBorrowerInterestNumeraire18[b.dayId] =
+                b.globalBorrowerNumeraire18;
+            s.knownGlobalSet[b.dayId] = true;
+        }
+
+        if (b.capMode == uint8(LibVaipakam.CapMode.ShareOfPool)) {
+            LibInteractionRewards.setBroadcastDayCapThreshold(
+                b.dayId, type(uint256).max
+            );
+            s.dayCapMode[b.dayId] = LibVaipakam.CapMode.ShareOfPool;
+            s.dayUserSideCapLenderVpfi18[b.dayId] = b.capPayloadLender;
+            s.dayUserSideCapBorrowerVpfi18[b.dayId] = b.capPayloadBorrower;
+        } else {
+            LibInteractionRewards.setBroadcastDayCapThreshold(
+                b.dayId, b.capPayloadLender
+            );
+        }
+
+        s.chainDayRecycledFunding[b.dayId][selfId] = LibVaipakam
+            .ChainDayFunding({
+            fundedLender: 0,
+            fundedBorrower: 0,
+            lenderHalfEquiv: b.recycledLenderHalfEquiv,
+            borrowerHalfEquiv: b.recycledBorrowerHalfEquiv,
+            recycleConsume: b.recycleConsume,
+            keeperAllocate: b.keeperAllocate,
+            stamped: true,
+            freshLenderHalf: b.freshLenderHalf,
+            freshBorrowerHalf: b.freshBorrowerHalf
+        });
+
+        if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
+            s.governorCommitArmedFromDay = b.armedFromDay;
+        }
+
+        // #1222 M3 B2-b (re-slice): the mirror does NOT consume its bucket on
+        // arrival — `recycleConsume` rides the wire as 0 today and mirror
+        // local consumption arms in B2-d, once the delivered-backing ledger
+        // makes it safe. The stamp is stored (above) so B2-d can price/arm
+        // against it; nothing debits the bucket here.
+        s.broadcastV2Applied[b.dayId] = true;
+        emit RewardBroadcastV2Applied(b.dayId, b.recycleConsume);
+        emit KnownGlobalInterestSet(
+            b.dayId,
+            b.globalLenderNumeraire18,
+            b.globalBorrowerNumeraire18
+        );
+    }
+
+    /// @dev Idempotent-re-delivery comparison for the cap family (mode-
+    ///      dependent fields).
+    function _capFamilyMatches(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV2 calldata b
+    ) private view returns (bool) {
+        if (b.capMode == uint8(LibVaipakam.CapMode.ShareOfPool)) {
+            return s.dayCapMode[b.dayId] == LibVaipakam.CapMode.ShareOfPool
+                && s.dayUserSideCapLenderVpfi18[b.dayId] == b.capPayloadLender
+                && s.dayUserSideCapBorrowerVpfi18[b.dayId]
+                    == b.capPayloadBorrower;
+        }
+        return s.dayCapThreshold18[b.dayId] == b.capPayloadLender;
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────────

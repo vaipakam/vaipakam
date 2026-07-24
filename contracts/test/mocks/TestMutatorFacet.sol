@@ -756,7 +756,10 @@ contract TestMutatorFacet {
     }
 
     function dayUserSideCapVpfi18Raw(uint256 dayId) external view returns (uint256) {
-        return LibVaipakam.storageSlot().dayUserSideCapVpfi18[dayId];
+        // #1222 M3 B2-b — reads the LIVE lender-side slot (the retired
+        // single slot is no longer written by finalize). Suites that need
+        // the pair discriminated read `getDayUserSideCaps` instead.
+        return LibVaipakam.storageSlot().dayUserSideCapLenderVpfi18[dayId];
     }
 
     /// @dev #1351 slice 2b — expose the internal D1 day primitive so its
@@ -878,7 +881,13 @@ contract TestMutatorFacet {
     }
 
     function setDayUserSideCapRaw(uint256 d, uint256 c) external {
-        LibVaipakam.storageSlot().dayUserSideCapVpfi18[d] = c;
+        // #1222 M3 B2-b — the consumer reads the per-SIDE pair now; seed
+        // both sides equal (the pre-B2-b semantic) plus the retired single
+        // slot for any legacy read.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.dayUserSideCapVpfi18[d] = c;
+        s.dayUserSideCapLenderVpfi18[d] = c;
+        s.dayUserSideCapBorrowerVpfi18[d] = c;
     }
 
     function setDayPoolStampRaw(
@@ -886,12 +895,31 @@ contract TestMutatorFacet {
         uint128 scheduleFloor,
         uint128 recycledBudget
     ) external {
-        LibVaipakam.storageSlot().dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
             scheduleFloor: scheduleFloor,
             recycledBudget: recycledBudget,
             aBarAtFinalize: 0,
             marginBpsAtFinalize: 0,
             stamped: true
+        });
+        // #1222 M3 B2-b — the armed-day consumers price from the chain's
+        // OWN per-(day,chain) funding stamp now, so seed it with the
+        // single-chain 50/50 equivalent of the same composition (exactly
+        // what Base's finalize produces on a single-chain deploy). Chain
+        // sides equal the globals locally, so the equivalent numerators
+        // ARE the halves.
+        s.chainDayRecycledFunding[dayId][uint32(block.chainid)] = LibVaipakam
+            .ChainDayFunding({
+            fundedLender: uint256(recycledBudget) / 2,
+            fundedBorrower: uint256(recycledBudget) / 2,
+            lenderHalfEquiv: uint256(recycledBudget) / 2,
+            borrowerHalfEquiv: uint256(recycledBudget) / 2,
+            recycleConsume: 0,
+            keeperAllocate: 0,
+            stamped: true,
+            freshLenderHalf: uint256(scheduleFloor) / 2,
+            freshBorrowerHalf: uint256(scheduleFloor) / 2
         });
     }
 
@@ -911,6 +939,12 @@ contract TestMutatorFacet {
     ///         full finalize + broadcast round.
     function setDayCapThreshold18(uint256 day, uint256 t) external {
         LibVaipakam.storageSlot().dayCapThreshold18[day] = t;
+    }
+
+    /// @notice #1222 M3 B2-b test-only — read the stored §4 threshold so the
+    ///         V2-ingress tests can assert the mode↔threshold atomicity.
+    function dayCapThreshold18Raw(uint256 day) external view returns (uint256) {
+        return LibVaipakam.storageSlot().dayCapThreshold18[day];
     }
 
     // ─── #953 test-only — sale-forfeit sweep-reachability scaffolding ───────

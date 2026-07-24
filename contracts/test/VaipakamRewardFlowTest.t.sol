@@ -10,6 +10,10 @@ import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {
+    IRewardMessenger,
+    RewardBroadcastV2
+} from "../src/interfaces/IRewardMessenger.sol";
 
 /// @dev Records the reward-ingress calls — stands in for a Vaipakam Diamond.
 contract MockRewardDiamond {
@@ -74,6 +78,18 @@ contract MockRewardDiamond {
         lastBcastLender = l;
         lastBcastBorrower = b;
         ++bcastCount;
+    }
+
+    // #1222 M3 B2-b — V2 broadcast ingress spy (the production diamond's
+    // `RewardReporterFacet.onRewardBroadcastV2Received`).
+    RewardBroadcastV2 public lastV2;
+    uint256 public v2Count;
+
+    function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
+        external
+    {
+        lastV2 = b;
+        ++v2Count;
     }
 
     // T-087 Sub 2.C — mirror-side tier ingress capture. The mock simply
@@ -481,6 +497,185 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondMirror.lastBcastDay(), 42, "dayId");
         assertEq(diamondMirror.lastBcastLender(), 9_000 ether, "global lender");
         assertEq(diamondMirror.lastBcastBorrower(), 4_000 ether, "global borrower");
+    }
+
+    // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────
+
+    function _v2Shared()
+        internal
+        pure
+        returns (IRewardMessenger.BroadcastV2Shared memory)
+    {
+        return IRewardMessenger.BroadcastV2Shared({
+            dayId: 42,
+            globalLenderNumeraire18: 9_000 ether,
+            globalBorrowerNumeraire18: 4_000 ether,
+            capMode: 1,
+            capPayloadLender: 11 ether,
+            capPayloadBorrower: 7 ether,
+            armedFromDay: 40
+        });
+    }
+
+    function _v2Dest(uint256 chainId)
+        internal
+        pure
+        returns (IRewardMessenger.BroadcastV2PerDest memory)
+    {
+        return IRewardMessenger.BroadcastV2PerDest({
+            destChainId: chainId,
+            freshLenderHalf: 20 ether,
+            freshBorrowerHalf: 20 ether,
+            recycledLenderHalfEquiv: 9 ether,
+            recycledBorrowerHalfEquiv: 4 ether,
+            recycleConsume: 5 ether,
+            keeperAllocate: 0
+        });
+    }
+
+    /// Full round trip: Base assembles one kind-5 payload for the mirror,
+    /// the mirror messenger decodes it into the SAME struct and forwards it
+    /// to the V2 diamond ingress — shared consensus fields + this chain's
+    /// own funded figures + the embedded destination binding, verbatim.
+    function test_BroadcastV2_BaseToMirror() public {
+        IRewardMessenger.BroadcastV2PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV2PerDest[](1);
+        dests[0] = _v2Dest(MIRROR);
+
+        vm.prank(address(diamondBase));
+        rewardBase.broadcastDayV2{value: fee}(
+            _v2Shared(), dests, payable(address(diamondBase))
+        );
+        assertEq(router.pendingCount(), 1, "one packet per destination");
+
+        router.deliver(0, SEL_BASE);
+
+        assertEq(diamondMirror.v2Count(), 1, "mirror got the V2 broadcast");
+        assertEq(diamondMirror.bcastCount(), 0, "legacy ingress untouched");
+        (
+            uint256 dayId,
+            uint256 gL,
+            uint256 gB,
+            uint8 capMode,
+            uint256 capL,
+            uint256 capB,
+            uint256 armedFrom,
+            uint256 freshL,
+            uint256 freshB,
+            uint256 recL,
+            uint256 recB,
+            uint256 consume,
+            uint256 keeper,
+            uint256 destChainId
+        ) = diamondMirror.lastV2();
+        assertEq(dayId, 42);
+        assertEq(gL, 9_000 ether);
+        assertEq(gB, 4_000 ether);
+        assertEq(capMode, 1);
+        assertEq(capL, 11 ether);
+        assertEq(capB, 7 ether);
+        assertEq(armedFrom, 40);
+        assertEq(freshL, 20 ether);
+        assertEq(freshB, 20 ether);
+        assertEq(recL, 9 ether);
+        assertEq(recB, 4 ether);
+        assertEq(consume, 5 ether);
+        assertEq(keeper, 0);
+        assertEq(destChainId, MIRROR, "replay-stable destination binding");
+    }
+
+    /// The per-destination array must cover the configured set exactly.
+    function test_BroadcastV2_RevertWhen_DestinationSetMismatch() public {
+        IRewardMessenger.BroadcastV2PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV2PerDest[](2);
+        dests[0] = _v2Dest(MIRROR);
+        dests[1] = _v2Dest(999);
+
+        vm.deal(address(diamondBase), 1 ether);
+        vm.prank(address(diamondBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.BroadcastDestinationSetMismatch.selector,
+                2,
+                1
+            )
+        );
+        rewardBase.broadcastDayV2{value: fee}(
+            _v2Shared(), dests, payable(address(diamondBase))
+        );
+    }
+
+    /// A configured destination with no funded entry reverts — never a
+    /// silent skip (a mirror left unbroadcast would halt its armed days).
+    function test_BroadcastV2_RevertWhen_MissingDestinationEntry() public {
+        IRewardMessenger.BroadcastV2PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV2PerDest[](1);
+        dests[0] = _v2Dest(999); // right length, wrong chain
+
+        vm.prank(address(diamondBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.MissingDestinationFunding.selector,
+                MIRROR
+            )
+        );
+        rewardBase.broadcastDayV2{value: fee}(
+            _v2Shared(), dests, payable(address(diamondBase))
+        );
+    }
+
+    function test_BroadcastV2_RevertWhen_NotDiamond() public {
+        IRewardMessenger.BroadcastV2PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV2PerDest[](1);
+        dests[0] = _v2Dest(MIRROR);
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardBase.broadcastDayV2{value: fee}(
+            _v2Shared(), dests, payable(owner)
+        );
+    }
+
+    function test_Receive_BroadcastV2_RevertOnCanonical() public {
+        RewardBroadcastV2 memory b;
+        b.dayId = 1;
+        b.destChainId = BASE;
+        vm.prank(address(messengerBase));
+        vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(uint8(5), b),
+            _empty()
+        );
+    }
+
+    /// The 15-word pin: a truncated kind-5 payload is rejected before any
+    /// decode (14 words is not in the size union at all).
+    function test_Receive_BroadcastV2_WrongSize_Rejected() public {
+        bytes memory truncated = new bytes(14 * 32);
+        truncated[31] = bytes1(uint8(5));
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                14 * 32,
+                6 * 32
+            )
+        );
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase), truncated, _empty()
+        );
+    }
+
+    function test_QuoteBroadcastDayV2() public view {
+        IRewardMessenger.BroadcastV2PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV2PerDest[](1);
+        dests[0] = _v2Dest(MIRROR);
+        assertEq(
+            rewardBase.quoteBroadcastDayV2(_v2Shared(), dests),
+            fee,
+            "one lane, one fee"
+        );
     }
 
     // ─── Sender access control ──────────────────────────────────────────────

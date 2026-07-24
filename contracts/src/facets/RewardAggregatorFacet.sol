@@ -541,9 +541,41 @@ contract RewardAggregatorFacet is
         // carved keeper share is never re-sized into a reward budget (#1344).
         uint256 fundable = _recycleFundable(s);
         uint256 coupled = (aBar * (10_000 - marginBps)) / 10_000;
-        uint256 recycledBudget = schedule == 0
-            ? 0
-            : (fundable < coupled ? fundable : coupled);
+
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        bool armed = armedFrom != 0 && dayId >= armedFrom;
+
+        // #1222 M3 B2-b — the Phase B′ two-pass funding resolution is LIVE
+        // on armed days: global Ā sizes the TARGET, each chain's B1-ledger
+        // availability bounds the reality, Base's own slice funds before
+        // top-ups draw from its remaining fundable balance, and the day's
+        // recycled budget is the funded Σ (identical to the Phase-A′
+        // `min(fundable, coupled)` on a single-chain deploy). The resolver
+        // stamps every chain's per-(day,chain) funding record and books
+        // each mirror's locally-funded capped commit into
+        // `chainConsumedRecycled[c]`; Base-funded shares are reserved into
+        // the global ledger below. Pre-cutover days keep the Phase-A′
+        // records-only stamp.
+        uint256 recycledBudget;
+        LibMeshFunding.FundingTotals memory totals;
+        if (armed) {
+            if (schedule != 0) {
+                totals = LibMeshFunding.resolveAndStampDayFunding(
+                    s, dayId, coupled, scheduleFloor / 2, fundable
+                );
+            }
+            recycledBudget = totals.funded;
+            // The mesh resolver legitimately skips its stamps when the day
+            // has no coupled target / no demand / no configured chains —
+            // but the flipped armed-day consumers HALT on an unstamped
+            // own-chain record, so Base must guarantee its own stamp on
+            // EVERY armed day (fresh floors only; recycled zeroes).
+            _ensureBaseDayFundingStamp(s, dayId, scheduleFloor / 2);
+        } else {
+            recycledBudget = schedule == 0
+                ? 0
+                : (fundable < coupled ? fundable : coupled);
+        }
 
         s.dayPoolStamp[dayId] = LibVaipakam.DayPoolStamp({
             scheduleFloor: uint128(scheduleFloor),
@@ -553,48 +585,35 @@ contract RewardAggregatorFacet is
             stamped: true
         });
 
-        // #1351 (M2 PR-2, slice 2a) — stamp the armed day's D1 per-(user,side)
-        // ceiling now that the pool composition is known. MUST stay after the
-        // stamp write above: `sideHalf` is read from it, so pricing `C` any
-        // earlier would silently stamp 0. No-op pre-cutover.
-        LibInteractionRewards.snapshotDayUserSideShareCap(dayId);
+        // #1351 (M2 PR-2, slice 2a → B2-b per-side) — stamp the armed day's
+        // D1 per-(user,side) ceilings now that the funded composition is
+        // known. Per-SIDE from B2-b: under per-chain funding the global
+        // per-side pools genuinely differ, so each side's C prices against
+        // its own pool (fresh floor half + that side's funded Σ). No-op
+        // pre-cutover.
+        LibInteractionRewards.snapshotDayUserSideShareCaps(
+            dayId,
+            scheduleFloor / 2,
+            totals.fundedLender,
+            totals.fundedBorrower
+        );
 
         // Commitment reservation — armed only from the PR-3c cutover day.
         // Codex #1315 P1: reserve the CAPPED committable amounts, not the
-        // raw stamp — claims/remits can only ever consume the #1008-capped
-        // per-side budgets, and a zero-denominator side consumes nothing;
-        // reserving the raw halves would strand the unclaimable remainder
-        // in `outstandingCommit*` and shrink every later day's
-        // availability for value no user can draw.
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        bool armed = armedFrom != 0 && dayId >= armedFrom;
+        // raw stamp. B2-b splits the recycled reservation by FUNDING
+        // SOURCE: the global ledger takes only the Base-funded shares
+        // (Base's own slice + every top-up — Σ reservedBase from the
+        // resolver, consumed at Base claims and at remit); each mirror's
+        // locally-funded share was booked into `chainConsumedRecycled[c]`
+        // by the resolver above. The fresh reservation is unchanged
+        // (recycledHalf = 0 cannot alter commitFresh: armed days carry
+        // `t = max`, so no combined-cap trim couples the sides).
         if (armed) {
-            (uint256 commitFresh, uint256 commitRecycled) =
-                LibInteractionRewards.committableForDay(
-                    s,
-                    dayId,
-                    scheduleFloor / 2,
-                    recycledBudget / 2
-                );
-            s.outstandingCommitFresh += commitFresh;
-            s.outstandingCommitRecycled += commitRecycled;
-        }
-
-        // #1222 M3 B2-a — Phase B′ two-pass funding PROJECTION (armed days,
-        // schedule days only). Global Ā sizes the TARGET; each chain's
-        // B1-ledger availability bounds the reality; Base's own slice funds
-        // before top-ups draw from its remaining fundable balance. In B2-a
-        // these stamps are PURE RECORDS: the live stamp, the reservations
-        // above, and every claim/remit consumer keep the Phase-A′ global
-        // figures byte-for-byte (Codex #1414 r1 — switching the aggregate
-        // while consumers still distribute it pro-rata would move armed-day
-        // rewards and bucket consumption to the wrong chains). B2-b flips
-        // the consumers to the per-chain stamps and arms the per-chain
-        // reservation ledger in the same change.
-        if (armed && schedule != 0) {
-            LibMeshFunding.resolveAndStampDayFunding(
-                s, dayId, coupled, scheduleFloor / 2, fundable
+            (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
+                s, dayId, scheduleFloor / 2, 0
             );
+            s.outstandingCommitFresh += commitFresh;
+            s.outstandingCommitRecycled += totals.reservedBase;
         }
 
         emit GovernorDayPoolStamped(
@@ -606,6 +625,31 @@ contract RewardAggregatorFacet is
         );
 
         _applyRecycleRegister(s, dayId, aBar, marginBps);
+    }
+
+    /// @dev #1222 M3 B2-b — Base's own per-(day,chain) funding stamp must
+    ///      exist on EVERY armed day: the flipped armed-day consumers
+    ///      (`_dayPoolHalves`) fail closed on an unstamped own-chain
+    ///      record, and the mesh resolver legitimately skips stamping on
+    ///      days with no coupled target / no demand / no configured
+    ///      chains. Idempotent — a resolver-written stamp is left intact.
+    function _ensureBaseDayFundingStamp(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 freshHalf
+    ) private {
+        uint32 baseId = uint32(block.chainid);
+        LibVaipakam.ChainDayFunding storage f =
+            s.chainDayRecycledFunding[dayId][baseId];
+        if (f.stamped) return;
+        f.stamped = true;
+        // Codex #1417 r2 P1 — inclusion gate applies to Base's own stamp
+        // too: a grace/force-finalized day that zeroed Base's report must
+        // not let Base-side claims accrue fresh halves either.
+        if (s.chainDailyIncluded[dayId][baseId]) {
+            f.freshLenderHalf = freshHalf;
+            f.freshBorrowerHalf = freshHalf;
+        }
     }
 
     /// @notice RL-4 (#1306, ratified §10.3) — emitted when the allocation
@@ -761,6 +805,189 @@ contract RewardAggregatorFacet is
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
 
+        // #1222 M3 B2-b — per-destination V2 assembly. The destination
+        // list getter exists on every messenger generation; the V2 SEND is
+        // the capability boundary: a pre-B2-b messenger proxy has no such
+        // selector and reverts EMPTY, in which case the facet falls back
+        // to the legacy kind-2 send (same shim shape as closeDay's B1
+        // report fallback). A reasoned revert is a real failure and
+        // bubbles.
+        _broadcastDayV2(
+            s,
+            dayId,
+            messenger,
+            IRewardMessenger(messenger).getBroadcastDestinations()
+        );
+    }
+
+    /// @notice B2-b (Codex #1417 r1) — quote the fee the PERMISSIONLESS
+    ///         {broadcastGlobal} trigger will actually pay: assembles the
+    ///         SAME per-destination V2 payloads as the send and quotes them
+    ///         through the messenger, falling back to the legacy quote when
+    ///         the messenger predates V2 (empty revert = missing selector)
+    ///         — the exact mirror of the send-side shim, so the unchanged
+    ///         public entry point stays quotable across the rollout window.
+    function quoteBroadcastGlobal(uint256 dayId)
+        external
+        view
+        returns (uint256 nativeFee)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(
+            s, dayId, IRewardMessenger(messenger).getBroadcastDestinations()
+        );
+        try IRewardMessenger(messenger).quoteBroadcastDayV2(shared, perDest)
+        returns (uint256 f) {
+            return f;
+        } catch (bytes memory reason) {
+            if (reason.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+        }
+        // Pre-B2-b messenger: the send path will fall back to the legacy
+        // kind-2 broadcast, so quote that shape.
+        return IRewardMessenger(messenger).quoteBroadcastGlobal(
+            dayId,
+            s.dailyGlobalLenderInterestNumeraire18[dayId],
+            s.dailyGlobalBorrowerInterestNumeraire18[dayId]
+        );
+    }
+
+    /// @dev B2-b — assemble the kind-5 per-destination broadcast: the
+    ///      day-shared consensus fields once, each destination's OWN funded
+    ///      figures from its finalize-time stamp. A destination the mesh
+    ///      resolver skipped (unarmed day / no coupled target) gets the
+    ///      global fresh floor halves and zeroed recycled fields — exactly
+    ///      what the remit sizing assumes for it. Shared by the send AND
+    ///      the facet-level quote so the two can never price different
+    ///      payloads (Codex #1417 r1).
+    function _assembleDayV2(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256[] memory dests
+    )
+        private
+        view
+        returns (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        )
+    {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        bool armed = armedFrom != 0 && dayId >= armedFrom;
+        shared = IRewardMessenger.BroadcastV2Shared({
+            dayId: dayId,
+            globalLenderNumeraire18: s.dailyGlobalLenderInterestNumeraire18[
+                dayId
+            ],
+            globalBorrowerNumeraire18: s
+                .dailyGlobalBorrowerInterestNumeraire18[dayId],
+            capMode: armed
+                ? uint8(LibVaipakam.CapMode.ShareOfPool)
+                : uint8(LibVaipakam.CapMode.LegacyEthRatio),
+            // ShareOfPool: the per-SIDE D1 ceilings (global figures, Base-
+            // computed). Legacy: the §4 threshold rides the lender slot.
+            capPayloadLender: armed
+                ? s.dayUserSideCapLenderVpfi18[dayId]
+                : s.dayCapThreshold18[dayId],
+            capPayloadBorrower: armed
+                ? s.dayUserSideCapBorrowerVpfi18[dayId]
+                : 0,
+            armedFromDay: armedFrom
+        });
+
+        uint256 n = dests.length;
+        perDest = new IRewardMessenger.BroadcastV2PerDest[](n);
+        uint256 floorHalf = uint256(s.dayPoolStamp[dayId].scheduleFloor) / 2;
+        for (uint256 i; i < n; ++i) {
+            perDest[i] = _perDestFields(s, dayId, dests[i], floorHalf);
+        }
+    }
+
+    /// @dev B2-b — build + send the kind-5 per-destination broadcast.
+    function _broadcastDayV2(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        address messenger,
+        uint256[] memory dests
+    ) private {
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(s, dayId, dests);
+
+        try IRewardMessenger(messenger).broadcastDayV2{value: msg.value}(
+            shared, perDest, payable(msg.sender)
+        ) {} catch (bytes memory reason) {
+            // Empty revert = missing selector on a pre-B2-b messenger
+            // proxy → legacy kind-2 fallback (the failed call returned
+            // the full msg.value, so the legacy send re-forwards it).
+            // Reasoned reverts (fee shortfall, destination-set mismatch)
+            // are real failures and bubble.
+            if (reason.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+            _broadcastLegacy(s, dayId, messenger);
+        }
+    }
+
+    /// @dev One destination's V2 fields (own frame — viaIR stack headroom).
+    function _perDestFields(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 destChainId,
+        uint256 floorHalf
+    ) private view returns (IRewardMessenger.BroadcastV2PerDest memory) {
+        LibVaipakam.ChainDayFunding storage f =
+            s.chainDayRecycledFunding[dayId][uint32(destChainId)];
+        if (f.stamped) {
+            return IRewardMessenger.BroadcastV2PerDest({
+                destChainId: destChainId,
+                freshLenderHalf: f.freshLenderHalf,
+                freshBorrowerHalf: f.freshBorrowerHalf,
+                recycledLenderHalfEquiv: f.lenderHalfEquiv,
+                recycledBorrowerHalfEquiv: f.borrowerHalfEquiv,
+                recycleConsume: f.recycleConsume,
+                keeperAllocate: f.keeperAllocate
+            });
+        }
+        // Codex #1417 r2 P1 — a destination excluded from the finalized
+        // denominator (grace/force-finalized without its report) gets ZERO
+        // halves: its numerators are not in the globals, so any nonzero
+        // half would let its users accrue unremittable rewards.
+        if (!s.chainDailyIncluded[dayId][uint32(destChainId)]) {
+            floorHalf = 0;
+        }
+        return IRewardMessenger.BroadcastV2PerDest({
+            destChainId: destChainId,
+            freshLenderHalf: floorHalf,
+            freshBorrowerHalf: floorHalf,
+            recycledLenderHalfEquiv: 0,
+            recycledBorrowerHalfEquiv: 0,
+            recycleConsume: 0,
+            keeperAllocate: 0
+        });
+    }
+
+    /// @dev B2-b — the pre-V2 kind-2 send, kept as the fallback for a
+    ///      not-yet-upgraded messenger proxy (rollout shim; remove with
+    ///      the legacy wire).
+    function _broadcastLegacy(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        address messenger
+    ) private {
         LibVaipakam.DayPoolStamp storage stamp = s.dayPoolStamp[dayId];
         IRewardMessenger(messenger).broadcastGlobal{value: msg.value}(
             dayId,
@@ -779,6 +1006,22 @@ contract RewardAggregatorFacet is
             payable(msg.sender)
         );
     }
+
+    /// @notice #1222 M3 B2-b — the armed day's per-SIDE D1 ceilings
+    ///         (stamped at finalization from the GLOBAL funded figures,
+    ///         broadcast verbatim to mirrors). Both zero pre-cutover.
+    function getDayUserSideCaps(uint256 dayId)
+        external
+        view
+        returns (uint256 lenderCap, uint256 borrowerCap)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.dayUserSideCapLenderVpfi18[dayId],
+            s.dayUserSideCapBorrowerVpfi18[dayId]
+        );
+    }
+
 
     /// @notice Governor PR-3c (#1217) — arm commitment reservation +
     ///         consume-at-claim from `dayId` forward (the D* cutover).

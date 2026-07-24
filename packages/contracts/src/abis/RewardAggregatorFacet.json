@@ -125,6 +125,16 @@
             "name": "stamped",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "freshLenderHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshBorrowerHalf",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -260,6 +270,30 @@
       },
       {
         "name": "marginBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getDayUserSideCaps",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lenderCap",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerCap",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -420,6 +454,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "quoteBroadcastGlobal",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nativeFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -795,6 +848,17 @@
     "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BroadcastDestinationMismatch",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

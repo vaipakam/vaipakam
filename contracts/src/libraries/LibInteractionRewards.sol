@@ -224,8 +224,16 @@ library LibInteractionRewards {
         uint32 chainId,
         uint256 dayId
     ) internal view returns (uint256 budgetFresh, uint256 budgetRecycled) {
-        uint256 half;
-        uint256 recycledHalf;
+        // #1222 M3 B2-b — armed days price from the DESTINATION chain's own
+        // funding stamp (per-side fresh halves + recycled global-equivalent
+        // numerators), never the global aggregate: the aggregate is a
+        // metric, and slicing it pro-rata would fund a chain against
+        // another chain's reserved slice. Per-side values genuinely differ,
+        // so the two sides carry their own halves through the split.
+        uint256 lenderFreshHalf;
+        uint256 borrowerFreshHalf;
+        uint256 lenderRecycledHalf;
+        uint256 borrowerRecycledHalf;
         {
             uint256 armedFrom = s.governorCommitArmedFromDay;
             if (armedFrom != 0 && dayId >= armedFrom) {
@@ -234,13 +242,32 @@ library LibInteractionRewards {
                 // yet (finalization/broadcast pending) — same wait the
                 // claim-side accumulators apply.
                 if (!p.stamped) return (0, 0);
-                half = uint256(p.scheduleFloor) / 2;
-                recycledHalf = uint256(p.recycledBudget) / 2;
+                LibVaipakam.ChainDayFunding storage f =
+                    s.chainDayRecycledFunding[dayId][chainId];
+                if (f.stamped) {
+                    lenderFreshHalf = f.freshLenderHalf;
+                    borrowerFreshHalf = f.freshBorrowerHalf;
+                    lenderRecycledHalf = f.lenderHalfEquiv;
+                    borrowerRecycledHalf = f.borrowerHalfEquiv;
+                } else {
+                    // Mesh-skipped armed day (no coupled target / no
+                    // demand): the broadcast shipped this destination the
+                    // global fresh floor halves + zero recycled — fund it
+                    // the same way.
+                    lenderFreshHalf = uint256(p.scheduleFloor) / 2;
+                    borrowerFreshHalf = lenderFreshHalf;
+                }
             } else {
-                half = halfPoolForDay(dayId);
+                lenderFreshHalf = halfPoolForDay(dayId);
+                borrowerFreshHalf = lenderFreshHalf;
             }
         }
-        if (half == 0 && recycledHalf == 0) return (0, 0);
+        if (
+            lenderFreshHalf == 0 && borrowerFreshHalf == 0
+                && lenderRecycledHalf == 0 && borrowerRecycledHalf == 0
+        ) {
+            return (0, 0);
+        }
         // #776 — only chains whose numerator was folded into `dayId`'s finalized
         // denominator get a slice; a reported-but-then-de-listed chain is out.
         if (!s.chainDailyIncluded[dayId][chainId]) return (0, 0);
@@ -260,8 +287,8 @@ library LibInteractionRewards {
         uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
         if (gLender != 0) {
             (uint256 f, uint256 r) = _sideBudgetSplit(
-                half,
-                recycledHalf,
+                lenderFreshHalf,
+                lenderRecycledHalf,
                 gLender,
                 t,
                 s.chainDailyLenderInterestNumeraire18[dayId][chainId]
@@ -272,8 +299,8 @@ library LibInteractionRewards {
         uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
         if (gBorrower != 0) {
             (uint256 f, uint256 r) = _sideBudgetSplit(
-                half,
-                recycledHalf,
+                borrowerFreshHalf,
+                borrowerRecycledHalf,
                 gBorrower,
                 t,
                 s.chainDailyBorrowerInterestNumeraire18[dayId][chainId]
@@ -281,6 +308,10 @@ library LibInteractionRewards {
             budgetFresh += f;
             budgetRecycled += r;
         }
+        // #1222 M3 B2-b (re-slice) — Base funds the WHOLE mesh budget until
+        // B2-d, so the remittance ships each mirror its entire recycled
+        // slice (no local-surrender netting yet). B2-d subtracts the
+        // mirror-locally-funded share once consume-on-arrival is armed.
     }
 
     /// @dev One side's capped per-chain budget, split fresh/recycled with
@@ -796,24 +827,47 @@ library LibInteractionRewards {
         return armedFrom != 0 && d >= armedFrom;
     }
 
-    /// @dev Governor PR-3c (#1217 §3.1) — resolve day `d`'s per-side pool
-    ///      halves for the accumulator build.
+    /// @dev Governor PR-3c (#1217 §3.1) — resolve day `d`'s pool halves for
+    ///      the accumulator build, for ONE side.
     ///
     ///      Pre-cutover days keep the legacy schedule (`halfPoolForDay`,
     ///      fresh-only). Post-cutover days (`armedFrom != 0 && d >=
     ///      armedFrom` — NEVER `>=` alone, per the redesign's D* rule) read
-    ///      the finalize-stamped {LibVaipakam.DayPoolStamp} halves: the
-    ///      fresh component from `scheduleFloor` and the recycled component
-    ///      from `recycledBudget`, each split 50/50 per side. A post-cutover
-    ///      day whose stamp hasn't landed yet (mirror waiting on the
-    ///      composition broadcast) HALTS the cursor — the same fail-closed
-    ///      wait the `knownGlobalSet` gate already applies, so a claim can
-    ///      never price an armed day from the wrong pool.
-    /// @return freshHalf    Per-side fresh pool for day `d`.
-    /// @return recycledHalf Per-side recycled pool (0 pre-cutover).
-    /// @return halt         True ⇒ armed day without a stamp: stop advancing.
-function _dayPoolHalves(
+    ///      THIS CHAIN'S OWN per-(day,chain) funding stamp (#1222 M3 B2-b —
+    ///      never the global day-pool stamp: under per-chain funding a
+    ///      chain's claimable figures are its own funded per-side fresh
+    ///      halves and recycled global-equivalent numerators, written at
+    ///      finalization on Base and at broadcast-V2 arrival on mirrors;
+    ///      pricing from the global aggregate would compute ≈ p_chain × Σ
+    ///      funded instead of the chain's reserved slice). The two sides
+    ///      genuinely differ, so the caller names its side. A post-cutover
+    ///      day whose stamp hasn't landed yet (mirror waiting on the V2
+    ///      broadcast) HALTS the cursor — the same fail-closed wait the
+    ///      `knownGlobalSet` gate already applies, so a claim can never
+    ///      price an armed day from the wrong pool.
+    ///
+    ///      #1222 M3 B2-b (re-slice, Codex #1417 r7) — this per-chain
+    ///      pricing is CANONICAL-ONLY. On a MIRROR an armed day HALTS
+    ///      (fail-closed), because mirror-side recycled consumption is
+    ///      deferred to B2-d: the mirror's recycled funding arrives by
+    ///      remittance (which never credits the local recycle bucket), so
+    ///      pricing the stamp's recycled equivalents here and then debiting
+    ///      the local bucket at claim (`LibVpfiRecycle.consume`) would
+    ///      either brick a correctly-remitted claim on an empty bucket or
+    ///      cannibalise a mirror's own local recycled balance — the exact
+    ///      mirror consumption the re-slice defers. Base never arms until
+    ///      the full mesh (incl. B2-d) is deployed, so no mirror ever
+    ///      actually reaches an armed day in the B2-b window; the halt is
+    ///      the safety backstop that makes that a code invariant, not just
+    ///      an operational one.
+    /// @return freshHalf    This side's fresh pool for day `d`.
+    /// @return recycledHalf This side's recycled global-equivalent numerator
+    ///                      (0 pre-cutover).
+    /// @return halt         True ⇒ armed day not priceable here: stop
+    ///                      advancing (no stamp yet, OR a mirror pre-B2-d).
+    function _dayPoolHalves(
         LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
         uint256 d
     )
         private
@@ -821,9 +875,14 @@ function _dayPoolHalves(
         returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
     {
         if (_isArmedDay(s, d)) {
-            LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[d];
-            if (!p.stamped) return (0, 0, true);
-            return (uint256(p.scheduleFloor) / 2, uint256(p.recycledBudget) / 2, false);
+            // Mirror armed-day pricing is deferred to B2-d — halt (see above).
+            if (LibVaipakam.isMirrorRewardChain(s)) return (0, 0, true);
+            LibVaipakam.ChainDayFunding storage f =
+                s.chainDayRecycledFunding[d][uint32(block.chainid)];
+            if (!f.stamped) return (0, 0, true);
+            return side == LibVaipakam.RewardSide.Lender
+                ? (f.freshLenderHalf, f.lenderHalfEquiv, false)
+                : (f.freshBorrowerHalf, f.borrowerHalfEquiv, false);
         }
         return (halfPoolForDay(d), 0, false);
     }
@@ -850,7 +909,7 @@ function _dayPoolHalves(
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
             (uint256 freshHalf, uint256 recycledHalf, bool halt) =
-                _dayPoolHalves(s, d);
+                _dayPoolHalves(s, LibVaipakam.RewardSide.Lender, d);
             if (halt) break;
             uint256 globalTotal = s.knownGlobalLenderInterestNumeraire18[d];
             uint256 freshDaily;
@@ -916,7 +975,7 @@ function _dayPoolHalves(
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
             (uint256 freshHalf, uint256 recycledHalf, bool halt) =
-                _dayPoolHalves(s, d);
+                _dayPoolHalves(s, LibVaipakam.RewardSide.Borrower, d);
             if (halt) break;
             uint256 globalTotal = s.knownGlobalBorrowerInterestNumeraire18[d];
             uint256 freshDaily;
@@ -1068,7 +1127,10 @@ function _dayPoolHalves(
             ? freshBudget - legacyFreshReserved
             : 0;
         WalkCtx memory ctx = WalkCtx({
-            pool: PoolBudget({fresh: freshLeft, recycled: s.recycleBucket}),
+            pool: PoolBudget({
+                fresh: freshLeft,
+                recycled: s.recycleBucket
+            }),
             advanced: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
         });
@@ -3233,21 +3295,33 @@ function _dayPoolHalves(
     ///         uncapped hole.
     ///
     ///         No-op on unarmed days — pre-cutover days carry no D1 ceiling.
-    ///         Prices off the finalized stamp, never a live re-derivation, so
-    ///         the ceiling can't be computed from a different pool than the
-    ///         rewards it bounds.
-    function snapshotDayUserSideShareCap(uint256 dayId) internal {
+    ///         Prices off the finalize-resolved figures the caller passes,
+    ///         never a live re-derivation, so the ceiling can't be computed
+    ///         from a different pool than the rewards it bounds.
+    ///
+    ///         #1222 M3 B2-b — per SIDE, from the GLOBAL figures: under
+    ///         per-chain funding the global per-side pools genuinely differ
+    ///         (Σ fundedLender_c ≠ Σ fundedBorrower_c when demand weights
+    ///         force different funding), so each side's C prices against
+    ///         its own pool (the shared fresh floor half + that side's
+    ///         funded Σ). Computed on Base only and broadcast verbatim —
+    ///         the per-chain equivalent numerators are the WRONG feed here
+    ///         (a thin chain's equivs legitimately dwarf the actual pool).
+    function snapshotDayUserSideShareCaps(
+        uint256 dayId,
+        uint256 freshHalf,
+        uint256 fundedLender,
+        uint256 fundedBorrower
+    ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!_isArmedDay(s, dayId)) return;
-        (uint256 freshHalf, uint256 recycledHalf, bool halt) =
-            _dayPoolHalves(s, dayId);
-        if (halt) return; // stamp not landed yet — leave C at 0 (pays nothing)
         // May legitimately be 0 on a dust / zero-emission day — which is exactly
         // why the MODE stamp, not this value, is the D1/legacy switch.
-        s.dayUserSideCapVpfi18[dayId] =
-            ((freshHalf + recycledHalf) *
-                LibVaipakam.cfgUserSideShareCapBps()) /
-            LibVaipakam.BASIS_POINTS;
+        uint256 capBps = LibVaipakam.cfgUserSideShareCapBps();
+        s.dayUserSideCapLenderVpfi18[dayId] =
+            ((freshHalf + fundedLender) * capBps) / LibVaipakam.BASIS_POINTS;
+        s.dayUserSideCapBorrowerVpfi18[dayId] =
+            ((freshHalf + fundedBorrower) * capBps) / LibVaipakam.BASIS_POINTS;
     }
 
     // ─── #1351 (M2 PR-2, slice 2b) — the shared D1 day primitive ────────────
@@ -3417,7 +3491,8 @@ function _dayPoolHalves(
         view
         returns (uint256 freshDaily, uint256 recycledDaily, bool halt)
     {
-        (uint256 freshHalf, uint256 recycledHalf, bool h) = _dayPoolHalves(s, d);
+        (uint256 freshHalf, uint256 recycledHalf, bool h) =
+            _dayPoolHalves(s, side, d);
         if (h) return (0, 0, true);
         uint256 globalTotal = side == LibVaipakam.RewardSide.Lender
             ? s.knownGlobalLenderInterestNumeraire18[d]
@@ -4091,7 +4166,12 @@ function _dayPoolHalves(
             _dayFreshRecycledDaily(s, side, d);
         if (halt) return (charge, slices);
 
-        uint256 c = s.dayUserSideCapVpfi18[d];
+        // #1222 M3 B2-b — per-SIDE ceilings (the pre-B2-b single
+        // `dayUserSideCapVpfi18` slot is retired; no armed day can predate
+        // the flip, so there is no mixed history to bridge).
+        uint256 c = side == LibVaipakam.RewardSide.Lender
+            ? s.dayUserSideCapLenderVpfi18[d]
+            : s.dayUserSideCapBorrowerVpfi18[d];
         uint256 paid = s.userSideDayPaidVpfi[user][uint8(side)][d];
         // Exhausted (including a legitimate `C == 0` dust day) — advance with a
         // 0 slice so the walk makes progress instead of spinning on this day.

@@ -200,6 +200,7 @@ library LibVpfiRecycle {
         emit VpfiRecycleConsumed(amount, dayId);
     }
 
+
     /**
      * @notice PR-3c — release a RECYCLED-funded commitment without
      *         consumption (forfeit / RL-3 expiry of a recycled-funded

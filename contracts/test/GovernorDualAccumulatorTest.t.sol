@@ -15,6 +15,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 
 /**
  * @title  GovernorDualAccumulatorTest
@@ -725,6 +726,66 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(recycled7, 18 ether, "recycled = 2x half");
         (uint256 armed, , , ) = _agg().getGovernorCommitState();
         assertEq(armed, 7, "arming day travels in-band");
+    }
+
+    /// Codex #1417 r7 — a MIRROR must fail-closed on armed-day pricing until
+    /// B2-d arms mirror consumption. If it priced the V2 stamp's recycled
+    /// equivalents and then debited the LOCAL bucket at claim (canonical
+    /// `consume` semantics), a remittance-funded reward would cannibalise
+    /// the mirror's own recycled balance — the exact mirror consumption the
+    /// re-slice defers. The armed day HALTS, so a mirror claim never touches
+    /// its bucket. (Base never arms a mirror until B2-d ships, so this is a
+    /// safety backstop; the test forces the armed state to prove the code
+    /// invariant.)
+    function testMirrorArmedDayHaltsAndNeverDebitsBucket() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(100 ether);
+
+        // Base broadcasts an armed day WITH recycled equivalents to the
+        // mirror — the shape that, without the halt, the claim would price
+        // and then debit the local bucket for.
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: 5,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1,
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 100 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 50 ether,
+                recycleConsume: 0,
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+
+        _seedEntry(alice, 90, 5, 6); // day-5 lender entry (armed, halts)
+
+        vm.prank(alice);
+        try
+            RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+                LibVaipakam.RewardDelivery.Wallet
+            )
+        returns (uint256, uint256, uint256) {} catch {}
+
+        // Whether the claim reverts (nothing claimable) or pays 0, the
+        // mirror recycle bucket is never debited: the armed day halted, so
+        // no recycled leg was priced or consumed.
+        assertEq(
+            _cfg().getRecycleBucket(),
+            100 ether,
+            "mirror bucket never debited on an armed day (halted pre-B2-d)"
+        );
     }
 
     // ─── 6. Arming guards ────────────────────────────────────────────────────
