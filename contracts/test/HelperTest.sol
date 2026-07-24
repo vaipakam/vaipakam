@@ -1899,16 +1899,18 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         selectors[17] =
             RewardAggregatorFacet.getChainDayRecycledFunding.selector;
         selectors[18] =
             RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
-        // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter.
+        // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter +
+        // the payload-accurate broadcast quote (Codex #1417 r1).
         selectors[19] = RewardAggregatorFacet.getDayUserSideCaps.selector;
         selectors[20] =
             RewardAggregatorFacet.getMirrorRemitFundedRecycledPaid.selector;
+        selectors[21] = RewardAggregatorFacet.quoteBroadcastGlobal.selector;
         // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
         // legacy four-word rollout shim): pin both signatures explicitly.
         selectors[0] = bytes4(

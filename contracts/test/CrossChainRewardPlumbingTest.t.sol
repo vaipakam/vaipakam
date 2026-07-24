@@ -663,6 +663,39 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(messenger.lastBroadcastValue(), 0.2 ether);
     }
 
+    /// @dev B2-b (Codex #1417 r1) — the facet-level quote prices the SAME
+    ///      per-destination V2 payloads the send will dispatch (the mock
+    ///      prices per lane, the legacy quote flat — so the 2x value proves
+    ///      which messenger path ran), and falls back to the legacy quote
+    ///      on a pre-B2-b messenger exactly like the send does.
+    function testQuoteBroadcastGlobalPricesV2PayloadsWithLegacyFallback()
+        public
+    {
+        _configureCanonical();
+        uint256[] memory dests = new uint256[](2);
+        dests[0] = CHAIN_ARB;
+        dests[1] = CHAIN_OP;
+        messenger.setBroadcastDestinations(dests);
+        messenger.setQuoteNative(0.05 ether);
+        messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
+        messenger.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
+        messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
+        _agg().finalizeDay(1);
+
+        assertEq(
+            _agg().quoteBroadcastGlobal(1),
+            0.1 ether,
+            "V2 quote: one lane per destination"
+        );
+
+        messenger.setV2Unsupported(true);
+        assertEq(
+            _agg().quoteBroadcastGlobal(1),
+            0.05 ether,
+            "pre-B2-b messenger: legacy flat quote"
+        );
+    }
+
     /// @dev B2-b — a REASONED messenger revert must bubble, never trip the
     ///      legacy fallback (only the missing-selector empty revert may).
     function testBroadcastReasonedRevertBubblesWithoutFallback() public {

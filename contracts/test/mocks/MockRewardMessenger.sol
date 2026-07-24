@@ -191,9 +191,18 @@ contract MockRewardMessenger is IRewardMessenger {
 
     function quoteBroadcastDayV2(
         IRewardMessenger.BroadcastV2Shared calldata,
-        IRewardMessenger.BroadcastV2PerDest[] calldata
+        IRewardMessenger.BroadcastV2PerDest[] calldata dests
     ) external view override returns (uint256) {
-        return quoteNative;
+        if (v2Unsupported) {
+            // Missing-selector analog for the quote path too.
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        // Per-destination pricing (one lane per entry) — deliberately
+        // DIFFERENT from the flat legacy quote so a facet-level quote test
+        // can discriminate which messenger path priced it.
+        return quoteNative * dests.length;
     }
 
     function getBroadcastDestinations()

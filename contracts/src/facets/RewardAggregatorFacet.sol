@@ -814,22 +814,71 @@ contract RewardAggregatorFacet is
         );
     }
 
-    /// @dev B2-b — build + send the kind-5 per-destination broadcast: the
+    /// @notice B2-b (Codex #1417 r1) — quote the fee the PERMISSIONLESS
+    ///         {broadcastGlobal} trigger will actually pay: assembles the
+    ///         SAME per-destination V2 payloads as the send and quotes them
+    ///         through the messenger, falling back to the legacy quote when
+    ///         the messenger predates V2 (empty revert = missing selector)
+    ///         — the exact mirror of the send-side shim, so the unchanged
+    ///         public entry point stays quotable across the rollout window.
+    function quoteBroadcastGlobal(uint256 dayId)
+        external
+        view
+        returns (uint256 nativeFee)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(
+            s, dayId, IRewardMessenger(messenger).getBroadcastDestinations()
+        );
+        try IRewardMessenger(messenger).quoteBroadcastDayV2(shared, perDest)
+        returns (uint256 f) {
+            return f;
+        } catch (bytes memory reason) {
+            if (reason.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+        }
+        // Pre-B2-b messenger: the send path will fall back to the legacy
+        // kind-2 broadcast, so quote that shape.
+        return IRewardMessenger(messenger).quoteBroadcastGlobal(
+            dayId,
+            s.dailyGlobalLenderInterestNumeraire18[dayId],
+            s.dailyGlobalBorrowerInterestNumeraire18[dayId]
+        );
+    }
+
+    /// @dev B2-b — assemble the kind-5 per-destination broadcast: the
     ///      day-shared consensus fields once, each destination's OWN funded
     ///      figures from its finalize-time stamp. A destination the mesh
     ///      resolver skipped (unarmed day / no coupled target) gets the
     ///      global fresh floor halves and zeroed recycled fields — exactly
-    ///      what the remit sizing assumes for it.
-    function _broadcastDayV2(
+    ///      what the remit sizing assumes for it. Shared by the send AND
+    ///      the facet-level quote so the two can never price different
+    ///      payloads (Codex #1417 r1).
+    function _assembleDayV2(
         LibVaipakam.Storage storage s,
         uint256 dayId,
-        address messenger,
         uint256[] memory dests
-    ) private {
+    )
+        private
+        view
+        returns (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        )
+    {
         uint256 armedFrom = s.governorCommitArmedFromDay;
         bool armed = armedFrom != 0 && dayId >= armedFrom;
-        IRewardMessenger.BroadcastV2Shared memory shared = IRewardMessenger
-            .BroadcastV2Shared({
+        shared = IRewardMessenger.BroadcastV2Shared({
             dayId: dayId,
             globalLenderNumeraire18: s.dailyGlobalLenderInterestNumeraire18[
                 dayId
@@ -851,12 +900,24 @@ contract RewardAggregatorFacet is
         });
 
         uint256 n = dests.length;
-        IRewardMessenger.BroadcastV2PerDest[] memory perDest =
-            new IRewardMessenger.BroadcastV2PerDest[](n);
+        perDest = new IRewardMessenger.BroadcastV2PerDest[](n);
         uint256 floorHalf = uint256(s.dayPoolStamp[dayId].scheduleFloor) / 2;
         for (uint256 i; i < n; ++i) {
             perDest[i] = _perDestFields(s, dayId, dests[i], floorHalf);
         }
+    }
+
+    /// @dev B2-b — build + send the kind-5 per-destination broadcast.
+    function _broadcastDayV2(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        address messenger,
+        uint256[] memory dests
+    ) private {
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(s, dayId, dests);
 
         try IRewardMessenger(messenger).broadcastDayV2{value: msg.value}(
             shared, perDest, payable(msg.sender)
