@@ -2177,12 +2177,16 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](6);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
+        // #1222 M3 B2-d1 — mirror commitment-report surface.
+        s[3] = RewardCommitmentFacet.submitCommitmentBatch.selector;
+        s[4] = RewardCommitmentFacet.sendCommitmentReport.selector;
+        s[5] = RewardCommitmentFacet.isDayCommitmentReady.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer
@@ -2490,7 +2494,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         s[17] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
         s[18] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
@@ -2526,6 +2530,8 @@ contract DeployDiamond is Script {
         s[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
         // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
         s[15] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
+        // #1222 M3 B2-d1 — mirror→Base commitment-report ingress (Base side).
+        s[21] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {

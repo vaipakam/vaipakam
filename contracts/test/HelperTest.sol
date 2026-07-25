@@ -1902,7 +1902,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         selectors[17] =
             RewardAggregatorFacet.getChainDayRecycledFunding.selector;
@@ -1939,6 +1939,8 @@ contract HelperTest {
         selectors[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
         // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
         selectors[15] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
+        // #1222 M3 B2-d1 — mirror→Base commitment-report ingress (Base side).
+        selectors[21] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
         return selectors;
     }
 
@@ -1971,7 +1973,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](6);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -1979,6 +1981,10 @@ contract HelperTest {
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete
             .selector;
+        // #1222 M3 B2-d1 — mirror commitment-report surface.
+        selectors[3] = RewardCommitmentFacet.submitCommitmentBatch.selector;
+        selectors[4] = RewardCommitmentFacet.sendCommitmentReport.selector;
+        selectors[5] = RewardCommitmentFacet.isDayCommitmentReady.selector;
         return selectors;
     }
 
