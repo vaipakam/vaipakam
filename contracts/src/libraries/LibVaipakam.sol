@@ -5549,6 +5549,27 @@ library LibVaipakam {
         //   operator reconciliation. Dormant until B2-d supplies the report.
         mapping(uint256 => mapping(uint32 => ChainDayCommitments))
             chainDayCommitments;
+        // ─── #1222 M3 B2-d1 — mirror-side commitment-report accumulation ─────
+        // APPEND-ONLY TAIL. A mirror computes its day-D per-side claimable
+        // liability by accumulating keeper-fed, mirror-VERIFIED per-user batches
+        // (the keeper cannot inflate — the mirror recomputes each user's rawPay
+        // from its own reward entries), then reports one compact per-side total
+        // to Base. Keyed `(dayId, side)`:
+        //   `commitmentLiabilityAccum18`     Σ min(rawPay_user, C_side − paid) — the liability.
+        //   `commitmentConservationAccum18`  Σ uncapped rawPay_user — the completeness proof:
+        //                                    a side is COMPLETE iff this equals the chain's own
+        //                                    day-`d` interest demand `_uncappedDelta(side,d)/1e18 ×
+        //                                    totalSideInterestNumeraire18[d]` (no maintained
+        //                                    active-unit count needed — a missing user understates
+        //                                    the sum and fails the check; delays, never zeroes).
+        //   `commitmentUserCursor`           last user accumulated (uint160 address), STRICTLY
+        //                                    INCREASING across batches ⇒ no double-count.
+        // `commitmentReportSent[dayId]` marks the report dispatched to Base (whole-day idempotency,
+        // both sides). Mirror-only; Base never writes these.
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentLiabilityAccum18;
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentConservationAccum18;
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentUserCursor;
+        mapping(uint256 => bool) commitmentReportSent;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -5602,6 +5623,16 @@ library LibVaipakam {
     struct ChainDayCommitments {
         bool complete;
         bool remitIneligible;
+        // ─── #1222 M3 B2-d1 — reported per-side day-D claimable liability ────
+        // APPEND-ONLY (struct-in-mapping tail widening is layout-safe). The
+        // mirror's commitment REPORT sets these alongside `complete`: the
+        // per-side aggregate `Σ_units min(rawPay_unit, cap_unit − paid)` of the
+        // day's residual claimable liability (VPFI 1e18) — per-loan headroom on
+        // Base, the D1 `(user,side,day)` residual on an (unstamped) mirror. The
+        // B2-d2 ShareOfPool remittance clamp bounds each day's remitted slice by
+        // `min(uncappedSlice, liability − remitted − pending)`. 0 until reported.
+        uint256 liabilityLender18;
+        uint256 liabilityBorrower18;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

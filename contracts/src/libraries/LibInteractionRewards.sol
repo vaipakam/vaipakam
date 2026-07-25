@@ -887,6 +887,48 @@ library LibInteractionRewards {
         return (halfPoolForDay(d), 0, false);
     }
 
+    /// @notice #1222 M3 B2-d1 — the day-`d` per-side RPN delta Δ_d computed
+    ///         HALT-INDEPENDENTLY from this chain's OWN funding stamp, for the
+    ///         mirror→Base commitment REPORT.
+    /// @dev    The report is a READ-ONLY liability estimate that must work
+    ///         while mirror armed-day CLAIM pricing is still halted (the
+    ///         line-879 `isMirrorRewardChain` halt in {_dayPoolHalves}, removed
+    ///         only in B2-d4 once consumption is backed). It therefore reads
+    ///         the stamp DIRECTLY and NEVER touches the halted cumulative
+    ///         cursor (`cumRpn18`, advanced by {advanceCumLenderThrough} which
+    ///         breaks on that same halt). The per-day math MIRRORS
+    ///         {advanceCumLenderThrough} exactly — stamp halves → per-side
+    ///         daily (floored) → summed — so the commitment's `rawPay`
+    ///         (`perDayNumeraire18 × Δ_d / 1e18`) equals what the claim path
+    ///         will pay once B2-d4 lifts the halt. Keep the two in lockstep:
+    ///         any change to the 883-925 halves/daily math must land here too.
+    ///         `priceable == false` ⇒ the day is unarmed or this chain's stamp
+    ///         has not arrived yet (broadcast pending) — the report must wait.
+    function dailyDeltaForCommitment(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) internal view returns (uint256 delta, bool priceable) {
+        if (!_isArmedDay(s, d)) return (0, false);
+        LibVaipakam.ChainDayFunding storage f =
+            s.chainDayRecycledFunding[d][uint32(block.chainid)];
+        if (!f.stamped) return (0, false);
+        uint256 global = side == LibVaipakam.RewardSide.Lender
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        // Priceable but a zero global-interest day yields a zero pool ⇒ Δ_d = 0
+        // (the same zero-denominator convention advanceCum uses).
+        if (global == 0) return (0, true);
+        (uint256 freshHalf, uint256 recycledHalf) =
+            side == LibVaipakam.RewardSide.Lender
+                ? (f.freshLenderHalf, f.lenderHalfEquiv)
+                : (f.freshBorrowerHalf, f.borrowerHalfEquiv);
+        uint256 freshDaily = freshHalf == 0 ? 0 : (freshHalf * 1e18) / global;
+        uint256 recycledDaily =
+            recycledHalf == 0 ? 0 : (recycledHalf * 1e18) / global;
+        return (freshDaily + recycledDaily, true);
+    }
+
     function advanceCumLenderThrough(uint256 through)
         internal
         returns (uint256 reached)
