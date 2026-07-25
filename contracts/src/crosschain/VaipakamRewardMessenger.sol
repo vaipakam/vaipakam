@@ -942,9 +942,8 @@ contract VaipakamRewardMessenger is
         }
 
         // The first word is always the `uint8 kind` tag — the smallest
-        // common shape across all four message types. Dispatch on it
-        // first, then per-shape decode with the canonical decode
-        // tuple for that type.
+        // common shape across all message types. Dispatch on it, then
+        // per-shape decode with the canonical decode tuple for that type.
         uint8 msgType = abi.decode(payload[:32], (uint8));
 
         if (msgType == MSG_TYPE_REPORT) {

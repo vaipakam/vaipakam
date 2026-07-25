@@ -69,6 +69,11 @@ contract GovernorDayPoolTest is SetupTest {
     function _finalize(uint256 dayId) internal {
         messenger.deliverChainReport(CHAIN_BASE, dayId, 10e18, 5e18);
         messenger.deliverChainReport(CHAIN_ARB, dayId, 20e18, 10e18);
+        // #1222 M3 B2-c — on an armed day, finalization additionally requires
+        // the mirror's commitments to be complete. The commitment report is
+        // deferred to B2-d, so set the gate flag directly (inert on unarmed
+        // days).
+        _mut().setChainDayCommitmentCompleteRaw(dayId, CHAIN_ARB, true);
         _agg().finalizeDay(dayId);
     }
 
@@ -320,6 +325,9 @@ contract GovernorDayPoolTest is SetupTest {
         messenger.deliverChainReportRecycled(
             CHAIN_ARB, dayId, 20e18, 10e18, arbCumulative, arbForDay
         );
+        // #1222 M3 B2-c — satisfy the armed-day commitment-completeness gate
+        // for the mirror (report deferred to B2-d; set the flag directly).
+        _mut().setChainDayCommitmentCompleteRaw(dayId, CHAIN_ARB, true);
         _agg().finalizeDay(dayId);
     }
 

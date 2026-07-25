@@ -105,6 +105,8 @@ export interface DeploymentFacets {
   receiverFacet?: HexAddress;
   repayPeriodicFacet?: HexAddress;
   rewardRemittanceFacet?: HexAddress;
+  /** #1222 M3 B2-c — commitment-gate plumbing (reconcile + gate views). */
+  rewardCommitmentFacet?: HexAddress;
   riskAccessFacet?: HexAddress;
   /** #1104 — RiskPreviewFacet split off RiskAccessFacet (preview cluster). */
   riskPreviewFacet?: HexAddress;

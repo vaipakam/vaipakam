@@ -650,6 +650,25 @@
   },
   {
     "type": "event",
+    "name": "CommitmentRemitIneligible",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "DailyGlobalInterestFinalized",
     "inputs": [
       {
