@@ -3,6 +3,8 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {LibCommitmentReport} from "../libraries/LibCommitmentReport.sol";
+import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -38,6 +40,101 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 indexed dayId,
         uint32 indexed chainId
     );
+
+    /// @notice #1222 M3 B2-d1 — this mirror dispatched its day-`D` commitment
+    ///         report (per-side claimable-liability aggregate) to Base.
+    /// @custom:event-category informational/reward-governor
+    event CommitmentReported(
+        uint256 indexed dayId,
+        bytes32 indexed messageId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    );
+
+    // ─── Mirror-side commitment REPORT (B2-d1) ───────────────────────────────
+
+    /// @notice Accumulate one keeper-fed batch of per-user commitment units for
+    ///         `(dayId, side)` — the mirror recomputes each unit's contribution
+    ///         from its OWN storage, so the keeper cannot inflate the reported
+    ///         liability.
+    /// @dev MIRROR-only. Permissionless (the mirror verifies everything); the
+    ///      keeper drives it. `side` is 0 (Lender) / 1 (Borrower). `users` MUST
+    ///      be strictly ascending by address, each with its full day-`dayId`
+    ///      entry set. Completeness is proven by demand conservation, so a
+    ///      partial submission simply leaves the day incomplete (delays, never
+    ///      zeroes). See {LibCommitmentReport}.
+    function submitCommitmentBatch(
+        uint256 dayId,
+        uint8 side,
+        address[] calldata users,
+        uint256[][] calldata entryIds
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        // Enum bounds-check reverts a side outside {0,1}.
+        LibCommitmentReport.accumulateBatch(
+            s, dayId, LibVaipakam.RewardSide(side), users, entryIds
+        );
+    }
+
+    /// @notice Dispatch this mirror's day-`D` commitment report to Base once
+    ///         both sides are complete, lighting the Base finalization gate.
+    /// @dev MIRROR-only, payable (covers the CCIP fee — quote via
+    ///      {IRewardMessenger.quoteSendCommitmentReport}). Whole-day idempotent
+    ///      (`commitmentReportSent`). CEI: the sent flag is set before the
+    ///      external dispatch, so a failed send rolls back and stays retryable.
+    function sendCommitmentReport(
+        uint256 dayId
+    ) external payable returns (bytes32 messageId) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        if (s.commitmentReportSent[dayId]) {
+            revert CommitmentReportAlreadySent(dayId);
+        }
+        if (!LibCommitmentReport.isDayComplete(s, dayId)) {
+            revert CommitmentDayNotComplete(dayId);
+        }
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        if (s.baseChainId == 0) revert BaseChainIdNotSet();
+
+        uint256 liabilityLender18 = LibCommitmentReport.sideLiability(
+            s, dayId, LibVaipakam.RewardSide.Lender
+        );
+        uint256 liabilityBorrower18 = LibCommitmentReport.sideLiability(
+            s, dayId, LibVaipakam.RewardSide.Borrower
+        );
+
+        s.commitmentReportSent[dayId] = true;
+
+        messageId = IRewardMessenger(messenger).sendCommitmentReport{
+            value: msg.value
+        }(dayId, liabilityLender18, liabilityBorrower18, payable(msg.sender));
+
+        emit CommitmentReported(
+            dayId, messageId, liabilityLender18, liabilityBorrower18
+        );
+    }
+
+    /// @notice True iff `dayId`'s per-side commitments are complete and the
+    ///         report has not yet been dispatched — the keeper's send trigger.
+    function isDayCommitmentReady(
+        uint256 dayId
+    ) external view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return
+            !s.commitmentReportSent[dayId] &&
+            LibCommitmentReport.isDayComplete(s, dayId);
+    }
+
+    /// @dev The commitment REPORT surface is mirror-only: a mirror computes its
+    ///      OWN day-`D` liability and ships it to Base. Reverts on the canonical
+    ///      (Base) chain and on a single-chain deploy (no `baseChainId`).
+    function _assertMirror(LibVaipakam.Storage storage s) private view {
+        if (!LibVaipakam.isMirrorRewardChain(s)) {
+            revert CommitmentReportOnlyMirror();
+        }
+    }
 
     /**
      * @notice Clear a chain's `remitIneligible` flag for `dayId` after an

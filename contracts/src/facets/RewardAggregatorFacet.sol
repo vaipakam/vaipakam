@@ -139,6 +139,17 @@ contract RewardAggregatorFacet is
         uint32 indexed chainId
     );
 
+    /// @notice #1222 M3 B2-d1 — a mirror's day-`D` commitment report was
+    ///         accepted: its per-side claimable-liability aggregate is stored
+    ///         and the finalization gate for `(dayId, chainId)` is now complete.
+    /// @custom:event-category informational/reward-governor
+    event CommitmentReportAccepted(
+        uint256 indexed dayId,
+        uint32 indexed chainId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    );
+
     /// @notice Emitted when ops mutate the Base-side expected-source list.
     /// @custom:event-category informational/config
     event ExpectedSourceChainIdsUpdated(uint32[] chainIds);
@@ -237,6 +248,41 @@ contract RewardAggregatorFacet is
     ) external onlyRewardMessenger onlyCanonical {
         _ingestChainReport(
             sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0
+        );
+    }
+
+    /// @notice #1222 M3 B2-d1 — accept a mirror's day-`D` commitment REPORT
+    ///         (its per-side claimable-liability aggregate) and light the B2-c
+    ///         finalization GATE for `(dayId, sourceChainId)`.
+    /// @dev Messenger-authenticated + canonical-only, mirroring
+    ///      {onChainReportReceived}. Sets `chainDayCommitments[..].complete` so
+    ///      an armed full-coverage finalize may fast-close, and stores the
+    ///      per-side liabilities the B2-d2 remittance clamp reads. Idempotent on
+    ///      CCIP re-delivery (the mirror sends once — `commitmentReportSent`);
+    ///      a first-time report for an already-finalized day is REJECTED (the
+    ///      gate is moot once the day closed via grace/force — the operator
+    ///      reconciles that mirror's remittance instead).
+    function onCommitmentReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    ) external onlyRewardMessenger onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!_isExpectedChainId(s, sourceChainId)) {
+            revert SourceChainIdNotExpected();
+        }
+        LibVaipakam.ChainDayCommitments storage c =
+            s.chainDayCommitments[dayId][sourceChainId];
+        // Idempotent: a re-delivered copy of an already-accepted report no-ops
+        // (never reverts — a benign CCIP re-execution must not fail).
+        if (c.complete) return;
+        if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
+        c.complete = true;
+        c.liabilityLender18 = liabilityLender18;
+        c.liabilityBorrower18 = liabilityBorrower18;
+        emit CommitmentReportAccepted(
+            dayId, sourceChainId, liabilityLender18, liabilityBorrower18
         );
     }
 
