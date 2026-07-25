@@ -730,6 +730,19 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().governorCommitArmedFromDay = dayId;
     }
 
+    /// @notice #1222 M3 B2-c test-only — set a `(day, chain)` commitment-gate
+    ///         `complete` flag directly. Production populates it via the B2-d
+    ///         mirror→Base commitment report (deferred out of B2-c), so this
+    ///         lets the finalization-readiness gate be exercised now.
+    function setChainDayCommitmentCompleteRaw(
+        uint256 dayId,
+        uint32 chainId,
+        bool complete
+    ) external {
+        LibVaipakam.storageSlot()
+            .chainDayCommitments[dayId][chainId].complete = complete;
+    }
+
     /// @notice #1353 (M2 PR-5c) test-only — stamp a loan's fee-entitlement
     ///         record directly, so a loan-side reward-cap test can seed a known
     ///         `loanSideRewardCapOpen` / `openDays` without driving a full Full

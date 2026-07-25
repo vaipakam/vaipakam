@@ -75,6 +75,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -86,7 +87,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](132);
+        selectors = new bytes4[](133);
+        selectors[132] =
+            TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.
@@ -1957,6 +1960,25 @@ contract HelperTest {
         selectors[9] = RewardRemittanceFacet.getRewardRemittanceReceiver.selector;
         selectors[10] = RewardRemittanceFacet.getRewardBudgetReceivedTotal.selector;
         selectors[11] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        return selectors;
+    }
+
+    /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
+    ///      Mirrors `DeployDiamond._getRewardCommitmentSelectors` (keep in
+    ///      sync — SelectorCoverageTest asserts the two lists match).
+    function getRewardCommitmentFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = RewardCommitmentFacet
+            .reconcileCommitmentRemitEligibility
+            .selector;
+        selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
+        selectors[2] = RewardCommitmentFacet
+            .isChainDayCommitmentsComplete
+            .selector;
         return selectors;
     }
 

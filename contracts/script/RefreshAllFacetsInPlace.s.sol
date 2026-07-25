@@ -76,6 +76,7 @@ import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
@@ -149,7 +150,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 68;
+    uint256 internal constant EXPECTED_FACETS = 69;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -497,6 +498,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "feeEntitlementFacet",
             address(new FeeEntitlementFacet()),
             _getFeeEntitlementFacetSelectors()
+        );
+        // #1222 M3 B2-c — commitment-GATE plumbing. NEW facet: an in-place
+        // refresh MUST cut it alongside the aggregator + remittance facets, or
+        // an armed grace/force finalize sets `remitIneligible` on the live
+        // Diamond with no routed `reconcileCommitmentRemitEligibility` selector
+        // to clear it, stranding that chain-day's remittance (Codex #1422 r3).
+        items[68] = Item(
+            "rewardCommitmentFacet",
+            address(new RewardCommitmentFacet()),
+            _getRewardCommitmentSelectors()
         );
         // #1132 (S10 central enforcement) — terminal-transition register host.
     }

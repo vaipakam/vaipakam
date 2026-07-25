@@ -149,6 +149,7 @@ FACETS=(
   "RewardReporterFacet"
   "RewardAggregatorFacet"
   "RewardRemittanceFacet"
+  "RewardCommitmentFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"
   "RiskSplitLiquidationFacet"

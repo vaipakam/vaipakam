@@ -75,6 +75,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
@@ -246,6 +247,7 @@ contract DeployDiamond is Script {
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
         RewardRemittanceFacet rewardRemittanceFacet = new RewardRemittanceFacet();
+        RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
         ConfigFacet configFacet = new ConfigFacet();
         // #394 (Codex #647) — numeraire / PAD / periodic-interest config
         // carved off `ConfigFacet` to keep it under EIP-170. Sibling
@@ -276,7 +278,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](68);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](69);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -505,6 +507,11 @@ contract DeployDiamond is Script {
             _getRiskAccessFacetSelectors()
         );
         cuts[61] = _buildCut(address(rewardRemittanceFacet), _getRewardRemittanceSelectors());
+        // #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
+        cuts[68] = _buildCut(
+            address(rewardCommitmentFacet),
+            _getRewardCommitmentSelectors()
+        );
         // #1104 — RiskPreviewFacet: the read-only preview cluster + the two
         // cross-facet gate asserts split off `RiskAccessFacet` (cuts[60]) so both
         // facets keep EIP-170 header room. Shares the same `LibRiskAccess` gate
@@ -848,6 +855,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("rewardRemittanceFacet",   address(rewardRemittanceFacet));
+        Deployments.writeFacet("rewardCommitmentFacet",   address(rewardCommitmentFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
         // so addresses.json (explorer verification / upgrade scripts / audits) can
@@ -2161,6 +2169,20 @@ contract DeployDiamond is Script {
         s[9] = RewardReporterFacet.getKnownGlobalInterestNumeraire18.selector;
         // Single-field getter for the protocol-console knob registry.
         s[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
+    }
+
+    /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
+    function _getRewardCommitmentSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](3);
+        s[0] = RewardCommitmentFacet
+            .reconcileCommitmentRemitEligibility
+            .selector;
+        s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
+        s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

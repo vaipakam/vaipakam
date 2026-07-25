@@ -241,7 +241,16 @@ contract RewardRemittanceFacet is
             if (!s.dailyGlobalFinalized[dayId]) {
                 revert RewardDayNotFinalized(dayId);
             }
-            if (s.rewardBudgetRemitted[dstChainId][dayId] == 0) {
+            // #1222 M3 B2-c — never remit a (chain, day) a force-finalize
+            // marked remit-ineligible-pending-reconciliation: its ShareOfPool
+            // budget must not be sized from a partial/absent commitment set
+            // until an operator reconciles + clears the flag
+            // (`RewardCommitmentFacet.reconcileCommitmentRemitEligibility`).
+            // The flag is armed-day-only, so this is inert pre-cutover.
+            if (
+                s.rewardBudgetRemitted[dstChainId][dayId] == 0
+                    && !s.chainDayCommitments[dayId][dstChainId].remitIneligible
+            ) {
                 (uint256 sliceFresh, uint256 sliceRecycled) =
                     LibInteractionRewards.chainRewardBudgetSplitForDay(
                         s,
@@ -445,7 +454,10 @@ contract RewardRemittanceFacet is
             if (
                 !seen &&
                 s.dailyGlobalFinalized[dayId] &&
-                s.rewardBudgetRemitted[dstChainId][dayId] == 0
+                s.rewardBudgetRemitted[dstChainId][dayId] == 0 &&
+                // #1222 M3 B2-c — match the send path: a remit-ineligible
+                // (chain, day) contributes 0 to the quote.
+                !s.chainDayCommitments[dayId][dstChainId].remitIneligible
             ) {
                 uint256 slice = LibInteractionRewards.chainRewardBudgetForDay(
                     s,
@@ -513,7 +525,10 @@ contract RewardRemittanceFacet is
                     ++j;
                 }
             }
-            if (!seen && s.rewardBudgetRemitted[dstChainId][dayId] == 0) {
+            if (
+                !seen && s.rewardBudgetRemitted[dstChainId][dayId] == 0
+                    && !s.chainDayCommitments[dayId][dstChainId].remitIneligible
+            ) {
                 (uint256 sliceFresh, uint256 sliceRecycled) =
                     LibInteractionRewards.chainRewardBudgetSplitForDay(
                         s,

@@ -123,6 +123,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
     function _finalize(uint256 dayId) internal {
         messenger.deliverChainReport(CHAIN_BASE, dayId, 10e18, 5e18);
         messenger.deliverChainReport(CHAIN_ARB, dayId, 20e18, 10e18);
+        // #1222 M3 B2-c — armed-day finalization additionally requires the
+        // mirror's commitments to be complete (report deferred to B2-d; set
+        // the gate flag directly; inert unarmed).
+        _mut().setChainDayCommitmentCompleteRaw(dayId, CHAIN_ARB, true);
         _agg().finalizeDay(dayId);
     }
 

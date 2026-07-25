@@ -49,7 +49,7 @@ abstract contract DiamondFacetNames {
     ///      60 → 61 in #1104 with `RiskPreviewFacet` (the read-only preview
     ///      cluster + the two cross-facet gate asserts split off
     ///      `RiskAccessFacet` for EIP-170 header room).)
-    function cutFacetNames() internal pure returns (string[68] memory) {
+    function cutFacetNames() internal pure returns (string[69] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -122,6 +122,7 @@ abstract contract DiamondFacetNames {
             "RewardAggregatorFacet",
             "RewardReporterFacet",
             "RewardRemittanceFacet",
+            "RewardCommitmentFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

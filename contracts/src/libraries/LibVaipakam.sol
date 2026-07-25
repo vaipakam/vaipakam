@@ -5538,6 +5538,17 @@ library LibVaipakam {
         //   broadcast verbatim (mirrors never recompute — config drift).
         mapping(uint256 => uint256) dayUserSideCapLenderVpfi18;
         mapping(uint256 => uint256) dayUserSideCapBorrowerVpfi18;
+        // ─── #1222 M3 B2-c — mirror→Base per-loan headroom commitments ──────
+        // APPEND-ONLY TAIL.
+        //
+        // #1222 M3 B2-c — Base-side commitment-GATE state per (day, chain):
+        //   `complete` (populated by the B2-d mirror→Base report) gates armed
+        //   full-coverage finalization; `remitIneligible` (set by a
+        //   force-finalize that closed an armed day without a mirror's complete
+        //   commitments) blocks that chain's ShareOfPool remittance until
+        //   operator reconciliation. Dormant until B2-d supplies the report.
+        mapping(uint256 => mapping(uint32 => ChainDayCommitments))
+            chainDayCommitments;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -5570,6 +5581,27 @@ library LibVaipakam {
         bool stamped;
         uint256 freshLenderHalf;
         uint256 freshBorrowerHalf;
+    }
+
+    /// @notice #1222 M3 B2-c — the Base-side commitment-GATE state for one
+    ///         `(day, chain)`: does the canonical chain consider this mirror's
+    ///         reward-headroom commitments COMPLETE for the day, and is its
+    ///         ShareOfPool remittance blocked pending reconciliation.
+    /// @dev B2-c ships the finalization-readiness GATE, the remit-ineligible
+    ///      flag, and operator reconciliation as DORMANT plumbing (like B2-a's
+    ///      records-only projection): nothing SETS `complete` in this slice —
+    ///      the mirror→Base commitment REPORT that populates it (and the
+    ///      per-loan / D1-derived headroom it carries) lands in **B2-d**, where
+    ///      it is designed once alongside the coupled mirror consumption +
+    ///      remitted clamp. Until then `complete` stays false, so on an armed
+    ///      day the fast full-coverage close waits (mirror never ready) and a
+    ///      force-finalize marks every included mirror `remitIneligible` — a
+    ///      fail-safe. Inert on a single-chain deployment (no mirrors) and on
+    ///      every unarmed day. `remitIneligible` is cleared only by operator
+    ///      reconciliation (`RewardCommitmentFacet.reconcileCommitmentRemitEligibility`).
+    struct ChainDayCommitments {
+        bool complete;
+        bool remitIneligible;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
