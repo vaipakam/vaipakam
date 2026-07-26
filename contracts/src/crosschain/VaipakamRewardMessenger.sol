@@ -218,10 +218,11 @@ contract VaipakamRewardMessenger is
     ///         there is no dual-length decode to keep.
     uint256 internal constant COMMITMENT_REPORT_PAYLOAD_SIZE = 4 * 32;
     /// @notice #1222 M3 B2-d2 — remit ack `abi.encode(uint8 kind, remitId,
-    ///         amountReceived, srcSender)` = FOUR words (r3: `srcSender`
-    ///         echoes the authenticated Base-side sender the mirror's
-    ///         receipt recorded, so the canonical ingress accepts only acks
-    ///         that name ITSELF — remit ids are per-deployment). Shares its
+    ///         amountReceived, remitter)` = FOUR words (r3/r4: `remitter`
+    ///         echoes the sending deployment's identity the mirror's
+    ///         receipt recorded from the remit PAYLOAD, so the canonical
+    ///         ingress accepts only acks that name ITSELF — remit ids are
+    ///         per-deployment). Shares its
     ///         byte length with {REPORT_PAYLOAD_SIZE_LEGACY} /
     ///         {COMMITMENT_REPORT_PAYLOAD_SIZE}; disambiguation is the kind
     ///         tag, never the length (the standing rule). Canonical-gated on
@@ -623,7 +624,7 @@ contract VaipakamRewardMessenger is
     function sendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
-        address srcSender,
+        address remitter,
         address payable refundAddress
     )
         external
@@ -640,7 +641,7 @@ contract VaipakamRewardMessenger is
             MSG_TYPE_REMIT_ACK,
             remitId,
             amountReceived,
-            srcSender
+            remitter
         );
         messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
 
@@ -651,14 +652,14 @@ contract VaipakamRewardMessenger is
     function quoteSendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
-        address srcSender
+        address remitter
     ) external view returns (uint256 nativeFee) {
         if (baseChainId == 0) revert BaseChainNotConfigured();
         bytes memory payload = abi.encode(
             MSG_TYPE_REMIT_ACK,
             remitId,
             amountReceived,
-            srcSender
+            remitter
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
@@ -1339,14 +1340,14 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            (, uint256 remitId, uint256 amountReceived, address srcSender) =
+            (, uint256 remitId, uint256 amountReceived, address remitter) =
                 abi.decode(payload, (uint8, uint256, uint256, address));
             emit RemitAckReceived(sourceChainId, remitId, amountReceived);
             IRewardRemitAckIngress(diamond).onRemitAckReceived(
                 SafeCast.toUint32(sourceChainId),
                 remitId,
                 amountReceived,
-                srcSender
+                remitter
             );
         } else {
             revert UnknownMessageType(msgType);

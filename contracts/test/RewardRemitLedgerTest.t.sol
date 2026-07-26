@@ -251,13 +251,26 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(uint256(r.status), 3, "released");
         assertEq(remit.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "day re-opened");
         assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "close cleared");
-        assertEq(remit.getRewardBudgetRemittedGlobal(), 0, "global restored");
-        assertEq(remit.getRewardBudgetRemittedTotal(CHAIN_ARB), 0, "chain restored");
+        // Codex r4 — the fresh counters stay RESERVED (the sent tokens are
+        // physically outside Diamond custody; re-opening 69M headroom would
+        // let the re-remit draw commingled custody as "fresh").
+        assertEq(remit.getRewardBudgetRemittedGlobal(), total, "global reserved");
+        assertEq(
+            remit.getRewardBudgetRemittedTotal(CHAIN_ARB),
+            total,
+            "chain cumulative kept"
+        );
         assertEq(remit.getRemitPendingTotal(CHAIN_ARB), 0, "pending cleared");
 
-        // The re-opened day funds again under a NEW reservation.
+        // The re-opened day funds again under a NEW reservation, consuming
+        // NEW fresh headroom (two real outflows happened).
         uint256 total2 = _remitDay1ToArb();
         assertEq(total2, total, "same slice re-funds");
+        assertEq(
+            remit.getRewardBudgetRemittedGlobal(),
+            total * 2,
+            "re-remit consumes new headroom"
+        );
         assertEq(remit.getRemitReservationNonce(), 2, "second reservation");
         assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 2, "closed by 2");
 
@@ -524,23 +537,24 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E)
         );
-        LibVaipakam.ReceivedRemit memory rec = remit.getReceivedRemit(42);
+        LibVaipakam.ReceivedRemit memory rec =
+            remit.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
         assertEq(rec.amount, 7e18, "amount");
         assertGt(rec.receivedAt, 0, "stamped");
 
-        uint256 fee = remit.quoteRemitAckFee(42);
-        remit.sendRemitAck{value: fee}(42, payable(address(this)));
+        uint256 fee = remit.quoteRemitAckFee(42, address(0xBA5E));
+        remit.sendRemitAck{value: fee}(42, address(0xBA5E), payable(address(this)));
         assertEq(rewardMessenger.lastAckRemitId(), 42, "echoed id");
         assertEq(rewardMessenger.lastAckAmount(), 7e18, "mirror-computed amount");
         assertEq(
-            rewardMessenger.lastAckSrcSender(),
+            rewardMessenger.lastAckRemitter(),
             address(0xBA5E),
-            "echoes the receipt's authenticated sender"
+            "echoes the receipt's payload-recorded remitter"
         );
 
         // Re-sendable: the lost-ack retry lever.
-        remit.sendRemitAck{value: fee}(42, payable(address(this)));
+        remit.sendRemitAck{value: fee}(42, address(0xBA5E), payable(address(this)));
         assertEq(rewardMessenger.ackSendCount(), 2, "re-sent");
     }
 
@@ -549,14 +563,20 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E)
         );
-        assertEq(remit.getReceivedRemit(0).receivedAt, 0, "no receipt for 0");
+        assertEq(
+            remit.getReceivedRemit(address(0xBA5E), 0).receivedAt,
+            0,
+            "no receipt for 0"
+        );
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ReceivedRemitNotFound.selector,
                 0
             )
         );
-        remit.sendRemitAck{value: 0.001 ether}(0, payable(address(this)));
+        remit.sendRemitAck{value: 0.001 ether}(
+            0, address(0xBA5E), payable(address(this))
+        );
     }
 
     /// @dev Codex r2 — a receipt is bound to the Base deployment that sent
@@ -577,7 +597,9 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_BASE
             )
         );
-        remit.sendRemitAck{value: 0.001 ether}(42, payable(address(this)));
+        remit.sendRemitAck{value: 0.001 ether}(
+            42, address(0xBA5E), payable(address(this))
+        );
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.ReceivedRemitStale.selector,
@@ -585,7 +607,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_BASE
             )
         );
-        remit.quoteRemitAckFee(42);
+        remit.quoteRemitAckFee(42, address(0xBA5E));
     }
 
     /// @dev Codex r3 — an ack naming a sender other than THIS deployment is
@@ -606,28 +628,47 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(uint256(remit.getRemitReservation(1).status), 1, "still pending");
     }
 
-    /// @dev Codex r3 — a delivery from a DIFFERENT canonical deployment
-    ///      supersedes a stale-era receipt with the same remitId (liveness:
-    ///      first-write-wins would permanently block the new reservation's
-    ///      ack after a same-numbered collision across a rotation).
-    function test_MirrorIngress_RotatedDeploymentSupersedesStaleReceipt() public {
+    /// @dev Codex r3/r4 — receipts key by (remitter, remitId): different
+    ///      canonical deployments' same-numbered receipts CO-EXIST under
+    ///      distinct keys (no collision, no supersession ordering, no
+    ///      delayed-delivery overwrite), and each ack routes independently
+    ///      with its own recorded remitter.
+    function test_MirrorIngress_DeploymentReceiptsCoexist() public {
         _configureMirror();
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D)
         );
-        assertEq(remit.getReceivedRemit(42).amount, 7e18, "old-era receipt");
-        // Same remitId from the ROTATED deployment (new authenticated peer).
         remit.onRewardBudgetReceived(
             address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF)
         );
-        LibVaipakam.ReceivedRemit memory rec = remit.getReceivedRemit(42);
-        assertEq(rec.amount, 9e18, "superseded by the new deployment");
-        assertEq(rec.srcSender, address(0x2EF), "new sender recorded");
-        // Same-sender re-delivery stays first-write-wins.
+        assertEq(
+            remit.getReceivedRemit(address(0x01D), 42).amount,
+            7e18,
+            "old-era receipt intact"
+        );
+        assertEq(
+            remit.getReceivedRemit(address(0x2EF), 42).amount,
+            9e18,
+            "new-era receipt co-exists"
+        );
+        // Per-key first-write-wins (a delayed duplicate cannot overwrite).
         remit.onRewardBudgetReceived(
             address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF)
         );
-        assertEq(remit.getReceivedRemit(42).amount, 9e18, "first-wins per sender");
+        assertEq(
+            remit.getReceivedRemit(address(0x2EF), 42).amount,
+            9e18,
+            "first-wins per key"
+        );
+        // Each receipt's ack echoes ITS remitter.
+        remit.sendRemitAck{value: 0.001 ether}(
+            42, address(0x01D), payable(address(this))
+        );
+        assertEq(rewardMessenger.lastAckRemitter(), address(0x01D), "old echo");
+        remit.sendRemitAck{value: 0.001 ether}(
+            42, address(0x2EF), payable(address(this))
+        );
+        assertEq(rewardMessenger.lastAckRemitter(), address(0x2EF), "new echo");
     }
 
     /// @dev Codex r2 — a released recycled-bearing day must NOT re-remit
@@ -673,7 +714,9 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_SendRemitAck_MirrorOnly() public {
         // Canonical config from setUp.
         vm.expectRevert(IVaipakamErrors.OnlyMirrorRewardChain.selector);
-        remit.sendRemitAck{value: 0.001 ether}(1, payable(address(this)));
+        remit.sendRemitAck{value: 0.001 ether}(
+            1, address(0xBA5E), payable(address(this))
+        );
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

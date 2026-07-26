@@ -40,7 +40,7 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     }
 
     uint256 public lastRemitId;
-    address public lastSourceSender;
+    address public lastRemitter;
 
     function onRewardBudgetReceived(
         address token,
@@ -48,14 +48,14 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         uint256[] calldata dayIds,
         uint256 sourceChainId,
         uint256 remitId,
-        address sourceSender
+        address remitter
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
         lastSourceChainId = sourceChainId;
         lastDayCount = dayIds.length;
         lastRemitId = remitId;
-        lastSourceSender = sourceSender;
+        lastRemitter = remitter;
         callCount++;
     }
 }
@@ -139,25 +139,27 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastRemitId(), 0, "legacy payload yields remitId 0");
     }
 
-    /// @dev #1222 M3 B2-d2 — the widened 3-tuple payload is discriminated
+    /// @dev #1222 M3 B2-d2 — the widened 4-tuple payload is discriminated
     ///      from the legacy shape by the leading ABI head word (`dayIds`
-    ///      offset 0x60 vs 0x40) and carries the delivered-backing echo id
-    ///      through to the Diamond ingress.
-    function test_Deliver_WidenedPayloadCarriesRemitId() public {
+    ///      offset 0x80 vs 0x40) and carries the delivered-backing echo id
+    ///      PLUS the sending deployment's identity (r4 — immutable message
+    ///      data, never the adapter's config-derived sourceSender) through
+    ///      to the Diamond ingress.
+    function test_Deliver_WidenedPayloadCarriesRemitIdAndRemitter() public {
         vpfi.mint(address(receiver), 500e18);
         messenger.relay(
             receiver,
             SRC_BASE,
             address(0xBA5E),
-            abi.encode(_days(1, 2), uint256(500e18), uint256(77)),
+            abi.encode(
+                _days(1, 2), uint256(500e18), uint256(77), address(0xD1A)
+            ),
             _tokens(address(vpfi), 500e18)
         );
         assertEq(diamond.callCount(), 1, "ingress called");
         assertEq(diamond.lastAmount(), 500e18, "credited amount");
         assertEq(diamond.lastRemitId(), 77, "echo remitId surfaced");
-        // r3 — the authenticated Base-side sender rides through to the
-        // ingress so receipts bind to the DEPLOYMENT, not just the chain.
-        assertEq(diamond.lastSourceSender(), address(0xBA5E), "sender forwarded");
+        assertEq(diamond.lastRemitter(), address(0xD1A), "payload remitter");
     }
 
     // ── auth / validation reverts ────────────────────────────────────────────

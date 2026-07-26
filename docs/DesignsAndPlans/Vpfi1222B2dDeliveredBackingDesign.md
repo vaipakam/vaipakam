@@ -409,14 +409,25 @@ keeps the messageId binding §M3 requires without touching the recipient seam.
 > per-deployment, so after an owner base-chain rotation the ack path rejects
 > a stale receipt (recorded source ≠ configured base) instead of routing it
 > to the new base, where an authenticated ack could finalize an unrelated
-> same-numbered reservation. **Codex r3 hardens this to full
-> deployment-binding** (a same-chain redeploy passes the chain-id check):
-> the receipt records the messenger-authenticated `sourceSender` (the
-> configured channel peer = the canonical Diamond of that era), the ack
-> echoes it on the wire (kind-7 grows to 4 words), and the Base ingress
-> accepts only acks that name ITSELF; a delivery from a different
-> (rotated) deployment SUPERSEDES a stale same-numbered receipt so the new
-> reservation's ack is never blocked (liveness).
+> same-numbered reservation. **Codex r3 hardened this to sender-binding;
+> Codex r4 showed the adapter's `sourceSender` is delivery-time CONFIG**
+> (`channelPeerOf` at receive), so a delayed pre-rotation packet delivered
+> after the peer update would be misattributed to the new deployment — and
+> any symmetric supersession rule inherits an unsolvable ordering problem.
+> **Final shape (r4): the deployment identity travels IN the remit
+> payload** — Base embeds `address(this)` (immutable message data,
+> transitively authenticated by the messenger allowlist + channel-sender
+> auth); receipts key by `(remitter, remitId)` so different deployments'
+> same-numbered receipts CO-EXIST (no collision, no supersession, no
+> ordering); the kind-7 ack echoes the recorded remitter (4 words) and the
+> Base ingress accepts only acks that name ITSELF. The keeper passes the
+> Base diamond it scans as the receipt key, and its D1 ack-scan state is
+> likewise namespaced by (chain, diamond) so a redeploy starts a fresh
+> scan namespace. Release semantics tightened in the same round: ALL value
+> counters (69M fresh headroom included) stay reserved on release — the
+> tokens are outside Diamond custody, and re-opening fresh headroom would
+> let a re-remit draw commingled custody as "fresh" — restored only by the
+> d5-class physical-recovery ceremony.
 
 The ack is authenticated by the same messenger peer the reports use
 (`msg.sender == messenger` + `CcipMessenger` `remoteMessengerOf`/`channelPeerOf`)

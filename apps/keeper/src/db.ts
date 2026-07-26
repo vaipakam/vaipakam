@@ -466,13 +466,14 @@ export async function markCommitmentDayResolved(
 export async function getRemitAckScanState(
   db: D1Database,
   baseChainId: number,
+  diamond: string,
 ): Promise<{ frontier: number; scanCursor: number }> {
   const row = await db
     .prepare(
       `SELECT next_remit_id, scan_cursor FROM keeper_remit_ack_frontier
-       WHERE base_chain_id = ?1`,
+       WHERE base_chain_id = ?1 AND diamond = ?2`,
     )
-    .bind(baseChainId)
+    .bind(baseChainId, diamond.toLowerCase())
     .first<{ next_remit_id: number; scan_cursor: number }>();
   return {
     frontier: row?.next_remit_id ?? 1,
@@ -484,20 +485,27 @@ export async function getRemitAckScanState(
 export async function putRemitAckScanState(
   db: D1Database,
   baseChainId: number,
+  diamond: string,
   nextRemitId: number,
   scanCursor: number,
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO keeper_remit_ack_frontier
-         (base_chain_id, next_remit_id, scan_cursor, updated_at)
-       VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT(base_chain_id) DO UPDATE SET
+         (base_chain_id, diamond, next_remit_id, scan_cursor, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(base_chain_id, diamond) DO UPDATE SET
          next_remit_id = excluded.next_remit_id,
          scan_cursor = excluded.scan_cursor,
          updated_at = excluded.updated_at`,
     )
-    .bind(baseChainId, nextRemitId, scanCursor, Math.floor(Date.now() / 1000))
+    .bind(
+      baseChainId,
+      diamond.toLowerCase(),
+      nextRemitId,
+      scanCursor,
+      Math.floor(Date.now() / 1000),
+    )
     .run();
 }
 
@@ -505,6 +513,7 @@ export async function putRemitAckScanState(
 export async function getRemitAckAttempts(
   db: D1Database,
   baseChainId: number,
+  diamond: string,
   remitIds: number[],
 ): Promise<Map<number, { attempts: number; lastAttemptAt: number }>> {
   const out = new Map<number, { attempts: number; lastAttemptAt: number }>();
@@ -513,9 +522,9 @@ export async function getRemitAckAttempts(
   const rows = await db
     .prepare(
       `SELECT remit_id, attempts, last_attempt_at FROM keeper_remit_ack
-       WHERE base_chain_id = ? AND remit_id IN (${placeholders})`,
+       WHERE base_chain_id = ? AND diamond = ? AND remit_id IN (${placeholders})`,
     )
-    .bind(baseChainId, ...remitIds)
+    .bind(baseChainId, diamond.toLowerCase(), ...remitIds)
     .all<{ remit_id: number; attempts: number; last_attempt_at: number | null }>();
   for (const r of rows.results ?? []) {
     out.set(r.remit_id, {
@@ -530,19 +539,26 @@ export async function getRemitAckAttempts(
 export async function recordRemitAckAttempt(
   db: D1Database,
   baseChainId: number,
+  diamond: string,
   remitId: number,
   mirrorChainId: number,
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO keeper_remit_ack
-         (base_chain_id, remit_id, mirror_chain_id, attempts, last_attempt_at)
-       VALUES (?1, ?2, ?3, 1, ?4)
-       ON CONFLICT(base_chain_id, remit_id) DO UPDATE SET
+         (base_chain_id, diamond, remit_id, mirror_chain_id, attempts, last_attempt_at)
+       VALUES (?1, ?2, ?3, ?4, 1, ?5)
+       ON CONFLICT(base_chain_id, diamond, remit_id) DO UPDATE SET
          attempts = keeper_remit_ack.attempts + 1,
          last_attempt_at = excluded.last_attempt_at`,
     )
-    .bind(baseChainId, remitId, mirrorChainId, Math.floor(Date.now() / 1000))
+    .bind(
+      baseChainId,
+      diamond.toLowerCase(),
+      remitId,
+      mirrorChainId,
+      Math.floor(Date.now() / 1000),
+    )
     .run();
 }
 
@@ -550,14 +566,16 @@ export async function recordRemitAckAttempt(
 export async function markRemitAcked(
   db: D1Database,
   baseChainId: number,
+  diamond: string,
   remitId: number,
 ): Promise<void> {
   await db
     .prepare(
-      `UPDATE keeper_remit_ack SET acked_at = ?3
-       WHERE base_chain_id = ?1 AND remit_id = ?2 AND acked_at IS NULL`,
+      `UPDATE keeper_remit_ack SET acked_at = ?4
+       WHERE base_chain_id = ?1 AND diamond = ?2 AND remit_id = ?3
+         AND acked_at IS NULL`,
     )
-    .bind(baseChainId, remitId, Math.floor(Date.now() / 1000))
+    .bind(baseChainId, diamond.toLowerCase(), remitId, Math.floor(Date.now() / 1000))
     .run();
 }
 

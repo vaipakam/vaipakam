@@ -142,11 +142,13 @@ contract RewardRemittanceFacet is
 
     /// @notice #1222 M3 B2-d2 — an ADMIN released a reservation the operator
     ///         verified can never execute: its days re-opened for funding and
-    ///         the emission counters + outstanding commitments were restored.
-    ///         `recycledStranded` is the recycled share whose tokens sit
-    ///         locked in the CCIP token pool — the bucket is deliberately NOT
-    ///         re-credited (out of Diamond custody); physical recovery rides
-    ///         the B2-d5 custody-credit class.
+    ///         the outstanding commitments were restored. The VALUE counters
+    ///         stay reserved (r4): the sent VPFI — fresh and recycled alike —
+    ///         sits locked in the CCIP token pool outside Diamond custody, so
+    ///         neither the 69M headroom nor the bucket is re-credited (a
+    ///         re-remit consumes NEW headroom/backing; physical recovery
+    ///         restores both through the B2-d5 governance ceremony).
+    ///         `recycledStranded` is the stranded recycled share.
     /// @custom:event-category informational/reward-transport
     event RemitReservationReleased(
         uint256 indexed remitId,
@@ -511,7 +513,12 @@ contract RewardRemittanceFacet is
     ) private returns (bytes32 messageId) {
         IERC20(vpfi).forceApprove(messenger, total);
 
-        bytes memory payload = abi.encode(fundedDays, total, remitId);
+        // r4 — the payload carries THIS deployment's identity (immutable
+        // message data): receipts key by (remitter, remitId) and the ack
+        // echoes it, so a rotated deployment's same-numbered remit can
+        // never be confused with this one.
+        bytes memory payload =
+            abi.encode(fundedDays, total, remitId, address(this));
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] =
@@ -668,7 +675,7 @@ contract RewardRemittanceFacet is
         uint256[] calldata dayIds,
         uint256 sourceChainId,
         uint256 remitId,
-        address sourceSender
+        address remitter
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
@@ -678,23 +685,31 @@ contract RewardRemittanceFacet is
             revert RewardBudgetTokenMismatch(s.vpfiToken, token);
         }
         s.rewardBudgetReceivedTotal += amount;
-        if (remitId != 0) {
-            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitId];
-            // First delivery wins the slot — EXCEPT when an authenticated
-            // delivery arrives from a DIFFERENT canonical deployment (Codex
-            // #1426 r3): remit ids are per-deployment, so after a base
-            // rotation the new deployment's same-numbered delivery
-            // supersedes the stale-era receipt (deliveries are messenger-
-            // authenticated, so the overwrite is safe; without it the new
-            // reservation's ack would be permanently blocked).
-            if (rec.receivedAt == 0 || rec.srcSender != sourceSender) {
+        // r4 — receipts key by (remitter, remitId): `remitter` comes from
+        // the remit PAYLOAD (immutable, messenger-authenticated message
+        // data — never delivery-time channel config), so different
+        // canonical deployments' same-numbered receipts CO-EXIST under
+        // distinct keys — no collision, no supersession ordering. Plain
+        // first-write-wins per key (CCIP executes a message once).
+        if (remitId != 0 && remitter != address(0)) {
+            bytes32 key = _receiptKey(remitter, remitId);
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[key];
+            if (rec.receivedAt == 0) {
                 rec.srcChainId = SafeCast.toUint32(sourceChainId);
                 rec.receivedAt = uint64(block.timestamp);
                 rec.amount = amount;
-                rec.srcSender = sourceSender;
+                rec.remitter = remitter;
             }
         }
         emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId);
+    }
+
+    /// @dev r4 — composite receipt key: remit ids are per-deployment.
+    function _receiptKey(
+        address remitter,
+        uint256 remitId
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(remitter, remitId));
     }
 
     // ─── #1222 M3 B2-d2 — mirror-side remit ack ───────────────────────────
@@ -712,6 +727,7 @@ contract RewardRemittanceFacet is
      */
     function sendRemitAck(
         uint256 remitId,
+        address remitter,
         address payable refundAddress
     )
         external
@@ -726,7 +742,8 @@ contract RewardRemittanceFacet is
         }
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
-        LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitId];
+        LibVaipakam.ReceivedRemit storage rec =
+            s.receivedRemits[_receiptKey(remitter, remitId)];
         if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
         // Codex #1426 r2 — a receipt is bound to the Base DEPLOYMENT that
         // sent it: remit ids are per-deployment, so after an owner
@@ -737,30 +754,32 @@ contract RewardRemittanceFacet is
         if (rec.srcChainId != s.baseChainId) {
             revert ReceivedRemitStale(remitId, rec.srcChainId);
         }
-        // r3 — echo the receipt's authenticated sender so the canonical
-        // ingress can verify the ack names ITSELF (remit ids are
-        // per-deployment; see {LibVaipakam.ReceivedRemit.srcSender}).
+        // r3/r4 — echo the receipt's PAYLOAD-recorded remitter so the
+        // canonical ingress can verify the ack names ITSELF (remit ids are
+        // per-deployment; see {LibVaipakam.ReceivedRemit.remitter}).
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
-            remitId, rec.amount, rec.srcSender, refundAddress
+            remitId, rec.amount, rec.remitter, refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
     }
 
     /// @notice Quote the CCIP native fee a {sendRemitAck} for `remitId` costs.
     function quoteRemitAckFee(
-        uint256 remitId
+        uint256 remitId,
+        address remitter
     ) external view returns (uint256 fee) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
-        LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitId];
+        LibVaipakam.ReceivedRemit storage rec =
+            s.receivedRemits[_receiptKey(remitter, remitId)];
         if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
         // Codex #1426 r2 — mirror the send's stale-receipt rejection.
         if (rec.srcChainId != s.baseChainId) {
             revert ReceivedRemitStale(remitId, rec.srcChainId);
         }
         fee = IRewardMessenger(messenger).quoteSendRemitAck(
-            remitId, rec.amount, rec.srcSender
+            remitId, rec.amount, rec.remitter
         );
     }
 
@@ -784,7 +803,7 @@ contract RewardRemittanceFacet is
         uint32 sourceChainId,
         uint256 remitId,
         uint256 amountReceived,
-        address srcSender
+        address remitter
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
@@ -792,13 +811,15 @@ contract RewardRemittanceFacet is
             revert NotAuthorizedRewardMessenger();
         }
         if (!s.isCanonicalRewardChain) revert NotCanonicalRewardChain();
-        // Codex #1426 r3 — the ack must name THIS deployment: the echoed
-        // sender is the authenticated channel peer the mirror's receipt was
-        // recorded under, and remit ids restart per deployment — a stale-era
-        // receipt (pre-rotation, possibly same chain id) must never finalize
-        // a same-numbered reservation here.
-        if (srcSender != address(this)) {
-            revert RemitAckSenderMismatch(remitId, srcSender);
+        // Codex #1426 r3/r4 — the ack must name THIS deployment: the echo
+        // is the remit PAYLOAD's embedded sender identity (immutable,
+        // messenger-authenticated message data recorded on the mirror's
+        // receipt — never delivery-time channel config), and remit ids
+        // restart per deployment, so a stale-era receipt (pre-rotation,
+        // possibly same chain id) can never finalize a same-numbered
+        // reservation here.
+        if (remitter != address(this)) {
+            revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.status == 2) return;
@@ -833,7 +854,8 @@ contract RewardRemittanceFacet is
     /**
      * @notice ADMIN valve — release a PENDING reservation the operator has
      *         verified can NEVER execute: re-opens its days for funding and
-     *         restores the emission counters + outstanding commitments.
+     *         restores the outstanding commitments (the VALUE counters stay
+     *         reserved — see the event doc).
      * @dev    LAST-RESORT + evidenced: CCIP failed messages stay manually
      *         re-executable indefinitely, so the normal recovery is
      *         re-execution → delivery → ack, with the reservation simply
@@ -865,10 +887,14 @@ contract RewardRemittanceFacet is
                 ++i;
             }
         }
-        uint256 g = s.rewardBudgetRemittedGlobal;
-        s.rewardBudgetRemittedGlobal = g > r.fresh ? g - r.fresh : 0;
-        uint256 t = s.rewardBudgetRemittedTotal[dst];
-        s.rewardBudgetRemittedTotal[dst] = t > r.total ? t - r.total : 0;
+        // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
+        // like the recycled bucket: the sent VPFI is physically outside
+        // Diamond custody (locked in the CCIP pool), so re-opening 69M
+        // headroom here would let the re-remit's transfer draw commingled
+        // custody (bucket tokens, LIF holds) as "fresh". The re-remit
+        // consumes NEW headroom (two real outflows happened); physical
+        // recovery restores the counters through the same governance
+        // ceremony that re-credits the bucket (B2-d5 class).
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
         LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
@@ -1097,9 +1123,12 @@ contract RewardRemittanceFacet is
     /// @notice Mirror-side receipt record for `remitId` (`receivedAt` 0 =
     ///         never delivered here).
     function getReceivedRemit(
+        address remitter,
         uint256 remitId
     ) external view returns (LibVaipakam.ReceivedRemit memory) {
-        return LibVaipakam.storageSlot().receivedRemits[remitId];
+        return LibVaipakam.storageSlot().receivedRemits[
+            _receiptKey(remitter, remitId)
+        ];
     }
 
     // ─── Views ────────────────────────────────────────────────────────────
@@ -1266,7 +1295,9 @@ contract RewardRemittanceFacet is
             // B2-d2 — price the WIDENED 3-tuple the send builds; the fee
             // depends on payload length, so the placeholder id (the next
             // nonce the send would draw) keeps the quote exact.
-            abi.encode(fundedDays, total, s.remitReservationNonce + 1),
+            abi.encode(
+                fundedDays, total, s.remitReservationNonce + 1, address(this)
+            ),
             tokens,
             REWARD_BUDGET_DEST_GAS_LIMIT
         );

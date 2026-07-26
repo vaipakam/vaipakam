@@ -43,12 +43,18 @@ the still-set remit-ineligible flag as its evidence, draws fresh under the
 lifetime emission cap, and reserves + acknowledges through the same ledger
 as any remittance.
 
-Receipts are bound to the canonical deployment itself (the mirror records
-the authenticated sender, the acknowledgement echoes it, and the canonical
-side accepts only acknowledgements naming itself), so even a same-chain
-canonical redeployment can never let stale-era receipts finalize the new
-deployment's reservations — while a delivery from the new deployment
-supersedes a stale same-numbered receipt so nothing is ever wedged.
+Receipts are bound to the canonical deployment itself: the sending
+deployment embeds its own identity in the remittance message (immutable,
+transport-authenticated data — never delivery-time configuration), the
+mirror keys each receipt by that identity plus the reservation number so
+different deployments' same-numbered receipts co-exist, and the
+acknowledgement echoes the recorded identity, accepted only when it names
+the receiving deployment itself. Even a same-chain canonical redeployment
+can therefore never let stale-era receipts finalize the new deployment's
+reservations, and nothing is ever wedged or overwritten by pre-rotation
+state. Releases keep every value counter reserved (the sent tokens sit in
+the transport's custody) — re-funding consumes new headroom and backing,
+and physical recovery restores the counters through governance.
 
 **Keeper + indexer.** A new keeper pass scans Base's dense reservation
 sequence (terminal-prefix frontier plus a rotating cursor, so one stuck

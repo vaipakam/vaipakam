@@ -5610,7 +5610,15 @@ library LibVaipakam {
         mapping(uint32 => uint256) remitAckedTotal;
         // Mirror-side receipt records, keyed by the echoed `remitId` (0 =
         //   legacy pre-d2 delivery — no receipt, no ack, no reservation).
-        mapping(uint256 => ReceivedRemit) receivedRemits;
+        // Keyed by keccak256(abi.encode(remitter, remitId)) — Codex #1426
+        //   r4: remit ids restart per canonical DEPLOYMENT and the mirror
+        //   cannot reconstruct deployment identity from local config, so the
+        //   identity travels IN the remit payload (Base embeds its own
+        //   address — immutable, messenger-authenticated message data) and
+        //   receipts from different deployments simply CO-EXIST under
+        //   distinct keys: no collision, no supersession ordering, and the
+        //   ack echoes the recorded remitter for Base's self-check.
+        mapping(bytes32 => ReceivedRemit) receivedRemits;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -5718,15 +5726,16 @@ library LibVaipakam {
         uint32 srcChainId;
         uint64 receivedAt;
         uint256 amount;
-        // Codex #1426 r3 — the authenticated Base-side sender (the CCIP
-        // channel peer at delivery time, i.e. the canonical Diamond). Remit
-        // ids are per-DEPLOYMENT, not per-chain: a same-chain canonical
-        // redeploy restarts the numbering, so the ack echoes this sender
-        // and Base accepts only acks that name ITSELF — a stale-era receipt
-        // can never finalize a same-numbered reservation on the new
-        // deployment, and a delivery from a rotated deployment supersedes
-        // the stale receipt (liveness).
-        address srcSender;
+        // Codex #1426 r3/r4 — the canonical Diamond that SENT the
+        // remittance, taken from the remit PAYLOAD (Base embeds its own
+        // address — immutable message data authenticated transitively by
+        // the messenger allowlist), never from delivery-time channel
+        // config. Remit ids restart per deployment, so the ack echoes this
+        // and Base accepts only acks that name ITSELF — a stale-era
+        // receipt can never finalize a same-numbered reservation on a
+        // rotated deployment (receipts key by (remitter, remitId), so
+        // different deployments' receipts co-exist).
+        address remitter;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

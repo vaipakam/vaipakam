@@ -207,13 +207,20 @@ async function remitToMirror(
   let planWindow: bigint[] = window;
   let perDay: readonly bigint[] = [];
   let closeable: readonly boolean[] = [];
-  for (let pass = 0; pass < 4; pass++) {
+  // Codex #1426 r4 — the arrays must always describe the FINAL planWindow:
+  // loop until a quote reports no oversized day (each filtering pass
+  // removes at least one, so this terminates in ≤ window-length passes;
+  // the cap only bounds pathological churn, and a capped exit still
+  // re-quotes so indices never misalign).
+  const MAX_REPLAN_PASSES = 8;
+  for (let pass = 0; ; pass++) {
     [perDay, closeable] = (await publicClient.readContract({
       address: diamond,
       abi: REMIT_ABI,
       functionName: 'quoteRemitDayPlans',
       args: [mirrorId, planWindow],
     })) as readonly [readonly bigint[], readonly boolean[]];
+    if (pass >= MAX_REPLAN_PASSES) break;
     const oversized: bigint[] = [];
     for (let i = 0; i < planWindow.length; i++) {
       if ((perDay[i] ?? 0n) > laneCap) {

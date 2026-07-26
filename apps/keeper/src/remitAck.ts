@@ -107,7 +107,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   })) as bigint;
   if (nonce === 0n) return;
 
-  const { frontier, scanCursor } = await getRemitAckScanState(env.DB, baseChainId);
+  const { frontier, scanCursor } = await getRemitAckScanState(env.DB, baseChainId, diamond);
   if (BigInt(frontier) > nonce) return;
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
   // it is ahead of the frontier — a stuck early Pending pins the frontier,
@@ -141,7 +141,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
       args: [id],
     })) as RemitReservationView;
     if (r.status === 2 || r.status === 3) {
-      if (r.status === 2) await markRemitAcked(env.DB, baseChainId, Number(id));
+      if (r.status === 2) await markRemitAcked(env.DB, baseChainId, diamond, Number(id));
       if (prefixUnbroken) contiguousTerminal = Number(id) + 1;
       continue;
     }
@@ -153,10 +153,10 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // status 0 past the frontier can only be the tail beyond the nonce —
     // the loop bound already excludes it.
   }
-  await putRemitAckScanState(env.DB, baseChainId, contiguousTerminal, Number(to));
+  await putRemitAckScanState(env.DB, baseChainId, diamond, contiguousTerminal, Number(to));
   if (pendingIds.length === 0) return;
 
-  const attempts = await getRemitAckAttempts(env.DB, baseChainId, pendingIds);
+  const attempts = await getRemitAckAttempts(env.DB, baseChainId, diamond, pendingIds);
   const now = Math.floor(Date.now() / 1000);
   let acksSent = 0;
 
@@ -175,9 +175,9 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
       continue;
     }
     try {
-      const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId);
+      const sent = await sendAckFromMirror(env, mirrorCfg, mirrorClients, remitId, diamond);
       if (sent) {
-        await recordRemitAckAttempt(env.DB, baseChainId, remitId, r.dstChainId);
+        await recordRemitAckAttempt(env.DB, baseChainId, diamond, remitId, r.dstChainId);
         acksSent++;
       }
     } catch (err) {
@@ -195,6 +195,9 @@ async function sendAckFromMirror(
   mirrorCfg: ChainConfig,
   clients: Map<number, PublicClient>,
   remitId: number,
+  // r4 — receipts key by (remitter, remitId); the remitter is the Base
+  // diamond whose reservation ledger this pass is scanning.
+  baseDiamond: Address,
 ): Promise<boolean> {
   let client = clients.get(mirrorCfg.id);
   if (!client) {
@@ -207,7 +210,7 @@ async function sendAckFromMirror(
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'getReceivedRemit',
-    args: [BigInt(remitId)],
+    args: [baseDiamond, BigInt(remitId)],
   })) as { srcChainId: number; receivedAt: bigint; amount: bigint };
   if (receipt.receivedAt === 0n) return false;
 
@@ -218,14 +221,14 @@ async function sendAckFromMirror(
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'quoteRemitAckFee',
-    args: [BigInt(remitId)],
+    args: [BigInt(remitId), baseDiamond],
   })) as bigint;
 
   const hash = await ctx.wallet.writeContract({
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'sendRemitAck',
-    args: [BigInt(remitId), ctx.wallet.account.address],
+    args: [BigInt(remitId), baseDiamond, ctx.wallet.account.address],
     value: fee,
     chain: undefined,
     account: ctx.wallet.account ?? null,

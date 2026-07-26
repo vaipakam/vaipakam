@@ -57,7 +57,7 @@ interface IRewardRemitAckIngress {
         uint32 sourceChainId,
         uint256 remitId,
         uint256 amountReceived,
-        address srcSender
+        address remitter
     ) external;
 }
 
@@ -225,16 +225,18 @@ interface IRewardMessenger {
     /// @param remitId        The Base-generated reservation id being acked.
     /// @param amountReceived The VPFI the mirror Diamond actually received.
     /// @param refundAddress  Address that receives leftover CCIP fee.
-    /// @param srcSender The authenticated Base-side sender recorded on the
-    ///                  mirror's receipt (Codex #1426 r3): echoed on the wire
-    ///                  so the canonical ingress accepts only acks that name
-    ///                  ITSELF — remit ids are per-deployment and a stale-era
-    ///                  receipt must never finalize a same-numbered
-    ///                  reservation on a rotated deployment.
+    /// @param remitter The sending DEPLOYMENT's identity recorded on the
+    ///                  mirror's receipt from the remit payload (Codex #1426
+    ///                  r3/r4 — immutable message data, never delivery-time
+    ///                  channel config): echoed on the wire so the canonical
+    ///                  ingress accepts only acks that name ITSELF — remit
+    ///                  ids are per-deployment and a stale-era receipt must
+    ///                  never finalize a same-numbered reservation on a
+    ///                  rotated deployment.
     function sendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
-        address srcSender,
+        address remitter,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
 
@@ -242,7 +244,7 @@ interface IRewardMessenger {
     function quoteSendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
-        address srcSender
+        address remitter
     ) external view returns (uint256 nativeFee);
 
     // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────

@@ -41,6 +41,11 @@
     "name": "getReceivedRemit",
     "inputs": [
       {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
@@ -68,7 +73,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "srcSender",
+            "name": "remitter",
             "type": "address",
             "internalType": "address"
           }
@@ -333,7 +338,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "srcSender",
+        "name": "remitter",
         "type": "address",
         "internalType": "address"
       }
@@ -371,7 +376,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "sourceSender",
+        "name": "remitter",
         "type": "address",
         "internalType": "address"
       }
@@ -387,6 +392,11 @@
         "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -564,6 +574,11 @@
         "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
       },
       {
         "name": "refundAddress",

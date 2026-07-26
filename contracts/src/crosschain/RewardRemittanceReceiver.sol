@@ -26,7 +26,7 @@ interface IRewardBudgetIngress {
         uint256[] calldata dayIds,
         uint256 sourceChainId,
         uint256 remitId,
-        address sourceSender
+        address remitter
     ) external;
 }
 
@@ -157,11 +157,12 @@ contract RewardRemittanceReceiver is
     /// @inheritdoc ICrossChainMessageRecipient
     function onCrossChainMessage(
         uint256 sourceChainId,
-        // The messenger-authenticated Base-side sender (the configured
-        // channel peer — the canonical Diamond). #1222 B2-d2 r3: forwarded
-        // to the ingress so the mirror's receipt is bound to the
-        // DEPLOYMENT that sent it, not just its chain id.
-        address sourceSender,
+        // Deliberately unused (#1426 r4): the adapter derives this from its
+        // delivery-time channel-peer CONFIG, so it cannot identify the
+        // sending DEPLOYMENT for a delayed pre-rotation packet. The
+        // deployment identity rides IN the payload instead (`remitter` —
+        // immutable message data), which is what the ingress binds to.
+        address /* sourceSender */,
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) external override whenNotPaused nonReentrant {
@@ -172,21 +173,26 @@ contract RewardRemittanceReceiver is
         // deliveries and governance replays MUST keep decoding, per the plan
         // §M3 backward-decodability rule):
         //   legacy: `abi.encode(uint256[] dayIds, uint256 total)`
-        //   d2:     `abi.encode(uint256[] dayIds, uint256 total, uint256 remitId)`
+        //   d2 r4:  `abi.encode(uint256[] dayIds, uint256 total,
+        //            uint256 remitId, address remitter)`
         // Discriminated by the leading ABI head word — the `dayIds` array
-        // offset, which is 0x40 (two head slots) for the legacy tuple and
-        // 0x60 (three head slots) for the widened one. Deterministic for
-        // these exact encodings; anything malformed still reverts in
-        // `abi.decode` below. A legacy delivery carries no `remitId` (0) —
-        // the Diamond records no receipt and no ack flows (Base holds no
-        // reservation for pre-d2 sends).
+        // offset: 0x40 (two head slots) for the legacy tuple, 0x80 (four)
+        // for the widened one. Deterministic for these exact encodings;
+        // anything malformed still reverts in `abi.decode` below. A legacy
+        // delivery carries no `remitId`/`remitter` — the Diamond records no
+        // receipt and no ack flows (Base holds no reservation for pre-d2
+        // sends). `remitter` is the sending deployment's own address,
+        // embedded at send — immutable message data, so unlike the
+        // adapter's config-derived sourceSender it identifies the
+        // DEPLOYMENT even for a delayed pre-rotation packet (#1426 r4).
         uint256[] memory dayIds;
         uint256 declaredTotal;
         uint256 remitId;
-        if (abi.decode(payload[:32], (uint256)) == 0x60) {
-            (dayIds, declaredTotal, remitId) = abi.decode(
+        address remitter;
+        if (abi.decode(payload[:32], (uint256)) == 0x80) {
+            (dayIds, declaredTotal, remitId, remitter) = abi.decode(
                 payload,
-                (uint256[], uint256, uint256)
+                (uint256[], uint256, uint256, address)
             );
         } else {
             (dayIds, declaredTotal) = abi.decode(payload, (uint256[], uint256));
@@ -223,7 +229,7 @@ contract RewardRemittanceReceiver is
             dayIds,
             sourceChainId,
             remitId,
-            sourceSender
+            remitter
         );
 
         emit RewardBudgetForwarded(
