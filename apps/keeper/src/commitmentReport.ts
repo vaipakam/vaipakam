@@ -175,7 +175,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
   // (day, this-chain) pairs the indexer persisted from Base's
   // CommitmentRemitEligibilityReconciled events, so an operator-reconciled
   // OLD day outside the bounded window still gets its (bookkeeping) report.
-  const reconciled = await getOpenReconciledDays(env.DB, chain.id);
+  const reconciled = await getOpenReconciledDays(env.DB, baseChainId, chain.id);
   const reconciledSet = new Set(reconciled);
   const dayList: bigint[] = [];
   for (let d = from; d < currentDay; d++) dayList.push(d);
@@ -202,7 +202,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
       // A reconciled rediscovery whose report is already dispatched is
       // terminal — retire the D1 row so the union stays bounded.
       if (reconciledSet.has(Number(d))) {
-        await markReconciledDayConsumed(env.DB, chain.id, Number(d));
+        await markReconciledDayConsumed(env.DB, baseChainId, chain.id, Number(d));
       }
       continue; // zero-RPC skip
     }
@@ -288,7 +288,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
       if (await isDayResolved(publicClient, diamond, d)) {
         await markCommitmentDayResolved(env.DB, chain.id, Number(d));
         if (reconciledSet.has(Number(d))) {
-          await markReconciledDayConsumed(env.DB, chain.id, Number(d));
+          await markReconciledDayConsumed(env.DB, baseChainId, chain.id, Number(d));
         }
       }
     } catch (err) {

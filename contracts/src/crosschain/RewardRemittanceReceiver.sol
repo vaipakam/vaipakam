@@ -25,7 +25,8 @@ interface IRewardBudgetIngress {
         uint256 amount,
         uint256[] calldata dayIds,
         uint256 sourceChainId,
-        uint256 remitId
+        uint256 remitId,
+        address sourceSender
     ) external;
 }
 
@@ -156,7 +157,11 @@ contract RewardRemittanceReceiver is
     /// @inheritdoc ICrossChainMessageRecipient
     function onCrossChainMessage(
         uint256 sourceChainId,
-        address /* sourceSender */,
+        // The messenger-authenticated Base-side sender (the configured
+        // channel peer — the canonical Diamond). #1222 B2-d2 r3: forwarded
+        // to the ingress so the mirror's receipt is bound to the
+        // DEPLOYMENT that sent it, not just its chain id.
+        address sourceSender,
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) external override whenNotPaused nonReentrant {
@@ -217,7 +222,8 @@ contract RewardRemittanceReceiver is
             actualReceived,
             dayIds,
             sourceChainId,
-            remitId
+            remitId,
+            sourceSender
         );
 
         emit RewardBudgetForwarded(

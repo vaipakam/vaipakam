@@ -218,15 +218,19 @@ contract MockRewardMessenger is IRewardMessenger {
         ackMessageId = id;
     }
 
+    address public lastAckSrcSender;
+
     function sendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
+        address srcSender,
         address payable refundAddress
     ) external payable override returns (bytes32 messageId) {
         require(msg.sender == diamond, "MockMessenger: only diamond");
         if (revertOnSend) revert("MockMessenger: send revert");
         lastAckRemitId = remitId;
         lastAckAmount = amountReceived;
+        lastAckSrcSender = srcSender;
         lastAckRefund = refundAddress;
         lastAckValue = msg.value;
         ackSendCount += 1;
@@ -235,20 +239,36 @@ contract MockRewardMessenger is IRewardMessenger {
 
     function quoteSendRemitAck(
         uint256,
-        uint256
+        uint256,
+        address
     ) external view override returns (uint256) {
         return quoteNative;
     }
 
     /// @notice Simulate a mirror's remit ack landing on the Base remit
-    ///         ingress (kind-7 CCIP delivery).
+    ///         ingress (kind-7 CCIP delivery). Echoes the DIAMOND as
+    ///         `srcSender` — the well-formed self-naming ack; use
+    ///         {deliverRemitAckFrom} to exercise the r3 sender check.
     function deliverRemitAck(
         uint32 sourceChainId,
         uint256 remitId,
         uint256 amountReceived
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived
+            sourceChainId, remitId, amountReceived, diamond
+        );
+    }
+
+    /// @notice r3 — deliver an ack echoing an arbitrary source sender (a
+    ///         stale-era receipt's ack after a canonical rotation).
+    function deliverRemitAckFrom(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived,
+        address srcSender
+    ) external {
+        IRewardRemitAckIngress(diamond).onRemitAckReceived(
+            sourceChainId, remitId, amountReceived, srcSender
         );
     }
 

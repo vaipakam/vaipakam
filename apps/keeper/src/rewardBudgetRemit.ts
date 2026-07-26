@@ -196,33 +196,52 @@ async function remitToMirror(
   // no VPFI but must still be submitted so it terminally closes and its
   // finalize-time commitments retire (an amount-only quote cannot
   // distinguish it from a gated/closed day).
-  const [perDay, closeable] = (await publicClient.readContract({
-    address: diamond,
-    abi: REMIT_ABI,
-    functionName: 'quoteRemitDayPlans',
-    args: [mirrorId, window],
-  })) as readonly [readonly bigint[], readonly boolean[]];
+  //
+  // Codex #1426 r2/r3 — the planner allocates the recycled-BACKING budget
+  // sequentially across the whole window, so a day this loop then drops
+  // for exceeding the lane cap has still consumed backing that a later day
+  // could have used; with an identical full-window plan every tick, that
+  // later day would stay non-closeable forever. Re-plan WITHOUT the
+  // dropped oversized days (bounded: each pass removes at least one day,
+  // and oversized days are rare operator-attention cases).
+  let planWindow: bigint[] = window;
+  let perDay: readonly bigint[] = [];
+  let closeable: readonly boolean[] = [];
+  for (let pass = 0; pass < 4; pass++) {
+    [perDay, closeable] = (await publicClient.readContract({
+      address: diamond,
+      abi: REMIT_ABI,
+      functionName: 'quoteRemitDayPlans',
+      args: [mirrorId, planWindow],
+    })) as readonly [readonly bigint[], readonly boolean[]];
+    const oversized: bigint[] = [];
+    for (let i = 0; i < planWindow.length; i++) {
+      if ((perDay[i] ?? 0n) > laneCap) {
+        console.warn(
+          `[keeper] rewardBudgetRemit day=${planWindow[i]} slice=${perDay[i]} > laneCap=${laneCap} mirror=${mirrorId} — raise the reward-budget CCIP lane capacity (#918); day excluded from planning`,
+        );
+        oversized.push(planWindow[i]);
+      }
+    }
+    if (oversized.length === 0) break;
+    const drop = new Set(oversized.map((d) => d.toString()));
+    planWindow = planWindow.filter((d) => !drop.has(d.toString()));
+    if (planWindow.length === 0) return;
+  }
 
   // Greedily batch the un-remitted days, keeping the total under the lane
   // cap. Close-only days (closeable, zero amount) ride along for free.
   const batch: bigint[] = [];
   let total = 0n;
-  for (let i = 0; i < window.length; i++) {
+  for (let i = 0; i < planWindow.length; i++) {
     const slice = perDay[i] ?? 0n;
     if (slice === 0n) {
-      if (closeable[i]) batch.push(window[i]);
+      if (closeable[i]) batch.push(planWindow[i]);
       continue;
     }
-    if (slice > laneCap) {
-      // A single day exceeds the lane bucket — remit sends a day atomically, so
-      // this day is unfundable until the operator raises the lane capacity (#918).
-      console.warn(
-        `[keeper] rewardBudgetRemit day=${window[i]} slice=${slice} > laneCap=${laneCap} mirror=${mirrorId} — raise the reward-budget CCIP lane capacity (#918); day skipped`,
-      );
-      continue;
-    }
+    if (slice > laneCap) continue; // appeared oversized on the final pass
     if (total + slice > laneCap) break; // fill the rest on a later tick
-    batch.push(window[i]);
+    batch.push(planWindow[i]);
     total += slice;
   }
   if (batch.length === 0) return;

@@ -56,7 +56,8 @@ interface IRewardRemitAckIngress {
     function onRemitAckReceived(
         uint32 sourceChainId,
         uint256 remitId,
-        uint256 amountReceived
+        uint256 amountReceived,
+        address srcSender
     ) external;
 }
 
@@ -224,16 +225,24 @@ interface IRewardMessenger {
     /// @param remitId        The Base-generated reservation id being acked.
     /// @param amountReceived The VPFI the mirror Diamond actually received.
     /// @param refundAddress  Address that receives leftover CCIP fee.
+    /// @param srcSender The authenticated Base-side sender recorded on the
+    ///                  mirror's receipt (Codex #1426 r3): echoed on the wire
+    ///                  so the canonical ingress accepts only acks that name
+    ///                  ITSELF — remit ids are per-deployment and a stale-era
+    ///                  receipt must never finalize a same-numbered
+    ///                  reservation on a rotated deployment.
     function sendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
+        address srcSender,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
 
     /// @notice Quote the native CCIP fee for a mirror→Base remit ack.
     function quoteSendRemitAck(
         uint256 remitId,
-        uint256 amountReceived
+        uint256 amountReceived,
+        address srcSender
     ) external view returns (uint256 nativeFee);
 
     // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────

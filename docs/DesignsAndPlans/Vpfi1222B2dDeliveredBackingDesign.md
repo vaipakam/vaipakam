@@ -409,7 +409,15 @@ keeps the messageId binding §M3 requires without touching the recipient seam.
 > per-deployment, so after an owner base-chain rotation the ack path rejects
 > a stale receipt (recorded source ≠ configured base) instead of routing it
 > to the new base, where an authenticated ack could finalize an unrelated
-> same-numbered reservation.
+> same-numbered reservation. **Codex r3 hardens this to full
+> deployment-binding** (a same-chain redeploy passes the chain-id check):
+> the receipt records the messenger-authenticated `sourceSender` (the
+> configured channel peer = the canonical Diamond of that era), the ack
+> echoes it on the wire (kind-7 grows to 4 words), and the Base ingress
+> accepts only acks that name ITSELF; a delivery from a different
+> (rotated) deployment SUPERSEDES a stale same-numbered receipt so the new
+> reservation's ack is never blocked (liveness).
+
 The ack is authenticated by the same messenger peer the reports use
 (`msg.sender == messenger` + `CcipMessenger` `remoteMessengerOf`/`channelPeerOf`)
 — no new auth primitive. The bounded operator reconciliation (finalize/release

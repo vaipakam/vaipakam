@@ -539,6 +539,13 @@ interface IVaipakamErrors {
     ///         operator valves.
     error ReceivedRemitStale(uint256 remitId, uint32 recordedSrcChainId);
 
+    /// @notice A remit ack's echoed source-sender is not THIS deployment:
+    ///         the receipt it was computed from belongs to a different
+    ///         (pre-rotation) canonical deployment whose remit numbering is
+    ///         unrelated — finalizing on it would mark a reservation
+    ///         delivered that never was.
+    error RemitAckSenderMismatch(uint256 remitId, address srcSender);
+
     /// @notice The manual-budget path requires the `(dayId, chainId)` still
     ///         marked remit-ineligible — the un-cleared flag is the on-chain
     ///         evidence the day was finalized with this chain ZEROED out of

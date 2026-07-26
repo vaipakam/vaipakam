@@ -40,19 +40,22 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     }
 
     uint256 public lastRemitId;
+    address public lastSourceSender;
 
     function onRewardBudgetReceived(
         address token,
         uint256 amount,
         uint256[] calldata dayIds,
         uint256 sourceChainId,
-        uint256 remitId
+        uint256 remitId,
+        address sourceSender
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
         lastSourceChainId = sourceChainId;
         lastDayCount = dayIds.length;
         lastRemitId = remitId;
+        lastSourceSender = sourceSender;
         callCount++;
     }
 }
@@ -152,6 +155,9 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.callCount(), 1, "ingress called");
         assertEq(diamond.lastAmount(), 500e18, "credited amount");
         assertEq(diamond.lastRemitId(), 77, "echo remitId surfaced");
+        // r3 — the authenticated Base-side sender rides through to the
+        // ingress so receipts bind to the DEPLOYMENT, not just the chain.
+        assertEq(diamond.lastSourceSender(), address(0xBA5E), "sender forwarded");
     }
 
     // ── auth / validation reverts ────────────────────────────────────────────

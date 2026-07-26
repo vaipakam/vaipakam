@@ -215,7 +215,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _remitDay1ToArb();
         vm.prank(stranger);
         vm.expectRevert(IVaipakamErrors.NotAuthorizedRewardMessenger.selector);
-        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18);
+        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond));
     }
 
     function test_ForceFinalize_AdminValve() public {
@@ -522,7 +522,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
 
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E)
         );
         LibVaipakam.ReceivedRemit memory rec = remit.getReceivedRemit(42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
@@ -533,6 +533,11 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.sendRemitAck{value: fee}(42, payable(address(this)));
         assertEq(rewardMessenger.lastAckRemitId(), 42, "echoed id");
         assertEq(rewardMessenger.lastAckAmount(), 7e18, "mirror-computed amount");
+        assertEq(
+            rewardMessenger.lastAckSrcSender(),
+            address(0xBA5E),
+            "echoes the receipt's authenticated sender"
+        );
 
         // Re-sendable: the lost-ack retry lever.
         remit.sendRemitAck{value: fee}(42, payable(address(this)));
@@ -542,7 +547,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_MirrorIngress_LegacyDeliveryHasNoReceipt() public {
         _configureMirror();
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E)
         );
         assertEq(remit.getReceivedRemit(0).receivedAt, 0, "no receipt for 0");
         vm.expectRevert(
@@ -561,7 +566,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_SendRemitAck_RejectsStaleReceiptAfterBaseRotation() public {
         _configureMirror();
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E)
         );
         // Owner rotates the canonical deployment.
         RewardReporterFacet(address(diamond)).setBaseChainId(999);
@@ -581,6 +586,48 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         remit.quoteRemitAckFee(42);
+    }
+
+    /// @dev Codex r3 — an ack naming a sender other than THIS deployment is
+    ///      rejected: remit ids are per-deployment, so a stale-era receipt
+    ///      (recorded under a pre-rotation canonical, possibly on the SAME
+    ///      chain id) must never finalize a same-numbered reservation here.
+    function test_Ack_RejectsForeignDeploymentSender() public {
+        _finalizeDay(1);
+        uint256 total = _remitDay1ToArb();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RemitAckSenderMismatch.selector,
+                1,
+                address(0x0DD)
+            )
+        );
+        rewardMessenger.deliverRemitAckFrom(CHAIN_ARB, 1, total, address(0x0DD));
+        assertEq(uint256(remit.getRemitReservation(1).status), 1, "still pending");
+    }
+
+    /// @dev Codex r3 — a delivery from a DIFFERENT canonical deployment
+    ///      supersedes a stale-era receipt with the same remitId (liveness:
+    ///      first-write-wins would permanently block the new reservation's
+    ///      ack after a same-numbered collision across a rotation).
+    function test_MirrorIngress_RotatedDeploymentSupersedesStaleReceipt() public {
+        _configureMirror();
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D)
+        );
+        assertEq(remit.getReceivedRemit(42).amount, 7e18, "old-era receipt");
+        // Same remitId from the ROTATED deployment (new authenticated peer).
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF)
+        );
+        LibVaipakam.ReceivedRemit memory rec = remit.getReceivedRemit(42);
+        assertEq(rec.amount, 9e18, "superseded by the new deployment");
+        assertEq(rec.srcSender, address(0x2EF), "new sender recorded");
+        // Same-sender re-delivery stays first-write-wins.
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF)
+        );
+        assertEq(remit.getReceivedRemit(42).amount, 9e18, "first-wins per sender");
     }
 
     /// @dev Codex r2 — a released recycled-bearing day must NOT re-remit

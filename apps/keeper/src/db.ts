@@ -561,17 +561,22 @@ export async function markRemitAcked(
     .run();
 }
 
-/** Open (un-consumed) reconciled day ids for a mirror chain (P7 union). */
+/** Open (un-consumed) reconciled day ids for a mirror chain (P7 union).
+ *  Codex #1426 r3 — scoped to the mirror's CURRENT base chain: the shared
+ *  D1 can hold rows from more than one canonical mesh (or a base
+ *  rotation), and a stale mesh's days must not drive reports toward the
+ *  current base. */
 export async function getOpenReconciledDays(
   db: D1Database,
+  baseChainId: number,
   mirrorChainId: number,
 ): Promise<number[]> {
   const rows = await db
     .prepare(
       `SELECT day_id FROM keeper_commitment_reconciled
-       WHERE mirror_chain_id = ?1 AND consumed_at IS NULL`,
+       WHERE base_chain_id = ?1 AND mirror_chain_id = ?2 AND consumed_at IS NULL`,
     )
-    .bind(mirrorChainId)
+    .bind(baseChainId, mirrorChainId)
     .all<{ day_id: number }>();
   return (rows.results ?? []).map((r) => r.day_id);
 }
@@ -579,14 +584,16 @@ export async function getOpenReconciledDays(
 /** Mark a reconciled (day, mirror) rediscovery consumed (report sent / terminal). */
 export async function markReconciledDayConsumed(
   db: D1Database,
+  baseChainId: number,
   mirrorChainId: number,
   dayId: number,
 ): Promise<void> {
   await db
     .prepare(
-      `UPDATE keeper_commitment_reconciled SET consumed_at = ?3
-       WHERE mirror_chain_id = ?1 AND day_id = ?2 AND consumed_at IS NULL`,
+      `UPDATE keeper_commitment_reconciled SET consumed_at = ?4
+       WHERE base_chain_id = ?1 AND mirror_chain_id = ?2 AND day_id = ?3
+         AND consumed_at IS NULL`,
     )
-    .bind(mirrorChainId, dayId, Math.floor(Date.now() / 1000))
+    .bind(baseChainId, mirrorChainId, dayId, Math.floor(Date.now() / 1000))
     .run();
 }

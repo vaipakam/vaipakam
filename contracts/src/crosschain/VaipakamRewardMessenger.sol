@@ -218,12 +218,16 @@ contract VaipakamRewardMessenger is
     ///         there is no dual-length decode to keep.
     uint256 internal constant COMMITMENT_REPORT_PAYLOAD_SIZE = 4 * 32;
     /// @notice #1222 M3 B2-d2 — remit ack `abi.encode(uint8 kind, remitId,
-    ///         amountReceived)` = THREE words. A byte length no other kind
-    ///         uses today, but disambiguation is still the kind tag, never
-    ///         the length (the standing rule the 4- and 8-word collisions
-    ///         above already pin). Canonical-gated on receive; kind-7 is new,
-    ///         so there is no legacy shape to dual-decode.
-    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 3 * 32;
+    ///         amountReceived, srcSender)` = FOUR words (r3: `srcSender`
+    ///         echoes the authenticated Base-side sender the mirror's
+    ///         receipt recorded, so the canonical ingress accepts only acks
+    ///         that name ITSELF — remit ids are per-deployment). Shares its
+    ///         byte length with {REPORT_PAYLOAD_SIZE_LEGACY} /
+    ///         {COMMITMENT_REPORT_PAYLOAD_SIZE}; disambiguation is the kind
+    ///         tag, never the length (the standing rule). Canonical-gated on
+    ///         receive; kind-7 pre-dates any deployment, so there is no
+    ///         legacy 3-word shape to dual-decode.
+    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 4 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -619,6 +623,7 @@ contract VaipakamRewardMessenger is
     function sendRemitAck(
         uint256 remitId,
         uint256 amountReceived,
+        address srcSender,
         address payable refundAddress
     )
         external
@@ -634,7 +639,8 @@ contract VaipakamRewardMessenger is
         bytes memory payload = abi.encode(
             MSG_TYPE_REMIT_ACK,
             remitId,
-            amountReceived
+            amountReceived,
+            srcSender
         );
         messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
 
@@ -644,13 +650,15 @@ contract VaipakamRewardMessenger is
     /// @notice Quote the native CCIP fee for a mirror→Base remit ack.
     function quoteSendRemitAck(
         uint256 remitId,
-        uint256 amountReceived
+        uint256 amountReceived,
+        address srcSender
     ) external view returns (uint256 nativeFee) {
         if (baseChainId == 0) revert BaseChainNotConfigured();
         bytes memory payload = abi.encode(
             MSG_TYPE_REMIT_ACK,
             remitId,
-            amountReceived
+            amountReceived,
+            srcSender
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
@@ -1331,11 +1339,14 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            (, uint256 remitId, uint256 amountReceived) =
-                abi.decode(payload, (uint8, uint256, uint256));
+            (, uint256 remitId, uint256 amountReceived, address srcSender) =
+                abi.decode(payload, (uint8, uint256, uint256, address));
             emit RemitAckReceived(sourceChainId, remitId, amountReceived);
             IRewardRemitAckIngress(diamond).onRemitAckReceived(
-                SafeCast.toUint32(sourceChainId), remitId, amountReceived
+                SafeCast.toUint32(sourceChainId),
+                remitId,
+                amountReceived,
+                srcSender
             );
         } else {
             revert UnknownMessageType(msgType);

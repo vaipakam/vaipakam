@@ -66,6 +66,11 @@
             "name": "amount",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "srcSender",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -326,6 +331,11 @@
         "name": "amountReceived",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "srcSender",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -359,6 +369,11 @@
         "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "sourceSender",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -1664,6 +1679,22 @@
         "name": "got",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitAckSenderMismatch",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "srcSender",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

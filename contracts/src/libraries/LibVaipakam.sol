@@ -5718,6 +5718,15 @@ library LibVaipakam {
         uint32 srcChainId;
         uint64 receivedAt;
         uint256 amount;
+        // Codex #1426 r3 — the authenticated Base-side sender (the CCIP
+        // channel peer at delivery time, i.e. the canonical Diamond). Remit
+        // ids are per-DEPLOYMENT, not per-chain: a same-chain canonical
+        // redeploy restarts the numbering, so the ack echoes this sender
+        // and Base accepts only acks that name ITSELF — a stale-era receipt
+        // can never finalize a same-numbered reservation on the new
+        // deployment, and a delivery from a rotated deployment supersedes
+        // the stale receipt (liveness).
+        address srcSender;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

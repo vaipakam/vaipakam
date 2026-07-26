@@ -43,6 +43,13 @@ the still-set remit-ineligible flag as its evidence, draws fresh under the
 lifetime emission cap, and reserves + acknowledges through the same ledger
 as any remittance.
 
+Receipts are bound to the canonical deployment itself (the mirror records
+the authenticated sender, the acknowledgement echoes it, and the canonical
+side accepts only acknowledgements naming itself), so even a same-chain
+canonical redeployment can never let stale-era receipts finalize the new
+deployment's reservations — while a delivery from the new deployment
+supersedes a stale same-numbered receipt so nothing is ever wedged.
+
 **Keeper + indexer.** A new keeper pass scans Base's dense reservation
 sequence (terminal-prefix frontier plus a rotating cursor, so one stuck
 delivery can never hide later reservations) and drives each landed

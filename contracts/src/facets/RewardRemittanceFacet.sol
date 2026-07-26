@@ -667,7 +667,8 @@ contract RewardRemittanceFacet is
         uint256 amount,
         uint256[] calldata dayIds,
         uint256 sourceChainId,
-        uint256 remitId
+        uint256 remitId,
+        address sourceSender
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
@@ -677,12 +678,21 @@ contract RewardRemittanceFacet is
             revert RewardBudgetTokenMismatch(s.vpfiToken, token);
         }
         s.rewardBudgetReceivedTotal += amount;
-        if (remitId != 0 && s.receivedRemits[remitId].receivedAt == 0) {
-            s.receivedRemits[remitId] = LibVaipakam.ReceivedRemit({
-                srcChainId: SafeCast.toUint32(sourceChainId),
-                receivedAt: uint64(block.timestamp),
-                amount: amount
-            });
+        if (remitId != 0) {
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitId];
+            // First delivery wins the slot — EXCEPT when an authenticated
+            // delivery arrives from a DIFFERENT canonical deployment (Codex
+            // #1426 r3): remit ids are per-deployment, so after a base
+            // rotation the new deployment's same-numbered delivery
+            // supersedes the stale-era receipt (deliveries are messenger-
+            // authenticated, so the overwrite is safe; without it the new
+            // reservation's ack would be permanently blocked).
+            if (rec.receivedAt == 0 || rec.srcSender != sourceSender) {
+                rec.srcChainId = SafeCast.toUint32(sourceChainId);
+                rec.receivedAt = uint64(block.timestamp);
+                rec.amount = amount;
+                rec.srcSender = sourceSender;
+            }
         }
         emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId);
     }
@@ -727,8 +737,11 @@ contract RewardRemittanceFacet is
         if (rec.srcChainId != s.baseChainId) {
             revert ReceivedRemitStale(remitId, rec.srcChainId);
         }
+        // r3 — echo the receipt's authenticated sender so the canonical
+        // ingress can verify the ack names ITSELF (remit ids are
+        // per-deployment; see {LibVaipakam.ReceivedRemit.srcSender}).
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
-            remitId, rec.amount, refundAddress
+            remitId, rec.amount, rec.srcSender, refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
     }
@@ -747,7 +760,7 @@ contract RewardRemittanceFacet is
             revert ReceivedRemitStale(remitId, rec.srcChainId);
         }
         fee = IRewardMessenger(messenger).quoteSendRemitAck(
-            remitId, rec.amount
+            remitId, rec.amount, rec.srcSender
         );
     }
 
@@ -770,7 +783,8 @@ contract RewardRemittanceFacet is
     function onRemitAckReceived(
         uint32 sourceChainId,
         uint256 remitId,
-        uint256 amountReceived
+        uint256 amountReceived,
+        address srcSender
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
@@ -778,6 +792,14 @@ contract RewardRemittanceFacet is
             revert NotAuthorizedRewardMessenger();
         }
         if (!s.isCanonicalRewardChain) revert NotCanonicalRewardChain();
+        // Codex #1426 r3 — the ack must name THIS deployment: the echoed
+        // sender is the authenticated channel peer the mirror's receipt was
+        // recorded under, and remit ids restart per deployment — a stale-era
+        // receipt (pre-rotation, possibly same chain id) must never finalize
+        // a same-numbered reservation here.
+        if (srcSender != address(this)) {
+            revert RemitAckSenderMismatch(remitId, srcSender);
+        }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.status == 2) return;
         if (r.status == 3) {
