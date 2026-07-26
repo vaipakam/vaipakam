@@ -460,36 +460,44 @@ export async function markCommitmentDayResolved(
 // ─── #1222 M3 B2-d2 — remit-ack scan state + reconcile rediscovery ─────────
 // Written by the keeper only; schema owned by apps/indexer/migrations/0044.
 
-/** The remit-ack scan frontier for a Base chain (1 = never scanned). */
-export async function getRemitAckFrontier(
+/** The remit-ack scan state for a Base chain: the terminal-prefix
+ *  frontier + the rotating scan cursor (Codex #1426 r1 — a stuck early
+ *  Pending pins the frontier; the cursor keeps paging the whole ledger). */
+export async function getRemitAckScanState(
   db: D1Database,
   baseChainId: number,
-): Promise<number> {
+): Promise<{ frontier: number; scanCursor: number }> {
   const row = await db
     .prepare(
-      `SELECT next_remit_id FROM keeper_remit_ack_frontier
+      `SELECT next_remit_id, scan_cursor FROM keeper_remit_ack_frontier
        WHERE base_chain_id = ?1`,
     )
     .bind(baseChainId)
-    .first<{ next_remit_id: number }>();
-  return row?.next_remit_id ?? 1;
+    .first<{ next_remit_id: number; scan_cursor: number }>();
+  return {
+    frontier: row?.next_remit_id ?? 1,
+    scanCursor: row?.scan_cursor ?? 1,
+  };
 }
 
-/** Advance the remit-ack scan frontier (all ids below are terminal). */
-export async function putRemitAckFrontier(
+/** Persist the remit-ack scan state (frontier only ever advances). */
+export async function putRemitAckScanState(
   db: D1Database,
   baseChainId: number,
   nextRemitId: number,
+  scanCursor: number,
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO keeper_remit_ack_frontier (base_chain_id, next_remit_id, updated_at)
-       VALUES (?1, ?2, ?3)
+      `INSERT INTO keeper_remit_ack_frontier
+         (base_chain_id, next_remit_id, scan_cursor, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
        ON CONFLICT(base_chain_id) DO UPDATE SET
          next_remit_id = excluded.next_remit_id,
+         scan_cursor = excluded.scan_cursor,
          updated_at = excluded.updated_at`,
     )
-    .bind(baseChainId, nextRemitId, Math.floor(Date.now() / 1000))
+    .bind(baseChainId, nextRemitId, scanCursor, Math.floor(Date.now() / 1000))
     .run();
 }
 

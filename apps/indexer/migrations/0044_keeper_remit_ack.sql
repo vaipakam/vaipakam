@@ -15,12 +15,18 @@
 --    keeper's mirror commitment-report pass re-unions reconciled OLD days
 --    that fell outside its bounded scan window.
 
--- Scan frontier per BASE chain: every reservation with
--- remit_id < next_remit_id is terminal (Acked/Released) — the keeper
--- resumes scanning at next_remit_id.
+-- Scan state per BASE chain. `next_remit_id` is the terminal-prefix
+-- frontier: every reservation below it is terminal (Acked/Released).
+-- `scan_cursor` is a SEPARATE rotating cursor (Codex #1426 r1): a single
+-- permanently-Pending early reservation pins the frontier, so without the
+-- rotation the bounded per-tick window would re-read the same stuck range
+-- forever and later reservations would never be discovered. Each tick scans
+-- from max(frontier, scan_cursor), persists the window end, and wraps back
+-- to the frontier after passing the ledger tip.
 CREATE TABLE IF NOT EXISTS keeper_remit_ack_frontier (
   base_chain_id INTEGER NOT NULL,
   next_remit_id INTEGER NOT NULL DEFAULT 1,
+  scan_cursor   INTEGER NOT NULL DEFAULT 1,
   updated_at    INTEGER NOT NULL,
   PRIMARY KEY (base_chain_id)
 );

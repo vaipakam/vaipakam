@@ -293,6 +293,12 @@ contract RewardRemitLedgerTest is SetupTest {
         // delays, never zeroes.
         (uint256 qt, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         assertEq(qt, 0, "gated quote");
+        // Codex r1 — the batch planner distinguishes GATED (not actionable)
+        // from close-only (actionable at zero): while gated, closeable=false.
+        (uint256[] memory pa, bool[] memory pc) =
+            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+        assertEq(pa[0], 0, "planner amount gated");
+        assertFalse(pc[0], "planner not closeable while gated");
         (uint256 fee, uint256 ft) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
         assertEq(fee + ft, 0, "gated fee quote");
         vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
@@ -382,6 +388,13 @@ contract RewardRemitLedgerTest is SetupTest {
 
         (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
         assertEq(quoted, 0, "zero clamp");
+        // Codex r1 — the planner is how a keeper DISCOVERS the close-only
+        // day: zero amount but closeable=true (quoteRewardBudget alone
+        // cannot distinguish it from a gated/closed day).
+        (uint256[] memory pa, bool[] memory pc) =
+            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+        assertEq(pa[0], 0, "planner zero amount");
+        assertTrue(pc[0], "planner closeable");
 
         uint256 sendsBefore = ccip.sentCount();
         uint256 balBefore = address(this).balance;
@@ -395,7 +408,10 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(uint256(r.status), 2, "born terminal");
         assertEq(r.total, 0, "zero total");
 
-        // Closed forever: a repeat is NothingToRemit.
+        // Closed forever: a repeat is NothingToRemit, and the planner no
+        // longer marks the day actionable.
+        (, bool[] memory pc2) = remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+        assertFalse(pc2[0], "planner closed");
         vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
     }

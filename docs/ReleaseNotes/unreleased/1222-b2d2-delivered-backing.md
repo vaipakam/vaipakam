@@ -44,10 +44,14 @@ lifetime emission cap, and reserves + acknowledges through the same ledger
 as any remittance.
 
 **Keeper + indexer.** A new keeper pass scans Base's dense reservation
-sequence from a persisted frontier and drives each landed delivery's ack
-(rate-limited per reservation); the indexer persists operator reconcile
-events so the mirror commitment-report pass re-surfaces reconciled old days
-outside its normal scan window. Operator note: apply D1 migration
+sequence (terminal-prefix frontier plus a rotating cursor, so one stuck
+delivery can never hide later reservations) and drives each landed
+delivery's ack (rate-limited per reservation); the remittance pass now
+plans through a batch view that also surfaces clamped-to-zero days needing
+closure, and extends its window over the armed range so late-completing
+reports are still funded; the indexer persists operator reconcile events so
+the mirror commitment-report pass re-surfaces reconciled old days outside
+its normal scan window. Operator note: apply D1 migration
 `0044_keeper_remit_ack.sql` before enabling the passes (same
 `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` arming as before — nothing
 new to flip).

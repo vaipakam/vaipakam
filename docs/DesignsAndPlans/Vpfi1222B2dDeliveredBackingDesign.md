@@ -322,7 +322,14 @@ record delegated to the implementing PR:
    amount semantics and cannot mark a zero) so its commitments release and the
    day never lingers half-open. `RecycleSource` gains an appended
    `RemitClampResidual` member for the release event's class vocabulary
-   (append-only enum, the #1204 `SpendGatedPerk` precedent).
+   (append-only enum, the #1204 `SpendGatedPerk` precedent). **Codex r1:**
+   discovery of close-only days is keeper-visible through a batch planner
+   view returning `(amounts, closeable)` per day — an amount-only quote
+   cannot distinguish "actionable at zero" from "gated/closed", and a
+   keeper reading only amounts would leave zero-clamp days open forever;
+   the remit pass plans through it and extends its window over the armed
+   range (bounded backscan) so a report completing after the plain
+   lookback still funds its day.
 4. **Release restores ledgers, never the bucket.** `releaseRemitReservation`
    (ADMIN, evidenced, for a remit the operator has verified can never execute)
    re-opens the reservation's days, restores the emission counters

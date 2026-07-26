@@ -939,6 +939,58 @@ contract RewardRemittanceFacet is
 
     // ─── #1222 M3 B2-d2 — ledger views ────────────────────────────────────
 
+    /**
+     * @notice #1222 M3 B2-d2 (Codex #1426 r1) — batch remit planner: for
+     *         each day, the amount a remit would move AND whether the day is
+     *         actionable at all (`closeable` — it would terminally close in
+     *         a batch: true for fundable days and for gate-passing armed
+     *         days whose Σcommitments clamp lands at ZERO, which move no
+     *         VPFI but must still close to retire their finalize-time
+     *         commitments).
+     * @dev    {quoteRewardBudget} alone cannot surface the zero-clamp case —
+     *         a zero amount there is indistinguishable from a gated /
+     *         already-closed / remit-ineligible day — so a keeper reading
+     *         only amounts would never drive the close-only batch and such a
+     *         day's commitments would stay outstanding forever. Mirrors the
+     *         send's in-batch de-duplication (a repeated day contributes
+     *         only on first occurrence) and skips non-finalized days.
+     */
+    function quoteRemitDayPlans(
+        uint32 dstChainId,
+        uint256[] calldata dayIds
+    )
+        external
+        view
+        returns (uint256[] memory amounts, bool[] memory closeable)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        amounts = new uint256[](dayIds.length);
+        closeable = new bool[](dayIds.length);
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        for (uint256 i; i < dayIds.length; ) {
+            uint256 dayId = dayIds[i];
+            bool seen;
+            for (uint256 j; j < i; ) {
+                if (dayIds[j] == dayId) {
+                    seen = true;
+                    break;
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            if (!seen && s.dailyGlobalFinalized[dayId]) {
+                DayRemitPlan memory p =
+                    _planDay(s, dstChainId, dayId, armedFrom);
+                amounts[i] = p.fresh + p.recycled;
+                closeable[i] = p.close;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     /// @notice The delivered-backing reservation for `remitId` (status 0 =
     ///         never issued, 1 = Pending, 2 = Acked, 3 = Released).
     function getRemitReservation(

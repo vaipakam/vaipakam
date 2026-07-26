@@ -1959,7 +1959,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](26);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -1986,6 +1986,7 @@ contract HelperTest {
         selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;
         selectors[24] = RewardRemittanceFacet.getReceivedRemit.selector;
+        selectors[25] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
         return selectors;
     }
 

@@ -36,8 +36,8 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import {
-  getRemitAckFrontier,
-  putRemitAckFrontier,
+  getRemitAckScanState,
+  putRemitAckScanState,
   getRemitAckAttempts,
   recordRemitAckAttempt,
   markRemitAcked,
@@ -107,9 +107,15 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   })) as bigint;
   if (nonce === 0n) return;
 
-  const frontier = await getRemitAckFrontier(env.DB, baseChainId);
-  const from = BigInt(frontier);
-  if (from > nonce) return;
+  const { frontier, scanCursor } = await getRemitAckScanState(env.DB, baseChainId);
+  if (BigInt(frontier) > nonce) return;
+  // Rotating window (Codex #1426 r1): start from the persisted cursor when
+  // it is ahead of the frontier — a stuck early Pending pins the frontier,
+  // and without the rotation the bounded window would re-read that range
+  // every tick while later reservations went undiscovered. Wrap back to the
+  // frontier once the cursor passes the ledger tip.
+  let from = BigInt(Math.max(frontier, scanCursor));
+  if (from > nonce) from = BigInt(frontier);
   const to = from + BigInt(MAX_SCAN_PER_TICK) < nonce + 1n
     ? from + BigInt(MAX_SCAN_PER_TICK)
     : nonce + 1n;
@@ -122,7 +128,10 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   const pendingIds: number[] = [];
   const reservations = new Map<number, RemitReservationView>();
   let contiguousTerminal = frontier;
-  let prefixUnbroken = true;
+  // The terminal-prefix frontier may only advance when this window actually
+  // starts AT the frontier (a rotated window proves nothing about the ids
+  // it skipped).
+  let prefixUnbroken = from === BigInt(frontier);
 
   for (let id = from; id < to; id++) {
     const r = (await publicClient.readContract({
@@ -144,9 +153,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // status 0 past the frontier can only be the tail beyond the nonce —
     // the loop bound already excludes it.
   }
-  if (contiguousTerminal > frontier) {
-    await putRemitAckFrontier(env.DB, baseChainId, contiguousTerminal);
-  }
+  await putRemitAckScanState(env.DB, baseChainId, contiguousTerminal, Number(to));
   if (pendingIds.length === 0) return;
 
   const attempts = await getRemitAckAttempts(env.DB, baseChainId, pendingIds);
