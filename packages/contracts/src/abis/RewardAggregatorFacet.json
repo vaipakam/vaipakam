@@ -457,6 +457,34 @@
   },
   {
     "type": "function",
+    "name": "onCommitmentReportReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liabilityLender18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liabilityBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "quoteBroadcastGlobal",
     "inputs": [
       {
@@ -663,6 +691,37 @@
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CommitmentReportAccepted",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "liabilityLender18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liabilityBorrower18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -930,6 +989,77 @@
     "type": "error",
     "name": "ChainDayAlreadyReported",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitmentDayNotArmed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentDayNotComplete",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentEntryMismatch",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentReportAlreadySent",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentReportOnlyMirror",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitmentStampNotArrived",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentUsersNotAscending",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
