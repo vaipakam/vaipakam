@@ -819,10 +819,16 @@ export async function runChainIndexerForChain(
     if (!Number.isFinite(mirrorChainId) || mirrorChainId <= 0) continue;
     await env.DB.prepare(
       `INSERT OR IGNORE INTO keeper_commitment_reconciled
-         (base_chain_id, day_id, mirror_chain_id, reconciled_at)
-       VALUES (?, ?, ?, ?)`,
+         (base_chain_id, base_diamond, day_id, mirror_chain_id, reconciled_at)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-      .bind(chainId, dayId, mirrorChainId, Math.floor(Date.now() / 1000))
+      .bind(
+        chainId,
+        diamond.toLowerCase(),
+        dayId,
+        mirrorChainId,
+        Math.floor(Date.now() / 1000),
+      )
       .run();
   }
 

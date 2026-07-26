@@ -587,14 +587,16 @@ export async function markRemitAcked(
 export async function getOpenReconciledDays(
   db: D1Database,
   baseChainId: number,
+  baseDiamond: string,
   mirrorChainId: number,
 ): Promise<number[]> {
   const rows = await db
     .prepare(
       `SELECT day_id FROM keeper_commitment_reconciled
-       WHERE base_chain_id = ?1 AND mirror_chain_id = ?2 AND consumed_at IS NULL`,
+       WHERE base_chain_id = ?1 AND base_diamond = ?2
+         AND mirror_chain_id = ?3 AND consumed_at IS NULL`,
     )
-    .bind(baseChainId, mirrorChainId)
+    .bind(baseChainId, baseDiamond.toLowerCase(), mirrorChainId)
     .all<{ day_id: number }>();
   return (rows.results ?? []).map((r) => r.day_id);
 }
@@ -603,15 +605,22 @@ export async function getOpenReconciledDays(
 export async function markReconciledDayConsumed(
   db: D1Database,
   baseChainId: number,
+  baseDiamond: string,
   mirrorChainId: number,
   dayId: number,
 ): Promise<void> {
   await db
     .prepare(
-      `UPDATE keeper_commitment_reconciled SET consumed_at = ?4
-       WHERE base_chain_id = ?1 AND mirror_chain_id = ?2 AND day_id = ?3
-         AND consumed_at IS NULL`,
+      `UPDATE keeper_commitment_reconciled SET consumed_at = ?5
+       WHERE base_chain_id = ?1 AND base_diamond = ?2
+         AND mirror_chain_id = ?3 AND day_id = ?4 AND consumed_at IS NULL`,
     )
-    .bind(baseChainId, mirrorChainId, dayId, Math.floor(Date.now() / 1000))
+    .bind(
+      baseChainId,
+      baseDiamond.toLowerCase(),
+      mirrorChainId,
+      dayId,
+      Math.floor(Date.now() / 1000),
+    )
     .run();
 }

@@ -70,18 +70,23 @@ contract RewardRemittanceFacet is
         uint256 armedFresh;
         uint256 armedFrom;
         uint256 recycledFull;
-        // Codex #1426 r2 — running recycled-backing budget (seeded from
-        // `recycleBucket`, decremented per closed day): a day whose recycled
-        // share exceeds it is SKIPPED, not closed. After an operator release
-        // the stranded tokens sit outside Diamond custody, and a re-remit
-        // would otherwise draw its "recycled" share from fresh/user custody
-        // while `consume` floors the bucket at zero (bucket-backing
-        // violation). Healthy-path no-op: finalize-time commitments reserve
-        // every recycled share against `fundable`, so backing always covers
-        // it; a blocked day flows again once governance returns the tokens
-        // and re-credits the bucket (B2-d5 custody-credit class). Applied
-        // IDENTICALLY at all four planning sites (send + three quotes).
-        uint256 backingLeft;
+        // Codex #1426 r2/r6 — running NET recycled-backing gate, applied
+        // IDENTICALLY at all four planning sites (send + three quotes). A
+        // closed day may fund only when the POST-close invariant holds:
+        // `bucket' >= outstanding'`, i.e.
+        // `bucketLeft + recycledFull_day >= outRecycledLeft + clamped_day`
+        // (the close retires the day's FULL commitment while sending only
+        // the clamped share). Comparing against the gross bucket (r2's
+        // first cut) let an operator-released reservation's stranded hole
+        // migrate onto innocent later days: release keeps the bucket
+        // custody-true but RESTORES the full outstanding commitment, so
+        // outstanding deliberately exceeds backing by the stranded amount —
+        // the net gate makes every recycled remit wait until the B2-d5
+        // recovery ceremony heals that hole, and is a structural no-op on
+        // the healthy path (finalize reserves commitments ⊆ fundable =
+        // bucket − outstanding).
+        uint256 bucketLeft;
+        uint256 outRecycledLeft;
     }
 
     /// @dev #1222 M3 B2-d2 — one day's remit plan, produced by {_planDay}:
@@ -362,16 +367,24 @@ contract RewardRemittanceFacet is
         // (Memory struct: keeps the viaIR stack under the ceiling.)
         RemitSplitTotals memory st;
         st.armedFrom = s.governorCommitArmedFromDay;
-        st.backingLeft = s.recycleBucket;
+        st.bucketLeft = s.recycleBucket;
+        st.outRecycledLeft = s.outstandingCommitRecycled;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             if (!s.dailyGlobalFinalized[dayId]) {
                 revert RewardDayNotFinalized(dayId);
             }
             DayRemitPlan memory p = _planDay(s, dstChainId, dayId, st.armedFrom);
-            // r2 backing filter (see {RemitSplitTotals.backingLeft}).
-            if (p.close && p.recycled <= st.backingLeft) {
-                st.backingLeft -= p.recycled;
+            // r2/r6 net backing gate (see {RemitSplitTotals.bucketLeft}).
+            if (
+                p.close
+                    && st.bucketLeft + p.recycledFull
+                        >= st.outRecycledLeft + p.recycled
+            ) {
+                st.bucketLeft -= p.recycled;
+                st.outRecycledLeft = st.outRecycledLeft > p.recycledFull
+                    ? st.outRecycledLeft - p.recycledFull
+                    : 0;
                 // Terminal close: a duplicate of this day later in the batch
                 // re-enters {_planDay} and finds the marker, so each day
                 // closes at most once.
@@ -432,10 +445,7 @@ contract RewardRemittanceFacet is
         // finalize-time commitment already reserved it against `fundable`)
         // and never consumes the fresh cap: at fresh exhaustion recycled
         // remittances keep flowing, the promised steady state.
-        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
-        uint256 remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
-            ? 0
-            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        uint256 remaining = _freshHeadroomNet(s, st.armedFresh);
         if (st.fresh > remaining) {
             revert RewardPoolCapExceeded(st.fresh, remaining);
         }
@@ -712,6 +722,32 @@ contract RewardRemittanceFacet is
             }
         }
         emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId);
+    }
+
+    /**
+     * @dev #1222 M3 B2-d2 (Codex #1426 r6) — NET fresh headroom for a remit
+     *      that will retire `retires` of the outstanding armed-fresh
+     *      commitments: `CAP − remitted − paid − (outstandingFresh −
+     *      retires)`, floored at zero. The gross `CAP − remitted − paid`
+     *      figure ignores commitments other days (and Base-side claims)
+     *      still hold against the pool — after an operator RELEASE (which
+     *      keeps the sent amount counted while restoring the obligation),
+     *      the gross check would let a re-remit push total issuance past
+     *      the 69M cap by exactly the stranded amount, terminally
+     *      truncating later claims. Healthy-path no-op: finalize reserves
+     *      commitments within remaining headroom.
+     */
+    function _freshHeadroomNet(
+        LibVaipakam.Storage storage s,
+        uint256 retires
+    ) private view returns (uint256 remaining) {
+        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
+        remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
+            ? 0
+            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        uint256 outFresh = s.outstandingCommitFresh;
+        uint256 encumbered = outFresh > retires ? outFresh - retires : 0;
+        remaining = remaining > encumbered ? remaining - encumbered : 0;
     }
 
     /// @dev r4 — composite receipt key: remit ids are per-deployment.
@@ -992,10 +1028,9 @@ contract RewardRemittanceFacet is
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
 
-        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
-        uint256 remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
-            ? 0
-            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        // r6 — NET headroom; a manual send retires no commitment (the
+        // zeroed chain's share was never committed at finalize).
+        uint256 remaining = _freshHeadroomNet(s, 0);
         if (amount > remaining) {
             revert RewardPoolCapExceeded(amount, remaining);
         }
@@ -1059,9 +1094,10 @@ contract RewardRemittanceFacet is
         amounts = new uint256[](dayIds.length);
         closeable = new bool[](dayIds.length);
         uint256 armedFrom = s.governorCommitArmedFromDay;
-        // r2 backing filter — identical to the send: an under-backed day
-        // reads NOT actionable (it must wait for bucket backing to return).
-        uint256 backingLeft = s.recycleBucket;
+        // r2/r6 net backing gate — identical to the send: an under-backed
+        // day reads NOT actionable (it waits for the recovery ceremony).
+        uint256 bucketLeft = s.recycleBucket;
+        uint256 outRecycledLeft = s.outstandingCommitRecycled;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             bool seen;
@@ -1077,8 +1113,15 @@ contract RewardRemittanceFacet is
             if (!seen && s.dailyGlobalFinalized[dayId]) {
                 DayRemitPlan memory p =
                     _planDay(s, dstChainId, dayId, armedFrom);
-                if (p.close && p.recycled <= backingLeft) {
-                    backingLeft -= p.recycled;
+                if (
+                    p.close
+                        && bucketLeft + p.recycledFull
+                            >= outRecycledLeft + p.recycled
+                ) {
+                    bucketLeft -= p.recycled;
+                    outRecycledLeft = outRecycledLeft > p.recycledFull
+                        ? outRecycledLeft - p.recycledFull
+                        : 0;
                     amounts[i] = p.fresh + p.recycled;
                     closeable[i] = true;
                 }
@@ -1170,9 +1213,10 @@ contract RewardRemittanceFacet is
     ) external view returns (uint256 total, uint256[] memory perDay) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         perDay = new uint256[](dayIds.length);
-        // r2 backing filter — identical to the send (see
-        // {RemitSplitTotals.backingLeft}).
-        uint256 backingLeft = s.recycleBucket;
+        // r2/r6 net backing gate — identical to the send (see
+        // {RemitSplitTotals.bucketLeft}).
+        uint256 bucketLeft = s.recycleBucket;
+        uint256 outRecycledLeft = s.outstandingCommitRecycled;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             // Skip a day already seen earlier in THIS call — the send path
@@ -1196,8 +1240,15 @@ contract RewardRemittanceFacet is
                     s, dstChainId, dayId, s.governorCommitArmedFromDay
                 );
                 uint256 slice;
-                if (p.close && p.recycled <= backingLeft) {
-                    backingLeft -= p.recycled;
+                if (
+                    p.close
+                        && bucketLeft + p.recycledFull
+                            >= outRecycledLeft + p.recycled
+                ) {
+                    bucketLeft -= p.recycled;
+                    outRecycledLeft = outRecycledLeft > p.recycledFull
+                        ? outRecycledLeft - p.recycledFull
+                        : 0;
                     slice = p.fresh + p.recycled;
                 }
                 perDay[i] = slice;
@@ -1244,8 +1295,10 @@ contract RewardRemittanceFacet is
         uint256[] memory fundedDays = new uint256[](dayIds.length);
         uint256 fundedCount;
         uint256 totalFresh; // PR-3c — fresh share for the cap guard below.
-        // r2 backing filter — identical to the send.
-        uint256 backingLeft = s.recycleBucket;
+        uint256 totalArmedFresh; // r6 — commitments this batch would retire.
+        // r2/r6 net backing gate — identical to the send.
+        uint256 bucketLeft = s.recycleBucket;
+        uint256 outRecycledLeft = s.outstandingCommitRecycled;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             // Mirror remit's revert on any unfinalized day so this quote never
@@ -1271,9 +1324,19 @@ contract RewardRemittanceFacet is
                 );
                 // r2 backing filter — identical to the send.
                 uint256 slice;
-                if (p.close && p.recycled <= backingLeft) {
-                    backingLeft -= p.recycled;
+                if (
+                    p.close
+                        && bucketLeft + p.recycledFull
+                            >= outRecycledLeft + p.recycled
+                ) {
+                    bucketLeft -= p.recycled;
+                    outRecycledLeft = outRecycledLeft > p.recycledFull
+                        ? outRecycledLeft - p.recycledFull
+                        : 0;
                     slice = p.fresh + p.recycled;
+                    // r6 — this day would terminally close in the send,
+                    // retiring its full armed-fresh commitment.
+                    totalArmedFresh += p.armedFreshFull;
                 }
                 if (slice > 0) {
                     fundedDays[fundedCount] = dayId;
@@ -1292,10 +1355,7 @@ contract RewardRemittanceFacet is
         // Mirror remit's 69M pool-cap guard so a quote can't succeed for a batch
         // remit would reject near pool exhaustion. PR-3c — fresh share only,
         // mirroring the send path.
-        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
-        uint256 remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
-            ? 0
-            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        uint256 remaining = _freshHeadroomNet(s, totalArmedFresh);
         if (totalFresh > remaining) {
             revert RewardPoolCapExceeded(totalFresh, remaining);
         }

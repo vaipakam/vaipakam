@@ -466,6 +466,30 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(r.dayIds.length, 2, "both days closed");
     }
 
+    /// @dev Codex r6 — the 69M guard is NET of outstanding armed-fresh
+    ///      commitments (minus what the batch itself retires): after a
+    ///      release keeps the sent amount counted while restoring the
+    ///      obligation, a gross check would let a re-remit push total
+    ///      issuance past the cap by the stranded amount.
+    function test_FreshNetHeadroom_EncumberedByOutstandingCommitments() public {
+        _finalizeDay(1);
+        (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertGt(quoted, 0, "slice exists");
+        mutator.setOutstandingCommitRaw(69_000_000 ether, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RewardPoolCapExceeded.selector,
+                quoted,
+                0
+            )
+        );
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
+        // Clearing the encumbrance restores the send.
+        mutator.setOutstandingCommitRaw(0, 0);
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, quoted, "funds once unencumbered");
+    }
+
     // ─── manual-budget path (zeroed chains) ───────────────────────────────
 
     function test_Manual_RequiresIneligibleFlag() public {

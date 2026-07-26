@@ -175,7 +175,15 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
   // (day, this-chain) pairs the indexer persisted from Base's
   // CommitmentRemitEligibilityReconciled events, so an operator-reconciled
   // OLD day outside the bounded window still gets its (bookkeeping) report.
-  const reconciled = await getOpenReconciledDays(env.DB, baseChainId, chain.id);
+  // r6 — reconcile rows are namespaced by the emitting canonical DIAMOND
+  // (same-chain redeploys overlap on day ids). Resolve it from the chain
+  // configs; without a configured Base RPC binding the rediscovery union
+  // is skipped (the bounded window still runs).
+  const baseCfg = getChainConfigs(env).find((c) => c.id === baseChainId);
+  const baseDiamond = baseCfg?.diamond;
+  const reconciled = baseDiamond
+    ? await getOpenReconciledDays(env.DB, baseChainId, baseDiamond, chain.id)
+    : [];
   const reconciledSet = new Set(reconciled);
   const dayList: bigint[] = [];
   for (let d = from; d < currentDay; d++) dayList.push(d);
@@ -201,8 +209,10 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
     if (resolved.has(Number(d))) {
       // A reconciled rediscovery whose report is already dispatched is
       // terminal — retire the D1 row so the union stays bounded.
-      if (reconciledSet.has(Number(d))) {
-        await markReconciledDayConsumed(env.DB, baseChainId, chain.id, Number(d));
+      if (reconciledSet.has(Number(d)) && baseDiamond) {
+        await markReconciledDayConsumed(
+          env.DB, baseChainId, baseDiamond, chain.id, Number(d),
+        );
       }
       continue; // zero-RPC skip
     }
@@ -287,8 +297,10 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
       // are skipped with zero reads forever after.
       if (await isDayResolved(publicClient, diamond, d)) {
         await markCommitmentDayResolved(env.DB, chain.id, Number(d));
-        if (reconciledSet.has(Number(d))) {
-          await markReconciledDayConsumed(env.DB, baseChainId, chain.id, Number(d));
+        if (reconciledSet.has(Number(d)) && baseDiamond) {
+          await markReconciledDayConsumed(
+            env.DB, baseChainId, baseDiamond, chain.id, Number(d),
+          );
         }
       }
     } catch (err) {

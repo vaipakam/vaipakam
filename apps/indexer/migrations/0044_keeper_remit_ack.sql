@@ -55,13 +55,19 @@ CREATE TABLE IF NOT EXISTS keeper_remit_ack (
 -- the keeper once the mirror's commitment report for the day is observed
 -- sent (or the day is otherwise terminal), so the rediscovery union stays
 -- bounded.
+-- Namespaced by the emitting canonical DIAMOND (Codex #1426 r6, same
+-- redeployment case as the two remit-ack tables above): day ids overlap
+-- across a same-chain redeploy, so without the identity a consumed old row
+-- would swallow the new deployment's reconcile event (INSERT OR IGNORE)
+-- and an open stale row could drive the new deployment.
 CREATE TABLE IF NOT EXISTS keeper_commitment_reconciled (
   base_chain_id   INTEGER NOT NULL,
+  base_diamond    TEXT    NOT NULL,
   day_id          INTEGER NOT NULL,
   mirror_chain_id INTEGER NOT NULL,
   reconciled_at   INTEGER NOT NULL,
   consumed_at     INTEGER,
-  PRIMARY KEY (base_chain_id, day_id, mirror_chain_id)
+  PRIMARY KEY (base_chain_id, base_diamond, day_id, mirror_chain_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_keeper_commitment_reconciled_open

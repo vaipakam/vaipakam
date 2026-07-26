@@ -207,20 +207,22 @@ async function remitToMirror(
   let planWindow: bigint[] = window;
   let perDay: readonly bigint[] = [];
   let closeable: readonly boolean[] = [];
-  // Codex #1426 r4 — the arrays must always describe the FINAL planWindow:
-  // loop until a quote reports no oversized day (each filtering pass
-  // removes at least one, so this terminates in ≤ window-length passes;
-  // the cap only bounds pathological churn, and a capped exit still
-  // re-quotes so indices never misalign).
-  const MAX_REPLAN_PASSES = 8;
-  for (let pass = 0; ; pass++) {
+  // Codex #1426 r4/r6 — batch only a STABILIZED plan: loop until a quote
+  // reports no oversized day (each filtering pass removes at least one, so
+  // this terminates within the window length; tight recycled backing can
+  // expose oversized days one per pass). If the safety cap trips before
+  // stabilization, BAIL for this tick rather than batch from a plan whose
+  // backing allocation still includes an excluded day — an unstabilized
+  // batch would starve affordable later days every tick.
+  const MAX_REPLAN_PASSES = 24;
+  let stabilized = false;
+  for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
     [perDay, closeable] = (await publicClient.readContract({
       address: diamond,
       abi: REMIT_ABI,
       functionName: 'quoteRemitDayPlans',
       args: [mirrorId, planWindow],
     })) as readonly [readonly bigint[], readonly boolean[]];
-    if (pass >= MAX_REPLAN_PASSES) break;
     const oversized: bigint[] = [];
     for (let i = 0; i < planWindow.length; i++) {
       if ((perDay[i] ?? 0n) > laneCap) {
@@ -230,10 +232,19 @@ async function remitToMirror(
         oversized.push(planWindow[i]);
       }
     }
-    if (oversized.length === 0) break;
+    if (oversized.length === 0) {
+      stabilized = true;
+      break;
+    }
     const drop = new Set(oversized.map((d) => d.toString()));
     planWindow = planWindow.filter((d) => !drop.has(d.toString()));
     if (planWindow.length === 0) return;
+  }
+  if (!stabilized) {
+    console.warn(
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} plan did not stabilize within ${MAX_REPLAN_PASSES} passes — skipping this tick (raise the lane capacity per #918)`,
+    );
+    return;
   }
 
   // Greedily batch the un-remitted days, keeping the total under the lane

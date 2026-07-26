@@ -350,14 +350,22 @@ record delegated to the implementing PR:
    d5's Ā-excluded custody-credit class — never a d2 blind re-credit that would
    un-back the bucket. A late ack arriving for a Released reservation is
    surfaced by a dedicated anomaly event (the operator released in error and
-   the mirror was double-funded) rather than silently swallowed. **Codex r2:**
-   a released recycled-bearing day must not RE-REMIT while its backing is
-   stranded — `consume` floors an insufficient bucket at zero, so the re-remit
-   would draw its "recycled" share from fresh/user custody. All four planning
-   sites therefore apply a running recycled-backing budget (seeded from
-   `recycleBucket`): an under-backed day is SKIPPED, not closed — it stays
-   open and flows again once the d5 re-credit lands. Healthy-path no-op (the
-   finalize-time commitments reserve every recycled share against fundable).
+   the mirror was double-funded) rather than silently swallowed. **Codex r2,
+   sharpened r6 to the NET invariant:** a released recycled-bearing day must
+   not RE-REMIT while its backing is stranded — `consume` floors an
+   insufficient bucket at zero, so the re-remit would draw its "recycled"
+   share from fresh/user custody — and a GROSS bucket check would only
+   relocate the stranded hole onto innocent later days (release keeps the
+   bucket custody-true while restoring the full outstanding commitment, so
+   outstanding deliberately exceeds backing by the stranded amount). All
+   four planning sites therefore gate each day on the POST-close invariant
+   `bucket' ≥ outstanding'` (running pair: `bucketLeft + recycledFull_day ≥
+   outstandingLeft + clamped_day`): while a stranded hole exists, recycled
+   remits WAIT for the d5 recovery ceremony; on the healthy path the gate
+   never binds (finalize reserves commitments ⊆ fundable). The 69M fresh
+   guard is the symmetric NET form — `CAP − remitted − paid −
+   (outstandingFresh − retiredByThisClose)` — at the send, the fee quote,
+   and the manual path.
 5. **Manual-budget path (zeroed chains) is flag-anchored and fresh-funded.**
    `remitManualBudget` (ADMIN-only, payable) requires the `(day, chain)` still
    marked `remitIneligible` — the un-cleared flag IS the on-chain evidence the
