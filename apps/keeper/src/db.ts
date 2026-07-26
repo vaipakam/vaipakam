@@ -456,3 +456,129 @@ export async function markCommitmentDayResolved(
     .bind(chainId, dayId, Math.floor(Date.now() / 1000))
     .run();
 }
+
+// ─── #1222 M3 B2-d2 — remit-ack scan state + reconcile rediscovery ─────────
+// Written by the keeper only; schema owned by apps/indexer/migrations/0044.
+
+/** The remit-ack scan frontier for a Base chain (1 = never scanned). */
+export async function getRemitAckFrontier(
+  db: D1Database,
+  baseChainId: number,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT next_remit_id FROM keeper_remit_ack_frontier
+       WHERE base_chain_id = ?1`,
+    )
+    .bind(baseChainId)
+    .first<{ next_remit_id: number }>();
+  return row?.next_remit_id ?? 1;
+}
+
+/** Advance the remit-ack scan frontier (all ids below are terminal). */
+export async function putRemitAckFrontier(
+  db: D1Database,
+  baseChainId: number,
+  nextRemitId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_remit_ack_frontier (base_chain_id, next_remit_id, updated_at)
+       VALUES (?1, ?2, ?3)
+       ON CONFLICT(base_chain_id) DO UPDATE SET
+         next_remit_id = excluded.next_remit_id,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(baseChainId, nextRemitId, Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/** Last ack-attempt timestamps for a set of pending remit ids. */
+export async function getRemitAckAttempts(
+  db: D1Database,
+  baseChainId: number,
+  remitIds: number[],
+): Promise<Map<number, { attempts: number; lastAttemptAt: number }>> {
+  const out = new Map<number, { attempts: number; lastAttemptAt: number }>();
+  if (remitIds.length === 0) return out;
+  const placeholders = remitIds.map(() => '?').join(',');
+  const rows = await db
+    .prepare(
+      `SELECT remit_id, attempts, last_attempt_at FROM keeper_remit_ack
+       WHERE base_chain_id = ? AND remit_id IN (${placeholders})`,
+    )
+    .bind(baseChainId, ...remitIds)
+    .all<{ remit_id: number; attempts: number; last_attempt_at: number | null }>();
+  for (const r of rows.results ?? []) {
+    out.set(r.remit_id, {
+      attempts: r.attempts,
+      lastAttemptAt: r.last_attempt_at ?? 0,
+    });
+  }
+  return out;
+}
+
+/** Record one ack send attempt for a reservation. */
+export async function recordRemitAckAttempt(
+  db: D1Database,
+  baseChainId: number,
+  remitId: number,
+  mirrorChainId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_remit_ack
+         (base_chain_id, remit_id, mirror_chain_id, attempts, last_attempt_at)
+       VALUES (?1, ?2, ?3, 1, ?4)
+       ON CONFLICT(base_chain_id, remit_id) DO UPDATE SET
+         attempts = keeper_remit_ack.attempts + 1,
+         last_attempt_at = excluded.last_attempt_at`,
+    )
+    .bind(baseChainId, remitId, mirrorChainId, Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/** Stamp a reservation observed Acked on Base (audit trail terminal). */
+export async function markRemitAcked(
+  db: D1Database,
+  baseChainId: number,
+  remitId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE keeper_remit_ack SET acked_at = ?3
+       WHERE base_chain_id = ?1 AND remit_id = ?2 AND acked_at IS NULL`,
+    )
+    .bind(baseChainId, remitId, Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/** Open (un-consumed) reconciled day ids for a mirror chain (P7 union). */
+export async function getOpenReconciledDays(
+  db: D1Database,
+  mirrorChainId: number,
+): Promise<number[]> {
+  const rows = await db
+    .prepare(
+      `SELECT day_id FROM keeper_commitment_reconciled
+       WHERE mirror_chain_id = ?1 AND consumed_at IS NULL`,
+    )
+    .bind(mirrorChainId)
+    .all<{ day_id: number }>();
+  return (rows.results ?? []).map((r) => r.day_id);
+}
+
+/** Mark a reconciled (day, mirror) rediscovery consumed (report sent / terminal). */
+export async function markReconciledDayConsumed(
+  db: D1Database,
+  mirrorChainId: number,
+  dayId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE keeper_commitment_reconciled SET consumed_at = ?3
+       WHERE mirror_chain_id = ?1 AND day_id = ?2 AND consumed_at IS NULL`,
+    )
+    .bind(mirrorChainId, dayId, Math.floor(Date.now() / 1000))
+    .run();
+}

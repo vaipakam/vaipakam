@@ -51,7 +51,9 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled, type KeeperContext } from './keeper';
 import {
   getCommitmentScanState,
+  getOpenReconciledDays,
   markCommitmentDayResolved,
+  markReconciledDayConsumed,
   putCommitmentScanFrontier,
 } from './db';
 
@@ -169,17 +171,41 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
     );
   }
 
+  // #1222 M3 B2-d2 (P7) — reconcile rediscovery: union in reconciled
+  // (day, this-chain) pairs the indexer persisted from Base's
+  // CommitmentRemitEligibilityReconciled events, so an operator-reconciled
+  // OLD day outside the bounded window still gets its (bookkeeping) report.
+  const reconciled = await getOpenReconciledDays(env.DB, chain.id);
+  const reconciledSet = new Set(reconciled);
+  const dayList: bigint[] = [];
+  for (let d = from; d < currentDay; d++) dayList.push(d);
+  let stateFrom = Number(from);
+  for (const rd of reconciled) {
+    if (rd >= Number(armedFromDay) && rd < Number(from)) {
+      dayList.push(BigInt(rd));
+      if (rd < stateFrom) stateFrom = rd;
+    }
+  }
+
   const { resolved, scans } = await getCommitmentScanState(
     env.DB,
     chain.id,
-    Number(from),
+    stateFrom,
     Number(currentDay),
   );
 
   const budget: TickBudget = { batches: MAX_BATCHES_PER_TICK, pages: MAX_PAGES_PER_TICK };
 
-  for (let d = from; d < currentDay && budget.batches > 0 && budget.pages > 0; d++) {
-    if (resolved.has(Number(d))) continue; // zero-RPC skip
+  for (const d of dayList) {
+    if (budget.batches <= 0 || budget.pages <= 0) break;
+    if (resolved.has(Number(d))) {
+      // A reconciled rediscovery whose report is already dispatched is
+      // terminal — retire the D1 row so the union stays bounded.
+      if (reconciledSet.has(Number(d))) {
+        await markReconciledDayConsumed(env.DB, chain.id, Number(d));
+      }
+      continue; // zero-RPC skip
+    }
     try {
       const ready = (await publicClient.readContract({
         address: diamond,
@@ -261,6 +287,9 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
       // are skipped with zero reads forever after.
       if (await isDayResolved(publicClient, diamond, d)) {
         await markCommitmentDayResolved(env.DB, chain.id, Number(d));
+        if (reconciledSet.has(Number(d))) {
+          await markReconciledDayConsumed(env.DB, chain.id, Number(d));
+        }
       }
     } catch (err) {
       // Benign races (a competing tick advanced the cursor, the stamp landing

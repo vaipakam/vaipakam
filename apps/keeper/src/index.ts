@@ -102,6 +102,7 @@ import { runAutoLifecycle } from './autoLifecycle';
 import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { runCommitmentReport } from './commitmentReport';
+import { runRemitAck } from './remitAck';
 
 export default {
   async scheduled(
@@ -189,6 +190,17 @@ export default {
       runCommitmentReport(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runCommitmentReport pass failed:', err);
+      }),
+    );
+    // #1222 M3 B2-d2 — delivered-backing remit ACK. Scans Base's dense
+    // reservation ledger from a D1 frontier, and for each Pending
+    // reservation whose CCIP delivery has landed on the mirror (receipt
+    // record present) sends the mirror→Base ack that finalizes it. Same
+    // arming as the remit pass (KEEPER_ENABLED + REWARD_REMIT_ENABLED).
+    ctx.waitUntil(
+      runRemitAck(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runRemitAck pass failed:', err);
       }),
     );
   },

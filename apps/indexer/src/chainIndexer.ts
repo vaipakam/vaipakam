@@ -805,6 +805,27 @@ export async function runChainIndexerForChain(
     },
   );
 
+  // #1222 M3 B2-d2 (P7) — commitment reconcile rediscovery: persist every
+  // Base-side CommitmentRemitEligibilityReconciled(dayId, chainId) so the
+  // keeper's mirror commitment-report pass re-unions reconciled OLD days
+  // that fell outside its bounded scan window. INSERT OR IGNORE keeps
+  // overlapping scan ranges exactly-once.
+  for (const log of allLogs) {
+    if (log.eventName !== 'CommitmentRemitEligibilityReconciled') continue;
+    const a = log.args as { dayId?: bigint; chainId?: number | bigint };
+    const dayId = Number(a.dayId ?? 0n);
+    const mirrorChainId = Number(a.chainId ?? 0);
+    if (!Number.isFinite(dayId) || dayId <= 0) continue;
+    if (!Number.isFinite(mirrorChainId) || mirrorChainId <= 0) continue;
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO keeper_commitment_reconciled
+         (base_chain_id, day_id, mirror_chain_id, reconciled_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+      .bind(chainId, dayId, mirrorChainId, Math.floor(Date.now() / 1000))
+      .run();
+  }
+
   const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
 
   // Per-domain detail refresh, batched per tick.
