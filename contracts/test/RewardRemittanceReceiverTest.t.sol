@@ -39,16 +39,20 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         vpfi = vpfi_;
     }
 
+    uint256 public lastRemitId;
+
     function onRewardBudgetReceived(
         address token,
         uint256 amount,
         uint256[] calldata dayIds,
-        uint256 sourceChainId
+        uint256 sourceChainId,
+        uint256 remitId
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
         lastSourceChainId = sourceChainId;
         lastDayCount = dayIds.length;
+        lastRemitId = remitId;
         callCount++;
     }
 }
@@ -127,6 +131,27 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastAmount(), 1_000e18, "credited amount");
         assertEq(diamond.lastSourceChainId(), SRC_BASE, "source chain");
         assertEq(diamond.lastDayCount(), 2, "day count");
+        // Legacy 2-tuple payload (all _deliver sends): dual-decoded with
+        // remitId 0 — no ack ever flows for pre-d2 messages.
+        assertEq(diamond.lastRemitId(), 0, "legacy payload yields remitId 0");
+    }
+
+    /// @dev #1222 M3 B2-d2 — the widened 3-tuple payload is discriminated
+    ///      from the legacy shape by the leading ABI head word (`dayIds`
+    ///      offset 0x60 vs 0x40) and carries the delivered-backing echo id
+    ///      through to the Diamond ingress.
+    function test_Deliver_WidenedPayloadCarriesRemitId() public {
+        vpfi.mint(address(receiver), 500e18);
+        messenger.relay(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            abi.encode(_days(1, 2), uint256(500e18), uint256(77)),
+            _tokens(address(vpfi), 500e18)
+        );
+        assertEq(diamond.callCount(), 1, "ingress called");
+        assertEq(diamond.lastAmount(), 500e18, "credited amount");
+        assertEq(diamond.lastRemitId(), 77, "echo remitId surfaced");
     }
 
     // ── auth / validation reverts ────────────────────────────────────────────

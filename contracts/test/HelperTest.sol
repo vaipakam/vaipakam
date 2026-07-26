@@ -87,11 +87,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](134);
+        selectors = new bytes4[](137);
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
         selectors[133] = TestMutatorFacet.setChainReportSentAtRaw.selector;
+        // #1222 M3 B2-d2 — destination-chain funding stamp for remit clamp tests.
+        selectors[134] = TestMutatorFacet.setChainDayFundingRaw.selector;
+        // #1222 M3 B2-d2 — remit-ineligible flag for the manual-budget anchor.
+        selectors[135] = TestMutatorFacet.setChainDayRemitIneligibleRaw.selector;
+        // #1222 M3 B2-d2 — outstanding-commitment baseline for retire asserts.
+        selectors[136] = TestMutatorFacet.setOutstandingCommitRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.
@@ -1953,7 +1959,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](25);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -1966,6 +1972,20 @@ contract HelperTest {
         selectors[9] = RewardRemittanceFacet.getRewardRemittanceReceiver.selector;
         selectors[10] = RewardRemittanceFacet.getRewardBudgetReceivedTotal.selector;
         selectors[11] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        // #1222 M3 B2-d2 — delivered-backing ledger surface.
+        selectors[12] = RewardRemittanceFacet.sendRemitAck.selector;
+        selectors[13] = RewardRemittanceFacet.quoteRemitAckFee.selector;
+        selectors[14] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        selectors[15] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        selectors[16] = RewardRemittanceFacet.releaseRemitReservation.selector;
+        selectors[17] = RewardRemittanceFacet.remitManualBudget.selector;
+        selectors[18] = RewardRemittanceFacet.getRemitReservation.selector;
+        selectors[19] = RewardRemittanceFacet.getRemitIdByMessageId.selector;
+        selectors[20] = RewardRemittanceFacet.getRemitReservationNonce.selector;
+        selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
+        selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
+        selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;
+        selectors[24] = RewardRemittanceFacet.getReceivedRemit.selector;
         return selectors;
     }
 

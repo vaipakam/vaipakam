@@ -2541,7 +2541,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](25);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2554,6 +2554,20 @@ contract DeployDiamond is Script {
         s[9] = RewardRemittanceFacet.getRewardRemittanceReceiver.selector;
         s[10] = RewardRemittanceFacet.getRewardBudgetReceivedTotal.selector;
         s[11] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        // #1222 M3 B2-d2 — delivered-backing ledger surface.
+        s[12] = RewardRemittanceFacet.sendRemitAck.selector;
+        s[13] = RewardRemittanceFacet.quoteRemitAckFee.selector;
+        s[14] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        s[15] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        s[16] = RewardRemittanceFacet.releaseRemitReservation.selector;
+        s[17] = RewardRemittanceFacet.remitManualBudget.selector;
+        s[18] = RewardRemittanceFacet.getRemitReservation.selector;
+        s[19] = RewardRemittanceFacet.getRemitIdByMessageId.selector;
+        s[20] = RewardRemittanceFacet.getRemitReservationNonce.selector;
+        s[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
+        s[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
+        s[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;
+        s[24] = RewardRemittanceFacet.getReceivedRemit.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

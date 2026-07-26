@@ -945,6 +945,58 @@ contract TestMutatorFacet {
         });
     }
 
+    /// @notice #1222 M3 B2-d2 test-only — stamp a DESTINATION chain's
+    ///         per-(day,chain) funding record directly (production stamps it
+    ///         in the finalize-time mesh resolver) so Base-side armed remit
+    ///         gate/clamp tests can seed a mirror's slice composition
+    ///         without driving the full two-pass resolution.
+    function setChainDayFundingRaw(
+        uint256 dayId,
+        uint32 chainId,
+        uint256 freshHalf,
+        uint256 recycledHalfEquiv
+    ) external {
+        LibVaipakam.storageSlot().chainDayRecycledFunding[dayId][chainId] =
+            LibVaipakam.ChainDayFunding({
+            fundedLender: recycledHalfEquiv,
+            fundedBorrower: recycledHalfEquiv,
+            lenderHalfEquiv: recycledHalfEquiv,
+            borrowerHalfEquiv: recycledHalfEquiv,
+            recycleConsume: 0,
+            keeperAllocate: 0,
+            stamped: true,
+            freshLenderHalf: freshHalf,
+            freshBorrowerHalf: freshHalf
+        });
+    }
+
+    /// @notice #1222 M3 B2-d2 test-only — set a `(day, chain)` remit-ineligible
+    ///         flag directly (production sets it in the armed grace/force
+    ///         finalize's zeroed-chain branch) so the manual-budget path's
+    ///         evidence anchor can be exercised without the full
+    ///         force-finalize scaffold.
+    function setChainDayRemitIneligibleRaw(
+        uint256 dayId,
+        uint32 chainId,
+        bool ineligible
+    ) external {
+        LibVaipakam.storageSlot()
+            .chainDayCommitments[dayId][chainId].remitIneligible = ineligible;
+    }
+
+    /// @notice #1222 M3 B2-d2 test-only — seed the outstanding commitment
+    ///         ledgers directly (production reserves them in the armed
+    ///         finalize) so remit-clamp retirement assertions have a
+    ///         non-zero baseline without driving an armed finalization.
+    function setOutstandingCommitRaw(
+        uint256 fresh,
+        uint256 recycled
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.outstandingCommitFresh = fresh;
+        s.outstandingCommitRecycled = recycled;
+    }
+
     /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited
     ///         (production stamps it via {LibInteractionRewards.closeLoan}
     ///         on liquidation-class terminals) so recycle-bucket tests can
