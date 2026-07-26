@@ -2296,6 +2296,17 @@ library LibInteractionRewards {
             outstanding > amount ? outstanding - amount : 0;
     }
 
+    /// @notice #1222 M3 B2-d2 — re-add armed FRESH commitments a released
+    ///         remit reservation had retired at send: the reservation's days
+    ///         re-open for funding, so their obligation exists again and the
+    ///         re-remit's {consumeArmedFresh} must have something to retire —
+    ///         otherwise the floored decrement silently under-states
+    ///         `outstandingCommitFresh` after a release/re-remit cycle.
+    function restoreArmedFresh(uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().outstandingCommitFresh += amount;
+    }
+
     /// @dev #1061 P1 — an entry destined for treasury: an explicit forfeit set
     ///      by `_closeEntry`, OR a terminal-derived liquidation/default forfeit.
     function _isForfeited(

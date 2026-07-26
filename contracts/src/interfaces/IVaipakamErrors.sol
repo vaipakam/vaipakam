@@ -509,4 +509,37 @@ interface IVaipakamErrors {
     /// @notice A commitment batch or send targeted a day whose report was
     ///         already dispatched to Base (whole-day idempotency).
     error CommitmentReportAlreadySent(uint256 dayId);
+
+    // ─── #1222 M3 B2-d2 — delivered-backing remit ledger ────────────────────
+
+    /// @notice The referenced remit reservation does not exist or is not in
+    ///         the state the operation requires (ack-finalize and release
+    ///         both require a PENDING reservation).
+    error RemitReservationNotPending(uint256 remitId);
+
+    /// @notice A remit ack arrived from a chain other than the reservation's
+    ///         destination — a mirror must only ack remittances addressed to
+    ///         it (`expected` is the reservation's destination chain).
+    error RemitAckChainMismatch(uint256 remitId, uint32 expected, uint32 got);
+
+    /// @notice `sendRemitAck` was called for a `remitId` this mirror holds no
+    ///         receipt record for (never delivered here, or a legacy pre-d2
+    ///         delivery that carried no remitId).
+    error ReceivedRemitNotFound(uint256 remitId);
+
+    /// @notice A mirror-only remit surface (the ack path) was called on the
+    ///         canonical chain or a single-chain deploy.
+    error OnlyMirrorRewardChain();
+
+    /// @notice The manual-budget path requires the `(dayId, chainId)` still
+    ///         marked remit-ineligible — the un-cleared flag is the on-chain
+    ///         evidence the day was finalized with this chain ZEROED out of
+    ///         the denominator (run the manual remit BEFORE any
+    ///         `reconcileCommitmentRemitEligibility` clear).
+    error RemitDayNotManualEligible(uint256 dayId, uint32 chainId);
+
+    /// @notice The (chain, day) was already funded or terminally closed by a
+    ///         remit batch — a day funds at most once (a RELEASED
+    ///         reservation re-opens its days).
+    error RemitDayAlreadyClosed(uint256 dayId, uint32 chainId);
 }

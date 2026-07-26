@@ -5576,6 +5576,41 @@ library LibVaipakam {
         mapping(uint256 => mapping(uint8 => uint256)) commitmentConservationAccum18;
         mapping(uint256 => mapping(uint8 => uint256)) commitmentEntryCursor;
         mapping(uint256 => bool) commitmentReportSent;
+        // ─── #1222 M3 B2-d2 — delivered-backing remit ledger ────────────────
+        // APPEND-ONLY TAIL. Every reward-budget remittance reserves into a
+        // `RemitReservation` BEFORE dispatch (CEI) under a Base-generated
+        // `remitId` (the wire echo key — a CCIP message cannot carry its own
+        // `messageId`, so the §M3 messageId binding is the post-send
+        // annotation on the reservation + the reverse index below, never the
+        // payload). The reservation finalizes exactly once on the mirror's
+        // authenticated ack (or the ADMIN force-finalize valve) and can be
+        // RELEASED (ADMIN, evidenced, never-will-execute terminal) — which
+        // re-opens its days for funding and restores the emission counters
+        // and outstanding commitments, but never re-credits `recycleBucket`
+        // (the tokens sit locked in the CCIP token pool, genuinely outside
+        // Diamond custody; re-crediting rides B2-d5's Ā-excluded
+        // custody-credit class once they physically return).
+        //
+        // Base-only except `receivedRemits` (mirror-only receipt records the
+        // ack path echoes from).
+        uint256 remitReservationNonce;
+        mapping(uint256 => RemitReservation) remitReservations;
+        mapping(bytes32 => uint256) remitIdByCcipMessageId;
+        // Terminal day-close marker: `dayClosedByRemitId[c][d]` names the
+        //   reservation that closed the (chain, day) — set for EVERY armed
+        //   gate-passing day a batch covers, including a clamped-to-zero day
+        //   (`rewardBudgetRemitted` keeps amount semantics and cannot mark a
+        //   zero), so a closed day's commitments release exactly once and the
+        //   day never lingers half-open. Cleared on release (day re-fundable).
+        mapping(uint32 => mapping(uint256 => uint256)) dayClosedByRemitId;
+        // Per-chain in-flight vs ack-finalized aggregates (observability +
+        //   the d3 netting inputs; the per-day clamp itself collapses to the
+        //   day-close state machine above — a day funds at most once).
+        mapping(uint32 => uint256) remitPendingTotal;
+        mapping(uint32 => uint256) remitAckedTotal;
+        // Mirror-side receipt records, keyed by the echoed `remitId` (0 =
+        //   legacy pre-d2 delivery — no receipt, no ack, no reservation).
+        mapping(uint256 => ReceivedRemit) receivedRemits;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -5644,6 +5679,45 @@ library LibVaipakam {
         // pending)`. 0 until reported.
         uint256 liabilityLender18;
         uint256 liabilityBorrower18;
+    }
+
+    /// @notice #1222 M3 B2-d2 — one reward-budget remittance's delivered-
+    ///         backing reservation. Reserved (status = Pending) BEFORE the
+    ///         CCIP dispatch under a Base-generated `remitId`; annotated with
+    ///         the CCIP `messageId` right after `sendMessage` returns (§M3's
+    ///         messageId binding — a message cannot carry its own id, so the
+    ///         wire echoes `remitId` and the binding lives here).
+    /// @dev `fresh`/`recycled` are the CLAMPED shares actually sent (what the
+    ///      emission counters / bucket consumption recorded);
+    ///      `armedFreshFull`/`recycledFull` are the PRE-clamp armed-day
+    ///      totals whose outstanding commitments were retired/released at
+    ///      send — release restores exactly these, so a re-remit's
+    ///      retirement pairs off without drift. `dayIds` is every day the
+    ///      batch terminally CLOSED (funded + clamped-to-zero) — release
+    ///      re-opens them all.
+    struct RemitReservation {
+        uint32 dstChainId;
+        // 0 = none, 1 = Pending (in flight), 2 = Acked (delivered,
+        // finalized), 3 = Released (operator-evidenced never-will-execute).
+        uint8 status;
+        uint64 sentAt;
+        bytes32 ccipMessageId;
+        uint256 total;
+        uint256 fresh;
+        uint256 recycled;
+        uint256 armedFreshFull;
+        uint256 recycledFull;
+        uint256[] dayIds;
+    }
+
+    /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
+    ///         remittance, keyed by the echoed `remitId`. What
+    ///         `sendRemitAck` reads — the ack content is mirror-computed
+    ///         from this record, never caller-supplied.
+    struct ReceivedRemit {
+        uint32 srcChainId;
+        uint64 receivedAt;
+        uint256 amount;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
