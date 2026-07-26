@@ -208,8 +208,12 @@ preserved):**
    Operator reconciles + remits manually (B2-c's reconcile surface, unchanged).
 4. **The Base ingress accepts reports post-finalize** (that is the normal
    sequence now; no `ReportAfterFinalization` on this path). A zeroed chain's
-   late report is also accepted — it stores exactly the liability figure the
-   operator needs to size the manual remit.
+   late report is also accepted for bookkeeping — but it prices at that
+   chain's deliberately-zero funding stamp (Codex #1425 r1), so the operator
+   sizes the manual remit from the mirror's locally-readable state (day
+   totals + entry set), never from this figure. Membership is checked
+   against the DAY's finalized topology evidence (`chainDailyIncluded` /
+   `remitIneligible`), not only the mutable expected-chain list.
 5. **Mirror send/readiness are armed-gated AND stamp-gated**
    (`sendCommitmentReport` / `isDayCommitmentReady`): an unarmed quiet day is
    trivially "complete" (0 == 0 conservation), and without the armed gate the
@@ -232,6 +236,50 @@ Plan-conformance: *"never computed from a partial set"* ✓ (remit gate);
 accepted; remittance waits instead of proceeding partial). Only the gate's
 *placement* is amended — finalize-readiness → remittance — because the re-sliced
 commitment content made the frozen placement self-contradictory.
+
+## 2c. r1 restructure — the unit is the ENTRY, not the user (Codex #1425 r1)
+
+Three round-1 findings shared one root — the per-user grouping of §2's pick:
+
+1. **Ownership is not frozen** (P1): `repointRewardEntry` rewrites
+   `RewardEntry.user` on position transfers/sales, so a per-user capped sum
+   fixed at report time can be REGROUPED before the entries become claimable —
+   splitting a cap-bound user's entries across owners raises the true
+   liability above the once-only report, and the d2 clamp would underfund.
+2. **Unbounded per-user set** (P1): the cap-on-whole-rawPay rule forced a
+   user's FULL entry set into one cursor slot (one tx), with an O(n²)
+   duplicate scan — a sufficiently active user becomes undeliverable and
+   wedges conservation.
+3. **User discovery is fragile** (P1/P2): D1 `loans.lender/borrower` are
+   init-time participants; transferred/intermediate holders own entries too,
+   so the keeper's candidate set was NOT a superset, and the empty-scan
+   truncation could livelock.
+
+**Resolution — per-ENTRY finest-split liability:**
+`liability_side(D) = Σ_covering-entries min(perDay_e × Δ_D / 1e18, C_side)`.
+Because `min(a+b, C) ≤ min(a, C) + min(b, C)`, this is the exact supremum of
+the per-user capped sum over EVERY possible ownership regrouping: it is
+transfer-invariant, can never under-state (the fatal direction), and any
+over-reservation (one owner holding several cap-binding entries) is bounded
+and swept back by d3's netting. No `paid` term: mirror payouts for an armed
+day are `remittedRemaining`-clamped (rev-15), remittance waits for this
+report, so `userSideDayPaidVpfi` is structurally zero at report time — and
+including it would re-introduce user-keyed (transfer-variant) state. All
+three findings dissolve structurally: no grouping to freeze, entries chunk
+freely across batches (the ascending entry-id cursor IS the dedup — O(1) per
+entry, no quadratic scan, no whole-set rule), and the keeper enumerates the
+chain's own sequential entry ids (creation-ordered ⇒ `startDay` monotone ⇒ a
+day's scan stops at the first `startDay > D`) — no D1 dependency at all.
+Still §M3-conformant: per-unit mirror-verified detail (more granular than
+per-user), bounded chunks, delays-never-zeroes. Two send-path guards ride
+along from the same round: the send/readiness additionally require the
+mirror's OWN interest close (`chainReportSentAt[D] != 0` — a Base grace/force
+finalize stamps a mirror whose close never ran, and pre-close the day looks
+quiet), and the readiness view now includes the mirror + messenger wiring
+preconditions so it is never true where the send would revert. The zeroed
+chain's report prices at its deliberately-zero stamp, so operator
+reconciliation sizes from mirror-local state, never from the report (§2b
+item 4 corrected accordingly).
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
@@ -265,7 +313,7 @@ the remit path holds only **per-(chain,day) aggregate** numerators and "cannot
 reconstruct how the windowed cap lands on each mirror user". Reconciled with
 §2/§3:
 - `Σcommitments` is the reported **per-(chain,day) per-side aggregate** liability
-  (§2) — per-loan on Base, per-D1-user on a mirror.
+  (§2) — per-loan on Base, per-ENTRY on a mirror (r1 restructure, §2c).
 - The reservation is **bound to the CCIP `messageId`** (§3): `pendingRemitted[messageId]
   → {dstChain, dayIds, per-side amounts}`. The clamp subtracts a **per-(chain,day)**
   running `pending` sum derived from open reservations; `remitted` is the

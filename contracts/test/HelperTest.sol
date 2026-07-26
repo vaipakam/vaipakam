@@ -87,9 +87,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](133);
+        selectors = new bytes4[](134);
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
+        // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
+        selectors[133] = TestMutatorFacet.setChainReportSentAtRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.
@@ -1852,7 +1854,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -1870,6 +1872,8 @@ contract HelperTest {
         // RL-3 (#1305) — the read-only claim-horizon views.
         selectors[14] = InteractionRewardsLensFacet.getUserRewardEntryIds.selector;
         selectors[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
+        // #1222 M3 B2-d1 — the commitment keeper's entry-sequence walk.
+        selectors[16] = InteractionRewardsLensFacet.getRewardEntriesRange.selector;
         return selectors;
     }
 

@@ -18,74 +18,88 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         + funding stamp it prices from are finalize outputs), so it never
  *         gates finalization itself.
  *
- *         The liability, per side, is the residual capped sum
+ *         The liability, per side, is the per-ENTRY capped sum
  *
- *           liability_side(D) = Σ_users min( rawPay_user , C_side − paid )
- *             rawPay_user = Σ (user's active entries) perDayNumeraire18 × Δ_D / 1e18
- *             C_side      = dayUserSideCap{Lender,Borrower}Vpfi18[D]  (broadcast verbatim)
- *             paid        = userSideDayPaidVpfi[user][side][D]        (≈0 at report time —
- *                           a mirror holds no VPFI until Base remits)
+ *           liability_side(D) = Σ_covering-entries min( rawPay_e , C_side )
+ *             rawPay_e = perDayNumeraire18_e × Δ_D / 1e18
+ *             C_side   = dayUserSideCap{Lender,Borrower}Vpfi18[D]  (broadcast verbatim)
  *
- *         On a mirror the per-LOAN reward cap is inert (mirror loans are
- *         unstamped — {LibInteractionRewards} openDays==0), so the D1
- *         `(user,side,day)` share cap `C_side` is the sole binding constraint;
- *         the commitment "unit" is therefore a USER, not a loan (per-loan on
- *         Base). This is NOT the "aggregate-only headroom" the tokenomics
- *         redesign forbids — every unit's contribution is recomputed from the
- *         mirror's OWN storage, so the keeper that feeds the batches cannot
- *         inflate the figure.
+ *         The unit is the reward ENTRY, deliberately NOT the user (Codex
+ *         #1425 r1): `repointRewardEntry` rewrites `RewardEntry.user` on
+ *         position transfers, so any per-user grouping fixed at report time
+ *         can be regrouped before the entries become claimable — a report
+ *         capped on the report-time grouping could then UNDER-state the true
+ *         liability and the remit clamp would underfund the mirror. The
+ *         per-entry figure is transfer-invariant, and because
+ *         `min(a+b, C) ≤ min(a, C) + min(b, C)` it is the exact supremum of
+ *         the per-user capped sum over every possible regrouping — it can
+ *         never under-state, and any over-reservation (a user holding several
+ *         cap-binding entries) is bounded and swept back by the B2-d3
+ *         netting. No `paid` term is subtracted: mirror payouts for an armed
+ *         day are clamped by `remittedRemaining` (rev-15), remittance waits
+ *         for THIS report, and the report precedes any remit — so
+ *         `userSideDayPaidVpfi` is structurally zero at report time, and
+ *         including it would re-introduce user-keyed (transfer-variant)
+ *         state.
  *
- *         Completeness — a busy day's report must never omit a user (that would
- *         UNDER-state the liability and permanently under-fund the mirror), yet
- *         there is no per-day active-user index. It is proven by DEMAND
- *         CONSERVATION, an EXACT integer identity with no maintained count:
+ *         Completeness — a busy day's report must never omit an entry (that
+ *         would UNDER-state the liability and permanently under-fund the
+ *         mirror), yet there is no per-day entry index. It is proven by
+ *         DEMAND CONSERVATION, an EXACT integer identity with no maintained
+ *         count:
  *
  *           Σ_submitted-entries perDayNumeraire18  ==  totalSideInterestNumeraire18[D]
  *
  *         because {LibInteractionRewards} folds exactly the same per-entry
  *         `perDayNumeraire18` into `totalSideInterestNumeraire18[D]` (via the
- *         difference-array `+perDay at start / -perDay at end`), and reward-INELIGIBLE
- *         (feed-fail) loans create no entry and no fold — so they are in NEITHER
- *         sum. An omitted user drops `conservation` below the total and the day
- *         never completes (delays, never zeroes); the frontier need not have
- *         reached `D` yet (the total is 0 until it does, so completeness simply
- *         waits for the interest close). Double-counting is barred by a
- *         STRICTLY-INCREASING user-address cursor (each user accumulated once)
- *         plus a within-batch duplicate-entry guard.
+ *         difference-array `+perDay at start / -perDay at end`), and
+ *         reward-INELIGIBLE (feed-fail) loans create no entry and no fold —
+ *         so they are in NEITHER sum. An omitted entry keeps `conservation`
+ *         below the total and the day never completes (delays, never
+ *         zeroes). Double-counting is barred by a STRICTLY-INCREASING
+ *         per-(day, side) entry-id cursor — which also makes each batch
+ *         internally ascending, so duplicate detection is O(1) per entry
+ *         (Codex #1425 r1: the former per-user scheme needed an O(n²)
+ *         within-batch scan and an unbounded whole-set-per-user rule).
+ *         Entries covering the day are included REGARDLESS of
+ *         processed/forfeited/closed status: the liability is
+ *         FORWARD-LOOKING and must match the conservation total, which also
+ *         counts every covering entry until its `endDay`.
  *
- * @dev    Mirror-only + read-only against the reward ledger: it stamps only its
- *         own accumulators, never pays out and never touches the recycle
- *         bucket, so it is safe to run while mirror armed-day CLAIM pricing is
- *         still halted (B2-d4 lifts that). Δ_D comes from
- *         {LibInteractionRewards.dailyDeltaForCommitment} (the halt-independent
- *         stamp read), so it never advances the halted cumulative cursor.
+ * @dev    Mirror-only + read-only against the reward ledger: it stamps only
+ *         its own accumulators, never pays out and never touches the recycle
+ *         bucket, so it is safe to run while mirror armed-day CLAIM pricing
+ *         is still halted (B2-d4 lifts that). Δ_D comes from
+ *         {LibInteractionRewards.dailyDeltaForCommitment} (the
+ *         halt-independent stamp read), so it never advances the halted
+ *         cumulative cursor. Day-`D` coverage of an entry is IMMUTABLE by
+ *         accumulation time: batches require the day's funding stamp, which
+ *         Base only broadcasts after `D` has elapsed, and a post-`D` early
+ *         close sets `endDay` to the (later) current day — so `startDay ≤ D
+ *         < endDay` cannot change under the cursor.
  */
 library LibCommitmentReport {
     uint256 private constant ONE = 1e18;
 
     /**
-     * @notice Accumulate one keeper-fed batch of per-user commitment units into
-     *         the `(dayId, side)` accumulators.
-     * @dev    `users` MUST be strictly ascending by address (the per-day dedup),
-     *         and `users[i]`'s full set of day-`dayId` entries is `entryIds[i]`
-     *         — a user's cap is applied to their WHOLE `rawPay`, so a user may
-     *         not be split across batches (the cursor forbids re-submission).
-     *         Reverts if the day is unarmed, its stamp has not arrived, the
-     *         report was already sent, ordering breaks, or an entry does not
-     *         belong to `(user, side)` / cover the day.
+     * @notice Accumulate one keeper-fed batch of day-covering reward entries
+     *         into the `(dayId, side)` accumulators.
+     * @dev    `entryIds` MUST be strictly ascending and strictly above the
+     *         stored cursor (the dedup). Every entry is recomputed from
+     *         storage and validated to be on `side` and cover the day — the
+     *         mirror is the authority on its own state, so the keeper cannot
+     *         inflate or distort either figure; it can only delay. Reverts if
+     *         the day is unarmed, its stamp has not arrived, the report was
+     *         already sent, ordering breaks, or an entry does not match.
      */
     function accumulateBatch(
         LibVaipakam.Storage storage s,
         uint256 dayId,
         LibVaipakam.RewardSide side,
-        address[] calldata users,
-        uint256[][] calldata entryIds
+        uint256[] calldata entryIds
     ) internal {
         if (s.commitmentReportSent[dayId]) {
             revert IVaipakamErrors.CommitmentReportAlreadySent(dayId);
-        }
-        if (users.length != entryIds.length) {
-            revert IVaipakamErrors.CommitmentEntryMismatch(0);
         }
         // Δ_D from THIS chain's own stamp — halt-independent. `priceable` false
         // ⇒ either unarmed (nothing to report) or the broadcast has not landed.
@@ -102,85 +116,40 @@ library LibCommitmentReport {
         uint256 cap = side == LibVaipakam.RewardSide.Lender
             ? s.dayUserSideCapLenderVpfi18[dayId]
             : s.dayUserSideCapBorrowerVpfi18[dayId];
-        uint256 cursor = s.commitmentUserCursor[dayId][sideKey];
+        uint256 cursor = s.commitmentEntryCursor[dayId][sideKey];
 
         uint256 liabilityAdd;
         uint256 conservationAdd;
-        uint256 n = users.length;
-        for (uint256 i; i < n; ) {
-            address user = users[i];
-            uint256 key = uint256(uint160(user));
-            // Strictly increasing ⇒ each user accumulated at most once.
-            if (key <= cursor) {
-                revert IVaipakamErrors.CommitmentUsersNotAscending(user);
-            }
-            cursor = key;
-
-            (uint256 rawPay, uint256 perDaySum) =
-                _userRawPay(s, dayId, side, delta, user, entryIds[i]);
-
-            uint256 paid = s.userSideDayPaidVpfi[user][sideKey][dayId];
-            uint256 remaining = cap > paid ? cap - paid : 0;
-            liabilityAdd += rawPay < remaining ? rawPay : remaining;
-            conservationAdd += perDaySum;
-            unchecked {
-                ++i;
-            }
-        }
-
-        s.commitmentUserCursor[dayId][sideKey] = cursor;
-        s.commitmentLiabilityAccum18[dayId][sideKey] += liabilityAdd;
-        s.commitmentConservationAccum18[dayId][sideKey] += conservationAdd;
-    }
-
-    /// @dev One user's uncapped `rawPay` for `dayId` (Σ entry contributions) and
-    ///      the `perDayNumeraire18` sum (the conservation term). Every entry is
-    ///      recomputed from storage and validated to belong to `(user, side)`
-    ///      and cover the day — the mirror is the authority on its own state, so
-    ///      the keeper cannot inflate either figure. Entries covering the day
-    ///      are included REGARDLESS of processed/forfeited/closed status: the
-    ///      liability is FORWARD-LOOKING (what Base must fund so the day can pay
-    ///      out on close), and it must match the conservation total, which also
-    ///      counts every covering entry until its `endDay`.
-    function _userRawPay(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        LibVaipakam.RewardSide side,
-        uint256 delta,
-        address user,
-        uint256[] calldata entryIds
-    ) private view returns (uint256 rawPay, uint256 perDaySum) {
         uint256 n = entryIds.length;
         for (uint256 i; i < n; ) {
             uint256 id = entryIds[i];
+            // Strictly increasing ⇒ each entry accumulated at most once, and
+            // the batch is internally duplicate-free by construction.
+            if (id <= cursor) {
+                revert IVaipakamErrors.CommitmentEntriesNotAscending(id);
+            }
+            cursor = id;
+
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
             uint256 start = e.startDay == 0 ? 1 : e.startDay;
-            if (
-                e.user != user ||
-                e.side != side ||
-                dayId < start ||
-                dayId >= e.endDay
-            ) {
+            if (e.side != side || dayId < start || dayId >= e.endDay) {
                 revert IVaipakamErrors.CommitmentEntryMismatch(id);
             }
-            // Within-batch duplicate would double-count both sums.
-            for (uint256 j; j < i; ) {
-                if (entryIds[j] == id) {
-                    revert IVaipakamErrors.CommitmentEntryMismatch(id);
-                }
-                unchecked {
-                    ++j;
-                }
-            }
+
             uint256 perDay = e.perDayNumeraire18;
-            perDaySum += perDay;
+            conservationAdd += perDay;
             // Same floored form as the claim path
             // ({LibInteractionRewards._contribFor}: perDay × Δ_D / 1e18).
-            rawPay += (perDay * delta) / ONE;
+            uint256 rawPay = (perDay * delta) / ONE;
+            liabilityAdd += rawPay < cap ? rawPay : cap;
             unchecked {
                 ++i;
             }
         }
+
+        s.commitmentEntryCursor[dayId][sideKey] = cursor;
+        s.commitmentLiabilityAccum18[dayId][sideKey] += liabilityAdd;
+        s.commitmentConservationAccum18[dayId][sideKey] += conservationAdd;
     }
 
     /// @notice True iff `dayId` is inside the governor's commitment-armed
@@ -198,16 +167,8 @@ library LibCommitmentReport {
     }
 
     /// @notice True iff this chain's day-`dayId` funding stamp has arrived
-    ///         (Base finalized the day and its broadcast landed here).
-    /// @dev The send-side race guard: demand conservation is only meaningful
-    ///      once this mirror's day-`dayId` interest totals are FINAL, i.e. its
-    ///      own interest close folded them. The stamp proves that transitively
-    ///      — Base can only finalize (and so broadcast the stamp) once this
-    ///      chain's interest report was included (or the chain was zeroed, in
-    ///      which case it is already remit-ineligible-pending-reconciliation).
-    ///      Without this guard a keeper could report a quiet-LOOKING day
-    ///      (totals still 0 pre-close ⇒ trivially "complete") as `(0, 0)`,
-    ///      permanently understating the liability (the send is once-per-day).
+    ///         (Base finalized the day and its broadcast landed here) — the
+    ///         pricing precondition for every batch.
     function hasFundingStamp(
         LibVaipakam.Storage storage s,
         uint256 dayId
@@ -215,10 +176,29 @@ library LibCommitmentReport {
         return s.chainDayRecycledFunding[dayId][uint32(block.chainid)].stamped;
     }
 
-    /// @notice True iff `(dayId, side)`'s reported units EXHAUST the day's
+    /// @notice True iff this mirror's OWN day-`dayId` interest close ran
+    ///         (`RewardReporterFacet.closeDay` — `chainReportSentAt` is
+    ///         stamped right after the fold that finalizes
+    ///         `totalSideInterestNumeraire18[dayId]`).
+    /// @dev    The send-side race guard (Codex #1425 r1): a Base grace/force
+    ///         finalize stamps this mirror even when its own close never ran,
+    ///         so stamp arrival alone does NOT prove the totals demand
+    ///         conservation is checked against are final. Before the local
+    ///         close a busy day LOOKS quiet (totals still 0 ⇒ trivially
+    ///         "complete") and the once-only report could ship an
+    ///         irreversible `(0, 0)`.
+    function hasLocalInterestClose(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) internal view returns (bool) {
+        return s.chainReportSentAt[dayId] != 0;
+    }
+
+    /// @notice True iff `(dayId, side)`'s reported entries EXHAUST the day's
     ///         interest demand — the demand-conservation completeness proof.
     /// @dev    A side with zero interest (`total == 0`) is trivially complete
-    ///         with zero liability and needs no batch.
+    ///         with zero liability and needs no batch. Only meaningful once
+    ///         {hasLocalInterestClose} — callers on the send path gate on it.
     function isSideComplete(
         LibVaipakam.Storage storage s,
         uint256 dayId,

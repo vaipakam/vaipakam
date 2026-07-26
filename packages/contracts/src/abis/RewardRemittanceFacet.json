@@ -461,6 +461,28 @@
   },
   {
     "type": "error",
+    "name": "CommitmentDayNotLocallyClosed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentEntriesNotAscending",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CommitmentEntryMismatch",
     "inputs": [
       {
@@ -494,17 +516,6 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CommitmentUsersNotAscending",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

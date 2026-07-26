@@ -2119,7 +2119,7 @@ contract DeployDiamond is Script {
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet} for
     ///      EIP-170 headroom. These 14 selectors route to the lens facet.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](16);
+        s = new bytes4[](17);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2137,6 +2137,8 @@ contract DeployDiamond is Script {
         // RL-3 (#1305) — the read-only claim-horizon views.
         s[14] = InteractionRewardsLensFacet.getUserRewardEntryIds.selector;
         s[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
+        // #1222 M3 B2-d1 — the commitment keeper's entry-sequence walk.
+        s[16] = InteractionRewardsLensFacet.getRewardEntriesRange.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for

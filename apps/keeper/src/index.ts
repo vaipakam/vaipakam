@@ -178,12 +178,13 @@ export default {
         console.error('[keeper] runRewardBudgetRemit pass failed:', err);
       }),
     );
-    // #1222 M3 B2-d1 — mirror→Base commitment report. On mirrors only:
-    // batches each armed day's per-user commitment units into the Diamond
-    // and dispatches the per-side liability report once demand conservation
-    // completes (Base's ShareOfPool remit gate waits for it). Dark until
-    // KEEPER_ENABLED + REWARD_COMMIT_ENABLED are both set and the keeper EOA
-    // holds KEEPER_ROLE on-chain.
+    // #1222 M3 B2-d1 — mirror→Base commitment report. On mirrors only: walks
+    // the chain's own reward-entry id sequence, batches each armed day's
+    // covering entries into the Diamond, and dispatches the per-side
+    // liability report once demand conservation completes (Base's
+    // ShareOfPool remit gate waits for it). Dark until KEEPER_ENABLED +
+    // REWARD_COMMIT_ENABLED are both set and the keeper EOA holds
+    // KEEPER_ROLE on-chain.
     ctx.waitUntil(
       runCommitmentReport(resolved).catch((err) => {
         // eslint-disable-next-line no-console

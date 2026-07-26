@@ -264,11 +264,12 @@ contract RewardAggregatorFacet is
     ///      finalization-ordering guard here (contrast
     ///      {_ingestChainReport}'s `ReportAfterFinalization`, whose interest
     ///      figures feed the denominator that finalize fixes). A report for a
-    ///      day whose interest contribution was zeroed is also accepted: the
-    ///      chain is remit-ineligible-pending-reconciliation and the stored
-    ///      liability is exactly what the operator needs to size the manual
-    ///      remit. Idempotent on CCIP re-delivery (the mirror sends once —
-    ///      `commitmentReportSent`).
+    ///      day whose interest contribution was zeroed is also accepted and
+    ///      stored — though note it prices at that chain's deliberately-zero
+    ///      funding stamp, so the operator reconciliation for a zeroed chain
+    ///      sizes from the mirror's locally-readable state, not from this
+    ///      figure (Codex #1425 r1). Idempotent on CCIP re-delivery (the
+    ///      mirror sends once — `commitmentReportSent`).
     function onCommitmentReportReceived(
         uint32 sourceChainId,
         uint256 dayId,
@@ -276,11 +277,21 @@ contract RewardAggregatorFacet is
         uint256 liabilityBorrower18
     ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!_isExpectedChainId(s, sourceChainId)) {
-            revert SourceChainIdNotExpected();
-        }
         LibVaipakam.ChainDayCommitments storage c =
             s.chainDayCommitments[dayId][sourceChainId];
+        // Membership is checked against the DAY's topology evidence, not only
+        // the mutable current list (Codex #1425 r1): a chain removed from
+        // `expectedSourceChainIds` after day `dayId` finalized must still be
+        // able to land its historical report — `chainDailyIncluded` proves it
+        // participated in the finalized denominator, and `remitIneligible`
+        // proves it was expected-and-zeroed at an armed finalize.
+        if (
+            !_isExpectedChainId(s, sourceChainId)
+                && !s.chainDailyIncluded[dayId][sourceChainId]
+                && !c.remitIneligible
+        ) {
+            revert SourceChainIdNotExpected();
+        }
         // Idempotent: a re-delivered copy of an already-accepted report no-ops
         // (never reverts — a benign CCIP re-execution must not fail).
         if (c.complete) return;
@@ -457,8 +468,10 @@ contract RewardAggregatorFacet is
         // automatic one. Cleared via
         // {RewardCommitmentFacet.reconcileCommitmentRemitEligibility} — the
         // chain's late commitment report is still ACCEPTED post-finalize
-        // ({onCommitmentReportReceived}), so the operator has the true
-        // liability figure on-chain to size the manual remit. Chains whose
+        // ({onCommitmentReportReceived}), though it prices at the zeroed
+        // chain's deliberately-zero funding stamp, so the operator sizes the
+        // manual remit from the mirror's locally-readable state instead
+        // (Codex #1425 r1). Chains whose
         // interest DID report are not marked: their commitment report simply
         // arrives after this finalize broadcasts the day's caps + stamp, and
         // the B2-d2 remit gate waits for it (delays, never zeroes). The

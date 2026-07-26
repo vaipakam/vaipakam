@@ -56,34 +56,32 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
 
     // ─── Mirror-side commitment REPORT (B2-d1) ───────────────────────────────
 
-    /// @notice Accumulate one keeper-fed batch of per-user commitment units for
-    ///         `(dayId, side)` — the mirror recomputes each unit's contribution
-    ///         from its OWN storage, so the keeper cannot inflate the reported
-    ///         liability.
+    /// @notice Accumulate one keeper-fed batch of day-covering reward entries
+    ///         for `(dayId, side)` — the mirror recomputes each entry's
+    ///         contribution from its OWN storage, so the keeper cannot inflate
+    ///         or distort the reported liability, only delay it.
     /// @dev MIRROR-only, KEEPER_ROLE-gated. The role is anti-grief, not trust:
-    ///      per-entry verification cannot prove a submission is a user's FULL
-    ///      day-`dayId` entry set, and the strictly-ascending cursor consumes
-    ///      each user's slot exactly once — so a permissionless partial/empty
-    ///      submission for a user would leave demand conservation permanently
-    ///      short and wedge the day's report (a cheap per-day DoS on the remit
-    ///      flow). The numeric figures stay mirror-computed regardless of
-    ///      caller; a keeper MIS-submission is recoverable via
-    ///      {resetCommitmentAccumulation}. `side` is 0 (Lender) /
-    ///      1 (Borrower). `users` MUST be strictly ascending by address, each
-    ///      with its full day-`dayId` entry set. Completeness is proven by
+    ///      the strictly-ascending entry-id cursor consumes each id slot at
+    ///      most once, so a permissionless submission that skipped ids (e.g.
+    ///      submitting a high id first) would leave lower covering entries
+    ///      unreachable, demand conservation permanently short, and the day's
+    ///      report wedged (a cheap per-day DoS on the remit flow). The numeric
+    ///      figures stay mirror-computed regardless of caller; a keeper
+    ///      MIS-submission is recoverable via {resetCommitmentAccumulation}.
+    ///      `side` is 0 (Lender) / 1 (Borrower). `entryIds` MUST be strictly
+    ///      ascending (and above the stored cursor). Completeness is proven by
     ///      demand conservation, so a partial submission simply leaves the day
     ///      incomplete (delays, never zeroes). See {LibCommitmentReport}.
     function submitCommitmentBatch(
         uint256 dayId,
         uint8 side,
-        address[] calldata users,
-        uint256[][] calldata entryIds
+        uint256[] calldata entryIds
     ) external onlyRole(LibAccessControl.KEEPER_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
         // Enum bounds-check reverts a side outside {0,1}.
         LibCommitmentReport.accumulateBatch(
-            s, dayId, LibVaipakam.RewardSide(side), users, entryIds
+            s, dayId, LibVaipakam.RewardSide(side), entryIds
         );
     }
 
@@ -96,8 +94,9 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     ///         accumulators) so the keeper can resubmit from scratch.
     /// @dev ADMIN-only, MIRROR-only, and only while the day's report has not
     ///      been sent. The recovery valve for a keeper MIS-submission (e.g. a
-    ///      user submitted with a partial entry set, permanently blocking
-    ///      demand conservation): reset, then resubmit every user correctly.
+    ///      covering entry id skipped below an already-consumed cursor,
+    ///      permanently blocking demand conservation): reset, then resubmit
+    ///      the full ascending set.
     function resetCommitmentAccumulation(
         uint256 dayId,
         uint8 side
@@ -109,7 +108,7 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         }
         // Enum bounds-check reverts a side outside {0,1}.
         uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
-        s.commitmentUserCursor[dayId][sideKey] = 0;
+        s.commitmentEntryCursor[dayId][sideKey] = 0;
         s.commitmentLiabilityAccum18[dayId][sideKey] = 0;
         s.commitmentConservationAccum18[dayId][sideKey] = 0;
         emit CommitmentAccumulationReset(dayId, sideKey);
@@ -134,14 +133,18 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (!LibCommitmentReport.isDayArmed(s, dayId)) {
             revert CommitmentDayNotArmed(dayId);
         }
-        // Race guard: only report once this chain's day-`dayId` funding stamp
-        // arrived — which transitively proves the local interest close folded
-        // the totals demand conservation is checked against (see
-        // {LibCommitmentReport.hasFundingStamp}). Without it, a quiet-LOOKING
-        // pre-close day (totals still 0) would ship an irreversible (0, 0)
-        // report.
+        // Pricing precondition: the day's funding stamp must have arrived.
         if (!LibCommitmentReport.hasFundingStamp(s, dayId)) {
             revert CommitmentStampNotArrived(dayId);
+        }
+        // Race guard (Codex #1425 r1): the stamp does NOT prove this mirror's
+        // own interest close ran — a Base grace/force-finalize stamps the
+        // mirror even when `closeDay(dayId)` never fired here, and pre-close
+        // the day LOOKS quiet (totals 0 ⇒ trivially "complete"), so the
+        // once-only report could ship an irreversible (0, 0). Require the
+        // local close explicitly.
+        if (!LibCommitmentReport.hasLocalInterestClose(s, dayId)) {
+            revert CommitmentDayNotLocallyClosed(dayId);
         }
         if (s.commitmentReportSent[dayId]) {
             revert CommitmentReportAlreadySent(dayId);
@@ -171,23 +174,29 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         );
     }
 
-    /// @notice True iff `dayId` is armed, its funding stamp has arrived, its
-    ///         per-side commitments are complete, and the report has not yet
-    ///         been dispatched — the keeper's send trigger. Never true for a
-    ///         day {sendCommitmentReport} would revert on.
+    /// @notice True iff this chain can dispatch `dayId`'s report right now:
+    ///         mirror + messenger wiring present, day armed, funding stamp
+    ///         arrived, local interest close ran, per-side commitments
+    ///         complete, report not yet sent — the keeper's send trigger.
+    ///         Never true for a day {sendCommitmentReport} would revert on
+    ///         (Codex #1425 r1: the earlier form was true on the canonical
+    ///         chain and on un-wired mirrors, where the send always reverts).
     function isDayCommitmentReady(
         uint256 dayId
     ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return
+            LibVaipakam.isMirrorRewardChain(s) &&
+            s.rewardMessenger != address(0) &&
             LibCommitmentReport.isDayArmed(s, dayId) &&
             LibCommitmentReport.hasFundingStamp(s, dayId) &&
+            LibCommitmentReport.hasLocalInterestClose(s, dayId) &&
             !s.commitmentReportSent[dayId] &&
             LibCommitmentReport.isDayComplete(s, dayId);
     }
 
     /// @notice The `(dayId, side)` accumulation state: the last-accumulated
-    ///         user cursor (0 = none yet; the keeper resumes with users
+    ///         entry-id cursor (0 = none yet; the keeper resumes with ids
     ///         strictly above it) and the two running sums.
     /// @dev The keeper's resumability view — batches are cheap but the cursor
     ///      is strictly ascending, so a restarted keeper must know where the
@@ -207,7 +216,7 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
         return (
-            s.commitmentUserCursor[dayId][sideKey],
+            s.commitmentEntryCursor[dayId][sideKey],
             s.commitmentLiabilityAccum18[dayId][sideKey],
             s.commitmentConservationAccum18[dayId][sideKey]
         );
@@ -257,9 +266,12 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      sized without its real demand, so automatic remittance must not
      *      proceed (B2-d1 retarget; a merely LATE commitment report is not
      *      flagged — the remit gate just waits for it). The operator
-     *      reconciles the true liability off-chain (evidenced — the chain's
-     *      late report is still accepted post-finalize and stores it) and
-     *      clears the flag here. Because clearing it
+     *      reconciles the true liability OFF-CHAIN from the mirror's locally
+     *      readable state (day totals + entry set): the zeroed chain's own
+     *      funding stamp deliberately carries zero halves, so its on-chain
+     *      report — still accepted post-finalize — prices at Δ = 0 and is NOT
+     *      a sizing basis (Codex #1425 r1). After the evidenced
+     *      reconciliation the operator clears the flag here. Because clearing it
      *      after a long delay can fall outside the keeper's bounded
      *      remit-discovery window (`apps/keeper` re-scans a fixed lookback and
      *      skips zero quotes), the operator that reconciles a day is expected

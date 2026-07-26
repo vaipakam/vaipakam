@@ -5551,24 +5551,30 @@ library LibVaipakam {
             chainDayCommitments;
         // ─── #1222 M3 B2-d1 — mirror-side commitment-report accumulation ─────
         // APPEND-ONLY TAIL. A mirror computes its day-D per-side claimable
-        // liability by accumulating keeper-fed, mirror-VERIFIED per-user batches
-        // (the keeper cannot inflate — the mirror recomputes each user's rawPay
-        // from its own reward entries), then reports one compact per-side total
-        // to Base. Keyed `(dayId, side)`:
-        //   `commitmentLiabilityAccum18`     Σ min(rawPay_user, C_side − paid) — the liability.
-        //   `commitmentConservationAccum18`  Σ uncapped rawPay_user — the completeness proof:
+        // liability by accumulating keeper-fed, mirror-VERIFIED per-ENTRY
+        // batches (the keeper cannot inflate or distort — the mirror recomputes
+        // each entry's figures from its own storage), then reports one compact
+        // per-side total to Base. The unit is the reward ENTRY, not the user:
+        // per-entry `min(rawPay_entry, C_side)` is invariant under position
+        // transfers (`repointRewardEntry` regroups entries across users after
+        // the once-only report) and is the exact supremum of the per-user
+        // capped sum over every possible ownership regrouping
+        // (`min(a+b, C) ≤ min(a, C) + min(b, C)`) — so the report can never
+        // under-state the eventual claimable liability (Codex #1425 r1).
+        // Keyed `(dayId, side)`:
+        //   `commitmentLiabilityAccum18`     Σ min(rawPay_entry, C_side) — the liability.
+        //   `commitmentConservationAccum18`  Σ perDayNumeraire18 — the completeness proof:
         //                                    a side is COMPLETE iff this equals the chain's own
-        //                                    day-`d` interest demand `_uncappedDelta(side,d)/1e18 ×
-        //                                    totalSideInterestNumeraire18[d]` (no maintained
-        //                                    active-unit count needed — a missing user understates
+        //                                    `totalSideInterestNumeraire18[d]` (no maintained
+        //                                    active-unit count needed — a missing entry understates
         //                                    the sum and fails the check; delays, never zeroes).
-        //   `commitmentUserCursor`           last user accumulated (uint160 address), STRICTLY
-        //                                    INCREASING across batches ⇒ no double-count.
+        //   `commitmentEntryCursor`          last entry id accumulated, STRICTLY INCREASING
+        //                                    across and within batches ⇒ no double-count.
         // `commitmentReportSent[dayId]` marks the report dispatched to Base (whole-day idempotency,
         // both sides). Mirror-only; Base never writes these.
         mapping(uint256 => mapping(uint8 => uint256)) commitmentLiabilityAccum18;
         mapping(uint256 => mapping(uint8 => uint256)) commitmentConservationAccum18;
-        mapping(uint256 => mapping(uint8 => uint256)) commitmentUserCursor;
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentEntryCursor;
         mapping(uint256 => bool) commitmentReportSent;
     }
 

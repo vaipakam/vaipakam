@@ -480,14 +480,23 @@ interface IVaipakamErrors {
     ///         The report must wait for the broadcast (delays, never zeroes).
     error CommitmentStampNotArrived(uint256 dayId);
 
-    /// @notice A commitment batch's users were not STRICTLY INCREASING by
-    ///         address (across the batch and versus the stored cursor) — the
-    ///         monotonic ordering is the per-day dedup that guarantees each user
-    ///         is accumulated exactly once. `user` is the offending address.
-    error CommitmentUsersNotAscending(address user);
+    /// @notice The mirror's day-`dayId` local interest close has not run yet
+    ///         (`chainReportSentAt[dayId] == 0`) — the demand-conservation
+    ///         totals the report's completeness is proven against are not
+    ///         final, so a quiet-LOOKING day must not ship the once-only
+    ///         report (Codex #1425 r1: a Base grace/force-finalize stamps the
+    ///         mirror even when its own close never ran).
+    error CommitmentDayNotLocallyClosed(uint256 dayId);
 
-    /// @notice An entry handed to a commitment batch does not belong to the
-    ///         claimed `(user, side)` or does not cover the reported day — the
+    /// @notice A commitment batch's entry ids were not STRICTLY INCREASING
+    ///         (within the batch and versus the stored per-(day, side)
+    ///         cursor) — the monotonic ordering is the dedup that guarantees
+    ///         each entry is accumulated exactly once. `entryId` is the
+    ///         offending id.
+    error CommitmentEntriesNotAscending(uint256 entryId);
+
+    /// @notice An entry handed to a commitment batch is not on the claimed
+    ///         `side` or does not cover the reported day — the
     ///         mirror recomputes each unit's contribution from its OWN storage,
     ///         so a mismatched entry (the keeper cannot inflate) is rejected.
     error CommitmentEntryMismatch(uint256 entryId);

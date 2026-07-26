@@ -13,20 +13,20 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 /// @title RewardCommitmentTest
 /// @notice #1222 M3 B2-c/B2-d1 — the reward-mesh commitment REPORT end to end:
-///         mirror-side keeper-fed accumulation (demand-conservation
-///         completeness, strictly-ascending user cursor, mirror-recomputed
-///         figures), the once-per-day dispatch to Base, the Base ingress that
-///         stores the per-side liabilities (the B2-d2 remit-gate input), and
-///         the retimed finalize semantics: finalization has NO commitment
-///         input (the report is only computable from the caps + stamp that
-///         finalize itself produces — design doc §2b), and `remitIneligible`
-///         marks chains ZEROED out of the interest denominator, not chains
-///         whose report is merely still in flight.
+///         mirror-side keeper-fed per-ENTRY accumulation (demand-conservation
+///         completeness, strictly-ascending entry-id cursor, mirror-recomputed
+///         figures — the entry unit is transfer-invariant, Codex #1425 r1),
+///         the once-per-day dispatch to Base, the Base ingress that stores the
+///         per-side liabilities (the B2-d2 remit-gate input) with day-topology
+///         membership, and the retimed finalize semantics: finalization has NO
+///         commitment input (the report is only computable from the caps +
+///         stamp finalize itself produces — design doc §2b), and
+///         `remitIneligible` marks chains ZEROED out of the interest
+///         denominator, not chains whose report is merely still in flight.
 contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
     MockRewardMessenger internal messenger;
 
     address internal alice;
-    // Strictly ascending commitment users (sorted in setUp).
     address internal u1;
     address internal u2;
     address internal u3;
@@ -41,11 +41,9 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         setupHelper();
         messenger = new MockRewardMessenger(address(diamond));
         alice = makeAddr("alice");
-        (u1, u2, u3) = _sort3(
-            makeAddr("carol"),
-            makeAddr("dave"),
-            makeAddr("erin")
-        );
+        u1 = makeAddr("carol");
+        u2 = makeAddr("dave");
+        u3 = makeAddr("erin");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -64,17 +62,6 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
 
     function _mut() internal view returns (TestMutatorFacet) {
         return TestMutatorFacet(address(diamond));
-    }
-
-    function _sort3(
-        address a,
-        address b,
-        address c
-    ) private pure returns (address, address, address) {
-        if (a > b) (a, b) = (b, a);
-        if (b > c) (b, c) = (c, b);
-        if (a > b) (a, b) = (b, a);
-        return (a, b, c);
     }
 
     function _configureCanonical() internal {
@@ -105,12 +92,20 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
     }
 
+    /// @dev Mark the mirror's OWN day-`DAY` interest close as run (production
+    ///      stamps this in `closeDay` right after the interest fold) — the
+    ///      send path's race guard requires it.
+    function _localClose() internal {
+        _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
+    }
+
     /// @dev Lender-side demand for `DAY`: total interest 100e18 (so
-    ///      Δ_L = (20e18 + 10e18) × 1e18 / 100e18 = 0.3e18), per-user D1 cap
-    ///      15e18, `u2` already paid 5e18. Expected per-user liability:
-    ///        u1: raw 60e18×0.3 = 18e18 → min(18, 15−0)  = 15e18 (cap-bound)
-    ///        u2: raw 40e18×0.3 = 12e18 → min(12, 15−5)  = 10e18 (paid-reduced)
-    ///      → lender liability 25e18.
+    ///      Δ_L = (20e18 + 10e18) × 1e18 / 100e18 = 0.3e18), per-entry D1 cap
+    ///      15e18. Expected per-ENTRY liability:
+    ///        e1: raw 60e18×0.3 = 18e18   → min(18, 15)  = 15e18 (cap-bound)
+    ///        e2: raw 25e18×0.3 = 7.5e18  → 7.5e18       (raw-bound)
+    ///        e3: raw 15e18×0.3 = 4.5e18  → 4.5e18       (raw-bound)
+    ///      → lender liability 27e18.
     function _seedLenderDemand()
         internal
         returns (uint256 e1, uint256 e2, uint256 e3)
@@ -129,7 +124,6 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
             u2, 3, LibVaipakam.RewardSide.Lender, 15e18, 1
         );
         _mut().setRewardEntryEndDayRaw(e3, 10);
-        _mut().setUserSideDayPaidRaw(u2, 0, DAY, 5e18);
     }
 
     function _ids1(uint256 a) internal pure returns (uint256[] memory ids) {
@@ -146,18 +140,15 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         ids[1] = b;
     }
 
-    function _batch1(
-        address user,
-        uint256[] memory ids
-    )
-        internal
-        pure
-        returns (address[] memory users, uint256[][] memory entryIds)
-    {
-        users = new address[](1);
-        users[0] = user;
-        entryIds = new uint256[][](1);
-        entryIds[0] = ids;
+    function _ids3(
+        uint256 a,
+        uint256 b,
+        uint256 c
+    ) internal pure returns (uint256[] memory ids) {
+        ids = new uint256[](3);
+        ids[0] = a;
+        ids[1] = b;
+        ids[2] = c;
     }
 
     // ═══ Retimed finalize semantics (design doc §2b) ═════════════════════════
@@ -240,9 +231,9 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
             "canonical exempt"
         );
 
-        // The zeroed chain's late report is STILL accepted — it stores the
-        // exact liability figure the operator needs to size the manual remit.
-        messenger.deliverCommitmentReport(CHAIN_ARB, DAY, 7e18, 8e18);
+        // The zeroed chain's late report is STILL accepted (it prices at the
+        // zero stamp, so it is bookkeeping — not the operator's sizing basis).
+        messenger.deliverCommitmentReport(CHAIN_ARB, DAY, 0, 0);
         assertTrue(
             _com().isChainDayCommitmentsComplete(DAY, CHAIN_ARB),
             "late report accepted for the zeroed chain"
@@ -289,19 +280,54 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         _agg().finalizeDay(DAY);
 
         // Arriving AFTER finalize is the NORMAL sequence (§2b).
-        messenger.deliverCommitmentReport(CHAIN_ARB, DAY, 25e18, 30e18);
+        messenger.deliverCommitmentReport(CHAIN_ARB, DAY, 27e18, 30e18);
         LibVaipakam.ChainDayCommitments memory c =
             _com().getChainDayCommitments(DAY, CHAIN_ARB);
         assertTrue(c.complete, "report accepted post-finalize");
-        assertEq(c.liabilityLender18, 25e18, "lender liability stored");
+        assertEq(c.liabilityLender18, 27e18, "lender liability stored");
         assertEq(c.liabilityBorrower18, 30e18, "borrower liability stored");
         assertTrue(_com().isChainDayCommitmentsComplete(DAY, CHAIN_ARB));
 
         // A re-delivered (or duplicate) report never rewrites the stored pair.
         messenger.deliverCommitmentReport(CHAIN_ARB, DAY, 1e18, 2e18);
         c = _com().getChainDayCommitments(DAY, CHAIN_ARB);
-        assertEq(c.liabilityLender18, 25e18, "re-delivery no-ops");
+        assertEq(c.liabilityLender18, 27e18, "re-delivery no-ops");
         assertEq(c.liabilityBorrower18, 30e18, "re-delivery no-ops");
+    }
+
+    function test_ingress_dayTopology_survivesExpectedListEdit() public {
+        // A chain removed from `expectedSourceChainIds` AFTER day D finalized
+        // must still land its historical report: `chainDailyIncluded` proves
+        // it was in the finalized denominator, `remitIneligible` proves it
+        // was expected-and-zeroed (Codex #1425 r1).
+        _configureCanonical();
+        _mut().setGovernorCommitArmedFromDayRaw(DAY);
+        messenger.deliverChainReport(CHAIN_BASE, DAY, 0, 0);
+        messenger.deliverChainReport(CHAIN_ARB, DAY, 0, 0);
+        // OP's interest report missing — zeroed + marked at force-finalize.
+        _agg().forceFinalizeDay(DAY);
+        assertTrue(_com().getChainDayCommitments(DAY, CHAIN_OP).remitIneligible);
+
+        // Shrink the topology to BASE only.
+        uint32[] memory chainIds = new uint32[](1);
+        chainIds[0] = CHAIN_BASE;
+        _agg().setExpectedSourceChainIds(chainIds);
+
+        // Included-then-removed chain: accepted via chainDailyIncluded.
+        messenger.deliverCommitmentReport(CHAIN_ARB, DAY, 5e18, 6e18);
+        assertTrue(
+            _com().isChainDayCommitmentsComplete(DAY, CHAIN_ARB),
+            "included chain's historical report accepted after list edit"
+        );
+        // Zeroed-then-removed chain: accepted via remitIneligible.
+        messenger.deliverCommitmentReport(CHAIN_OP, DAY, 0, 0);
+        assertTrue(
+            _com().isChainDayCommitmentsComplete(DAY, CHAIN_OP),
+            "zeroed chain's historical report accepted after list edit"
+        );
+        // A chain with NO day-D evidence stays rejected.
+        vm.expectRevert(SourceChainIdNotExpected.selector);
+        messenger.deliverCommitmentReport(999, DAY, 1, 1);
     }
 
     function test_ingress_guards() public {
@@ -313,7 +339,7 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
             CHAIN_ARB, DAY, 1, 1
         );
 
-        // Unexpected source chain.
+        // Unexpected source chain (no day-D evidence either).
         vm.expectRevert(SourceChainIdNotExpected.selector);
         messenger.deliverCommitmentReport(999, DAY, 1, 1);
 
@@ -328,12 +354,13 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
     function test_mirror_reportFullFlow() public {
         _configureMirror();
         _armAndStamp();
+        _localClose();
         (uint256 e1, uint256 e2, uint256 e3) = _seedLenderDemand();
 
         // Borrower demand: total 200e18 → Δ_B = 30e18×1e18/200e18 = 0.15e18.
-        //   u1: raw 100e18×0.15 = 15e18 → exactly the 15e18 cap (boundary)
-        //   u2: raw  60e18×0.15 =  9e18 → raw-bound
-        //   u3: raw  40e18×0.15 =  6e18 → raw-bound
+        //   b1: raw 100e18×0.15 = 15e18 → exactly the 15e18 cap (boundary)
+        //   b2: raw  60e18×0.15 =  9e18 → raw-bound
+        //   b3: raw  40e18×0.15 =  6e18 → raw-bound
         // → borrower liability 30e18.
         _mut().setDailyBorrowerInterest(DAY, u1, 0, 200e18);
         uint256 b1 = _mut().pushRewardEntry(
@@ -351,34 +378,36 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
 
         assertFalse(_com().isDayCommitmentReady(DAY), "nothing submitted");
 
-        // Lender side in two batches — the cursor spans batches.
-        (address[] memory us, uint256[][] memory ids) = _batch1(u1, _ids1(e1));
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        // Lender side in two batches — the entry cursor spans batches.
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e1));
         assertFalse(
             _com().isDayCommitmentReady(DAY),
             "lender conservation short => incomplete"
         );
-        (us, ids) = _batch1(u2, _ids2(e2, e3));
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids2(e2, e3));
         assertFalse(
             _com().isDayCommitmentReady(DAY),
             "borrower side still incomplete"
         );
 
-        // Borrower side: all three users in ONE ascending batch.
-        address[] memory bu = new address[](3);
-        bu[0] = u1;
-        bu[1] = u2;
-        bu[2] = u3;
-        uint256[][] memory bids = new uint256[][](3);
-        bids[0] = _ids1(b1);
-        bids[1] = _ids1(b2);
-        bids[2] = _ids1(b3);
-        _com().submitCommitmentBatch(DAY, 1, bu, bids);
+        // Borrower side: all three entries in ONE ascending batch.
+        _com().submitCommitmentBatch(DAY, 1, _ids3(b1, b2, b3));
 
         assertTrue(_com().isDayCommitmentReady(DAY), "both sides complete");
 
+        // The resumability view reflects the walk.
+        (uint256 cursor, uint256 liab, uint256 cons) =
+            _com().getCommitmentAccumulation(DAY, 0);
+        assertEq(cursor, e3, "lender cursor at last entry");
+        assertEq(liab, 27e18, "lender liability accumulated");
+        assertEq(cons, 100e18, "lender conservation == total");
+
         vm.deal(address(this), 1 ether);
+        assertEq(
+            _com().quoteCommitmentReportFee(DAY),
+            0,
+            "mock quote (quoteNative unset)"
+        );
         bytes32 mid = _com().sendCommitmentReport{value: 0.02 ether}(DAY);
         assertEq(
             mid,
@@ -388,8 +417,8 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         assertEq(messenger.lastCommitSendDay(), DAY);
         assertEq(
             messenger.lastCommitLiabilityLender18(),
-            25e18,
-            "lender: min(18,15) + min(12,15-5)"
+            27e18,
+            "lender: min(18,15) + 7.5 + 4.5 per-entry"
         );
         assertEq(
             messenger.lastCommitLiabilityBorrower18(),
@@ -406,22 +435,22 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
             abi.encodeWithSelector(CommitmentReportAlreadySent.selector, DAY)
         );
         _com().sendCommitmentReport(DAY);
-        (us, ids) = _batch1(u3, new uint256[](0));
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentReportAlreadySent.selector, DAY)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, new uint256[](0));
     }
 
     function test_mirror_zeroDemandDay_sendRevert_staysRetryable() public {
         // A genuinely quiet armed day is trivially complete once the stamp
-        // arrives and ships (0, 0). A messenger revert rolls the sent flag
-        // back (CEI) so the send stays retryable.
+        // arrived AND the local close ran, and ships (0, 0). A messenger
+        // revert rolls the sent flag back (CEI) so the send stays retryable.
         _configureMirror();
         _armAndStamp();
+        _localClose();
         assertTrue(
             _com().isDayCommitmentReady(DAY),
-            "quiet stamped day trivially complete"
+            "quiet stamped locally-closed day trivially complete"
         );
 
         messenger.setRevertOnSend(true);
@@ -441,14 +470,13 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
 
     function test_mirror_submitAndSendGuards() public {
         _configureMirror();
-        (address[] memory us, uint256[][] memory ids) =
-            _batch1(u1, new uint256[](0));
+        uint256[] memory none = new uint256[](0);
 
         // Unarmed day: nothing to report, never ready.
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentDayNotArmed.selector, DAY)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, none);
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentDayNotArmed.selector, DAY)
         );
@@ -458,157 +486,171 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
             "unarmed quiet day must NOT look ready (0 == 0 conservation)"
         );
 
-        // Armed but the funding stamp has not arrived: the pre-close race
-        // guard — totals may not be folded yet, so a (0,0) send must be
-        // impossible.
+        // Armed but the funding stamp has not arrived.
         _mut().setGovernorCommitArmedFromDayRaw(DAY);
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentStampNotArrived.selector, DAY)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, none);
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentStampNotArrived.selector, DAY)
         );
         _com().sendCommitmentReport(DAY);
+        assertFalse(_com().isDayCommitmentReady(DAY), "no stamp => not ready");
+
+        // Armed + stamped but this mirror's OWN interest close never ran
+        // (the Codex #1425 r1 zeroed-chain race): the day LOOKS quiet
+        // (totals 0) yet the once-only (0,0) send must be impossible.
+        _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(CommitmentDayNotLocallyClosed.selector, DAY)
+        );
+        _com().sendCommitmentReport(DAY);
         assertFalse(
             _com().isDayCommitmentReady(DAY),
-            "no stamp => not ready (pre-close race guard)"
+            "no local close => not ready (pre-close race guard)"
         );
 
-        // Batch submission is KEEPER_ROLE-gated (anti-grief: a partial-set
-        // submission would consume the user cursor and wedge conservation).
-        _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
+        // Batch submission is KEEPER_ROLE-gated (anti-grief: an id-skipping
+        // submission would wedge conservation behind the ascending cursor).
         vm.prank(alice);
         vm.expectRevert();
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, none);
+    }
+
+    function test_mirror_readiness_requiresMirrorAndWiring() public {
+        // Codex #1425 r1: the readiness predicate must be false wherever the
+        // send would revert — the canonical chain, and an un-wired mirror.
+        _configureCanonical();
+        _mut().setGovernorCommitArmedFromDayRaw(DAY);
+        _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
+        _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
+        assertFalse(
+            _com().isDayCommitmentReady(DAY),
+            "canonical chain is never commitment-ready"
+        );
+
+        // Mirror flags but NO messenger wired: send reverts, so not ready.
+        vm.chainId(CHAIN_ARB);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(0));
+        _mut().setDayPoolStampRaw(DAY, 40e18, 20e18); // stamp under ARB id
+        assertFalse(
+            _com().isDayCommitmentReady(DAY),
+            "un-wired mirror is never commitment-ready"
+        );
     }
 
     function test_mirror_surfaceRevertsOnCanonical() public {
         _configureCanonical();
-        (address[] memory us, uint256[][] memory ids) =
-            _batch1(u1, new uint256[](0));
+        uint256[] memory none = new uint256[](0);
         vm.expectRevert(CommitmentReportOnlyMirror.selector);
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, none);
         vm.expectRevert(CommitmentReportOnlyMirror.selector);
         _com().sendCommitmentReport(DAY);
         vm.expectRevert(CommitmentReportOnlyMirror.selector);
         _com().resetCommitmentAccumulation(DAY, 0);
+        vm.expectRevert(CommitmentReportOnlyMirror.selector);
+        _com().quoteCommitmentReportFee(DAY);
     }
 
-    function test_mirror_cursorMonotonic() public {
+    function test_mirror_entryCursorMonotonic() public {
         _configureMirror();
         _armAndStamp();
+        _localClose();
         (uint256 e1, uint256 e2, uint256 e3) = _seedLenderDemand();
 
-        // u2 first is fine; the cursor then bars anything <= u2.
-        (address[] memory us, uint256[][] memory ids) =
-            _batch1(u2, _ids2(e2, e3));
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        // Later ids first is legal; the cursor then bars anything <= e3.
+        _com().submitCommitmentBatch(DAY, 0, _ids2(e2, e3));
 
-        (us, ids) = _batch1(u1, _ids1(e1));
         vm.expectRevert(
-            abi.encodeWithSelector(CommitmentUsersNotAscending.selector, u1)
+            abi.encodeWithSelector(CommitmentEntriesNotAscending.selector, e1)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e1));
 
-        (us, ids) = _batch1(u2, _ids2(e2, e3));
         vm.expectRevert(
-            abi.encodeWithSelector(CommitmentUsersNotAscending.selector, u2)
+            abi.encodeWithSelector(CommitmentEntriesNotAscending.selector, e2)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids2(e2, e3));
 
-        // Within-batch ordering on the untouched borrower side.
-        address[] memory us2 = new address[](2);
-        us2[0] = u2;
-        us2[1] = u1;
-        uint256[][] memory ids2 = new uint256[][](2);
-        ids2[0] = new uint256[](0);
-        ids2[1] = new uint256[](0);
-        vm.expectRevert(
-            abi.encodeWithSelector(CommitmentUsersNotAscending.selector, u1)
+        // Within-batch: descending pair on the untouched borrower side.
+        uint256 b1 = _mut().pushRewardEntry(
+            u1, 4, LibVaipakam.RewardSide.Borrower, 10e18, 1
         );
-        _com().submitCommitmentBatch(DAY, 1, us2, ids2);
+        _mut().setRewardEntryEndDayRaw(b1, 10);
+        uint256 b2 = _mut().pushRewardEntry(
+            u2, 5, LibVaipakam.RewardSide.Borrower, 10e18, 1
+        );
+        _mut().setRewardEntryEndDayRaw(b2, 10);
+        vm.expectRevert(
+            abi.encodeWithSelector(CommitmentEntriesNotAscending.selector, b1)
+        );
+        _com().submitCommitmentBatch(DAY, 1, _ids2(b2, b1));
+
+        // A duplicate id inside a batch is the same ascending violation.
+        vm.expectRevert(
+            abi.encodeWithSelector(CommitmentEntriesNotAscending.selector, b1)
+        );
+        _com().submitCommitmentBatch(DAY, 1, _ids2(b1, b1));
     }
 
     function test_mirror_entryValidation() public {
         _configureMirror();
         _armAndStamp();
-        (uint256 e1, uint256 e2, ) = _seedLenderDemand();
-
-        // Entry owned by another user.
-        (address[] memory us, uint256[][] memory ids) = _batch1(u1, _ids1(e2));
-        vm.expectRevert(
-            abi.encodeWithSelector(CommitmentEntryMismatch.selector, e2)
-        );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _localClose();
+        (uint256 e1, , ) = _seedLenderDemand();
 
         // Entry on the other side.
-        (us, ids) = _batch1(u1, _ids1(e1));
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentEntryMismatch.selector, e1)
         );
-        _com().submitCommitmentBatch(DAY, 1, us, ids);
+        _com().submitCommitmentBatch(DAY, 1, _ids1(e1));
 
         // Window: entry ends AT the day (dayId >= endDay).
         uint256 e4 = _mut().pushRewardEntry(
             u1, 7, LibVaipakam.RewardSide.Lender, 7e18, 1
         );
         _mut().setRewardEntryEndDayRaw(e4, uint32(DAY));
-        (us, ids) = _batch1(u1, _ids1(e4));
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentEntryMismatch.selector, e4)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e4));
 
         // Window: entry starts after the day.
         uint256 e5 = _mut().pushRewardEntry(
             u1, 8, LibVaipakam.RewardSide.Lender, 7e18, uint32(DAY + 2)
         );
         _mut().setRewardEntryEndDayRaw(e5, 10);
-        (us, ids) = _batch1(u1, _ids1(e5));
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentEntryMismatch.selector, e5)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e5));
 
-        // Within-batch duplicate entry id (would double-count both sums).
-        (us, ids) = _batch1(u1, _ids2(e1, e1));
+        // A nonexistent id decodes as a zeroed entry (endDay 0) — rejected.
         vm.expectRevert(
-            abi.encodeWithSelector(CommitmentEntryMismatch.selector, e1)
+            abi.encodeWithSelector(CommitmentEntryMismatch.selector, 999)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
-
-        // users/entryIds length mismatch.
-        us = new address[](1);
-        us[0] = u1;
-        ids = new uint256[][](0);
-        vm.expectRevert(
-            abi.encodeWithSelector(CommitmentEntryMismatch.selector, 0)
-        );
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids1(999));
     }
 
-    function test_mirror_partialSubmission_wedges_resetRecovers() public {
+    function test_mirror_skippedEntry_wedges_resetRecovers() public {
         _configureMirror();
         _armAndStamp();
+        _localClose();
         (uint256 e1, uint256 e2, uint256 e3) = _seedLenderDemand();
 
-        // Keeper MIS-submission: u2 lands with only half its entry set.
-        // Per-entry validation passes, but conservation is permanently short
-        // (85e18 != 100e18) and u2's cursor slot is consumed.
-        (address[] memory us, uint256[][] memory ids) = _batch1(u1, _ids1(e1));
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
-        (us, ids) = _batch1(u2, _ids1(e2)); // e3 missing!
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
-
+        // Keeper MIS-submission: e2 skipped below the consumed cursor.
+        // Per-entry validation passes for e1+e3, but conservation is
+        // permanently short (75e18 != 100e18) and e2 is now unreachable.
+        _com().submitCommitmentBatch(DAY, 0, _ids2(e1, e3));
         assertFalse(
             _com().isDayCommitmentReady(DAY),
             "conservation short => never completes"
         );
         vm.expectRevert(
-            abi.encodeWithSelector(CommitmentUsersNotAscending.selector, u2)
+            abi.encodeWithSelector(CommitmentEntriesNotAscending.selector, e2)
         );
-        _com().submitCommitmentBatch(DAY, 0, us, ids); // cursor bars repair
+        _com().submitCommitmentBatch(DAY, 0, _ids1(e2));
 
         // ADMIN valve: wipe the (day, side) accumulation and resubmit fully.
         vm.prank(alice);
@@ -616,10 +658,7 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         _com().resetCommitmentAccumulation(DAY, 0); // admin-gated
 
         _com().resetCommitmentAccumulation(DAY, 0);
-        (us, ids) = _batch1(u1, _ids1(e1));
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
-        (us, ids) = _batch1(u2, _ids2(e2, e3));
-        _com().submitCommitmentBatch(DAY, 0, us, ids);
+        _com().submitCommitmentBatch(DAY, 0, _ids3(e1, e2, e3));
         assertTrue(
             _com().isDayCommitmentReady(DAY),
             "reset + full resubmission completes"
@@ -628,7 +667,7 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         // The recovered figure equals the clean-path liability.
         vm.deal(address(this), 1 ether);
         _com().sendCommitmentReport{value: 0.01 ether}(DAY);
-        assertEq(messenger.lastCommitLiabilityLender18(), 25e18);
+        assertEq(messenger.lastCommitLiabilityLender18(), 27e18);
 
         // Reset after send is blocked (the report is out).
         vm.expectRevert(
