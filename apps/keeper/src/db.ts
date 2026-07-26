@@ -369,3 +369,90 @@ export async function upsertLiquidityConfidence(
     )
     .run();
 }
+
+// ─── #1222 M3 B2-d1 — commitment-report scan state (Codex #1425 r2) ────────
+// Written by the keeper only; schema owned by apps/indexer/migrations/0043.
+// The scan frontier lets the entry-id walk cross arbitrarily long
+// non-covering gaps across stateless invocations; the day marker lets
+// resolved days be skipped with zero RPC reads.
+
+export interface CommitmentScanRow {
+  side: number;
+  scan_next: string;
+  last_cursor: string;
+}
+
+/** Resolved-day ids + per-(day, side) scan frontiers for one chain/range. */
+export async function getCommitmentScanState(
+  db: D1Database,
+  chainId: number,
+  fromDay: number,
+  toDay: number,
+): Promise<{
+  resolved: Set<number>;
+  scans: Map<string, { scanNext: bigint; lastCursor: bigint }>;
+}> {
+  const [days, rows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT day_id FROM keeper_commitment_day
+         WHERE chain_id = ?1 AND day_id >= ?2 AND day_id < ?3`,
+      )
+      .bind(chainId, fromDay, toDay)
+      .all<{ day_id: number }>(),
+    db
+      .prepare(
+        `SELECT day_id, side, scan_next, last_cursor FROM keeper_commitment_scan
+         WHERE chain_id = ?1 AND day_id >= ?2 AND day_id < ?3`,
+      )
+      .bind(chainId, fromDay, toDay)
+      .all<{ day_id: number; side: number; scan_next: string; last_cursor: string }>(),
+  ]);
+  const resolved = new Set<number>((days.results ?? []).map((r) => r.day_id));
+  const scans = new Map<string, { scanNext: bigint; lastCursor: bigint }>();
+  for (const r of rows.results ?? []) {
+    scans.set(`${r.day_id}:${r.side}`, {
+      scanNext: BigInt(r.scan_next),
+      lastCursor: BigInt(r.last_cursor),
+    });
+  }
+  return { resolved, scans };
+}
+
+/** Persist a (day, side) scan frontier + the on-chain cursor it was built on. */
+export async function putCommitmentScanFrontier(
+  db: D1Database,
+  chainId: number,
+  dayId: number,
+  side: number,
+  scanNext: bigint,
+  lastCursor: bigint,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_commitment_scan
+         (chain_id, day_id, side, scan_next, last_cursor, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT(chain_id, day_id, side) DO UPDATE SET
+         scan_next = excluded.scan_next,
+         last_cursor = excluded.last_cursor,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(chainId, dayId, side, scanNext.toString(), lastCursor.toString(), Math.floor(Date.now() / 1000))
+    .run();
+}
+
+/** Mark a chain-day's commitment report as complete + sent (skip forever). */
+export async function markCommitmentDayResolved(
+  db: D1Database,
+  chainId: number,
+  dayId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO keeper_commitment_day (chain_id, day_id, resolved_at)
+       VALUES (?1, ?2, ?3)`,
+    )
+    .bind(chainId, dayId, Math.floor(Date.now() / 1000))
+    .run();
+}

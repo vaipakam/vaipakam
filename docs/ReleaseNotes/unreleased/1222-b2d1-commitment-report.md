@@ -49,8 +49,12 @@ underfunding) are preserved at the only causally-possible site:
   contribution zeroed out of the denominator. That chain's late report is
   still accepted for bookkeeping — though it prices at the chain's
   deliberately-zero funding composition, so the operator sizes the
-  manual, evidenced remittance from the mirror's locally readable state
-  before clearing the flag. Historical reports also survive later edits
+  compensation from the mirror's locally readable state. Clearing the
+  flag records the reconciliation; the funding vehicle itself lands with
+  the delivered-backing stage (a zeroed chain has no slice for the
+  ordinary remittance call, and a manual send must reserve and
+  acknowledge like any remittance) — until then, zeroed-chain
+  compensation stays the pre-mesh out-of-band governance posture. Historical reports also survive later edits
   to the expected-chain list (membership checks the day's own finalized
   evidence). Chains whose interest reported normally are never marked.
 - A mirror cannot dispatch before both the day's funding broadcast has

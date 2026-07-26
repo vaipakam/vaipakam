@@ -63,8 +63,14 @@ that legitimately lights it up):
 - **B2-d2 — Delivered-backing ledger + Σcommitments clamp.** P3 + P4. The
   `pendingRemitted` reservation, the authenticated ack path, reconciliation, and
   the `min(uncappedSlice, Σcommitments − remitted − pending)` clamp at the 3
-  remit sites. Closes #1351's remitted-clamp tail. **Effect:** Base never remits
-  more than a mirror's reported+backed liability.
+  remit sites. Closes #1351's remitted-clamp tail. **Also owns the evidenced
+  MANUAL-BUDGET path for zeroed chains (Codex #1425 r2):** clearing
+  `remitIneligible` alone cannot fund a zeroed chain (its finalized slice is
+  zero, so `remitRewardBudget` reverts `NothingToRemit`) — the manual vehicle
+  must reserve into `pendingRemitted` and finalize on ack like any remit, so
+  it is designed WITH the ledger, not before it; until d2, zeroed-chain
+  compensation stays the pre-mesh out-of-band governance posture. **Effect:**
+  Base never remits more than a mirror's reported+backed liability.
 - **B2-d3 — Mirror consume-on-arrival + two-sided netting + per-chain books.**
   P2. `_stampOne` split (mirror avail = delivered-backed availability), Base
   books `chainConsumedRecycled`/`chainOutstandingRecycledCommit`, mirror

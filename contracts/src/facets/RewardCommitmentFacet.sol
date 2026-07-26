@@ -271,17 +271,21 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      funding stamp deliberately carries zero halves, so its on-chain
      *      report — still accepted post-finalize — prices at Δ = 0 and is NOT
      *      a sizing basis (Codex #1425 r1). After the evidenced
-     *      reconciliation the operator clears the flag here. Because clearing it
-     *      after a long delay can fall outside the keeper's bounded
-     *      remit-discovery window (`apps/keeper` re-scans a fixed lookback and
-     *      skips zero quotes), the operator that reconciles a day is expected
-     *      to remit it explicitly via `RewardRemittanceFacet.remitRewardBudget`
-     *      with that day id — the same manual, admin-driven path the force-close
-     *      + reconcile already are; the emitted event is the keeper's hook for
-     *      the automatic rediscovery that lands with the armed remit flow in
-     *      B2-d2. With the B2-d1 report in place, an armed day whose chains
-     *      all deliver their interest reports never reaches this path — only
-     *      a chain zeroed out of the denominator does.
+     *      reconciliation the operator clears the flag here. NOTE (Codex
+     *      #1425 r2): clearing the flag is the OBLIGATION-side half only — a
+     *      zeroed chain has no slice in the finalized denominator
+     *      (`chainRewardBudgetSplitForDay` returns zero for a non-included
+     *      chain), so `RewardRemittanceFacet.remitRewardBudget` cannot fund
+     *      the reconciled day. The funding VEHICLE is the B2-d2 evidenced
+     *      manual-budget path, designed WITH the delivered-backing ledger —
+     *      a manual send that bypassed the pendingRemitted reservation + ack
+     *      would be exactly the unbacked-remit class that ledger exists to
+     *      prevent. Until d2 lands, a zeroed chain-day's compensation stays
+     *      the pre-mesh out-of-band governance posture
+     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery).
+     *      With the B2-d1 report in place, an armed day whose chains all
+     *      deliver their interest reports never reaches this path — only a
+     *      chain zeroed out of the denominator does.
      */
     function reconcileCommitmentRemitEligibility(
         uint256 dayId,

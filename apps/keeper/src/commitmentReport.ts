@@ -12,23 +12,27 @@
 //
 //   1. wait for the day's funding stamp AND the mirror's own interest close
 //      (`chainReportSentAt`) — the on-chain send gate requires both;
-//   2. walk the GLOBAL reward-entry id sequence from the on-chain
-//      per-(day, side) cursor (`getRewardEntriesRange`), filter the entries
-//      that cover the day on that side, and feed them to
-//      `submitCommitmentBatch` in ascending id order. The unit is the ENTRY
-//      (transfer-invariant — Codex #1425 r1), so no user discovery, no
-//      indexer dependency: the chain's own sequential entry ids are the
-//      complete enumeration, and ids are creation-ordered so the walk stops
-//      at the first entry with `startDay > D`;
+//   2. walk the GLOBAL reward-entry id sequence, filter the entries that
+//      cover the day on that side, and feed them to `submitCommitmentBatch`
+//      in ascending id order. The unit is the ENTRY (transfer-invariant —
+//      Codex #1425 r1), so no user discovery and no positional drift: the
+//      chain's own sequential entry ids are the complete enumeration, and
+//      ids are creation-ordered so the walk stops at the first entry with
+//      `startDay > D`;
 //   3. once demand conservation completes (`isDayCommitmentReady`), quote via
 //      `quoteCommitmentReportFee` and dispatch `sendCommitmentReport`.
 //
-// Discovery is cursor-free across ticks: a resolved day (complete + sent)
-// reads as "conservation == totals && !ready" and is skipped; the on-chain
-// entry cursor makes double-submission impossible, so a crashed tick resumes
-// safely. Days older than the lookback window are NOT abandoned (Codex #1425
-// r1): the pass walks backward from the window's floor while days remain
-// unresolved (bounded), so an outage longer than the lookback still heals.
+// Statelessness is bridged through the shared D1 (Codex #1425 r2, schema in
+// apps/indexer/migrations/0043): a per-(day, side) SCAN FRONTIER persists
+// progress across arbitrarily long non-covering id gaps (the on-chain cursor
+// only advances on submissions, so a stateless walk would otherwise re-read
+// the same pages forever), invalidated automatically when the on-chain
+// cursor moves backward (operator resetCommitmentAccumulation); and a
+// per-(chain, day) RESOLVED marker lets finished days be skipped with zero
+// RPC reads. The pass scans its FULL bounded day range every tick — days can
+// resolve out of order, so one resolved day is never treated as proof that
+// every earlier day resolved (Codex #1425 r2) — with the range floor at
+// `armedFromDay`, bounded by lookback + backscan caps.
 //
 // Gated twice: the global `KEEPER_ENABLED` AND an explicit
 // `REWARD_COMMIT_ENABLED`, because `submitCommitmentBatch` is
@@ -45,15 +49,20 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled, type KeeperContext } from './keeper';
+import {
+  getCommitmentScanState,
+  markCommitmentDayResolved,
+  putCommitmentScanFrontier,
+} from './db';
 
 const COMMIT_ABI = RewardCommitmentFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
 const LENS_ABI = InteractionRewardsLensFacetABI as Abi;
 
-/** How many recent days to re-scan for un-reported commitments each tick. */
+/** Primary recent-day window re-scanned each tick. */
 const DEFAULT_LOOKBACK_DAYS = 14;
-/** How far past the lookback floor the unresolved-day walk may extend. */
+/** How far past the lookback floor the unresolved-day range extends. */
 const MAX_BACKSCAN_DAYS = 90;
 /** Entry ids per submitCommitmentBatch tx (bounded calldata / gas). */
 const MAX_IDS_PER_BATCH = 200;
@@ -62,9 +71,8 @@ const MAX_BATCHES_PER_TICK = 8;
 /** Entry-range page size (the lens view clamps at 500 anyway). */
 const PAGE_SIZE = 500n;
 /**
- * Entry-range pages read per invocation across all days. A truncated walk is
- * safe (ascending order + the on-chain cursor resume), but log it — silent
- * caps read as full coverage.
+ * Entry-range pages read per invocation across all days. Truncation is safe:
+ * the persisted scan frontier resumes exactly where the walk stopped.
  */
 const MAX_PAGES_PER_TICK = 20;
 
@@ -147,31 +155,31 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
   const ctx = buildKeeperContext(env, chain, publicClient);
   if (!ctx || !ctx.wallet.account) return;
 
+  // FULL bounded range every tick (Codex #1425 r2): floor at armedFromDay,
+  // capped at lookback + backscan days below currentDay. Days can resolve
+  // out of order, so no "first resolved day" short-circuit — instead,
+  // resolved days are D1-marked and skipped with zero RPC reads.
   const lookback = readNumber(env, 'REWARD_COMMIT_LOOKBACK_DAYS', DEFAULT_LOOKBACK_DAYS);
-  let from = currentDay > BigInt(lookback) ? currentDay - BigInt(lookback) : 1n;
+  const span = BigInt(lookback + MAX_BACKSCAN_DAYS);
+  let from = currentDay > span ? currentDay - span : 1n;
   if (from < armedFromDay) from = armedFromDay;
-
-  // Codex #1425 r1 — an outage longer than the lookback must not orphan a
-  // day Base's remit gate is waiting for: extend the window backward while
-  // days remain unresolved (bounded), stopping at the first resolved day.
-  let extended = 0;
-  while (
-    from > armedFromDay &&
-    extended < MAX_BACKSCAN_DAYS &&
-    !(await isDayResolved(publicClient, diamond, localChainId, from - 1n))
-  ) {
-    from -= 1n;
-    extended++;
-  }
-  if (extended >= MAX_BACKSCAN_DAYS) {
+  if (from > armedFromDay && from === currentDay - span) {
     console.warn(
-      `[keeper] commitmentReport chain=${chain.id} backscan hit ${MAX_BACKSCAN_DAYS}-day cap at day=${from} — older unresolved days need operator attention`,
+      `[keeper] commitmentReport chain=${chain.id} day range floored at ${from} by the ${lookback}+${MAX_BACKSCAN_DAYS}-day cap — anything older and unresolved needs operator attention`,
     );
   }
 
+  const { resolved, scans } = await getCommitmentScanState(
+    env.DB,
+    chain.id,
+    Number(from),
+    Number(currentDay),
+  );
+
   const budget: TickBudget = { batches: MAX_BATCHES_PER_TICK, pages: MAX_PAGES_PER_TICK };
 
-  for (let d = from; d < currentDay && budget.batches > 0; d++) {
+  for (let d = from; d < currentDay && budget.batches > 0 && budget.pages > 0; d++) {
+    if (resolved.has(Number(d))) continue; // zero-RPC skip
     try {
       const ready = (await publicClient.readContract({
         address: diamond,
@@ -181,63 +189,79 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
       })) as boolean;
       if (ready) {
         await sendReport(publicClient, ctx, diamond, d);
-        continue;
-      }
+      } else {
+        // On-chain preconditions for both the batch path (Δ pricing) and the
+        // send (final totals): the day's funding stamp AND the local close.
+        const funding = (await publicClient.readContract({
+          address: diamond,
+          abi: AGGREGATOR_ABI,
+          functionName: 'getChainDayRecycledFunding',
+          args: [d, localChainId],
+        })) as { stamped: boolean };
+        if (!funding.stamped) continue;
+        const closedAt = (await publicClient.readContract({
+          address: diamond,
+          abi: REPORTER_ABI,
+          functionName: 'getChainReportSentAt',
+          args: [d],
+        })) as bigint;
+        if (closedAt === 0n) continue;
 
-      // On-chain preconditions for both the batch path (Δ pricing) and the
-      // send (final totals): the day's funding stamp AND the local close.
-      const funding = (await publicClient.readContract({
-        address: diamond,
-        abi: AGGREGATOR_ABI,
-        functionName: 'getChainDayRecycledFunding',
-        args: [d, localChainId],
-      })) as { stamped: boolean };
-      if (!funding.stamped) continue;
-      const closedAt = (await publicClient.readContract({
-        address: diamond,
-        abi: REPORTER_ABI,
-        functionName: 'getChainReportSentAt',
-        args: [d],
-      })) as bigint;
-      if (closedAt === 0n) continue;
+        const [, , totalLender, totalBorrower] = (await publicClient.readContract({
+          address: diamond,
+          abi: LENS_ABI,
+          functionName: 'getInteractionDayEntry',
+          args: [d, ZERO_ADDR],
+        })) as readonly [bigint, bigint, bigint, bigint];
 
-      const [, , totalLender, totalBorrower] = (await publicClient.readContract({
-        address: diamond,
-        abi: LENS_ABI,
-        functionName: 'getInteractionDayEntry',
-        args: [d, ZERO_ADDR],
-      })) as readonly [bigint, bigint, bigint, bigint];
+        for (const side of [0, 1] as const) {
+          if (budget.batches <= 0 || budget.pages <= 0) break;
+          const total = side === 0 ? totalLender : totalBorrower;
+          const [cursor, , conservation] = (await publicClient.readContract({
+            address: diamond,
+            abi: COMMIT_ABI,
+            functionName: 'getCommitmentAccumulation',
+            args: [d, side],
+          })) as readonly [bigint, bigint, bigint];
+          // Complete (also true for already-sent days) — nothing to submit.
+          if (conservation === total) continue;
+          if (conservation > total) {
+            // Should be unreachable (figures are mirror-recomputed); an
+            // id-skipping mis-submission wedge is operator territory
+            // (resetCommitmentAccumulation).
+            console.warn(
+              `[keeper] commitmentReport chain=${chain.id} day=${d} side=${side} conservation ${conservation} > total ${total} — needs operator resetCommitmentAccumulation`,
+            );
+            continue;
+          }
+          await submitSide(
+            env,
+            publicClient,
+            ctx,
+            diamond,
+            chain.id,
+            d,
+            side,
+            cursor,
+            scans.get(`${Number(d)}:${side}`),
+            budget,
+          );
+        }
 
-      for (const side of [0, 1] as const) {
-        if (budget.batches <= 0 || budget.pages <= 0) break;
-        const total = side === 0 ? totalLender : totalBorrower;
-        const [cursor, , conservation] = (await publicClient.readContract({
+        const readyNow = (await publicClient.readContract({
           address: diamond,
           abi: COMMIT_ABI,
-          functionName: 'getCommitmentAccumulation',
-          args: [d, side],
-        })) as readonly [bigint, bigint, bigint];
-        // Complete (also true for already-sent days) — nothing to submit.
-        if (conservation === total) continue;
-        if (conservation > total) {
-          // Should be unreachable (figures are mirror-recomputed); an
-          // id-skipping mis-submission wedge is operator territory
-          // (resetCommitmentAccumulation).
-          console.warn(
-            `[keeper] commitmentReport chain=${chain.id} day=${d} side=${side} conservation ${conservation} > total ${total} — needs operator resetCommitmentAccumulation`,
-          );
-          continue;
-        }
-        await submitSide(publicClient, ctx, diamond, chain.id, d, side, cursor, budget);
+          functionName: 'isDayCommitmentReady',
+          args: [d],
+        })) as boolean;
+        if (readyNow) await sendReport(publicClient, ctx, diamond, d);
       }
 
-      const readyNow = (await publicClient.readContract({
-        address: diamond,
-        abi: COMMIT_ABI,
-        functionName: 'isDayCommitmentReady',
-        args: [d],
-      })) as boolean;
-      if (readyNow) await sendReport(publicClient, ctx, diamond, d);
+      // Resolution probe: complete on both sides AND no longer ready
+      // (⇒ sent). Marked days are skipped with zero reads forever after.
+      if (await isDayResolved(publicClient, diamond, localChainId, d)) {
+        await markCommitmentDayResolved(env.DB, chain.id, Number(d));
+      }
     } catch (err) {
       // Benign races (a competing tick advanced the cursor, the stamp landing
       // mid-scan, etc.) — log and let the next tick re-evaluate.
@@ -252,7 +276,7 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
  * A day is RESOLVED when its report is out: stamped + locally closed +
  * conservation equal to the totals on both sides + not ready (ready would
  * mean complete-but-unsent). Unstamped / not-yet-closed days count as
- * unresolved so the backscan keeps retrying them once upstream events land.
+ * unresolved so they keep being retried once upstream events land.
  */
 async function isDayResolved(
   publicClient: PublicClient,
@@ -299,14 +323,18 @@ async function isDayResolved(
 }
 
 /**
- * Walk the global entry-id sequence from `cursor + 1`, submitting ascending
- * batches of the entries that cover `(day, side)`. Ids are creation-ordered
- * and `startDay` is stamped from the registration day, so the walk stops at
- * the first entry with `startDay > day` (nothing later can cover the day).
- * Gap entries that do not cover are re-read on later ticks until the day
- * resolves — a bounded, transient cost (the day's id range is fixed).
+ * Walk the global entry-id sequence for `(day, side)`, submitting ascending
+ * batches of covering entries. The scan resumes from the D1-persisted
+ * frontier (everything below it is submitted or verified non-covering) so
+ * arbitrarily long non-covering gaps cost each page read exactly once
+ * (Codex #1425 r2); the frontier is discarded when the on-chain cursor
+ * moved backward (operator reset — earlier submissions were wiped and must
+ * be rescanned). Ids are creation-ordered and `startDay` is stamped from
+ * the registration day, so the walk stops at the first entry with
+ * `startDay > day`.
  */
 async function submitSide(
+  env: Env,
   publicClient: PublicClient,
   ctx: KeeperContext,
   diamond: Address,
@@ -314,16 +342,20 @@ async function submitSide(
   day: bigint,
   side: 0 | 1,
   cursor: bigint,
+  persisted: { scanNext: bigint; lastCursor: bigint } | undefined,
   budget: TickBudget,
 ): Promise<void> {
-  let pending: bigint[] = [];
+  // Reset detection: cursor moved backward vs the frontier's snapshot.
+  const frontierValid = persisted !== undefined && cursor >= persisted.lastCursor;
   let nextId = cursor + 1n;
+  if (frontierValid && persisted.scanNext > nextId) nextId = persisted.scanNext;
+
+  let pending: bigint[] = [];
   let frontierReached = false;
 
   const flush = async (): Promise<boolean> => {
     if (pending.length === 0) return true;
     const batch = pending.slice(0, MAX_IDS_PER_BATCH);
-    pending = pending.slice(MAX_IDS_PER_BATCH);
     const hash = await ctx.wallet.writeContract({
       address: diamond,
       abi: COMMIT_ABI,
@@ -337,18 +369,22 @@ async function submitSide(
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
     budget.batches--;
     if (receipt.status !== 'success') {
+      // Keep the batch in `pending` — the frontier persisted below must not
+      // advance past unsubmitted covering ids.
       console.warn(
-        `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} batch tx=${hash} REVERTED — next tick resumes from the on-chain cursor`,
+        `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} batch tx=${hash} REVERTED — resumes from the on-chain cursor / frontier next tick`,
       );
       return false;
     }
+    pending = pending.slice(MAX_IDS_PER_BATCH);
     console.log(
       `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} submitted ${batch.length} entries tx=${hash}`,
     );
     return true;
   };
 
-  while (!frontierReached && budget.pages > 0) {
+  let aborted = false;
+  while (!frontierReached && !aborted && budget.pages > 0) {
     budget.pages--;
     const page = (await publicClient.readContract({
       address: diamond,
@@ -357,6 +393,7 @@ async function submitSide(
       args: [nextId, PAGE_SIZE],
     })) as readonly RewardEntryView[];
 
+    let consumed = 0;
     for (let i = 0; i < page.length; i++) {
       const e = page[i];
       const id = nextId + BigInt(i);
@@ -365,35 +402,49 @@ async function submitSide(
         frontierReached = true;
         break;
       }
+      const start = BigInt(e.startDay === 0 ? 1 : e.startDay);
       // Creation-ordered: nothing at or beyond this id can cover `day`.
-      if (BigInt(e.startDay === 0 ? 1 : e.startDay) > day) {
+      if (start > day) {
         frontierReached = true;
         break;
       }
-      const start = BigInt(e.startDay === 0 ? 1 : e.startDay);
+      consumed = i + 1;
       if (Number(e.side) === side && e.endDay > 0 && day >= start && day < BigInt(e.endDay)) {
         pending.push(id);
       }
     }
-    nextId += BigInt(page.length);
+    nextId += BigInt(consumed);
 
     while (pending.length >= MAX_IDS_PER_BATCH && budget.batches > 0) {
-      if (!(await flush())) return;
+      if (!(await flush())) {
+        aborted = true;
+        break;
+      }
     }
-    if (budget.batches <= 0) {
-      console.log(
-        `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} batch budget exhausted — resumes next tick`,
-      );
-      return;
+    if (!aborted && pending.length >= MAX_IDS_PER_BATCH && budget.batches <= 0) {
+      aborted = true; // batch budget out with work left — resume next tick
     }
   }
-  if (!frontierReached && budget.pages <= 0) {
+
+  while (!aborted && pending.length > 0 && budget.batches > 0) {
+    if (!(await flush())) aborted = true;
+  }
+
+  // Persist the frontier: everything below it is submitted or verified
+  // non-covering. If covering ids remain unsubmitted (budget out / revert),
+  // the frontier must sit AT the lowest unsubmitted covering id.
+  const frontier = pending.length > 0 ? pending[0] : nextId;
+  try {
+    await putCommitmentScanFrontier(env.DB, chainId, Number(day), side, frontier, cursor);
+  } catch (err) {
     console.warn(
-      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} page budget exhausted mid-walk — resumes next tick`,
+      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${(err as Error).message}`,
     );
   }
-  while (pending.length > 0 && budget.batches > 0) {
-    if (!(await flush())) return;
+  if (aborted || (!frontierReached && budget.pages <= 0)) {
+    console.log(
+      `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} paused (budgets) — frontier=${frontier} persisted, resumes next tick`,
+    );
   }
 }
 
