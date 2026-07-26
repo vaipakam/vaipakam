@@ -35,7 +35,8 @@ interface IRewardReporterIngressV2 {
 /// @notice #1222 M3 B2-d1 — Base-side Diamond ingress for an inbound mirror→Base
 ///         commitment REPORT (`RewardAggregatorFacet.onCommitmentReportReceived`).
 ///         Delivers a mirror's day-`D` per-side claimable-liability aggregate,
-///         which lights the B2-c finalization gate (`ChainDayCommitments.complete`).
+///         which marks the chain-day report-complete
+///         (`ChainDayCommitments.complete` — the B2-d2 remit gate).
 interface IRewardCommitmentIngress {
     function onCommitmentReportReceived(
         uint32 sourceChainId,
@@ -171,7 +172,7 @@ interface IRewardMessenger {
 
     /// @notice Send a day-`D` commitment REPORT from a mirror to the canonical
     ///         (Base) reward messenger: this chain's per-side claimable-liability
-    ///         aggregate, which lights the Base finalization gate.
+    ///         aggregate, which lights the Base remit gate for this chain-day.
     /// @dev Callable only by the Diamond that owns this messenger, and only from
     ///      a mirror (the Diamond enforces the mirror-only precondition). Reverts
     ///      if `msg.value` doesn't cover the CCIP native fee — quote first via

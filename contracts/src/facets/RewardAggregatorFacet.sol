@@ -252,16 +252,23 @@ contract RewardAggregatorFacet is
     }
 
     /// @notice #1222 M3 B2-d1 — accept a mirror's day-`D` commitment REPORT
-    ///         (its per-side claimable-liability aggregate) and light the B2-c
-    ///         finalization GATE for `(dayId, sourceChainId)`.
+    ///         (its per-side claimable-liability aggregate) for
+    ///         `(dayId, sourceChainId)`.
     /// @dev Messenger-authenticated + canonical-only, mirroring
-    ///      {onChainReportReceived}. Sets `chainDayCommitments[..].complete` so
-    ///      an armed full-coverage finalize may fast-close, and stores the
-    ///      per-side liabilities the B2-d2 remittance clamp reads. Idempotent on
-    ///      CCIP re-delivery (the mirror sends once — `commitmentReportSent`);
-    ///      a first-time report for an already-finalized day is REJECTED (the
-    ///      gate is moot once the day closed via grace/force — the operator
-    ///      reconciles that mirror's remittance instead).
+    ///      {onChainReportReceived}. Sets `chainDayCommitments[..].complete`
+    ///      and stores the per-side liabilities the B2-d2 remittance gate +
+    ///      clamp read. Arriving AFTER `finalizeDay(dayId)` is the NORMAL
+    ///      sequence — the mirror can only price its liability from the day's
+    ///      caps + funding stamp, which that finalize computes and
+    ///      {broadcastGlobal} delivers — so there is deliberately no
+    ///      finalization-ordering guard here (contrast
+    ///      {_ingestChainReport}'s `ReportAfterFinalization`, whose interest
+    ///      figures feed the denominator that finalize fixes). A report for a
+    ///      day whose interest contribution was zeroed is also accepted: the
+    ///      chain is remit-ineligible-pending-reconciliation and the stored
+    ///      liability is exactly what the operator needs to size the manual
+    ///      remit. Idempotent on CCIP re-delivery (the mirror sends once —
+    ///      `commitmentReportSent`).
     function onCommitmentReportReceived(
         uint32 sourceChainId,
         uint256 dayId,
@@ -277,7 +284,6 @@ contract RewardAggregatorFacet is
         // Idempotent: a re-delivered copy of an already-accepted report no-ops
         // (never reverts — a benign CCIP re-execution must not fail).
         if (c.complete) return;
-        if (s.dailyGlobalFinalized[dayId]) revert ReportAfterFinalization();
         c.complete = true;
         c.liabilityLender18 = liabilityLender18;
         c.liabilityBorrower18 = liabilityBorrower18;
@@ -363,24 +369,19 @@ contract RewardAggregatorFacet is
         uint32 reportCount = s.chainDailyReportCount[dayId];
 
         bool fullCoverage = reportCount >= nExpected && nExpected != 0;
-        // #1222 M3 B2-c — an ARMED day's fast full-coverage path additionally
-        // requires every expected MIRROR chain's commitments to be COMPLETE,
-        // so a delayed commitment page can never yield a finalized day whose
-        // mirror ShareOfPool remittances would be sized from partial/absent
-        // commitments (permanently underfunding that mirror). The canonical
-        // chain is EXEMPT — it never receives remittance, so its own
-        // commitments are irrelevant here — which also keeps the gate inert on
-        // a single-chain deployment (no mirrors ⇒ trivially ready). The grace
-        // path below is unchanged (it stays the backstop that still closes a
-        // stuck day; a force-finalize then marks any incomplete chain
-        // remit-ineligible).
-        if (
-            fullCoverage
-                && s.governorCommitArmedFromDay != 0
-                && dayId >= s.governorCommitArmedFromDay
-        ) {
-            fullCoverage = _armedMirrorCommitmentsReady(s, dayId);
-        }
+        // #1222 M3 B2-d1 — finalization does NOT wait for mirror commitment
+        // reports (supersedes the B2-c readiness input). A mirror's day-`D`
+        // liability is priced from the day-`D` per-side caps + funding stamp,
+        // which exist only once THIS finalize computes them and
+        // {broadcastGlobal} delivers them — a readiness gate on the report
+        // would deadlock every armed day into the grace backstop. The plan's
+        // "never remit from a partial set" rule is enforced where it is
+        // causally possible instead: ShareOfPool remittance for a
+        // `(day, chain)` waits for that chain's COMPLETE report
+        // (`ChainDayCommitments.complete` — the B2-d2 remit gate; a late
+        // report delays, never zeroes), and a chain whose INTEREST report was
+        // zeroed out of the denominator is marked
+        // remit-ineligible-pending-reconciliation in {_finalizeAndWrite}.
         bool graceElapsed;
         uint64 firstAt = s.dailyFirstReportAt[dayId];
         if (firstAt != 0) {
@@ -435,30 +436,6 @@ contract RewardAggregatorFacet is
     ///      {forceFinalizeDay} (admin override). Separated only to
     ///      keep the two public entry points each responsible for
     ///      their own preconditions.
-    /// @dev #1222 M3 B2-c — true iff every expected MIRROR chain (all expected
-    ///      chains except the canonical chain itself) is commitment-complete
-    ///      for `dayId`. The canonical chain is exempt — it is never remitted
-    ///      to, so its own commitments are irrelevant — which makes this
-    ///      trivially true on a single-chain deployment (no mirrors).
-    function _armedMirrorCommitmentsReady(
-        LibVaipakam.Storage storage s,
-        uint256 dayId
-    ) private view returns (bool) {
-        uint32 selfId = uint32(block.chainid);
-        uint32[] storage expected = s.expectedSourceChainIds;
-        uint256 n = expected.length;
-        for (uint256 i; i < n; ) {
-            uint32 c = expected[i];
-            if (c != selfId && !s.chainDayCommitments[dayId][c].complete) {
-                return false;
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        return true;
-    }
-
     function _finalizeAndWrite(
         LibVaipakam.Storage storage s,
         uint256 dayId,
@@ -471,16 +448,21 @@ contract RewardAggregatorFacet is
         uint256 globalBorrower;
         uint32 participating;
         uint32 missing;
-        // #1222 M3 B2-c — ANY armed-day finalize (the grace backstop OR a
-        // force-finalize) that fixes the denominator without a MIRROR chain's
-        // COMPLETE commitments marks that chain
-        // remit-ineligible-pending-reconciliation (below), so its ShareOfPool
-        // budget is never sized from a partial/absent commitment set (Codex
-        // #1422 r2). The canonical chain is exempt (it is never remitted to).
-        // The fast full-coverage close never reaches an incomplete mirror here
-        // (its readiness gate already requires completeness), so this only
-        // bites on grace / the admin override — exactly the paths that can
-        // close an armed day with a mirror still incomplete.
+        // #1222 M3 B2-d1 (retargets the B2-c marking) — an armed-day finalize
+        // that ZEROES a mirror's interest contribution (grace backstop or the
+        // admin override closing over a missing report) marks that chain
+        // remit-ineligible-pending-reconciliation: its ShareOfPool slice was
+        // sized without its real demand, so its remittance for the day must
+        // come from the operator path (evidenced, manual), never the
+        // automatic one. Cleared via
+        // {RewardCommitmentFacet.reconcileCommitmentRemitEligibility} — the
+        // chain's late commitment report is still ACCEPTED post-finalize
+        // ({onCommitmentReportReceived}), so the operator has the true
+        // liability figure on-chain to size the manual remit. Chains whose
+        // interest DID report are not marked: their commitment report simply
+        // arrives after this finalize broadcasts the day's caps + stamp, and
+        // the B2-d2 remit gate waits for it (delays, never zeroes). The
+        // canonical chain is exempt (it is never remitted to).
         bool markIneligible = s.governorCommitArmedFromDay != 0
             && dayId >= s.governorCommitArmedFromDay;
         uint32 selfId = uint32(block.chainid);
@@ -493,25 +475,15 @@ contract RewardAggregatorFacet is
                 // #776 — snapshot that this chain's numerator IS part of the
                 // finalized denominator, so its reward-budget slice is coherent.
                 s.chainDailyIncluded[dayId][chainId] = true;
-                // #1222 M3 B2-c — an included MIRROR that is not
-                // commitment-complete when an armed day is finalized (grace or
-                // force): its ShareOfPool remittance is blocked until an
-                // operator reconciles the true headroom off-chain (never sized
-                // from the partial set). Cleared via
-                // {RewardCommitmentFacet.reconcileCommitmentRemitEligibility}.
-                if (
-                    markIneligible
-                        && chainId != selfId
-                        && !s.chainDayCommitments[dayId][chainId].complete
-                ) {
-                    s.chainDayCommitments[dayId][chainId].remitIneligible = true;
-                    emit CommitmentRemitIneligible(dayId, chainId);
-                }
                 unchecked {
                     ++participating;
                 }
             } else {
                 emit ChainContributionZeroed(dayId, chainId, forced);
+                if (markIneligible && chainId != selfId) {
+                    s.chainDayCommitments[dayId][chainId].remitIneligible = true;
+                    emit CommitmentRemitIneligible(dayId, chainId);
+                }
                 unchecked {
                     ++missing;
                 }
@@ -1340,20 +1312,10 @@ contract RewardAggregatorFacet is
 
         if (count == 0) return (false, 2);
 
-        // #1222 M3 B2-c — mirror {finalizeDay}'s readiness EXACTLY: on an armed
-        // day the fast full-coverage path additionally requires every mirror's
-        // commitments to be complete, so this public view never reports "ready"
-        // for a call {finalizeDay} would revert (keeper / operator-tooling
-        // parity). If full interest coverage is present but a mirror is
-        // incomplete, readiness falls through to the grace check below.
+        // #1222 M3 B2-d1 — readiness mirrors {finalizeDay} exactly, which has
+        // NO commitment input (the day-`D` report is only computable from the
+        // caps + stamp this finalize produces — see the comment there).
         bool fullCoverage = count >= nExpected && nExpected != 0;
-        if (
-            fullCoverage
-                && s.governorCommitArmedFromDay != 0
-                && dayId >= s.governorCommitArmedFromDay
-        ) {
-            fullCoverage = _armedMirrorCommitmentsReady(s, dayId);
-        }
         if (fullCoverage) return (true, 0);
 
         uint64 grace = s.rewardGraceSeconds == 0

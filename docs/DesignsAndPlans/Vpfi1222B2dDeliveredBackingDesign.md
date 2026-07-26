@@ -53,10 +53,13 @@ that legitimately lights it up):
   computation of the day-D per-side claimable-liability total, the Base-side
   ingress that stores the reported per-side totals on an extended
   `ChainDayCommitments` and sets `.complete`, and the keeper send pass (part of
-  P7). **Effect:** armed full-coverage finalize can now fire; `remitIneligible`
-  stops being spuriously set. **Still safe without P2–P6:** remittance is still
-  the pre-mesh whole-budget send (no clamp yet), and mirror consumption is still
-  off — nothing new can over-pay.
+  P7). **Effect (as retimed in §2b):** armed full-coverage finalize fires on
+  interest coverage alone (the B2-c commitment readiness input is removed — it
+  was causally unsatisfiable, see §2b); `.complete` becomes the d2 REMIT gate's
+  input; `remitIneligible` is set only for chains zeroed out of the
+  denominator. **Still safe without P2–P6:** remittance is still the pre-mesh
+  whole-budget send (no clamp yet), and mirror consumption is still off —
+  nothing new can over-pay.
 - **B2-d2 — Delivered-backing ledger + Σcommitments clamp.** P3 + P4. The
   `pendingRemitted` reservation, the authenticated ack path, reconciliation, and
   the `min(uncappedSlice, Σcommitments − remitted − pending)` clamp at the 3
@@ -131,9 +134,18 @@ accumulation chunks**, then reports **one compact per-side aggregate** to Base:
 - the mirror **recomputes each batch's** `Σ min(rawPay, cap)` **from its own
   storage** and accumulates — so the keeper can never inflate the figure, and
   each on-chain step is bounded (never undeliverable);
-- completeness is proven by a **per-(day,side) active-unit count** the batches
-  must exactly exhaust before the aggregate may be sent (a missing unit would
-  *understate* the liability → under-remit, so completeness is load-bearing);
+- completeness is proven by **demand conservation** — an exact integer identity
+  with no maintained count or new lifecycle hooks: the submitted entries'
+  `Σ perDayNumeraire18` must equal `totalSideInterestNumeraire18[D]`, because
+  the difference-array interest fold writes exactly `±perDayNumeraire18` per
+  entry and reward-ineligible loans appear in *neither* sum. A missing user
+  keeps the sums unequal and the day incomplete (a missing unit would
+  *understate* the liability → under-remit, so completeness is load-bearing;
+  it **delays, never zeroes**). Double-counting is barred by a
+  strictly-ascending per-(day,side) user-address cursor plus a within-batch
+  duplicate-entry guard. (This refines the earlier "active-unit count" sketch —
+  a count would need new write hooks on every entry lifecycle path; the
+  conservation identity is already maintained by the existing fold.)
 - the wire report to Base is a fixed 2-number (per-side) payload — **no Merkle
   commitment-root is needed** because the *mirror diamond itself* computes and
   attests via the authenticated messenger peer (the trust anchor is the peer
@@ -147,6 +159,65 @@ non-spec upper bound only. A paged permissionless **active-loan-list** report
 (the withdrawn B2-c approach, Codex #1422) stays rejected — the accumulation
 batches are keeper-fed and **mirror-verified against own storage**, not a
 positional snapshot of a mutable list.
+
+## 2b. Report timing — the finalize-gate contradiction and its resolution (d1)
+
+**Discovered at build time (2026-07-26), decided per the delegated-decision
+rule and flagged for owner ratification:** the plan's §M3 sentence *"this gate
+must be wired into day-finalization readiness itself"* is **causally
+unsatisfiable** for the mirror-liability commitment this design computes:
+
+- The mirror's day-`D` liability prices from `Δ_D` (the day's per-chain funding
+  stamp) and `C_side(D)` (the day's per-side D1 caps).
+- Both are **outputs of Base's `finalizeDay(D)`**, delivered to mirrors only by
+  `broadcastGlobal(D)`, which itself requires `dailyGlobalFinalized[D]`.
+- B2-c's armed full-coverage readiness waited for `chainDayCommitments[D].complete`,
+  and the d1 ingress draft rejected reports post-finalize (`ReportAfterFinalization`).
+
+Net: finalize(D) waits for a report whose inputs are produced *by* finalize(D).
+Once d1 reports honestly, every armed multi-chain day deadlocks into the 4-hour
+grace backstop with **every** mirror marked remit-ineligible, forever — total
+mechanism failure. The plan sentence predates the owner's B2-c re-slice and the
+mirror-unstamped reconciliation (§2): it was written for per-loan **lifetime**
+headroom riding the day-close report, which *is* pre-finalize computable for
+stamped Base loans — not for a day-`D` **priced liability**, which is not.
+
+**Resolution (the only causally-possible ordering; the plan's GOALS are all
+preserved):**
+
+1. **Finalization readiness has no commitment input** (B2-c's readiness gate
+   and its `isDayReadyToFinalize` mirror are removed). Armed fast-close =
+   full interest coverage, as pre-B2-c.
+2. **The gate moves to remittance, where §M3's rule actually binds:**
+   ShareOfPool remittance for a `(day, chain)` waits for that chain's COMPLETE
+   report (`ChainDayCommitments.complete`, consumed by the d2 gate + clamp).
+   A late report **delays, never zeroes** — §M3's rule verbatim.
+3. **`remitIneligible` is retargeted** from "commitment-incomplete at finalize"
+   (which would now flag every mirror on every armed day) to the case that
+   genuinely poisons automatic remittance: an armed-day finalize that **zeroed
+   the chain's interest contribution** out of the denominator (grace/force over
+   a missing report — the chain's slice was sized without its real demand).
+   Operator reconciles + remits manually (B2-c's reconcile surface, unchanged).
+4. **The Base ingress accepts reports post-finalize** (that is the normal
+   sequence now; no `ReportAfterFinalization` on this path). A zeroed chain's
+   late report is also accepted — it stores exactly the liability figure the
+   operator needs to size the manual remit.
+5. **Mirror send/readiness are armed-gated** (`sendCommitmentReport` /
+   `isDayCommitmentReady`): an unarmed quiet day is trivially "complete"
+   (0 == 0 conservation), and without the gate the keeper trigger would burn
+   CCIP fees reporting days Base never consults.
+
+Timeline on an armed day `D`: mirrors `closeDay(D)` → Base full interest
+coverage → `finalizeDay(D)` (caps + stamps + arming) → `broadcastGlobal(D)` →
+mirror keeper submits batches → conservation completes → `sendCommitmentReport(D)`
+→ Base stores liabilities + `.complete` → d2 remit gate opens for that chain-day.
+
+Plan-conformance: *"never computed from a partial set"* ✓ (remit gate);
+*"a missing chunk delays, never zeroes"* ✓ (remit waits; nothing zeroes);
+*"permanently underfunds that mirror"* hazard ✓ eliminated (late reports
+accepted; remittance waits instead of proceeding partial). Only the gate's
+*placement* is amended — finalize-readiness → remittance — because the re-sliced
+commitment content made the frozen placement self-contradictory.
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
@@ -220,8 +291,12 @@ running sums land as new append-only tail fields.
 
 ## 6. Test plan (per slice; full 3-chain e2e is B4)
 
-d1: report sets `.complete`; armed full-coverage finalize now fires; incomplete
-mirror still fail-closes; keeper send pass. d2: pending→ack→remitted lifecycle,
+d1: mirror batches accumulate + conservation completes + send ships the
+per-side aggregate; Base ingress stores liabilities + `.complete`
+(post-finalize acceptance); armed finalize fires on interest coverage alone
+(no commitment input — §2b); zeroed-interest chain marked `remitIneligible`,
+reported chains not; unarmed/incomplete days unreportable; cursor + entry
+validation rejections; keeper send pass. d2: pending→ack→remitted lifecycle,
 lost-ack reconcile, clamp at 3 sites, quote==send. d3: `consumed ≤ reported`,
 one-bucket-one-ledger, netting sum identity, idempotent consume-on-arrival. d4:
 mirror prices its own stamp; `!stamped` still waits. d5: Ā-excluded credit

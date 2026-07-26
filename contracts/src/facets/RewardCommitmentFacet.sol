@@ -10,26 +10,29 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 /**
  * @title RewardCommitmentFacet — #1222 M3 B2-c commitment-GATE plumbing.
  *
- * @notice The Base-side surface of the reward-mesh commitment gate: operator
- *         reconciliation of a force-finalized mirror's remit-eligibility, plus
- *         the read views over the per-(day, chain) gate state. The
- *         finalization-readiness gate itself lives in {RewardAggregatorFacet}
- *         (it consults `chainDayCommitments[...].complete`), and the
- *         remit-ineligible skip in {RewardRemittanceFacet}.
+ * @notice The two ends of the reward-mesh commitment REPORT: the MIRROR-side
+ *         surface (keeper-fed batch accumulation + the once-per-day dispatch
+ *         to Base) and the Base-side operator surface (reconciliation of a
+ *         zeroed chain's remit-eligibility + the read views over the
+ *         per-(day, chain) state). The Base ingress that accepts the report
+ *         lives in {RewardAggregatorFacet.onCommitmentReportReceived}; the
+ *         remit gate + clamp that consume it land in B2-d2
+ *         ({RewardRemittanceFacet}).
  *
- * @dev    B2-c ships this gate as DORMANT plumbing (completion-plan §M3;
- *         owner re-slice 2026-07-25): nothing SETS `complete` in this slice —
- *         the mirror→Base commitment REPORT that populates it, and the D1-
- *         derived per-loan headroom it carries, land in **B2-d** where they
- *         are designed once alongside the coupled mirror consumption +
- *         remitted clamp. Until then the gate is inert on a single-chain
- *         deployment (no mirrors) and on every unarmed day; on an armed
- *         multi-chain day it fails safe (the fast full-coverage close waits;
- *         a force-finalize marks every included mirror remit-ineligible until
- *         reconciled). The earlier B2-c paged commitment report was withdrawn
- *         after review (Codex #1422) showed a paged, permissionless,
- *         active-loan-list report is the wrong mechanism for a mirror's
- *         day-`D` claimable liabilities — see the release note.
+ * @dev    B2-d1 report timing (supersedes the B2-c finalization-readiness
+ *         gate): a mirror's day-`D` liability is priced from the day-`D`
+ *         per-side caps + funding stamp, which exist only once Base's
+ *         `finalizeDay(D)` computes them and `broadcastGlobal(D)` delivers
+ *         them — so the report always lands AFTER finalize, and what waits
+ *         for it is the per-(day, chain) ShareOfPool REMITTANCE (delays,
+ *         never zeroes). `remitIneligible` marks the one case remittance
+ *         must not auto-proceed: an armed-day finalize that ZEROED the
+ *         chain's interest contribution (its slice was sized without its
+ *         real demand) — the operator reconciles and remits manually. The
+ *         earlier B2-c paged commitment report was withdrawn after review
+ *         (Codex #1422) showed a paged, permissionless, active-loan-list
+ *         report is the wrong mechanism for day-`D` claimable liabilities —
+ *         see the release note.
  */
 contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     /// @notice Emitted when an operator clears a chain's remit-ineligible flag
@@ -78,16 +81,24 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     }
 
     /// @notice Dispatch this mirror's day-`D` commitment report to Base once
-    ///         both sides are complete, lighting the Base finalization gate.
+    ///         both sides are complete, lighting the Base remit gate for this
+    ///         chain-day.
     /// @dev MIRROR-only, payable (covers the CCIP fee — quote via
-    ///      {IRewardMessenger.quoteSendCommitmentReport}). Whole-day idempotent
-    ///      (`commitmentReportSent`). CEI: the sent flag is set before the
-    ///      external dispatch, so a failed send rolls back and stays retryable.
+    ///      {IRewardMessenger.quoteSendCommitmentReport}). ARMED days only —
+    ///      an unarmed day has no Base gate to light, and a quiet unarmed day
+    ///      is trivially "complete", so without the gate every pre-arming day
+    ///      would be sendable (see {LibCommitmentReport.isDayArmed}). Whole-day
+    ///      idempotent (`commitmentReportSent`). CEI: the sent flag is set
+    ///      before the external dispatch, so a failed send rolls back and
+    ///      stays retryable.
     function sendCommitmentReport(
         uint256 dayId
     ) external payable returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
+        if (!LibCommitmentReport.isDayArmed(s, dayId)) {
+            revert CommitmentDayNotArmed(dayId);
+        }
         if (s.commitmentReportSent[dayId]) {
             revert CommitmentReportAlreadySent(dayId);
         }
@@ -116,13 +127,16 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         );
     }
 
-    /// @notice True iff `dayId`'s per-side commitments are complete and the
-    ///         report has not yet been dispatched — the keeper's send trigger.
+    /// @notice True iff `dayId` is armed, its per-side commitments are
+    ///         complete, and the report has not yet been dispatched — the
+    ///         keeper's send trigger. Never true for a day
+    ///         {sendCommitmentReport} would revert on.
     function isDayCommitmentReady(
         uint256 dayId
     ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return
+            LibCommitmentReport.isDayArmed(s, dayId) &&
             !s.commitmentReportSent[dayId] &&
             LibCommitmentReport.isDayComplete(s, dayId);
     }
@@ -140,10 +154,15 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      * @notice Clear a chain's `remitIneligible` flag for `dayId` after an
      *         off-chain commitment reconciliation, so its ShareOfPool
      *         remittance may proceed again.
-     * @dev ADMIN-only. The flag is set by any armed-day finalize (grace or
-     *      force) that closed without this mirror's complete commitments (never
-     *      sized from a partial set); the operator reconciles the true headroom
-     *      off-chain (evidenced) and clears the flag here. Because clearing it
+     * @dev ADMIN-only. The flag is set by any armed-day finalize (grace
+     *      backstop or admin force) that ZEROED this chain's interest
+     *      contribution out of the denominator — its ShareOfPool slice was
+     *      sized without its real demand, so automatic remittance must not
+     *      proceed (B2-d1 retarget; a merely LATE commitment report is not
+     *      flagged — the remit gate just waits for it). The operator
+     *      reconciles the true liability off-chain (evidenced — the chain's
+     *      late report is still accepted post-finalize and stores it) and
+     *      clears the flag here. Because clearing it
      *      after a long delay can fall outside the keeper's bounded
      *      remit-discovery window (`apps/keeper` re-scans a fixed lookback and
      *      skips zero quotes), the operator that reconciles a day is expected
@@ -151,8 +170,9 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      with that day id — the same manual, admin-driven path the force-close
      *      + reconcile already are; the emitted event is the keeper's hook for
      *      the automatic rediscovery that lands with the armed remit flow in
-     *      B2-d. Once B2-d supplies the mirror→Base report, an armed day whose
-     *      mirrors report complete commitments never reaches this path.
+     *      B2-d2. With the B2-d1 report in place, an armed day whose chains
+     *      all deliver their interest reports never reaches this path — only
+     *      a chain zeroed out of the denominator does.
      */
     function reconcileCommitmentRemitEligibility(
         uint256 dayId,

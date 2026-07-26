@@ -10,9 +10,13 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @author Vaipakam Developer Team
  * @notice #1222 M3 B2-d1 — a MIRROR computes its day-`D` per-side claimable
  *         LIABILITY and reports it to the canonical (Base) reward chain, which
- *         uses it to light the B2-c finalization GATE (`ChainDayCommitments.
- *         complete`) and, in B2-d2, to clamp ShareOfPool remittance to
- *         `min(uncappedSlice, liability − remitted − pending)`.
+ *         marks the chain-day report-complete (`ChainDayCommitments.complete`
+ *         — the B2-d2 REMIT gate: ShareOfPool remittance for the chain-day
+ *         waits for it) and, in B2-d2, clamps that remittance to
+ *         `min(uncappedSlice, liability − remitted − pending)`. The report is
+ *         computable only AFTER Base finalizes + broadcasts day `D` (the caps
+ *         + funding stamp it prices from are finalize outputs), so it never
+ *         gates finalization itself.
  *
  *         The liability, per side, is the residual capped sum
  *
@@ -88,10 +92,7 @@ library LibCommitmentReport {
         (uint256 delta, bool priceable) =
             LibInteractionRewards.dailyDeltaForCommitment(s, side, dayId);
         if (!priceable) {
-            if (
-                s.governorCommitArmedFromDay == 0 ||
-                dayId < s.governorCommitArmedFromDay
-            ) {
+            if (!isDayArmed(s, dayId)) {
                 revert IVaipakamErrors.CommitmentDayNotArmed(dayId);
             }
             revert IVaipakamErrors.CommitmentStampNotArrived(dayId);
@@ -180,6 +181,20 @@ library LibCommitmentReport {
                 ++i;
             }
         }
+    }
+
+    /// @notice True iff `dayId` is inside the governor's commitment-armed
+    ///         window. Unarmed days have no gate on Base and MUST NOT be
+    ///         reported: a zero-interest unarmed day is trivially "complete"
+    ///         (0 == 0 conservation), so without this guard the keeper's
+    ///         readiness trigger would see every quiet pre-arming day as
+    ///         sendable and burn CCIP fees on reports Base never consults.
+    function isDayArmed(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) internal view returns (bool) {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        return armedFrom != 0 && dayId >= armedFrom;
     }
 
     /// @notice True iff `(dayId, side)`'s reported units EXHAUST the day's
