@@ -16,12 +16,17 @@ import {
 } from "./ICrossChainMessenger.sol";
 
 /// @dev Mirror-side Diamond ingress for the reward-budget remittance flow.
+///      #1222 M3 B2-d2 widens the ingress with the echoed `remitId` (0 for a
+///      legacy pre-d2 delivery — the Diamond records no receipt and no ack
+///      ever flows; Base holds no reservation for those).
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
         address token,
         uint256 amount,
         uint256[] calldata dayIds,
-        uint256 sourceChainId
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter
     ) external;
 }
 
@@ -83,11 +88,14 @@ contract RewardRemittanceReceiver is
     /// @custom:event-category informational/config
     event VpfiTokenSet(address indexed previousToken, address indexed newToken);
     /// @custom:event-category informational/reward-transport
+    /// @dev #1222 M3 B2-d2 — `remitId` is the Base-side delivered-backing
+    ///      reservation this delivery fulfils (0 = legacy pre-d2 message).
     event RewardBudgetForwarded(
         uint256 indexed sourceChainId,
         address indexed token,
         uint256 amount,
-        uint256[] dayIds
+        uint256[] dayIds,
+        uint256 remitId
     );
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -149,6 +157,11 @@ contract RewardRemittanceReceiver is
     /// @inheritdoc ICrossChainMessageRecipient
     function onCrossChainMessage(
         uint256 sourceChainId,
+        // Deliberately unused (#1426 r4): the adapter derives this from its
+        // delivery-time channel-peer CONFIG, so it cannot identify the
+        // sending DEPLOYMENT for a delayed pre-rotation packet. The
+        // deployment identity rides IN the payload instead (`remitter` —
+        // immutable message data), which is what the ingress binds to.
         address /* sourceSender */,
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
@@ -156,11 +169,34 @@ contract RewardRemittanceReceiver is
         if (msg.sender != messenger) revert NotMessenger(msg.sender);
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
 
-        // Payload shape: `abi.encode(uint256[] dayIds, uint256 total)`.
-        (uint256[] memory dayIds, uint256 declaredTotal) = abi.decode(
-            payload,
-            (uint256[], uint256)
-        );
+        // Payload shapes (#1222 M3 B2-d2 dual-decode — delayed pre-d2 CCIP
+        // deliveries and governance replays MUST keep decoding, per the plan
+        // §M3 backward-decodability rule):
+        //   legacy: `abi.encode(uint256[] dayIds, uint256 total)`
+        //   d2 r4:  `abi.encode(uint256[] dayIds, uint256 total,
+        //            uint256 remitId, address remitter)`
+        // Discriminated by the leading ABI head word — the `dayIds` array
+        // offset: 0x40 (two head slots) for the legacy tuple, 0x80 (four)
+        // for the widened one. Deterministic for these exact encodings;
+        // anything malformed still reverts in `abi.decode` below. A legacy
+        // delivery carries no `remitId`/`remitter` — the Diamond records no
+        // receipt and no ack flows (Base holds no reservation for pre-d2
+        // sends). `remitter` is the sending deployment's own address,
+        // embedded at send — immutable message data, so unlike the
+        // adapter's config-derived sourceSender it identifies the
+        // DEPLOYMENT even for a delayed pre-rotation packet (#1426 r4).
+        uint256[] memory dayIds;
+        uint256 declaredTotal;
+        uint256 remitId;
+        address remitter;
+        if (abi.decode(payload[:32], (uint256)) == 0x80) {
+            (dayIds, declaredTotal, remitId, remitter) = abi.decode(
+                payload,
+                (uint256[], uint256, uint256, address)
+            );
+        } else {
+            (dayIds, declaredTotal) = abi.decode(payload, (uint256[], uint256));
+        }
 
         address deliveredToken = tokens[0].token;
         uint256 deliveredAmount = tokens[0].amount;
@@ -191,14 +227,17 @@ contract RewardRemittanceReceiver is
             deliveredToken,
             actualReceived,
             dayIds,
-            sourceChainId
+            sourceChainId,
+            remitId,
+            remitter
         );
 
         emit RewardBudgetForwarded(
             sourceChainId,
             deliveredToken,
             actualReceived,
-            dayIds
+            dayIds,
+            remitId
         );
     }
 

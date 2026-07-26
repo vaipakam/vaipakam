@@ -509,4 +509,59 @@ interface IVaipakamErrors {
     /// @notice A commitment batch or send targeted a day whose report was
     ///         already dispatched to Base (whole-day idempotency).
     error CommitmentReportAlreadySent(uint256 dayId);
+
+    // ─── #1222 M3 B2-d2 — delivered-backing remit ledger ────────────────────
+
+    /// @notice The referenced remit reservation does not exist or is not in
+    ///         the state the operation requires (ack-finalize and release
+    ///         both require a PENDING reservation).
+    error RemitReservationNotPending(uint256 remitId);
+
+    /// @notice A remit ack arrived from a chain other than the reservation's
+    ///         destination — a mirror must only ack remittances addressed to
+    ///         it (`expected` is the reservation's destination chain).
+    error RemitAckChainMismatch(uint256 remitId, uint32 expected, uint32 got);
+
+    /// @notice `sendRemitAck` was called for a `remitId` this mirror holds no
+    ///         receipt record for (never delivered here, or a legacy pre-d2
+    ///         delivery that carried no remitId).
+    error ReceivedRemitNotFound(uint256 remitId);
+
+    /// @notice A mirror-only remit surface (the ack path) was called on the
+    ///         canonical chain or a single-chain deploy.
+    error OnlyMirrorRewardChain();
+
+    /// @notice A remit receipt's recorded source chain no longer matches the
+    ///         configured base chain (owner base rotation): remit ids are
+    ///         per-deployment, so acking a stale receipt toward the NEW base
+    ///         could finalize an unrelated same-numbered reservation there.
+    ///         The old deployment's reservation resolves through its own
+    ///         operator valves.
+    error ReceivedRemitStale(uint256 remitId, uint32 recordedSrcChainId);
+
+    /// @notice A remit ack's echoed source-sender is not THIS deployment:
+    ///         the receipt it was computed from belongs to a different
+    ///         (pre-rotation) canonical deployment whose remit numbering is
+    ///         unrelated — finalizing on it would mark a reservation
+    ///         delivered that never was.
+    error RemitAckSenderMismatch(uint256 remitId, address srcSender);
+
+    /// @notice `releaseRemitReservation` was called before the reservation
+    ///         aged past the reconciliation timeout (plan §M3: the operator
+    ///         terminal runs only AFTER a timeout — a merely-delayed CCIP
+    ///         message must not have its days re-opened while it can still
+    ///         execute). `earliest` is the first allowed timestamp.
+    error RemitReleaseTooEarly(uint256 remitId, uint256 earliest);
+
+    /// @notice The manual-budget path requires the `(dayId, chainId)` still
+    ///         marked remit-ineligible — the un-cleared flag is the on-chain
+    ///         evidence the day was finalized with this chain ZEROED out of
+    ///         the denominator (run the manual remit BEFORE any
+    ///         `reconcileCommitmentRemitEligibility` clear).
+    error RemitDayNotManualEligible(uint256 dayId, uint32 chainId);
+
+    /// @notice The (chain, day) was already funded or terminally closed by a
+    ///         remit batch — a day funds at most once (a RELEASED
+    ///         reservation re-opens its days).
+    error RemitDayAlreadyClosed(uint256 dayId, uint32 chainId);
 }

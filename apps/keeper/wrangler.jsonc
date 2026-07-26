@@ -95,7 +95,9 @@
   //                        matcher / liquidity-confidence submit paths.
   //   - TG_BOT_USERNAME  — public Telegram bot handle.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
-  //     (only after the keeper EOA is authorized on-chain). Optional knobs:
+  //     (only after the keeper EOA is authorized on-chain) AND the #1222
+  //     B2-d2 remit-ACK pass (delivered-backing reservations; needs D1
+  //     migration 0044 applied first). Optional knobs:
   //     REWARD_REMIT_LOOKBACK_DAYS (default 45),
   //     REWARD_REMIT_LANE_CAP (wei, default 50000e18 = the on-chain lane default; see #918).
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base

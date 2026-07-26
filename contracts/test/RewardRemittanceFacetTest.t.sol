@@ -407,7 +407,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(remit.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
-        remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE);
+        remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E));
         assertEq(remit.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
@@ -420,7 +420,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 stranger
             )
         );
-        remit.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE);
+        remit.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E));
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
@@ -434,7 +434,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 address(0xDEAD)
             )
         );
-        remit.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE);
+        remit.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E));
     }
 
     receive() external payable {}

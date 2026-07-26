@@ -56,7 +56,14 @@ library LibVpfiRecycle {
         YieldFeeVpfiShare,
         MatcherRemainder,
         ServiceBondSlash,
-        ExpiredReward
+        ExpiredReward,
+        // #1222 M3 B2-d2 — release-only class (append-only enum): the
+        // pre-clamp recycled share of a terminally-closed remit day that the
+        // Σcommitments clamp did NOT send (the mirror's reported liability is
+        // below the uncapped slice). Never a CREDIT class — it tags
+        // {RewardCommitmentReleased} so the residual's outstanding-commitment
+        // retirement is distinguishable from forfeit/expiry releases.
+        RemitClampResidual
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -219,6 +226,46 @@ library LibVpfiRecycle {
         s.outstandingCommitRecycled =
             outstanding > amount ? outstanding - amount : 0;
         emit RewardCommitmentReleased(uint8(source), refId, amount);
+    }
+
+    /**
+     * @notice #1222 M3 B2-d2 — reverse a released remit reservation's
+     *         recycled-side ledger effects so a later re-remit of the
+     *         re-opened days pairs off exactly: restores the outstanding
+     *         commitment for the PRE-clamp recycled total (`consume` +
+     *         `releaseCommitment` both retired it at send) and reverses the
+     *         `paidOutRecycled` transparency counter for the CLAMPED share
+     *         actually sent (it was never paid to anyone).
+     * @dev    Deliberately NEVER re-credits `recycleBucket`: the sent tokens
+     *         sit locked in the CCIP token pool — genuinely outside Diamond
+     *         custody — so the bucket ledger is already correct. Re-crediting
+     *         here would un-back the bucket; physical recovery re-enters via
+     *         B2-d5's Ā-excluded custody-credit class once the tokens
+     *         actually return. Restoring the outstanding commitment WITHOUT
+     *         the bucket shrinks `fundable` (bucket − outstanding) — the
+     *         conservative direction while the re-opened days await
+     *         re-funding.
+     */
+    function restoreReleasedRemit(
+        uint256 recycledFull,
+        uint256 recycledSent
+    ) internal {
+        if (recycledFull == 0 && recycledSent == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.outstandingCommitRecycled += recycledFull;
+        // Codex #1426 r5 — on an in-place-upgraded Diamond whose
+        // `recycleCreditedCumulative` is still unseeded, the cumulative is
+        // DERIVED as `bucket + paidOutRecycled`; reversing paidOut below
+        // would shrink that supposedly-monotonic figure and a later seed
+        // would lock the under-report in. Snapshot the derived value into
+        // the stored slot first, so the reversal is invisible to the
+        // cumulative ledger.
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
+        uint256 paid = s.paidOutRecycled;
+        s.paidOutRecycled = paid > recycledSent ? paid - recycledSent : 0;
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

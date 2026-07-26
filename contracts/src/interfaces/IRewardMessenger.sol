@@ -46,6 +46,21 @@ interface IRewardCommitmentIngress {
     ) external;
 }
 
+/// @notice #1222 M3 B2-d2 — Base-side Diamond ingress for an inbound
+///         mirror→Base remit ACK
+///         (`RewardRemittanceFacet.onRemitAckReceived`). Finalizes the
+///         echoed `remitId`'s delivered-backing reservation exactly once
+///         (idempotent on re-delivery; a Released reservation's late ack is
+///         surfaced, never re-finalized).
+interface IRewardRemitAckIngress {
+    function onRemitAckReceived(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter
+    ) external;
+}
+
 /**
  * @title IRewardMessenger
  * @author Vaipakam Developer Team
@@ -193,6 +208,43 @@ interface IRewardMessenger {
         uint256 dayId,
         uint256 liabilityLender18,
         uint256 liabilityBorrower18
+    ) external view returns (uint256 nativeFee);
+
+    // ─── #1222 M3 B2-d2 — mirror → Base remit ack ───────────────────────────
+
+    /// @notice Send a delivered-remittance ACK from a mirror to the canonical
+    ///         (Base) reward messenger: echoes the `remitId` a delivered
+    ///         reward-budget remittance carried, finalizing Base's
+    ///         delivered-backing reservation.
+    /// @dev Callable only by the Diamond that owns this messenger, and only
+    ///      from a mirror (the Diamond enforces the mirror-only precondition
+    ///      and computes the content from its own receipt record). Reverts if
+    ///      `msg.value` doesn't cover the CCIP native fee — quote first via
+    ///      {quoteSendRemitAck}. Deliberately re-sendable: a lost ack is
+    ///      retried by re-calling; Base finalizes exactly once.
+    /// @param remitId        The Base-generated reservation id being acked.
+    /// @param amountReceived The VPFI the mirror Diamond actually received.
+    /// @param refundAddress  Address that receives leftover CCIP fee.
+    /// @param remitter The sending DEPLOYMENT's identity recorded on the
+    ///                  mirror's receipt from the remit payload (Codex #1426
+    ///                  r3/r4 — immutable message data, never delivery-time
+    ///                  channel config): echoed on the wire so the canonical
+    ///                  ingress accepts only acks that name ITSELF — remit
+    ///                  ids are per-deployment and a stale-era receipt must
+    ///                  never finalize a same-numbered reservation on a
+    ///                  rotated deployment.
+    function sendRemitAck(
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native CCIP fee for a mirror→Base remit ack.
+    function quoteSendRemitAck(
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter
     ) external view returns (uint256 nativeFee);
 
     // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────

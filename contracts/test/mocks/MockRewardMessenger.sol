@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {
     IRewardMessenger,
+    IRewardRemitAckIngress,
     RewardBroadcastV2
 } from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
@@ -200,6 +201,74 @@ contract MockRewardMessenger is IRewardMessenger {
             dayId,
             liabilityLender18,
             liabilityBorrower18
+        );
+    }
+
+    // ─── #1222 M3 B2-d2 — remit-ack surface ───────────────────────────────
+
+    uint256 public lastAckRemitId;
+    uint256 public lastAckAmount;
+    address public lastAckRefund;
+    uint256 public lastAckValue;
+    uint256 public ackSendCount;
+    /// @notice The messageId {sendRemitAck} returns (settable).
+    bytes32 public ackMessageId = bytes32(uint256(0xACC));
+
+    function setAckMessageId(bytes32 id) external {
+        ackMessageId = id;
+    }
+
+    address public lastAckRemitter;
+
+    function sendRemitAck(
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter,
+        address payable refundAddress
+    ) external payable override returns (bytes32 messageId) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastAckRemitId = remitId;
+        lastAckAmount = amountReceived;
+        lastAckRemitter = remitter;
+        lastAckRefund = refundAddress;
+        lastAckValue = msg.value;
+        ackSendCount += 1;
+        return ackMessageId;
+    }
+
+    function quoteSendRemitAck(
+        uint256,
+        uint256,
+        address
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice Simulate a mirror's remit ack landing on the Base remit
+    ///         ingress (kind-7 CCIP delivery). Echoes the DIAMOND as
+    ///         `remitter` — the well-formed self-naming ack; use
+    ///         {deliverRemitAckFrom} to exercise the r3/r4 identity check.
+    function deliverRemitAck(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived
+    ) external {
+        IRewardRemitAckIngress(diamond).onRemitAckReceived(
+            sourceChainId, remitId, amountReceived, diamond
+        );
+    }
+
+    /// @notice r3/r4 — deliver an ack echoing an arbitrary remitter (a
+    ///         stale-era receipt's ack after a canonical rotation).
+    function deliverRemitAckFrom(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter
+    ) external {
+        IRewardRemitAckIngress(diamond).onRemitAckReceived(
+            sourceChainId, remitId, amountReceived, remitter
         );
     }
 

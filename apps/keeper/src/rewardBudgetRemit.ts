@@ -48,6 +48,13 @@ const DEFAULT_LOOKBACK_DAYS = 45;
  * #918). A day whose slice exceeds the cap is skipped with a loud log.
  */
 const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
+/**
+ * Codex #1426 r1 — bounded backscan behind the normal lookback for ARMED
+ * days: a day gated by a missing commitment report can outlive the 45-day
+ * lookback and would otherwise never be re-quoted once its report finally
+ * completes. Matches the commitment pass's backscan horizon.
+ */
+const ARMED_BACKSCAN_DAYS = 90;
 
 function flagOn(env: Env, key: string): boolean {
   const v = (env as unknown as Record<string, string | undefined>)[key];
@@ -130,9 +137,19 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   const lookback = readNumber(env, 'REWARD_REMIT_LOOKBACK_DAYS', DEFAULT_LOOKBACK_DAYS);
   const laneCap = readBigint(env, 'REWARD_REMIT_LANE_CAP', DEFAULT_LANE_CAP);
 
+  // Armed-day window extension (Codex #1426 r1): armed days carry the
+  // commitment gate + close-only semantics, so their un-closed tail must
+  // stay in scope beyond the plain lookback (bounded by the backscan cap).
+  const commitState = (await publicClient.readContract({
+    address: diamond,
+    abi: AGGREGATOR_ABI,
+    functionName: 'getGovernorCommitState',
+  })) as readonly [bigint, bigint, bigint, bigint];
+  const armedFromDay = commitState[0];
+
   for (const mirrorId of mirrorIds) {
     try {
-      await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap);
+      await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay);
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
@@ -151,36 +168,98 @@ async function remitToMirror(
   currentDay: bigint,
   lookback: number,
   laneCap: bigint,
+  armedFromDay: bigint,
 ): Promise<void> {
   // Candidate window of recent finalized days (strictly < currentDay).
-  const from = currentDay > BigInt(lookback) ? currentDay - BigInt(lookback) : 1n;
+  // Codex #1426 r1: when the program is armed, extend the floor down to
+  // the armed range (bounded by the backscan cap) so a day whose
+  // commitment report completes only after the plain lookback expired is
+  // still re-quoted, and a zero-clamp day's close-only batch still runs.
+  let from = currentDay > BigInt(lookback) ? currentDay - BigInt(lookback) : 1n;
+  if (armedFromDay !== 0n && armedFromDay < from) {
+    const span = BigInt(lookback + ARMED_BACKSCAN_DAYS);
+    const floor = currentDay > span ? currentDay - span : 1n;
+    const armedFloor = armedFromDay > floor ? armedFromDay : floor;
+    if (armedFloor > armedFromDay) {
+      console.warn(
+        `[keeper] rewardBudgetRemit mirror=${mirrorId} armed window floored at ${armedFloor} by the ${lookback}+${ARMED_BACKSCAN_DAYS}-day cap — anything older and un-closed needs operator attention`,
+      );
+    }
+    if (armedFloor < from) from = armedFloor;
+  }
   const window: bigint[] = [];
   for (let d = from; d < currentDay; d++) window.push(d);
   if (window.length === 0) return;
 
-  const [, perDay] = (await publicClient.readContract({
-    address: diamond,
-    abi: REMIT_ABI,
-    functionName: 'quoteRewardBudget',
-    args: [mirrorId, window],
-  })) as readonly [bigint, readonly bigint[]];
+  // Codex #1426 r1 — plan through the batch planner view, not the plain
+  // amount quote: a gate-passing armed day whose clamp lands at ZERO moves
+  // no VPFI but must still be submitted so it terminally closes and its
+  // finalize-time commitments retire (an amount-only quote cannot
+  // distinguish it from a gated/closed day).
+  //
+  // Codex #1426 r2/r3 — the planner allocates the recycled-BACKING budget
+  // sequentially across the whole window, so a day this loop then drops
+  // for exceeding the lane cap has still consumed backing that a later day
+  // could have used; with an identical full-window plan every tick, that
+  // later day would stay non-closeable forever. Re-plan WITHOUT the
+  // dropped oversized days (bounded: each pass removes at least one day,
+  // and oversized days are rare operator-attention cases).
+  let planWindow: bigint[] = window;
+  let perDay: readonly bigint[] = [];
+  let closeable: readonly boolean[] = [];
+  // Codex #1426 r4/r6 — batch only a STABILIZED plan: loop until a quote
+  // reports no oversized day (each filtering pass removes at least one, so
+  // this terminates within the window length; tight recycled backing can
+  // expose oversized days one per pass). If the safety cap trips before
+  // stabilization, BAIL for this tick rather than batch from a plan whose
+  // backing allocation still includes an excluded day — an unstabilized
+  // batch would starve affordable later days every tick.
+  const MAX_REPLAN_PASSES = 24;
+  let stabilized = false;
+  for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
+    [perDay, closeable] = (await publicClient.readContract({
+      address: diamond,
+      abi: REMIT_ABI,
+      functionName: 'quoteRemitDayPlans',
+      args: [mirrorId, planWindow],
+    })) as readonly [readonly bigint[], readonly boolean[]];
+    const oversized: bigint[] = [];
+    for (let i = 0; i < planWindow.length; i++) {
+      if ((perDay[i] ?? 0n) > laneCap) {
+        console.warn(
+          `[keeper] rewardBudgetRemit day=${planWindow[i]} slice=${perDay[i]} > laneCap=${laneCap} mirror=${mirrorId} — raise the reward-budget CCIP lane capacity (#918); day excluded from planning`,
+        );
+        oversized.push(planWindow[i]);
+      }
+    }
+    if (oversized.length === 0) {
+      stabilized = true;
+      break;
+    }
+    const drop = new Set(oversized.map((d) => d.toString()));
+    planWindow = planWindow.filter((d) => !drop.has(d.toString()));
+    if (planWindow.length === 0) return;
+  }
+  if (!stabilized) {
+    console.warn(
+      `[keeper] rewardBudgetRemit mirror=${mirrorId} plan did not stabilize within ${MAX_REPLAN_PASSES} passes — skipping this tick (raise the lane capacity per #918)`,
+    );
+    return;
+  }
 
-  // Greedily batch the un-remitted days, keeping the total under the lane cap.
+  // Greedily batch the un-remitted days, keeping the total under the lane
+  // cap. Close-only days (closeable, zero amount) ride along for free.
   const batch: bigint[] = [];
   let total = 0n;
-  for (let i = 0; i < window.length; i++) {
+  for (let i = 0; i < planWindow.length; i++) {
     const slice = perDay[i] ?? 0n;
-    if (slice === 0n) continue;
-    if (slice > laneCap) {
-      // A single day exceeds the lane bucket — remit sends a day atomically, so
-      // this day is unfundable until the operator raises the lane capacity (#918).
-      console.warn(
-        `[keeper] rewardBudgetRemit day=${window[i]} slice=${slice} > laneCap=${laneCap} mirror=${mirrorId} — raise the reward-budget CCIP lane capacity (#918); day skipped`,
-      );
+    if (slice === 0n) {
+      if (closeable[i]) batch.push(planWindow[i]);
       continue;
     }
+    if (slice > laneCap) continue; // appeared oversized on the final pass
     if (total + slice > laneCap) break; // fill the rest on a later tick
-    batch.push(window[i]);
+    batch.push(planWindow[i]);
     total += slice;
   }
   if (batch.length === 0) return;
@@ -199,12 +278,16 @@ async function remitToMirror(
   // be unset — either way `quoteRemittanceFee` returns total 0. Submitting the
   // now-stale batch would revert (NothingToRemit / config guard) and burn keeper
   // gas every tick, so skip and re-evaluate on the next tick.
-  if (quotedTotal === 0n) {
+  if (quotedTotal === 0n && total > 0n) {
     console.log(
       `[keeper] rewardBudgetRemit Base->${mirrorId} batch=${batch.length} — quote total 0 (raced or wiring unset); skipping`,
     );
     return;
   }
+  // A close-only batch (every day clamped to zero) legitimately quotes 0:
+  // nothing is dispatched on-chain, the fee is 0, and the send just closes
+  // the days + retires their commitments. If it races an admin close the
+  // send reverts NothingToRemit, caught benignly below.
 
   const hash = await ctx.wallet.writeContract({
     address: diamond,

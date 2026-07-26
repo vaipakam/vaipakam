@@ -17,6 +17,7 @@ import {
     IRewardMessenger,
     IRewardReporterIngressV2,
     IRewardCommitmentIngress,
+    IRewardRemitAckIngress,
     RewardBroadcastV2
 } from "../interfaces/IRewardMessenger.sol";
 
@@ -150,6 +151,11 @@ contract VaipakamRewardMessenger is
     ///         day-`D` per-side claimable-liability aggregate that lights the
     ///         Base finalization gate. Distinct from the kind-1 interest report.
     uint8 internal constant MSG_TYPE_COMMITMENT_REPORT = 6;
+    /// @notice #1222 M3 B2-d2 — mirror → Base remit ACK: echoes the
+    ///         `remitId` a delivered reward-budget remittance carried,
+    ///         finalizing Base's delivered-backing reservation. Data-only —
+    ///         the value moved on the token channel; this is its receipt.
+    uint8 internal constant MSG_TYPE_REMIT_ACK = 7;
 
     /// @notice LEGACY REPORT payload size — the pre-#1222 mirror→Base
     ///         `abi.encode(uint8, uint256, uint256, uint256)` four-word
@@ -211,6 +217,18 @@ contract VaipakamRewardMessenger is
     ///         receive, and no legacy shape precedes it (kind-6 is new), so
     ///         there is no dual-length decode to keep.
     uint256 internal constant COMMITMENT_REPORT_PAYLOAD_SIZE = 4 * 32;
+    /// @notice #1222 M3 B2-d2 — remit ack `abi.encode(uint8 kind, remitId,
+    ///         amountReceived, remitter)` = FOUR words (r3/r4: `remitter`
+    ///         echoes the sending deployment's identity the mirror's
+    ///         receipt recorded from the remit PAYLOAD, so the canonical
+    ///         ingress accepts only acks that name ITSELF — remit ids are
+    ///         per-deployment). Shares its
+    ///         byte length with {REPORT_PAYLOAD_SIZE_LEGACY} /
+    ///         {COMMITMENT_REPORT_PAYLOAD_SIZE}; disambiguation is the kind
+    ///         tag, never the length (the standing rule). Canonical-gated on
+    ///         receive; kind-7 pre-dates any deployment, so there is no
+    ///         legacy 3-word shape to dual-decode.
+    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 4 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -293,6 +311,22 @@ contract VaipakamRewardMessenger is
         uint256 indexed dayId,
         uint256 liabilityLender18,
         uint256 liabilityBorrower18
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1222 M3 B2-d2 — a mirror→Base remit ack left this (mirror)
+    ///         messenger.
+    event RemitAckSent(
+        bytes32 indexed messageId,
+        uint256 indexed remitId,
+        uint256 amountReceived
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1222 M3 B2-d2 — a mirror→Base remit ack arrived at this
+    ///         (canonical/Base) messenger.
+    event RemitAckReceived(
+        uint256 indexed sourceChainId,
+        uint256 indexed remitId,
+        uint256 amountReceived
     );
     /// @custom:event-category informational/reward-transport
     /// @notice #1222 M3 B2-b — one kind-5 per-destination broadcast left
@@ -573,6 +607,59 @@ contract VaipakamRewardMessenger is
             dayId,
             liabilityLender18,
             liabilityBorrower18
+        );
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            baseChainId, payload, _noTokens(), destGasLimit
+        );
+    }
+
+    /// @notice #1222 M3 B2-d2 — send a mirror's remit ACK to Base: echoes the
+    ///         `remitId` a delivered reward-budget remittance carried.
+    ///         Diamond-only (the Diamond enforces the mirror-only
+    ///         precondition and computes the content from its own receipt
+    ///         record). Deliberately re-sendable — a lost ack is retried by
+    ///         re-calling; Base finalizes exactly once. `msg.value` must
+    ///         cover the CCIP fee (quote first via {quoteSendRemitAck}); the
+    ///         remainder is refunded.
+    function sendRemitAck(
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter,
+        address payable refundAddress
+    )
+        external
+        payable
+        onlyDiamond
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (messenger == address(0)) revert MessengerNotSet();
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REMIT_ACK,
+            remitId,
+            amountReceived,
+            remitter
+        );
+        messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
+
+        emit RemitAckSent(messageId, remitId, amountReceived);
+    }
+
+    /// @notice Quote the native CCIP fee for a mirror→Base remit ack.
+    function quoteSendRemitAck(
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter
+    ) external view returns (uint256 nativeFee) {
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REMIT_ACK,
+            remitId,
+            amountReceived,
+            remitter
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
@@ -1011,8 +1098,9 @@ contract VaipakamRewardMessenger is
         // The inbound shape gate accepts the union of valid word counts:
         // 6 (REPORT, #1222 B1), 4 (legacy REPORT), 8 (legacy BROADCAST /
         // TierUpdated — disambiguated by the kind tag below), 2
-        // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b). Any other length
-        // is a padded / truncated packet and is rejected before decode.
+        // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REMIT_ACK,
+        // #1222 B2-d2). Any other length is a padded / truncated packet and
+        // is rejected before decode.
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
@@ -1021,6 +1109,7 @@ contract VaipakamRewardMessenger is
             && len != TIER_UPDATED_PAYLOAD_SIZE
             && len != VERSION_BUMPED_PAYLOAD_SIZE
             && len != BROADCAST_V2_PAYLOAD_SIZE
+            && len != REMIT_ACK_PAYLOAD_SIZE
         ) {
             revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
         }
@@ -1235,6 +1324,30 @@ contract VaipakamRewardMessenger is
                 dayId,
                 liabilityLender18,
                 liabilityBorrower18
+            );
+        } else if (msgType == MSG_TYPE_REMIT_ACK) {
+            // #1222 M3 B2-d2 — mirror → Base remit ack. Canonical-only, like
+            // the other mirror→Base kinds. No legacy shape precedes kind-7,
+            // so there is no dual-length decode and no ingress downgrade: a
+            // not-yet-upgraded Base diamond reverts the ingress selector and
+            // the CCIP message stays failed/re-executable until Base is
+            // current — the ack is never silently dropped (and the mirror
+            // can simply re-send it anyway).
+            if (len != REMIT_ACK_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, REMIT_ACK_PAYLOAD_SIZE);
+            }
+            if (!isCanonical) revert ReportOnMirror();
+            if (sourceChainId > type(uint32).max) {
+                revert ChainIdTooLarge(sourceChainId);
+            }
+            (, uint256 remitId, uint256 amountReceived, address remitter) =
+                abi.decode(payload, (uint8, uint256, uint256, address));
+            emit RemitAckReceived(sourceChainId, remitId, amountReceived);
+            IRewardRemitAckIngress(diamond).onRemitAckReceived(
+                SafeCast.toUint32(sourceChainId),
+                remitId,
+                amountReceived,
+                remitter
             );
         } else {
             revert UnknownMessageType(msgType);
