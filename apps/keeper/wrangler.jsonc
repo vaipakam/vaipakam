@@ -98,6 +98,9 @@
   //     (only after the keeper EOA is authorized on-chain). Optional knobs:
   //     REWARD_REMIT_LOOKBACK_DAYS (default 45),
   //     REWARD_REMIT_LANE_CAP (wei, default 50000e18 = the on-chain lane default; see #918).
+  //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
+  //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
+  //     KEEPER_ROLE). Optional: REWARD_COMMIT_LOOKBACK_DAYS (default 14).
   //   - FRONTEND_ORIGIN, LIQ_* / SPLIT_* / PARTIAL_LIQ_* tuning knobs
   //     (see src/env.ts) — all optional, sensible defaults.
   "vars": {
