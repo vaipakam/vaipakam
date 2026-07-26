@@ -730,6 +730,15 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().governorCommitArmedFromDay = dayId;
     }
 
+    /// @notice #1222 M3 B2-d1 test-only — stamp the mirror's local
+    ///         interest-close marker (`chainReportSentAt`, production writes
+    ///         it in {RewardReporterFacet.closeDay} right after the day's
+    ///         interest fold) so the commitment send's local-close race guard
+    ///         can be exercised without driving a full close.
+    function setChainReportSentAtRaw(uint256 dayId, uint64 ts) external {
+        LibVaipakam.storageSlot().chainReportSentAt[dayId] = ts;
+    }
+
     /// @notice #1222 M3 B2-c test-only — set a `(day, chain)` commitment-gate
     ///         `complete` flag directly. Production populates it via the B2-d
     ///         mirror→Base commitment report (deferred out of B2-c), so this

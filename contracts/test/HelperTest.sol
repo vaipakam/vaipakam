@@ -87,9 +87,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](133);
+        selectors = new bytes4[](134);
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
+        // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
+        selectors[133] = TestMutatorFacet.setChainReportSentAtRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.
@@ -1852,7 +1854,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -1870,6 +1872,8 @@ contract HelperTest {
         // RL-3 (#1305) — the read-only claim-horizon views.
         selectors[14] = InteractionRewardsLensFacet.getUserRewardEntryIds.selector;
         selectors[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
+        // #1222 M3 B2-d1 — the commitment keeper's entry-sequence walk.
+        selectors[16] = InteractionRewardsLensFacet.getRewardEntriesRange.selector;
         return selectors;
     }
 
@@ -1902,7 +1906,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         selectors[17] =
             RewardAggregatorFacet.getChainDayRecycledFunding.selector;
@@ -1939,6 +1943,8 @@ contract HelperTest {
         selectors[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
         // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
         selectors[15] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
+        // #1222 M3 B2-d1 — mirror→Base commitment-report ingress (Base side).
+        selectors[21] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
         return selectors;
     }
 
@@ -1971,13 +1977,29 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](10);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete
+            .selector;
+        // #1222 M3 B2-d1 — mirror commitment-report surface.
+        selectors[3] = RewardCommitmentFacet.submitCommitmentBatch.selector;
+        selectors[4] = RewardCommitmentFacet.sendCommitmentReport.selector;
+        selectors[5] = RewardCommitmentFacet.isDayCommitmentReady.selector;
+        selectors[6] = RewardCommitmentFacet
+            .resetCommitmentAccumulation
+            .selector;
+        selectors[7] = RewardCommitmentFacet
+            .getCommitmentAccumulation
+            .selector;
+        selectors[8] = RewardCommitmentFacet
+            .quoteCommitmentReportFee
+            .selector;
+        selectors[9] = RewardCommitmentFacet
+            .isCommitmentReportSent
             .selector;
         return selectors;
     }

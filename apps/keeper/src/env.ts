@@ -65,6 +65,12 @@ interface BaseEnv {
   /** per-send VPFI ceiling in wei — perRemittanceCap + batch bound (default 50000e18, matches the on-chain lane default). */
   REWARD_REMIT_LANE_CAP?: string;
 
+  // #1222 M3 B2-d1 — mirror→Base commitment-report pass knobs.
+  /** 'true' arms the commitment-report pass (in addition to KEEPER_ENABLED; the keeper EOA needs on-chain KEEPER_ROLE). */
+  REWARD_COMMIT_ENABLED?: string;
+  /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
+  REWARD_COMMIT_LOOKBACK_DAYS?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -240,6 +246,8 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_ENABLED: raw.REWARD_REMIT_ENABLED,
     REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
+    REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
+    REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

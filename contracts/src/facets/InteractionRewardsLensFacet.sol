@@ -303,6 +303,35 @@ contract InteractionRewardsLensFacet {
         }
     }
 
+    /// @notice #1222 M3 B2-d1 — a page of the GLOBAL reward-entry sequence:
+    ///         entries `fromId .. fromId+count-1` (ids are allocated
+    ///         sequentially from 1 by `_allocEntry`). Ids past
+    ///         `nextRewardEntryId` return zeroed structs (`user == 0`).
+    /// @dev    The commitment-report keeper's enumeration primitive: it walks
+    ///         this sequence from the on-chain entry cursor, filters
+    ///         day-covering entries locally, and feeds
+    ///         {RewardCommitmentFacet.submitCommitmentBatch}. Entry ids are
+    ///         creation-ordered, so `startDay` is non-decreasing along the
+    ///         walk and a scan for day `D` can stop at the first entry with
+    ///         `startDay > D`. `count` is clamped to 500 per call (RPC-node
+    ///         friendliness — callers page).
+    /// @param  fromId First entry id to return (1-based).
+    /// @param  count  Page size (clamped to 500).
+    /// @return entries Full {RewardEntry} structs, `entries[i]` = id
+    ///         `fromId + i`.
+    function getRewardEntriesRange(uint256 fromId, uint256 count)
+        external
+        view
+        returns (LibVaipakam.RewardEntry[] memory entries)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (count > 500) count = 500;
+        entries = new LibVaipakam.RewardEntry[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            entries[i] = s.rewardEntries[fromId + i];
+        }
+    }
+
     /// @notice RL-3 (#1305) — the storage ids backing {getUserRewardEntries},
     ///         same length and registration order, so keepers and the Claim
     ///         Center can address {getRewardEntryExpiry} /

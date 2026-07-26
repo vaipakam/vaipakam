@@ -459,4 +459,54 @@ interface IVaipakamErrors {
     ///         entry, so a mismatched set would charge the wrong ceiling and
     ///         pay slices the claimant never earned.
     error RewardEntrySetMismatch(uint256 entryId);
+
+    // ─── #1222 M3 B2-d1 — mirror→Base commitment report ─────────────────────
+
+    /// @notice The commitment report is a MIRROR-only surface: it computes this
+    ///         chain's day-D claimable-liability and ships it to the canonical
+    ///         (Base) reward chain. Reverts on Base (canonical) and on a
+    ///         single-chain deploy (no baseChainId).
+    error CommitmentReportOnlyMirror();
+
+    /// @notice A commitment batch/report targeted a day that is not armed
+    ///         (`governorCommitArmedFromDay == 0 || dayId < it`) — the
+    ///         commitment gate is inert on unarmed days, so there is nothing to
+    ///         report.
+    error CommitmentDayNotArmed(uint256 dayId);
+
+    /// @notice A commitment batch reached a day whose per-chain funding stamp
+    ///         has not arrived yet (the Base→mirror broadcast is pending), so
+    ///         the per-side pool — and thus the liability — cannot be priced.
+    ///         The report must wait for the broadcast (delays, never zeroes).
+    error CommitmentStampNotArrived(uint256 dayId);
+
+    /// @notice The mirror's day-`dayId` local interest close has not run yet
+    ///         (`chainReportSentAt[dayId] == 0`) — the demand-conservation
+    ///         totals the report's completeness is proven against are not
+    ///         final, so a quiet-LOOKING day must not ship the once-only
+    ///         report (Codex #1425 r1: a Base grace/force-finalize stamps the
+    ///         mirror even when its own close never ran).
+    error CommitmentDayNotLocallyClosed(uint256 dayId);
+
+    /// @notice A commitment batch's entry ids were not STRICTLY INCREASING
+    ///         (within the batch and versus the stored per-(day, side)
+    ///         cursor) — the monotonic ordering is the dedup that guarantees
+    ///         each entry is accumulated exactly once. `entryId` is the
+    ///         offending id.
+    error CommitmentEntriesNotAscending(uint256 entryId);
+
+    /// @notice An entry handed to a commitment batch is not on the claimed
+    ///         `side` or does not cover the reported day — the
+    ///         mirror recomputes each unit's contribution from its OWN storage,
+    ///         so a mismatched entry (the keeper cannot inflate) is rejected.
+    error CommitmentEntryMismatch(uint256 entryId);
+
+    /// @notice `sendCommitmentReport` was called for a day whose per-side
+    ///         commitments are not both COMPLETE (the demand-conservation proof
+    ///         has not been satisfied on one or both sides).
+    error CommitmentDayNotComplete(uint256 dayId);
+
+    /// @notice A commitment batch or send targeted a day whose report was
+    ///         already dispatched to Base (whole-day idempotency).
+    error CommitmentReportAlreadySent(uint256 dayId);
 }

@@ -32,6 +32,20 @@ interface IRewardReporterIngressV2 {
     ) external;
 }
 
+/// @notice #1222 M3 B2-d1 — Base-side Diamond ingress for an inbound mirror→Base
+///         commitment REPORT (`RewardAggregatorFacet.onCommitmentReportReceived`).
+///         Delivers a mirror's day-`D` per-side claimable-liability aggregate,
+///         which marks the chain-day report-complete
+///         (`ChainDayCommitments.complete` — the B2-d2 remit gate).
+interface IRewardCommitmentIngress {
+    function onCommitmentReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    ) external;
+}
+
 /**
  * @title IRewardMessenger
  * @author Vaipakam Developer Team
@@ -152,6 +166,33 @@ interface IRewardMessenger {
         uint256 dayId,
         uint256 globalLenderNumeraire18,
         uint256 globalBorrowerNumeraire18
+    ) external view returns (uint256 nativeFee);
+
+    // ─── #1222 M3 B2-d1 — mirror → Base commitment report ───────────────────
+
+    /// @notice Send a day-`D` commitment REPORT from a mirror to the canonical
+    ///         (Base) reward messenger: this chain's per-side claimable-liability
+    ///         aggregate, which lights the Base remit gate for this chain-day.
+    /// @dev Callable only by the Diamond that owns this messenger, and only from
+    ///      a mirror (the Diamond enforces the mirror-only precondition). Reverts
+    ///      if `msg.value` doesn't cover the CCIP native fee — quote first via
+    ///      {quoteSendCommitmentReport}.
+    /// @param dayId               Elapsed interaction day being committed.
+    /// @param liabilityLender18   This chain's lender-side day-`D` liability (1e18).
+    /// @param liabilityBorrower18 This chain's borrower-side day-`D` liability (1e18).
+    /// @param refundAddress       Address that receives leftover CCIP fee.
+    function sendCommitmentReport(
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native CCIP fee for a mirror→Base commitment report.
+    function quoteSendCommitmentReport(
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
     ) external view returns (uint256 nativeFee);
 
     // ─── #1222 M3 B2-b — per-destination broadcast V2 ───────────────────────

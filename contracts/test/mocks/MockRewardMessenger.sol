@@ -55,6 +55,17 @@ contract MockRewardMessenger is IRewardMessenger {
     uint256 public lastBroadcastValue;
     uint256 public broadcastCount;
 
+    // ─── #1222 M3 B2-d1 — commitment-report spies ─────────────────────────
+    uint256 public lastCommitSendDay;
+    uint256 public lastCommitLiabilityLender18;
+    uint256 public lastCommitLiabilityBorrower18;
+    address public lastCommitRefund;
+    uint256 public lastCommitValue;
+    uint256 public commitSendCount;
+    /// @notice The messageId {sendCommitmentReport} returns (settable so a
+    ///         test can assert the facet surfaces it verbatim).
+    bytes32 public commitMessageId = bytes32(uint256(0xC0117171));
+
     // ─── #1222 M3 B2-b — V2 broadcast spies + destination config ──────────
     uint256[] internal destsConfig;
     IRewardMessenger.BroadcastV2Shared public lastV2Shared;
@@ -143,6 +154,53 @@ contract MockRewardMessenger is IRewardMessenger {
         lastBroadcastRefund = refundAddress;
         lastBroadcastValue = msg.value;
         broadcastCount += 1;
+    }
+
+    // ─── #1222 M3 B2-d1 — commitment-report surface ───────────────────────
+
+    function setCommitMessageId(bytes32 id) external {
+        commitMessageId = id;
+    }
+
+    function sendCommitmentReport(
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18,
+        address payable refundAddress
+    ) external payable override returns (bytes32 messageId) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastCommitSendDay = dayId;
+        lastCommitLiabilityLender18 = liabilityLender18;
+        lastCommitLiabilityBorrower18 = liabilityBorrower18;
+        lastCommitRefund = refundAddress;
+        lastCommitValue = msg.value;
+        commitSendCount += 1;
+        return commitMessageId;
+    }
+
+    function quoteSendCommitmentReport(
+        uint256,
+        uint256,
+        uint256
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice Simulate a mirror's commitment report landing on the Base
+    ///         aggregator ingress (kind-6 CCIP delivery).
+    function deliverCommitmentReport(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    ) external {
+        RewardAggregatorFacet(diamond).onCommitmentReportReceived(
+            sourceChainId,
+            dayId,
+            liabilityLender18,
+            liabilityBorrower18
+        );
     }
 
     function quoteSendChainReport(

@@ -16,6 +16,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     IRewardMessenger,
     IRewardReporterIngressV2,
+    IRewardCommitmentIngress,
     RewardBroadcastV2
 } from "../interfaces/IRewardMessenger.sol";
 
@@ -145,6 +146,10 @@ contract VaipakamRewardMessenger is
     ///         funded figures. One payload per destination — never a shared
     ///         payload positionally aligned to the mutable destination list.
     uint8 internal constant MSG_TYPE_BROADCAST_V2 = 5;
+    /// @notice #1222 M3 B2-d1 — mirror → Base commitment REPORT: this chain's
+    ///         day-`D` per-side claimable-liability aggregate that lights the
+    ///         Base finalization gate. Distinct from the kind-1 interest report.
+    uint8 internal constant MSG_TYPE_COMMITMENT_REPORT = 6;
 
     /// @notice LEGACY REPORT payload size — the pre-#1222 mirror→Base
     ///         `abi.encode(uint8, uint256, uint256, uint256)` four-word
@@ -197,6 +202,15 @@ contract VaipakamRewardMessenger is
     ///         backward-decodability rule); only the sender generation
     ///         decides which kind goes out.
     uint256 internal constant BROADCAST_V2_PAYLOAD_SIZE = 15 * 32;
+    /// @notice #1222 M3 B2-d1 — commitment report `abi.encode(uint8 kind,
+    ///         dayId, liabilityLender18, liabilityBorrower18)` = FOUR words.
+    ///         Shares its byte length with {REPORT_PAYLOAD_SIZE_LEGACY}, exactly
+    ///         as {BROADCAST_PAYLOAD_SIZE}/{TIER_UPDATED_PAYLOAD_SIZE} share
+    ///         theirs — the `uint8 kind` tag (6 vs 1) is what disambiguates the
+    ///         two at decode, never the length. Base is canonical-gated on
+    ///         receive, and no legacy shape precedes it (kind-6 is new), so
+    ///         there is no dual-length decode to keep.
+    uint256 internal constant COMMITMENT_REPORT_PAYLOAD_SIZE = 4 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -261,6 +275,24 @@ contract VaipakamRewardMessenger is
         uint256 indexed dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1222 M3 B2-d1 — a mirror→Base commitment report left this
+    ///         (mirror) messenger.
+    event CommitmentReportSent(
+        bytes32 indexed messageId,
+        uint256 indexed dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1222 M3 B2-d1 — a mirror→Base commitment report arrived at this
+    ///         (canonical/Base) messenger.
+    event CommitmentReportReceived(
+        uint256 indexed sourceChainId,
+        uint256 indexed dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
     );
     /// @custom:event-category informational/reward-transport
     /// @notice #1222 M3 B2-b — one kind-5 per-destination broadcast left
@@ -492,6 +524,58 @@ contract VaipakamRewardMessenger is
 
         emit ReportSent(
             messageId, dayId, lenderNumeraire18, borrowerNumeraire18
+        );
+    }
+
+    /// @notice #1222 M3 B2-d1 — send a mirror's day-`D` commitment report to
+    ///         Base. Diamond-only (the Diamond enforces the mirror-only
+    ///         precondition and that the day's commitments are complete).
+    ///         `msg.value` must cover the CCIP fee (quote first via
+    ///         {quoteSendCommitmentReport}); the remainder is refunded.
+    function sendCommitmentReport(
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18,
+        address payable refundAddress
+    )
+        external
+        payable
+        onlyDiamond
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (messenger == address(0)) revert MessengerNotSet();
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+
+        bytes memory payload = abi.encode(
+            MSG_TYPE_COMMITMENT_REPORT,
+            dayId,
+            liabilityLender18,
+            liabilityBorrower18
+        );
+        messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
+
+        emit CommitmentReportSent(
+            messageId, dayId, liabilityLender18, liabilityBorrower18
+        );
+    }
+
+    /// @notice Quote the native CCIP fee for a mirror→Base commitment report.
+    function quoteSendCommitmentReport(
+        uint256 dayId,
+        uint256 liabilityLender18,
+        uint256 liabilityBorrower18
+    ) external view returns (uint256 nativeFee) {
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+        bytes memory payload = abi.encode(
+            MSG_TYPE_COMMITMENT_REPORT,
+            dayId,
+            liabilityLender18,
+            liabilityBorrower18
+        );
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            baseChainId, payload, _noTokens(), destGasLimit
         );
     }
 
@@ -1122,6 +1206,35 @@ contract VaipakamRewardMessenger is
             emit VersionBumpReceived(sourceChainId, newVersion);
             IMirrorTierIngress(diamond).onVersionBumpedReceived(
                 sourceChainId, newVersion
+            );
+        } else if (msgType == MSG_TYPE_COMMITMENT_REPORT) {
+            // #1222 M3 B2-d1 — mirror → Base commitment report. Canonical-only,
+            // mirroring the kind-1 interest report (both flow mirror→Base). No
+            // legacy shape precedes kind-6, so there is no dual-length decode
+            // and no ingress downgrade: a not-yet-upgraded Base diamond reverts
+            // the ingress selector and the CCIP message stays failed/re-executable
+            // until Base is current — the report is never silently dropped.
+            if (len != COMMITMENT_REPORT_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, COMMITMENT_REPORT_PAYLOAD_SIZE);
+            }
+            if (!isCanonical) revert ReportOnMirror();
+            if (sourceChainId > type(uint32).max) {
+                revert ChainIdTooLarge(sourceChainId);
+            }
+            (
+                ,
+                uint256 dayId,
+                uint256 liabilityLender18,
+                uint256 liabilityBorrower18
+            ) = abi.decode(payload, (uint8, uint256, uint256, uint256));
+            emit CommitmentReportReceived(
+                sourceChainId, dayId, liabilityLender18, liabilityBorrower18
+            );
+            IRewardCommitmentIngress(diamond).onCommitmentReportReceived(
+                SafeCast.toUint32(sourceChainId),
+                dayId,
+                liabilityLender18,
+                liabilityBorrower18
             );
         } else {
             revert UnknownMessageType(msgType);

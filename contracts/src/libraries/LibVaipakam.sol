@@ -5549,6 +5549,33 @@ library LibVaipakam {
         //   operator reconciliation. Dormant until B2-d supplies the report.
         mapping(uint256 => mapping(uint32 => ChainDayCommitments))
             chainDayCommitments;
+        // ─── #1222 M3 B2-d1 — mirror-side commitment-report accumulation ─────
+        // APPEND-ONLY TAIL. A mirror computes its day-D per-side claimable
+        // liability by accumulating keeper-fed, mirror-VERIFIED per-ENTRY
+        // batches (the keeper cannot inflate or distort — the mirror recomputes
+        // each entry's figures from its own storage), then reports one compact
+        // per-side total to Base. The unit is the reward ENTRY, not the user:
+        // per-entry `min(rawPay_entry, C_side)` is invariant under position
+        // transfers (`repointRewardEntry` regroups entries across users after
+        // the once-only report) and is the exact supremum of the per-user
+        // capped sum over every possible ownership regrouping
+        // (`min(a+b, C) ≤ min(a, C) + min(b, C)`) — so the report can never
+        // under-state the eventual claimable liability (Codex #1425 r1).
+        // Keyed `(dayId, side)`:
+        //   `commitmentLiabilityAccum18`     Σ min(rawPay_entry, C_side) — the liability.
+        //   `commitmentConservationAccum18`  Σ perDayNumeraire18 — the completeness proof:
+        //                                    a side is COMPLETE iff this equals the chain's own
+        //                                    `totalSideInterestNumeraire18[d]` (no maintained
+        //                                    active-unit count needed — a missing entry understates
+        //                                    the sum and fails the check; delays, never zeroes).
+        //   `commitmentEntryCursor`          last entry id accumulated, STRICTLY INCREASING
+        //                                    across and within batches ⇒ no double-count.
+        // `commitmentReportSent[dayId]` marks the report dispatched to Base (whole-day idempotency,
+        // both sides). Mirror-only; Base never writes these.
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentLiabilityAccum18;
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentConservationAccum18;
+        mapping(uint256 => mapping(uint8 => uint256)) commitmentEntryCursor;
+        mapping(uint256 => bool) commitmentReportSent;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
@@ -5583,25 +5610,40 @@ library LibVaipakam {
         uint256 freshBorrowerHalf;
     }
 
-    /// @notice #1222 M3 B2-c — the Base-side commitment-GATE state for one
-    ///         `(day, chain)`: does the canonical chain consider this mirror's
-    ///         reward-headroom commitments COMPLETE for the day, and is its
-    ///         ShareOfPool remittance blocked pending reconciliation.
-    /// @dev B2-c ships the finalization-readiness GATE, the remit-ineligible
-    ///      flag, and operator reconciliation as DORMANT plumbing (like B2-a's
-    ///      records-only projection): nothing SETS `complete` in this slice —
-    ///      the mirror→Base commitment REPORT that populates it (and the
-    ///      per-loan / D1-derived headroom it carries) lands in **B2-d**, where
-    ///      it is designed once alongside the coupled mirror consumption +
-    ///      remitted clamp. Until then `complete` stays false, so on an armed
-    ///      day the fast full-coverage close waits (mirror never ready) and a
-    ///      force-finalize marks every included mirror `remitIneligible` — a
-    ///      fail-safe. Inert on a single-chain deployment (no mirrors) and on
-    ///      every unarmed day. `remitIneligible` is cleared only by operator
-    ///      reconciliation (`RewardCommitmentFacet.reconcileCommitmentRemitEligibility`).
+    /// @notice #1222 M3 B2-c/B2-d1 — the Base-side per-`(day, chain)`
+    ///         commitment state: has this mirror's day-`D` liability REPORT
+    ///         landed (`complete` — the B2-d2 REMIT gate's input), and is its
+    ///         ShareOfPool remittance blocked pending operator reconciliation
+    ///         (`remitIneligible`).
+    /// @dev B2-d1 retiming (design record §2b): the report always arrives
+    ///      AFTER `finalizeDay(dayId)` (it prices from that finalize's own
+    ///      outputs), so finalization readiness never consults `complete` —
+    ///      what waits for it is the chain-day's remittance (B2-d2; a late
+    ///      report delays, never zeroes). `remitIneligible` marks a chain
+    ///      whose INTEREST contribution was ZEROED out of an armed day's
+    ///      denominator (grace/force close over a missing report); cleared
+    ///      only by operator reconciliation
+    ///      (`RewardCommitmentFacet.reconcileCommitmentRemitEligibility`);
+    ///      the actual funding vehicle for a zeroed chain is the B2-d2
+    ///      evidenced manual path (an unbacked manual send before the
+    ///      delivered-backing ledger would defeat it). Inert on a
+    ///      single-chain deployment (no mirrors) and on every unarmed day.
     struct ChainDayCommitments {
         bool complete;
         bool remitIneligible;
+        // ─── #1222 M3 B2-d1 — reported per-side day-D claimable liability ────
+        // APPEND-ONLY (struct-in-mapping tail widening is layout-safe). The
+        // mirror's commitment REPORT sets these alongside `complete`: the
+        // per-ENTRY finest-split aggregate `Σ_covering-entries
+        // min(perDay_e × Δ_D / 1e18, C_side)` (VPFI 1e18) — NO `paid`
+        // subtraction and NO per-user/per-loan grouping (design record §2c:
+        // the per-entry figure is invariant under post-report ownership
+        // regrouping and never under-states the eventual per-user capped
+        // claims). The B2-d2 ShareOfPool remittance clamp bounds each day's
+        // remitted slice by `min(uncappedSlice, liability − remitted −
+        // pending)`. 0 until reported.
+        uint256 liabilityLender18;
+        uint256 liabilityBorrower18;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
