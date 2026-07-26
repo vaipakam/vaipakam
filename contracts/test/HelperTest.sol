@@ -1977,7 +1977,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -1997,6 +1997,9 @@ contract HelperTest {
             .selector;
         selectors[8] = RewardCommitmentFacet
             .quoteCommitmentReportFee
+            .selector;
+        selectors[9] = RewardCommitmentFacet
+            .isCommitmentReportSent
             .selector;
         return selectors;
     }

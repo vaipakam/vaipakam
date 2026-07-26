@@ -394,6 +394,10 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         _com().submitCommitmentBatch(DAY, 1, _ids3(b1, b2, b3));
 
         assertTrue(_com().isDayCommitmentReady(DAY), "both sides complete");
+        assertFalse(
+            _com().isCommitmentReportSent(DAY),
+            "explicit dispatch flag false before send"
+        );
 
         // The resumability view reflects the walk.
         (uint256 cursor, uint256 liab, uint256 cons) =
@@ -429,7 +433,10 @@ contract RewardCommitmentTest is SetupTest, IVaipakamErrors {
         assertEq(messenger.lastCommitValue(), 0.02 ether);
         assertEq(messenger.commitSendCount(), 1);
 
-        // Whole-day idempotency: no re-send, no late batches.
+        // Whole-day idempotency: no re-send, no late batches. The explicit
+        // dispatch flag is what keeper resolution keys on (Codex r3 —
+        // "complete but not ready" is NOT proof of dispatch).
+        assertTrue(_com().isCommitmentReportSent(DAY), "dispatch flag set");
         assertFalse(_com().isDayCommitmentReady(DAY), "sent => not ready");
         vm.expectRevert(
             abi.encodeWithSelector(CommitmentReportAlreadySent.selector, DAY)

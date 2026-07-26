@@ -195,6 +195,18 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
             LibCommitmentReport.isDayComplete(s, dayId);
     }
 
+    /// @notice True iff this mirror already dispatched `dayId`'s commitment
+    ///         report to Base.
+    /// @dev The explicit dispatch signal (Codex #1425 r3): "complete but not
+    ///      ready" is NOT proof of dispatch — readiness also folds in the
+    ///      messenger wiring, so an un-wired mirror's complete-unsent day
+    ///      would read identically. Keeper resolution keys on THIS.
+    function isCommitmentReportSent(
+        uint256 dayId
+    ) external view returns (bool) {
+        return LibVaipakam.storageSlot().commitmentReportSent[dayId];
+    }
+
     /// @notice The `(dayId, side)` accumulation state: the last-accumulated
     ///         entry-id cursor (0 = none yet; the keeper resumes with ids
     ///         strictly above it) and the two running sums.

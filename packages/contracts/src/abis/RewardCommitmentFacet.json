@@ -105,6 +105,25 @@
   },
   {
     "type": "function",
+    "name": "isCommitmentReportSent",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isDayCommitmentReady",
     "inputs": [
       {

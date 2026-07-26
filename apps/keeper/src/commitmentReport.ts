@@ -257,9 +257,9 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
         if (readyNow) await sendReport(publicClient, ctx, diamond, d);
       }
 
-      // Resolution probe: complete on both sides AND no longer ready
-      // (⇒ sent). Marked days are skipped with zero reads forever after.
-      if (await isDayResolved(publicClient, diamond, localChainId, d)) {
+      // Resolution probe: the explicit on-chain dispatch flag. Marked days
+      // are skipped with zero reads forever after.
+      if (await isDayResolved(publicClient, diamond, d)) {
         await markCommitmentDayResolved(env.DB, chain.id, Number(d));
       }
     } catch (err) {
@@ -273,53 +273,23 @@ async function reportFromMirror(env: Env, chain: ChainConfig): Promise<void> {
 }
 
 /**
- * A day is RESOLVED when its report is out: stamped + locally closed +
- * conservation equal to the totals on both sides + not ready (ready would
- * mean complete-but-unsent). Unstamped / not-yet-closed days count as
- * unresolved so they keep being retried once upstream events land.
+ * A day is RESOLVED only when its report is EXPLICITLY dispatched
+ * (`isCommitmentReportSent` — Codex #1425 r3: "complete but not ready" is
+ * NOT proof of dispatch, since readiness also folds in the messenger
+ * wiring; an un-wired mirror's complete-unsent day would read identically
+ * and a resolved marker is permanent).
  */
 async function isDayResolved(
   publicClient: PublicClient,
   diamond: Address,
-  localChainId: number,
   d: bigint,
 ): Promise<boolean> {
-  const funding = (await publicClient.readContract({
-    address: diamond,
-    abi: AGGREGATOR_ABI,
-    functionName: 'getChainDayRecycledFunding',
-    args: [d, localChainId],
-  })) as { stamped: boolean };
-  if (!funding.stamped) return false;
-  const closedAt = (await publicClient.readContract({
-    address: diamond,
-    abi: REPORTER_ABI,
-    functionName: 'getChainReportSentAt',
-    args: [d],
-  })) as bigint;
-  if (closedAt === 0n) return false;
-  const [, , totalLender, totalBorrower] = (await publicClient.readContract({
-    address: diamond,
-    abi: LENS_ABI,
-    functionName: 'getInteractionDayEntry',
-    args: [d, ZERO_ADDR],
-  })) as readonly [bigint, bigint, bigint, bigint];
-  for (const side of [0, 1] as const) {
-    const [, , conservation] = (await publicClient.readContract({
-      address: diamond,
-      abi: COMMIT_ABI,
-      functionName: 'getCommitmentAccumulation',
-      args: [d, side],
-    })) as readonly [bigint, bigint, bigint];
-    if (conservation !== (side === 0 ? totalLender : totalBorrower)) return false;
-  }
-  const ready = (await publicClient.readContract({
+  return (await publicClient.readContract({
     address: diamond,
     abi: COMMIT_ABI,
-    functionName: 'isDayCommitmentReady',
+    functionName: 'isCommitmentReportSent',
     args: [d],
   })) as boolean;
-  return !ready; // complete AND sent
 }
 
 /**
@@ -352,6 +322,11 @@ async function submitSide(
 
   let pending: bigint[] = [];
   let frontierReached = false;
+  // Highest id actually submitted THIS invocation — persisted as
+  // `last_cursor` so reset detection compares against the POST-batch chain
+  // state (Codex #1425 r3: persisting the pre-batch read let a reset that
+  // landed right after our batches masquerade as the pre-batch cursor).
+  let lastSubmitted = cursor;
 
   const flush = async (): Promise<boolean> => {
     if (pending.length === 0) return true;
@@ -377,6 +352,7 @@ async function submitSide(
       return false;
     }
     pending = pending.slice(MAX_IDS_PER_BATCH);
+    lastSubmitted = batch[batch.length - 1];
     console.log(
       `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} submitted ${batch.length} entries tx=${hash}`,
     );
@@ -432,10 +408,13 @@ async function submitSide(
 
   // Persist the frontier: everything below it is submitted or verified
   // non-covering. If covering ids remain unsubmitted (budget out / revert),
-  // the frontier must sit AT the lowest unsubmitted covering id.
+  // the frontier must sit AT the lowest unsubmitted covering id. The cursor
+  // snapshot is the POST-batch value (`lastSubmitted`), so a later operator
+  // reset — which rewinds the on-chain cursor below it — is always detected
+  // and invalidates the frontier.
   const frontier = pending.length > 0 ? pending[0] : nextId;
   try {
-    await putCommitmentScanFrontier(env.DB, chainId, Number(day), side, frontier, cursor);
+    await putCommitmentScanFrontier(env.DB, chainId, Number(day), side, frontier, lastSubmitted);
   } catch (err) {
     console.warn(
       `[keeper] commitmentReport chain=${chainId} day=${day} side=${side} frontier persist failed (rescan next tick): ${(err as Error).message}`,
