@@ -245,6 +245,16 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 total = _remitDay1ToArb();
         assertEq(remit.getRewardBudgetRemittedGlobal(), total, "fresh reserved");
 
+        // r5 — the release valve is timeout-gated (§M3): too early reverts.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RemitReleaseTooEarly.selector,
+                1,
+                block.timestamp + 7 days
+            )
+        );
+        remit.releaseRemitReservation(1);
+        vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
 
         LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
@@ -287,6 +297,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _finalizeDay(1);
         uint256 total = _remitDay1ToArb();
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
+        vm.warp(block.timestamp + 7 days);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.RemitReservationNotPending.selector,
@@ -684,6 +695,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         uint256 total = _remitDay1ToArb();
         assertEq(total, liab, "first remit clamped");
+        vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
         assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened");
 

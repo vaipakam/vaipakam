@@ -546,6 +546,13 @@ interface IVaipakamErrors {
     ///         delivered that never was.
     error RemitAckSenderMismatch(uint256 remitId, address srcSender);
 
+    /// @notice `releaseRemitReservation` was called before the reservation
+    ///         aged past the reconciliation timeout (plan §M3: the operator
+    ///         terminal runs only AFTER a timeout — a merely-delayed CCIP
+    ///         message must not have its days re-opened while it can still
+    ///         execute). `earliest` is the first allowed timestamp.
+    error RemitReleaseTooEarly(uint256 remitId, uint256 earliest);
+
     /// @notice The manual-budget path requires the `(dayId, chainId)` still
     ///         marked remit-ineligible — the un-cleared flag is the on-chain
     ///         evidence the day was finalized with this chain ZEROED out of

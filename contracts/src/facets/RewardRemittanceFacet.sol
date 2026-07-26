@@ -105,6 +105,16 @@ contract RewardRemittanceFacet is
     ///         Matched to the buyback remittance receiver's budget.
     uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 300_000;
 
+    /// @notice #1222 M3 B2-d2 (Codex #1426 r5) — minimum reservation age
+    ///         before {releaseRemitReservation} may run (plan §M3's bounded
+    ///         reconciliation TIMEOUT, enforced on-chain): a merely-delayed
+    ///         CCIP message is re-executable and typically lands within
+    ///         hours, so a premature release would re-open the days for
+    ///         re-funding while the original message can still execute —
+    ///         double-funding the mirror. Seven days is far past any
+    ///         observed CCIP delay while keeping the terminal usable.
+    uint256 internal constant REMIT_RELEASE_MIN_AGE = 7 days;
+
     // ─── Events ───────────────────────────────────────────────────────────
 
     /// @notice Emitted when a reward-budget remittance is sent to a mirror.
@@ -875,6 +885,12 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.status != 1) revert RemitReservationNotPending(remitId);
+        // r5 — §M3's reconciliation timeout, on-chain: a merely-delayed
+        // message must age out before its days may re-open.
+        uint256 earliest = uint256(r.sentAt) + REMIT_RELEASE_MIN_AGE;
+        if (block.timestamp < earliest) {
+            revert RemitReleaseTooEarly(remitId, earliest);
+        }
         r.status = 3;
         uint32 dst = r.dstChainId;
         uint256[] storage closed = r.dayIds;

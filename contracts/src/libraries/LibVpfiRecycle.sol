@@ -253,6 +253,17 @@ library LibVpfiRecycle {
         if (recycledFull == 0 && recycledSent == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.outstandingCommitRecycled += recycledFull;
+        // Codex #1426 r5 — on an in-place-upgraded Diamond whose
+        // `recycleCreditedCumulative` is still unseeded, the cumulative is
+        // DERIVED as `bucket + paidOutRecycled`; reversing paidOut below
+        // would shrink that supposedly-monotonic figure and a later seed
+        // would lock the under-report in. Snapshot the derived value into
+        // the stored slot first, so the reversal is invisible to the
+        // cumulative ledger.
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
         uint256 paid = s.paidOutRecycled;
         s.paidOutRecycled = paid > recycledSent ? paid - recycledSent : 0;
     }

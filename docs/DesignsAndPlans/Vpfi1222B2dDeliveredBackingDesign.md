@@ -330,14 +330,22 @@ record delegated to the implementing PR:
    the remit pass plans through it and extends its window over the armed
    range (bounded backscan) so a report completing after the plain
    lookback still funds its day.
-4. **Release restores ledgers, never the bucket.** `releaseRemitReservation`
-   (ADMIN, evidenced, for a remit the operator has verified can never execute)
-   re-opens the reservation's days, restores the emission counters
-   (`rewardBudgetRemittedGlobal` fresh share, `rewardBudgetRemittedTotal`),
-   restores the outstanding fresh + recycled commitments (so a re-remit's
-   retirement pairs off exactly), and reverses `paidOutRecycled` — but does
-   NOT re-credit `recycleBucket`: the tokens sit locked in the CCIP token pool,
-   genuinely outside Diamond custody, so the bucket ledger is already correct.
+4. **Release restores obligations, never value ledgers.** (As amended by
+   Codex r4/r5 — this is the FINAL rule; an earlier draft of this pin said
+   the emission counters were restored, which r4 retracted.)
+   `releaseRemitReservation` (ADMIN, evidenced, for a remit the operator has
+   verified can never execute, and gated on-chain by the §M3 reconciliation
+   TIMEOUT — a minimum reservation age — so a merely-delayed message cannot
+   have its days re-opened while it can still execute) re-opens the
+   reservation's days, restores the outstanding fresh + recycled commitments
+   (so a re-remit's retirement pairs off exactly), and reverses
+   `paidOutRecycled` (seeding the derived cumulative first on an unseeded
+   in-place upgrade, so the monotonic credit total never shrinks) — but
+   restores NO value counter: `rewardBudgetRemittedGlobal`,
+   `rewardBudgetRemittedTotal`, and `recycleBucket` all stay as-sent, because
+   the tokens sit locked in the CCIP token pool, genuinely outside Diamond
+   custody. A re-remit therefore consumes NEW headroom and NEW backing (two
+   real outflows happened).
    Physical recovery (pool → Diamond) is a governance op whose re-credit rides
    d5's Ā-excluded custody-credit class — never a d2 blind re-credit that would
    un-back the bucket. A late ack arriving for a Released reservation is
@@ -396,13 +404,16 @@ keeps the messageId binding §M3 requires without touching the recipient seam.
 > "reservations are bound to the CCIP message ID" holds through that stored
 > binding — the operator reconciles from observed CCIP delivery evidence by
 > messageId — while the wire echo key is the `remitId`. The ack is a new
-> data-only wire kind (mirror→Base, canonical-only receive, strict 3-word
-> shape), sendable by anyone on the mirror (payable, fee-on-caller, mirror-
-> computed content, re-sendable for lost-ack retry); Base finalizes exactly
-> once (idempotent status check + source-chain-matches-reservation check).
-> Receiver compatibility: the widened remit payload is discriminated from the
+> data-only wire kind (mirror→Base, canonical-only receive, strict FOUR-word
+> shape after the r4 `remitter` echo: kind, remitId, amountReceived,
+> remitter), sendable by anyone on the mirror (payable, fee-on-caller,
+> mirror-computed content, re-sendable for lost-ack retry); Base finalizes
+> exactly once (idempotent status check + source-chain + self-naming
+> remitter checks). Receiver compatibility: the widened remit payload
+> (`dayIds, total, remitId, remitter` after r4) is discriminated from the
 > legacy 2-tuple by the leading ABI head word (the `dayIds` array offset —
-> `0x40` legacy vs `0x60` widened), so delayed pre-d2 deliveries keep
+> `0x40` legacy vs `0x80` widened; the interim 3-tuple/`0x60` shape existed
+> only on this branch and never shipped), so delayed pre-d2 deliveries keep
 > crediting on an upgraded receiver (they carry no `remitId` and simply
 > produce no ack — their reservations don't exist). **Codex r2:** a mirror
 > receipt is bound to the Base DEPLOYMENT that sent it — remit ids are

@@ -1150,6 +1150,22 @@
   },
   {
     "type": "error",
+    "name": "RemitReleaseTooEarly",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "earliest",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitReservationNotPending",
     "inputs": [
       {
