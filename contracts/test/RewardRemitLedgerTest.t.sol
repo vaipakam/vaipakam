@@ -554,6 +554,75 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.sendRemitAck{value: 0.001 ether}(0, payable(address(this)));
     }
 
+    /// @dev Codex r2 — a receipt is bound to the Base deployment that sent
+    ///      it; after an owner base-chain rotation the ack must not route a
+    ///      stale receipt toward the NEW base (remit ids are per-deployment
+    ///      and could finalize an unrelated same-numbered reservation).
+    function test_SendRemitAck_RejectsStaleReceiptAfterBaseRotation() public {
+        _configureMirror();
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42
+        );
+        // Owner rotates the canonical deployment.
+        RewardReporterFacet(address(diamond)).setBaseChainId(999);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ReceivedRemitStale.selector,
+                42,
+                CHAIN_BASE
+            )
+        );
+        remit.sendRemitAck{value: 0.001 ether}(42, payable(address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ReceivedRemitStale.selector,
+                42,
+                CHAIN_BASE
+            )
+        );
+        remit.quoteRemitAckFee(42);
+    }
+
+    /// @dev Codex r2 — a released recycled-bearing day must NOT re-remit
+    ///      while its bucket backing is stranded outside Diamond custody:
+    ///      the backing filter leaves the day open (not actionable) until
+    ///      governance returns the tokens and re-credits the bucket.
+    function test_Release_RecycledDay_WaitsForBackingBeforeReRemit() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 0, 50e18); // recycled-only slice
+        mutator.setRecycleBucketRaw(1_000e18);
+        uint256 liab = 3e18;
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, liab, 0);
+
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, liab, "first remit clamped");
+        remit.releaseRemitReservation(1);
+        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened");
+
+        // Backing gone (stranded in the CCIP pool): the day is NOT
+        // actionable at any planning site — no close, no quote, no remit.
+        mutator.setRecycleBucketRaw(liab - 1);
+        (uint256[] memory pa, bool[] memory pc) =
+            remit.quoteRemitDayPlans(CHAIN_ARB, _days(1));
+        assertEq(pa[0], 0, "under-backed amount 0");
+        assertFalse(pc[0], "under-backed not actionable");
+        (uint256 qt, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(qt, 0, "under-backed quote 0");
+        vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
+        remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, _days(1), 1e24);
+
+        // Backing returns (governance recovery + custody re-credit): the
+        // day funds again and the bucket is debited by the clamped share.
+        mutator.setRecycleBucketRaw(100e18);
+        uint256 total2 = _remitDay1ToArb();
+        assertEq(total2, liab, "re-remit after backing returns");
+        assertEq(
+            ConfigFacet(address(diamond)).getRecycleBucket(),
+            100e18 - liab,
+            "bucket debited by the clamped share"
+        );
+    }
+
     function test_SendRemitAck_MirrorOnly() public {
         // Canonical config from setUp.
         vm.expectRevert(IVaipakamErrors.OnlyMirrorRewardChain.selector);

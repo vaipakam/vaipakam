@@ -70,6 +70,18 @@ contract RewardRemittanceFacet is
         uint256 armedFresh;
         uint256 armedFrom;
         uint256 recycledFull;
+        // Codex #1426 r2 — running recycled-backing budget (seeded from
+        // `recycleBucket`, decremented per closed day): a day whose recycled
+        // share exceeds it is SKIPPED, not closed. After an operator release
+        // the stranded tokens sit outside Diamond custody, and a re-remit
+        // would otherwise draw its "recycled" share from fresh/user custody
+        // while `consume` floors the bucket at zero (bucket-backing
+        // violation). Healthy-path no-op: finalize-time commitments reserve
+        // every recycled share against `fundable`, so backing always covers
+        // it; a blocked day flows again once governance returns the tokens
+        // and re-credits the bucket (B2-d5 custody-credit class). Applied
+        // IDENTICALLY at all four planning sites (send + three quotes).
+        uint256 backingLeft;
     }
 
     /// @dev #1222 M3 B2-d2 — one day's remit plan, produced by {_planDay}:
@@ -338,13 +350,16 @@ contract RewardRemittanceFacet is
         // (Memory struct: keeps the viaIR stack under the ceiling.)
         RemitSplitTotals memory st;
         st.armedFrom = s.governorCommitArmedFromDay;
+        st.backingLeft = s.recycleBucket;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             if (!s.dailyGlobalFinalized[dayId]) {
                 revert RewardDayNotFinalized(dayId);
             }
             DayRemitPlan memory p = _planDay(s, dstChainId, dayId, st.armedFrom);
-            if (p.close) {
+            // r2 backing filter (see {RemitSplitTotals.backingLeft}).
+            if (p.close && p.recycled <= st.backingLeft) {
+                st.backingLeft -= p.recycled;
                 // Terminal close: a duplicate of this day later in the batch
                 // re-enters {_planDay} and finds the marker, so each day
                 // closes at most once.
@@ -703,6 +718,15 @@ contract RewardRemittanceFacet is
         if (messenger == address(0)) revert RewardMessengerNotSet();
         LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitId];
         if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
+        // Codex #1426 r2 — a receipt is bound to the Base DEPLOYMENT that
+        // sent it: remit ids are per-deployment, so after an owner
+        // base-chain rotation an ack for a stale receipt routed to the NEW
+        // base could finalize an unrelated same-numbered reservation there.
+        // Stale receipts are rejected; the old deployment's reservation
+        // resolves through its own operator valves.
+        if (rec.srcChainId != s.baseChainId) {
+            revert ReceivedRemitStale(remitId, rec.srcChainId);
+        }
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
             remitId, rec.amount, refundAddress
         );
@@ -718,6 +742,10 @@ contract RewardRemittanceFacet is
         if (messenger == address(0)) revert RewardMessengerNotSet();
         LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[remitId];
         if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
+        // Codex #1426 r2 — mirror the send's stale-receipt rejection.
+        if (rec.srcChainId != s.baseChainId) {
+            revert ReceivedRemitStale(remitId, rec.srcChainId);
+        }
         fee = IRewardMessenger(messenger).quoteSendRemitAck(
             remitId, rec.amount
         );
@@ -967,6 +995,9 @@ contract RewardRemittanceFacet is
         amounts = new uint256[](dayIds.length);
         closeable = new bool[](dayIds.length);
         uint256 armedFrom = s.governorCommitArmedFromDay;
+        // r2 backing filter — identical to the send: an under-backed day
+        // reads NOT actionable (it must wait for bucket backing to return).
+        uint256 backingLeft = s.recycleBucket;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             bool seen;
@@ -982,8 +1013,11 @@ contract RewardRemittanceFacet is
             if (!seen && s.dailyGlobalFinalized[dayId]) {
                 DayRemitPlan memory p =
                     _planDay(s, dstChainId, dayId, armedFrom);
-                amounts[i] = p.fresh + p.recycled;
-                closeable[i] = p.close;
+                if (p.close && p.recycled <= backingLeft) {
+                    backingLeft -= p.recycled;
+                    amounts[i] = p.fresh + p.recycled;
+                    closeable[i] = true;
+                }
             }
             unchecked {
                 ++i;
@@ -1069,6 +1103,9 @@ contract RewardRemittanceFacet is
     ) external view returns (uint256 total, uint256[] memory perDay) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         perDay = new uint256[](dayIds.length);
+        // r2 backing filter — identical to the send (see
+        // {RemitSplitTotals.backingLeft}).
+        uint256 backingLeft = s.recycleBucket;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             // Skip a day already seen earlier in THIS call — the send path
@@ -1091,7 +1128,11 @@ contract RewardRemittanceFacet is
                 DayRemitPlan memory p = _planDay(
                     s, dstChainId, dayId, s.governorCommitArmedFromDay
                 );
-                uint256 slice = p.fresh + p.recycled;
+                uint256 slice;
+                if (p.close && p.recycled <= backingLeft) {
+                    backingLeft -= p.recycled;
+                    slice = p.fresh + p.recycled;
+                }
                 perDay[i] = slice;
                 total += slice;
             }
@@ -1136,6 +1177,8 @@ contract RewardRemittanceFacet is
         uint256[] memory fundedDays = new uint256[](dayIds.length);
         uint256 fundedCount;
         uint256 totalFresh; // PR-3c — fresh share for the cap guard below.
+        // r2 backing filter — identical to the send.
+        uint256 backingLeft = s.recycleBucket;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             // Mirror remit's revert on any unfinalized day so this quote never
@@ -1159,7 +1202,12 @@ contract RewardRemittanceFacet is
                 DayRemitPlan memory p = _planDay(
                     s, dstChainId, dayId, s.governorCommitArmedFromDay
                 );
-                uint256 slice = p.fresh + p.recycled;
+                // r2 backing filter — identical to the send.
+                uint256 slice;
+                if (p.close && p.recycled <= backingLeft) {
+                    backingLeft -= p.recycled;
+                    slice = p.fresh + p.recycled;
+                }
                 if (slice > 0) {
                     fundedDays[fundedCount] = dayId;
                     unchecked {

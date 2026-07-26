@@ -531,6 +531,14 @@ interface IVaipakamErrors {
     ///         canonical chain or a single-chain deploy.
     error OnlyMirrorRewardChain();
 
+    /// @notice A remit receipt's recorded source chain no longer matches the
+    ///         configured base chain (owner base rotation): remit ids are
+    ///         per-deployment, so acking a stale receipt toward the NEW base
+    ///         could finalize an unrelated same-numbered reservation there.
+    ///         The old deployment's reservation resolves through its own
+    ///         operator valves.
+    error ReceivedRemitStale(uint256 remitId, uint32 recordedSrcChainId);
+
     /// @notice The manual-budget path requires the `(dayId, chainId)` still
     ///         marked remit-ineligible — the un-cleared flag is the on-chain
     ///         evidence the day was finalized with this chain ZEROED out of

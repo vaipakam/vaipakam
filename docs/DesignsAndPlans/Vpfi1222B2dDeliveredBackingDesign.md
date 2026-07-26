@@ -342,7 +342,14 @@ record delegated to the implementing PR:
    d5's Ā-excluded custody-credit class — never a d2 blind re-credit that would
    un-back the bucket. A late ack arriving for a Released reservation is
    surfaced by a dedicated anomaly event (the operator released in error and
-   the mirror was double-funded) rather than silently swallowed.
+   the mirror was double-funded) rather than silently swallowed. **Codex r2:**
+   a released recycled-bearing day must not RE-REMIT while its backing is
+   stranded — `consume` floors an insufficient bucket at zero, so the re-remit
+   would draw its "recycled" share from fresh/user custody. All four planning
+   sites therefore apply a running recycled-backing budget (seeded from
+   `recycleBucket`): an under-backed day is SKIPPED, not closed — it stays
+   open and flows again once the d5 re-credit lands. Healthy-path no-op (the
+   finalize-time commitments reserve every recycled share against fundable).
 5. **Manual-budget path (zeroed chains) is flag-anchored and fresh-funded.**
    `remitManualBudget` (ADMIN-only, payable) requires the `(day, chain)` still
    marked `remitIneligible` — the un-cleared flag IS the on-chain evidence the
@@ -397,7 +404,12 @@ keeps the messageId binding §M3 requires without touching the recipient seam.
 > legacy 2-tuple by the leading ABI head word (the `dayIds` array offset —
 > `0x40` legacy vs `0x60` widened), so delayed pre-d2 deliveries keep
 > crediting on an upgraded receiver (they carry no `remitId` and simply
-> produce no ack — their reservations don't exist).
+> produce no ack — their reservations don't exist). **Codex r2:** a mirror
+> receipt is bound to the Base DEPLOYMENT that sent it — remit ids are
+> per-deployment, so after an owner base-chain rotation the ack path rejects
+> a stale receipt (recorded source ≠ configured base) instead of routing it
+> to the new base, where an authenticated ack could finalize an unrelated
+> same-numbered reservation.
 The ack is authenticated by the same messenger peer the reports use
 (`msg.sender == messenger` + `CcipMessenger` `remoteMessengerOf`/`channelPeerOf`)
 — no new auth primitive. The bounded operator reconciliation (finalize/release
