@@ -130,7 +130,15 @@ marks the chain `remitIneligible` — B2-c already built that half).
 accumulation chunks**, then reports **one compact per-side aggregate** to Base:
 - the keeper (which holds every entry in the indexer D1) submits bounded batches
   of the units (loans on Base / users on a mirror) active on `d` to a
-  permissionless mirror function;
+  **KEEPER_ROLE-gated** mirror function (amended from the earlier
+  "permissionless" pick: per-entry verification cannot prove a submission is a
+  user's *full* entry set, and the ascending cursor consumes each user's slot
+  once — so a permissionless partial/empty submission would wedge demand
+  conservation permanently, a cheap per-day DoS. The role is anti-grief, not
+  trust — the figures stay mirror-computed; an ADMIN
+  `resetCommitmentAccumulation(day, side)` valve recovers a keeper
+  mis-submission by wiping the (day, side) accumulation for full resubmission,
+  blocked once the report is sent);
 - the mirror **recomputes each batch's** `Σ min(rawPay, cap)` **from its own
   storage** and accumulates — so the keeper can never inflate the figure, and
   each on-chain step is bounded (never undeliverable);
@@ -202,10 +210,16 @@ preserved):**
    sequence now; no `ReportAfterFinalization` on this path). A zeroed chain's
    late report is also accepted — it stores exactly the liability figure the
    operator needs to size the manual remit.
-5. **Mirror send/readiness are armed-gated** (`sendCommitmentReport` /
-   `isDayCommitmentReady`): an unarmed quiet day is trivially "complete"
-   (0 == 0 conservation), and without the gate the keeper trigger would burn
-   CCIP fees reporting days Base never consults.
+5. **Mirror send/readiness are armed-gated AND stamp-gated**
+   (`sendCommitmentReport` / `isDayCommitmentReady`): an unarmed quiet day is
+   trivially "complete" (0 == 0 conservation), and without the armed gate the
+   keeper trigger would burn CCIP fees reporting days Base never consults.
+   The stamp gate closes the pre-close race: before the mirror's own interest
+   close folds day-`D` totals, the day LOOKS quiet (totals 0 ⇒ trivially
+   complete) and an irreversible `(0, 0)` report could ship. Stamp arrival
+   transitively proves the local close ran (Base can only finalize+broadcast
+   once this chain's interest report was included — or the chain was zeroed,
+   which is already remit-ineligible).
 
 Timeline on an armed day `D`: mirrors `closeDay(D)` → Base full interest
 coverage → `finalizeDay(D)` (caps + stamps + arming) → `broadcastGlobal(D)` →
