@@ -287,6 +287,69 @@ chain's report prices at its deliberately-zero stamp, so operator
 reconciliation sizes from mirror-local state, never from the report (§2b
 item 4 corrected accordingly).
 
+## 2d. d2 pins — remit gate, clamp mechanics, release semantics, manual path
+
+Recorded at d2 build time (2026-07-26); these are the §1/§3/§4 choices the
+record delegated to the implementing PR:
+
+1. **One shared eligibility helper, three call sites.** The remit facet already
+   duplicates its day filter across `remitRewardBudget` / `quoteRewardBudget` /
+   `quoteRemittanceFee`; the d2 gate + clamp land as ONE internal helper all
+   three consume, so `quote == send` holds structurally rather than by
+   triplicated logic. Per finalized day the helper yields zeros when: already
+   remitted OR terminally closed (below), `remitIneligible`, or — armed days
+   only — the destination's commitment report is not `.complete` (§M3's
+   "delays, never zeroes": the day simply contributes 0 now and remits once the
+   report lands).
+2. **Clamp = `min(slice, liabilityLender18 + liabilityBorrower18)`, pro-rata
+   apportionment.** Armed, gate-passing days clamp the (CEIL-rounded) slice by
+   the reported per-entry liability supremum — safe because §2c's figure can
+   never under-state the mirror's eventual payout, so clamping to it can never
+   brick a claim (under-funding stays impossible; the removed surplus is
+   exactly #1351's "never remit more than reported+backed liability"). The
+   clamped total is apportioned across the fresh/recycled funding sources
+   pro-rata (floor on fresh, remainder recycled) — the same convention the
+   PR-3c combined-cap apportionment already pins.
+3. **Terminal day close releases residual commitments.** A clamped day still
+   retires/releases its FULL finalize-time commitments: fresh retires whole
+   (`consumeArmedFresh(sliceFresh)` — remitted + residual are both dead once
+   the day is terminally funded), recycled splits into
+   `consume(clampedRecycled)` + `releaseCommitment(residualRecycled)` — else
+   `outstandingCommitFresh/Recycled` leak the residuals forever and `fundable`
+   under-states availability. A gate-passing armed day whose clamp yields ZERO
+   (complete report, zero liability, non-zero slice) is terminally CLOSED
+   without funding via the reservation day-marker (`rewardBudgetRemitted` keeps
+   amount semantics and cannot mark a zero) so its commitments release and the
+   day never lingers half-open. `RecycleSource` gains an appended
+   `RemitClampResidual` member for the release event's class vocabulary
+   (append-only enum, the #1204 `SpendGatedPerk` precedent).
+4. **Release restores ledgers, never the bucket.** `releaseRemitReservation`
+   (ADMIN, evidenced, for a remit the operator has verified can never execute)
+   re-opens the reservation's days, restores the emission counters
+   (`rewardBudgetRemittedGlobal` fresh share, `rewardBudgetRemittedTotal`),
+   restores the outstanding fresh + recycled commitments (so a re-remit's
+   retirement pairs off exactly), and reverses `paidOutRecycled` — but does
+   NOT re-credit `recycleBucket`: the tokens sit locked in the CCIP token pool,
+   genuinely outside Diamond custody, so the bucket ledger is already correct.
+   Physical recovery (pool → Diamond) is a governance op whose re-credit rides
+   d5's Ā-excluded custody-credit class — never a d2 blind re-credit that would
+   un-back the bucket. A late ack arriving for a Released reservation is
+   surfaced by a dedicated anomaly event (the operator released in error and
+   the mirror was double-funded) rather than silently swallowed.
+5. **Manual-budget path (zeroed chains) is flag-anchored and fresh-funded.**
+   `remitManualBudget` (ADMIN-only, payable) requires the `(day, chain)` still
+   marked `remitIneligible` — the un-cleared flag IS the on-chain evidence the
+   day was zeroed; run the manual remit BEFORE any
+   `reconcileCommitmentRemitEligibility` clear (clearing removes the anchor
+   and, for a zeroed day, restores nothing fundable anyway — the automatic
+   slice is 0 forever). The amount is operator-sized from mirror-local state
+   (§2b item 4), funded FRESH under the 69M `RewardPoolCapExceeded` guard (a
+   zeroed day stamped no recycled funding for the chain, so a recycled draw
+   has no backing figure), reserves into the ledger, rides the same token
+   channel with a `remitId`, and finalizes on ack like any remit. It does not
+   retire armed-fresh commitments (a zeroed chain's share was never committed
+   at finalize — its numerator was excluded from the globals).
+
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
 Not an open fork: §M3 pins it — *"reservations are bound to the **CCIP message
@@ -307,6 +370,27 @@ recipients) or carry Base's `messageId` **in the remittance payload** so the
 mirror echoes it back in the ack (no seam change — the reservation key travels
 with the value). d2 pins which; the payload-echo path is the lighter one and
 keeps the messageId binding §M3 requires without touching the recipient seam.
+
+> **d2 pin (2026-07-26) — payload-echo, in its only causally-possible form.**
+> The raw "messageId in the payload" sketch is circular: CCIP computes the
+> `messageId` over the fully-built message (the router returns it from
+> `ccipSend`), so a message cannot carry its own id. The implementable echo:
+> Base reserves under a self-generated `remitId` (monotonic nonce) BEFORE the
+> send — CEI-clean — and the widened remit payload carries that `remitId`;
+> immediately after `sendMessage` returns, the reservation is annotated with
+> the CCIP `messageId` plus a `remitIdByCcipMessageId` reverse index. §M3's
+> "reservations are bound to the CCIP message ID" holds through that stored
+> binding — the operator reconciles from observed CCIP delivery evidence by
+> messageId — while the wire echo key is the `remitId`. The ack is a new
+> data-only wire kind (mirror→Base, canonical-only receive, strict 3-word
+> shape), sendable by anyone on the mirror (payable, fee-on-caller, mirror-
+> computed content, re-sendable for lost-ack retry); Base finalizes exactly
+> once (idempotent status check + source-chain-matches-reservation check).
+> Receiver compatibility: the widened remit payload is discriminated from the
+> legacy 2-tuple by the leading ABI head word (the `dayIds` array offset —
+> `0x40` legacy vs `0x60` widened), so delayed pre-d2 deliveries keep
+> crediting on an upgraded receiver (they carry no `remitId` and simply
+> produce no ack — their reservations don't exist).
 The ack is authenticated by the same messenger peer the reports use
 (`msg.sender == messenger` + `CcipMessenger` `remoteMessengerOf`/`channelPeerOf`)
 — no new auth primitive. The bounded operator reconciliation (finalize/release
@@ -327,6 +411,14 @@ reconstruct how the windowed cap lands on each mirror user". Reconciled with
   doc's per-loan `loanSideRewardRemitted`). Mirror-side, `processUserSideDay`
   clamps `cEff` by the delivered `remittedRemaining` (rev-15) so the mirror
   never pays past what actually arrived.
+- **d2 pin:** the reservation keys by the Base-generated `remitId` with the
+  CCIP `messageId` annotated post-send (§3 pin — a message cannot carry its
+  own id). And at mesh grain the formula's `− remitted − pending` terms
+  COLLAPSE to a per-(chain,day) state machine: a day funds at most once
+  (`rewardBudgetRemitted[c][d]` marks it at send, a release re-opens it), so
+  the live clamp is `min(uncappedSlice, liability)` evaluated the single time
+  the day funds, with per-chain `pending`/`acked` aggregates maintained for
+  observability + the d3 netting inputs rather than as clamp subtrahends.
 
 **Where the reported totals live:** extend `ChainDayCommitments` with the two
 per-side liability totals (`liabilityLender18`, `liabilityBorrower18`) — it is
