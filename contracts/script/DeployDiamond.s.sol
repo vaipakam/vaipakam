@@ -2177,7 +2177,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](6);
+        s = new bytes4[](9);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2187,6 +2187,9 @@ contract DeployDiamond is Script {
         s[3] = RewardCommitmentFacet.submitCommitmentBatch.selector;
         s[4] = RewardCommitmentFacet.sendCommitmentReport.selector;
         s[5] = RewardCommitmentFacet.isDayCommitmentReady.selector;
+        s[6] = RewardCommitmentFacet.resetCommitmentAccumulation.selector;
+        s[7] = RewardCommitmentFacet.getCommitmentAccumulation.selector;
+        s[8] = RewardCommitmentFacet.quoteCommitmentReportFee.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

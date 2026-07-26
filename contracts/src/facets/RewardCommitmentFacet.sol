@@ -60,24 +60,59 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     ///         `(dayId, side)` — the mirror recomputes each unit's contribution
     ///         from its OWN storage, so the keeper cannot inflate the reported
     ///         liability.
-    /// @dev MIRROR-only. Permissionless (the mirror verifies everything); the
-    ///      keeper drives it. `side` is 0 (Lender) / 1 (Borrower). `users` MUST
-    ///      be strictly ascending by address, each with its full day-`dayId`
-    ///      entry set. Completeness is proven by demand conservation, so a
-    ///      partial submission simply leaves the day incomplete (delays, never
-    ///      zeroes). See {LibCommitmentReport}.
+    /// @dev MIRROR-only, KEEPER_ROLE-gated. The role is anti-grief, not trust:
+    ///      per-entry verification cannot prove a submission is a user's FULL
+    ///      day-`dayId` entry set, and the strictly-ascending cursor consumes
+    ///      each user's slot exactly once — so a permissionless partial/empty
+    ///      submission for a user would leave demand conservation permanently
+    ///      short and wedge the day's report (a cheap per-day DoS on the remit
+    ///      flow). The numeric figures stay mirror-computed regardless of
+    ///      caller; a keeper MIS-submission is recoverable via
+    ///      {resetCommitmentAccumulation}. `side` is 0 (Lender) /
+    ///      1 (Borrower). `users` MUST be strictly ascending by address, each
+    ///      with its full day-`dayId` entry set. Completeness is proven by
+    ///      demand conservation, so a partial submission simply leaves the day
+    ///      incomplete (delays, never zeroes). See {LibCommitmentReport}.
     function submitCommitmentBatch(
         uint256 dayId,
         uint8 side,
         address[] calldata users,
         uint256[][] calldata entryIds
-    ) external {
+    ) external onlyRole(LibAccessControl.KEEPER_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
         // Enum bounds-check reverts a side outside {0,1}.
         LibCommitmentReport.accumulateBatch(
             s, dayId, LibVaipakam.RewardSide(side), users, entryIds
         );
+    }
+
+    /// @notice #1222 M3 B2-d1 — a `(dayId, side)` accumulation was wiped so it
+    ///         can be resubmitted from scratch.
+    /// @custom:event-category informational/reward-governor
+    event CommitmentAccumulationReset(uint256 indexed dayId, uint8 indexed side);
+
+    /// @notice Wipe `(dayId, side)`'s commitment accumulation (cursor + both
+    ///         accumulators) so the keeper can resubmit from scratch.
+    /// @dev ADMIN-only, MIRROR-only, and only while the day's report has not
+    ///      been sent. The recovery valve for a keeper MIS-submission (e.g. a
+    ///      user submitted with a partial entry set, permanently blocking
+    ///      demand conservation): reset, then resubmit every user correctly.
+    function resetCommitmentAccumulation(
+        uint256 dayId,
+        uint8 side
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        if (s.commitmentReportSent[dayId]) {
+            revert CommitmentReportAlreadySent(dayId);
+        }
+        // Enum bounds-check reverts a side outside {0,1}.
+        uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
+        s.commitmentUserCursor[dayId][sideKey] = 0;
+        s.commitmentLiabilityAccum18[dayId][sideKey] = 0;
+        s.commitmentConservationAccum18[dayId][sideKey] = 0;
+        emit CommitmentAccumulationReset(dayId, sideKey);
     }
 
     /// @notice Dispatch this mirror's day-`D` commitment report to Base once
@@ -98,6 +133,15 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         _assertMirror(s);
         if (!LibCommitmentReport.isDayArmed(s, dayId)) {
             revert CommitmentDayNotArmed(dayId);
+        }
+        // Race guard: only report once this chain's day-`dayId` funding stamp
+        // arrived — which transitively proves the local interest close folded
+        // the totals demand conservation is checked against (see
+        // {LibCommitmentReport.hasFundingStamp}). Without it, a quiet-LOOKING
+        // pre-close day (totals still 0) would ship an irreversible (0, 0)
+        // report.
+        if (!LibCommitmentReport.hasFundingStamp(s, dayId)) {
+            revert CommitmentStampNotArrived(dayId);
         }
         if (s.commitmentReportSent[dayId]) {
             revert CommitmentReportAlreadySent(dayId);
@@ -127,18 +171,71 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         );
     }
 
-    /// @notice True iff `dayId` is armed, its per-side commitments are
-    ///         complete, and the report has not yet been dispatched — the
-    ///         keeper's send trigger. Never true for a day
-    ///         {sendCommitmentReport} would revert on.
+    /// @notice True iff `dayId` is armed, its funding stamp has arrived, its
+    ///         per-side commitments are complete, and the report has not yet
+    ///         been dispatched — the keeper's send trigger. Never true for a
+    ///         day {sendCommitmentReport} would revert on.
     function isDayCommitmentReady(
         uint256 dayId
     ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return
             LibCommitmentReport.isDayArmed(s, dayId) &&
+            LibCommitmentReport.hasFundingStamp(s, dayId) &&
             !s.commitmentReportSent[dayId] &&
             LibCommitmentReport.isDayComplete(s, dayId);
+    }
+
+    /// @notice The `(dayId, side)` accumulation state: the last-accumulated
+    ///         user cursor (0 = none yet; the keeper resumes with users
+    ///         strictly above it) and the two running sums.
+    /// @dev The keeper's resumability view — batches are cheap but the cursor
+    ///      is strictly ascending, so a restarted keeper must know where the
+    ///      prior tick stopped rather than re-submit from the start.
+    function getCommitmentAccumulation(
+        uint256 dayId,
+        uint8 side
+    )
+        external
+        view
+        returns (
+            uint256 cursor,
+            uint256 liabilityAccum18,
+            uint256 conservationAccum18
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
+        return (
+            s.commitmentUserCursor[dayId][sideKey],
+            s.commitmentLiabilityAccum18[dayId][sideKey],
+            s.commitmentConservationAccum18[dayId][sideKey]
+        );
+    }
+
+    /// @notice Quote the native CCIP fee {sendCommitmentReport} would pay for
+    ///         `dayId` right now, from the currently-accumulated liabilities.
+    /// @dev MIRROR-only; the Diamond-side wrapper so the keeper needs neither
+    ///      the messenger address nor the liability reads (symmetric with
+    ///      {RewardRemittanceFacet.quoteRemittanceFee}). Same wiring guards as
+    ///      the send.
+    function quoteCommitmentReportFee(
+        uint256 dayId
+    ) external view returns (uint256 nativeFee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        if (s.baseChainId == 0) revert BaseChainIdNotSet();
+        return IRewardMessenger(messenger).quoteSendCommitmentReport(
+            dayId,
+            LibCommitmentReport.sideLiability(
+                s, dayId, LibVaipakam.RewardSide.Lender
+            ),
+            LibCommitmentReport.sideLiability(
+                s, dayId, LibVaipakam.RewardSide.Borrower
+            )
+        );
     }
 
     /// @dev The commitment REPORT surface is mirror-only: a mirror computes its

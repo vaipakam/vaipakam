@@ -197,6 +197,24 @@ library LibCommitmentReport {
         return armedFrom != 0 && dayId >= armedFrom;
     }
 
+    /// @notice True iff this chain's day-`dayId` funding stamp has arrived
+    ///         (Base finalized the day and its broadcast landed here).
+    /// @dev The send-side race guard: demand conservation is only meaningful
+    ///      once this mirror's day-`dayId` interest totals are FINAL, i.e. its
+    ///      own interest close folded them. The stamp proves that transitively
+    ///      — Base can only finalize (and so broadcast the stamp) once this
+    ///      chain's interest report was included (or the chain was zeroed, in
+    ///      which case it is already remit-ineligible-pending-reconciliation).
+    ///      Without this guard a keeper could report a quiet-LOOKING day
+    ///      (totals still 0 pre-close ⇒ trivially "complete") as `(0, 0)`,
+    ///      permanently understating the liability (the send is once-per-day).
+    function hasFundingStamp(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) internal view returns (bool) {
+        return s.chainDayRecycledFunding[dayId][uint32(block.chainid)].stamped;
+    }
+
     /// @notice True iff `(dayId, side)`'s reported units EXHAUST the day's
     ///         interest demand — the demand-conservation completeness proof.
     /// @dev    A side with zero interest (`total == 0`) is trivially complete
