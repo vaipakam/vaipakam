@@ -42,15 +42,58 @@ health publicly observable; and the system **armed**, not just merged dark.
 | RL-6 legal evidence pack + copy-rules release gate | #1304 (#1308) | |
 | Read views (`getRecycleBucket`, `getRecycledCreditedByDay`, `getRecycleConfig`, `getRecycleRegisterState`) + EIP-170 lens refactor | #1344 / #1333 | |
 
-**Verified NOT done:** notification-fee custody re-route + flat tariff
-(`LibNotificationFee.bill` still pays user-vault → treasury, "No Diamond
-custody", via the fixed conversion) — #1346; the Layer-2 tariff charger
-(no `credit(FullTariff, …)` call site) — #1347; the #1294 D1/HoldOnly/
-settlement-sweep stack (no `dayCapMode`/ShareOfPool/`feeEntitlement`
-anywhere in `contracts/src`); all Phase B′ mesh fields (no
-`chainRecycledVpfi18`, no `recycleConsume` — B1 WIP parked on
-`feat/1222-b1-per-chain-recycled-ledger`, not for merge); Phase C′; the
-arming ceremonies.
+**Verified NOT done (as of 2026-07-18 — see §1a for the current state):**
+notification-fee custody re-route + flat tariff — #1346; the Layer-2
+tariff charger — #1347; the #1294 D1/HoldOnly/settlement-sweep stack;
+all Phase B′ mesh fields; Phase C′; the arming ceremonies.
+
+## 1a. Status refresh — verified against `main` 2026-07-27 (through #1426)
+
+The 2026-07-18 baseline above is retained for the record; this section is
+the current state. Everything below merged **dark/dormant** — the M7
+ceremonies remain the only activation path.
+
+**Now DONE (all Codex-reviewed, all `Closes` their cards):**
+
+| Milestone | Landed via | Notes |
+| --- | --- | --- |
+| **M1 complete** (#1346) | #1358 | Flat native tariff + numeraire-rotation removal + Diamond-custody re-route + `credit(NotificationFee, …)` + the #973 restamp tail |
+| **M2 complete** — every card | #1350→#1359 (specs) · #1352→#1363 (HoldOnly + 20/200 freeze + grandfather resolver) · #1347→#1366 (Full tariff, dark) · #1353→#1371 (loan-side cap, dark) · #1354→#1381 (settlement sweep, dark) · #1355→#1412 (frontend) · #1356→#1411 (deploy asserts + facet-key drift gate) · **#1351 CLOSED** via the slice series #1397/#1399/#1407–#1410 (D1 ShareOfPool claim SM: storage+knob+stamp, `processUserSideDay`, pricing core, chunked claim, preview-parity) with its remit-side prerequisite delivered by B2-d2 | Settlement-sweep long tail closed by follow-up cards #1383 (PR-B2/B3 repay/preclose/swap families), #1384 (extension repricing), #1391 (offset close-out), #1392 (sold-position discount continuity) |
+| **M3 B1 + B2-a…d2** (#1222, in progress) | B1 #1413 · B2-a #1414 (two-pass per-chain funding) · B2-b #1417 (per-destination BROADCAST_V2 — the D1+mesh **union** landed as one 15-word kind-5 evolution, per the wire rule) · B2-c #1422 (Base-side commitment-gate plumbing) · B2-d1 #1425 (per-entry mirror→Base commitment report, kind-6) · B2-d2 #1426 (delivered-backing remit ledger `(remitter, remitId)` + kind-7 ack + Σcommitments remit gate/clamp + operator valves + zeroed-chain manual-budget path) | Keeper passes shipped with d1/d2; **operator prerequisite: D1 migrations `0043_keeper_commitment_scan.sql` + `0044_keeper_remit_ack.sql` before arming** |
+
+**Implementation supersessions of this plan's §M3 text (recorded; the
+merged PRs' design records are authoritative):**
+
+1. **B1 consistency clamp** landed as the **AGGREGATE form** — the
+   baseline advances only by accepted credit, order-independent,
+   `Σattributed ≤ reported` — superseding this plan's
+   per-chain-monotonic-cursor / lower-day-snapshot options (Codex r2 on
+   #1413 showed the per-report-delta clamp corrupts quiet-day late
+   closes).
+2. **Gate retiming (§2b of the B2-d design record) — ⚠️ AWAITING OWNER
+   RATIFICATION:** finalize-readiness does NOT wait for commitment
+   reports (causally circular — the report prices from finalize's own
+   outputs); the "never from a partial set / delays never zeroes" rule
+   binds at the **remit gate** instead, and `remitIneligible` marks
+   chains ZEROED out of the interest denominator. Load-bearing in two
+   merged slices (#1425, #1426); the retiming commit (`13042b0c`) is
+   isolated if the owner wants it reversed. This supersedes this plan's
+   "chunk completeness wired into day-finalization readiness" rule
+   pending that ratification.
+
+**Still REMAINING for complete VPFI recycling:**
+
+| Item | Where |
+| --- | --- |
+| **M3 B2-d3** — mirror consume-on-arrival + two-sided netting + per-chain books (`chainConsumedRecycled` / `chainOutstandingRecycledCommit` become real; `_stampOne` local-vs-top-up split; remittance netting) — makes the per-chain §7 invariants bind | #1222 |
+| **M3 B3** — source-scoped netted remittance completion (shortfall-only sends on the per-chain books d3 creates) | #1222 |
+| **M3 B4** — 3-chain mesh e2e + invariants + watcher per-chain bucket checks + TokenomicsTechSpec §4a | #1222 |
+| **M4 C1/C2** — surplus knob + batched repatriation | #1222 tail |
+| **M5** — dashboard views (`selfFundingRatio`, `platformRetained`, runway, `netEmission = freshDrawdown`) + public surface | #1218 |
+| **M6** — perks (#1204, `SpendGatedPerk` enum entry, legal glance first) + bonds (#1219, schedule the glance) | #1204 / #1219 |
+| **M7** — ceremonies, now including the NEW operator steps the mesh added: apply keeper D1 migrations 0043/0044; arm `REWARD_COMMIT_ENABLED` (keeper) and `governorCommitArmedFromDay` (chain) alongside the original `armedFromDay` / `D*` / `feeEntitlementEnabled` gates | runbook |
+| **M8** — fragment assembly (`1346`–`1356`, `1383`+ families), #882 | docs |
+| **Owner ratification** — the §2b gate retiming (supersession 2 above) | owner |
 
 ## 2. Is the cross-chain mesh (#1222) still required? — YES
 
