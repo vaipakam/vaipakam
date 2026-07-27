@@ -1321,13 +1321,15 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         });
     }
 
-    /// One arrival applies the STORE-ONLY ingress: consensus pair, cap
-    /// family (mode + per-side ceilings + legacy threshold disabled), the
-    /// chain's own funding stamp (including the wire's `recycleConsume`,
-    /// stored for B2-d to arm against), and the in-band arming day. The
-    /// B2-b re-slice does NOT consume the mirror bucket on arrival —
-    /// mirror-local consumption arms in B2-d — so the bucket is untouched.
-    function testBroadcastV2AppliesConsensusCapFamilyAndStampNoConsume()
+    /// One arrival applies the ingress: consensus pair, cap family (mode +
+    /// per-side ceilings + legacy threshold disabled), the chain's own
+    /// funding stamp, the in-band arming day — and (B2-d3) RESERVES the
+    /// instructed `recycleConsume` against this chain's recycled
+    /// commitments. Per plan SSM3 the broadcast *commits*; the bucket itself
+    /// is debited pro-rata later at claim/remit, so the bucket balance is
+    /// deliberately untouched here (debiting at arrival would double-charge
+    /// against the claim-time consume — design record SS2e.1).
+    function testBroadcastV2AppliesConsensusCapFamilyAndReservesCommit()
         public
     {
         _configureMirror(CHAIN_ARB);
@@ -1357,15 +1359,19 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(f.freshLenderHalf, 20e18);
         assertEq(f.lenderHalfEquiv, 9e18);
         assertEq(f.borrowerHalfEquiv, 4e18);
-        assertEq(f.recycleConsume, 5e18, "wire recycleConsume stored for B2-d");
+        assertEq(f.recycleConsume, 5e18, "wire recycleConsume stored");
 
-        (uint256 armedFrom, , , ) = _agg().getGovernorCommitState();
+        (uint256 armedFrom, , uint256 outR, ) = _agg().getGovernorCommitState();
         assertEq(armedFrom, 2, "arming day travels in-band");
 
+        // B2-d3 — arrival COMMITS: the instruction is reserved against this
+        // chain's recycled commitments, and the bucket is NOT debited (that
+        // happens pro-rata at claim/remit through the unchanged consume).
+        assertEq(outR, 5e18, "instructed commit reserved on arrival");
         assertEq(
             _cfg().getRecycleBucket(),
             12e18,
-            "bucket untouched - mirror consumption arms in B2-d"
+            "bucket debited at claim/remit, never at arrival"
         );
     }
 
@@ -1378,11 +1384,47 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
         assertEq(_cfg().getRecycleBucket(), 12e18, "bucket never touched");
+        // B2-d3 — the reservation runs exactly once under the whole-day
+        // idempotency guard, so a duplicated CCIP delivery cannot
+        // double-encumber the mirror's availability.
+        (, , uint256 outR, ) = _agg().getGovernorCommitState();
+        assertEq(outR, 5e18, "reservation applied exactly once on replay");
 
         RewardBroadcastV2 memory diverged = _v2Packet(CHAIN_ARB);
         diverged.recycleConsume = 6e18;
         vm.expectRevert(IVaipakamErrors.KnownGlobalAlreadySet.selector);
         messenger.deliverBroadcastV2(diverged);
+    }
+
+    /// Codex #1430 r4 — a PRE-d3 implementation could apply a broadcast that
+    /// already carried a non-zero `recycleConsume`: it stored the stamp and
+    /// set the whole-day flag WITHOUT reserving. After the upgrade every
+    /// replay takes the idempotency early-return, so the reservation must be
+    /// completed there — otherwise the mirror under-reserves forever while
+    /// Base has already booked and netted that local share.
+    function testBroadcastV2ReplayBackfillsAPreUpgradeReservation() public {
+        _configureMirror(CHAIN_ARB);
+        _mut().setRecycleBucketRaw(12e18);
+
+        // Reconstruct the pre-d3 state FAITHFULLY: apply the broadcast
+        // normally so every stamped field is exactly as a pre-d3 receiver
+        // would have left it, then undo ONLY the reservation.
+        RewardBroadcastV2 memory b = _v2Packet(CHAIN_ARB);
+        messenger.deliverBroadcastV2(b);
+        _mut().setOutstandingCommitRaw(0, 0);
+        _mut().setMirrorCommitReservedRaw(b.dayId, false);
+        (, , uint256 outBefore, ) = _agg().getGovernorCommitState();
+        assertEq(outBefore, 0, "pre-upgrade state has no reservation");
+
+        // A replay under the upgraded implementation completes it exactly
+        // once — and a further replay does not double-reserve.
+        messenger.deliverBroadcastV2(b);
+        (, , uint256 outAfter, ) = _agg().getGovernorCommitState();
+        assertEq(outAfter, 5e18, "missed reservation backfilled on replay");
+        messenger.deliverBroadcastV2(b);
+        (, , uint256 outAgain, ) = _agg().getGovernorCommitState();
+        assertEq(outAgain, 5e18, "still exactly once");
+        assertEq(_cfg().getRecycleBucket(), 12e18, "bucket never debited");
     }
 
     /// The embedded destination id is the replay-stable binding: a packet

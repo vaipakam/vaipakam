@@ -490,6 +490,105 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(total, quoted, "funds once unencumbered");
     }
 
+    /// @dev Codex #1430 r1 (d3) — the reported liability covers the
+    ///      mirror's WHOLE day-D claimable liability, part of which the
+    ///      chain already backs from its own locally-committed recycled
+    ///      share. The clamp must therefore bound the remittance by
+    ///      `liability - localBacking`, or Base backs `local + liability`
+    ///      for at most `liability` of claims.
+    function test_Clamp_AccountsForMirrorLocalBacking() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 0, 50e18); // recycled-only slice
+        mutator.setRecycleBucketRaw(1_000e18);
+
+        // The chain locally committed 4 VPFI of this day's recycled slice
+        // (stamped by the funding resolution; netted out of the slice).
+        mutator.setChainDayFundingLocalCommitRaw(1, CHAIN_ARB, 4e18);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 10e18, 0);
+
+        // Recycled-only pool: the whole liability is a recycled leg, so the
+        // local backing nets against it in full. Liability 10, local 4 → 6.
+        (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(quoted, 6e18, "clamped by liability NET of local backing");
+
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, 6e18, "send matches the net-of-local clamp");
+    }
+
+    /// @dev Codex #1430 r2 (d3) — the netting must be PER FUNDING SOURCE.
+    ///      The mirror's claim path splits every payout pro-rata over the
+    ///      day's fresh:recycled composition, so local RECYCLED backing can
+    ///      only cover the recycled leg — never the fresh leg Base funds in
+    ///      full. Netting against the aggregate liability would strand the
+    ///      fresh claims unbacked on a terminally-closed day.
+    function test_Clamp_NetsLocalBackingPerFundingSource() public {
+        _finalizeDay(1);
+        // Pool composition on ARB: 90 fresh / 10 recycled (gross).
+        // `_armDayForArb` stamps the equivs; the local commit is part of the
+        // GROSS recycled pool, so the net slice carries the remainder.
+        _armDayForArb(1, 45e18, 10e18); // freshHalf x2 = 90 fresh, 10 recycled
+        mutator.setRecycleBucketRaw(1_000e18);
+        mutator.setChainDayFundingLocalCommitRaw(1, CHAIN_ARB, 10e18);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 5e18, 0);
+
+        // Gross pool on ARB for this day: 30 fresh + 6.67 recycled, plus the
+        // 10 local commit = 40 gross (the local share is part of the pool the
+        // claim path prices against). Liability 5 splits pro-rata → fresh leg
+        // 5 x 30/40 = 3.75, recycled leg 1.25 (fully covered by the local 10).
+        //
+        // This is the discriminating assertion: netting against the AGGREGATE
+        // liability (5 - 10 -> 0) would remit ZERO and strand the 3.75 of
+        // fresh claims unbacked on a terminally-closed day.
+        // Per-side (Codex r3): the liability sits entirely on the LENDER
+        // side, whose composition is 15 fresh : 3.33 recycled (fresh-heavier
+        // than the day aggregate). Liability 5 → fresh leg 5 x 15/18.33 =
+        // 4.09, recycled leg 0.91, and the 10 of local backing covers that
+        // recycled leg entirely. Pricing against the day AGGREGATE instead
+        // would understate the fresh leg at 3.75 — the exact mispricing r3
+        // identified.
+        (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertApproxEqAbs(
+            quoted, 4.0909e18, 1e15, "fresh leg on the LENDER composition"
+        );
+
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, quoted, "send matches the per-source clamp");
+        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        assertEq(r.recycled, 0, "recycled leg fully covered by local backing");
+        assertEq(r.fresh, total, "the remittance is the fresh leg");
+    }
+
+    /// @dev Codex #1430 r3 (d3) — the clamp runs PER SIDE. The mirror
+    ///      reports lender/borrower liabilities separately and the two sides
+    ///      carry different fresh:recycled compositions, so a liability
+    ///      concentrated on one side must be priced against THAT side's
+    ///      composition. Here the whole liability sits on the lender side;
+    ///      an aggregate clamp would blend the borrower side's composition
+    ///      into the fresh/recycled split and misprice both legs.
+    function test_Clamp_PricesEachSideAgainstItsOwnComposition() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 45e18, 10e18);
+        mutator.setRecycleBucketRaw(1_000e18);
+
+        // All liability on the LENDER side, none on the borrower side.
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 5e18, 0);
+
+        (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        // Lender side gross: 15 fresh + 3.33 recycled = 18.33; liability 5
+        // → fresh leg 5 x 15/18.33 = 4.09, recycled leg 0.91. Borrower side
+        // contributes nothing (zero liability). No local commit here, so the
+        // whole per-side clamp remits.
+        assertApproxEqAbs(quoted, 5e18, 1e15, "clamped to the lender-side liability");
+
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, quoted, "send matches the per-side clamp");
+        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        // The split follows the LENDER side's composition (15:3.33), not the
+        // day aggregate.
+        assertApproxEqAbs(r.fresh, 4.09e18, 2e16, "fresh leg on lender composition");
+        assertApproxEqAbs(r.recycled, 0.91e18, 2e16, "recycled leg on lender composition");
+    }
+
     // ─── manual-budget path (zeroed chains) ───────────────────────────────
 
     function test_Manual_RequiresIneligibleFlag() public {

@@ -606,30 +606,86 @@ contract RewardRemittanceFacet is
         if (c.remitIneligible) return p;
         bool armed = armedFrom != 0 && dayId >= armedFrom;
         if (armed && !c.complete) return p;
-        (uint256 sliceFresh, uint256 sliceRecycled) = LibInteractionRewards
-            .chainRewardBudgetSplitForDay(s, dstChainId, dayId);
-        uint256 sliceTotal = sliceFresh + sliceRecycled;
-        if (sliceTotal == 0) return p;
+        LibInteractionRewards.ChainDayBudget memory b = LibInteractionRewards
+            .chainRewardBudgetSideSplitForDay(s, dstChainId, dayId);
+        uint256 grossRecycled = b.recycledLender + b.recycledBorrower;
+        uint256 localBacking =
+            s.chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
+        if (localBacking > grossRecycled) localBacking = grossRecycled;
+        uint256 sliceFresh = b.freshLender + b.freshBorrower;
+        uint256 sliceRecycled = grossRecycled - localBacking;
+        if (sliceFresh + sliceRecycled == 0 && localBacking == 0) return p;
         p.close = true;
         if (armed) {
             p.armedFreshFull = sliceFresh;
             p.recycledFull = sliceRecycled;
-            uint256 liability =
-                c.liabilityLender18 + c.liabilityBorrower18;
-            if (liability < sliceTotal) {
-                uint256 clampedFresh = liability == 0
-                    ? 0
-                    : (liability * sliceFresh) / sliceTotal;
-                p.fresh = clampedFresh;
-                p.recycled = liability - clampedFresh;
-            } else {
-                p.fresh = sliceFresh;
-                p.recycled = sliceRecycled;
-            }
+            // #1222 M3 B2-d3 (Codex #1430 r1→r2→r3) — the clamp is applied
+            // PER SIDE, because all three of these differ by side and
+            // collapsing them first misprices the legs:
+            //   * the mirror reports `liabilityLender18` / `liabilityBorrower18`
+            //     separately, and the liability can concentrate on one side;
+            //   * the two sides carry genuinely different fresh:recycled
+            //     compositions (the reason B2-b introduced per-side halves);
+            //   * local RECYCLED backing can only cover a recycled leg — Base
+            //     funds all fresh — so it must net against that side's
+            //     recycled leg alone.
+            // The local backing is ONE fungible pool of recycled tokens on
+            // the mirror — it is NOT earmarked per side — so only the LEG
+            // SPLIT is per-side; the netting is aggregate. (Apportioning the
+            // backing per side too would strand it: a day whose liability
+            // lands entirely on one side would only be allowed to use that
+            // side's notional share, and Base would over-remit the rest.)
+            (uint256 freshLegL, uint256 recycledLegL) = _sideLegs(
+                b.freshLender, b.recycledLender, c.liabilityLender18
+            );
+            (uint256 freshLegB, uint256 recycledLegB) = _sideLegs(
+                b.freshBorrower, b.recycledBorrower, c.liabilityBorrower18
+            );
+            uint256 recycledLegs = recycledLegL + recycledLegB;
+            p.fresh = freshLegL + freshLegB;
+            p.recycled = recycledLegs > localBacking
+                ? recycledLegs - localBacking
+                : 0;
         } else {
             p.fresh = sliceFresh;
             p.recycled = sliceRecycled;
         }
+    }
+
+    /**
+     * @dev #1222 M3 B2-d3 (Codex #1430 r3) — split ONE reward side's claim
+     *      exposure into its fresh and recycled LEGS, using that side's OWN
+     *      pool composition and its OWN reported liability.
+     *
+     *      The mirror's claim path splits every payout pro-rata over the
+     *      side's fresh:recycled composition, and the two sides genuinely
+     *      differ (that is why B2-b introduced per-side halves), so a
+     *      liability concentrated on one side must be priced against that
+     *      side — blending them first misprices whichever leg it lands on.
+     *      Netting the chain's local backing is deliberately NOT done here:
+     *      that backing is one fungible pool across both sides, so the
+     *      caller nets it against the SUMMED recycled legs.
+     * @param sideFresh    This side's Base-funded fresh budget.
+     * @param sideRecycled This side's GROSS recycled budget (local included).
+     * @param liability    This side's reported claimable liability.
+     */
+    function _sideLegs(
+        uint256 sideFresh,
+        uint256 sideRecycled,
+        uint256 liability
+    ) private pure returns (uint256 freshLeg, uint256 recycledLeg) {
+        uint256 gross = sideFresh + sideRecycled;
+        if (gross == 0) return (0, 0);
+        if (liability >= gross) return (sideFresh, sideRecycled);
+        // Codex #1430 r4 — use the CLAIM PATH's rounding convention:
+        // `_splitDayAmount` floors the RECYCLED share and gives fresh the
+        // remainder (and `_attributeLegs` repeats that per entry). Flooring
+        // fresh here instead would round the recycled leg UP, over-net it
+        // against the local backing, and under-remit the fresh leg — leaving
+        // fresh claims short by up to a wei per entry, which is the unsafe
+        // direction.
+        recycledLeg = (liability * sideRecycled) / gross;
+        freshLeg = liability - recycledLeg;
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────

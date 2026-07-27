@@ -412,6 +412,23 @@ contract RewardReporterFacet is
      *         `chainConsumedRecycled[c]` mark Base booked at finalization
      *         (same figure, both ledgers).
      */
+    /// @dev #1222 M3 B2-d3 — reserve this day's instructed local recycled
+    ///      commit AT MOST ONCE, tracked on its own flag
+    ///      (`mirrorRecycleCommitReserved`) rather than on
+    ///      `broadcastV2Applied`, so a day whose broadcast was applied by a
+    ///      pre-d3 implementation can still have its reservation completed
+    ///      by a later replay (Codex #1430 r4).
+    function _reserveMirrorCommitOnce(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 amount
+    ) private {
+        if (amount == 0) return;
+        if (s.mirrorRecycleCommitReserved[dayId]) return;
+        s.mirrorRecycleCommitReserved[dayId] = true;
+        LibVpfiRecycle.reserveMirrorCommit(dayId, amount);
+    }
+
     function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
         external
     {
@@ -426,6 +443,12 @@ contract RewardReporterFacet is
 
         uint32 selfId = uint32(block.chainid);
         if (s.broadcastV2Applied[b.dayId]) {
+            // Codex #1430 r4 — complete a reservation a PRE-d3 application of
+            // this same day missed (Base-first / non-atomic rollout: the old
+            // receiver stored the stamp and set the applied flag without
+            // reserving). Guarded by its own flag, so it can never
+            // double-reserve on an ordinary replay.
+            _reserveMirrorCommitOnce(s, b.dayId, b.recycleConsume);
             LibVaipakam.ChainDayFunding storage prior =
                 s.chainDayRecycledFunding[b.dayId][selfId];
             if (
@@ -496,11 +519,18 @@ contract RewardReporterFacet is
             s.governorCommitArmedFromDay = b.armedFromDay;
         }
 
-        // #1222 M3 B2-b (re-slice): the mirror does NOT consume its bucket on
-        // arrival — `recycleConsume` rides the wire as 0 today and mirror
-        // local consumption arms in B2-d, once the delivered-backing ledger
-        // makes it safe. The stamp is stored (above) so B2-d can price/arm
-        // against it; nothing debits the bucket here.
+        // #1222 M3 B2-d3 — arrival COMMITS (plan §M3: "broadcast *commits*;
+        // bucket debited pro-rata at claim/remit"). The mirror encumbers the
+        // recycled commit Base instructed it to fund from its own bucket —
+        // the same figure Base booked into `chainConsumedRecycled[c]` at
+        // finalization. Deliberately NOT a bucket debit: `consume` already
+        // runs at every claim on this chain, so debiting here too would
+        // charge the same tokens twice (design record §2e.1). Claims retire
+        // this reservation, forfeits/expiries release it — the identical
+        // lifecycle Base runs for its own commits. Runs exactly once per day
+        // under the whole-day idempotency guard above.
+        _reserveMirrorCommitOnce(s, b.dayId, b.recycleConsume);
+
         s.broadcastV2Applied[b.dayId] = true;
         emit RewardBroadcastV2Applied(b.dayId, b.recycleConsume);
         emit KnownGlobalInterestSet(

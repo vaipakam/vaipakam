@@ -898,6 +898,17 @@
   },
   {
     "type": "error",
+    "name": "DuplicateExpectedChainId",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ERC721NonexistentToken",
     "inputs": [
       {

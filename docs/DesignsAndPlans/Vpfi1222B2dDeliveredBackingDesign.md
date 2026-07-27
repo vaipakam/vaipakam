@@ -77,12 +77,32 @@ that legitimately lights it up):
   `LibVpfiRecycle.consume(recycleConsume)` under the `broadcastV2Applied`
   idempotency, remittance netting. **Makes the per-chain §7 invariants bind.**
 - **B2-d4 — Mirror armed-day pricing ON.** P5. Remove the `_dayPoolHalves`
-  line-879 halt; keep the genuine `!stamped` wait. Gated behind d2+d3 landing.
+  line-879 halt; keep the genuine `!stamped` wait.
+  **⚠️ HARD ORDERING GATE (Codex #1430 r3): d4 MUST NOT land before d5.**
+  Lifting the halt is what makes mirror armed-day claims reachable, and a
+  mirror's claim path debits its bucket for the WHOLE recycled payout while
+  only the locally-funded share was ever credited there — the Base-funded
+  top-up arrives as VPFI but `onRewardBudgetReceived` only increments
+  `rewardBudgetReceivedTotal`, never the bucket. A 40-local/23-top-up day
+  would then consume 63 against a 40 bucket: the bucket floors at zero,
+  `paidOutRecycled` over-counts by 23, and the DERIVED
+  `creditedCumulative` (`bucket + paidOut`) reports those 23 Base-funded
+  tokens as this chain's own new absorption — phantom availability Base
+  re-commits on later days. d5 is exactly the fix the plan already
+  specifies for this (§M3's `Ā`-feed exclusion: remitted-recycled credits
+  the mirror bucket for availability/custody labelling while staying OUT of
+  the `credited[d]`/`Ā` feed), so the two must land in that order.
+  Gated behind d2+d3+**d5**.
 - **B2-d5 — Third credit class (#1331).** P6. The Ā-excluded custody-credit
   primitive, the `VpfiRecycled` discriminator, the 3-site forfeit/expiry
   reclassification, the remit-arrival provenance tag. (Previously tracked as
-  "B2-e"; §M3 says #1331 is absorbed by B2 — keeping it as the last B2-d slice
-  is consistent.)
+  "B2-e"; §M3 says #1331 is absorbed by B2 — keeping it inside B2-d is
+  consistent.) **Now sequenced BEFORE d4** (see the d4 gate above): its
+  remit-arrival credit is what gives a mirror's bucket real backing for the
+  Base-funded recycled share, so that mirror claims cannot inflate
+  `paidOutRecycled` → the derived `creditedCumulative` → phantom
+  availability. Until d5 lands, mirror armed-day claims stay HALTED, which
+  is what keeps that hazard unreachable today.
 - **Keeper/indexer (P7)** rides d1 (send pass) + a small follow-up for the
   out-of-window reconcile rediscovery (indexer event handler + D1 table + keeper
   read), landing alongside d2.
@@ -379,6 +399,107 @@ record delegated to the implementing PR:
    channel with a `remitId`, and finalizes on ack like any remit. It does not
    retire armed-fresh commitments (a zeroed chain's share was never committed
    at finalize — its numerator was excluded from the globals).
+
+## 2e. d3 pins — arrival COMMITS (not debits), per-chain books, netting
+
+Recorded at d3 build time (2026-07-26). §1 sketched the arrival step as a
+mirror-side `LibVpfiRecycle.consume(recycleConsume)` — a bucket DEBIT. The
+scout showed that reading is wrong, and plan §M3 (authoritative; this record
+defers to it) states the correct rule verbatim: **"commitment semantics
+(broadcast *commits*; bucket debited pro-rata at claim/remit)"**.
+
+1. **Why a debit-at-arrival would have been a bug (the scout's evidence for
+   the plan's rule).** `LibVpfiRecycle.consume` is ALREADY called on every
+   chain at claim time (`RewardClaimFacet` — `consume(paidRecycled)`), because
+   a mirror's recycled-funded payouts debit its bucket as users claim. Had the
+   mirror ALSO consumed `recycleConsume` at broadcast arrival, the same tokens
+   would be debited twice: the bucket ledger drains at 2× (flooring at zero,
+   silently under-backing) and `paidOutRecycled` double-counts — which inflates
+   the DERIVED `creditedCumulative` floor (`bucket + paidOut`) and therefore
+   OVER-states that chain's availability to Base. Over-statement is the unsafe
+   direction, and it is the same class the d2 r5 review caught on the release
+   path. §1's wording is superseded by this section.
+2. **Arrival = commitment.** The mirror's V2 ingress reserves the instructed
+   figure into its OWN `outstandingCommitRecycled` (the existing primitive,
+   under the existing whole-day `broadcastV2Applied` idempotency). The bucket
+   is untouched at arrival; it drains through the unchanged claim/remit
+   `consume` sites, and a forfeit/expiry releases the un-drawn remainder
+   through the unchanged `releaseCommitment` path. So the mirror runs exactly
+   the reserve → consume → release lifecycle Base already runs, with zero new
+   ledger primitives, zero change to `consume`, and zero change to the
+   `creditedCumulative` derivation (the r5 landmine stays untouched).
+3. **Base's per-chain books.** At finalization Base books the mirror-funded
+   share into BOTH per-chain ledgers: `chainConsumedRecycled[c] += commitLocal`
+   (the INSTRUCTION cumulative — exactly what the B1 storage comment defines
+   the field as, and the hard availability backstop) and
+   `chainOutstandingRecycledCommit[c] += commitLocal` (§5's local-slice
+   reservation ledger, the per-chain sibling of the global
+   `outstandingCommitRecycled`). Availability nets by the INSTRUCTION only —
+   `availRecycled[c] = chainReportedRecycled[c] − chainConsumedRecycled[c]`,
+   per the B1 comment — so the two books are not double-subtracted; the
+   reservation ledger is what B3's netting retires once a mirror-consumption
+   signal exists (Base cannot observe mirror claims in d3). The §7 invariant
+   `consumed ≤ reported` binds non-trivially from this slice on, enforced by
+   the pass-1 availability cap.
+   **Direction of any drift is conservative:** un-claimed mirror commitments
+   leave Base counting more instructed than the mirror eventually spends, so
+   Base UNDER-states that chain's availability and under-funds it — never the
+   reverse.
+4. **Two-pass funding turns on for mirrors.** Pass 1's `c.avail` becomes
+   `reported − consumed` for a mirror (Base's model of its committable
+   bucket); Base's own `_recycleFundable` is unchanged. `_stampOne` splits the
+   #1008-capped commit pro-rata by funding source — `commitLocal =
+   commit × localTotal / fundedTotal` (floor), `reservedBase = commit −
+   commitLocal` — so §5's "one bucket, one ledger" holds by construction: the
+   local share books into the per-chain ledgers, the Base-funded share into the
+   global `outstandingCommitRecycled`, never both.
+6. **The remitted top-up has no bucket backing on the mirror — d5's job, and
+   it re-orders the slices (Codex r3).** A mirror's claim path debits its
+   bucket for the whole recycled payout, but only the locally-funded share was
+   ever credited there; the Base-funded top-up arrives as VPFI without a
+   bucket credit. Once mirror armed claims are reachable that over-counts
+   `paidOutRecycled` and the derived `creditedCumulative` reports Base-funded
+   tokens as local absorption — phantom availability Base re-commits. It is
+   NOT reachable in d3 (the `_dayPoolHalves` halt keeps mirror armed-day
+   claims off), and the fix is the one §M3 already specifies — d5's
+   `Ā`-excluded remit-arrival custody credit. Recorded consequence: **d5 now
+   sequences BEFORE d4**, and d4 carries a hard gate saying so (§1).
+
+5c. **Per-SIDE clamping (Codex r3).** The clamp runs per reward side, not on
+   the summed liability: the mirror reports `liabilityLender18` /
+   `liabilityBorrower18` separately and the two sides carry genuinely
+   different fresh:recycled compositions, so collapsing them first misprices
+   whichever leg the liability concentrates on (a fresh-heavy lender side
+   paired with a recycled-heavy borrower side gets too little fresh, and the
+   local recycled backing then nets a remainder it cannot actually fund). The
+   single stamped local commitment is apportioned across the sides pro-rata to
+   their GROSS recycled budgets — the basis it was computed on at
+   finalization.
+
+5b. **The remit CLAMP nets local backing PER FUNDING SOURCE (Codex r1→r2).**
+   d2's clamp bounds the remittance by the mirror's reported liability. Under
+   d3 part of that liability is already backed by the chain's own locally
+   committed RECYCLED share, so the clamp must net it — but only against the
+   matching source. The mirror's claim path splits every payout pro-rata over
+   the day's fresh:recycled composition (`_splitDayAmount`), so local recycled
+   backing can cover the recycled leg and never the fresh leg (Base funds all
+   fresh). `_planDay` therefore splits the liability by the GROSS composition
+   (the pool claims actually price against, local share included) and
+   subtracts the local backing from the recycled leg alone. Netting against
+   the aggregate instead — r1's first cut — treats local recycled VPFI as
+   backing fresh claims: on a 90-fresh/10-recycled pool with a local commit of
+   10 and a liability of 5 it remits ZERO while ~4.5 of fresh claims still
+   need backing, on a day that then closes terminally.
+
+5. **Two-sided netting = subtract the instruction.** `chainRewardBudgetSplitForDay`
+   nets the stamped `recycleConsume` out of the chain's recycled budget
+   (floored at zero), so Base remits only the TOP-UP it actually funded. Sum
+   identity: `mirror-committed (recycleConsume) + Base-remitted
+   (budgetRecycled − recycleConsume) = the funded recycled slice`. Netting
+   lands INSIDE the split helper — below d2's `_planDay` — so all four planning
+   sites inherit it, and d2's net backing gate keeps comparing the Base-funded
+   share against Base's own bucket, which is exactly what funds it. The fresh
+   side is untouched (Base funds all fresh).
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 

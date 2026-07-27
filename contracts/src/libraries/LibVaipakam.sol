@@ -5619,6 +5619,18 @@ library LibVaipakam {
         //   distinct keys: no collision, no supersession ordering, and the
         //   ack echoes the recorded remitter for Base's self-check.
         mapping(bytes32 => ReceivedRemit) receivedRemits;
+        // ─── #1222 M3 B2-d3 — mirror arrival-reservation idempotency ────────
+        // APPEND-ONLY TAIL. Per day: has this MIRROR reserved the recycled
+        // commit Base instructed it to fund locally? Kept SEPARATE from
+        // `broadcastV2Applied` deliberately (Codex #1430 r4): on a Base-first
+        // / non-atomic rollout a pre-d3 mirror can apply a broadcast that
+        // already carries a non-zero `recycleConsume` — storing the stamp and
+        // setting `broadcastV2Applied` WITHOUT reserving — and once upgraded,
+        // every replay would take the whole-day idempotency early-return, so
+        // the reservation would be missed forever while Base has already
+        // booked and netted that local share. With its own flag a replay
+        // completes the missed reservation exactly once.
+        mapping(uint256 => bool) mirrorRecycleCommitReserved;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

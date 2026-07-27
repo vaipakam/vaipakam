@@ -970,6 +970,37 @@ contract TestMutatorFacet {
         });
     }
 
+    /// @notice #1222 M3 B2-d3 test-only — clear the mirror's
+    ///         arrival-reservation flag for a day. Lets a test reconstruct
+    ///         the PRE-d3 state FAITHFULLY: apply a broadcast normally (so
+    ///         every stamped field is consistent, as a pre-d3 receiver would
+    ///         have left it), then undo only the reservation — proving a
+    ///         post-upgrade replay completes it.
+    function setBroadcastV2AppliedRaw(uint256 dayId, bool applied) external {
+        LibVaipakam.storageSlot().broadcastV2Applied[dayId] = applied;
+    }
+
+    function setMirrorCommitReservedRaw(uint256 dayId, bool reserved)
+        external
+    {
+        LibVaipakam.storageSlot().mirrorRecycleCommitReserved[dayId] =
+            reserved;
+    }
+
+    /// @notice #1222 M3 B2-d3 test-only — set a `(day, chain)` stamp's
+    ///         locally-funded commit (production writes it in the
+    ///         finalize-time mesh resolution) so the remit clamp's
+    ///         net-of-local-backing behaviour can be exercised directly.
+    function setChainDayFundingLocalCommitRaw(
+        uint256 dayId,
+        uint32 chainId,
+        uint256 recycleConsume
+    ) external {
+        LibVaipakam.storageSlot()
+            .chainDayRecycledFunding[dayId][chainId].recycleConsume =
+            recycleConsume;
+    }
+
     /// @notice #1222 M3 B2-d2 test-only — set a `(day, chain)` remit-ineligible
     ///         flag directly (production sets it in the armed grace/force
     ///         finalize's zeroed-chain branch) so the manual-budget path's
@@ -1017,6 +1048,19 @@ contract TestMutatorFacet {
 
     /// @notice #1222 M3 B2-b test-only — read the stored §4 threshold so the
     ///         V2-ingress tests can assert the mode↔threshold atomicity.
+    /// @notice #1222 M3 B2-d3 test-only — read the per-chain remit split
+    ///         (the internal library helper the remit facet prices from), so
+    ///         the two-sided netting identity can be asserted directly
+    ///         without staging a full remittance.
+    function chainRewardBudgetSplitForDayRaw(
+        uint32 chainId,
+        uint256 dayId
+    ) external view returns (uint256 budgetFresh, uint256 budgetRecycled) {
+        return LibInteractionRewards.chainRewardBudgetSplitForDay(
+            LibVaipakam.storageSlot(), chainId, dayId
+        );
+    }
+
     function dayCapThreshold18Raw(uint256 day) external view returns (uint256) {
         return LibVaipakam.storageSlot().dayCapThreshold18[day];
     }
