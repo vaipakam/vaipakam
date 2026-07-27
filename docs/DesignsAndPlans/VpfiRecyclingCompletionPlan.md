@@ -648,9 +648,19 @@ constituent cards below remain the working tickets.
    remitted accounting — are part of the package). M2 cards scope
    against rev 15 as pinned — a later formula-doc rev enters scope only via a plan update (re-ratification); #1347 re-based;
    option (a) retired with a supersession note.
-2. Confirm this plan as the **programme of record** (supersedes the
-   Phase-B checklist in #1222's body; adopts the parked B1–B4/C1–C2 cut
-   with §M3's two corrections).
-3. Confirm the **wire-evolution coordination rule**: one messenger
-   widening shared between M2's D1 broadcast and M3's mesh fields if they
-   land in the same window.
+2. **CONFIRMED (owner, 2026-07-27):** this plan is the **programme of
+   record** (supersedes the Phase-B checklist in #1222's body; adopts the
+   parked B1–B4/C1–C2 cut with §M3's two corrections). It had been
+   executed against as such since the plan merged — every M1/M2/M3 slice
+   in §1a was scoped from it — so this marker records the standing
+   practice rather than changing it.
+3. **CONFIRMED (owner, 2026-07-27):** the **wire-evolution coordination
+   rule** — one messenger widening shared between M2's D1 broadcast and
+   M3's mesh fields when they land in the same window. Already applied in
+   practice: B2-b (#1417) landed the D1 + mesh field sets as ONE 15-word
+   kind-5 evolution rather than two, exactly per this rule.
+
+> Every decision in this section is now settled: D1 (2026-07-18), the two
+> confirmations above (2026-07-27), and the §2b gate retiming ratified
+> 2026-07-27 (recorded as §1a supersession 2). No owner decision is
+> outstanding against this plan.
