@@ -26,7 +26,7 @@ reviewable PR. The pieces, and why they couple:
 | Piece | What it does | Couples to |
 | --- | --- | --- |
 | **P1 Commitment report** | mirror→Base per-side day-D **claimable-liability** total; sets `.complete` | needs the enumeration decision (§2); feeds the clamp (P3) |
-| **P2 Mirror consume-on-arrival + two-sided netting** | mirror debits its own bucket for the locally-funded slice; Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
+| **P2 Mirror commitment-on-arrival + two-sided netting** *(this row said "consume-on-arrival / mirror debits its own bucket" while the slice was being planned; §2e.1 superseded that before implementation — recorded here because a planning table that outlives its own correction reads as shipped behaviour)* | mirror RESERVES the locally-funded slice into its own `outstandingCommitRecycled`; the bucket drains later, pro-rata, at claim/remit. Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
 | **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g |
@@ -71,11 +71,16 @@ that legitimately lights it up):
   it is designed WITH the ledger, not before it; until d2, zeroed-chain
   compensation stays the pre-mesh out-of-band governance posture. **Effect:**
   Base never remits more than a mirror's reported+backed liability.
-- **B2-d3 — Mirror consume-on-arrival + two-sided netting + per-chain books.**
-  P2. `_stampOne` split (mirror avail = delivered-backed availability), Base
-  books `chainConsumedRecycled`/`chainOutstandingRecycledCommit`, mirror
-  `LibVpfiRecycle.consume(recycleConsume)` under the `broadcastV2Applied`
-  idempotency, remittance netting. **Makes the per-chain §7 invariants bind.**
+- **B2-d3 — Mirror commitment-on-arrival + two-sided netting + per-chain
+  books.** P2. `_stampOne` split (mirror avail = delivered-backed
+  availability), Base books
+  `chainConsumedRecycled`/`chainOutstandingRecycledCommit`, mirror
+  `LibVpfiRecycle.reserveMirrorCommit(recycleConsume)` under its own
+  once-only flag, remittance netting. **Makes the per-chain §7 invariants
+  bind.** *(An earlier draft of this line said
+  `LibVpfiRecycle.consume(recycleConsume)`. §2e.1 superseded it before
+  implementation: consuming at arrival would debit the same tokens twice,
+  because claims already debit as they pay.)*
 - **B2-d4 — Mirror armed-day pricing ON. ⚠️ ATTEMPTED AND WITHDRAWN — the halt
   STAYS; see §2g and #1434.** P5. The intent was to remove the
   `_dayPoolHalves` mirror halt and keep only the genuine `!stamped` wait.
@@ -898,7 +903,8 @@ per-side aggregate; Base ingress stores liabilities + `.complete`
 reported chains not; unarmed/incomplete days unreportable; cursor + entry
 validation rejections; keeper send pass. d2: pending→ack→remitted lifecycle,
 lost-ack reconcile, clamp at 3 sites, quote==send. d3: `consumed ≤ reported`,
-one-bucket-one-ledger, netting sum identity, idempotent consume-on-arrival.
+one-bucket-one-ledger, netting sum identity, idempotent
+commitment-on-arrival (a RESERVATION, not a bucket debit — §2e.1).
 **d4 (withdrawn): the halt is PINNED instead** — a mirror armed day prices
 nothing, with a canonical control proving the mirror flags are what stop it;
 when #1434 revives the slice, add "mirror prices its own stamp; `!stamped` still
