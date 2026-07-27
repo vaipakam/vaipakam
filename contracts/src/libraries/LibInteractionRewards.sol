@@ -989,7 +989,8 @@ library LibInteractionRewards {
     ///         daily (floored) → summed — so the commitment's `rawPay`
     ///         (`perDayNumeraire18 × Δ_d / 1e18`) equals what the claim path
     ///         will pay if and when the halt is lifted. Keep the two in lockstep:
-    ///         any change to the 883-925 halves/daily math must land here too.
+    ///         any change to {_dayPoolHalves}'s halves or to
+    ///         {advanceCumLenderThrough}'s per-day math must land here too.
     ///         `priceable == false` ⇒ the day is unarmed or this chain's stamp
     ///         has not arrived yet (broadcast pending) — the report must wait.
     function dailyDeltaForCommitment(

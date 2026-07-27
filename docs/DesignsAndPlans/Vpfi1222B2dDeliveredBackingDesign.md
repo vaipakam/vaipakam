@@ -656,9 +656,22 @@ invented a hazard that did not exist.
    fresh before its remit lands, out of VPFI the Diamond holds for other
    obligations (LIF custody, earlier days' unclaimed budget). My r1 claim that
    "the walk already budgets it" was true only of the RECYCLED leg; I
-   generalised across legs without checking. Fix shape: give `PoolBudget.fresh`
-   a delivered-fresh budget on mirrors (received − locally paid out), i.e. the
-   same VALUE bound the recycled side already has.
+   generalised across legs without checking.
+
+   **Fix shape — and a delivered-fresh budget alone is NOT enough** (Codex
+   #1433 r6). Giving `PoolBudget.fresh` a delivered-fresh budget on mirrors
+   (received − locally paid out) supplies the missing VALUE bound, but the
+   fresh path's SEMANTICS are wrong for it: a fresh shortage is handled as
+   TRUNCATION, and the truncated remainder is consumed terminally. That is
+   correct on Base — `remaining` there is `CAP − paidOut − remittedGlobal`,
+   both subtrahends append-only, so the pool is monotone non-increasing and a
+   trimmed remainder is unfundable forever ("there is no future state that
+   could pay it"). On a MIRROR the delivered budget **grows with every remit**,
+   so the same trim would permanently underpay a day whose funding was merely
+   still in flight. So prerequisite 1 is two parts: the delivered-fresh
+   **bound**, and **deferral rather than truncation** when a mirror's fresh
+   budget is short — matching the recycled side, whose shortfall already
+   defers.
 2. **Deliberately-zeroed days would retire entries for zero.** A grace/force
    finalization that excludes a mirror's interest report broadcasts an all-zero
    stamp and marks the day `remitIneligible` for later operator-sized funding.
