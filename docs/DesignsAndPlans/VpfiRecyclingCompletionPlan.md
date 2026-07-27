@@ -70,16 +70,17 @@ merged PRs' design records are authoritative):**
    per-chain-monotonic-cursor / lower-day-snapshot options (Codex r2 on
    #1413 showed the per-report-delta clamp corrupts quiet-day late
    closes).
-2. **Gate retiming (§2b of the B2-d design record) — ⚠️ AWAITING OWNER
-   RATIFICATION:** finalize-readiness does NOT wait for commitment
+2. **Gate retiming (§2b of the B2-d design record) — RATIFIED (owner,
+   2026-07-27):** finalize-readiness does NOT wait for commitment
    reports (causally circular — the report prices from finalize's own
    outputs); the "never from a partial set / delays never zeroes" rule
-   binds at the **remit gate** instead, and `remitIneligible` marks
-   chains ZEROED out of the interest denominator. Load-bearing in two
-   merged slices (#1425, #1426); the retiming commit (`13042b0c`) is
-   isolated if the owner wants it reversed. This supersedes this plan's
-   "chunk completeness wired into day-finalization readiness" rule
-   pending that ratification.
+   binds at the **remit gate** instead — tokens never leave Base for a
+   mirror until that mirror's report is complete — and
+   `remitIneligible` marks a silent chain ZEROED out of that day's
+   shipment until operator reconciliation. Load-bearing in #1425 +
+   #1426. This supersedes this plan's earlier "chunk completeness wired
+   into day-finalization readiness" rule (the §M3 text carries the
+   in-place supersession note).
 
 **Still REMAINING for complete VPFI recycling:**
 
@@ -371,16 +372,19 @@ become undeliverable: the report carries a **bounded** scheme
 (aggregate per-side headroom + a commitment root with chunked detail,
 or paginated commitment chunks), and ShareOfPool remittance for a day
 is gated on **all chunks present and verified** — never computed from a
-partial set (a missing chunk delays, never zeroes, that chain). **This
-gate must be wired into day-finalization readiness itself** (PR-2): the
-aggregator's grace/force-finalize path currently zeroes a missing
-chain and rejects late reports — unless chunk completeness is a
-readiness input, a delayed chunk still yields a finalized day with
-partial/zero commitments and permanently underfunds that mirror. If a
-force-finalize genuinely must proceed without a chain's chunks, that
-chain's ShareOfPool remittance for the day is marked
-remit-ineligible-pending-reconciliation (operator path) — never
-computed from the partial set. (2)
+partial set (a missing chunk delays, never zeroes, that chain).
+> **SUPERSEDED in part — §2b gate retiming, RATIFIED by the owner
+> 2026-07-27 (see §1a supersession 2):** the original rule here wired
+> chunk completeness into *day-finalization readiness*; implementation
+> (#1425/#1426) proved that causally circular — the commitment report
+> prices from finalize's own outputs — so the completeness gate binds
+> at the **remit gate** instead: armed days remit to a destination only
+> once its report is `.complete`, bounded by the reported liability,
+> with `remitIneligible` zeroing a silent chain out of that day's
+> shipment until the evidenced operator reconciliation (which the
+> B2-d2 zeroed-chain manual-budget path serves). The
+> delays-never-zeroes / never-partial-set property is preserved at the
+> point where tokens actually move. (2)
 *pending-remittance reservation* — ack-timed accounting alone allows
 duplicate in-flight allocations (two remits before the first ack both
 see the same headroom), while incrementing at send reintroduces the
