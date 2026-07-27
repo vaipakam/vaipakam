@@ -496,11 +496,18 @@ contract RewardReporterFacet is
             s.governorCommitArmedFromDay = b.armedFromDay;
         }
 
-        // #1222 M3 B2-b (re-slice): the mirror does NOT consume its bucket on
-        // arrival — `recycleConsume` rides the wire as 0 today and mirror
-        // local consumption arms in B2-d, once the delivered-backing ledger
-        // makes it safe. The stamp is stored (above) so B2-d can price/arm
-        // against it; nothing debits the bucket here.
+        // #1222 M3 B2-d3 — arrival COMMITS (plan §M3: "broadcast *commits*;
+        // bucket debited pro-rata at claim/remit"). The mirror encumbers the
+        // recycled commit Base instructed it to fund from its own bucket —
+        // the same figure Base booked into `chainConsumedRecycled[c]` at
+        // finalization. Deliberately NOT a bucket debit: `consume` already
+        // runs at every claim on this chain, so debiting here too would
+        // charge the same tokens twice (design record §2e.1). Claims retire
+        // this reservation, forfeits/expiries release it — the identical
+        // lifecycle Base runs for its own commits. Runs exactly once per day
+        // under the whole-day idempotency guard above.
+        LibVpfiRecycle.reserveMirrorCommit(b.dayId, b.recycleConsume);
+
         s.broadcastV2Applied[b.dayId] = true;
         emit RewardBroadcastV2Applied(b.dayId, b.recycleConsume);
         emit KnownGlobalInterestSet(

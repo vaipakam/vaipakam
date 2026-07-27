@@ -380,6 +380,69 @@ record delegated to the implementing PR:
    retire armed-fresh commitments (a zeroed chain's share was never committed
    at finalize — its numerator was excluded from the globals).
 
+## 2e. d3 pins — arrival COMMITS (not debits), per-chain books, netting
+
+Recorded at d3 build time (2026-07-26). §1 sketched the arrival step as a
+mirror-side `LibVpfiRecycle.consume(recycleConsume)` — a bucket DEBIT. The
+scout showed that reading is wrong, and plan §M3 (authoritative; this record
+defers to it) states the correct rule verbatim: **"commitment semantics
+(broadcast *commits*; bucket debited pro-rata at claim/remit)"**.
+
+1. **Why a debit-at-arrival would have been a bug (the scout's evidence for
+   the plan's rule).** `LibVpfiRecycle.consume` is ALREADY called on every
+   chain at claim time (`RewardClaimFacet` — `consume(paidRecycled)`), because
+   a mirror's recycled-funded payouts debit its bucket as users claim. Had the
+   mirror ALSO consumed `recycleConsume` at broadcast arrival, the same tokens
+   would be debited twice: the bucket ledger drains at 2× (flooring at zero,
+   silently under-backing) and `paidOutRecycled` double-counts — which inflates
+   the DERIVED `creditedCumulative` floor (`bucket + paidOut`) and therefore
+   OVER-states that chain's availability to Base. Over-statement is the unsafe
+   direction, and it is the same class the d2 r5 review caught on the release
+   path. §1's wording is superseded by this section.
+2. **Arrival = commitment.** The mirror's V2 ingress reserves the instructed
+   figure into its OWN `outstandingCommitRecycled` (the existing primitive,
+   under the existing whole-day `broadcastV2Applied` idempotency). The bucket
+   is untouched at arrival; it drains through the unchanged claim/remit
+   `consume` sites, and a forfeit/expiry releases the un-drawn remainder
+   through the unchanged `releaseCommitment` path. So the mirror runs exactly
+   the reserve → consume → release lifecycle Base already runs, with zero new
+   ledger primitives, zero change to `consume`, and zero change to the
+   `creditedCumulative` derivation (the r5 landmine stays untouched).
+3. **Base's per-chain books.** At finalization Base books the mirror-funded
+   share into BOTH per-chain ledgers: `chainConsumedRecycled[c] += commitLocal`
+   (the INSTRUCTION cumulative — exactly what the B1 storage comment defines
+   the field as, and the hard availability backstop) and
+   `chainOutstandingRecycledCommit[c] += commitLocal` (§5's local-slice
+   reservation ledger, the per-chain sibling of the global
+   `outstandingCommitRecycled`). Availability nets by the INSTRUCTION only —
+   `availRecycled[c] = chainReportedRecycled[c] − chainConsumedRecycled[c]`,
+   per the B1 comment — so the two books are not double-subtracted; the
+   reservation ledger is what B3's netting retires once a mirror-consumption
+   signal exists (Base cannot observe mirror claims in d3). The §7 invariant
+   `consumed ≤ reported` binds non-trivially from this slice on, enforced by
+   the pass-1 availability cap.
+   **Direction of any drift is conservative:** un-claimed mirror commitments
+   leave Base counting more instructed than the mirror eventually spends, so
+   Base UNDER-states that chain's availability and under-funds it — never the
+   reverse.
+4. **Two-pass funding turns on for mirrors.** Pass 1's `c.avail` becomes
+   `reported − consumed` for a mirror (Base's model of its committable
+   bucket); Base's own `_recycleFundable` is unchanged. `_stampOne` splits the
+   #1008-capped commit pro-rata by funding source — `commitLocal =
+   commit × localTotal / fundedTotal` (floor), `reservedBase = commit −
+   commitLocal` — so §5's "one bucket, one ledger" holds by construction: the
+   local share books into the per-chain ledgers, the Base-funded share into the
+   global `outstandingCommitRecycled`, never both.
+5. **Two-sided netting = subtract the instruction.** `chainRewardBudgetSplitForDay`
+   nets the stamped `recycleConsume` out of the chain's recycled budget
+   (floored at zero), so Base remits only the TOP-UP it actually funded. Sum
+   identity: `mirror-committed (recycleConsume) + Base-remitted
+   (budgetRecycled − recycleConsume) = the funded recycled slice`. Netting
+   lands INSIDE the split helper — below d2's `_planDay` — so all four planning
+   sites inherit it, and d2's net backing gate keeps comparing the Base-funded
+   share against Base's own bucket, which is exactly what funds it. The fresh
+   side is untouched (Base funds all fresh).
+
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
 Not an open fork: §M3 pins it — *"reservations are bound to the **CCIP message

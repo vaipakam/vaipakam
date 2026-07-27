@@ -1017,6 +1017,19 @@ contract TestMutatorFacet {
 
     /// @notice #1222 M3 B2-b test-only — read the stored §4 threshold so the
     ///         V2-ingress tests can assert the mode↔threshold atomicity.
+    /// @notice #1222 M3 B2-d3 test-only — read the per-chain remit split
+    ///         (the internal library helper the remit facet prices from), so
+    ///         the two-sided netting identity can be asserted directly
+    ///         without staging a full remittance.
+    function chainRewardBudgetSplitForDayRaw(
+        uint32 chainId,
+        uint256 dayId
+    ) external view returns (uint256 budgetFresh, uint256 budgetRecycled) {
+        return LibInteractionRewards.chainRewardBudgetSplitForDay(
+            LibVaipakam.storageSlot(), chainId, dayId
+        );
+    }
+
     function dayCapThreshold18Raw(uint256 day) external view returns (uint256) {
         return LibVaipakam.storageSlot().dayCapThreshold18[day];
     }

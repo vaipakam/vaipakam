@@ -331,90 +331,141 @@ contract GovernorDayPoolTest is SetupTest {
         _agg().finalizeDay(dayId);
     }
 
-    /// Armed day, per-chain stamps LIVE — but the B2-b RE-SLICE defers
-    /// mirror LOCAL funding to B2-d, so Base funds the WHOLE mesh budget
-    /// (mirror avail = 0): each chain still gets its own funded stamp for
-    /// pricing, but `recycleConsume` is 0 everywhere, no per-chain ledger is
-    /// booked, and the GLOBAL reservation is the whole budget — numerically
-    /// identical to the pre-mesh single-pool `min(fundable, coupled)`.
-    function testArmedTwoPassFundsAllFromBaseUntilB2d() public {
+    /// Armed day, two-pass funding with mirror LOCAL funding ON (B2-d3).
+    /// A mirror funds its target from its OWN reported-minus-consumed
+    /// availability first; Base tops up only the shortfall from its
+    /// remaining fundable. The locally-funded share books into the per-chain
+    /// ledgers and rides the wire as `recycleConsume`; Base's top-up books
+    /// into the GLOBAL reservation — never both (design record §2e.4).
+    function testArmedTwoPassFundsMirrorLocallyThenBaseTopsUp() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
         _mut().setRecycledCreditedByDayRaw(5, 700 ether); // Ā=100, coupled=95
         _mut().setGovernorCommitArmedFromDayRaw(5);
 
-        // ARB reports 40 recycled availability — IGNORED for funding in
-        // B2-b (mirror local funding arms in B2-d).
+        // ARB reports 40 VPFI of recycled availability — now REAL funding
+        // capacity (B2-b ignored it).
         _finalizeWithArbRecycled(5, 40 ether, 0);
 
-        (, , uint256 recycled5, , ) = _agg().getDayPoolStamp(5);
         LibVaipakam.ChainDayFunding memory arb =
             _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
         LibVaipakam.ChainDayFunding memory base =
             _agg().getChainDayRecycledFunding(5, CHAIN_BASE);
-
         assertTrue(arb.stamped && base.stamped, "both chains stamped");
-        // Demand weights: ARB carries 2/3 of both sides, Base 1/3.
-        // coupled 95 → targets: ARB ≈ 63.33, Base ≈ 31.67 (funded via
-        // Base top-up, since ARB contributes zero local availability).
+
+        // Demand weights: ARB 2/3, Base 1/3 → targets ARB 63.33, Base 31.67.
+        // ARB self-funds 40 (its whole availability), Base tops up 23.33.
         assertApproxEqAbs(
             arb.fundedLender + arb.fundedBorrower,
             63.333e18,
             1e15,
-            "ARB funded to its full target (all from Base)"
+            "ARB funded to its full target"
         );
         assertApproxEqAbs(
-            base.fundedLender + base.fundedBorrower,
-            31.666e18,
+            arb.recycleConsume,
+            40 ether,
             1e15,
-            "Base funded its own slice"
+            "ARB own bucket funded 40 - the instruction it reserves"
         );
-        // No local consumption instruction until B2-d.
-        assertEq(arb.recycleConsume, 0, "recycleConsume deferred to B2-d");
-        assertEq(base.recycleConsume, 0, "Base has no local consume either");
-        assertEq(arb.keeperAllocate, 0, "keeper allocation is B2-b+");
-        // Σ funded is the global stamp.
-        assertApproxEqAbs(
-            arb.fundedLender + arb.fundedBorrower + base.fundedLender
-                + base.fundedBorrower,
-            recycled5,
-            2,
-            "global stamp = sum of funded slices"
-        );
-        assertApproxEqAbs(recycled5, 95 ether, 2, "mesh total matches coupled");
 
-        // No per-chain ledger booking; the GLOBAL outstanding reserves the
-        // WHOLE budget (Phase-A') since everything is Base-funded.
-        (, uint256 consumedArb, , ) = _cfg().getChainRecycledLedger(CHAIN_ARB);
-        assertEq(consumedArb, 0, "no mirror-consumed booking in B2-b");
-        (, , uint256 outR, ) = _agg().getGovernorCommitState();
-        assertApproxEqAbs(
-            outR, 95 ether, 1e6, "global outstanding = whole budget (Phase-A')"
-        );
+        // Per-chain books carry the local share; Base has none.
+        (uint256 reported, uint256 consumed, uint256 avail, ) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 40 ether, "reported cumulative");
+        assertApproxEqAbs(consumed, 40 ether, 1e15, "instruction booked");
+        assertLe(consumed, reported, "SS7 invariant: consumed <= reported");
+        assertApproxEqAbs(avail, 0, 1e15, "availability now exhausted");
         assertEq(
             _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
-            0,
-            "per-chain outstanding arms in B2-d"
+            consumed,
+            "per-chain reservation ledger mirrors the instruction"
         );
+        (, uint256 consumedBase, , ) =
+            _cfg().getChainRecycledLedger(CHAIN_BASE);
+        assertEq(consumedBase, 0, "Base never books a per-chain instruction");
 
-        // Equiv halves make the per-side global-denominator math yield the
-        // funded budget: equivL = fundedL x gL / chainL.
+        // One bucket, one ledger: the GLOBAL reservation is Base's share
+        // only (its own slice + the ARB top-up) — the mirror-funded 40 is
+        // NOT in it.
+        (, , uint256 outR, ) = _agg().getGovernorCommitState();
+        uint256 total = arb.fundedLender + arb.fundedBorrower
+            + base.fundedLender + base.fundedBorrower;
         assertApproxEqAbs(
-            arb.lenderHalfEquiv,
-            (arb.fundedLender * 30e18) / 20e18,
-            2,
-            "lender equiv half"
-        );
-        assertApproxEqAbs(
-            arb.borrowerHalfEquiv,
-            (arb.fundedBorrower * 15e18) / 10e18,
-            2,
-            "borrower equiv half"
+            outR, total - arb.recycleConsume, 1e15, "global holds Base-funded only"
         );
     }
 
-    /// Base funds the whole mesh from its OWN availability: with a small
-    /// Base bucket the total is bounded by that bucket (mirrors contribute
-    /// zero local availability in B2-b).
+    /// The pass-1 availability cap is where the SS7 `consumed <= reported`
+    /// invariant is enforced: once a mirror's reported availability is fully
+    /// instructed, a later armed day funds it entirely from Base.
+    function testMirrorAvailabilityIsExhaustedByPriorInstructions() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalizeWithArbRecycled(5, 40 ether, 0);
+
+        // Day 6: ARB reports the SAME cumulative (no new credits), so its
+        // availability is already spent.
+        _mut().setRecycledCreditedByDayRaw(6, 700 ether);
+        _finalizeWithArbRecycled(6, 40 ether, 0);
+
+        // Day 5 must have instructed materially, or day 6's zero proves
+        // nothing about the cap (guards this test against passing
+        // vacuously if mirror-local funding were disabled).
+        LibVaipakam.ChainDayFunding memory arb5 =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        assertApproxEqAbs(
+            arb5.recycleConsume, 40 ether, 1e15, "day 5 spent the availability"
+        );
+
+        LibVaipakam.ChainDayFunding memory arb6 =
+            _agg().getChainDayRecycledFunding(6, CHAIN_ARB);
+        // Dust-level only: day 5's floored instruction can leave a few wei
+        // of reported availability unspent.
+        assertLe(arb6.recycleConsume, 1e12, "no meaningful availability left");
+        assertGt(
+            arb6.fundedLender + arb6.fundedBorrower, 0, "still funded by Base"
+        );
+        (uint256 reported, uint256 consumed, , ) =
+            _cfg().getChainRecycledLedger(CHAIN_ARB);
+        assertLe(consumed, reported, "invariant holds across days");
+    }
+
+    /// Two-sided netting: Base remits only the TOP-UP it funded — the
+    /// mirror already holds (and has reserved) its local share.
+    function testRemitBudgetNetsTheMirrorLocalCommit() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalizeWithArbRecycled(5, 40 ether, 0);
+
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        uint256 funded = arb.fundedLender + arb.fundedBorrower;
+
+        (, uint256 remitRecycled) = _mut().chainRewardBudgetSplitForDayRaw(
+            CHAIN_ARB, 5
+        );
+        // The netting must be MATERIAL, not rounding dust — otherwise this
+        // test would pass with netting disabled entirely.
+        assertApproxEqAbs(
+            arb.recycleConsume, 40 ether, 1e15, "mirror committed 40 locally"
+        );
+        assertApproxEqAbs(
+            funded - remitRecycled,
+            arb.recycleConsume,
+            1e15,
+            "the remit is reduced by exactly the local commitment"
+        );
+        // Sum identity: locally-committed + Base-remitted == funded slice.
+        assertApproxEqAbs(
+            remitRecycled + arb.recycleConsume,
+            funded,
+            1e15,
+            "surrendered + remitted == funded recycled slice"
+        );
+    }
+
+
     function testArmedTopUpDrawsFromRemainingBaseAvailabilityOnly() public {
         // Base bucket 40: its own slice ≈ 31.67 funds first; only ~8.33
         // remains to fund ARB's ~63.33 target.

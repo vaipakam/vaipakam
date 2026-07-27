@@ -308,10 +308,29 @@ library LibInteractionRewards {
             budgetFresh += f;
             budgetRecycled += r;
         }
-        // #1222 M3 B2-b (re-slice) — Base funds the WHOLE mesh budget until
-        // B2-d, so the remittance ships each mirror its entire recycled
-        // slice (no local-surrender netting yet). B2-d subtracts the
-        // mirror-locally-funded share once consume-on-arrival is armed.
+        // #1222 M3 B2-d3 — TWO-SIDED NETTING. The chain funded
+        // `recycleConsume` of this day's recycled budget from its OWN bucket
+        // (reserved there at broadcast arrival, drawn down by its own
+        // claims), so Base must remit only the TOP-UP it actually funded.
+        // Sum identity: locally-committed + Base-remitted = the funded
+        // recycled slice — remitting the whole slice would double-fund the
+        // local share and cannibalise Base's bucket for tokens the mirror
+        // already holds. Floored: the stamped instruction is the #1008-capped
+        // commit while this budget is the CEIL-per-side slice, so wei-scale
+        // rounding can leave the instruction marginally the larger figure.
+        // Fresh is untouched — Base funds all fresh.
+        //
+        // Netting lives HERE, below every planning surface, so the send and
+        // all three quotes inherit it identically (d2's `quote == send`), and
+        // d2's net backing gate keeps comparing the Base-funded share against
+        // Base's own bucket — which is exactly what funds it.
+        if (budgetRecycled != 0) {
+            uint256 localCommit =
+                s.chainDayRecycledFunding[dayId][chainId].recycleConsume;
+            budgetRecycled = budgetRecycled > localCommit
+                ? budgetRecycled - localCommit
+                : 0;
+        }
     }
 
     /// @dev One side's capped per-chain budget, split fresh/recycled with

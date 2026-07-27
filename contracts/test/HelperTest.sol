@@ -87,7 +87,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](137);
+        selectors = new bytes4[](138);
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
@@ -98,6 +98,9 @@ contract HelperTest {
         selectors[135] = TestMutatorFacet.setChainDayRemitIneligibleRaw.selector;
         // #1222 M3 B2-d2 — outstanding-commitment baseline for retire asserts.
         selectors[136] = TestMutatorFacet.setOutstandingCommitRaw.selector;
+        // #1222 M3 B2-d3 — per-chain remit split for the netting identity.
+        selectors[137] =
+            TestMutatorFacet.chainRewardBudgetSplitForDayRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.

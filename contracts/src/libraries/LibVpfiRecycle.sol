@@ -228,6 +228,38 @@ library LibVpfiRecycle {
         emit RewardCommitmentReleased(uint8(source), refId, amount);
     }
 
+    /// @notice #1222 M3 B2-d3 — emitted when a mirror RESERVES the recycled
+    ///         commit Base instructed it to fund locally for an armed day
+    ///         (broadcast arrival). Plan §M3: the broadcast *commits*; the
+    ///         bucket itself is debited pro-rata later, at claim/remit. ZERO
+    ///         absorption and ZERO payout — this only encumbers availability,
+    ///         mirroring the `chainConsumedRecycled[c]` mark Base booked at
+    ///         finalization (same figure, both ledgers).
+    /// @custom:event-category informational/reward-governor
+    event MirrorRecycleCommitReserved(uint256 indexed dayId, uint256 amount);
+
+    /**
+     * @notice #1222 M3 B2-d3 — mirror-side arrival RESERVATION: encumber
+     *         `amount` of this chain's recycle bucket for the armed day's
+     *         locally-funded reward payouts.
+     * @dev    Deliberately NOT a bucket debit (plan §M3 "broadcast commits;
+     *         bucket debited pro-rata at claim/remit"): `consume` already
+     *         runs at every claim on every chain, so debiting here too would
+     *         charge the same tokens twice — draining the bucket ledger to
+     *         its floor and double-counting `paidOutRecycled`, which inflates
+     *         the derived `creditedCumulative` and over-states this chain's
+     *         availability to Base (see the design record §2e.1). Reserving
+     *         instead gives the mirror the identical reserve → consume →
+     *         release lifecycle Base already runs, with no new primitives:
+     *         claims retire it via {consume}, forfeits/expiries via
+     *         {releaseCommitment}.
+     */
+    function reserveMirrorCommit(uint256 dayId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().outstandingCommitRecycled += amount;
+        emit MirrorRecycleCommitReserved(dayId, amount);
+    }
+
     /**
      * @notice #1222 M3 B2-d2 — reverse a released remit reservation's
      *         recycled-side ledger effects so a later re-remit of the
