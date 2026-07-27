@@ -51,7 +51,12 @@ all Phase B′ mesh fields; Phase C′; the arming ceremonies.
 
 The 2026-07-18 baseline above is retained for the record; this section is
 the current state. Everything below merged **dark/dormant** — the M7
-ceremonies remain the only activation path.
+ceremonies remain the only activation path — **with ONE exception: the
+M1 notification tariff is LIVE**. `LibNotificationFee.bill` has no M7
+gate: on any deployment where notification billing runs, the flat
+tariff already moves into Diamond custody and credits the bucket
+(`credit(NotificationFee, …)`) — operators account for those credits
+now, not after the ceremonies.
 
 **Now DONE (all Codex-reviewed, all `Closes` their cards):**
 
@@ -95,9 +100,9 @@ merged PRs' design records are authoritative):**
 | **M4 C1/C2** — surplus knob + batched repatriation | #1222 tail |
 | **M5** — dashboard views (`selfFundingRatio`, `platformRetained`, runway, `netEmission = freshDrawdown`) + public surface | #1218 |
 | **M6** — perks (#1204, `SpendGatedPerk` enum entry, legal glance first) + bonds (#1219, schedule the glance) | #1204 / #1219 |
-| **M7** — ceremonies, now including the NEW operator steps the mesh added. **Chain side:** `setGovernorCommitArmedFromDay(D*)` **IS the D\* cutover** — one canonical-only, one-shot Base call that broadcasts `D*` to mirrors **in-band** (this satisfies the plan's all-chains-configured precondition via propagation; there is NO per-chain `D*` administration — a mirror-chain or duplicate call reverts), alongside the original `armedFromDay` / `feeEntitlementEnabled` gates. **Keeper side:** apply D1 migrations 0043/0044; grant the keeper EOA `KEEPER_ROLE` on-chain (required by `submitCommitmentBatch`); authorize the remit signing EOA; and arm the **master flags together** — `KEEPER_ENABLED` + `REWARD_COMMIT_ENABLED` (commitment reports) + `REWARD_REMIT_ENABLED` (delivery-ack pass) — arming the chain without all of these leaves reports/acks inert and stalls multi-chain funding | runbook |
+| **M7** — ceremonies, now including the NEW operator steps the mesh added. **Chain side:** `setGovernorCommitArmedFromDay(D*)` **IS the D\* cutover** — one canonical-only, one-shot Base call that broadcasts `D*` to mirrors **in-band** (this satisfies the plan's all-chains-configured precondition via propagation; there is NO per-chain `D*` administration — a mirror-chain or duplicate call reverts), alongside the original `armedFromDay` / `feeEntitlementEnabled` gates. **Keeper side:** apply D1 migrations 0043/0044; grant the keeper EOA `KEEPER_ROLE` **on EVERY mirror Diamond** (`submitCommitmentBatch` is mirror-only AND role-gated — granting on Base alone, or missing one mirror, leaves that mirror's commitment pass reverting forever, its report never completes, and the remit gate stalls that chain's funding); authorize the remit signing EOA; and arm the **master flags together** — `KEEPER_ENABLED` + `REWARD_COMMIT_ENABLED` (commitment reports) + `REWARD_REMIT_ENABLED` (delivery-ack pass) — arming the chain without all of these leaves reports/acks inert and stalls multi-chain funding | runbook |
 | **M8** — fragment assembly (`1346`–`1356`, `1383`+ families), #882 | docs |
-| **Owner ratification** — the §2b gate retiming (supersession 2 above) | owner |
+| ~~Owner ratification — the §2b gate retiming~~ | **DONE — RATIFIED 2026-07-27** (supersession 2 above) |
 
 ## 2. Is the cross-chain mesh (#1222) still required? — YES
 
@@ -496,13 +501,17 @@ GovernanceRunbook gains a recycling section, executed in order:
    at origination while every yield-fee site still ignores the lender
    Full stamp — collecting the tariff without delivering the purchased
    +10% discount. Gate = PR-2 + PR-5c live + PR-6 live + `D*` armed
-   (asserted by PR-9/#1356). **Multi-chain `D*` precondition:** before
-   Base arms, the SAME `shareOfPoolCutoverDay` must be configured on
-   EVERY reward chain — the fail-closed predicate is
-   `D* != 0 && d ≥ D*`, so a mirror left at the default 0 never enters
-   the post-cutover path while Base sends ShareOfPool days, and claim
-   vs remittance behaviour diverges. All-chains-configured is a
-   checklist item ahead of Base arming. **Mesh/dark precondition
+   (asserted by PR-9/#1356).
+   > **SUPERSEDED by implementation (see §1a):** the original
+   > "configure the same `shareOfPoolCutoverDay` on every reward chain
+   > before Base arms" step no longer exists as per-chain
+   > administration — `RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)`
+   > IS the cutover: one canonical-only, one-shot Base call that
+   > broadcasts `D*` to mirrors **in-band** (a mirror-chain or
+   > duplicate call reverts). The all-chains-consistent property this
+   > paragraph wanted is delivered by that propagation; the operator
+   > checklist item becomes "verify every mirror received the arming
+   > broadcast", not "configure each chain". **Mesh/dark precondition
    (same as governor arming and RL-3):** Full enablement on
    reward-active mirrors before M3 would strand `FullTariff` credits
    in mirror-local buckets Base can neither count in `Ā` nor fund
@@ -513,7 +522,10 @@ GovernanceRunbook gains a recycling section, executed in order:
 
 ### M8 — Docs housekeeping
 
-Assemble the pending `1217-*`/`130x-*` release-note fragments;
+Assemble the pending release-note fragments — the `1217-*`/`130x-*`
+families AND the post-plan implementation wave (`1346`–`1356`, `1383`,
+`1384`, `1391`, `1392`, `1413`–`1426` families, as present under
+`docs/ReleaseNotes/unreleased/`);
 TokenomicsTechSpec edits ride each implementing PR; whitepaper
 reconciliation (#882) when that copy is next touched.
 
@@ -565,7 +577,11 @@ constituent cards below remain the working tickets.
 ## 6. Definition of done — "VPFI recycling complete"
 
 1. **Absorption**: notification tariff (M1) + Full tariff (M2) live and
-   crediting the bucket; forfeit/expiry classes live (already);
+   crediting the bucket — **including the #1369 origination-auth slice**
+   (signed-offer maker Full authorization + matched fills honoring the
+   lender offer's `creatorFull`): the Full channel is not complete while
+   whole origination paths cannot enter it; forfeit/expiry classes live
+   (already);
    **spend-gated perks (#1204) in a DECIDED state** — legal glance passed
    + built and crediting, or an explicit owner deferral recorded on
    #1204; **service bonds (#1219) in a DECIDED state** — either the
