@@ -33,6 +33,21 @@ interface IRewardAggregatorIngress {
     ) external;
 }
 
+/// @dev #1222 M3 B3 — the CURRENT Base-side Diamond ingress: the B1 figures
+///      plus the reporting chain's commitment-retirement cumulatives.
+interface IRewardAggregatorIngressB3 {
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18
+    ) external;
+}
+
 /// @notice #1222 M3 B1 (Codex #1413 r4) — the Diamond fallback's
 ///         unknown-selector error, matched to recognize a not-yet-cut Base
 ///         diamond when the widened ingress call fails.
@@ -180,6 +195,36 @@ contract VaipakamRewardMessenger is
     ///         `closeDay` reports revert on delivery and the day finalizes
     ///         with that chain zeroed.
     uint256 internal constant REPORT_PAYLOAD_SIZE = 6 * 32;
+    /// @notice CURRENT REPORT payload size — #1222 M3 B3 widens the
+    ///         mirror→Base report to `abi.encode(uint8, dayId,
+    ///         lenderNumeraire18, borrowerNumeraire18, recycledCumulative18,
+    ///         recycledForDay18, commitRetiredCumulative18,
+    ///         commitReleasedCumulative18)` = EIGHT words. The two additions
+    ///         are the chain's commitment-RETIREMENT cumulatives: what it has
+    ///         retired from its outstanding recycled commitments in total,
+    ///         and the RELEASE-only subset (forfeit / RL-3 expiry — the
+    ///         tokens stayed in its bucket). Base closes its per-chain
+    ///         reservation ledger with the first and restores that chain's
+    ///         availability with the second.
+    ///
+    ///         Three report shapes are now accepted — 4 (pre-#1222 legacy),
+    ///         6 (B1) and 8 (B3) — and nothing else; anything else is a
+    ///         padded/truncated packet. LENGTH is a sound discriminator here
+    ///         because the report is a FLAT tuple of `uint256`s with no
+    ///         dynamic member, so there is no head-offset ladder to
+    ///         mis-read (which is why this needs no leading-sentinel version
+    ///         tag, unlike the remit payload's `RemitWire` tag). The
+    ///         collision with {BROADCAST_PAYLOAD_SIZE} /
+    ///         {TIER_UPDATED_PAYLOAD_SIZE} at 8 words is resolved by the
+    ///         `uint8 kind` tag, exactly as the standing rule already
+    ///         resolves the four-word collision set.
+    ///
+    ///         ROLLOUT — receiver first: Base's messenger must be live with
+    ///         this triple-length decode BEFORE any mirror messenger that
+    ///         sends the eight-word shape is deployed, otherwise mirror
+    ///         `closeDay` reports revert on delivery and the day finalizes
+    ///         with that chain zeroed.
+    uint256 internal constant REPORT_PAYLOAD_SIZE_B3 = 8 * 32;
     /// @notice Broadcast payload size. #1008 (S13) added the canonical §4 cap
     ///         threshold (5th word); governor PR-3c (#1217 §6/§8) adds the
     ///         day-pool COMPOSITION — `scheduleFloorHalf` + `recycledHalf`
@@ -501,9 +546,51 @@ contract VaipakamRewardMessenger is
 
     // ─── Sender side ────────────────────────────────────────────────────────
 
-    /// @notice Send a closed-day REPORT from a mirror chain to Base.
+    /// @notice Send a closed-day REPORT from a mirror chain to Base
+    ///         (#1222 M3 B3 — the CURRENT eight-word shape).
     /// @dev Diamond-only. The exact quoted fee is forwarded; any
     ///      `msg.value` remainder returns to `refundAddress`.
+    /// @param commitRetiredCumulative18  Σ of every actual decrement of this
+    ///        chain's outstanding recycled commitments (claims + releases).
+    /// @param commitReleasedCumulative18 The release-only subset — the half
+    ///        that restores this chain's availability on Base.
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        address payable refundAddress
+    ) external payable onlyDiamond whenNotPaused nonReentrant {
+        if (messenger == address(0)) revert MessengerNotSet();
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPORT,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18
+        );
+        bytes32 messageId =
+            _dispatch(baseChainId, payload, msg.value, refundAddress);
+
+        emit ReportSent(
+            messageId, dayId, lenderNumeraire18, borrowerNumeraire18
+        );
+    }
+
+    /// @notice #1222 M3 B1 sender overload (the six-word shape), kept so a
+    ///         mirror's diamond and messenger proxies need not upgrade
+    ///         atomically through the B3 window: a B1-generation diamond
+    ///         calling this selector on a B3 messenger keeps working, and its
+    ///         reports simply carry no retirement figures (which advance
+    ///         nothing in Base's ledger).
     function sendChainReport(
         uint256 dayId,
         uint256 lenderNumeraire18,
@@ -745,7 +832,40 @@ contract VaipakamRewardMessenger is
     }
     // slither-disable-end msg-value-loop
 
-    /// @notice Quote the fee for a {sendChainReport}.
+    /// @notice #1222 M3 B3 — quote the fee for the CURRENT eight-word
+    ///         {sendChainReport}. A keeper must quote the shape its diamond
+    ///         will actually dispatch: an eight-word payload prices above a
+    ///         six-word one, and quoting the shorter shape underpays the
+    ///         CCIP fee and reverts the send.
+    function quoteSendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18
+    ) external view returns (uint256 nativeFee) {
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPORT,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18
+        );
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            baseChainId, payload, _noTokens(), destGasLimit
+        );
+    }
+
+    /// @notice #1222 M3 B1 quote overload — prices the six-word payload the
+    ///         matching {sendChainReport} overload dispatches, so a
+    ///         B1-generation mirror diamond can still price `closeDay`
+    ///         through the B3 rollout window.
     function quoteSendChainReport(
         uint256 dayId,
         uint256 lenderNumeraire18,
@@ -1096,11 +1216,11 @@ contract VaipakamRewardMessenger is
         if (tokens.length != 0) revert UnexpectedTokens(tokens.length);
 
         // The inbound shape gate accepts the union of valid word counts:
-        // 6 (REPORT, #1222 B1), 4 (legacy REPORT), 8 (legacy BROADCAST /
-        // TierUpdated — disambiguated by the kind tag below), 2
-        // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REMIT_ACK,
-        // #1222 B2-d2). Any other length is a padded / truncated packet and
-        // is rejected before decode.
+        // 6 (REPORT, #1222 B1), 4 (legacy REPORT), 8 (REPORT #1222 B3 /
+        // legacy BROADCAST / TierUpdated — all disambiguated by the kind tag
+        // below), 2 (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3
+        // (REMIT_ACK, #1222 B2-d2). Any other length is a padded / truncated
+        // packet and is rejected before decode.
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
@@ -1120,9 +1240,12 @@ contract VaipakamRewardMessenger is
         uint8 msgType = abi.decode(payload[:32], (uint8));
 
         if (msgType == MSG_TYPE_REPORT) {
-            if (len != REPORT_PAYLOAD_SIZE && len != REPORT_PAYLOAD_SIZE_LEGACY)
-            {
-                revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
+            if (
+                len != REPORT_PAYLOAD_SIZE_B3
+                && len != REPORT_PAYLOAD_SIZE
+                && len != REPORT_PAYLOAD_SIZE_LEGACY
+            ) {
+                revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE_B3);
             }
             if (!isCanonical) revert ReportOnMirror();
             // The aggregator tags each report with a uint32 origin chain.
@@ -1133,70 +1256,7 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            if (len == REPORT_PAYLOAD_SIZE) {
-                (
-                    ,
-                    uint256 dayId,
-                    uint256 a,
-                    uint256 b,
-                    uint256 recycledCum,
-                    uint256 recycledForDay
-                ) = abi.decode(
-                    payload,
-                    (uint8, uint256, uint256, uint256, uint256, uint256)
-                );
-                emit ReportReceived(sourceChainId, dayId, a, b);
-                // Codex #1413 r4/r5 — rollout shim for the messenger-first
-                // Base upgrade: a not-yet-cut diamond reverts the widened
-                // ingress selector with `FunctionDoesNotExist()`, and ONLY
-                // that exact shape downgrades to the legacy ingress — the
-                // recycled figures are dropped for the window rather than
-                // the whole report failing toward a grace-zeroed day. Empty
-                // returndata is NOT accepted here (r5): the diamond's
-                // missing-selector path always carries the error, so an
-                // empty revert can only be an OOG-class failure, which must
-                // stay failed/retryable. Every reasoned ingress failure
-                // (duplicate, finalized, unexpected chain) bubbles too.
-                try IRewardAggregatorIngress(diamond).onChainReportReceived(
-                    SafeCast.toUint32(sourceChainId),
-                    dayId,
-                    a,
-                    b,
-                    recycledCum,
-                    recycledForDay
-                ) {} catch (bytes memory reason) {
-                    bytes4 reasonSelector;
-                    if (reason.length >= 4) {
-                        assembly ("memory-safe") {
-                            reasonSelector := mload(add(reason, 0x20))
-                        }
-                    }
-                    bool missingSelector = reason.length == 4
-                        && reasonSelector
-                            == IDiamondFallback.FunctionDoesNotExist.selector;
-                    if (!missingSelector) {
-                        assembly ("memory-safe") {
-                            revert(add(reason, 0x20), mload(reason))
-                        }
-                    }
-                    IRewardAggregatorIngressLegacy(diamond)
-                        .onChainReportReceived(
-                        SafeCast.toUint32(sourceChainId), dayId, a, b
-                    );
-                }
-            } else {
-                // Legacy pre-#1222 four-word report (a delayed delivery or a
-                // not-yet-upgraded mirror): forwarded through the LEGACY
-                // ingress selector, which both diamond generations expose
-                // (Codex #1413 r3) — dispatching by wire shape keeps every
-                // diamond/messenger upgrade-order combination live.
-                (, uint256 dayId, uint256 a, uint256 b) =
-                    abi.decode(payload, (uint8, uint256, uint256, uint256));
-                emit ReportReceived(sourceChainId, dayId, a, b);
-                IRewardAggregatorIngressLegacy(diamond).onChainReportReceived(
-                    SafeCast.toUint32(sourceChainId), dayId, a, b
-                );
-            }
+            _handleReport(SafeCast.toUint32(sourceChainId), payload, len);
         } else if (msgType == MSG_TYPE_BROADCAST) {
             if (len != BROADCAST_PAYLOAD_SIZE) {
                 revert PayloadSizeMismatch(len, BROADCAST_PAYLOAD_SIZE);
@@ -1355,6 +1415,121 @@ contract VaipakamRewardMessenger is
     }
 
     // ─── Internal helpers ───────────────────────────────────────────────────
+
+    /**
+     * @dev Decode + forward an inbound mirror→Base REPORT of any accepted
+     *      generation (8-word B3, 6-word B1, 4-word pre-#1222 legacy), in its
+     *      own frame so {onCrossChainMessage}'s dispatcher does not carry the
+     *      widest decode's stack.
+     *
+     *      Dispatching by WIRE SHAPE, then downgrading the DIAMOND ingress a
+     *      generation at a time on a missing selector, is what keeps every
+     *      messenger/diamond upgrade-order combination live (Codex #1413
+     *      r3/r4/r5): the fields the older ingress cannot take are dropped for
+     *      the window rather than the whole report failing toward a
+     *      grace-zeroed day, and dropped figures advance nothing in Base's
+     *      monotonic ledgers.
+     */
+    function _handleReport(
+        uint32 sourceChainId,
+        bytes calldata payload,
+        uint256 len
+    ) private {
+        if (len == REPORT_PAYLOAD_SIZE_LEGACY) {
+            // Legacy pre-#1222 four-word report (a delayed delivery or a
+            // not-yet-upgraded mirror): forwarded through the LEGACY ingress
+            // selector, which every diamond generation exposes.
+            (, uint256 dayId, uint256 a, uint256 b) =
+                abi.decode(payload, (uint8, uint256, uint256, uint256));
+            emit ReportReceived(sourceChainId, dayId, a, b);
+            IRewardAggregatorIngressLegacy(diamond).onChainReportReceived(
+                sourceChainId, dayId, a, b
+            );
+            return;
+        }
+
+        uint256[7] memory w = _decodeReportWords(payload, len);
+        emit ReportReceived(sourceChainId, w[0], w[1], w[2]);
+
+        if (len == REPORT_PAYLOAD_SIZE_B3) {
+            try IRewardAggregatorIngressB3(diamond).onChainReportReceived(
+                sourceChainId, w[0], w[1], w[2], w[3], w[4], w[5], w[6]
+            ) {
+                return;
+            } catch (bytes memory reason) {
+                _requireMissingSelector(reason);
+            }
+        }
+
+        // Either a six-word report, or an eight-word one whose B3 ingress the
+        // diamond has not been cut with yet.
+        try IRewardAggregatorIngress(diamond).onChainReportReceived(
+            sourceChainId, w[0], w[1], w[2], w[3], w[4]
+        ) {
+            return;
+        } catch (bytes memory reason) {
+            _requireMissingSelector(reason);
+        }
+
+        IRewardAggregatorIngressLegacy(diamond).onChainReportReceived(
+            sourceChainId, w[0], w[1], w[2]
+        );
+    }
+
+    /// @dev Decode a six- or eight-word report into
+    ///      `[dayId, lender, borrower, recycledCum, recycledForDay,
+    ///      commitRetiredCum, commitReleasedCum]`; the two B3 words read as
+    ///      zero for a six-word packet, which advances nothing on Base.
+    ///      Returns a fixed array so the caller holds ONE stack slot instead
+    ///      of seven (viaIR headroom in the ingress ladder).
+    function _decodeReportWords(
+        bytes calldata payload,
+        uint256 len
+    ) private pure returns (uint256[7] memory w) {
+        if (len == REPORT_PAYLOAD_SIZE_B3) {
+            (, w[0], w[1], w[2], w[3], w[4], w[5], w[6]) = abi.decode(
+                payload,
+                (
+                    uint8,
+                    uint256,
+                    uint256,
+                    uint256,
+                    uint256,
+                    uint256,
+                    uint256,
+                    uint256
+                )
+            );
+        } else {
+            (, w[0], w[1], w[2], w[3], w[4]) = abi.decode(
+                payload, (uint8, uint256, uint256, uint256, uint256, uint256)
+            );
+        }
+    }
+
+    /// @dev Re-throws `reason` verbatim unless it is EXACTLY the Diamond
+    ///      fallback's unknown-selector error — the only shape that may
+    ///      downgrade an ingress generation. Empty returndata is deliberately
+    ///      NOT accepted (Codex #1413 r5): the diamond's missing-selector path
+    ///      always carries the error, so an empty revert can only be an
+    ///      OOG-class failure, which must stay failed/retryable. Every
+    ///      reasoned ingress failure (duplicate, finalized, unexpected chain)
+    ///      bubbles too.
+    function _requireMissingSelector(bytes memory reason) private pure {
+        bytes4 reasonSelector;
+        if (reason.length >= 4) {
+            assembly ("memory-safe") {
+                reasonSelector := mload(add(reason, 0x20))
+            }
+        }
+        bool missingSelector = reason.length == 4
+            && reasonSelector == IDiamondFallback.FunctionDoesNotExist.selector;
+        if (!missingSelector) {
+            assembly ("memory-safe") {
+                revert(add(reason, 0x20), mload(reason))
+            }
+        }
+    }
 
     /// @dev Send one data-only message: quote, forward the exact fee,
     ///      refund the remainder to `refundAddress`.

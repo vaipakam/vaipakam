@@ -228,7 +228,52 @@ contract RewardAggregatorFacet is
             lenderNumeraire18,
             borrowerNumeraire18,
             recycledCumulative18,
-            recycledForDay18
+            recycledForDay18,
+            0,
+            0
+        );
+    }
+
+    /**
+     * @notice #1222 M3 B3 — the CURRENT ingress: the B1 figures plus the
+     *         reporting chain's commitment-RETIREMENT cumulatives.
+     * @dev Messenger-authenticated + canonical-only, like every other
+     *      overload. The two additions close the loop the B2-d3 books left
+     *      open — Base could instruct a mirror to fund a slice locally but
+     *      had no authenticated view of what the mirror then did with the
+     *      reservation, so `chainOutstandingRecycledCommit[c]` only ever grew
+     *      and a commitment RELEASED un-spent (forfeit / RL-3 expiry, tokens
+     *      never left that chain's bucket) was lost from Base's availability
+     *      model permanently.
+     *
+     *      Both figures are monotonic cumulatives and are CLAMPED on ingest
+     *      against Base's own instruction ledger, so a mirror is trusted for
+     *      timing only, never for magnitude (see
+     *      {LibVpfiRecycle-recordChainCommitRetirement}).
+     * @param commitRetiredCumulative18  Σ of every actual decrement of that
+     *        chain's outstanding recycled commitments (claims + releases).
+     * @param commitReleasedCumulative18 The release-only subset — the half
+     *        that restores availability.
+     */
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18
+    ) external onlyRewardMessenger onlyCanonical {
+        _ingestChainReport(
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18
         );
     }
 
@@ -247,7 +292,14 @@ contract RewardAggregatorFacet is
         uint256 borrowerNumeraire18
     ) external onlyRewardMessenger onlyCanonical {
         _ingestChainReport(
-            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            0,
+            0,
+            0,
+            0
         );
     }
 
@@ -303,15 +355,19 @@ contract RewardAggregatorFacet is
         );
     }
 
-    /// @dev Shared body of the two ingress overloads — gates run in the
-    ///      external wrappers, the write path is identical.
+    /// @dev Shared body of the three ingress overloads — gates run in the
+    ///      external wrappers, the write path is identical. Older generations
+    ///      forward zeros for the figures their wire shape cannot carry, and
+    ///      every ledger below treats a zero as "nothing to advance".
     function _ingestChainReport(
         uint32 sourceChainId,
         uint256 dayId,
         uint256 lenderNumeraire18,
         uint256 borrowerNumeraire18,
         uint256 recycledCumulative18,
-        uint256 recycledForDay18
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -327,6 +383,17 @@ contract RewardAggregatorFacet is
         // availability + clamped day attribution) from the mirror's report.
         LibVpfiRecycle.recordChainRecycled(
             s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
+        );
+        // #1222 M3 B3 — and the retirement half of the same report: retire
+        // this chain's reservation ledger by what it has actually spent or
+        // released, and give back availability for the released share (those
+        // tokens never left its bucket). Clamped against Base's own
+        // instruction cumulative inside the helper.
+        LibVpfiRecycle.recordChainCommitRetirement(
+            s,
+            sourceChainId,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18
         );
         s.chainDailyReported[dayId][sourceChainId] = true;
         uint32 count;
@@ -577,15 +644,113 @@ contract RewardAggregatorFacet is
 
     /// @notice #1222 M3 B2-a — a mirror chain's outstanding recycled
     ///         commitments (mirror-locally-funded slices reserved at
-    ///         armed-day finalization; consumed/released from B2-b on).
-    ///         Always 0 for Base — its funded shares reserve into the
-    ///         global outstanding ledger.
+    ///         armed-day finalization). B3 made this RETIRE: it now equals
+    ///         `instructed − retired` at every instant, in-flight broadcasts
+    ///         included, instead of growing monotonically. Always 0 for Base
+    ///         — its funded shares reserve into the global outstanding
+    ///         ledger.
     function getChainOutstandingRecycledCommit(uint32 chainId)
         external
         view
         returns (uint256)
     {
         return LibVaipakam.storageSlot().chainOutstandingRecycledCommit[chainId];
+    }
+
+    /// @notice #1222 M3 B1 — Base's per-chain recycled ledger for `chainId`
+    ///         (Base's own figures live under its chain id). Zeros on
+    ///         mirrors and for never-reported chains.
+    /// @dev    MOVED here from {ConfigFacet} in #1222 M3 B3: B3 gave
+    ///         `availRecycled` a third input, which tipped that facet over
+    ///         EIP-170, and this is where the rest of the per-chain mesh
+    ///         ledger already reads from.
+    /// @return reportedCumulative   Highest cumulative accepted from the
+    ///                              chain (availability, monotonic).
+    /// @return consumedCumulative   Cumulative Base has instructed the chain
+    ///                              to consume (written from B2 on).
+    /// @return availRecycled        `reported + released − consumed` — what
+    ///                              mesh funding/netting may draw against.
+    ///                              #1222 M3 B3 added the release term (a
+    ///                              commitment the chain forfeited/expired
+    ///                              un-spent left its tokens in that chain's
+    ///                              bucket) and routed this view and the
+    ///                              funding pass through ONE helper, so the
+    ///                              operator figure and the figure Base
+    ///                              actually funds from cannot drift.
+    /// @return attributedCumulative Σ of accepted per-day credits — the
+    ///                              attribution clamp baseline; always
+    ///                              `≤ reportedCumulative`.
+    function getChainRecycledLedger(uint32 chainId)
+        external
+        view
+        returns (
+            uint256 reportedCumulative,
+            uint256 consumedCumulative,
+            uint256 availRecycled,
+            uint256 attributedCumulative
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        reportedCumulative = s.chainReportedRecycled[chainId];
+        consumedCumulative = s.chainConsumedRecycled[chainId];
+        availRecycled = LibVpfiRecycle.mirrorAvailRecycled(s, chainId);
+        attributedCumulative = s.chainAttributedRecycled[chainId];
+    }
+
+    /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has
+    ///         attributed to `(dayId, chainId)` — the mesh half of the
+    ///         `credited[D]` feed that B2 folds into `Ā`. Moved here from
+    ///         {ConfigFacet} alongside {getChainRecycledLedger}.
+    /// @return credit   VPFI wei attributed (0 when unaccepted or clamped
+    ///                  away).
+    /// @return accepted True once the chain's report for the day was
+    ///                  processed (distinguishes a genuine zero credit from
+    ///                  "no report yet").
+    function getChainDailyRecycledCredit(uint256 dayId, uint32 chainId)
+        external
+        view
+        returns (uint256 credit, bool accepted)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        credit = s.chainDailyRecycledCredit[dayId][chainId];
+        accepted = s.chainRecycledDayAccepted[dayId][chainId];
+    }
+
+    /// @notice #1222 M3 B3 — the commitment-retirement cumulatives Base has
+    ///         accepted (and clamped) from `chainId`'s day-close reports.
+    /// @return retiredCumulative  Everything that chain has retired from its
+    ///                            outstanding recycled commitments — claims
+    ///                            and releases together. Retires
+    ///                            {getChainOutstandingRecycledCommit}.
+    /// @return releasedCumulative The release-only subset (forfeit / RL-3
+    ///                            expiry — the tokens stayed in that chain's
+    ///                            bucket), which is added back to its
+    ///                            availability. Always
+    ///                            `≤ retiredCumulative`, and both are
+    ///                            `≤ chainConsumedRecycled[chainId]`.
+    function getChainRecycledCommitRetirement(uint32 chainId)
+        external
+        view
+        returns (uint256 retiredCumulative, uint256 releasedCumulative)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        retiredCumulative = s.chainRetiredRecycledCommit[chainId];
+        releasedCumulative = s.chainReleasedRecycledCommit[chainId];
+    }
+
+    /// @notice #1222 M3 B3 — THIS chain's own commitment-retirement
+    ///         cumulatives, the pair its day-close report ships to Base.
+    ///         Live on every chain (canonical and mirror); the operator
+    ///         readback that proves a mirror's report matches its local
+    ///         ledger.
+    function getLocalRecycledCommitRetirement()
+        external
+        view
+        returns (uint256 retiredCumulative, uint256 releasedCumulative)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        retiredCumulative = s.recycleCommitRetiredCumulative;
+        releasedCumulative = s.recycleCommitReleasedCumulative;
     }
 
     /// @dev Governor PR-3b (#1217 §3.1) — compute + stamp the day's pool

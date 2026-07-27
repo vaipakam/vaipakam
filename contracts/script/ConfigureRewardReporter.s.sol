@@ -262,14 +262,19 @@ contract ConfigureRewardReporter is Script {
         );
 
         // (2a) IRewardMessenger.quoteSendChainReport selector present?
-        // #1222 M3 B1 (Codex #1413 r1/r4) — accept EITHER generation: the
-        // widened five-argument shape, or the pre-#1222 three-argument
-        // shape (a diamond-first rollout legitimately re-runs this spell
-        // against a still-bound legacy messenger, whose legacy send/quote
-        // surface `closeDay` can still use).
+        // #1222 M3 B1 (Codex #1413 r1/r4) — accept ANY generation: the
+        // #1222 M3 B3 seven-argument shape, the B1 five-argument shape, or
+        // the pre-#1222 three-argument shape (a diamond-first rollout
+        // legitimately re-runs this spell against a still-bound older
+        // messenger, whose send/quote surface `closeDay` can still use via
+        // the reporter's generation-fallback shim). The overload set makes
+        // `.selector` on the bare name ambiguous, so every probe pins its
+        // full signature.
         (bool ok1, bytes memory ret1) = candidate.staticcall(
-            abi.encodeWithSelector(
-                IRewardMessenger.quoteSendChainReport.selector,
+            abi.encodeWithSignature(
+                "quoteSendChainReport(uint256,uint256,uint256,uint256,uint256,uint256,uint256)",
+                uint256(0),
+                uint256(0),
                 uint256(0),
                 uint256(0),
                 uint256(0),
@@ -277,6 +282,18 @@ contract ConfigureRewardReporter is Script {
                 uint256(0)
             )
         );
+        if (!(ok1 || ret1.length > 0)) {
+            (ok1, ret1) = candidate.staticcall(
+                abi.encodeWithSignature(
+                    "quoteSendChainReport(uint256,uint256,uint256,uint256,uint256)",
+                    uint256(0),
+                    uint256(0),
+                    uint256(0),
+                    uint256(0),
+                    uint256(0)
+                )
+            );
+        }
         if (!(ok1 || ret1.length > 0)) {
             (ok1, ret1) = candidate.staticcall(
                 abi.encodeWithSignature(

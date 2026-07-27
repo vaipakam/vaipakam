@@ -736,6 +736,19 @@ contract TestMutatorFacet {
         LibVpfiRecycle.consume(amount);
     }
 
+    /// @notice #1222 M3 B3 test-only — drive the REAL forfeit/expiry release
+    ///         path, which retires an outstanding recycled commitment WITHOUT
+    ///         a payout (the tokens stay in the bucket). Deliberately the
+    ///         genuine {LibVpfiRecycle.releaseCommitment} rather than raw
+    ///         writes: B3's whole point is that the release cumulative it
+    ///         maintains is what restores a chain's availability on Base, so
+    ///         a test that faked the counter would prove nothing.
+    function releaseRecycleCommitmentRaw(uint256 amount) external {
+        LibVpfiRecycle.releaseCommitment(
+            LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, amount
+        );
+    }
+
     /// @notice Governor PR-3b test-only — arm commitment reservation from
     ///         `dayId` (production arms this via the PR-3c cutover).
     function setGovernorCommitArmedFromDayRaw(uint256 dayId) external {

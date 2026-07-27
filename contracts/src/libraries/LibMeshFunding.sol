@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
@@ -252,17 +253,18 @@ library LibMeshFunding {
     }
 
     /// @dev #1222 M3 B2-d3 — Base's model of a mirror's committable recycle
-    ///      bucket: everything the chain has ever reported crediting, less
-    ///      everything Base has instructed it to fund locally. Floors at
-    ///      zero (the two counters are advanced by different paths — a
-    ///      report can lag an instruction across a missed day).
+    ///      bucket. B3 moved the formula into {LibVpfiRecycle} (which owns
+    ///      the per-chain ledger) so this funding pass and the
+    ///      operator-facing `getChainRecycledLedger` view cannot drift, and
+    ///      added the release term: a commitment the mirror FORFEITS or
+    ///      EXPIRES un-spent leaves its tokens in the bucket, so it must
+    ///      return to availability instead of being lost from Base's model
+    ///      forever.
     function _mirrorAvailable(
         LibVaipakam.Storage storage s,
         uint32 chainId
     ) private view returns (uint256) {
-        uint256 reported = s.chainReportedRecycled[chainId];
-        uint256 consumed = s.chainConsumedRecycled[chainId];
-        return reported > consumed ? reported - consumed : 0;
+        return LibVpfiRecycle.mirrorAvailRecycled(s, chainId);
     }
 
     /// @dev Shared read-only context for the per-chain stamp step (one

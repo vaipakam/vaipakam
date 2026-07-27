@@ -87,9 +87,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](142);
+        selectors = new bytes4[](143);
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
         selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
+        // #1222 M3 B3 — real forfeit/expiry release path for the
+        // commitment-retirement counter tests.
+        selectors[142] =
+            TestMutatorFacet.releaseRecycleCommitmentRaw.selector;
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
@@ -1600,7 +1604,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](92);
+        selectors = new bytes4[](90);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1752,8 +1756,9 @@ contract HelperTest {
         selectors[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         selectors[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
-        selectors[90] = ConfigFacet.getChainRecycledLedger.selector;
-        selectors[91] = ConfigFacet.getChainDailyRecycledCredit.selector;
+        // #1222 M3 B3 — `getChainRecycledLedger` /
+        // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
+        // (ConfigFacet hit the EIP-170 ceiling), shrinking this list by two.
         return selectors;
     }
 
@@ -1923,10 +1928,27 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](28);
+        // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
+        // ConfigFacet (which hit the EIP-170 ceiling).
+        selectors[26] =
+            RewardAggregatorFacet.getChainRecycledLedger.selector;
+        selectors[27] =
+            RewardAggregatorFacet.getChainDailyRecycledCredit.selector;
         // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
         selectors[22] =
             RewardAggregatorFacet.getRecycleCustodyPosition.selector;
+        // #1222 M3 B3 — the eight-word report ingress (a THIRD overload, so
+        // pinned by signature) + the commitment-retirement reads.
+        selectors[23] = bytes4(
+            keccak256(
+                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
+            )
+        );
+        selectors[24] =
+            RewardAggregatorFacet.getChainRecycledCommitRetirement.selector;
+        selectors[25] =
+            RewardAggregatorFacet.getLocalRecycledCommitRetirement.selector;
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         selectors[17] =
             RewardAggregatorFacet.getChainDayRecycledFunding.selector;

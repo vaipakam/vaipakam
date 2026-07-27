@@ -370,7 +370,7 @@ contract GovernorDayPoolTest is SetupTest {
 
         // Per-chain books carry the local share; Base has none.
         (uint256 reported, uint256 consumed, uint256 avail, ) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 40 ether, "reported cumulative");
         assertApproxEqAbs(consumed, 40 ether, 1e15, "instruction booked");
         assertLe(consumed, reported, "SS7 invariant: consumed <= reported");
@@ -381,7 +381,7 @@ contract GovernorDayPoolTest is SetupTest {
             "per-chain reservation ledger mirrors the instruction"
         );
         (, uint256 consumedBase, , ) =
-            _cfg().getChainRecycledLedger(CHAIN_BASE);
+            _agg().getChainRecycledLedger(CHAIN_BASE);
         assertEq(consumedBase, 0, "Base never books a per-chain instruction");
 
         // One bucket, one ledger: the GLOBAL reservation is Base's share
@@ -427,7 +427,7 @@ contract GovernorDayPoolTest is SetupTest {
             arb6.fundedLender + arb6.fundedBorrower, 0, "still funded by Base"
         );
         (uint256 reported, uint256 consumed, , ) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertLe(consumed, reported, "invariant holds across days");
     }
 

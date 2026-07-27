@@ -28,6 +28,22 @@ interface IRewardMessengerLegacySend {
     ) external payable;
 }
 
+/// @dev #1222 M3 B1 six-argument sender — the shape that preceded B3's
+///      eight-word report. Declared separately (rather than reached through
+///      {IRewardMessenger}, which now carries both) so the rollout shim in
+///      {RewardReporterFacet-closeDay} can name each generation explicitly:
+///      8 → 6 → 4, one fallback per messenger generation.
+interface IRewardMessengerB1Send {
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        address payable refundAddress
+    ) external payable;
+}
+
 /**
  * @title RewardReporterFacet
  * @author Vaipakam Developer Team
@@ -67,6 +83,26 @@ contract RewardReporterFacet is
     ///         `rewardGraceSeconds` — 4 hours for Phase 1. Admin may
     ///         widen or tighten per spec §4a via {setRewardGraceSeconds}.
     uint64 internal constant DEFAULT_REWARD_GRACE_SECONDS = 4 hours;
+
+    /// @dev #1222 M3 B3 — the six figures one day-close report carries,
+    ///      gathered once and threaded through the canonical write and the
+    ///      mirror send as a memory struct rather than six stack slots
+    ///      (viaIR headroom: {closeDay} also holds the day cursor, the
+    ///      messenger address and the rollout shim's frames).
+    ///
+    ///      `lender` / `borrower` — this chain's day-`D` interest
+    ///      numerators. `recycledCumulative18` / `recycledForDay18` — B1's
+    ///      availability cumulative and `Ā` day-attribution pair.
+    ///      `commitRetiredCumulative18` / `commitReleasedCumulative18` — B3's
+    ///      commitment-retirement pair (see the design record).
+    struct ReportFigures {
+        uint256 lender;
+        uint256 borrower;
+        uint256 recycledCumulative18;
+        uint256 recycledForDay18;
+        uint256 commitRetiredCumulative18;
+        uint256 commitReleasedCumulative18;
+    }
 
     /// @notice Emitted when the local chain reports its day-`D` interest
     ///         totals — directly to aggregator storage on Base, or via
@@ -169,23 +205,26 @@ contract RewardReporterFacet is
         // so its `recycledCreditedByDay` bucket is complete. Read through the
         // library helper so a diamond refreshed over live pre-#1222 state
         // reports its pre-upgrade absorption too (Codex #1413 r5).
-        uint256 recycledCumulative18 = LibVpfiRecycle.creditedCumulative(s);
-        uint256 recycledForDay18 = s.recycledCreditedByDay[dayId];
+        // #1222 M3 B3 — and this chain's commitment-RETIREMENT cumulatives
+        // ride the same day-close, so Base can close its per-chain
+        // reservation ledger and give back availability for commitments this
+        // chain released un-spent (forfeit / RL-3 expiry leave the tokens in
+        // the bucket). Both are monotonic; Base ratchets and clamps them.
+        ReportFigures memory f = ReportFigures({
+            lender: lenderNumeraire18,
+            borrower: borrowerNumeraire18,
+            recycledCumulative18: LibVpfiRecycle.creditedCumulative(s),
+            recycledForDay18: s.recycledCreditedByDay[dayId],
+            commitRetiredCumulative18: s.recycleCommitRetiredCumulative,
+            commitReleasedCumulative18: s.recycleCommitReleasedCumulative
+        });
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
 
         if (s.isCanonicalRewardChain) {
             // Base writes directly — no cross-chain hop for its own numbers.
             uint32 chainId = uint32(block.chainid);
-            _recordChainReportLocal(
-                s,
-                dayId,
-                chainId,
-                lenderNumeraire18,
-                borrowerNumeraire18,
-                recycledCumulative18,
-                recycledForDay18
-            );
+            _recordChainReportLocal(s, dayId, chainId, f);
             emit ChainInterestReported(
                 dayId,
                 chainId,
@@ -213,41 +252,71 @@ contract RewardReporterFacet is
             );
 
             // Forward full msg.value; messenger refunds the caller directly.
-            // Codex #1413 r3 — rollout shim: an upgraded mirror diamond in
-            // front of a not-yet-upgraded messenger falls back to the legacy
-            // four-argument send (recycled figures simply don't travel until
-            // the messenger is current), so the permissionless day-close
-            // never reverts through the upgrade window. Codex r4 P1 — the
-            // fallback fires ONLY on the missing-selector shape (a pre-#1222
-            // messenger has no receive path for the unknown selector and
-            // reverts with EMPTY data); every reasoned failure — paused,
-            // InsufficientFee from a caller who quoted the legacy shape —
-            // bubbles unchanged, because downgrading a current messenger's
-            // real failure to a legacy send would permanently strip the
-            // day's recycled fields (`chainReportSentAt` blocks a resend).
-            try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
+            _dispatchChainReport(messenger, dayId, f);
+        }
+    }
+
+    /**
+     * @dev Mirror-side send with the generation-fallback rollout shim.
+     *
+     *      Codex #1413 r3 — an upgraded mirror diamond in front of a
+     *      not-yet-upgraded messenger falls back a generation at a time
+     *      (#1222 M3 B3: 8-word → 6-word → legacy 4-word), so the
+     *      permissionless day-close never reverts through an upgrade window;
+     *      the fields the older messenger cannot carry simply don't travel,
+     *      and Base's ledger treats their absence as "nothing to advance".
+     *
+     *      Codex r4 P1 — a fallback fires ONLY on the missing-selector shape
+     *      (an older messenger has no receive path for the unknown selector
+     *      and reverts with EMPTY data). Every reasoned failure — paused,
+     *      InsufficientFee from a caller who quoted an older shape — bubbles
+     *      unchanged, because downgrading a current messenger's real failure
+     *      would permanently strip that day's extra fields
+     *      (`chainReportSentAt` blocks a resend).
+     */
+    function _dispatchChainReport(
+        address messenger,
+        uint256 dayId,
+        ReportFigures memory f
+    ) private {
+        try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
+            dayId,
+            f.lender,
+            f.borrower,
+            f.recycledCumulative18,
+            f.recycledForDay18,
+            f.commitRetiredCumulative18,
+            f.commitReleasedCumulative18,
+            payable(msg.sender)
+        ) {} catch (bytes memory reason) {
+            _bubbleUnlessMissingSelector(reason);
+            // A failed attempt returned its full value; the fallback
+            // re-forwards it.
+            try IRewardMessengerB1Send(messenger).sendChainReport{
+                value: msg.value
+            }(
                 dayId,
-                lenderNumeraire18,
-                borrowerNumeraire18,
-                recycledCumulative18,
-                recycledForDay18,
+                f.lender,
+                f.borrower,
+                f.recycledCumulative18,
+                f.recycledForDay18,
                 payable(msg.sender)
-            ) {} catch (bytes memory reason) {
-                if (reason.length != 0) {
-                    assembly ("memory-safe") {
-                        revert(add(reason, 0x20), mload(reason))
-                    }
-                }
-                // A failed six-argument attempt returned its full value;
-                // the fallback re-forwards it.
+            ) {} catch (bytes memory b1Reason) {
+                _bubbleUnlessMissingSelector(b1Reason);
                 IRewardMessengerLegacySend(messenger).sendChainReport{
                     value: msg.value
-                }(
-                    dayId,
-                    lenderNumeraire18,
-                    borrowerNumeraire18,
-                    payable(msg.sender)
-                );
+                }(dayId, f.lender, f.borrower, payable(msg.sender));
+            }
+        }
+    }
+
+    /// @dev Re-throws `reason` verbatim unless it is the empty revert an
+    ///      older messenger returns for an unknown selector — the ONLY shape
+    ///      that may downgrade a generation (see {_dispatchChainReport}).
+    function _bubbleUnlessMissingSelector(bytes memory reason) private pure {
+        if (reason.length != 0) {
+            assembly ("memory-safe") {
+                revert(add(reason, 0x20), mload(reason))
             }
         }
     }
@@ -262,18 +331,28 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s,
         uint256 dayId,
         uint32 sourceChainId,
-        uint256 lenderNumeraire18,
-        uint256 borrowerNumeraire18,
-        uint256 recycledCumulative18,
-        uint256 recycledForDay18
+        ReportFigures memory f
     ) internal {
-        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = lenderNumeraire18;
-        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] = borrowerNumeraire18;
+        s.chainDailyLenderInterestNumeraire18[dayId][sourceChainId] = f.lender;
+        s.chainDailyBorrowerInterestNumeraire18[dayId][sourceChainId] =
+            f.borrower;
         // #1222 M3 B1 — Base records its OWN chain in the per-chain recycled
         // ledger through the same helper the mirror ingress uses, so both
         // paths write identically and B2/B3's netting sees one uniform ledger.
         LibVpfiRecycle.recordChainRecycled(
-            s, sourceChainId, dayId, recycledCumulative18, recycledForDay18
+            s, sourceChainId, dayId, f.recycledCumulative18, f.recycledForDay18
+        );
+        // #1222 M3 B3 — and the retirement half of the same report, which
+        // closes `chainOutstandingRecycledCommit[c]` and restores
+        // availability for released commitments. Inert for Base's own chain
+        // id (Base never instructs itself, so both clamps pin it to zero) —
+        // recorded through the identical path purely so the two report
+        // sources cannot diverge.
+        LibVpfiRecycle.recordChainCommitRetirement(
+            s,
+            sourceChainId,
+            f.commitRetiredCumulative18,
+            f.commitReleasedCumulative18
         );
         if (!s.chainDailyReported[dayId][sourceChainId]) {
             s.chainDailyReported[dayId][sourceChainId] = true;

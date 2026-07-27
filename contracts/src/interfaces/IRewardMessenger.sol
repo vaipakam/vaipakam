@@ -131,6 +131,32 @@ interface IRewardMessenger {
     ) external payable;
 
     /**
+     * @notice #1222 M3 B3 — day-close chain report carrying the
+     *         commitment-RETIREMENT cumulatives alongside the B1 recycled
+     *         figures (report payload 6 → 8 words).
+     * @dev    Same call as the six-argument overload above, plus the two
+     *         counters that let Base close its per-chain reservation ledger
+     *         and restore availability for commitments this chain released
+     *         un-spent. Both are monotonic cumulative totals — Base ratchets
+     *         and clamps them, so a delayed or replayed delivery is inert
+     *         rather than corrupting.
+     * @param commitRetiredCumulative18  Σ of every actual decrement of this
+     *        chain's outstanding recycled commitments (claims + releases).
+     * @param commitReleasedCumulative18 The release-only subset (tokens
+     *        stayed in the bucket); always `≤ commitRetiredCumulative18`.
+     */
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        address payable refundAddress
+    ) external payable;
+
+    /**
      * @notice Broadcast the finalized global lender+borrower Numeraire18
      *         denominator for `dayId` to every mirror chain.
      * @dev Callable only by the Diamond. The messenger iterates its
@@ -170,6 +196,20 @@ interface IRewardMessenger {
         uint256 borrowerNumeraire18,
         uint256 recycledCumulative18,
         uint256 recycledForDay18
+    ) external view returns (uint256 nativeFee);
+
+    /// @notice #1222 M3 B3 — quote the EIGHT-word report shape (the
+    ///         six-word figures plus the two commitment-retirement
+    ///         cumulatives). Keepers pricing `closeDay` must quote the shape
+    ///         their diamond will actually dispatch.
+    function quoteSendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18
     ) external view returns (uint256 nativeFee);
 
     /// @notice Quote the native CCIP fee SUM for a Base→mirrors broadcast.
