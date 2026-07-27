@@ -10,6 +10,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -669,7 +670,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
 
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E)
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
         );
         LibVaipakam.ReceivedRemit memory rec =
             remit.getReceivedRemit(address(0xBA5E), 42);
@@ -695,7 +696,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_MirrorIngress_LegacyDeliveryHasNoReceipt() public {
         _configureMirror();
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E)
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
         );
         assertEq(
             remit.getReceivedRemit(address(0xBA5E), 0).receivedAt,
@@ -720,7 +721,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_SendRemitAck_RejectsStaleReceiptAfterBaseRotation() public {
         _configureMirror();
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E)
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
         );
         // Owner rotates the canonical deployment.
         RewardReporterFacet(address(diamond)).setBaseChainId(999);
@@ -770,10 +771,10 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_MirrorIngress_DeploymentReceiptsCoexist() public {
         _configureMirror();
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D)
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0
         );
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF)
+            address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0
         );
         assertEq(
             remit.getReceivedRemit(address(0x01D), 42).amount,
@@ -787,7 +788,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         // Per-key first-write-wins (a delayed duplicate cannot overwrite).
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF)
+            address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
         );
         assertEq(
             remit.getReceivedRemit(address(0x2EF), 42).amount,
@@ -852,6 +853,128 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.sendRemitAck{value: 0.001 ether}(
             1, address(0xBA5E), payable(address(this))
         );
+    }
+
+    // ─── B2-d5: relocated-custody credit at remit arrival ─────────────────
+
+    /// @dev The core d5 shape: an arriving remit's RECYCLED share credits the
+    ///      mirror's bucket (so the claim path's `consume(paidRecycled)` has
+    ///      real backing) while staying OUT of both Ā-feeding figures — the
+    ///      day-bucket AND the cumulative this chain reports to Base.
+    function test_D5_CustodyCredit_BacksBucket_ButFeedsNeitherAFigure() public {
+        _configureMirror();
+        ConfigFacet cfg = ConfigFacet(address(diamond));
+
+        // Give the mirror some GENUINE local absorption first, so the test
+        // distinguishes "excluded" from "trivially zero".
+        mutator.setRecycleBucketRaw(40e18);
+        mutator.setRecycleCreditedCumulativeRaw(40e18);
+        (uint256 dayNow, ) = InteractionRewardsLensFacet(address(diamond))
+            .getInteractionCurrentDay();
+        uint256 dayBucketBefore = cfg.getRecycledCreditedByDay(dayNow);
+        uint256 reportedBefore = cfg.getRecycleCreditedCumulative();
+        assertEq(reportedBefore, 40e18, "precondition: genuine absorption");
+
+        // Base tops up 23 recycled inside a 30-token delivery.
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
+            23e18
+        );
+
+        // Bucket grew by exactly the recycled share — the claim path is backed.
+        assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
+        // ...but neither Ā-feeding figure moved.
+        assertEq(
+            cfg.getRecycledCreditedByDay(dayNow),
+            dayBucketBefore,
+            "day-bucket (A-bar's per-day feed) untouched"
+        );
+        assertEq(
+            cfg.getRecycleCreditedCumulative(),
+            reportedBefore,
+            "reported cumulative untouched despite the bucket growing"
+        );
+
+        (uint256 relocated, uint256 bucket, uint256 reported) =
+            RewardAggregatorFacet(address(diamond))
+                .getRecycleCustodyPosition();
+        assertEq(relocated, 23e18, "custody counter records the relocation");
+        assertEq(bucket, 63e18, "position reports the live bucket");
+        assertEq(reported, 40e18, "position reports the netted cumulative");
+    }
+
+    /// @dev THE load-bearing invariant (design record §2f.2). Base derives a
+    ///      mirror's committable local funding as `reported − consumed`. If
+    ///      relocated custody reached `reported`, Base would re-offer its own
+    ///      already-spent top-up as that mirror's OWN funding and commit it
+    ///      twice. The exclusion must survive the tokens being CONSUMED,
+    ///      because `creditedCumulative` derives a floor from
+    ///      `recycleBucket + paidOutRecycled` — consuming moves the custody
+    ///      value from one term of that sum into the other.
+    function test_D5_ReportedCumulativeSurvivesConsume_NoPhantomAvailability()
+        public
+    {
+        _configureMirror();
+        ConfigFacet cfg = ConfigFacet(address(diamond));
+
+        mutator.setRecycleBucketRaw(40e18);
+        mutator.setRecycleCreditedCumulativeRaw(40e18);
+
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 23e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
+            23e18
+        );
+        assertEq(cfg.getRecycleBucket(), 63e18, "backed");
+
+        // The mirror's claims now consume the WHOLE recycled payout — the
+        // 40 it absorbed itself plus the 23 Base delivered.
+        mutator.consumeRecycleRaw(63e18);
+        assertEq(cfg.getRecycleBucket(), 0, "bucket drained by claims");
+
+        // The reported cumulative must still be 40: this chain absorbed 40,
+        // full stop. Without the custody subtraction the derived floor
+        // (`0 + 63`) would report 63 and hand Base 23 of phantom
+        // availability on the very next day.
+        assertEq(
+            cfg.getRecycleCreditedCumulative(),
+            40e18,
+            "reports only GENUINE absorption after the custody tokens are consumed"
+        );
+    }
+
+    /// @dev A payload cannot claim more recycled backing than it delivered —
+    ///      the Diamond's own bound, independent of the receiver's scaling.
+    function test_D5_Ingress_RejectsRecycledShareAboveDelivery() public {
+        _configureMirror();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecycledShareExceedsDelivery.selector,
+                8e18,
+                7e18
+            )
+        );
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
+            8e18
+        );
+    }
+
+    /// @dev Backward-decodability: a delayed pre-d5 delivery arrives with a
+    ///      zero share and must relocate NO custody — degrading to the old
+    ///      behaviour rather than mis-crediting.
+    function test_D5_LegacyShapedDelivery_RelocatesNoCustody() public {
+        _configureMirror();
+        ConfigFacet cfg = ConfigFacet(address(diamond));
+        mutator.setRecycleBucketRaw(40e18);
+
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
+        );
+
+        assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
+        (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
+            .getRecycleCustodyPosition();
+        assertEq(relocated, 0, "no custody relocated");
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

@@ -6,6 +6,7 @@ import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.so
 import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
+import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
 import {LibPrepayCleanup} from "../../src/libraries/LibPrepayCleanup.sol";
@@ -722,6 +723,17 @@ contract TestMutatorFacet {
     ///         reports to Base) without driving real bucket credits.
     function setRecycleCreditedCumulativeRaw(uint256 amount) external {
         LibVaipakam.storageSlot().recycleCreditedCumulative = amount;
+    }
+
+    /// @notice #1222 M3 B2-d5 test-only — drive the REAL consume path
+    ///         (bucket → `paidOutRecycled`), which is what a mirror's claims
+    ///         do. Deliberately the genuine {LibVpfiRecycle.consume} rather
+    ///         than raw writes: the d5 exclusion has to hold across the
+    ///         value moving between the two terms of the derived floor
+    ///         (`recycleBucket + paidOutRecycled`), so a test that faked the
+    ///         move would not exercise the thing that matters.
+    function consumeRecycleRaw(uint256 amount) external {
+        LibVpfiRecycle.consume(amount);
     }
 
     /// @notice Governor PR-3b test-only — arm commitment reservation from

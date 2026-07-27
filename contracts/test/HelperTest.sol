@@ -87,7 +87,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](141);
+        selectors = new bytes4[](142);
+        // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
+        selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
@@ -1921,7 +1923,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](23);
+        // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
+        selectors[22] =
+            RewardAggregatorFacet.getRecycleCustodyPosition.selector;
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         selectors[17] =
             RewardAggregatorFacet.getChainDayRecycledFunding.selector;

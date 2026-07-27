@@ -41,6 +41,9 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
 
     uint256 public lastRemitId;
     address public lastRemitter;
+    /// @dev B2-d5 — the recycled component the receiver forwarded, already
+    ///      scaled to what physically landed.
+    uint256 public lastRecycledShare;
 
     function onRewardBudgetReceived(
         address token,
@@ -48,7 +51,8 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         uint256[] calldata dayIds,
         uint256 sourceChainId,
         uint256 remitId,
-        address remitter
+        address remitter,
+        uint256 recycledShare
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
@@ -56,6 +60,7 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         lastDayCount = dayIds.length;
         lastRemitId = remitId;
         lastRemitter = remitter;
+        lastRecycledShare = recycledShare;
         callCount++;
     }
 }
@@ -160,6 +165,81 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastAmount(), 500e18, "credited amount");
         assertEq(diamond.lastRemitId(), 77, "echo remitId surfaced");
         assertEq(diamond.lastRemitter(), address(0xD1A), "payload remitter");
+        // B2-d5 — a d2-shaped payload states no recycled share, so the
+        // mirror relocates no custody: the pre-d5 behaviour exactly.
+        assertEq(diamond.lastRecycledShare(), 0, "d2 shape relocates nothing");
+    }
+
+    /// @dev #1222 M3 B2-d5 — the THIRD payload layout. The discriminator is
+    ///      the same leading ABI head word (the `dayIds` offset = 32 × head
+    ///      slots), so 0x40 / 0x80 / 0xA0 select legacy / d2 / d5 with no new
+    ///      mechanism. This asserts the widest shape surfaces the recycled
+    ///      component, and the two older shapes surface zero — the
+    ///      conservative direction, which is what makes a delayed pre-d5
+    ///      delivery safe to accept.
+    function test_Deliver_D5PayloadCarriesRecycledShare_OlderShapesDoNot()
+        public
+    {
+        vpfi.mint(address(receiver), 500e18);
+        messenger.relay(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            abi.encode(
+                _days(1, 2),
+                uint256(500e18),
+                uint256(77),
+                address(0xD1A),
+                uint256(120e18)
+            ),
+            _tokens(address(vpfi), 500e18)
+        );
+        assertEq(diamond.lastAmount(), 500e18, "credited amount");
+        assertEq(diamond.lastRemitId(), 77, "remitId still surfaced");
+        assertEq(diamond.lastRemitter(), address(0xD1A), "remitter still surfaced");
+        assertEq(
+            diamond.lastRecycledShare(), 120e18, "recycled share surfaced"
+        );
+
+        // Legacy 0x40 on the same receiver: still decodes, still zero.
+        _deliver(10e18, 10e18);
+        assertEq(diamond.lastRecycledShare(), 0, "legacy shape stays zero");
+    }
+
+    /// @dev B2-d5 — the declared recycled share is a component of the
+    ///      DECLARED total, but a fee-on-transfer token can land less than
+    ///      that. Crediting the face value would relocate custody the Diamond
+    ///      never received (and the Diamond's backing assertion would revert
+    ///      the whole arrival), so the share scales to what actually landed.
+    function test_Deliver_ScalesRecycledShareToWhatActuallyLanded() public {
+        // Receiver holds only half the declared total, so `toTransfer` — and
+        // therefore `actualReceived` — is halved.
+        vpfi.mint(address(receiver), 250e18);
+        messenger.relay(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            abi.encode(
+                _days(1, 2),
+                uint256(500e18),
+                uint256(77),
+                address(0xD1A),
+                uint256(200e18)
+            ),
+            _tokens(address(vpfi), 500e18)
+        );
+        assertEq(diamond.lastAmount(), 250e18, "half landed");
+        // 200 × 250/500 = 100, floored — never more than what arrived.
+        assertEq(
+            diamond.lastRecycledShare(),
+            100e18,
+            "recycled share scaled to the delivered fraction"
+        );
+        assertLe(
+            diamond.lastRecycledShare(),
+            diamond.lastAmount(),
+            "scaled share can never exceed the delivery"
+        );
     }
 
     // ── auth / validation reverts ────────────────────────────────────────────
