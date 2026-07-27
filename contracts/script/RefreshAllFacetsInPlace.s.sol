@@ -78,6 +78,12 @@ import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+// #1222 M3 B2-d5 — the mirror-side remit receiver is a standalone UUPS
+// proxy, not a Diamond facet; the B2-d5 block below upgrades it in step
+// with the widened ingress so an un-upgraded receiver cannot silently
+// decode the new payload as the legacy shape.
+import {RewardRemittanceReceiver} from "../src/crosschain/RewardRemittanceReceiver.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
 interface IOwnable {
@@ -284,6 +290,102 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             IDiamondCut(diamond).diamondCut(rmCut, address(0), "");
             console.log(
                 "M1 (#1346): reset notification tariff to VPFI default + removed stale 8-arg setNumeraire selector"
+            );
+        }
+
+        // ─── #1222 M3 B2-d5 — remit ingress widened 6 → 7 args ──────────────
+        //
+        // B2-d5 added `recycledShare` to `onRewardBudgetReceived`, so its
+        // SELECTOR changed, and the remit payload grew a fifth head slot
+        // (0x80 → 0xA0). Two facts about this script make the un-migrated
+        // state SILENTLY WRONG rather than merely stale:
+        //
+        //   1. it Replaces/Adds but never Removes (see the SCOPE note), so the
+        //      retired 6-arg selector stays routed to the OLD facet bytecode;
+        //   2. it refreshes DIAMOND FACETS only — the mirror-side
+        //      `RewardRemittanceReceiver` is a standalone UUPS proxy and was
+        //      never upgraded here.
+        //
+        // An un-upgraded receiver reads the 0xA0 payload as the LEGACY 2-tuple
+        // (its `== 0x80` test fails, and the array offset still decodes), drops
+        // `remitId` / `remitter` / `recycledShare`, and calls the retired 6-arg
+        // ingress — which still routes, to stale code. The delivery SUCCEEDS:
+        // tokens land, no receipt is written, so no ack ever flows and Base's
+        // reservation is stranded Pending; and no custody credit is applied, so
+        // the exact accounting hole B2-d5 exists to close stays open. Silently.
+        //
+        // Fixed in two layers, deliberately not one:
+        //
+        //   (a) STRUCTURAL, fail-closed — Remove the retired selector. An
+        //       un-upgraded receiver then REVERTS instead of half-succeeding;
+        //       CCIP records a failed message, re-executable once the receiver
+        //       is upgraded, so nothing is lost. This is the same posture the
+        //       pause lever relies on, and it holds even if an operator runs a
+        //       partial deploy.
+        //   (b) OPERATIONAL — upgrade the receiver proxy, so the happy path
+        //       works immediately rather than needing a manual re-execution.
+        //
+        // Ordering follows the M1 lesson above: the still-routed old selector
+        // is the DURABLE completion marker, so it is Removed LAST. If the
+        // receiver upgrade lands but the Remove is dropped, a rerun re-enters
+        // and redoes both (re-upgrading to a fresh implementation is
+        // idempotent in effect). Removing first would clear the marker while
+        // the upgrade could still fail, permanently skipping it.
+        bytes4 oldRemitIngress = bytes4(
+            keccak256(
+                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)"
+            )
+        );
+        if (loupe.facetAddress(oldRemitIngress) != address(0)) {
+            address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
+            (, , , bool isCanonicalReward, ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+
+            // Codex r2 F2 — a MIRROR must never pass this point without its
+            // receiver actually upgraded. `_readAddrOptional` returns zero for
+            // a missing/stale/malformed artifact as well as for a chain that
+            // genuinely has no receiver; skipping on that ambiguity and then
+            // Removing the selector anyway would leave the old receiver
+            // calling an UNROUTED ingress — every delivery failing — while
+            // destroying the migration marker, so a rerun would never retry
+            // the upgrade. Only the canonical chain legitimately has no
+            // receiver (nothing remits to it), so only it may skip.
+            require(
+                remitReceiver != address(0) || isCanonicalReward,
+                "B2-d5: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
+            );
+
+            if (remitReceiver != address(0)) {
+                address newImpl = address(new RewardRemittanceReceiver());
+                UUPSUpgradeable(remitReceiver).upgradeToAndCall(newImpl, "");
+                // Codex r2 F3 — the CANONICAL key. `writeFacet` would write
+                // `.facets.rewardRemittanceReceiverImpl`, while DeployCrosschain
+                // and every consumer read the TOP-LEVEL
+                // `.rewardRemittanceReceiverImpl`; using it would leave the
+                // real record pointing at the superseded implementation while
+                // inventing a spurious facet entry.
+                Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+                console.log(
+                    "B2-d5: upgraded RewardRemittanceReceiver impl ->", newImpl
+                );
+            } else {
+                console.log(
+                    "B2-d5: canonical reward chain - no receiver to upgrade"
+                );
+            }
+
+            bytes4[] memory rmIngress = new bytes4[](1);
+            rmIngress[0] = oldRemitIngress;
+            IDiamondCut.FacetCut[] memory rmIngressCut =
+                new IDiamondCut.FacetCut[](1);
+            rmIngressCut[0] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: rmIngress
+            });
+            IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
+            console.log(
+                "B2-d5 (#1222): removed retired 6-arg onRewardBudgetReceived selector"
             );
         }
 
@@ -546,4 +648,32 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
     }
+
+    /// @dev Read an optional address key from this chain's `addresses.json`.
+    ///      Chain-scoped keys are ABSENT on chains they do not apply to (the
+    ///      omit-keys policy — no `0x0…0` sentinels), so a missing key must
+    ///      mean "not on this chain", never a hard failure of the whole
+    ///      refresh. Mirrors the helper `Handover.s.sol` uses for the same
+    ///      reason.
+    function _readAddrOptional(string memory key)
+        internal
+        view
+        returns (address)
+    {
+        string memory path = string.concat(
+            "deployments/",
+            Deployments.slugForChainId(block.chainid),
+            "/addresses.json"
+        );
+        try vm.readFile(path) returns (string memory json) {
+            try vm.parseJsonAddress(json, key) returns (address a) {
+                return a;
+            } catch {
+                return address(0);
+            }
+        } catch {
+            return address(0);
+        }
+    }
+
 }

@@ -8,8 +8,10 @@ import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/acces
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {GuardianPausable} from "./GuardianPausable.sol";
+import {RemitWire} from "./RemitWire.sol";
 import {
     ICrossChainMessenger,
     ICrossChainMessageRecipient
@@ -18,7 +20,10 @@ import {
 /// @dev Mirror-side Diamond ingress for the reward-budget remittance flow.
 ///      #1222 M3 B2-d2 widens the ingress with the echoed `remitId` (0 for a
 ///      legacy pre-d2 delivery — the Diamond records no receipt and no ack
-///      ever flows; Base holds no reservation for those).
+///      ever flows; Base holds no reservation for those). B2-d5 adds
+///      `recycledShare`: the RECYCLED component of `amount`, already scaled to
+///      what physically landed. Zero for legacy/d2 layouts, which is the
+///      pre-d5 behaviour.
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
         address token,
@@ -26,7 +31,8 @@ interface IRewardBudgetIngress {
         uint256[] calldata dayIds,
         uint256 sourceChainId,
         uint256 remitId,
-        address remitter
+        address remitter,
+        uint256 recycledShare
     ) external;
 }
 
@@ -175,21 +181,54 @@ contract RewardRemittanceReceiver is
         //   legacy: `abi.encode(uint256[] dayIds, uint256 total)`
         //   d2 r4:  `abi.encode(uint256[] dayIds, uint256 total,
         //            uint256 remitId, address remitter)`
-        // Discriminated by the leading ABI head word — the `dayIds` array
-        // offset: 0x40 (two head slots) for the legacy tuple, 0x80 (four)
-        // for the widened one. Deterministic for these exact encodings;
-        // anything malformed still reverts in `abi.decode` below. A legacy
-        // delivery carries no `remitId`/`remitter` — the Diamond records no
-        // receipt and no ack flows (Base holds no reservation for pre-d2
-        // sends). `remitter` is the sending deployment's own address,
-        // embedded at send — immutable message data, so unlike the
-        // adapter's config-derived sourceSender it identifies the
-        // DEPLOYMENT even for a delayed pre-rotation packet (#1426 r4).
+        //   d5:     `abi.encode(REMIT_WIRE_TAG_D5, uint256[] dayIds,
+        //            uint256 total, uint256 remitId, address remitter,
+        //            uint256 recycledShare)`
+        //
+        // The two OLD shapes are discriminated by the leading ABI head word —
+        // the `dayIds` array offset, exactly `32 × head-slots`: 0x40 (two) for
+        // legacy, 0x80 (four) for d2's. A legacy delivery carries no
+        // `remitId`/`remitter` — the Diamond records no receipt and no ack
+        // flows (Base holds no reservation for pre-d2 sends). `remitter` is
+        // the sending deployment's own address, embedded at send — immutable
+        // message data, so unlike the adapter's config-derived sourceSender
+        // it identifies the DEPLOYMENT even for a delayed pre-rotation packet
+        // (#1426 r4).
+        //
+        // B2-d5 (Codex #1432 r2) — the new shape leads with an explicit
+        // TAG instead of extending the offset ladder to 0xA0, and that choice
+        // is load-bearing for the cross-chain ROLLOUT, not cosmetic.
+        //
+        // With an offset ladder, a not-yet-upgraded receiver reads 0xA0,
+        // fails its `== 0x80` test, falls into the legacy branch — and the
+        // 0xA0 offset is still IN BOUNDS, so the decode SUCCEEDS. It silently
+        // drops `remitId`/`remitter`/`recycledShare`, forwards through the
+        // retired ingress, strands Base's reservation Pending and applies no
+        // custody credit. Since Base is refreshed before the mirrors, that
+        // window is real on every rollout.
+        //
+        // The tag is a keccak-derived sentinel, so it is astronomically
+        // larger than any payload length. An old receiver reads it as the
+        // array offset, the decoder's bounds check fails, and the delivery
+        // REVERTS — deterministically, not probabilistically. CCIP records a
+        // failed message, re-executable once that mirror is upgraded, so
+        // nothing is lost. The wire is therefore version-gated BY
+        // CONSTRUCTION: no operator flag to set, no refresh-order rule to
+        // remember, and no way for a partial rollout to under-credit
+        // silently. Fail-closed is the same posture the pause lever relies on.
         uint256[] memory dayIds;
         uint256 declaredTotal;
         uint256 remitId;
         address remitter;
-        if (abi.decode(payload[:32], (uint256)) == 0x80) {
+        uint256 recycledShare;
+        uint256 head = abi.decode(payload[:32], (uint256));
+        if (head == RemitWire.REMIT_WIRE_TAG_D5) {
+            (, dayIds, declaredTotal, remitId, remitter, recycledShare) =
+                abi.decode(
+                    payload,
+                    (uint256, uint256[], uint256, uint256, address, uint256)
+                );
+        } else if (head == 0x80) {
             (dayIds, declaredTotal, remitId, remitter) = abi.decode(
                 payload,
                 (uint256[], uint256, uint256, address)
@@ -223,13 +262,28 @@ contract RewardRemittanceReceiver is
             diamondBalBefore;
         if (actualReceived == 0) revert ZeroAmount();
 
+        // B2-d5 — scale the declared recycled share to what ACTUALLY landed.
+        // `recycledShare` is a component of `declaredTotal`, but the
+        // fee-on-transfer path above can credit less than that, and crediting
+        // the face value would relocate custody the Diamond never received —
+        // {LibVpfiRecycle.creditCustodyRelocated} asserts physical backing and
+        // would revert the whole arrival. Floored, matching the claim path's
+        // convention that RECYCLED floors and fresh takes the remainder, so
+        // the scaled share can never exceed `actualReceived`. `declaredTotal`
+        // is non-zero here (it equals the non-zero `deliveredAmount`).
+        if (recycledShare != 0 && actualReceived != declaredTotal) {
+            recycledShare =
+                Math.mulDiv(recycledShare, actualReceived, declaredTotal);
+        }
+
         IRewardBudgetIngress(diamond).onRewardBudgetReceived(
             deliveredToken,
             actualReceived,
             dayIds,
             sourceChainId,
             remitId,
-            remitter
+            remitter,
+            recycledShare
         );
 
         emit RewardBudgetForwarded(

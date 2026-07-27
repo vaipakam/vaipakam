@@ -501,6 +501,128 @@ defers to it) states the correct rule verbatim: **"commitment semantics
    share against Base's own bucket, which is exactly what funds it. The fresh
    side is untouched (Base funds all fresh).
 
+## 2f. d5 pins — where the custody credit lands, and how wide its exclusion must be
+
+Scouted against the merged d3 code (`bf2b97cc`) before writing any d5 code.
+Two of these pins **correct earlier wording in this document and in plan
+§M3** — both were written before d3 made mirror availability live, and
+following either literally now would reintroduce an over-statement.
+
+1. **The credit lands at REMIT ARRIVAL, not at mirror forfeit/expiry.**
+   Plan §M3 (~line 446) words it as *"the remitted-recycled share of a mirror
+   forfeit/expiry credits the mirror bucket"*. The code says arrival:
+   `RewardClaimFacet` debits the bucket for the WHOLE recycled payout
+   (`consume(paidRecycled)`, no funding-source split), while
+   `RewardRemittanceFacet.onRewardBudgetReceived` only advances
+   `rewardBudgetReceivedTotal` and never touches `recycleBucket`. So the
+   bucket must already hold the Base-funded share by claim time, and only an
+   arrival credit puts it there. This is also exactly what closes the
+   Codex #1430 r3 F2 hazard that produced the d5-before-d4 ordering gate.
+
+   Consequence: **the 3-site forfeit/expiry reclassification largely
+   dissolves.** Once the remitted share is credited at arrival, a
+   remitted-recycled forfeit/expiry is a *pure commitment release* — the
+   tokens are already in the bucket — which is precisely what
+   `InteractionRewardsFacet` / `RewardClaimFacet` already do for the
+   recycled share. d5 keeps those call sites and adds the provenance the
+   §1/P6 row asked for, rather than a three-way split at each site.
+
+2. **⚠ The exclusion must cover the REPORTED CUMULATIVE, not just the `Ā`
+   day-bucket. This supersedes §5's "No manufactured `Ā`" bullet**, which
+   says the custody credit advances `recycleBucket` **and**
+   `recycleCreditedCumulative` while skipping `recycledCreditedByDay`. That
+   was safe when B2-b forced mirror `avail = 0`. After d3 it is not, by two
+   independent paths:
+
+   - **Availability.** The day-close report sends
+     `LibVpfiRecycle.creditedCumulative(s)`; `recordChainRecycled` ratchets
+     `chainReportedRecycled[c]` to it; d3's `_mirrorAvailable` computes
+     `reported − consumed` and offers the difference to Base as that
+     mirror's committable local funding. Worked example — mirror bucket 40
+     local, day-D recycled liability 63 (40 local + 23 Base top-up): arrival
+     credit → bucket 63, reported 63, while `chainConsumedRecycled` is 40, so
+     day D+1 shows `avail = 23`. Base commits its OWN already-spent top-up a
+     second time as mirror-local funding and remits nothing against it,
+     while M's bucket is actually empty after D's claims.
+   - **`Ā` headroom.** `recordChainRecycled`'s aggregate consistency clamp
+     accepts `min(forDayReported, reported − attributed)`. An inflated
+     `reported` widens that headroom, so custody tokens leak into `Ā`
+     *through the clamp* even with `recycledCreditedByDay` correctly
+     skipped. Skipping the day-bucket alone is therefore not sufficient.
+
+   Both are the over-statement direction — the same class as the d2 r5
+   finding and §2e.1's arrival-COMMITS correction.
+
+3. **Mechanism: a `recycleCustodyRelocatedCumulative` counter subtracted from
+   the derived floor.** `creditedCumulative()` is
+   `max(stored, recycleBucket + paidOutRecycled)`, so a custody credit that
+   raises the bucket leaks into the reported cumulative **through the
+   pre-upgrade floor even if `recycleCreditedCumulative` is never written** —
+   the counter must be subtracted, not merely left unwritten. The custody
+   credit therefore advances `recycleBucket` + `recycleCustodyRelocatedCumulative`
+   ONLY, and the floor becomes
+   `recycleBucket + paidOutRecycled − recycleCustodyRelocatedCumulative`.
+
+   Same worked example: stored 40, bucket 63, paidOut 0, custody 23 →
+   floor `63 + 0 − 23 = 40` → reports 40, so `avail = 40 − 40 = 0`. After D's
+   claims consume 63: bucket 0, paidOut 63, custody 23 → floor
+   `0 + 63 − 23 = 40` → still 40, the mirror's genuine lifetime absorption.
+
+   **Underflow is structurally impossible**, so the subtraction needs no
+   special-casing beyond a saturating guard for defence in depth: every
+   custody credit adds its amount to `recycleBucket`, and `consume` only
+   moves value bucket → `paidOutRecycled` (`releaseCommitment` moves
+   neither), so `recycleBucket + paidOutRecycled` is monotonically
+   non-decreasing and always dominates the custody counter.
+
+   This keeps §5's *one bucket, one ledger* property — there is still exactly
+   one bucket, with one extra scalar recording how much of it is relocated
+   custody rather than first-time absorption.
+
+4. **The recycled share must ride the wire — it cannot be re-derived.**
+   `remitRewardBudget` accumulates `st.fresh` / `st.recycled` separately but
+   sends only their sum, and a mirror cannot reconstruct the split because
+   `p.recycled` is computed AFTER Base's Σcommitments clamp — Base-global
+   state the mirror cannot observe — so any reconstruction would diverge
+   exactly when the clamp binds. d5 therefore adds one word to the remit
+   payload, per the owner-confirmed plan §7 wire rule (derive the layout
+   from the union at implementation time; the implementing PR pins the
+   words).
+
+   **The d5 shape LEADS with an explicit tag — it does NOT extend the
+   head-offset ladder.** (Corrected in review, Codex #1432 r2; the first cut
+   of this section proposed **0xA0** as a third rung and that is unsafe.)
+
+   The two older shapes are discriminated by the leading ABI head word — the
+   `dayIds` array offset, `32 × head-slots`: **0x40** legacy · **0x80** d2
+   `(+ remitId, remitter)`. Adding **0xA0** for d5 looks like the same
+   pattern but breaks across the **rollout window**: the canonical chain is
+   refreshed before the mirrors, and in between, a not-yet-upgraded receiver
+   reads `0xA0`, fails its `== 0x80` test, falls into the legacy branch —
+   and because `0xA0` is a perfectly valid in-bounds array offset, the decode
+   **succeeds**. It drops `remitId` / `remitter` / `recycledShare`, forwards
+   through the retired ingress selector, strands the canonical reservation
+   Pending and applies no custody credit. Silently, and on every rollout.
+
+   So d5's payload is
+   `abi.encode(REMIT_WIRE_TAG_D5, dayIds, total, remitId, remitter,
+   recycledShare)` (`RemitWire.sol`). The tag is keccak-derived, hence
+   astronomically larger than any real payload length, so an old receiver
+   reads it as the array offset, the decoder's bounds check fails, and the
+   delivery **reverts** — deterministically, not probabilistically (a small
+   sentinel could land on a valid offset; this cannot). CCIP records a failed
+   message, re-executable once that mirror is upgraded, so nothing is lost.
+
+   The wire is therefore version-gated **by construction**: no operator flag,
+   no "refresh mirrors first" rule to remember, and no way for a partial
+   rollout to under-credit silently — the same fail-closed posture the
+   cross-chain pause lever relies on. Both older layouts still decode (with
+   `recycledShare = 0`, i.e. the pre-d5 behaviour) and both get an explicit
+   test, as does the fail-closed property itself.
+
+   **Future wire evolutions take a NEW tag, never another rung on the
+   offset ladder.**
+
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
 Not an open fork: §M3 pins it — *"reservations are bound to the **CCIP message
@@ -618,10 +740,19 @@ running sums land as new append-only tail fields.
   `outstandingCommitRecycled` — never both.
 - **No double-pay across surrender+remit:** mirror-surrendered + Base-remitted =
   exactly the funded recycled slice (two-sided netting, d3).
-- **No manufactured Ā (d5):** the remitted-recycled custody credit advances
-  `recycleBucket` + `recycleCreditedCumulative` (availability/netting) but
-  **skips** `recycledCreditedByDay` (the Ā day-bucket) — those tokens were
-  Ā-counted once on Base at first absorption.
+- **No manufactured Ā (d5) — AMENDED by §2f.2/§2f.3, read that first.** The
+  remitted-recycled custody credit advances `recycleBucket` +
+  `recycleCustodyRelocatedCumulative` ONLY. It skips `recycledCreditedByDay`
+  (the Ā day-bucket) AND must not reach the **reported cumulative** — those
+  tokens were Ā-counted once on Base at first absorption, and after d3 an
+  inflated cumulative would also re-offer Base's own top-up as mirror-local
+  availability (`_mirrorAvailable = reported − consumed`) and widen the Ā
+  attribution headroom in `recordChainRecycled`. Because
+  `creditedCumulative()` derives a floor of `recycleBucket + paidOutRecycled`,
+  leaving `recycleCreditedCumulative` unwritten is NOT sufficient — the
+  custody counter is subtracted from that floor.
+  *(This bullet originally said the credit advances `recycleCreditedCumulative`;
+  that was written while B2-b forced mirror `avail = 0` and is unsafe now.)*
 - **pending never double-allocates and a lost ack never permanently suppresses**
   (d2): reservation bound to the ack key, idempotent+retryable finalize,
   bounded operator reconcile against observed CCIP status.

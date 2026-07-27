@@ -371,8 +371,13 @@ contract RewardRemittanceFacetTest is SetupTest {
         dup[0] = 1;
         dup[1] = 1;
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, dup, CAP);
-        (uint256[] memory sentDays, uint256 sentTotal) =
-            abi.decode(ccip.sentPayload(0), (uint256[], uint256));
+        // B2-d5 — the payload leads with the wire tag (see {RemitWire}); the
+        // pre-tag prefix decode now reverts by design, which is the whole
+        // point of the tag.
+        (, uint256[] memory sentDays, uint256 sentTotal, , , ) = abi.decode(
+            ccip.sentPayload(0),
+            (uint256, uint256[], uint256, uint256, address, uint256)
+        );
         assertEq(sentDays.length, 1, "payload carries only the funded day");
         assertEq(sentDays[0], 1, "funded day is day 1");
         assertGt(sentTotal, 0, "non-zero total");
@@ -407,7 +412,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(remit.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
-        remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E));
+        remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0);
         assertEq(remit.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
@@ -420,7 +425,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 stranger
             )
         );
-        remit.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E));
+        remit.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0);
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
@@ -434,7 +439,7 @@ contract RewardRemittanceFacetTest is SetupTest {
                 address(0xDEAD)
             )
         );
-        remit.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E));
+        remit.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0);
     }
 
     receive() external payable {}

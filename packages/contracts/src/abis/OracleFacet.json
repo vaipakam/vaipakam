@@ -1199,6 +1199,22 @@
   },
   {
     "type": "error",
+    "name": "RecycledShareExceedsDelivery",
+    "inputs": [
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequiresPeriodSettle",
     "inputs": [
       {

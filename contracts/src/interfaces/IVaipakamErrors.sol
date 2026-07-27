@@ -553,6 +553,16 @@ interface IVaipakamErrors {
     ///         execute). `earliest` is the first allowed timestamp.
     error RemitReleaseTooEarly(uint256 remitId, uint256 earliest);
 
+    /// @notice #1222 M3 B2-d5 — an arriving remit declared a RECYCLED share
+    ///         larger than the VPFI actually delivered. The recycled share is
+    ///         a COMPONENT of the delivery, so it can never exceed it; a
+    ///         payload claiming otherwise would relocate custody the Diamond
+    ///         never received and over-back the mirror's recycle bucket.
+    ///         The receiver already scales the declared share to what landed,
+    ///         so this is the Diamond's own independent bound on a
+    ///         malformed or hostile ingress.
+    error RecycledShareExceedsDelivery(uint256 recycledShare, uint256 amount);
+
     /// @notice #1222 M3 B2-d3 — `setExpectedSourceChainIds` was given the
     ///         same chain id twice. The per-chain funding resolution treats
     ///         each entry independently, so a duplicate would double-count
