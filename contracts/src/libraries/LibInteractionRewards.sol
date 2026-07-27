@@ -160,6 +160,15 @@ library LibInteractionRewards {
             (LibVaipakam.BASIS_POINTS * 365 * 2);
     }
 
+    /// @notice #1222 M3 B2-d3 — a chain's day budget, per SIDE and per
+    ///         funding source, GROSS of that chain's own local commitment.
+    struct ChainDayBudget {
+        uint256 freshLender;
+        uint256 recycledLender;
+        uint256 freshBorrower;
+        uint256 recycledBorrower;
+    }
+
     /// @notice #776 — the aggregate VPFI a chain's users collectively accrue
     ///         for day `dayId`, i.e. that chain's finalized reward *slice*.
     /// @dev    Telescopes the per-user accrual: Σ_users(userNum × half/global)
@@ -219,11 +228,22 @@ library LibInteractionRewards {
     ///         against the 69M cap; recycled debits the bucket at remit —
     ///         the doc-flagged `chainRewardBudgetForDay` underfunding site).
     ///         Pre-cutover days are fresh-only (legacy schedule).
-    function chainRewardBudgetSplitForDay(
+    /// @notice #1222 M3 B2-d3 (Codex #1430 r3) — the per-chain day budget
+    ///         split BY SIDE and by funding source, GROSS of the chain's own
+    ///         local commitment.
+    /// @dev    The two sides genuinely carry different fresh:recycled
+    ///         compositions (that is why B2-b introduced per-side equivalent
+    ///         halves), and the mirror reports its liability per side too —
+    ///         so any clamp or source-netting that collapses the sides first
+    ///         misprices whichever leg the liability actually concentrates
+    ///         on. Callers that only need the aggregate use
+    ///         {chainRewardBudgetSplitForDay}, which sums these and applies
+    ///         the local netting.
+    function chainRewardBudgetSideSplitForDay(
         LibVaipakam.Storage storage s,
         uint32 chainId,
         uint256 dayId
-    ) internal view returns (uint256 budgetFresh, uint256 budgetRecycled) {
+    ) internal view returns (ChainDayBudget memory b) {
         // #1222 M3 B2-b — armed days price from the DESTINATION chain's own
         // funding stamp (per-side fresh halves + recycled global-equivalent
         // numerators), never the global aggregate: the aggregate is a
@@ -241,7 +261,7 @@ library LibInteractionRewards {
                 // Fail-closed: an armed day without a stamp funds nothing
                 // yet (finalization/broadcast pending) — same wait the
                 // claim-side accumulators apply.
-                if (!p.stamped) return (0, 0);
+                if (!p.stamped) return b;
                 LibVaipakam.ChainDayFunding storage f =
                     s.chainDayRecycledFunding[dayId][chainId];
                 if (f.stamped) {
@@ -266,11 +286,11 @@ library LibInteractionRewards {
             lenderFreshHalf == 0 && borrowerFreshHalf == 0
                 && lenderRecycledHalf == 0 && borrowerRecycledHalf == 0
         ) {
-            return (0, 0);
+            return b;
         }
         // #776 — only chains whose numerator was folded into `dayId`'s finalized
         // denominator get a slice; a reported-but-then-de-listed chain is out.
-        if (!s.chainDailyIncluded[dayId][chainId]) return (0, 0);
+        if (!s.chainDailyIncluded[dayId][chainId]) return b;
         // #1008 (S13) — cap the per-chain remittance with the SAME finalize-
         // snapshotted threshold the per-user claims use. Because the §4 threshold
         // is ENTRY-INDEPENDENT, `min(Δ_d, T_d)` factors out of the per-user sum, so
@@ -286,51 +306,58 @@ library LibInteractionRewards {
         uint256 t = s.dayCapThreshold18[dayId];
         uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
         if (gLender != 0) {
-            (uint256 f, uint256 r) = _sideBudgetSplit(
+            (b.freshLender, b.recycledLender) = _sideBudgetSplit(
                 lenderFreshHalf,
                 lenderRecycledHalf,
                 gLender,
                 t,
                 s.chainDailyLenderInterestNumeraire18[dayId][chainId]
             );
-            budgetFresh += f;
-            budgetRecycled += r;
         }
         uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
         if (gBorrower != 0) {
-            (uint256 f, uint256 r) = _sideBudgetSplit(
+            (b.freshBorrower, b.recycledBorrower) = _sideBudgetSplit(
                 borrowerFreshHalf,
                 borrowerRecycledHalf,
                 gBorrower,
                 t,
                 s.chainDailyBorrowerInterestNumeraire18[dayId][chainId]
             );
-            budgetFresh += f;
-            budgetRecycled += r;
         }
-        // #1222 M3 B2-d3 — TWO-SIDED NETTING. The chain funded
-        // `recycleConsume` of this day's recycled budget from its OWN bucket
-        // (reserved there at broadcast arrival, drawn down by its own
-        // claims), so Base must remit only the TOP-UP it actually funded.
-        // Sum identity: locally-committed + Base-remitted = the funded
-        // recycled slice — remitting the whole slice would double-fund the
-        // local share and cannibalise Base's bucket for tokens the mirror
-        // already holds. Floored: the stamped instruction is the #1008-capped
-        // commit while this budget is the CEIL-per-side slice, so wei-scale
-        // rounding can leave the instruction marginally the larger figure.
-        // Fresh is untouched — Base funds all fresh.
-        //
-        // Netting lives HERE, below every planning surface, so the send and
-        // all three quotes inherit it identically (d2's `quote == send`), and
-        // d2's net backing gate keeps comparing the Base-funded share against
-        // Base's own bucket — which is exactly what funds it.
-        if (budgetRecycled != 0) {
-            uint256 localCommit =
-                s.chainDayRecycledFunding[dayId][chainId].recycleConsume;
-            budgetRecycled = budgetRecycled > localCommit
-                ? budgetRecycled - localCommit
-                : 0;
-        }
+    }
+
+    /// @notice The chain's day budget as an AGGREGATE (fresh, recycled) pair,
+    ///         with the chain's own local commitment netted out of the
+    ///         recycled side.
+    /// @dev    #1222 M3 B2-d3 TWO-SIDED NETTING: the chain funded
+    ///         `recycleConsume` of this day's recycled budget from its OWN
+    ///         bucket (reserved at broadcast arrival, drawn down by its own
+    ///         claims), so Base remits only the TOP-UP it actually funded —
+    ///         locally-committed + Base-remitted = the funded recycled slice.
+    ///         Remitting the whole slice would double-fund the local share
+    ///         and cannibalise Base's bucket for tokens the mirror already
+    ///         holds. Floored: the stamped instruction is the #1008-capped
+    ///         commit while this budget is the CEIL-per-side slice, so
+    ///         wei-scale rounding can leave the instruction marginally the
+    ///         larger figure. Fresh is untouched — Base funds all fresh.
+    ///
+    ///         NOTE (Codex #1430 r3): the armed-day remit CLAMP must NOT use
+    ///         this aggregate — it nets and clamps per SIDE, because the two
+    ///         sides carry different fresh:recycled compositions and the
+    ///         mirror reports its liability per side. See
+    ///         {chainRewardBudgetSideSplitForDay} and `_planDay`.
+    function chainRewardBudgetSplitForDay(
+        LibVaipakam.Storage storage s,
+        uint32 chainId,
+        uint256 dayId
+    ) internal view returns (uint256 budgetFresh, uint256 budgetRecycled) {
+        ChainDayBudget memory b =
+            chainRewardBudgetSideSplitForDay(s, chainId, dayId);
+        budgetFresh = b.freshLender + b.freshBorrower;
+        uint256 gross = b.recycledLender + b.recycledBorrower;
+        uint256 localCommit =
+            s.chainDayRecycledFunding[dayId][chainId].recycleConsume;
+        budgetRecycled = gross > localCommit ? gross - localCommit : 0;
     }
 
     /// @dev One side's capped per-chain budget, split fresh/recycled with

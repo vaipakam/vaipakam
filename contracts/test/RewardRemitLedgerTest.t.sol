@@ -539,14 +539,54 @@ contract RewardRemitLedgerTest is SetupTest {
         // This is the discriminating assertion: netting against the AGGREGATE
         // liability (5 - 10 -> 0) would remit ZERO and strand the 3.75 of
         // fresh claims unbacked on a terminally-closed day.
+        // Per-side (Codex r3): the liability sits entirely on the LENDER
+        // side, whose composition is 15 fresh : 3.33 recycled (fresh-heavier
+        // than the day aggregate). Liability 5 → fresh leg 5 x 15/18.33 =
+        // 4.09, recycled leg 0.91, and the 10 of local backing covers that
+        // recycled leg entirely. Pricing against the day AGGREGATE instead
+        // would understate the fresh leg at 3.75 — the exact mispricing r3
+        // identified.
         (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
-        assertEq(quoted, 3.75e18, "fresh leg backed; recycled leg netted");
+        assertApproxEqAbs(
+            quoted, 4.0909e18, 1e15, "fresh leg on the LENDER composition"
+        );
 
         uint256 total = _remitDay1ToArb();
         assertEq(total, quoted, "send matches the per-source clamp");
         LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
         assertEq(r.recycled, 0, "recycled leg fully covered by local backing");
         assertEq(r.fresh, total, "the remittance is the fresh leg");
+    }
+
+    /// @dev Codex #1430 r3 (d3) — the clamp runs PER SIDE. The mirror
+    ///      reports lender/borrower liabilities separately and the two sides
+    ///      carry different fresh:recycled compositions, so a liability
+    ///      concentrated on one side must be priced against THAT side's
+    ///      composition. Here the whole liability sits on the lender side;
+    ///      an aggregate clamp would blend the borrower side's composition
+    ///      into the fresh/recycled split and misprice both legs.
+    function test_Clamp_PricesEachSideAgainstItsOwnComposition() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 45e18, 10e18);
+        mutator.setRecycleBucketRaw(1_000e18);
+
+        // All liability on the LENDER side, none on the borrower side.
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 5e18, 0);
+
+        (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        // Lender side gross: 15 fresh + 3.33 recycled = 18.33; liability 5
+        // → fresh leg 5 x 15/18.33 = 4.09, recycled leg 0.91. Borrower side
+        // contributes nothing (zero liability). No local commit here, so the
+        // whole per-side clamp remits.
+        assertApproxEqAbs(quoted, 5e18, 1e15, "clamped to the lender-side liability");
+
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, quoted, "send matches the per-side clamp");
+        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        // The split follows the LENDER side's composition (15:3.33), not the
+        // day aggregate.
+        assertApproxEqAbs(r.fresh, 4.09e18, 2e16, "fresh leg on lender composition");
+        assertApproxEqAbs(r.recycled, 0.91e18, 2e16, "recycled leg on lender composition");
     }
 
     // ─── manual-budget path (zeroed chains) ───────────────────────────────
