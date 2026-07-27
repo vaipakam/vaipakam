@@ -9,6 +9,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
+import {RemitWire} from "../crosschain/RemitWire.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -571,12 +572,24 @@ contract RewardRemittanceFacet is
         // echoes it, so a rotated deployment's same-numbered remit can
         // never be confused with this one.
         //
-        // B2-d5 appends `recycledShare` — the RECYCLED component of `total`.
-        // The head grows 4 → 5 slots, so the leading ABI word (the
-        // `fundedDays` array offset) becomes 0xA0, which is exactly how the
-        // receiver discriminates layouts: 0x40 legacy, 0x80 d2, 0xA0 d5.
+        // B2-d5 appends `recycledShare` — the RECYCLED component of `total` —
+        // and LEADS with {RemitWire.REMIT_WIRE_TAG_D5} rather than extending
+        // the head-offset ladder to 0xA0. That is a rollout-safety choice, not
+        // a cosmetic one: 0xA0 is a valid in-bounds array offset, so a
+        // not-yet-upgraded mirror would decode the new payload as the LEGACY
+        // 2-tuple and silently drop `remitId`/`remitter`/`recycledShare`,
+        // stranding this reservation Pending with no custody credit — during
+        // exactly the window where Base is refreshed before the mirrors. The
+        // keccak-derived tag is far larger than any payload length, so an old
+        // decoder's bounds check fails and the delivery REVERTS instead;
+        // CCIP re-executes it once that mirror is upgraded. See {RemitWire}.
         bytes memory payload = abi.encode(
-            fundedDays, total, d.remitId, address(this), d.recycledShare
+            RemitWire.REMIT_WIRE_TAG_D5,
+            fundedDays,
+            total,
+            d.remitId,
+            address(this),
+            d.recycledShare
         );
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
@@ -1493,12 +1506,13 @@ contract RewardRemittanceFacet is
             // B2-d2 — price the WIDENED tuple the send builds; the fee
             // depends on payload length, so the placeholder id (the next
             // nonce the send would draw) keeps the quote exact. B2-d5 adds
-            // the recycled share as a fifth head slot, matching
+            // the wire tag and the recycled share, matching
             // {_sendRemitPayload} exactly so `quote == send` still holds.
             // `total − totalFresh` IS that share: every funded day contributes
             // `slice = p.fresh + p.recycled` to `total` and `p.fresh` to
             // `totalFresh`.
             abi.encode(
+                RemitWire.REMIT_WIRE_TAG_D5,
                 fundedDays,
                 total,
                 s.remitReservationNonce + 1,

@@ -57,6 +57,22 @@ scaled down to what genuinely landed. As with every stage of this programme,
 none of it is active until the operator arming ceremony; single-chain
 deployments are unaffected.
 
+**Upgrades cannot be applied half-way without noticing.** The chains in this
+mesh are upgraded one at a time, and the canonical chain goes first — so there
+is always a window where it has started stating the recycled portion while some
+receiving chain has not yet learned to read it. The new message is deliberately
+shaped so that an un-upgraded receiver cannot misread it: rather than looking
+like a slightly longer version of the old message — which an old reader would
+have accepted while quietly discarding the new fields, stranding the sender's
+record and skipping the credit — it is marked such that an old reader rejects it
+outright. The delivery then fails loudly and is re-delivered once that chain is
+upgraded, so nothing is lost and nothing is silently mis-recorded. This makes
+the upgrade order impossible to get wrong, rather than merely documented; it
+needs no operator switch. The same reasoning applies to the operator's in-place
+refresh tooling, which now upgrades the receiving component alongside the rest
+and refuses to proceed on a receiving chain whose record of that component is
+missing.
+
 The off-chain indexer is deliberately left un-updated here: it records
 absorption from the existing event, and relocated custody is correctly absent
 from absorption, so its figures stay right. Surfacing the relocation itself

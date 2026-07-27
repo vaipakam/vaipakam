@@ -589,12 +589,39 @@ following either literally now would reintroduce an over-statement.
    from the union at implementation time; the implementing PR pins the
    words).
 
-   The existing discriminator already generalises: the leading ABI head word
-   is the `dayIds` array offset = `32 × head-slots`. **0x40** legacy ·
-   **0x80** d2 `(+ remitId, remitter)` · **0xA0** d5 `(+ recycledShare)`.
-   A legacy or d2 delivery decodes with `recycledShare = 0`, which degrades
-   to today's no-credit behaviour rather than mis-crediting — fail-safe in
-   the conservative direction. Both older layouts get an explicit test.
+   **The d5 shape LEADS with an explicit tag — it does NOT extend the
+   head-offset ladder.** (Corrected in review, Codex #1432 r2; the first cut
+   of this section proposed **0xA0** as a third rung and that is unsafe.)
+
+   The two older shapes are discriminated by the leading ABI head word — the
+   `dayIds` array offset, `32 × head-slots`: **0x40** legacy · **0x80** d2
+   `(+ remitId, remitter)`. Adding **0xA0** for d5 looks like the same
+   pattern but breaks across the **rollout window**: the canonical chain is
+   refreshed before the mirrors, and in between, a not-yet-upgraded receiver
+   reads `0xA0`, fails its `== 0x80` test, falls into the legacy branch —
+   and because `0xA0` is a perfectly valid in-bounds array offset, the decode
+   **succeeds**. It drops `remitId` / `remitter` / `recycledShare`, forwards
+   through the retired ingress selector, strands the canonical reservation
+   Pending and applies no custody credit. Silently, and on every rollout.
+
+   So d5's payload is
+   `abi.encode(REMIT_WIRE_TAG_D5, dayIds, total, remitId, remitter,
+   recycledShare)` (`RemitWire.sol`). The tag is keccak-derived, hence
+   astronomically larger than any real payload length, so an old receiver
+   reads it as the array offset, the decoder's bounds check fails, and the
+   delivery **reverts** — deterministically, not probabilistically (a small
+   sentinel could land on a valid offset; this cannot). CCIP records a failed
+   message, re-executable once that mirror is upgraded, so nothing is lost.
+
+   The wire is therefore version-gated **by construction**: no operator flag,
+   no "refresh mirrors first" rule to remember, and no way for a partial
+   rollout to under-credit silently — the same fail-closed posture the
+   cross-chain pause lever relies on. Both older layouts still decode (with
+   `recycledShare = 0`, i.e. the pre-d5 behaviour) and both get an explicit
+   test, as does the fail-closed property itself.
+
+   **Future wire evolutions take a NEW tag, never another rung on the
+   offset ladder.**
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 

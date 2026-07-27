@@ -11,6 +11,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {GuardianPausable} from "./GuardianPausable.sol";
+import {RemitWire} from "./RemitWire.sol";
 import {
     ICrossChainMessenger,
     ICrossChainMessageRecipient
@@ -180,12 +181,13 @@ contract RewardRemittanceReceiver is
         //   legacy: `abi.encode(uint256[] dayIds, uint256 total)`
         //   d2 r4:  `abi.encode(uint256[] dayIds, uint256 total,
         //            uint256 remitId, address remitter)`
-        //   d5:     `... + uint256 recycledShare`
-        // Discriminated by the leading ABI head word — the `dayIds` array
-        // offset, which is exactly `32 × head-slots`: 0x40 (two) for the
-        // legacy tuple, 0x80 (four) for d2's, 0xA0 (five) for d5's.
-        // Deterministic for these exact encodings; anything malformed still
-        // reverts in `abi.decode` below. A legacy delivery carries no
+        //   d5:     `abi.encode(REMIT_WIRE_TAG_D5, uint256[] dayIds,
+        //            uint256 total, uint256 remitId, address remitter,
+        //            uint256 recycledShare)`
+        //
+        // The two OLD shapes are discriminated by the leading ABI head word —
+        // the `dayIds` array offset, exactly `32 × head-slots`: 0x40 (two) for
+        // legacy, 0x80 (four) for d2's. A legacy delivery carries no
         // `remitId`/`remitter` — the Diamond records no receipt and no ack
         // flows (Base holds no reservation for pre-d2 sends). `remitter` is
         // the sending deployment's own address, embedded at send — immutable
@@ -193,23 +195,38 @@ contract RewardRemittanceReceiver is
         // it identifies the DEPLOYMENT even for a delayed pre-rotation packet
         // (#1426 r4).
         //
-        // B2-d5 — `recycledShare` is the RECYCLED component of `total`, which
-        // the mirror credits as relocated custody so its claim path has real
-        // backing. Older layouts leave it ZERO, which degrades to the
-        // pre-d5 behaviour (no custody credit) rather than mis-crediting: the
-        // conservative direction, and the reason a delayed pre-d5 packet is
-        // safe to accept.
+        // B2-d5 (Codex #1432 r2) — the new shape leads with an explicit
+        // TAG instead of extending the offset ladder to 0xA0, and that choice
+        // is load-bearing for the cross-chain ROLLOUT, not cosmetic.
+        //
+        // With an offset ladder, a not-yet-upgraded receiver reads 0xA0,
+        // fails its `== 0x80` test, falls into the legacy branch — and the
+        // 0xA0 offset is still IN BOUNDS, so the decode SUCCEEDS. It silently
+        // drops `remitId`/`remitter`/`recycledShare`, forwards through the
+        // retired ingress, strands Base's reservation Pending and applies no
+        // custody credit. Since Base is refreshed before the mirrors, that
+        // window is real on every rollout.
+        //
+        // The tag is a keccak-derived sentinel, so it is astronomically
+        // larger than any payload length. An old receiver reads it as the
+        // array offset, the decoder's bounds check fails, and the delivery
+        // REVERTS — deterministically, not probabilistically. CCIP records a
+        // failed message, re-executable once that mirror is upgraded, so
+        // nothing is lost. The wire is therefore version-gated BY
+        // CONSTRUCTION: no operator flag to set, no refresh-order rule to
+        // remember, and no way for a partial rollout to under-credit
+        // silently. Fail-closed is the same posture the pause lever relies on.
         uint256[] memory dayIds;
         uint256 declaredTotal;
         uint256 remitId;
         address remitter;
         uint256 recycledShare;
         uint256 head = abi.decode(payload[:32], (uint256));
-        if (head == 0xA0) {
-            (dayIds, declaredTotal, remitId, remitter, recycledShare) =
+        if (head == RemitWire.REMIT_WIRE_TAG_D5) {
+            (, dayIds, declaredTotal, remitId, remitter, recycledShare) =
                 abi.decode(
                     payload,
-                    (uint256[], uint256, uint256, address, uint256)
+                    (uint256, uint256[], uint256, uint256, address, uint256)
                 );
         } else if (head == 0x80) {
             (dayIds, declaredTotal, remitId, remitter) = abi.decode(

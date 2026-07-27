@@ -8,6 +8,7 @@ import {
     RewardRemittanceReceiver,
     IRewardBudgetIngress
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
@@ -170,13 +171,12 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(diamond.lastRecycledShare(), 0, "d2 shape relocates nothing");
     }
 
-    /// @dev #1222 M3 B2-d5 — the THIRD payload layout. The discriminator is
-    ///      the same leading ABI head word (the `dayIds` offset = 32 × head
-    ///      slots), so 0x40 / 0x80 / 0xA0 select legacy / d2 / d5 with no new
-    ///      mechanism. This asserts the widest shape surfaces the recycled
-    ///      component, and the two older shapes surface zero — the
-    ///      conservative direction, which is what makes a delayed pre-d5
-    ///      delivery safe to accept.
+    /// @dev #1222 M3 B2-d5 — the THIRD payload layout, discriminated by a
+    ///      leading {RemitWire.REMIT_WIRE_TAG_D5} rather than another rung on
+    ///      the head-offset ladder (0x40 legacy / 0x80 d2). This asserts the
+    ///      new shape surfaces the recycled component and that the two older
+    ///      shapes still decode, surfacing zero — the conservative direction,
+    ///      which is what makes a delayed pre-d5 delivery safe to accept.
     function test_Deliver_D5PayloadCarriesRecycledShare_OlderShapesDoNot()
         public
     {
@@ -186,6 +186,7 @@ contract RewardRemittanceReceiverTest is Test {
             SRC_BASE,
             address(0xBA5E),
             abi.encode(
+                RemitWire.REMIT_WIRE_TAG_D5,
                 _days(1, 2),
                 uint256(500e18),
                 uint256(77),
@@ -220,6 +221,7 @@ contract RewardRemittanceReceiverTest is Test {
             SRC_BASE,
             address(0xBA5E),
             abi.encode(
+                RemitWire.REMIT_WIRE_TAG_D5,
                 _days(1, 2),
                 uint256(500e18),
                 uint256(77),
@@ -335,6 +337,61 @@ contract RewardRemittanceReceiverTest is Test {
             abi.encode(_days(1, 2), 1e18),
             _tokens(address(vpfi), 1e18)
         );
+    }
+
+    /// @dev #1222 M3 B2-d5 (Codex #1432 r2) — the ROLLOUT-safety property, and
+    ///      the reason the d5 shape leads with a tag instead of extending the
+    ///      head-offset ladder to 0xA0.
+    ///
+    ///      This simulates the pre-upgrade receiver's decoder against a d5
+    ///      payload. The old code branched `head == 0x80 ? 4-tuple : 2-tuple`,
+    ///      so with an 0xA0 ladder it would have taken the LEGACY branch and
+    ///      SUCCEEDED — 0xA0 is a valid in-bounds array offset — silently
+    ///      dropping remitId/remitter/recycledShare and stranding the Base
+    ///      reservation. With the keccak-derived tag as the leading word, that
+    ///      same legacy decode is forced out of bounds and REVERTS, so a
+    ///      not-yet-upgraded mirror fails closed and CCIP re-executes the
+    ///      message after the upgrade. Asserted directly on `abi.decode`
+    ///      because the old bytecode no longer exists to run.
+    function test_D5Payload_IsUndecodableByThePreUpgradeDecoder() public {
+        bytes memory d5 = abi.encode(
+            RemitWire.REMIT_WIRE_TAG_D5,
+            _days(1, 2),
+            uint256(500e18),
+            uint256(77),
+            address(0xD1A),
+            uint256(120e18)
+        );
+
+        // The pre-d5 discriminator would not match, so the old receiver fell
+        // through to the legacy 2-tuple decode. That decode must now fail.
+        uint256 head = abi.decode(this.slice32(d5), (uint256));
+        assertTrue(head != 0x80, "tag must not collide with the d2 shape");
+        assertTrue(head != 0x40, "tag must not collide with the legacy shape");
+        assertGt(head, d5.length, "tag must exceed any real payload length");
+
+        vm.expectRevert();
+        this.decodeLegacy(d5);
+    }
+
+    /// @dev External so the failing `abi.decode` is a callable target for
+    ///      `vm.expectRevert` (an inline decode would abort the test itself).
+    function decodeLegacy(bytes calldata payload)
+        external
+        pure
+        returns (uint256[] memory a, uint256 b)
+    {
+        (a, b) = abi.decode(payload, (uint256[], uint256));
+    }
+
+    /// @dev External calldata slice helper — mirrors the receiver's
+    ///      `payload[:32]` peek.
+    function slice32(bytes calldata payload)
+        external
+        pure
+        returns (bytes memory)
+    {
+        return payload[:32];
     }
 
     function test_Pause_GuardianCanPause_OwnerUnpauses() public {

@@ -160,9 +160,9 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed by 1");
 
         // The widened payload carries the echo remitId.
-        (uint256[] memory pd, uint256 pt, uint256 prid) = abi.decode(
+        (, uint256[] memory pd, uint256 pt, uint256 prid, , ) = abi.decode(
             ccip.sentPayload(0),
-            (uint256[], uint256, uint256)
+            (uint256, uint256[], uint256, uint256, address, uint256)
         );
         assertEq(pd.length, 1, "payload days");
         assertEq(pt, total, "payload total");
@@ -622,9 +622,9 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(remit.getRewardBudgetRemittedGlobal(), amount, "69M reserved");
 
         // Payload rode the token channel with the echo id.
-        (uint256[] memory pd, uint256 pt, uint256 prid) = abi.decode(
+        (, uint256[] memory pd, uint256 pt, uint256 prid, , ) = abi.decode(
             ccip.sentPayload(0),
-            (uint256[], uint256, uint256)
+            (uint256, uint256[], uint256, uint256, address, uint256)
         );
         assertEq(pd[0], 1, "day");
         assertEq(pt, amount, "total");

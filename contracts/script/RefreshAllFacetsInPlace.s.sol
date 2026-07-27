@@ -337,22 +337,40 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             )
         );
         if (loupe.facetAddress(oldRemitIngress) != address(0)) {
-            // Canonical/single-chain deploys have no receiver — the key is
-            // absent per the omit-keys policy, so read it optionally and skip
-            // the upgrade rather than reverting the whole refresh.
             address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
+            (, , , bool isCanonicalReward, ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+
+            // Codex r2 F2 — a MIRROR must never pass this point without its
+            // receiver actually upgraded. `_readAddrOptional` returns zero for
+            // a missing/stale/malformed artifact as well as for a chain that
+            // genuinely has no receiver; skipping on that ambiguity and then
+            // Removing the selector anyway would leave the old receiver
+            // calling an UNROUTED ingress — every delivery failing — while
+            // destroying the migration marker, so a rerun would never retry
+            // the upgrade. Only the canonical chain legitimately has no
+            // receiver (nothing remits to it), so only it may skip.
+            require(
+                remitReceiver != address(0) || isCanonicalReward,
+                "B2-d5: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
+            );
+
             if (remitReceiver != address(0)) {
                 address newImpl = address(new RewardRemittanceReceiver());
                 UUPSUpgradeable(remitReceiver).upgradeToAndCall(newImpl, "");
-                Deployments.writeFacet(
-                    "rewardRemittanceReceiverImpl", newImpl
-                );
+                // Codex r2 F3 — the CANONICAL key. `writeFacet` would write
+                // `.facets.rewardRemittanceReceiverImpl`, while DeployCrosschain
+                // and every consumer read the TOP-LEVEL
+                // `.rewardRemittanceReceiverImpl`; using it would leave the
+                // real record pointing at the superseded implementation while
+                // inventing a spurious facet entry.
+                Deployments.writeRewardRemittanceReceiverImpl(newImpl);
                 console.log(
                     "B2-d5: upgraded RewardRemittanceReceiver impl ->", newImpl
                 );
             } else {
                 console.log(
-                    "B2-d5: no rewardRemittanceReceiver on this chain - skipping receiver upgrade"
+                    "B2-d5: canonical reward chain - no receiver to upgrade"
                 );
             }
 
