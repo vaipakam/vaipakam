@@ -433,6 +433,21 @@ defers to it) states the correct rule verbatim: **"commitment semantics
    commitLocal` — so §5's "one bucket, one ledger" holds by construction: the
    local share books into the per-chain ledgers, the Base-funded share into the
    global `outstandingCommitRecycled`, never both.
+5b. **The remit CLAMP nets local backing PER FUNDING SOURCE (Codex r1→r2).**
+   d2's clamp bounds the remittance by the mirror's reported liability. Under
+   d3 part of that liability is already backed by the chain's own locally
+   committed RECYCLED share, so the clamp must net it — but only against the
+   matching source. The mirror's claim path splits every payout pro-rata over
+   the day's fresh:recycled composition (`_splitDayAmount`), so local recycled
+   backing can cover the recycled leg and never the fresh leg (Base funds all
+   fresh). `_planDay` therefore splits the liability by the GROSS composition
+   (the pool claims actually price against, local share included) and
+   subtracts the local backing from the recycled leg alone. Netting against
+   the aggregate instead — r1's first cut — treats local recycled VPFI as
+   backing fresh claims: on a 90-fresh/10-recycled pool with a local commit of
+   10 and a liability of 5 it remits ZERO while ~4.5 of fresh claims still
+   need backing, on a day that then closes terminally.
+
 5. **Two-sided netting = subtract the instruction.** `chainRewardBudgetSplitForDay`
    nets the stamped `recycleConsume` out of the chain's recycled budget
    (floored at zero), so Base remits only the TOP-UP it actually funded. Sum

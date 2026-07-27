@@ -614,29 +614,40 @@ contract RewardRemittanceFacet is
         if (armed) {
             p.armedFreshFull = sliceFresh;
             p.recycledFull = sliceRecycled;
-            // #1222 M3 B2-d3 (Codex #1430 r1) — the reported liability is the
-            // mirror's WHOLE day-D claimable liability, but part of it is
-            // already backed by the chain's OWN locally-committed recycled
+            // #1222 M3 B2-d3 (Codex #1430 r1/r2) — the reported liability is
+            // the mirror's WHOLE day-D claimable liability, and part of it is
+            // already backed by the chain's OWN locally-committed RECYCLED
             // share (`recycleConsume`, netted out of the slice above and
-            // reserved on the mirror at broadcast arrival). Clamping the
-            // remittance against the full liability would back
-            // `local + liability` for at most `liability` of claims — an
-            // over-remit that needlessly spends Base availability other
-            // chains' rewards need. The remittable budget is therefore the
-            // liability NET of the local backing.
+            // reserved on the mirror at broadcast arrival).
+            //
+            // The netting must be PER FUNDING SOURCE. The mirror's claim path
+            // splits every payout pro-rata over the day's fresh:recycled pool
+            // composition (`_splitDayAmount`), so local RECYCLED backing can
+            // only ever cover the recycled leg of those claims — never the
+            // fresh leg, which Base funds in full. Netting it against the
+            // aggregate liability (r1's first cut) would treat local recycled
+            // VPFI as backing fresh claims too: on a 90-fresh/10-recycled
+            // pool with a local commit of 10 and a liability of 5, it remitted
+            // ZERO while ~4.5 of fresh claims still needed backing — and the
+            // day then closed terminally, so the mirror had to cannibalise
+            // unrelated custody or fail to pay.
+            //
+            // So: split the liability by the GROSS composition (the pool the
+            // claim path actually prices against, local share included), then
+            // subtract the local backing from the recycled leg alone.
+            uint256 localBacking =
+                s.chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
+            uint256 grossTotal = sliceFresh + sliceRecycled + localBacking;
             uint256 liability = c.liabilityLender18 + c.liabilityBorrower18;
-            {
-                uint256 localBacking = s
-                    .chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
-                liability =
-                    liability > localBacking ? liability - localBacking : 0;
-            }
-            if (liability < sliceTotal) {
-                uint256 clampedFresh = liability == 0
+            if (liability < grossTotal) {
+                uint256 freshLeg = grossTotal == 0
                     ? 0
-                    : (liability * sliceFresh) / sliceTotal;
-                p.fresh = clampedFresh;
-                p.recycled = liability - clampedFresh;
+                    : (liability * sliceFresh) / grossTotal;
+                uint256 recycledLeg = liability - freshLeg;
+                p.fresh = freshLeg;
+                p.recycled = recycledLeg > localBacking
+                    ? recycledLeg - localBacking
+                    : 0;
             } else {
                 p.fresh = sliceFresh;
                 p.recycled = sliceRecycled;
