@@ -295,6 +295,35 @@ contract MeshCommitRetirementTest is SetupTest {
         );
     }
 
+    /// Codex #1435 r1 P1 — the availability read must never REVERT, whatever
+    /// a chain reports. `chainReportedRecycled[c]` is ratcheted to whatever
+    /// cumulative a chain sends and is deliberately unbounded, so computing
+    /// `(reported + released) − consumed` would overflow on a near-max
+    /// cumulative paired with any nonzero release. That is not contained:
+    /// this read is on the `finalizeDay` path via the mesh funding pass, and
+    /// the ratchets cannot be walked back — one poisoned report would wedge
+    /// day finalization for the whole mesh, permanently.
+    function test_B3_HugeReportedCumulativeCannotWedgeFinalization() public {
+        _armAndInstruct40();
+
+        // A faulty/compromised mirror reports an absurd lifetime cumulative
+        // together with a genuine release.
+        _reportArb(6, type(uint256).max, 20 ether, 15 ether);
+
+        // The read survives, and the ceiling still holds structurally.
+        (uint256 reported, , uint256 avail, ) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, type(uint256).max, "ratchet took the report");
+        assertLe(avail, reported, "CEILING holds at the extreme too");
+
+        // And the day still finalizes — the whole point.
+        _finalize(6);
+        assertTrue(
+            _agg().getChainDayRecycledFunding(6, CHAIN_ARB).stamped,
+            "finalization is not wedged"
+        );
+    }
+
     // ─── Base's own chain id is inert ────────────────────────────────────
 
     /// Base never instructs itself, so its own reported retirement pair is

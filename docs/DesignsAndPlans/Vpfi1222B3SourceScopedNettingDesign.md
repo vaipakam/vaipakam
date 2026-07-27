@@ -107,7 +107,7 @@ never walk them back — and then:
 
 ```
 outstanding_c  ←  outstanding_c − Δretired            (floor 0)
-avail_c        =  reported_c + released_c − consumed_c   (floor 0)
+avail_c        =  reported_c − (consumed_c − released_c)  (both floored — see §2.3)
 ```
 
 The identity that makes one counter enough for the ledger is worth stating,
@@ -136,8 +136,21 @@ That yields the load-bearing bound, by construction and independent of what
 any mirror sends:
 
 ```
-released_c ≤ consumed_c   ⟹   avail_c = reported_c + released_c − consumed_c ≤ reported_c
+released_c ≤ consumed_c   ⟹   avail_c = reported_c − (consumed_c − released_c) ≤ reported_c
 ```
+
+**The availability read is arranged as a subtraction, never an addition**
+(Codex #1435 r1 P1). `reported_c + released_c − consumed_c` is mathematically
+identical under the clamp, but it can OVERFLOW: `chainReportedRecycled[c]` is
+ratcheted to whatever cumulative a chain reports and is deliberately unbounded
+(B1 — it is that chain's own lifetime absorption), so a faulty or compromised
+mirror sending a near-maximal cumulative alongside any nonzero release would
+make the read revert. That failure is not contained: this read sits on the
+`finalizeDay` path through the mesh funding pass, and the ratchets cannot be
+walked back — one such report would wedge day finalization for the entire mesh,
+permanently. The subtraction form cannot overflow, both of its subtractions are
+floored regardless of the clamp, and it makes the ceiling **structural** rather
+than derived.
 
 **A chain's availability can never exceed what it reported as locally
 credited.** This is the invariant that keeps d5's exclusion intact. d5
@@ -217,7 +230,7 @@ code (the report path dual-decodes 4-word legacy and 6-word B1 today; B3 adds
 ## 4. Invariants B3 establishes (B4 asserts them)
 
 1. `chainReleasedRecycledCommit[c] ≤ chainRetiredRecycledCommit[c] ≤ chainConsumedRecycled[c]` — enforced by the ingest clamps, not by trust.
-2. `availRecycled(c) ≤ chainReportedRecycled[c]` — the §2.3 ceiling; d5's exclusion survives.
+2. `availRecycled(c) ≤ chainReportedRecycled[c]` — the §2.3 ceiling, structural in the subtraction form; d5's exclusion survives. The read can never revert, whatever any chain reports.
 3. `chainOutstandingRecycledCommit[c] == chainConsumedRecycled[c] − chainRetiredRecycledCommit[c]` — exact at every instant, in-flight messages included.
 4. Base's own chain id is inert in all of the above: Base never instructs
    itself, so `chainConsumedRecycled[Base] == 0`, both clamps pin its copies to

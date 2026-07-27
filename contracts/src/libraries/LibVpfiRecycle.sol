@@ -617,6 +617,27 @@ library LibVpfiRecycle {
      *         `released ≤ consumed`, so this can never exceed
      *         `chainReportedRecycled[c]`.
      *
+     *         ARRANGED AS `reported − (consumed − released)`, NOT
+     *         `(reported + released) − consumed` (Codex #1435 r1 P1). The two
+     *         are mathematically identical under the clamp, but the addition
+     *         form can OVERFLOW: `chainReportedRecycled[c]` is ratcheted to
+     *         whatever cumulative a chain reports and is deliberately
+     *         unbounded (B1 — it is that chain's own lifetime absorption), so
+     *         a faulty or compromised mirror reporting a near-`type(uint256)
+     *         .max` cumulative alongside any nonzero release would make this
+     *         read REVERT. That is not a contained failure: this function is
+     *         on the `finalizeDay` path via the mesh funding pass, and the
+     *         ratchets cannot be walked back — one such report would wedge
+     *         day finalization for the WHOLE mesh, permanently. The
+     *         subtraction form cannot overflow, and it makes the
+     *         `avail ≤ reported` ceiling structural rather than derived.
+     *
+     *         Both subtractions are floored even though the clamp chain and
+     *         `chainConsumedRecycled`'s single monotonic writer make
+     *         `released ≤ consumed` hold: an availability read must never be
+     *         able to revert, whatever state the ledger is in, precisely
+     *         because of the blast radius above.
+     *
      *         SINGLE SOURCE OF TRUTH: the mesh funding pass and the
      *         operator-facing `getChainRecycledLedger` view both call this —
      *         two independent copies of the formula would drift the moment
@@ -631,9 +652,10 @@ library LibVpfiRecycle {
         LibVaipakam.Storage storage s,
         uint32 chainId
     ) internal view returns (uint256) {
-        uint256 creditable = s.chainReportedRecycled[chainId]
-            + s.chainReleasedRecycledCommit[chainId];
+        uint256 reported = s.chainReportedRecycled[chainId];
         uint256 consumed = s.chainConsumedRecycled[chainId];
-        return creditable > consumed ? creditable - consumed : 0;
+        uint256 released = s.chainReleasedRecycledCommit[chainId];
+        uint256 netConsumed = consumed > released ? consumed - released : 0;
+        return reported > netConsumed ? reported - netConsumed : 0;
     }
 }
