@@ -9,6 +9,8 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
+import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /// @title  ShareOfPoolClaimWalkTest
@@ -592,5 +594,72 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         // Bucket short: the live walk defers the day; so must the preview.
         _mut().setRecycleBucketRaw(0);
         assertEq(_preview(), 0, "bucket-short day is deferred, not previewed");
+    }
+
+    // ── B2-d4 (WITHDRAWN): the mirror pricing halt STAYS ─────────────────────
+
+    /// @dev Flip this diamond to a MIRROR. `isMirrorRewardChain` is
+    ///      `!isCanonical && baseChainId != 0`; this suite leaves both unset,
+    ///      which is why every other test here is unaffected by mirror rules.
+    function _configureMirror() internal {
+        RewardReporterFacet rep = RewardReporterFacet(address(diamond));
+        rep.setIsCanonicalRewardChain(false);
+        rep.setBaseChainId(8453);
+    }
+
+    /// @dev B2-d4 set out to lift the mirror armed-day pricing halt, and the
+    ///      attempt was WITHDRAWN after review. This test PINS the halt so the
+    ///      next attempt cannot remove it silently.
+    ///
+    ///      B2-d5 discharged the halt's originally-stated precondition (the
+    ///      arriving recycled share now credits the mirror bucket), and the
+    ///      recycled leg is separately safe because the walk budgets it against
+    ///      the live bucket. But the halt is ALSO load-bearing for two things
+    ///      d5 never addressed, both of which must land first:
+    ///
+    ///        1. the FRESH side has no delivered-funding bound on a mirror —
+    ///           `poolRemaining()` there is the GLOBAL cap less LOCAL payouts,
+    ///           so fresh could be paid before the remit arrives, out of VPFI
+    ///           held for other obligations;
+    ///        2. a deliberately-zeroed (`remitIneligible`) day would advance
+    ///           the cursor at zero delta and retire its entries before
+    ///           `remitManualBudget` can compensate them.
+    ///
+    ///      Identical setup to `test_ClaimIsBoundedByTheDailyCeilingAcrossDays`
+    ///      — which pays `0.8e18` — differing ONLY by the mirror flags. That
+    ///      contrast is the assertion: the halt, and nothing else, is what
+    ///      stops payment here.
+    function test_D4_MirrorArmedDayPricingStaysHalted() public {
+        _configureMirror();
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().userClaimFundingNeedRaw(alice);
+
+        assertEq(_preview(), 0, "mirror armed-day pricing is halted");
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+    }
+
+    /// @dev The CANONICAL chain is unaffected by the halt and prices its own
+    ///      armed days normally — the control proving the test above isolates
+    ///      the mirror flags rather than a broken setup.
+    function test_D4_CanonicalArmedDayPricesNormally() public {
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
+        RewardReporterFacet(address(diamond)).setBaseChainId(8453);
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+
+        assertEq(
+            _claim(),
+            0.8e18,
+            "canonical prices its own armed days, trimmed to each D1 ceiling"
+        );
     }
 }

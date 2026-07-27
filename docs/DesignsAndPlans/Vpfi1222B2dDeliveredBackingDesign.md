@@ -29,7 +29,7 @@ reviewable PR. The pieces, and why they couple:
 | **P2 Mirror consume-on-arrival + two-sided netting** | mirror debits its own bucket for the locally-funded slice; Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
-| **P5 Mirror armed-day pricing ON** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | unsafe until P2+P4 guarantee the priced recycled halves are backed |
+| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g |
 | **P6 Third credit class (#1331)** | Ā-**excluded** custody-credit for remitted-recycled forfeit/expiry; provenance tag at remit arrival; `VpfiRecycled` discriminator | needs P4's provenance signal |
 | **P7 Keeper + indexer** | keeper drives the mirror→Base report send; out-of-window reconciled-day rediscovery via the `CommitmentRemitEligibilityReconciled` hook; indexer handlers + D1 | needs P1/P4 to exist first |
 
@@ -76,23 +76,29 @@ that legitimately lights it up):
   books `chainConsumedRecycled`/`chainOutstandingRecycledCommit`, mirror
   `LibVpfiRecycle.consume(recycleConsume)` under the `broadcastV2Applied`
   idempotency, remittance netting. **Makes the per-chain §7 invariants bind.**
-- **B2-d4 — Mirror armed-day pricing ON.** P5. Remove the `_dayPoolHalves`
-  line-879 halt; keep the genuine `!stamped` wait.
-  **⚠️ HARD ORDERING GATE (Codex #1430 r3): d4 MUST NOT land before d5.**
-  Lifting the halt is what makes mirror armed-day claims reachable, and a
-  mirror's claim path debits its bucket for the WHOLE recycled payout while
-  only the locally-funded share was ever credited there — the Base-funded
-  top-up arrives as VPFI but `onRewardBudgetReceived` only increments
-  `rewardBudgetReceivedTotal`, never the bucket. A 40-local/23-top-up day
-  would then consume 63 against a 40 bucket: the bucket floors at zero,
-  `paidOutRecycled` over-counts by 23, and the DERIVED
-  `creditedCumulative` (`bucket + paidOut`) reports those 23 Base-funded
-  tokens as this chain's own new absorption — phantom availability Base
-  re-commits on later days. d5 is exactly the fix the plan already
-  specifies for this (§M3's `Ā`-feed exclusion: remitted-recycled credits
-  the mirror bucket for availability/custody labelling while staying OUT of
-  the `credited[d]`/`Ā` feed), so the two must land in that order.
-  Gated behind d2+d3+**d5**.
+- **B2-d4 — Mirror armed-day pricing ON. ⚠️ ATTEMPTED AND WITHDRAWN — the halt
+  STAYS; see §2g and #1434.** P5. The intent was to remove the
+  `_dayPoolHalves` mirror halt and keep only the genuine `!stamped` wait.
+  Review (#1433 r2) showed that is not yet safe: the halt also guards the
+  FRESH side, which has no delivered-funding bound on a mirror, and stops
+  deliberately-zeroed (`remitIneligible`) days from advancing the cursor and
+  retiring their entries for zero. **Both prerequisites are tracked on #1434
+  and both must land before this slice can be retried.**
+  - The ordering gate below is now HISTORICAL — d5 shipped first (#1432) and
+    discharged the precondition it names. It is kept because it records why
+    the two were sequenced that way. **Original gate (Codex #1430 r3): d4 MUST
+    NOT land before d5.** Lifting the halt is what makes mirror armed-day
+    claims reachable, and a mirror's claim path debits its bucket for the
+    WHOLE recycled payout while only the locally-funded share was ever
+    credited there — the Base-funded top-up arrived as VPFI but
+    `onRewardBudgetReceived` only incremented `rewardBudgetReceivedTotal`,
+    never the bucket. A 40-local/23-top-up day would then consume 63 against a
+    40 bucket: the bucket floors at zero, `paidOutRecycled` over-counts by 23,
+    and the DERIVED `creditedCumulative` (`bucket + paidOut`) reports those 23
+    Base-funded tokens as this chain's own new absorption — phantom
+    availability Base re-commits on later days. d5 was exactly the fix §M3
+    already specified (the `Ā`-feed exclusion), so the two had to land in that
+    order. Gated behind d2+d3+**d5** — all three now shipped.
 - **B2-d5 — Third credit class (#1331).** P6. The Ā-excluded custody-credit
   primitive, the `VpfiRecycled` discriminator, the 3-site forfeit/expiry
   reclassification, the remit-arrival provenance tag. (Previously tracked as
@@ -623,6 +629,129 @@ following either literally now would reintroduce an over-statement.
    **Future wire evolutions take a NEW tag, never another rung on the
    offset ladder.**
 
+## 2g. d4 pins — the halt STAYS; two prerequisites remain (#1434)
+
+§1 scopes d4 as "remove the `_dayPoolHalves` halt; keep the genuine `!stamped`
+wait". **That scope turned out to be incomplete, and d4 was WITHDRAWN** (owner
+decision after Codex #1433 r2: defer, keep the halt fail-closed, file a
+follow-up). The halt remains in the tree. This section records why, and the two
+approaches tried and dropped along the way, so neither is repeated.
+
+**What d5 DID discharge.** The halt's originally-documented cause was that a
+mirror's remitted recycled funding never credited its local bucket. B2-d5 fixed
+exactly that. The recycled leg is safe for a second reason too: the ShareOfPool
+walk budgets it against the LIVE bucket (`ctx.pool.recycled = s.recycleBucket`,
+mirrored by the preview) and defers a day it cannot cover, so a recycled
+shortfall never reaches `LibVpfiRecycle.consume` (which FLOORS at zero rather
+than reverting). That check sits one layer ABOVE the consume site — which is why
+reading only the consume site makes it look absent, and why my first cut
+invented a hazard that did not exist.
+
+**What d5 did NOT discharge — the two prerequisites (Codex #1433 r2, both P1).**
+
+1. **The FRESH side has no delivered-funding bound on a mirror.** Fresh is
+   entirely Base-funded and arrives with the remit, but the walk bounds it only
+   by `poolRemaining()` — on a mirror that is the GLOBAL 69M cap less LOCAL
+   payouts, not what has been received. Lifting the halt would let a mirror pay
+   fresh before its remit lands, out of VPFI the Diamond holds for other
+   obligations (LIF custody, earlier days' unclaimed budget). My r1 claim that
+   "the walk already budgets it" was true only of the RECYCLED leg; I
+   generalised across legs without checking.
+
+   **Fix shape — and a delivered-fresh budget alone is NOT enough** (Codex
+   #1433 r6). Giving `PoolBudget.fresh` a delivered-fresh budget on mirrors
+   (received − locally paid out) supplies the missing VALUE bound, but the
+   fresh path's SEMANTICS are wrong for it: a fresh shortage is handled as
+   TRUNCATION, and the truncated remainder is consumed terminally. That is
+   correct on Base — `remaining` there is `CAP − paidOut − remittedGlobal`,
+   both subtrahends append-only, so the pool is monotone non-increasing and a
+   trimmed remainder is unfundable forever ("there is no future state that
+   could pay it"). On a MIRROR the delivered budget **grows with every remit**,
+   so the same trim would permanently underpay a day whose funding was merely
+   still in flight. So prerequisite 1 is two parts: the delivered-fresh
+   **bound**, and **deferral rather than truncation** when a mirror's fresh
+   budget is short — matching the recycled side, whose shortfall already
+   defers.
+2. **Deliberately-zeroed days would retire entries for zero.** A grace/force
+   finalization that excludes a mirror's interest report broadcasts an all-zero
+   stamp and marks the day `remitIneligible` for later operator-sized funding.
+   With the halt gone the mirror advances its cursor at zero delta,
+   `processUserSideDay` treats `rawPay == 0` as terminal progress and persists
+   the cursor — so entries are retired BEFORE `remitManualBudget` can
+   compensate them.
+
+   **Not-priced is necessary but NOT sufficient** (Codex #1433 r4). Suppressing
+   the day only stops it being *burned*; it does not make it *payable* once the
+   compensation lands. `remitManualBudget` sends a total plus a `dayId`, and
+   `onRewardBudgetReceived` merely increments `rewardBudgetReceivedTotal` — it
+   never writes the mirror's `chainDayRecycledFunding` stamp. So after
+   compensation the stamp is still all-zero and the day still prices at zero;
+   the tokens arrive with no path into the claim math. The manual path
+   therefore needs a **repricing** step, not just an exclusion:
+
+   - the mirror must be able to tell a deliberately-zeroed day from a
+     genuinely-zero one — a mirror-observable signal, likely a broadcast field,
+     and per §2f.4 a wire evolution takes a **NEW TAG**, never another rung on
+     the offset ladder; **and**
+   - the compensation must carry (or authorise) the per-side funding figures
+     that replace that day's zero stamp, so the day becomes priceable at the
+     operator-sized amount. Whatever writes that stamp is a fund-moving,
+     operator-driven path into pricing and needs the same evidence discipline
+     as the rest of d2's manual vehicle.
+
+   Until BOTH exist, a zeroed day must stay unpriced rather than be walked.
+
+**The withdrawn approach, and why it was worse than the problem** (Codex #1433
+r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
+`mirrorDayBudgetReceived` marker set from the remit's `dayIds`:
+
+- **it wedges the cursor permanently.** `advanceCumLenderThrough` does
+  `if (halt) break;`. Base does NOT remit every armed day — `_planDay` closes a
+  fully mirror-local recycled day, and a liability-clamped-to-zero day, with
+  `p.fresh + p.recycled == 0` and never adds them to `fundedDays`. Such a day
+  could never be marked, so it would halt forever and block every LATER day's
+  claims on that mirror. My "the gate cannot strand a payable day" claim was
+  simply false.
+- **it breaks the destination gas budget.** One cold `SSTORE` per day against
+  the fixed `REWARD_BUDGET_DEST_GAS_LIMIT` of 300,000; the keeper batches by
+  VPFI value over a 45-day window, so the marker writes alone can exceed the
+  callback allowance — the delivery then fails AFTER Base closed the days and
+  put the tokens in flight.
+- **it is not bound to the remitter deployment.** d2 keys receipts by
+  `(remitter, remitId)` precisely because a delayed pre-rotation packet cannot
+  be identified from delivery-time config; a day-only flag lets such a packet
+  unlock the current era's stamp.
+- **it unlocks the zeroed-chain manual path.** A `remitIneligible` day is
+  stamped all-zero by design, and `remitManualBudget` later sends an
+  operator-sized FRESH amount carrying that day — the marker would make a zero
+  stamp priceable, advancing the cursor and retiring entries for nothing.
+- **it over-marks a short delivery.** The receiver's fee-on-transfer path
+  forwards `actualReceived` and scales `recycledShare`, but the loop marked
+  every declared day fully backed.
+
+**Pin: no arrival-marker gate.** An arrival EVENT is the wrong proxy for a
+backing VALUE. When the halt does eventually lift (#1434), the fresh-side
+prerequisite must be met with a delivered-funding BUDGET in `PoolBudget.fresh`,
+matching the recycled side's existing shape — not with a per-day flag.
+
+**Pin: a backing refusal must be a pool-budget DEFERRAL, never a
+`_dayPoolHalves` halt.** Both stop at the offending day — `processUserSideDay`
+returns `advanced == false`, `_walkSideDays` breaks, and `_lowestPendingDay`
+re-selects that same oldest day next attempt, so later days genuinely do wait.
+The difference is RECOVERABILITY, and it is what makes one shape acceptable and
+the other not:
+
+- a pool-budget deferral clears as soon as the backing arrives, and for a funded
+  day it always does;
+- a `_dayPoolHalves` halt keyed on a signal that may NEVER arrive is permanent.
+  That is what killed the arrival marker: Base does not remit every armed day
+  (`_planDay` closes a fully mirror-local recycled day, and a
+  liability-clamped-to-zero day, with `p.fresh + p.recycled == 0` and never adds
+  them to `fundedDays`), so those days would have blocked their mirror forever.
+
+So the test is not "does it stop the cursor" — both do — but "can the condition
+that stopped it always be satisfied".
+
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
 Not an open fork: §M3 pins it — *"reservations are bound to the **CCIP message
@@ -732,8 +861,10 @@ running sums land as new append-only tail fields.
 ## 5. Invariants B2-d must preserve / establish
 
 - **Fail-closed until lit:** every slice before d1 keeps `.complete` unset; d1
-  is the sole `.complete` writer; d4 is the sole thing that removes the mirror
-  pricing halt — none may be reordered.
+  is the sole `.complete` writer; and the mirror pricing halt is removed by
+  exactly one slice — **which is still outstanding.** d4 attempted it and was
+  withdrawn, so the halt REMAINS in the tree and its two prerequisites are
+  tracked on #1434 (§2g). None of this may be reordered.
 - **`consumed ≤ reported` per chain** (becomes real in d3): `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]`.
 - **One bucket, one ledger:** a mirror-local slice reserves into
   `chainOutstandingRecycledCommit[c]`; a Base-funded slice into the global
@@ -767,7 +898,10 @@ per-side aggregate; Base ingress stores liabilities + `.complete`
 reported chains not; unarmed/incomplete days unreportable; cursor + entry
 validation rejections; keeper send pass. d2: pending→ack→remitted lifecycle,
 lost-ack reconcile, clamp at 3 sites, quote==send. d3: `consumed ≤ reported`,
-one-bucket-one-ledger, netting sum identity, idempotent consume-on-arrival. d4:
-mirror prices its own stamp; `!stamped` still waits. d5: Ā-excluded credit
+one-bucket-one-ledger, netting sum identity, idempotent consume-on-arrival.
+**d4 (withdrawn): the halt is PINNED instead** — a mirror armed day prices
+nothing, with a canonical control proving the mirror flags are what stop it;
+when #1434 revives the slice, add "mirror prices its own stamp; `!stamped` still
+waits", plus a delivered-FRESH bound and a zeroed-day repricing case. d5: Ā-excluded credit
 advances cumulative but not the day-bucket; 3-way forfeit/expiry classify;
 no-recycle→budget→expiry→bucket Ā inflation (the geometric-inflation guard).
