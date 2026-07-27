@@ -892,20 +892,23 @@ library LibInteractionRewards {
     ///      `knownGlobalSet` gate already applies, so a claim can never
     ///      price an armed day from the wrong pool.
     ///
-    ///      #1222 M3 B2-b (re-slice, Codex #1417 r7) — this per-chain
-    ///      pricing is CANONICAL-ONLY. On a MIRROR an armed day HALTS
-    ///      (fail-closed), because mirror-side recycled consumption is
-    ///      deferred to B2-d: the mirror's recycled funding arrives by
-    ///      remittance (which never credits the local recycle bucket), so
-    ///      pricing the stamp's recycled equivalents here and then debiting
-    ///      the local bucket at claim (`LibVpfiRecycle.consume`) would
-    ///      either brick a correctly-remitted claim on an empty bucket or
-    ///      cannibalise a mirror's own local recycled balance — the exact
-    ///      mirror consumption the re-slice defers. Base never arms until
-    ///      the full mesh (incl. B2-d) is deployed, so no mirror ever
-    ///      actually reaches an armed day in the B2-b window; the halt is
-    ///      the safety backstop that makes that a code invariant, not just
-    ///      an operational one.
+    ///      #1222 M3 B2-b (re-slice, Codex #1417 r7) — per-chain pricing was
+    ///      CANONICAL-ONLY, with an armed day on a MIRROR halting outright:
+    ///      the mirror's recycled funding arrived by remittance, which never
+    ///      credited the local recycle bucket, so pricing the stamp's recycled
+    ///      equivalents and then debiting that bucket at claim would either
+    ///      brick a correctly-remitted claim or cannibalise the mirror's own
+    ///      local recycled balance.
+    ///
+    ///      **B2-d4 LIFTS that blanket halt** — B2-d5 discharged its
+    ///      precondition by crediting the arriving recycled share to the
+    ///      mirror's bucket as relocated custody, so a mirror's claim now has
+    ///      real backing. What replaces it is NARROWER but still fail-closed:
+    ///      a mirror waits for the day's REMIT, not merely its stamp (see the
+    ///      `mirrorDayBudgetReceived` gate in the body). The stamp lands first
+    ///      and prices the day at local + top-up while only the local share is
+    ///      yet in the bucket, so pricing on the stamp alone would reopen the
+    ///      same under-backing on a narrower window.
     /// @return freshHalf    This side's fresh pool for day `d`.
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
@@ -921,11 +924,34 @@ library LibInteractionRewards {
         returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
     {
         if (_isArmedDay(s, d)) {
-            // Mirror armed-day pricing is deferred to B2-d — halt (see above).
-            if (LibVaipakam.isMirrorRewardChain(s)) return (0, 0, true);
             LibVaipakam.ChainDayFunding storage f =
                 s.chainDayRecycledFunding[d][uint32(block.chainid)];
             if (!f.stamped) return (0, 0, true);
+            // #1222 M3 B2-d4 — a MIRROR additionally waits for the day's
+            // REMIT to have landed, not merely its stamp.
+            //
+            // The stamp arrives first (broadcast) and prices the day at
+            // (locally-funded + Base top-up), but at that moment only the
+            // LOCAL share sits in this chain's `recycleBucket`; the top-up and
+            // the entire fresh side are still in flight. The claim path caps
+            // the FRESH pool but makes no recycled-backing check — its
+            // "bucket-backed by the finalize stamp against `fundable`"
+            // reasoning is a BASE property, whose stamp is sized against its
+            // own bucket — and {LibVpfiRecycle.consume} floors at zero instead
+            // of reverting. A claim in that window would therefore under-back
+            // silently: bucket floors, `paidOutRecycled` over-counts, and the
+            // payout is drawn from other custody classes.
+            //
+            // Exact, not conservative: Base lists a day in the remit payload
+            // only when its slice is non-zero, and every payable armed day has
+            // a Base-funded fresh component — so a day whose remit never
+            // arrives is a day with nothing to pay here.
+            if (
+                LibVaipakam.isMirrorRewardChain(s)
+                    && !s.mirrorDayBudgetReceived[d]
+            ) {
+                return (0, 0, true);
+            }
             return side == LibVaipakam.RewardSide.Lender
                 ? (f.freshLenderHalf, f.lenderHalfEquiv, false)
                 : (f.freshBorrowerHalf, f.borrowerHalfEquiv, false);

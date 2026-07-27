@@ -9,6 +9,8 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
+import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /// @title  ShareOfPoolClaimWalkTest
@@ -592,5 +594,90 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         // Bucket short: the live walk defers the day; so must the preview.
         _mut().setRecycleBucketRaw(0);
         assertEq(_preview(), 0, "bucket-short day is deferred, not previewed");
+    }
+
+    // ── B2-d4: mirror armed-day pricing, gated on the REMIT not the stamp ────
+
+    /// @dev Flip this diamond to a MIRROR. `isMirrorRewardChain` is
+    ///      `!isCanonical && baseChainId != 0`, and this suite leaves both
+    ///      unset by default — which is exactly why every other test here is
+    ///      unaffected by the mirror gate.
+    function _configureMirror() internal {
+        RewardReporterFacet rep = RewardReporterFacet(address(diamond));
+        rep.setIsCanonicalRewardChain(false);
+        rep.setBaseChainId(8453);
+    }
+
+    /// @dev B2-d4 lifted B2-b's blanket mirror halt, but a mirror still must
+    ///      not price an armed day on the STAMP alone. The stamp lands at
+    ///      broadcast and prices the day at (locally-funded + Base top-up)
+    ///      while only the local share is in the bucket; the top-up and the
+    ///      whole fresh side arrive later in the remit. Since the claim path
+    ///      caps only the FRESH pool and `LibVpfiRecycle.consume` floors at
+    ///      zero rather than reverting, pricing in that window would
+    ///      under-back silently. So: stamped-but-unremitted pays NOTHING, and
+    ///      the same day pays once the remit is recorded.
+    function test_D4_MirrorArmedDayWaitsForTheRemit_ThenPrices() public {
+        _configureMirror();
+        _armedDay(1, type(uint256).max);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(0);
+        _entry(1, 2);
+
+        assertEq(
+            _preview(),
+            0,
+            "stamped but un-remitted armed day must not price on a mirror"
+        );
+        // With the only claimable day halted there is nothing to pay AND no
+        // commitment to retire, so the live claim surfaces the waiting state
+        // rather than settling a zero — the same shape as an unfinalized day.
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        // The remit lands, carrying day 1.
+        _mut().setMirrorDayBudgetReceivedRaw(1, true);
+
+        uint256 paid = _claim();
+        assertGt(paid, 0, "the same day pays once its backing has arrived");
+    }
+
+    /// @dev The pre-existing `!stamped` wait is INDEPENDENT of the new remit
+    ///      gate and must survive it: a remit that arrives before the
+    ///      broadcast still cannot price a day this chain has no stamp for.
+    function test_D4_MirrorStillWaitsWhenStampHasNotLanded() public {
+        _configureMirror();
+        // Arm + fund the day GLOBALLY but leave this chain's own stamp unset.
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 0, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, type(uint256).max);
+        _mut().setMirrorDayBudgetReceivedRaw(1, true);
+        _loanSideOpen(0);
+        _entry(1, 2);
+
+        assertEq(
+            _preview(),
+            0,
+            "remit alone cannot price a day with no per-chain stamp"
+        );
+    }
+
+    /// @dev The gate is MIRROR-ONLY: the canonical chain funds its own armed
+    ///      days from the very bucket its stamp was sized against, so nothing
+    ///      remits to it and it must never wait on an arrival marker. Without
+    ///      this the gate would brick Base entirely.
+    function test_D4_CanonicalChainNeverWaitsForARemit() public {
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
+        RewardReporterFacet(address(diamond)).setBaseChainId(8453);
+        _armedDay(1, type(uint256).max);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(0);
+        _entry(1, 2);
+
+        // No `setMirrorDayBudgetReceivedRaw` anywhere.
+        assertGt(_claim(), 0, "canonical prices its armed day immediately");
     }
 }

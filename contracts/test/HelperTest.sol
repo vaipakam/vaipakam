@@ -87,7 +87,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](142);
+        selectors = new bytes4[](143);
+        // #1222 M3 B2-d4 — mirror remit-arrival marker for the pricing tests.
+        selectors[142] = TestMutatorFacet.setMirrorDayBudgetReceivedRaw.selector;
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
         selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
         selectors[132] =
