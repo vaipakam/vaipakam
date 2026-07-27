@@ -51,12 +51,22 @@ all Phase B′ mesh fields; Phase C′; the arming ceremonies.
 
 The 2026-07-18 baseline above is retained for the record; this section is
 the current state. Everything below merged **dark/dormant** — the M7
-ceremonies remain the only activation path — **with ONE exception: the
-M1 notification tariff is LIVE**. `LibNotificationFee.bill` has no M7
-gate: on any deployment where notification billing runs, the flat
-tariff already moves into Diamond custody and credits the bucket
-(`credit(NotificationFee, …)`) — operators account for those credits
-now, not after the ceremonies.
+ceremonies remain the only activation path — **with TWO exceptions
+that are LIVE now**:
+
+1. **The M1 notification tariff.** `LibNotificationFee.bill` has no M7
+   gate: on any deployment where notification billing runs, the flat
+   tariff already moves into Diamond custody and credits the bucket
+   (`credit(NotificationFee, …)`) — operators account for those
+   credits now, not after the ceremonies.
+2. **The #1352 fee changes.** The 0.2% LIF / 2% yield-fee freeze is a
+   **compiled constant** (`LOAN_INITIATION_FEE_BPS = 20`) charged at
+   accept, and the borrower HoldOnly direct lending-asset fee
+   reduction likewise runs at origination — neither waits for
+   `feeEntitlementEnabled` or a ceremony. Current borrower charges and
+   treasury fee behaviour already reflect them. "Dark" properly covers
+   the Full channel, the loan-side reward cap, and their gated
+   settlement behaviour.
 
 **Now DONE (all Codex-reviewed, all `Closes` their cards):**
 
@@ -100,7 +110,7 @@ merged PRs' design records are authoritative):**
 | **M4 C1/C2** — surplus knob + batched repatriation | #1222 tail |
 | **M5** — dashboard views (`selfFundingRatio`, `platformRetained`, runway, `netEmission = freshDrawdown`) + public surface | #1218 |
 | **M6** — perks (#1204, `SpendGatedPerk` enum entry, legal glance first) + bonds (#1219, schedule the glance) | #1204 / #1219 |
-| **M7** — ceremonies, now including the NEW operator steps the mesh added. **Hard precondition BEFORE `setGovernorCommitArmedFromDay`: zero unstamped reward-eligible canonical loans.** On armed days the legacy #1008 cap retires and the loan-side cap deliberately skips an UNSTAMPED loan (`feeEntitlementByLoanId[loanId].openDays == 0` — the rev-15 unstamped-earns-normally rule), so any reward-eligible canonical loan still open and unstamped at `D*` would earn **uncapped**. The ceremony must enumerate open reward-eligible canonical loans with `openDays == 0`, backfill-stamp or close each, and read back **zero unresolved** before the arming call. (Pre-live: arming at mainnet genesis makes the set empty by construction — but the readback is still the gate, and any testnet-rehearsal or post-launch `D*` DOES have such loans.) **Chain side:** `setGovernorCommitArmedFromDay(D*)` **IS the D\* cutover** — one canonical-only, one-shot, future-day-only Base call; there is NO per-chain `D*` administration (a mirror-chain or duplicate call reverts) — alongside the original `armedFromDay` / `feeEntitlementEnabled` gates. **Propagation caveat:** the setter only writes Base storage + emits `GovernorCommitArmed` — it does NOT itself send anything. A mirror learns `D*` only when the **first application of a not-yet-applied finalized day's kind-5 broadcast** lands after arming (a replay of an already-applied day exits through the idempotency branch WITHOUT installing `armedFromDay`). Because arming requires a strictly-future day, normal daily broadcast cadence delivers it before `D*` — but the ceremony gate is a per-mirror **readback of `governorCommitArmedFromDay`** after the next new-day broadcast, never the assumption. **Keeper side:** apply D1 migrations 0043/0044; grant the keeper EOA `KEEPER_ROLE` **on EVERY mirror Diamond** (`submitCommitmentBatch` is mirror-only AND role-gated — granting on Base alone, or missing one mirror, leaves that mirror's commitment pass reverting forever, its report never completes, and the remit gate stalls that chain's funding); **fund the keeper EOA with native gas on every mirror AND with the CCIP native fee margin** (`submitCommitmentBatch` pays transaction gas per mirror; `sendCommitmentReport` and `sendRemitAck` additionally attach the quoted native message fee — an unfunded mirror leaves that chain's report/acks permanently stalled even with the role granted and all flags on; per-chain balance readback is part of the checklist); authorize the remit signing EOA; and arm the **master flags together** — `KEEPER_ENABLED` + `REWARD_COMMIT_ENABLED` (commitment reports) + `REWARD_REMIT_ENABLED` (delivery-ack pass) — arming the chain without all of these leaves reports/acks inert and stalls multi-chain funding | runbook |
+| **M7** — ceremonies, now including the NEW operator steps the mesh added. **Chain-side ORDER is load-bearing (r4):** **(1) enable `feeEntitlementEnabled` FIRST** — while it is off, `_fullTariffShouldRun` skips plain canonical originations, so any loan accepted after an unstamped-scan but before enablement re-joins the unstamped class and the readback goes stale; enabling first means every subsequent origination stamps itself and the scan result cannot be invalidated by new loans (this reorders the §M7.4 joint gate — arming becomes the LAST step, see the in-place note there; the alternative is atomically batching enablement + scan + arming with canonical originations paused across the batch). **(2) Zero unstamped reward-eligible canonical loans.** On armed days the legacy #1008 cap retires and the loan-side cap deliberately skips an UNSTAMPED loan (`feeEntitlementByLoanId[loanId].openDays == 0` — the rev-15 unstamped-earns-normally rule), so any reward-eligible canonical loan still open and unstamped at `D*` would earn **uncapped**. Enumerate open reward-eligible canonical loans with `openDays == 0` and resolve each, reading back **zero unresolved** before arming. **There is NO backfill surface**: `_stampEntitlement` runs only at origination and no admin/migration path can stamp an existing loan — the supported resolutions are the enable-first ordering (prevents new members of the class) and **wait-for-close** (or voluntary close/re-open) for existing ones; a true backfill needs a not-yet-filed migration card with snapshot inputs + verification. (Pre-live: enabling + arming at mainnet genesis makes the set empty by construction — but the readback is still the gate, and any testnet-rehearsal or post-launch `D*` DOES have such loans.) **(3) Arm with a propagation buffer:** `setGovernorCommitArmedFromDay(D*)` **IS the D\* cutover** — one canonical-only, one-shot, future-day-only Base call; NO per-chain `D*` administration (a mirror-chain or duplicate call reverts). The setter only writes Base storage + emits `GovernorCommitArmed` — it does NOT itself send anything: a mirror learns `D*` only when the **first application of a not-yet-applied finalized day's kind-5 broadcast** lands after arming (a replay of an already-applied day exits through the idempotency branch WITHOUT installing `armedFromDay`). Because the call is **irreversible the moment it lands** while `D*` may legally be `today+1`, choose `D*` with a **multi-day buffer** (several broadcast cycles), require the per-mirror **readback of `governorCommitArmedFromDay`** to succeed on every mirror **well before `D*`**, and have the contingency written down for a mirror that misses the deadline (its claims stay halted until CCIP delivery recovery / manual re-execution — governance cannot postpone `D*`). **Keeper side:** apply D1 migrations 0043/0044; grant the keeper EOA `KEEPER_ROLE` **on EVERY mirror Diamond** (`submitCommitmentBatch` is mirror-only AND role-gated — granting on Base alone, or missing one mirror, leaves that mirror's commitment pass reverting forever, its report never completes, and the remit gate stalls that chain's funding); **fund the keeper EOA on every mirror AND on Base (canonical)** — mirrors need transaction gas for `submitCommitmentBatch` plus the quoted native CCIP fee for `sendCommitmentReport`/`sendRemitAck`, and **Base needs gas + the CCIP `msg.value` fee for every Base→mirror `remitRewardBudget` send** (`runRewardBudgetRemit` submits from the canonical chain — an unfunded Base EOA lets commitment reports complete while every reward-budget send fails and mirror claims stay unfunded); per-chain balance readback **including the canonical chain** is part of the checklist; **verify per-destination lane capacity before enabling the flags** — the keeper excludes any day whose eligible slice exceeds `REWARD_REMIT_LANE_CAP` or the CCIP token-bucket capacity (retries cannot fund it until limits are raised, and the 50,000-VPFI default capacity can be below an early high-concentration daily slice), so the **#918 largest-slice preflight is an M7 activation dependency**: read back that each destination's token-bucket capacity AND the keeper lane cap clear the maximum supported single-day slice; authorize the remit signing EOA; and arm the **master flags together** — `KEEPER_ENABLED` + `REWARD_COMMIT_ENABLED` (commitment reports) + `REWARD_REMIT_ENABLED` (delivery-ack pass) — arming the chain without all of these leaves reports/acks inert and stalls multi-chain funding | runbook |
 | **M8** — fragment assembly (`1346-*`–`1356-*`, `1383a/b-*`+, and the `1222-b*` mesh family — see §M8 for the exact filename families), #882 | docs |
 | ~~Owner ratification — the §2b gate retiming~~ | **DONE — RATIFIED 2026-07-27** (supersession 2 above) |
 
@@ -508,6 +518,15 @@ GovernanceRunbook gains a recycling section, executed in order:
    Full stamp — collecting the tariff without delivering the purchased
    +10% discount. Gate = PR-2 + PR-5c live + PR-6 live + `D*` armed
    (asserted by PR-9/#1356).
+   > **ORDERING SUPERSEDED (r4, see the §1a M7 row):** with PR-6
+   > (#1354/#1381) landed, the protective intent of "`D*` armed" as an
+   > enablement precondition is met differently — the ceremony now runs
+   > **enable `feeEntitlementEnabled` → unstamped-scan/readback → arm
+   > `D*` LAST** (with a multi-day propagation buffer). Enabling before
+   > arming is safe (pre-`D*` days keep the legacy #1008 cap) and
+   > closes the scan-staleness window: while enablement is off, plain
+   > canonical originations skip stamping, so a loan accepted between
+   > the scan and enablement would reach `D*` unstamped and uncapped.
    > **SUPERSEDED by implementation (see §1a):** the original
    > "configure the same `shareOfPoolCutoverDay` on every reward chain
    > before Base arms" step no longer exists as per-chain
