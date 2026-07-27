@@ -596,57 +596,49 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         assertEq(_preview(), 0, "bucket-short day is deferred, not previewed");
     }
 
-    // ── B2-d4: mirror armed-day pricing, gated on the REMIT not the stamp ────
+    // ── B2-d4: mirror armed-day pricing ON ───────────────────────────────────
 
     /// @dev Flip this diamond to a MIRROR. `isMirrorRewardChain` is
-    ///      `!isCanonical && baseChainId != 0`, and this suite leaves both
-    ///      unset by default — which is exactly why every other test here is
-    ///      unaffected by the mirror gate.
+    ///      `!isCanonical && baseChainId != 0`; this suite leaves both unset,
+    ///      which is why every other test here is unaffected by mirror rules.
     function _configureMirror() internal {
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
         rep.setIsCanonicalRewardChain(false);
         rep.setBaseChainId(8453);
     }
 
-    /// @dev B2-d4 lifted B2-b's blanket mirror halt, but a mirror still must
-    ///      not price an armed day on the STAMP alone. The stamp lands at
-    ///      broadcast and prices the day at (locally-funded + Base top-up)
-    ///      while only the local share is in the bucket; the top-up and the
-    ///      whole fresh side arrive later in the remit. Since the claim path
-    ///      caps only the FRESH pool and `LibVpfiRecycle.consume` floors at
-    ///      zero rather than reverting, pricing in that window would
-    ///      under-back silently. So: stamped-but-unremitted pays NOTHING, and
-    ///      the same day pays once the remit is recorded.
-    function test_D4_MirrorArmedDayWaitsForTheRemit_ThenPrices() public {
+    /// @dev The slice: B2-b halted armed-day pricing on a MIRROR outright,
+    ///      because the mirror's remitted recycled funding never credited its
+    ///      local bucket, so a claim would have drawn backing it did not hold.
+    ///      B2-d5 discharged that (arriving recycled share credits the bucket
+    ///      as relocated custody), so a mirror now prices its own armed days
+    ///      from its own per-chain stamp exactly as the canonical chain does.
+    function test_D4_MirrorPricesItsOwnArmedDayStamp() public {
         _configureMirror();
-        _armedDay(1, type(uint256).max);
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
         _mut().setGovernorCommitArmedFromDayRaw(1);
-        _loanSideOpen(0);
-        _entry(1, 2);
+        _loanSideOpen(2);
+        _entry(1, 3);
 
+        // Advance the entry's cursors first: the preview is documented to
+        // read BEHIND (0) for an unadvanced entry — the one axis on which it
+        // is a conservative estimate rather than exact. The suite's own
+        // preview test does the same.
+        _mut().userClaimFundingNeedRaw(alice);
+        assertGt(_preview(), 0, "mirror previews its own armed day");
         assertEq(
-            _preview(),
-            0,
-            "stamped but un-remitted armed day must not price on a mirror"
+            _claim(),
+            0.8e18,
+            "mirror pays its own stamp, trimmed to each day's D1 ceiling"
         );
-        // With the only claimable day halted there is nothing to pay AND no
-        // commitment to retire, so the live claim surfaces the waiting state
-        // rather than settling a zero — the same shape as an unfinalized day.
-        vm.prank(alice);
-        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
-        RewardClaimFacet(address(diamond)).claimInteractionRewards();
-
-        // The remit lands, carrying day 1.
-        _mut().setMirrorDayBudgetReceivedRaw(1, true);
-
-        uint256 paid = _claim();
-        assertGt(paid, 0, "the same day pays once its backing has arrived");
     }
 
-    /// @dev The pre-existing `!stamped` wait is INDEPENDENT of the new remit
-    ///      gate and must survive it: a remit that arrives before the
-    ///      broadcast still cannot price a day this chain has no stamp for.
-    function test_D4_MirrorStillWaitsWhenStampHasNotLanded() public {
+    /// @dev The genuine `!stamped` wait SURVIVES the lift: an armed day whose
+    ///      per-chain stamp has not arrived (mirror still waiting on the
+    ///      broadcast) is still not priceable. Only the blanket mirror halt
+    ///      went away.
+    function test_D4_MirrorStillWaitsForItsOwnStamp() public {
         _configureMirror();
         // Arm + fund the day GLOBALLY but leave this chain's own stamp unset.
         _mut().setGovernorCommitArmedFromDayRaw(1);
@@ -654,30 +646,40 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _mut().setDayCapThreshold18(1, type(uint256).max);
         _mut().setDayCapModeRaw(1, 1);
         _mut().setDayUserSideCapRaw(1, type(uint256).max);
-        _mut().setMirrorDayBudgetReceivedRaw(1, true);
         _loanSideOpen(0);
         _entry(1, 2);
 
-        assertEq(
-            _preview(),
-            0,
-            "remit alone cannot price a day with no per-chain stamp"
-        );
+        assertEq(_preview(), 0, "no per-chain stamp yet -> still not priceable");
     }
 
-    /// @dev The gate is MIRROR-ONLY: the canonical chain funds its own armed
-    ///      days from the very bucket its stamp was sized against, so nothing
-    ///      remits to it and it must never wait on an arrival marker. Without
-    ///      this the gate would brick Base entirely.
-    function test_D4_CanonicalChainNeverWaitsForARemit() public {
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
-        RewardReporterFacet(address(diamond)).setBaseChainId(8453);
-        _armedDay(1, type(uint256).max);
+    /// @dev Why lifting the halt does NOT expose an unbacked draw, asserted
+    ///      rather than argued. The mirror's stamp promises
+    ///      `locally-funded + Base top-up`, and the top-up is credited only
+    ///      when the remit lands — so between broadcast and remit the stamp
+    ///      over-promises. The ShareOfPool walk already budgets the recycled
+    ///      leg against the LIVE bucket (`ctx.pool.recycled = s.recycleBucket`)
+    ///      and DEFERS a day it cannot cover, so the shortfall never reaches
+    ///      `LibVpfiRecycle.consume` (which would have floored at zero).
+    ///
+    ///      Recycled-only day, empty bucket: nothing is paid and nothing is
+    ///      consumed. Then the backing arrives and the same day pays.
+    function test_D4_MirrorRecycledDayDefersUntilItsBackingArrives() public {
+        _configureMirror();
+        // freshHalf 0, recycled equivalents 1e18 => payout is entirely the
+        // RECYCLED leg, so the bucket is the only thing backing it.
+        _mut().setDayPoolStampRaw(1, 0, uint128(2e18));
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 0, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, type(uint256).max);
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _loanSideOpen(0);
         _entry(1, 2);
 
-        // No `setMirrorDayBudgetReceivedRaw` anywhere.
-        assertGt(_claim(), 0, "canonical prices its armed day immediately");
+        _mut().setRecycleBucketRaw(0);
+        assertEq(_preview(), 0, "un-backed recycled day is deferred, not priced");
+
+        _mut().setRecycleBucketRaw(1e18);
+        assertGt(_claim(), 0, "the same day pays once its backing arrives");
     }
 }

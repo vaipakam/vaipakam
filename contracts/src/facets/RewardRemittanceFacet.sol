@@ -832,19 +832,6 @@ contract RewardRemittanceFacet is
             revert RecycledShareExceedsDelivery(recycledShare, amount);
         }
         LibVpfiRecycle.creditCustodyRelocated(remitId, recycledShare);
-        // #1222 M3 B2-d4 — mark each funded day as BACKED on this chain. On a
-        // mirror this is what releases the day for armed-day claim pricing:
-        // the broadcast stamp alone prices the day at (locally-funded + Base
-        // top-up) while only the local share is yet in the bucket, so pricing
-        // before the remit lands would let a claim consume backing that has
-        // not arrived. Idempotent by construction (a boolean set), so a
-        // re-delivery or a day repeated across remits is harmless.
-        for (uint256 i; i < dayIds.length; ) {
-            s.mirrorDayBudgetReceived[dayIds[i]] = true;
-            unchecked {
-                ++i;
-            }
-        }
         // r4 — receipts key by (remitter, remitId): `remitter` comes from
         // the remit PAYLOAD (immutable, messenger-authenticated message
         // data — never delivery-time channel config), so different

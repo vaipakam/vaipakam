@@ -5658,31 +5658,6 @@ library LibVaipakam {
         // paidOutRecycled` is monotonically non-decreasing and always
         // dominates this counter — the subtraction cannot underflow.
         uint256 recycleCustodyRelocatedCumulative;
-        // ─── #1222 M3 B2-d4 — mirror per-day remit-arrival marker ────────────
-        // APPEND-ONLY TAIL. Set for every day id carried by an inbound
-        // `onRewardBudgetReceived`. On a MIRROR it is the precondition for
-        // pricing an armed day's claims (see {LibInteractionRewards._dayPoolHalves}).
-        //
-        // Why the stamp alone is NOT sufficient backing on a mirror: the
-        // broadcast stamp lands first and prices the day's recycled
-        // equivalents at (locally-funded + Base top-up), but only the LOCAL
-        // share is in this chain's `recycleBucket` at that moment — the
-        // top-up, and the whole fresh side, arrive later in the remit. The
-        // claim path caps the FRESH pool but performs no recycled-backing
-        // check (its "bucket-backed by the finalize stamp against fundable"
-        // reasoning holds on Base, whose stamp is sized against its OWN
-        // bucket), and `LibVpfiRecycle.consume` FLOORS at zero rather than
-        // reverting. So a claim landing in the window between broadcast and
-        // remit would silently under-back: the bucket floors, `paidOutRecycled`
-        // over-counts, and the payout is drawn from other custody classes.
-        //
-        // Gating on arrival closes that window fail-closed, in the same shape
-        // as the existing `!stamped` wait. It is exact rather than
-        // conservative: Base only lists a day in the remit payload when its
-        // slice is non-zero, and every payable armed day carries a fresh
-        // component Base funds — so a day that never arrives is a day with
-        // nothing to pay.
-        mapping(uint256 => bool) mirrorDayBudgetReceived;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

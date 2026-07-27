@@ -623,59 +623,67 @@ following either literally now would reintroduce an over-statement.
    **Future wire evolutions take a NEW tag, never another rung on the
    offset ladder.**
 
-## 2g. d4 pins — the halt lifts, but the stamp alone is NOT backing
+## 2g. d4 pins — the halt lifts, and the existing walk budget is what makes that safe
 
-§1's d4 entry scopes this slice as "remove the `_dayPoolHalves` halt; keep the
-genuine `!stamped` wait". Scouted against the merged d5 code, that is
-**incomplete** — removing the halt and stopping there reopens the same
-under-backing class d5 just closed, on a narrower window.
+§1 scopes d4 as "remove the `_dayPoolHalves` halt; keep the genuine `!stamped`
+wait". **That scope is correct.** This section exists because my first cut
+assumed otherwise and added a gate that had to be withdrawn — the reasoning is
+recorded so the next reader does not repeat it.
 
-1. **The claim path has no recycled-backing check.** It caps the FRESH pool
-   (`remaining = CAP − paidOut − remittedGlobal`) and truncates against it, but
-   the recycled leg is passed straight to `LibVpfiRecycle.consume`. The code's
-   own justification is that the recycled components are *"bucket-backed (sized
-   by the finalize stamp against `fundable`)"* — and that is a **Base**
-   property: Base's stamp is sized against Base's own
-   `fundable = bucket − outstanding`, so its stamp can never promise more than
-   its bucket holds.
+**The concern, which is real.** A mirror's per-chain stamp lands at broadcast
+and prices the day at `locally-funded + Base top-up`, but only the LOCAL share
+is in its `recycleBucket` at that moment (d3 reserves exactly `recycleConsume`);
+the top-up is credited later, when the remit arrives (d5's relocated custody).
+So between broadcast and remit the stamp over-promises, and
+`LibVpfiRecycle.consume` FLOORS at zero rather than reverting — an unbacked draw
+would therefore be silent, over-counting `paidOutRecycled`, inflating the
+derived `creditedCumulative`, and paying out of unrelated custody.
 
-2. **On a mirror the stamp is NOT that guarantee.** The mirror's stamp arrives
-   at broadcast and prices the day at `locally-funded + Base top-up`, but at
-   that instant only the LOCAL share is in its `recycleBucket` (d3 reserves
-   exactly `recycleConsume` there). The top-up — and the entire fresh side —
-   arrive later, in the remit. So between broadcast and remit the stamp
-   over-promises by exactly the top-up.
+**Why it cannot happen anyway — verified, not assumed.** The ShareOfPool walk
+already budgets the recycled leg against the LIVE bucket: the claim builds
+`ctx.pool.recycled = s.recycleBucket` and, per its own comment, *"a recycled
+shortfall DEFERS a day and stops the side"*. The preview mirrors it
+(`PoolBudget.recycled = s.recycleBucket`). So a day the bucket cannot cover is
+never priced into a payout at all, and the shortfall never reaches `consume`.
+The bucket check sits one layer ABOVE the consume site — which is why reading
+only the consume site suggests it is missing. `test_D4_MirrorRecycledDay
+DefersUntilItsBackingArrives` asserts this directly on a mirror.
 
-3. **`consume` floors, it does not revert** (`bucket > amount ? bucket - amount
-   : 0`). A claim in that window therefore does not fail loudly: the bucket
-   floors at zero, `paidOutRecycled` over-counts, the derived
-   `creditedCumulative` inflates — and the payout itself is drawn from whatever
-   other custody the Diamond holds (LIF custody, earlier days' unclaimed
-   budget), breaking the §5 separation invariant. If the Diamond happens to
-   hold nothing the transfer reverts and the tx rolls back harmlessly, so the
-   damage needs prior activity on that mirror — narrow, but real, and silent.
+**The withdrawn approach, and why it was worse than the problem** (Codex #1433
+r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
+`mirrorDayBudgetReceived` marker set from the remit's `dayIds`:
 
-**Pin: a mirror waits for the day's REMIT, not merely its stamp.**
-`onRewardBudgetReceived` marks every day id it carries in
-`mirrorDayBudgetReceived`, and `_dayPoolHalves` requires that marker on a
-mirror in addition to `f.stamped`. Same fail-closed shape as the existing
-`!stamped` wait, and strictly narrower than B2-b's blanket halt.
+- **it wedges the cursor permanently.** `advanceCumLenderThrough` does
+  `if (halt) break;`. Base does NOT remit every armed day — `_planDay` closes a
+  fully mirror-local recycled day, and a liability-clamped-to-zero day, with
+  `p.fresh + p.recycled == 0` and never adds them to `fundedDays`. Such a day
+  could never be marked, so it would halt forever and block every LATER day's
+  claims on that mirror. My "the gate cannot strand a payable day" claim was
+  simply false.
+- **it breaks the destination gas budget.** One cold `SSTORE` per day against
+  the fixed `REWARD_BUDGET_DEST_GAS_LIMIT` of 300,000; the keeper batches by
+  VPFI value over a 45-day window, so the marker writes alone can exceed the
+  callback allowance — the delivery then fails AFTER Base closed the days and
+  put the tokens in flight.
+- **it is not bound to the remitter deployment.** d2 keys receipts by
+  `(remitter, remitId)` precisely because a delayed pre-rotation packet cannot
+  be identified from delivery-time config; a day-only flag lets such a packet
+  unlock the current era's stamp.
+- **it unlocks the zeroed-chain manual path.** A `remitIneligible` day is
+  stamped all-zero by design, and `remitManualBudget` later sends an
+  operator-sized FRESH amount carrying that day — the marker would make a zero
+  stamp priceable, advancing the cursor and retiring entries for nothing.
+- **it over-marks a short delivery.** The receiver's fee-on-transfer path
+  forwards `actualReceived` and scales `recycledShare`, but the loop marked
+  every declared day fully backed.
 
-**Exact, not conservative.** Base lists a day in the remit payload only when
-its slice is non-zero, and every payable armed day carries a Base-funded FRESH
-component — so a day whose remit never arrives is a day with nothing to pay on
-that mirror. The gate cannot strand a payable day.
+**Pin: no new gate.** An arrival EVENT is the wrong proxy for a backing VALUE,
+and the value is already enforced where it belongs. d4 removes the blanket halt
+and nothing else; the `!stamped` wait stays.
 
-**Canonical is exempt** — nothing remits to Base, so gating it would brick its
-own armed days. That exemption is asserted directly
-(`test_D4_CanonicalChainNeverWaitsForARemit`), because it is the one way this
-gate could do broad damage.
-
-The marker is set from the remit's own `dayIds`, is idempotent (a boolean), and
-survives re-delivery or a day repeated across remits. `dailyDeltaForCommitment`
-(d1's report) is unaffected: it reads the stamp directly and is
-halt-independent by construction, which is what lets a mirror still REPORT a
-day it cannot yet PRICE.
+**Pin: a refusal must never be a pricing halt.** A halt `break`s the cumulative
+cursor and so strands every later day; the walk's deferral advances nothing and
+strands nothing, which is why it is the right shape for "wait for backing".
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 

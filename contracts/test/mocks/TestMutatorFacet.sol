@@ -725,16 +725,6 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycleCreditedCumulative = amount;
     }
 
-    /// @notice #1222 M3 B2-d4 test-only — mark a day's reward-budget remit as
-    ///         ARRIVED on this chain. Production writes this in
-    ///         {RewardRemittanceFacet.onRewardBudgetReceived} from the day ids
-    ///         the remit carries; the pricing suites set it directly so they
-    ///         can exercise the mirror wait without standing up a full CCIP
-    ///         delivery.
-    function setMirrorDayBudgetReceivedRaw(uint256 dayId, bool on) external {
-        LibVaipakam.storageSlot().mirrorDayBudgetReceived[dayId] = on;
-    }
-
     /// @notice #1222 M3 B2-d5 test-only — drive the REAL consume path
     ///         (bucket → `paidOutRecycled`), which is what a mirror's claims
     ///         do. Deliberately the genuine {LibVpfiRecycle.consume} rather
