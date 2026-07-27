@@ -474,6 +474,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getRewardClaimFacetSelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
+        // #1222 M3 B3 — `getChainRecycledLedger` /
+        // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).
+        // No special handling is needed: both facets are listed, the moved
+        // selectors appear in THIS item's list, and a selector that is already
+        // routed is cut as a Replace pointing at the new facet address — which
+        // is the diamond-standard way to move one. (Contrast the #1351 slice-2c
+        // note above, where the DESTINATION facet was missing from this script
+        // entirely and the move silently did not happen.)
         items[27] = Item(
             "rewardAggregatorFacet",
             address(new RewardAggregatorFacet()),

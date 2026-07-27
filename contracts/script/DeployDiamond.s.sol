@@ -2252,7 +2252,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](92);
+        s = new bytes4[](90);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2438,8 +2438,9 @@ contract DeployDiamond is Script {
         s[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
         s[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
-        s[90] = ConfigFacet.getChainRecycledLedger.selector;
-        s[91] = ConfigFacet.getChainDailyRecycledCredit.selector;
+        // #1222 M3 B3 — `getChainRecycledLedger` /
+        // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
+        // (ConfigFacet hit the EIP-170 ceiling).
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config
@@ -2500,9 +2501,26 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](28);
+        // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
+        // ConfigFacet (which hit the EIP-170 ceiling); they join the rest of
+        // the Base-side finalization records.
+        s[26] = RewardAggregatorFacet.getChainRecycledLedger.selector;
+        s[27] = RewardAggregatorFacet.getChainDailyRecycledCredit.selector;
         // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
         s[22] = RewardAggregatorFacet.getRecycleCustodyPosition.selector;
+        // #1222 M3 B3 — the eight-word report ingress (a THIRD overload of
+        // `onChainReportReceived`, so it too must be pinned by signature) and
+        // the commitment-retirement transparency reads.
+        s[23] = bytes4(
+            keccak256(
+                "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
+            )
+        );
+        s[24] =
+            RewardAggregatorFacet.getChainRecycledCommitRetirement.selector;
+        s[25] =
+            RewardAggregatorFacet.getLocalRecycledCommitRetirement.selector;
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         s[17] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
         s[18] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;

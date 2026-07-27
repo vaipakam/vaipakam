@@ -1191,60 +1191,17 @@ contract ConfigFacet is DiamondAccessControl {
         return LibVpfiRecycle.creditedCumulative(LibVaipakam.storageSlot());
     }
 
-    /// @notice #1222 M3 B1 — Base's per-chain recycled ledger for `chainId`
-    ///         (Base's own figures live under its chain id). Zeros on
-    ///         mirrors and for never-reported chains.
-    /// @return reportedCumulative   Highest cumulative accepted from the
-    ///                              chain (availability, monotonic).
-    /// @return consumedCumulative   Cumulative Base has instructed the chain
-    ///                              to consume (written from B2 on).
-    /// @return availRecycled        `reported − consumed` — what mesh
-    ///                              funding/netting may draw against.
-    /// @return attributedCumulative Σ of accepted per-day credits — the
-    ///                              attribution clamp baseline; always
-    ///                              `≤ reportedCumulative`.
-    function getChainRecycledLedger(uint32 chainId)
-        external
-        view
-        returns (
-            uint256 reportedCumulative,
-            uint256 consumedCumulative,
-            uint256 availRecycled,
-            uint256 attributedCumulative
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        reportedCumulative = s.chainReportedRecycled[chainId];
-        consumedCumulative = s.chainConsumedRecycled[chainId];
-        availRecycled = reportedCumulative > consumedCumulative
-            ? reportedCumulative - consumedCumulative
-            : 0;
-        attributedCumulative = s.chainAttributedRecycled[chainId];
-    }
-
-    /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has
-    ///         attributed to `(dayId, chainId)` — the mesh half of the
-    ///         `credited[D]` feed that B2 folds into `Ā`.
-    /// @return credit   VPFI wei attributed (0 when unaccepted or clamped
-    ///                  away).
-    /// @return accepted True once the chain's report for the day was
-    ///                  processed (distinguishes a genuine zero credit from
-    ///                  "no report yet").
-    function getChainDailyRecycledCredit(uint256 dayId, uint32 chainId)
-        external
-        view
-        returns (uint256 credit, bool accepted)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        credit = s.chainDailyRecycledCredit[dayId][chainId];
-        accepted = s.chainRecycledDayAccepted[dayId][chainId];
-    }
-
     // #1222 M3 B2-a — the two-pass funding transparency reads
     // (`getChainDayRecycledFunding` / `getChainOutstandingRecycledCommit`)
     // live on {RewardAggregatorFacet} next to `getDayPoolStamp`: they are
     // Base-side finalization records, and ConfigFacet sits at the EIP-170
     // ceiling.
+    //
+    // #1222 M3 B3 — for the same two reasons, `getChainRecycledLedger` and
+    // `getChainDailyRecycledCredit` MOVED to {RewardAggregatorFacet} in this
+    // slice: B3 gave the availability figure a third input (the released
+    // commitments), which tipped this facet 70 bytes over EIP-170, and the
+    // whole per-chain mesh ledger now reads from one facet.
 
     /**
      * @notice T-032 / Recycling M1 (#1346) — read the live notification-

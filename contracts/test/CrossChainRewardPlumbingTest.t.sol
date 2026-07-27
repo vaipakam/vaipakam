@@ -980,12 +980,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // Day 1 — honest report: forDay 40 backed by a 100 cumulative.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 1, 1e18, 0, 100e18, 40e18);
         (uint256 reported, , uint256 avail, uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "availability cumulative");
         assertEq(avail, 100e18, "nothing consumed yet");
         assertEq(attributed, 40e18, "honest for-day accepted in full");
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(1, CHAIN_ARB);
+            _agg().getChainDailyRecycledCredit(1, CHAIN_ARB);
         assertTrue(accepted);
         assertEq(credit, 40e18);
 
@@ -993,10 +993,10 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // backing exists (150 reported − 40 attributed) → clamped, so Ā can
         // never be fed credit the availability ledger does not back.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 120e18);
-        (credit, accepted) = _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
+        (credit, accepted) = _agg().getChainDailyRecycledCredit(2, CHAIN_ARB);
         assertTrue(accepted);
         assertEq(credit, 110e18, "day credit clamped to unattributed backing");
-        (reported, , , attributed) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        (reported, , , attributed) = _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 150e18);
         assertEq(attributed, 150e18, "attributed never exceeds reported");
     }
@@ -1013,15 +1013,15 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 80e18, 10e18);
 
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "availability never regresses");
         assertEq(attributed, 20e18, "backed day credit still attributes");
 
         // Day 3 heals the cumulative; its full for-day is backed.
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 130e18, 50e18);
-        (uint256 credit, ) = _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+        (uint256 credit, ) = _agg().getChainDailyRecycledCredit(3, CHAIN_ARB);
         assertEq(credit, 50e18, "headroom measured from the ratcheted total");
-        (reported, , , attributed) = _cfg().getChainRecycledLedger(CHAIN_ARB);
+        (reported, , , attributed) = _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 130e18);
         assertEq(attributed, 70e18);
     }
@@ -1042,12 +1042,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReportRecycled(CHAIN_ARB, 2, 1e18, 0, 150e18, 50e18);
 
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
+            _agg().getChainDailyRecycledCredit(2, CHAIN_ARB);
         assertTrue(accepted);
         assertEq(credit, 50e18, "delayed day attributes exactly");
 
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 180e18, "stale cumulative did not regress availability");
         assertEq(attributed, 100e18, "20 + 30 + 50, all exact");
     }
@@ -1064,11 +1064,11 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReportRecycled(CHAIN_ARB, 0, 1e18, 0, 60e18, 60e18);
 
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(0, CHAIN_ARB);
+            _agg().getChainDailyRecycledCredit(0, CHAIN_ARB);
         assertTrue(accepted);
         assertEq(credit, 60e18, "day-0 attribution kept");
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "stale cumulative did not regress availability");
         assertEq(attributed, 80e18);
     }
@@ -1090,11 +1090,11 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 100e18, 100e18);
 
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+            _agg().getChainDailyRecycledCredit(3, CHAIN_ARB);
         assertTrue(accepted);
         assertEq(credit, 100e18, "day-3 credit not stolen by the quiet-day close");
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18);
         assertEq(attributed, 100e18);
     }
@@ -1112,11 +1112,11 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReportRecycled(CHAIN_ARB, 3, 1e18, 0, 180e18, 30e18);
 
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(3, CHAIN_ARB);
+            _agg().getChainDailyRecycledCredit(3, CHAIN_ARB);
         assertTrue(accepted, "report processed");
         assertEq(credit, 30e18, "late gap day attributes exactly");
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 200e18, "availability unaffected");
         assertEq(attributed, 60e18);
     }
@@ -1130,11 +1130,11 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_ARB, 2, 1e18, 0); // legacy shape
 
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 100e18, "zero cumulative advances nothing");
         assertEq(attributed, 10e18, "zero for-day attributes nothing");
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(2, CHAIN_ARB);
+            _agg().getChainDailyRecycledCredit(2, CHAIN_ARB);
         assertTrue(accepted, "day still marked processed");
         assertEq(credit, 0);
     }
@@ -1153,7 +1153,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         assertTrue(_agg().isChainReported(1, CHAIN_ARB), "interest recorded");
         (uint256 reported, , , uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_ARB);
+            _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 0, "no recycled figures travel on the legacy shape");
         assertEq(attributed, 0);
 
@@ -1284,12 +1284,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().closeDay(1);
 
         (uint256 reported, , uint256 avail, uint256 attributed) =
-            _cfg().getChainRecycledLedger(CHAIN_BASE);
+            _agg().getChainRecycledLedger(CHAIN_BASE);
         assertEq(reported, 55e18, "own cumulative recorded under own chain id");
         assertEq(avail, 55e18);
         assertEq(attributed, 5e18, "own day credit attributed");
         (uint256 credit, bool accepted) =
-            _cfg().getChainDailyRecycledCredit(1, CHAIN_BASE);
+            _agg().getChainDailyRecycledCredit(1, CHAIN_BASE);
         assertTrue(accepted);
         assertEq(credit, 5e18);
     }

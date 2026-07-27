@@ -5658,6 +5658,53 @@ library LibVaipakam {
         // paidOutRecycled` is monotonically non-decreasing and always
         // dominates this counter — the subtraction cannot underflow.
         uint256 recycleCustodyRelocatedCumulative;
+        // ─── #1222 M3 B3 — commitment-retirement signal + per-chain books ──
+        // APPEND-ONLY TAIL. B2-d3 books a mirror's locally-funded slice into
+        // `chainConsumedRecycled[c]` (the instruction cumulative) and
+        // `chainOutstandingRecycledCommit[c]` (the reservation ledger), but
+        // Base had no authenticated view of what the mirror then did with
+        // those reservations — so the reservation ledger only ever grew, and
+        // a commitment RELEASED un-spent (forfeit / RL-3 expiry, tokens never
+        // left the bucket) was lost from Base's availability model forever.
+        // B3 closes both books with two mirror-local cumulative counters
+        // reported on the day-close (see the design record
+        // `Vpfi1222B3SourceScopedNettingDesign.md`).
+        //
+        // `recycleCommitRetiredCumulative` — LOCAL, every chain: monotonic Σ
+        //   of every ACTUAL decrement applied to `outstandingCommitRecycled`,
+        //   whether by a claim (`consume`) or by a forfeit/expiry
+        //   (`releaseCommitment`). Counts the actual decrement, never the
+        //   requested amount: both primitives floor the outstanding sum at
+        //   zero for bounded cap-trim dust, and counting the request would
+        //   over-report retirement on a chain whose outstanding is exhausted.
+        uint256 recycleCommitRetiredCumulative;
+        // `recycleCommitReleasedCumulative` — LOCAL: the RELEASE-only subset
+        //   of the above (retired WITHOUT a payout, so the tokens stayed in
+        //   this chain's bucket and are committable again). `released ≤
+        //   retired` by construction. This is the half that restores
+        //   availability on Base; the consumed half is genuinely spent.
+        uint256 recycleCommitReleasedCumulative;
+        // `chainRetiredRecycledCommit` — BASE-ONLY per-chain ratchet of the
+        //   reported retirement cumulative. Monotonic-guarded on write AND
+        //   clamped to `chainConsumedRecycled[c]` on ingest, so Base trusts a
+        //   mirror for TIMING only, never for magnitude — a chain can never
+        //   report retiring more than Base instructed it to fund.
+        //   `chainOutstandingRecycledCommit[c] == chainConsumedRecycled[c] −
+        //   chainRetiredRecycledCommit[c]` holds at every instant, INCLUDING
+        //   with broadcasts in flight: Base's outstanding is (instructions not
+        //   yet applied) + (mirror's live outstanding) = (instructed −
+        //   applied) + (applied − retired), and the `applied` term cancels.
+        mapping(uint32 => uint256) chainRetiredRecycledCommit;
+        // `chainReleasedRecycledCommit` — BASE-ONLY per-chain ratchet of the
+        //   reported RELEASE cumulative; clamped to the ratcheted retired
+        //   figure and to `chainConsumedRecycled[c]`. It re-credits
+        //   availability: `avail_c = reported_c + released_c − consumed_c`.
+        //   The clamp is the load-bearing safety bound — `released_c ≤
+        //   consumed_c` forces `avail_c ≤ chainReportedRecycled[c]`, so the
+        //   self-heal can never re-offer the Base-funded custody d5
+        //   deliberately excluded from the reported cumulative ("phantom
+        //   availability").
+        mapping(uint32 => uint256) chainReleasedRecycledCommit;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

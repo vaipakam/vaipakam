@@ -53,6 +53,35 @@
   },
   {
     "type": "function",
+    "name": "getChainDailyRecycledCredit",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "credit",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accepted",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getChainDailyReportCount",
     "inputs": [
       {
@@ -154,6 +183,64 @@
     "outputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainRecycledCommitRetirement",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "retiredCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainRecycledLedger",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "reportedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "consumedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "availRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attributedCumulative",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -343,6 +430,24 @@
   },
   {
     "type": "function",
+    "name": "getLocalRecycledCommitRetirement",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "retiredCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRecycleCustodyPosition",
     "inputs": [],
     "outputs": [
@@ -480,6 +585,54 @@
   },
   {
     "type": "function",
+    "name": "onChainReportReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledCumulative18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledForDay18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "commitRetiredCumulative18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "commitReleasedCumulative18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "onCommitmentReportReceived",
     "inputs": [
       {
@@ -550,6 +703,37 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ChainCommitRetirementReported",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "retiredAccepted",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedAccepted",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstanding",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",

@@ -294,8 +294,14 @@ library LibVpfiRecycle {
         uint256 bucket = s.recycleBucket;
         s.recycleBucket = bucket > amount ? bucket - amount : 0;
         uint256 outstanding = s.outstandingCommitRecycled;
-        s.outstandingCommitRecycled =
-            outstanding > amount ? outstanding - amount : 0;
+        // #1222 M3 B3 — record the ACTUAL decrement, not `amount`: the floor
+        // below is load-bearing (cap-trim dust can make a day's consumption
+        // exceed its recorded commitment), so counting the request would
+        // over-report retirement to Base on a chain whose outstanding is
+        // already exhausted.
+        uint256 retired = outstanding > amount ? amount : outstanding;
+        s.outstandingCommitRecycled = outstanding - retired;
+        s.recycleCommitRetiredCumulative += retired;
         s.paidOutRecycled += amount;
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active) dayId = 0;
@@ -318,8 +324,16 @@ library LibVpfiRecycle {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 outstanding = s.outstandingCommitRecycled;
-        s.outstandingCommitRecycled =
-            outstanding > amount ? outstanding - amount : 0;
+        // #1222 M3 B3 — the actual decrement counts twice: into the shared
+        // retirement cumulative AND into the release-only subset, because a
+        // release leaves the tokens in the bucket. The release cumulative is
+        // what restores this chain's availability on Base (`avail_c =
+        // reported_c + released_c − consumed_c`); the `consume` half is
+        // genuinely spent and restores nothing.
+        uint256 retired = outstanding > amount ? amount : outstanding;
+        s.outstandingCommitRecycled = outstanding - retired;
+        s.recycleCommitRetiredCumulative += retired;
+        s.recycleCommitReleasedCumulative += retired;
         emit RewardCommitmentReleased(uint8(source), refId, amount);
     }
 
@@ -499,5 +513,127 @@ library LibVpfiRecycle {
         emit ChainRecycledReported(
             sourceChainId, dayId, cumulative, forDayReported, accepted
         );
+    }
+
+    // ─── #1222 M3 B3 — commitment retirement + availability ────────────────
+
+    /// @notice #1222 M3 B3 — Base accepted a chain's commitment-retirement
+    ///         cumulatives, closing the per-chain reservation ledger and (for
+    ///         the released half) restoring that chain's availability.
+    /// @param  sourceChainId  Reporting chain.
+    /// @param  retiredAccepted  The clamped retirement cumulative now on
+    ///                          record (monotonic).
+    /// @param  releasedAccepted The clamped RELEASE cumulative now on record
+    ///                          (monotonic; `≤ retiredAccepted`).
+    /// @param  outstanding      The chain's reservation ledger after the
+    ///                          retirement was applied.
+    /// @custom:event-category informational/reward-transport
+    event ChainCommitRetirementReported(
+        uint32 indexed sourceChainId,
+        uint256 retiredAccepted,
+        uint256 releasedAccepted,
+        uint256 outstanding
+    );
+
+    /**
+     * @notice #1222 M3 B3 — fold a chain's reported commitment-retirement
+     *         cumulatives into Base's per-chain books.
+     * @dev    Base trusts a mirror for TIMING only, never for magnitude.
+     *         Both figures ratchet monotonically (a stale or reordered
+     *         delivery can never walk them back) and both are CLAMPED against
+     *         Base-local state before they are believed:
+     *
+     *           retired  ≤ chainConsumedRecycled[c]   (Base's instructions)
+     *           released ≤ retired
+     *
+     *         The second clamp chained onto the first is what forces
+     *         `released_c ≤ consumed_c`, hence `avail_c ≤
+     *         chainReportedRecycled[c]` in {mirrorAvailRecycled} — the bound
+     *         that keeps d5's exclusion intact (Base can never be induced to
+     *         re-commit against its own already-remitted custody).
+     *
+     *         The reservation ledger is decremented by the retirement DELTA,
+     *         preserving `chainOutstandingRecycledCommit[c] ==
+     *         chainConsumedRecycled[c] − chainRetiredRecycledCommit[c]` at
+     *         every instant, in-flight broadcasts included (design record
+     *         §2.2: the "applied" term cancels).
+     *
+     *         No-op for a report carrying zeros — the legacy/pre-B3 report
+     *         shapes forward zeros, which advance nothing.
+     */
+    function recordChainCommitRetirement(
+        LibVaipakam.Storage storage s,
+        uint32 sourceChainId,
+        uint256 retiredCumulative,
+        uint256 releasedCumulative
+    ) internal {
+        if (retiredCumulative == 0 && releasedCumulative == 0) return;
+        uint256 instructed = s.chainConsumedRecycled[sourceChainId];
+
+        uint256 retired = s.chainRetiredRecycledCommit[sourceChainId];
+        uint256 nextRetired =
+            retiredCumulative > instructed ? instructed : retiredCumulative;
+        if (nextRetired > retired) {
+            uint256 delta = nextRetired - retired;
+            retired = nextRetired;
+            s.chainRetiredRecycledCommit[sourceChainId] = nextRetired;
+            uint256 outstanding =
+                s.chainOutstandingRecycledCommit[sourceChainId];
+            s.chainOutstandingRecycledCommit[sourceChainId] =
+                outstanding > delta ? outstanding - delta : 0;
+        }
+
+        uint256 released = s.chainReleasedRecycledCommit[sourceChainId];
+        uint256 nextReleased =
+            releasedCumulative > retired ? retired : releasedCumulative;
+        if (nextReleased > released) {
+            released = nextReleased;
+            s.chainReleasedRecycledCommit[sourceChainId] = nextReleased;
+        }
+
+        emit ChainCommitRetirementReported(
+            sourceChainId,
+            retired,
+            released,
+            s.chainOutstandingRecycledCommit[sourceChainId]
+        );
+    }
+
+    /**
+     * @notice #1222 M3 B3 — Base's model of a MIRROR's committable recycle
+     *         bucket: everything the chain reported crediting, PLUS the
+     *         commitments it released un-spent, LESS everything Base has
+     *         instructed it to fund locally.
+     * @dev    The release term is B3's whole point. A mirror retires a
+     *         reservation either by paying a claim (`consume` — the tokens
+     *         leave) or by forfeiting/expiring it (`releaseCommitment` — the
+     *         tokens stay in the bucket and are committable again). Without
+     *         the second term Base's model drifts down by Σreleased forever,
+     *         and a chain with ordinary forfeit rates eventually reads as
+     *         having zero availability while its bucket is full — at which
+     *         point Base silently funds the whole mesh again.
+     *
+     *         The ingest clamps in {recordChainCommitRetirement} guarantee
+     *         `released ≤ consumed`, so this can never exceed
+     *         `chainReportedRecycled[c]`.
+     *
+     *         SINGLE SOURCE OF TRUTH: the mesh funding pass and the
+     *         operator-facing `getChainRecycledLedger` view both call this —
+     *         two independent copies of the formula would drift the moment
+     *         one of them was updated.
+     *
+     *         Base's own chain id is inert here (and never routed through it
+     *         by the funding pass, which uses its live fundable balance):
+     *         Base never instructs itself, so `chainConsumedRecycled[Base]`
+     *         is 0 and both clamps pin its copies to 0.
+     */
+    function mirrorAvailRecycled(
+        LibVaipakam.Storage storage s,
+        uint32 chainId
+    ) internal view returns (uint256) {
+        uint256 creditable = s.chainReportedRecycled[chainId]
+            + s.chainReleasedRecycledCommit[chainId];
+        uint256 consumed = s.chainConsumedRecycled[chainId];
+        return creditable > consumed ? creditable - consumed : 0;
     }
 }
