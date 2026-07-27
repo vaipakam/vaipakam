@@ -614,8 +614,23 @@ contract RewardRemittanceFacet is
         if (armed) {
             p.armedFreshFull = sliceFresh;
             p.recycledFull = sliceRecycled;
-            uint256 liability =
-                c.liabilityLender18 + c.liabilityBorrower18;
+            // #1222 M3 B2-d3 (Codex #1430 r1) — the reported liability is the
+            // mirror's WHOLE day-D claimable liability, but part of it is
+            // already backed by the chain's OWN locally-committed recycled
+            // share (`recycleConsume`, netted out of the slice above and
+            // reserved on the mirror at broadcast arrival). Clamping the
+            // remittance against the full liability would back
+            // `local + liability` for at most `liability` of claims — an
+            // over-remit that needlessly spends Base availability other
+            // chains' rewards need. The remittable budget is therefore the
+            // liability NET of the local backing.
+            uint256 liability = c.liabilityLender18 + c.liabilityBorrower18;
+            {
+                uint256 localBacking = s
+                    .chainDayRecycledFunding[dayId][dstChainId].recycleConsume;
+                liability =
+                    liability > localBacking ? liability - localBacking : 0;
+            }
             if (liability < sliceTotal) {
                 uint256 clampedFresh = liability == 0
                     ? 0

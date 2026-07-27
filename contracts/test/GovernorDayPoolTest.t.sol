@@ -10,6 +10,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  GovernorDayPoolTest
@@ -428,6 +429,24 @@ contract GovernorDayPoolTest is SetupTest {
         (uint256 reported, uint256 consumed, , ) =
             _cfg().getChainRecycledLedger(CHAIN_ARB);
         assertLe(consumed, reported, "invariant holds across days");
+    }
+
+    /// Codex #1430 r1 — duplicate chain ids are rejected at the only
+    /// writer: the resolution reads each entry's demand + availability
+    /// independently, so a repeat would double-count the target, self-fund
+    /// the same availability twice (breaking consumed <= reported), and
+    /// clobber the shared per-(day, chain) stamp.
+    function testExpectedSourceChainIdsRejectsDuplicates() public {
+        uint32[] memory dup = new uint32[](3);
+        dup[0] = CHAIN_BASE;
+        dup[1] = CHAIN_ARB;
+        dup[2] = CHAIN_ARB;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.DuplicateExpectedChainId.selector, CHAIN_ARB
+            )
+        );
+        _agg().setExpectedSourceChainIds(dup);
     }
 
     /// Two-sided netting: Base remits only the TOP-UP it funded — the

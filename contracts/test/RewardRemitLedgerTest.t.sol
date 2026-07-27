@@ -490,6 +490,30 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(total, quoted, "funds once unencumbered");
     }
 
+    /// @dev Codex #1430 r1 (d3) — the reported liability covers the
+    ///      mirror's WHOLE day-D claimable liability, part of which the
+    ///      chain already backs from its own locally-committed recycled
+    ///      share. The clamp must therefore bound the remittance by
+    ///      `liability - localBacking`, or Base backs `local + liability`
+    ///      for at most `liability` of claims.
+    function test_Clamp_AccountsForMirrorLocalBacking() public {
+        _finalizeDay(1);
+        _armDayForArb(1, 0, 50e18); // recycled-only slice
+        mutator.setRecycleBucketRaw(1_000e18);
+
+        // The chain locally committed 4 VPFI of this day's recycled slice
+        // (stamped by the funding resolution; netted out of the slice).
+        mutator.setChainDayFundingLocalCommitRaw(1, CHAIN_ARB, 4e18);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 10e18, 0);
+
+        // Liability 10, local backing 4 → at most 6 may be remitted.
+        (uint256 quoted, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(quoted, 6e18, "clamped by liability NET of local backing");
+
+        uint256 total = _remitDay1ToArb();
+        assertEq(total, 6e18, "send matches the net-of-local clamp");
+    }
+
     // ─── manual-budget path (zeroed chains) ───────────────────────────────
 
     function test_Manual_RequiresIneligibleFlag() public {

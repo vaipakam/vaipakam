@@ -1193,6 +1193,24 @@ contract RewardAggregatorFacet is
             }
         }
         for (uint256 i; i < chainIds.length; ) {
+            // #1222 M3 B2-d3 (Codex #1430 r1) — reject DUPLICATES. The
+            // per-chain funding resolution reads each entry's demand
+            // numerators and its `reported − consumed` availability
+            // independently, so a repeated id would double-count that
+            // chain's target, self-fund its availability twice (booking
+            // `2 × commitLocal` into the per-chain ledgers and breaking
+            // `consumed ≤ reported`), and clobber the shared
+            // `(day, chain)` funding stamp so the broadcast instructs only
+            // one of the two reservations. There is no legitimate use for a
+            // repeated source chain, so it is rejected at the only writer.
+            for (uint256 j; j < i; ) {
+                if (chainIds[j] == chainIds[i]) {
+                    revert DuplicateExpectedChainId(chainIds[i]);
+                }
+                unchecked {
+                    ++j;
+                }
+            }
             s.expectedSourceChainIds.push(chainIds[i]);
             unchecked {
                 ++i;

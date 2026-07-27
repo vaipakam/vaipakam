@@ -970,6 +970,20 @@ contract TestMutatorFacet {
         });
     }
 
+    /// @notice #1222 M3 B2-d3 test-only — set a `(day, chain)` stamp's
+    ///         locally-funded commit (production writes it in the
+    ///         finalize-time mesh resolution) so the remit clamp's
+    ///         net-of-local-backing behaviour can be exercised directly.
+    function setChainDayFundingLocalCommitRaw(
+        uint256 dayId,
+        uint32 chainId,
+        uint256 recycleConsume
+    ) external {
+        LibVaipakam.storageSlot()
+            .chainDayRecycledFunding[dayId][chainId].recycleConsume =
+            recycleConsume;
+    }
+
     /// @notice #1222 M3 B2-d2 test-only — set a `(day, chain)` remit-ineligible
     ///         flag directly (production sets it in the armed grace/force
     ///         finalize's zeroed-chain branch) so the manual-budget path's

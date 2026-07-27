@@ -553,6 +553,14 @@ interface IVaipakamErrors {
     ///         execute). `earliest` is the first allowed timestamp.
     error RemitReleaseTooEarly(uint256 remitId, uint256 earliest);
 
+    /// @notice #1222 M3 B2-d3 — `setExpectedSourceChainIds` was given the
+    ///         same chain id twice. The per-chain funding resolution treats
+    ///         each entry independently, so a duplicate would double-count
+    ///         that chain's demand target, self-fund its availability twice
+    ///         (breaking `consumed ≤ reported`), and clobber the shared
+    ///         per-(day, chain) funding stamp.
+    error DuplicateExpectedChainId(uint32 chainId);
+
     /// @notice The manual-budget path requires the `(dayId, chainId)` still
     ///         marked remit-ineligible — the un-cleared flag is the on-chain
     ///         evidence the day was finalized with this chain ZEROED out of
