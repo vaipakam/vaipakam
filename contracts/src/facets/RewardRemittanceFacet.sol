@@ -677,8 +677,15 @@ contract RewardRemittanceFacet is
         uint256 gross = sideFresh + sideRecycled;
         if (gross == 0) return (0, 0);
         if (liability >= gross) return (sideFresh, sideRecycled);
-        freshLeg = (liability * sideFresh) / gross;
-        recycledLeg = liability - freshLeg;
+        // Codex #1430 r4 — use the CLAIM PATH's rounding convention:
+        // `_splitDayAmount` floors the RECYCLED share and gives fresh the
+        // remainder (and `_attributeLegs` repeats that per entry). Flooring
+        // fresh here instead would round the recycled leg UP, over-net it
+        // against the local backing, and under-remit the fresh leg — leaving
+        // fresh claims short by up to a wei per entry, which is the unsafe
+        // direction.
+        recycledLeg = (liability * sideRecycled) / gross;
+        freshLeg = liability - recycledLeg;
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────

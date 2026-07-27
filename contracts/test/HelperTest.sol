@@ -87,7 +87,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](139);
+        selectors = new bytes4[](141);
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
@@ -104,6 +104,9 @@ contract HelperTest {
         // #1222 M3 B2-d3 — stamp a local commit for the clamp test.
         selectors[138] =
             TestMutatorFacet.setChainDayFundingLocalCommitRaw.selector;
+        // #1222 M3 B2-d3 — reconstruct a pre-d3 applied broadcast.
+        selectors[139] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
+        selectors[140] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.

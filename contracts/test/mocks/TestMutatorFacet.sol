@@ -970,6 +970,23 @@ contract TestMutatorFacet {
         });
     }
 
+    /// @notice #1222 M3 B2-d3 test-only — clear the mirror's
+    ///         arrival-reservation flag for a day. Lets a test reconstruct
+    ///         the PRE-d3 state FAITHFULLY: apply a broadcast normally (so
+    ///         every stamped field is consistent, as a pre-d3 receiver would
+    ///         have left it), then undo only the reservation — proving a
+    ///         post-upgrade replay completes it.
+    function setBroadcastV2AppliedRaw(uint256 dayId, bool applied) external {
+        LibVaipakam.storageSlot().broadcastV2Applied[dayId] = applied;
+    }
+
+    function setMirrorCommitReservedRaw(uint256 dayId, bool reserved)
+        external
+    {
+        LibVaipakam.storageSlot().mirrorRecycleCommitReserved[dayId] =
+            reserved;
+    }
+
     /// @notice #1222 M3 B2-d3 test-only — set a `(day, chain)` stamp's
     ///         locally-funded commit (production writes it in the
     ///         finalize-time mesh resolution) so the remit clamp's

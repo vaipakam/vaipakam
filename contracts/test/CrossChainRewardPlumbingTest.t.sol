@@ -1396,6 +1396,37 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverBroadcastV2(diverged);
     }
 
+    /// Codex #1430 r4 — a PRE-d3 implementation could apply a broadcast that
+    /// already carried a non-zero `recycleConsume`: it stored the stamp and
+    /// set the whole-day flag WITHOUT reserving. After the upgrade every
+    /// replay takes the idempotency early-return, so the reservation must be
+    /// completed there — otherwise the mirror under-reserves forever while
+    /// Base has already booked and netted that local share.
+    function testBroadcastV2ReplayBackfillsAPreUpgradeReservation() public {
+        _configureMirror(CHAIN_ARB);
+        _mut().setRecycleBucketRaw(12e18);
+
+        // Reconstruct the pre-d3 state FAITHFULLY: apply the broadcast
+        // normally so every stamped field is exactly as a pre-d3 receiver
+        // would have left it, then undo ONLY the reservation.
+        RewardBroadcastV2 memory b = _v2Packet(CHAIN_ARB);
+        messenger.deliverBroadcastV2(b);
+        _mut().setOutstandingCommitRaw(0, 0);
+        _mut().setMirrorCommitReservedRaw(b.dayId, false);
+        (, , uint256 outBefore, ) = _agg().getGovernorCommitState();
+        assertEq(outBefore, 0, "pre-upgrade state has no reservation");
+
+        // A replay under the upgraded implementation completes it exactly
+        // once — and a further replay does not double-reserve.
+        messenger.deliverBroadcastV2(b);
+        (, , uint256 outAfter, ) = _agg().getGovernorCommitState();
+        assertEq(outAfter, 5e18, "missed reservation backfilled on replay");
+        messenger.deliverBroadcastV2(b);
+        (, , uint256 outAgain, ) = _agg().getGovernorCommitState();
+        assertEq(outAgain, 5e18, "still exactly once");
+        assertEq(_cfg().getRecycleBucket(), 12e18, "bucket never debited");
+    }
+
     /// The embedded destination id is the replay-stable binding: a packet
     /// built for another chain must never apply its figures here.
     function testBroadcastV2RejectsWrongDestination() public {
