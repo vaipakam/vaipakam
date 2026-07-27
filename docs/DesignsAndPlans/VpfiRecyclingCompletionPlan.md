@@ -42,15 +42,77 @@ health publicly observable; and the system **armed**, not just merged dark.
 | RL-6 legal evidence pack + copy-rules release gate | #1304 (#1308) | |
 | Read views (`getRecycleBucket`, `getRecycledCreditedByDay`, `getRecycleConfig`, `getRecycleRegisterState`) + EIP-170 lens refactor | #1344 / #1333 | |
 
-**Verified NOT done:** notification-fee custody re-route + flat tariff
-(`LibNotificationFee.bill` still pays user-vault → treasury, "No Diamond
-custody", via the fixed conversion) — #1346; the Layer-2 tariff charger
-(no `credit(FullTariff, …)` call site) — #1347; the #1294 D1/HoldOnly/
-settlement-sweep stack (no `dayCapMode`/ShareOfPool/`feeEntitlement`
-anywhere in `contracts/src`); all Phase B′ mesh fields (no
-`chainRecycledVpfi18`, no `recycleConsume` — B1 WIP parked on
-`feat/1222-b1-per-chain-recycled-ledger`, not for merge); Phase C′; the
-arming ceremonies.
+**Verified NOT done (as of 2026-07-18 — see §1a for the current state):**
+notification-fee custody re-route + flat tariff — #1346; the Layer-2
+tariff charger — #1347; the #1294 D1/HoldOnly/settlement-sweep stack;
+all Phase B′ mesh fields; Phase C′; the arming ceremonies.
+
+## 1a. Status refresh — verified against `main` 2026-07-27 (through #1426)
+
+The 2026-07-18 baseline above is retained for the record; this section is
+the current state. Everything below merged **dark/dormant** — the M7
+ceremonies remain the only activation path — **with TWO exceptions
+that are LIVE now**:
+
+1. **The M1 notification tariff.** `LibNotificationFee.bill` has no M7
+   gate: on any deployment where notification billing runs, the flat
+   tariff already moves into Diamond custody and credits the bucket
+   (`credit(NotificationFee, …)`) — operators account for those
+   credits now, not after the ceremonies.
+2. **The #1352 fee changes.** The 0.2% LIF / 2% yield-fee freeze is a
+   **compiled constant** (`LOAN_INITIATION_FEE_BPS = 20`) charged at
+   accept, and the borrower HoldOnly direct lending-asset fee
+   reduction likewise runs at origination — neither waits for
+   `feeEntitlementEnabled` or a ceremony. Current borrower charges and
+   treasury fee behaviour already reflect them. "Dark" properly covers
+   the Full channel, the loan-side reward cap, and their gated
+   settlement behaviour.
+
+**Now DONE (all Codex-reviewed, all `Closes` their cards):**
+
+| Milestone | Landed via | Notes |
+| --- | --- | --- |
+| **M1 complete** (#1346) | #1358 | Flat native tariff + numeraire-rotation removal + Diamond-custody re-route + `credit(NotificationFee, …)` + the #973 restamp tail |
+| **M2 — all landed slices** (milestone itself stays IN PROGRESS until #1369) | #1350→#1359 (specs) · #1352→#1363 (HoldOnly + 20/200 freeze + grandfather resolver) · #1347→#1366 (Full tariff, dark) · #1353→#1371 (loan-side cap, dark) · #1354→#1381 (settlement sweep, dark) · #1355→#1412 (frontend) · #1356→#1411 (deploy asserts + facet-key drift gate) · **#1351 CLOSED** via the slice series #1397/#1399/#1407–#1410 (D1 ShareOfPool claim SM: storage+knob+stamp, `processUserSideDay`, pricing core, chunked claim, preview-parity) with its remit-side prerequisite delivered by B2-d2 | Settlement-sweep long tail closed by follow-up cards #1383 (PR-B2/B3 repay/preclose/swap families), #1384 (extension repricing), #1391 (offset close-out), #1392 (sold-position discount continuity). **One deferred origination-auth slice remains — #1369** (see the remaining map): signed-offer makers cannot authorize Full, and matched fills ignore the lender offer's `creatorFull` — so the M2 milestone must NOT be checked off on the umbrella tracker until #1369 lands; only the listed slices are done |
+| **M3 B1 + B2-a…d2** (#1222, in progress) | B1 #1413 · B2-a #1414 (two-pass per-chain funding) · B2-b #1417 (per-destination BROADCAST_V2 — the D1+mesh **union** landed as one 15-word kind-5 evolution, per the wire rule) · B2-c #1422 (Base-side commitment-gate plumbing) · B2-d1 #1425 (per-entry mirror→Base commitment report, kind-6) · B2-d2 #1426 (delivered-backing remit ledger `(remitter, remitId)` + kind-7 ack + Σcommitments remit gate/clamp + operator valves + zeroed-chain manual-budget path) | Keeper passes shipped with d1/d2; **operator prerequisite: D1 migrations `0043_keeper_commitment_scan.sql` + `0044_keeper_remit_ack.sql` before arming** |
+
+**Implementation supersessions of this plan's §M3 text (recorded; the
+merged PRs' design records are authoritative):**
+
+1. **B1 consistency clamp** landed as the **AGGREGATE form** — the
+   baseline advances only by accepted credit, order-independent,
+   `Σattributed ≤ reported` — superseding this plan's
+   per-chain-monotonic-cursor / lower-day-snapshot options (Codex r2 on
+   #1413 showed the per-report-delta clamp corrupts quiet-day late
+   closes).
+2. **Gate retiming (§2b of the B2-d design record) — RATIFIED (owner,
+   2026-07-27):** finalize-readiness does NOT wait for commitment
+   reports (causally circular — the report prices from finalize's own
+   outputs); the "never from a partial set / delays never zeroes" rule
+   binds at the **remit gate** instead — tokens never leave Base for a
+   mirror until that mirror's report is complete — and
+   `remitIneligible` marks a silent chain ZEROED out of that day's
+   shipment until operator reconciliation. Load-bearing in #1425 +
+   #1426. This supersedes this plan's earlier "chunk completeness wired
+   into day-finalization readiness" rule (the §M3 text carries the
+   in-place supersession note).
+
+**Still REMAINING for complete VPFI recycling:**
+
+| Item | Where |
+| --- | --- |
+| **M3 B2-d3** — mirror consume-on-arrival + two-sided netting + per-chain books (`chainConsumedRecycled` / `chainOutstandingRecycledCommit` become real; `_stampOne` local-vs-top-up split; remittance netting) — makes the per-chain §7 invariants bind | #1222 |
+| **M3 B2-d4** — lift the mirror `_dayPoolHalves` pricing halt (mirror claims are HALTED on armed days until this lands — per the B2-d design record `Vpfi1222B2dDeliveredBackingDesign.md`; `LibInteractionRewards` gates on it) | #1222 |
+| **M3 B2-d5** — the `Ā`-excluded remitted-recycled custody-credit class (`RecycleSource` has no such entry yet) + the #1331 reclassification — the ratified §M3 `Ā`-feed exclusion is unimplemented until this | #1222 |
+| **M2 #1369** — deferred Full-auth origination paths: signed-offer maker Full authorization (`OfferCreateFacet`) + matched fills honoring the lender offer's `creatorFull` (`FeeEntitlementFacet`) + the frontend maker surface — without it, those parties cannot enter the Full absorption channel even after enablement | #1369 |
+| **M3 B3** — source-scoped netted remittance completion (shortfall-only sends on the per-chain books d3 creates) | #1222 |
+| **M3 B4** — 3-chain mesh e2e + invariants + watcher per-chain bucket checks + TokenomicsTechSpec §4a | #1222 |
+| **M4 C1/C2** — surplus knob + batched repatriation | #1222 tail |
+| **M5** — dashboard views (`selfFundingRatio`, `platformRetained`, runway, `netEmission = freshDrawdown`) + public surface | #1218 |
+| **M6** — perks (#1204, `SpendGatedPerk` enum entry, legal glance first) + bonds (#1219, schedule the glance) | #1204 / #1219 |
+| **M7** — ceremonies, now including the NEW operator steps the mesh added. **Chain-side ORDER is load-bearing (r4):** **(1) enable `feeEntitlementEnabled` FIRST** — while it is off, `_fullTariffShouldRun` skips plain canonical originations, so any loan accepted after an unstamped-scan but before enablement re-joins the unstamped class and the readback goes stale; enabling first means every subsequent origination stamps itself and the scan result cannot be invalidated by new loans (this reorders the §M7.4 joint gate — arming becomes the LAST step, see the in-place note there; the alternative is atomically batching enablement + scan + arming with canonical originations paused across the batch). **(2) Zero unstamped reward-eligible canonical loans.** On armed days the legacy #1008 cap retires and the loan-side cap deliberately skips an UNSTAMPED loan (`feeEntitlementByLoanId[loanId].openDays == 0` — the rev-15 unstamped-earns-normally rule), so any reward-eligible canonical loan still open and unstamped at `D*` would earn **uncapped**. Enumerate open reward-eligible canonical loans with `openDays == 0` and resolve each, reading back **zero unresolved** before arming. **There is NO backfill surface**: `_stampEntitlement` runs only at origination and no admin/migration path can stamp an existing loan — the supported resolutions are the enable-first ordering (prevents new members of the class) and **wait-for-close** (or voluntary close/re-open) for existing ones; a true backfill needs a not-yet-filed migration card with snapshot inputs + verification. (Pre-live: enabling + arming at mainnet genesis makes the set empty by construction — but the readback is still the gate, and any testnet-rehearsal or post-launch `D*` DOES have such loans.) **(3) Arm with a propagation buffer:** `setGovernorCommitArmedFromDay(D*)` **IS the D\* cutover** — one canonical-only, one-shot, future-day-only Base call; NO per-chain `D*` administration (a mirror-chain or duplicate call reverts). The setter only writes Base storage + emits `GovernorCommitArmed` — it does NOT itself send anything: a mirror learns `D*` only when the **first application of a not-yet-applied finalized day's kind-5 broadcast** lands after arming (a replay of an already-applied day exits through the idempotency branch WITHOUT installing `armedFromDay`). Because the call is **irreversible the moment it lands** while `D*` may legally be `today+1`, choose `D*` with a **multi-day buffer** (several broadcast cycles), require the per-mirror **readback of `governorCommitArmedFromDay`** to succeed on every mirror **well before `D*`**, and have the contingency written down for a mirror that misses the deadline (its claims stay halted until CCIP delivery recovery / manual re-execution — governance cannot postpone `D*`). **Keeper side:** apply D1 migrations 0043/0044; grant the keeper EOA `KEEPER_ROLE` **on EVERY mirror Diamond** (`submitCommitmentBatch` is mirror-only AND role-gated — granting on Base alone, or missing one mirror, leaves that mirror's commitment pass reverting forever, its report never completes, and the remit gate stalls that chain's funding); **fund the keeper EOA on every mirror AND on Base (canonical)** — mirrors need transaction gas for `submitCommitmentBatch` plus the quoted native CCIP fee for `sendCommitmentReport`/`sendRemitAck`, and **Base needs gas + the CCIP `msg.value` fee for every Base→mirror `remitRewardBudget` send** (`runRewardBudgetRemit` submits from the canonical chain — an unfunded Base EOA lets commitment reports complete while every reward-budget send fails and mirror claims stay unfunded); per-chain balance readback **including the canonical chain** is part of the checklist; **verify per-destination lane capacity before enabling the flags** — the keeper excludes any day whose eligible slice exceeds `REWARD_REMIT_LANE_CAP` or the CCIP token-bucket capacity (retries cannot fund it until limits are raised, and the 50,000-VPFI default capacity can be below an early high-concentration daily slice), so the **#918 largest-slice preflight is an M7 activation dependency**: read back that each destination's token-bucket capacity AND the keeper lane cap clear the maximum supported single-day slice; authorize the remit signing EOA; and arm the **master flags together** — `KEEPER_ENABLED` + `REWARD_COMMIT_ENABLED` (commitment reports) + `REWARD_REMIT_ENABLED` (delivery-ack pass) — arming the chain without all of these leaves reports/acks inert and stalls multi-chain funding | runbook |
+| **M8** — fragment assembly (`1346-*`–`1356-*`, `1383a/b-*`+, and the `1222-b*` mesh family — see §M8 for the exact filename families), #882 | docs |
+| ~~Owner ratification — the §2b gate retiming~~ | **DONE — RATIFIED 2026-07-27** (supersession 2 above) |
 
 ## 2. Is the cross-chain mesh (#1222) still required? — YES
 
@@ -90,7 +152,13 @@ custody re-route into Diamond custody with
 Reconcile with **#973 (L26)** in the same PR: the bill path moves vault
 VPFI without the mandatory discount/tier restamp; the re-route must run
 the standard tracked-balance/rollup tail. First live non-forfeit
-absorption class; ships dark like everything else. **Numeraire-rotation
+absorption class.
+> **SUPERSEDED by implementation (see §1a):** this milestone did NOT
+> ship dark. `LibNotificationFee.bill` carries no M7 gate — the flat
+> tariff is LIVE wherever notification billing runs, moving VPFI into
+> Diamond custody and crediting the bucket now. Operators account for
+> `NotificationFee` credits from deploy, not after the ceremonies.
+**Numeraire-rotation
 surface (in scope):** the current code treats the notification fee as a
 numeraire-denominated knob — `NumeraireConfigFacet.setNumeraire` writes
 `newNotificationFeeInNewNumeraire` into the same storage slot. Once the
@@ -328,16 +396,19 @@ become undeliverable: the report carries a **bounded** scheme
 (aggregate per-side headroom + a commitment root with chunked detail,
 or paginated commitment chunks), and ShareOfPool remittance for a day
 is gated on **all chunks present and verified** — never computed from a
-partial set (a missing chunk delays, never zeroes, that chain). **This
-gate must be wired into day-finalization readiness itself** (PR-2): the
-aggregator's grace/force-finalize path currently zeroes a missing
-chain and rejects late reports — unless chunk completeness is a
-readiness input, a delayed chunk still yields a finalized day with
-partial/zero commitments and permanently underfunds that mirror. If a
-force-finalize genuinely must proceed without a chain's chunks, that
-chain's ShareOfPool remittance for the day is marked
-remit-ineligible-pending-reconciliation (operator path) — never
-computed from the partial set. (2)
+partial set (a missing chunk delays, never zeroes, that chain).
+> **SUPERSEDED in part — §2b gate retiming, RATIFIED by the owner
+> 2026-07-27 (see §1a supersession 2):** the original rule here wired
+> chunk completeness into *day-finalization readiness*; implementation
+> (#1425/#1426) proved that causally circular — the commitment report
+> prices from finalize's own outputs — so the completeness gate binds
+> at the **remit gate** instead: armed days remit to a destination only
+> once its report is `.complete`, bounded by the reported liability,
+> with `remitIneligible` zeroing a silent chain out of that day's
+> shipment until the evidenced operator reconciliation (which the
+> B2-d2 zeroed-chain manual-budget path serves). The
+> delays-never-zeroes / never-partial-set property is preserved at the
+> point where tokens actually move. (2)
 *pending-remittance reservation* — ack-timed accounting alone allows
 duplicate in-flight allocations (two remits before the first ack both
 see the same headroom), while incrementing at send reintroduces the
@@ -446,13 +517,32 @@ GovernanceRunbook gains a recycling section, executed in order:
    at origination while every yield-fee site still ignores the lender
    Full stamp — collecting the tariff without delivering the purchased
    +10% discount. Gate = PR-2 + PR-5c live + PR-6 live + `D*` armed
-   (asserted by PR-9/#1356). **Multi-chain `D*` precondition:** before
-   Base arms, the SAME `shareOfPoolCutoverDay` must be configured on
-   EVERY reward chain — the fail-closed predicate is
-   `D* != 0 && d ≥ D*`, so a mirror left at the default 0 never enters
-   the post-cutover path while Base sends ShareOfPool days, and claim
-   vs remittance behaviour diverges. All-chains-configured is a
-   checklist item ahead of Base arming. **Mesh/dark precondition
+   (asserted by PR-9/#1356).
+   > **ORDERING SUPERSEDED (r4, see the §1a M7 row):** with PR-6
+   > (#1354/#1381) landed, the protective intent of "`D*` armed" as an
+   > enablement precondition is met differently — the ceremony now runs
+   > **enable `feeEntitlementEnabled` → unstamped-scan/readback → arm
+   > `D*` LAST** (with a multi-day propagation buffer). Enabling before
+   > arming is safe (pre-`D*` days keep the legacy #1008 cap) and
+   > closes the scan-staleness window: while enablement is off, plain
+   > canonical originations skip stamping, so a loan accepted between
+   > the scan and enablement would reach `D*` unstamped and uncapped.
+   > **SUPERSEDED by implementation (see §1a):** the original
+   > "configure the same `shareOfPoolCutoverDay` on every reward chain
+   > before Base arms" step no longer exists as per-chain
+   > administration — `RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)`
+   > IS the cutover: one canonical-only, one-shot, future-day-only Base
+   > call (a mirror-chain or duplicate call reverts). The setter itself
+   > only writes Base storage and emits `GovernorCommitArmed` — it does
+   > NOT invoke the messenger. `D*` reaches a mirror in-band with the
+   > **first application of a not-yet-applied finalized day's kind-5
+   > broadcast** after arming; a replay of an already-applied day exits
+   > through the idempotency branch without installing `armedFromDay`.
+   > The all-chains-consistent property this paragraph wanted is
+   > delivered by that propagation, gated by a per-mirror **readback of
+   > `governorCommitArmedFromDay`** once the next new-day broadcast has
+   > applied — the checklist item is that readback, not "configure each
+   > chain" and not the setter call alone. **Mesh/dark precondition
    (same as governor arming and RL-3):** Full enablement on
    reward-active mirrors before M3 would strand `FullTariff` credits
    in mirror-local buckets Base can neither count in `Ā` nor fund
@@ -463,7 +553,12 @@ GovernanceRunbook gains a recycling section, executed in order:
 
 ### M8 — Docs housekeeping
 
-Assemble the pending `1217-*`/`130x-*` release-note fragments;
+Assemble the pending release-note fragments — the `1217-*`/`130x-*`
+families AND the post-plan implementation wave (`1346-*`–`1356-*`,
+`1383a-*`/`1383b-*`, `1384-*`, `1391-*`, `1392-*`, and the Phase B′
+mesh family `1222-b1-*` through `1222-b2d2-*` — fragments are named by
+their **card**, #1222, not by the implementing PR numbers — as present
+under `docs/ReleaseNotes/unreleased/`);
 TokenomicsTechSpec edits ride each implementing PR; whitepaper
 reconciliation (#882) when that copy is next touched.
 
@@ -515,7 +610,11 @@ constituent cards below remain the working tickets.
 ## 6. Definition of done — "VPFI recycling complete"
 
 1. **Absorption**: notification tariff (M1) + Full tariff (M2) live and
-   crediting the bucket; forfeit/expiry classes live (already);
+   crediting the bucket — **including the #1369 origination-auth slice**
+   (signed-offer maker Full authorization + matched fills honoring the
+   lender offer's `creatorFull`): the Full channel is not complete while
+   whole origination paths cannot enter it; forfeit/expiry classes live
+   (already);
    **spend-gated perks (#1204) in a DECIDED state** — legal glance passed
    + built and crediting, or an explicit owner deferral recorded on
    #1204; **service bonds (#1219) in a DECIDED state** — either the
