@@ -946,7 +946,8 @@ library LibInteractionRewards {
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
     /// @return halt         True ⇒ armed day not priceable here: stop
-    ///                      advancing (no stamp yet, OR a mirror pre-B2-d).
+    ///                      advancing (no stamp yet, OR a mirror — see the
+    ///                      standing halt above; B2-d4 did not lift it).
     function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardSide side,
@@ -978,15 +979,16 @@ library LibInteractionRewards {
     ///         mirror→Base commitment REPORT.
     /// @dev    The report is a READ-ONLY liability estimate that must work
     ///         while mirror armed-day CLAIM pricing is still halted (the
-    ///         line-879 `isMirrorRewardChain` halt in {_dayPoolHalves}, removed
-    ///         only in B2-d4 once consumption is backed). It therefore reads
+    ///         `isMirrorRewardChain` halt in {_dayPoolHalves} — which B2-d4
+    ///         attempted to remove and did NOT: it STAYS pending the two
+    ///         prerequisites recorded there and on #1434). It therefore reads
     ///         the stamp DIRECTLY and NEVER touches the halted cumulative
     ///         cursor (`cumRpn18`, advanced by {advanceCumLenderThrough} which
     ///         breaks on that same halt). The per-day math MIRRORS
     ///         {advanceCumLenderThrough} exactly — stamp halves → per-side
     ///         daily (floored) → summed — so the commitment's `rawPay`
     ///         (`perDayNumeraire18 × Δ_d / 1e18`) equals what the claim path
-    ///         will pay once B2-d4 lifts the halt. Keep the two in lockstep:
+    ///         will pay if and when the halt is lifted. Keep the two in lockstep:
     ///         any change to the 883-925 halves/daily math must land here too.
     ///         `priceable == false` ⇒ the day is unarmed or this chain's stamp
     ///         has not arrived yet (broadcast pending) — the report must wait.

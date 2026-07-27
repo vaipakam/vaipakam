@@ -659,10 +659,28 @@ invented a hazard that did not exist.
    With the halt gone the mirror advances its cursor at zero delta,
    `processUserSideDay` treats `rawPay == 0` as terminal progress and persists
    the cursor — so entries are retired BEFORE `remitManualBudget` can
-   compensate them. Fix shape: the mirror needs to distinguish a deliberately-
-   zeroed day from a genuinely-zero one, which needs a mirror-observable signal
-   — likely a broadcast field, and per §2f.4 a wire evolution takes a NEW TAG,
-   never another rung on the offset ladder.
+   compensate them.
+
+   **Not-priced is necessary but NOT sufficient** (Codex #1433 r4). Suppressing
+   the day only stops it being *burned*; it does not make it *payable* once the
+   compensation lands. `remitManualBudget` sends a total plus a `dayId`, and
+   `onRewardBudgetReceived` merely increments `rewardBudgetReceivedTotal` — it
+   never writes the mirror's `chainDayRecycledFunding` stamp. So after
+   compensation the stamp is still all-zero and the day still prices at zero;
+   the tokens arrive with no path into the claim math. The manual path
+   therefore needs a **repricing** step, not just an exclusion:
+
+   - the mirror must be able to tell a deliberately-zeroed day from a
+     genuinely-zero one — a mirror-observable signal, likely a broadcast field,
+     and per §2f.4 a wire evolution takes a **NEW TAG**, never another rung on
+     the offset ladder; **and**
+   - the compensation must carry (or authorise) the per-side funding figures
+     that replace that day's zero stamp, so the day becomes priceable at the
+     operator-sized amount. Whatever writes that stamp is a fund-moving,
+     operator-driven path into pricing and needs the same evidence discipline
+     as the rest of d2's manual vehicle.
+
+   Until BOTH exist, a zeroed day must stay unpriced rather than be walked.
 
 **The withdrawn approach, and why it was worse than the problem** (Codex #1433
 r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
