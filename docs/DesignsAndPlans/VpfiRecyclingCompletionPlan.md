@@ -47,7 +47,7 @@ notification-fee custody re-route + flat tariff — #1346; the Layer-2
 tariff charger — #1347; the #1294 D1/HoldOnly/settlement-sweep stack;
 all Phase B′ mesh fields; Phase C′; the arming ceremonies.
 
-## 1a. Status refresh — verified against `main` 2026-07-27 (through #1426)
+## 1a. Status refresh — verified against `main` 2026-07-27 (through #1435)
 
 The 2026-07-18 baseline above is retained for the record; this section is
 the current state. Everything below merged **dark/dormant** — the M7
@@ -101,7 +101,7 @@ merged PRs' design records are authoritative):**
 
 | Item | Where |
 | --- | --- |
-| ~~**M3 B2-d3**~~ **— DONE, merged `bf2b97cc` (#1430).** Mirror consume-on-arrival + two-sided netting + per-chain books (`chainConsumedRecycled` / `chainOutstandingRecycledCommit` become real; `_stampOne` local-vs-top-up split; remittance netting) — makes the per-chain §7 invariants bind | #1222 |
+| ~~**M3 B2-d3**~~ **— DONE, merged `bf2b97cc` (#1430).** Mirror commitment-on-arrival (**not** the "consume-on-arrival" this row said while parked — arrival RESERVES the instructed amount into the mirror's `outstandingCommitRecycled`; the bucket is debited later, pro-rata, at claim/remit, per this plan's own "broadcast *commits*" rule. Debiting at arrival would charge the same tokens twice, because claims already debit as they pay — see `LibVpfiRecycle.reserveMirrorCommit`) + two-sided netting + per-chain books (`chainConsumedRecycled` / `chainOutstandingRecycledCommit` become real; `_stampOne` local-vs-top-up split; remittance netting) — makes the per-chain §7 invariants bind | #1222 |
 | **M3 B2-d4** — lift the mirror `_dayPoolHalves` pricing halt (mirror claims are HALTED on armed days until this lands — per the B2-d design record `Vpfi1222B2dDeliveredBackingDesign.md`; `LibInteractionRewards` gates on it). **ATTEMPTED 2026-07-27 (PR #1433) and WITHDRAWN — the halt STAYS.** d5 discharged the precondition this row assumed, but review found the halt ALSO guards (a) the FRESH side, which has no delivered-funding bound on a mirror and truncates-terminally rather than deferring, and (b) deliberately-zeroed (`remitIneligible`) days, which would advance the cursor and retire their entries for zero — and which the manual-compensation path cannot reprice, since nothing writes the mirror's funding stamp. **Both prerequisites, and the retry of this slice, are tracked on #1434** (design record §2g) | #1222 → **#1434** |
 | ~~**M3 B2-d5**~~ **— DONE, merged `64964e91` (#1432).** The `Ā`-excluded remitted-recycled custody-credit class (`RecycleSource.RemittedCustodyRelocation`) + the #1331 reclassification. The exclusion covers the REPORTED CUMULATIVE as well as the `Ā` day-bucket (the derived floor `bucket + paidOut` would otherwise re-admit it), and the remit payload carries a leading keccak version sentinel (`RemitWire.REMIT_WIRE_TAG_D5`) so an un-upgraded receiver REJECTS rather than silently truncates | #1222 |
 | **M2 #1369** — deferred Full-auth origination paths: signed-offer maker Full authorization (`OfferCreateFacet`) + matched fills honoring the lender offer's `creatorFull` (`FeeEntitlementFacet`) + the frontend maker surface — without it, those parties cannot enter the Full absorption channel even after enablement | #1369 |
