@@ -343,6 +343,29 @@
   },
   {
     "type": "function",
+    "name": "getRecycleCustodyPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "custodyRelocated",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reportedCumulative",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isChainReported",
     "inputs": [
       {
@@ -1614,6 +1637,22 @@
     "type": "error",
     "name": "RecoveryUserHasNoVault",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycledShareExceedsDelivery",
+    "inputs": [
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
