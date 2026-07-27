@@ -63,7 +63,16 @@ library LibVpfiRecycle {
         // below the uncapped slice). Never a CREDIT class — it tags
         // {RewardCommitmentReleased} so the residual's outstanding-commitment
         // retirement is distinguishable from forfeit/expiry releases.
-        RemitClampResidual
+        RemitClampResidual,
+        // #1222 M3 B2-d5 — CUSTODY-RELOCATION class (append-only enum): the
+        // RECYCLED share of a Base-funded remit arriving on a mirror. The
+        // tokens are physically delivered, so they credit `recycleBucket` and
+        // give the mirror's claim path real backing — but they are NOT new
+        // absorption. They were already Ā-counted once on Base when first
+        // absorbed there, so this class is excluded from the day-bucketed
+        // `credited[d]` feed AND from the cumulative a mirror reports to Base
+        // (see {creditCustodyRelocated} and design record §2f).
+        RemittedCustodyRelocation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -154,9 +163,95 @@ library LibVpfiRecycle {
         returns (uint256)
     {
         uint256 stored = s.recycleCreditedCumulative;
-        uint256 preUpgradeFloor = s.recycleBucket + s.paidOutRecycled;
+        // #1222 M3 B2-d5 — net RELOCATED CUSTODY out of the derived floor.
+        // {creditCustodyRelocated} raises `recycleBucket` without advancing
+        // `recycleCreditedCumulative`, so without this subtraction those
+        // tokens would re-enter the reported figure through the floor and
+        // Base would read its own remit top-up back as the mirror's own
+        // absorption (design record §2f.3). Structurally cannot underflow —
+        // every custody credit adds to the bucket and `consume` only moves
+        // bucket → `paidOutRecycled` — but saturate anyway so a future path
+        // that decremented the bucket without this counter degrades to a
+        // conservative under-report instead of reverting every day-close.
+        uint256 gross = s.recycleBucket + s.paidOutRecycled;
+        uint256 relocated = s.recycleCustodyRelocatedCumulative;
+        uint256 preUpgradeFloor = gross > relocated ? gross - relocated : 0;
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
     }
+
+    /**
+     * @notice #1222 M3 B2-d5 — credit the RECYCLED share of an arriving
+     *         Base-funded remit into this mirror's bucket as RELOCATED
+     *         CUSTODY: real backing for the claim path, but not new
+     *         absorption.
+     * @dev    Differs from {credit} in exactly two ways, both deliberate:
+     *
+     *         1. It does NOT touch `recycledCreditedByDay` — the day-bucketed
+     *            `credited[d]` feed that sizes `Ā`. Re-crediting would let one
+     *            protocol receipt cycle bucket → budget → expiry → bucket and
+     *            manufacture repeat reward budget with no new user activity
+     *            behind it (plan §M3's geometric-inflation hazard).
+     *         2. It does NOT advance `recycleCreditedCumulative`; instead it
+     *            advances `recycleCustodyRelocatedCumulative`, which
+     *            {creditedCumulative} subtracts. That keeps the tokens out of
+     *            the cumulative a mirror reports to Base, which after B2-d3
+     *            drives BOTH `_mirrorAvailable` (`reported − consumed`) and
+     *            the `Ā` attribution headroom in {recordChainRecycled}.
+     *
+     *         It shares {credit}'s backing assertion: the tokens must
+     *         physically be on the Diamond, so a caller that credited without
+     *         delivery rolls the whole arrival back.
+     *
+     *         There is exactly ONE bucket (design record §5) — this only
+     *         records how much of it is relocated custody rather than
+     *         first-time absorption.
+     * @param  refId  Class-specific reference id (the remit id at arrival).
+     * @param  amount VPFI wei of RECYCLED backing delivered.
+     */
+    function creditCustodyRelocated(uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
+        uint256 needed = s.recycleBucket + amount;
+        if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
+        (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
+        if (!active) dayId = 0;
+        s.recycleBucket = needed;
+        s.recycleCustodyRelocatedCumulative += amount;
+        emit VpfiCustodyRelocated(
+            uint8(RecycleSource.RemittedCustodyRelocation), refId, amount, dayId
+        );
+    }
+
+    /**
+     * @notice #1222 M3 B2-d5 — emitted when RELOCATED CUSTODY credits the
+     *         bucket: recycled VPFI that arrived as a Base-funded remit
+     *         top-up. The bucket grows, but this is NOT absorption.
+     * @dev    A SIBLING event rather than a `source` discriminator on
+     *         {VpfiRecycled}, which plan §M3 offers as the alternative. The
+     *         reason is the failure mode, not taste: every existing
+     *         `VpfiRecycled` consumer treats the event as an absorption
+     *         credit with no source filter — `apps/indexer`'s
+     *         `rewardLoopLedger` tests bare membership in its HANDLED set and
+     *         credits `absorbed[D]` + `cum_absorbed`, which feeds #1218's
+     *         self-funding ratio. Overloading the existing event would
+     *         manufacture absorption OFF-chain in exactly the way the
+     *         on-chain Ā exclusion prevents, and would do so silently in any
+     *         consumer that was not updated in lockstep. A distinct event
+     *         name makes such a consumer under-count (visible, conservative)
+     *         instead of over-count, and every consumer that wants the full
+     *         bucket picture opts in explicitly.
+     *
+     *         The balance still goes labelled — the class is carried on the
+     *         shared {RecycleSource} vocabulary, just on its own channel.
+     * @custom:event-category state-change/treasury-mutation
+     */
+    event VpfiCustodyRelocated(
+        uint8 indexed source,
+        uint256 indexed refId,
+        uint256 amount,
+        uint256 dayId
+    );
 
     /// @notice PR-3c — emitted when a recycled payout leaves the bucket
     ///         (a claim or remittance paid its recycled component). The

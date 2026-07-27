@@ -5631,6 +5631,33 @@ library LibVaipakam {
         // booked and netted that local share. With its own flag a replay
         // completes the missed reservation exactly once.
         mapping(uint256 => bool) mirrorRecycleCommitReserved;
+        // ─── #1222 M3 B2-d5 — relocated-custody counter ──────────────────────
+        // APPEND-ONLY TAIL. Lifetime Σ of RECYCLED VPFI that arrived on this
+        // chain as a Base-funded remit top-up and was credited to
+        // `recycleBucket` purely to give the claim path real backing — NOT
+        // first-time absorption. It is subtracted from the derived floor in
+        // {LibVpfiRecycle.creditedCumulative} so these tokens never reach the
+        // figure a mirror REPORTS to Base.
+        //
+        // Why the subtraction is load-bearing (design record §2f.2/§2f.3):
+        // the day-close reports `creditedCumulative`, `recordChainRecycled`
+        // ratchets `chainReportedRecycled[c]` to it, and B2-d3's
+        // `_mirrorAvailable` = `reported − consumed` offers the difference to
+        // Base as that mirror's committable LOCAL funding. Counting relocated
+        // custody there would re-offer Base's own already-spent top-up as
+        // mirror-local availability, and would additionally widen the Ā
+        // attribution headroom (`min(forDay, reported − attributed)`) — so
+        // skipping the `recycledCreditedByDay` day-bucket alone is NOT
+        // sufficient. Leaving `recycleCreditedCumulative` merely unwritten is
+        // also not sufficient, because the floor derives from
+        // `recycleBucket + paidOutRecycled` and the custody credit raises the
+        // bucket.
+        //
+        // Never decremented: `consume` moves value bucket → `paidOutRecycled`
+        // and `releaseCommitment` moves neither, so `recycleBucket +
+        // paidOutRecycled` is monotonically non-decreasing and always
+        // dominates this counter — the subtraction cannot underflow.
+        uint256 recycleCustodyRelocatedCumulative;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

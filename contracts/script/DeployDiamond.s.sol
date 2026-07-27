@@ -2500,7 +2500,9 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
+        // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
+        s[22] = RewardAggregatorFacet.getRecycleCustodyPosition.selector;
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
         s[17] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
         s[18] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;

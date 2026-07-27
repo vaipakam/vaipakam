@@ -892,6 +892,39 @@ contract RewardAggregatorFacet is
         );
     }
 
+    /**
+     * @notice #1222 M3 B2-d5 — this chain's relocated-custody position: how
+     *         much of the recycle bucket is Base-funded remit backing rather
+     *         than first-time absorption, and the cumulative this chain
+     *         actually REPORTS to Base with that netted out.
+     * @dev    Operator/observability read for the invariant that matters:
+     *         `reportedCumulative` must never include relocated custody, or
+     *         Base's `_mirrorAvailable` (`reported − consumed`) would re-offer
+     *         its own already-spent top-up as this mirror's local funding and
+     *         the Ā attribution headroom would widen (design record §2f.2).
+     *         On Base itself `custodyRelocated` stays 0 — nothing remits to
+     *         the canonical chain.
+     * @return custodyRelocated   Lifetime Σ of relocated-custody credits.
+     * @return bucket             Live recycle-bucket balance (includes it).
+     * @return reportedCumulative What the day-close reports (excludes it).
+     */
+    function getRecycleCustodyPosition()
+        external
+        view
+        returns (
+            uint256 custodyRelocated,
+            uint256 bucket,
+            uint256 reportedCumulative
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.recycleCustodyRelocatedCumulative,
+            s.recycleBucket,
+            LibVpfiRecycle.creditedCumulative(s)
+        );
+    }
+
     // ─── Broadcast trigger ─────────────────────────────────────────────────
 
     /**
