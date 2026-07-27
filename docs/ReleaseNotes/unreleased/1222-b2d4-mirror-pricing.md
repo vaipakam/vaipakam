@@ -38,8 +38,16 @@ the previous stage never addressed:
 Both are now tracked as explicit prerequisites, and the pause is covered by a
 test so it cannot be removed inadvertently.
 
-**One durable rule came out of this**, recorded alongside the code: when a chain
-cannot pay for want of funding, that must *defer* the affected day and move on —
-never stop the chain's day-by-day progress. Stopping strands every later day
-behind it, including days the canonical chain intentionally never funds because
-the receiving chain covers them entirely from its own balance.
+**One durable rule came out of this**, recorded alongside the code. When a chain
+cannot pay a day for want of funding, the claim stops at that day and resumes
+from it on a later attempt — days are settled oldest-first, so later days do
+wait behind it. That is acceptable only because the wait can always end: a day
+the platform actually funds becomes payable as soon as its funding lands.
+
+The rule is therefore about what the wait is keyed on. A wait keyed on the
+*amount* of funding present always clears. A wait keyed on the *arrival of a
+message* may never clear — and some days are deliberately never funded from the
+canonical chain, either because the receiving chain covers them entirely from
+its own balance or because the day's liability rounds to nothing. Keying on
+arrival would strand that chain's rewards permanently, which is the trap the
+first attempt at this stage fell into.

@@ -933,8 +933,15 @@ library LibInteractionRewards {
     ///      the mirror's own balance, or one whose liability clamps to zero —
     ///      would never be marked, and because the cumulative cursor `break`s
     ///      on the first halted day it would wedge every later claim forever.
-    ///      **Standing constraint: a refusal to pay for want of backing must be
-    ///      a DEFERRAL (as the walk's pool budget does), never a halt here.**
+    ///
+    ///      **Standing constraint: key a funding wait on the AMOUNT present,
+    ///      never on the ARRIVAL of a message.** Both stop at the offending day
+    ///      (a pool-budget shortfall makes `processUserSideDay` return
+    ///      `advanced == false`, `_walkSideDays` breaks, and `_lowestPendingDay`
+    ///      re-selects that same day next attempt — later days do wait). The
+    ///      difference is whether the wait can ever END: a budget shortfall
+    ///      clears when the funding lands, and for a funded day it always does;
+    ///      a wait on a message that is never sent is permanent.
     /// @return freshHalf    This side's fresh pool for day `d`.
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
