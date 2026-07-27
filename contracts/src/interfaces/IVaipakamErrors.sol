@@ -563,7 +563,6 @@ interface IVaipakamErrors {
     ///         malformed or hostile ingress.
     error RecycledShareExceedsDelivery(uint256 recycledShare, uint256 amount);
 
-
     /// @notice #1222 M3 B2-d3 — `setExpectedSourceChainIds` was given the
     ///         same chain id twice. The per-chain funding resolution treats
     ///         each entry independently, so a duplicate would double-count

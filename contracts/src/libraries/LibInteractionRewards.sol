@@ -900,25 +900,41 @@ library LibInteractionRewards {
     ///      brick a correctly-remitted claim or cannibalise the mirror's own
     ///      local recycled balance.
     ///
-    ///      **B2-d4 LIFTS that blanket halt** — B2-d5 discharged its
-    ///      precondition by crediting the arriving recycled share to the
-    ///      mirror's bucket as relocated custody, so a mirror's claim now has
-    ///      real backing. Every chain therefore prices its own armed days from
-    ///      its own stamp; only the genuine `!stamped` wait remains here.
+    ///      **B2-d4 attempted to lift this halt and the attempt was
+    ///      WITHDRAWN — the halt STAYS. Do not remove it without the two
+    ///      prerequisites below** (design record §2g; follow-up card filed off
+    ///      #1433 r2). B2-d5 discharged the ONE precondition named above (the
+    ///      arriving recycled share now credits the mirror's bucket as
+    ///      relocated custody), and the recycled leg is separately safe because
+    ///      the ShareOfPool walk budgets it against the live bucket and DEFERS
+    ///      a day it cannot cover. But review found the halt is load-bearing
+    ///      for two further things d5 never addressed:
     ///
-    ///      What guards the residual risk is NOT another gate in this
-    ///      function. A mirror's stamp lands at broadcast promising
-    ///      `local + Base top-up` while only the local share is yet in the
-    ///      bucket, so between broadcast and remit the stamp over-promises.
-    ///      That is a BACKING question, not a pricing one, and it is enforced
-    ///      where the draw actually happens — `RewardClaimFacet` refuses a
-    ///      claim whose recycled leg exceeds the live bucket (see
-    ///      {IVaipakamErrors.RecycledBackingUnavailable} and design record
-    ///      §2g). Gating pricing on a per-day arrival MARKER instead was tried
-    ///      and withdrawn (Codex #1433 r1): a day Base never remits — a fully
-    ///      mirror-local recycled day, or one whose liability clamps to zero —
-    ///      never gets marked, and because the cumulative cursor `break`s on
-    ///      the first halted day it would wedge every later claim forever.
+    ///        1. **The FRESH side has no delivered-funding bound on a mirror.**
+    ///           All fresh funding is Base-funded and arrives with the remit,
+    ///           yet the walk bounds fresh only by `poolRemaining()` — on a
+    ///           mirror that is the GLOBAL 69M cap less LOCAL payouts, not
+    ///           what has been received. Pricing fresh before the remit lands
+    ///           would pay out of VPFI the Diamond holds for other obligations
+    ///           (LIF custody, earlier days' unclaimed budget). The fix is a
+    ///           delivered-fresh budget for `PoolBudget.fresh` on mirrors, in
+    ///           the same VALUE shape the recycled side already uses.
+    ///        2. **Deliberately-zeroed days would retire entries for zero.**
+    ///           A grace/force finalization that excludes a mirror's interest
+    ///           report broadcasts an all-zero stamp and marks the day
+    ///           `remitIneligible` for later operator-sized funding. With the
+    ///           halt gone the mirror advances its cursor at zero delta,
+    ///           `processUserSideDay` treats `rawPay == 0` as terminal
+    ///           progress and persists the cursor — so the entries are retired
+    ///           before `remitManualBudget` can compensate them.
+    ///
+    ///      Also withdrawn (Codex #1433 r1): gating pricing on a per-day remit
+    ///      ARRIVAL marker. A day Base never remits — one funded entirely from
+    ///      the mirror's own balance, or one whose liability clamps to zero —
+    ///      would never be marked, and because the cumulative cursor `break`s
+    ///      on the first halted day it would wedge every later claim forever.
+    ///      **Standing constraint: a refusal to pay for want of backing must be
+    ///      a DEFERRAL (as the walk's pool budget does), never a halt here.**
     /// @return freshHalf    This side's fresh pool for day `d`.
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
@@ -934,6 +950,12 @@ library LibInteractionRewards {
         returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
     {
         if (_isArmedDay(s, d)) {
+            // Mirror armed-day pricing stays HALTED — see the two outstanding
+            // prerequisites in the natspec above. B2-d4's removal of this line
+            // was withdrawn after review; Base never arms a mirror before the
+            // full mesh ships, so this is the backstop that makes that a code
+            // invariant rather than only an operational one.
+            if (LibVaipakam.isMirrorRewardChain(s)) return (0, 0, true);
             LibVaipakam.ChainDayFunding storage f =
                 s.chainDayRecycledFunding[d][uint32(block.chainid)];
             if (!f.stamped) return (0, 0, true);

@@ -596,7 +596,7 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         assertEq(_preview(), 0, "bucket-short day is deferred, not previewed");
     }
 
-    // ── B2-d4: mirror armed-day pricing ON ───────────────────────────────────
+    // ── B2-d4 (WITHDRAWN): the mirror pricing halt STAYS ─────────────────────
 
     /// @dev Flip this diamond to a MIRROR. `isMirrorRewardChain` is
     ///      `!isCanonical && baseChainId != 0`; this suite leaves both unset,
@@ -607,79 +607,59 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         rep.setBaseChainId(8453);
     }
 
-    /// @dev The slice: B2-b halted armed-day pricing on a MIRROR outright,
-    ///      because the mirror's remitted recycled funding never credited its
-    ///      local bucket, so a claim would have drawn backing it did not hold.
-    ///      B2-d5 discharged that (arriving recycled share credits the bucket
-    ///      as relocated custody), so a mirror now prices its own armed days
-    ///      from its own per-chain stamp exactly as the canonical chain does.
-    function test_D4_MirrorPricesItsOwnArmedDayStamp() public {
+    /// @dev B2-d4 set out to lift the mirror armed-day pricing halt, and the
+    ///      attempt was WITHDRAWN after review. This test PINS the halt so the
+    ///      next attempt cannot remove it silently.
+    ///
+    ///      B2-d5 discharged the halt's originally-stated precondition (the
+    ///      arriving recycled share now credits the mirror bucket), and the
+    ///      recycled leg is separately safe because the walk budgets it against
+    ///      the live bucket. But the halt is ALSO load-bearing for two things
+    ///      d5 never addressed, both of which must land first:
+    ///
+    ///        1. the FRESH side has no delivered-funding bound on a mirror —
+    ///           `poolRemaining()` there is the GLOBAL cap less LOCAL payouts,
+    ///           so fresh could be paid before the remit arrives, out of VPFI
+    ///           held for other obligations;
+    ///        2. a deliberately-zeroed (`remitIneligible`) day would advance
+    ///           the cursor at zero delta and retire its entries before
+    ///           `remitManualBudget` can compensate them.
+    ///
+    ///      Identical setup to `test_ClaimIsBoundedByTheDailyCeilingAcrossDays`
+    ///      — which pays `0.8e18` — differing ONLY by the mirror flags. That
+    ///      contrast is the assertion: the halt, and nothing else, is what
+    ///      stops payment here.
+    function test_D4_MirrorArmedDayPricingStaysHalted() public {
         _configureMirror();
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _loanSideOpen(2);
         _entry(1, 3);
-
-        // Advance the entry's cursors first: the preview is documented to
-        // read BEHIND (0) for an unadvanced entry — the one axis on which it
-        // is a conservative estimate rather than exact. The suite's own
-        // preview test does the same.
         _mut().userClaimFundingNeedRaw(alice);
-        assertGt(_preview(), 0, "mirror previews its own armed day");
+
+        assertEq(_preview(), 0, "mirror armed-day pricing is halted");
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+    }
+
+    /// @dev The CANONICAL chain is unaffected by the halt and prices its own
+    ///      armed days normally — the control proving the test above isolates
+    ///      the mirror flags rather than a broken setup.
+    function test_D4_CanonicalArmedDayPricesNormally() public {
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
+        RewardReporterFacet(address(diamond)).setBaseChainId(8453);
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+
         assertEq(
             _claim(),
             0.8e18,
-            "mirror pays its own stamp, trimmed to each day's D1 ceiling"
+            "canonical prices its own armed days, trimmed to each D1 ceiling"
         );
-    }
-
-    /// @dev The genuine `!stamped` wait SURVIVES the lift: an armed day whose
-    ///      per-chain stamp has not arrived (mirror still waiting on the
-    ///      broadcast) is still not priceable. Only the blanket mirror halt
-    ///      went away.
-    function test_D4_MirrorStillWaitsForItsOwnStamp() public {
-        _configureMirror();
-        // Arm + fund the day GLOBALLY but leave this chain's own stamp unset.
-        _mut().setGovernorCommitArmedFromDayRaw(1);
-        _mut().setKnownGlobalDailyInterest(1, 1e18, 0, true);
-        _mut().setDayCapThreshold18(1, type(uint256).max);
-        _mut().setDayCapModeRaw(1, 1);
-        _mut().setDayUserSideCapRaw(1, type(uint256).max);
-        _loanSideOpen(0);
-        _entry(1, 2);
-
-        assertEq(_preview(), 0, "no per-chain stamp yet -> still not priceable");
-    }
-
-    /// @dev Why lifting the halt does NOT expose an unbacked draw, asserted
-    ///      rather than argued. The mirror's stamp promises
-    ///      `locally-funded + Base top-up`, and the top-up is credited only
-    ///      when the remit lands — so between broadcast and remit the stamp
-    ///      over-promises. The ShareOfPool walk already budgets the recycled
-    ///      leg against the LIVE bucket (`ctx.pool.recycled = s.recycleBucket`)
-    ///      and DEFERS a day it cannot cover, so the shortfall never reaches
-    ///      `LibVpfiRecycle.consume` (which would have floored at zero).
-    ///
-    ///      Recycled-only day, empty bucket: nothing is paid and nothing is
-    ///      consumed. Then the backing arrives and the same day pays.
-    function test_D4_MirrorRecycledDayDefersUntilItsBackingArrives() public {
-        _configureMirror();
-        // freshHalf 0, recycled equivalents 1e18 => payout is entirely the
-        // RECYCLED leg, so the bucket is the only thing backing it.
-        _mut().setDayPoolStampRaw(1, 0, uint128(2e18));
-        _mut().setKnownGlobalDailyInterest(1, 1e18, 0, true);
-        _mut().setDayCapThreshold18(1, type(uint256).max);
-        _mut().setDayCapModeRaw(1, 1);
-        _mut().setDayUserSideCapRaw(1, type(uint256).max);
-        _mut().setGovernorCommitArmedFromDayRaw(1);
-        _loanSideOpen(0);
-        _entry(1, 2);
-
-        _mut().setRecycleBucketRaw(0);
-        assertEq(_preview(), 0, "un-backed recycled day is deferred, not priced");
-
-        _mut().setRecycleBucketRaw(1e18);
-        assertGt(_claim(), 0, "the same day pays once its backing arrives");
     }
 }
