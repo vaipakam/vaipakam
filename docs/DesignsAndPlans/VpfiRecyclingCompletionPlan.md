@@ -495,8 +495,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    live feed — **AND only while reward claims are Base-only / dark on
    mirrors, or M3 (Phase B′) is complete AND #1434 has made mirror
    settlement reachable** (the second gate below; the §4 dependency
-   graph carries it as the `SETTLE --> ARM` edge, so planning derived
-   from the graph cannot schedule `D*` straight off M3). Arming with active mirror
+   graph carries it as the dedicated `ARMGATE` node, so planning derived
+   from the graph cannot schedule `D*` straight off M3). Note the
+   dark-mirror branch is unchanged and does **not** require #1434 —
+   arming with reward claims dark on every mirror was always permitted,
+   and `ARMGATE` keeps that disjunct. Only the M3 branch gains the
+   settlement-reachability condition. `RL3KNOB` and `FEE` continue to
+   hang off the weaker `GATE`, which #1434 does not affect. Arming with active mirror
    claims and no mesh produces exactly the §2 failure set (mirror
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class
    drift becoming economically real). The runbook entry carries this
@@ -546,13 +551,29 @@ GovernanceRunbook gains a recycling section, executed in order:
    > **release** path specifically, and a flat-RETIREMENT signal would
    > fire during perfectly healthy paid settlement.
    >
-   > **The signal B4-c should watch** is therefore a persistent
-   > `consumed − released > 0` backlog on a chain whose `released` subset
-   > stays flat — NOT a growing backlog. Growth stops on its own once
-   > Base exhausts that mirror's reported capacity and `_stampOne` has
-   > nothing left to instruct; the stuck state persists after the backlog
-   > plateaus, so a growth-keyed alert would clear precisely when the
-   > condition became permanent.
+   > **Two DIFFERENT questions, two different signals — do not conflate
+   > them** (Codex #1439 r6 + r7; an earlier draft of this paragraph did,
+   > and would have produced a permanently-firing alert):
+   >
+   > - *How much capacity came back?* — the **release** subset, per (c)
+   >   above. Only releases restore availability.
+   > - *Is settlement STUCK?* — the **outstanding reservation**,
+   >   `chainOutstandingRecycledCommit[c]` (B3's `consumed − retired`),
+   >   staying positive while `retired` stays flat over a window.
+   >
+   > `consumed − released` is NOT a backlog measure: a perfectly healthy
+   > mirror that pays claims and simply has no forfeits or expiries keeps
+   > it positive with `released` flat forever, so an alert keyed on it
+   > fires continuously on normal paid settlement. Retirement is what
+   > distinguishes settling from stuck; releases quantify how much
+   > capacity that settlement gave back.
+   >
+   > **B4-c's condition**: `outstanding > 0` AND `retired` unchanged
+   > across the window — deliberately NOT "outstanding is growing".
+   > Growth stops on its own once Base exhausts that mirror's reported
+   > capacity and `_stampOne` has nothing left to instruct; the stuck
+   > state persists after the backlog plateaus, so a growth-keyed alert
+   > would clear precisely when the condition became permanent.
    >
    > *Evidence, stated precisely.* The DECAY is proved end-to-end by
    > `test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability` in
@@ -641,10 +662,11 @@ flowchart LR
   D1{{"D1: tariff formulation<br/>(a) §4.2 vs (b) rev 15"}} --> M2
   M1a[#1346 M1a flat tariff] --> M1b[#1346 M1b custody re-route]
   M1b --> ARM[M7.1 arm governor]
-  GATE{{"mesh/dark gate:<br/>mirrors dark OR M3 complete"}} --> ARM
+  GATE{{"mesh/dark gate:<br/>mirrors dark OR M3 complete"}}
   M3 -.-> GATE
-  M3 -.-> SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}}
-  SETTLE --> ARM
+  ARMGATE{{"arming gate:<br/>mirrors dark OR<br/>(M3 complete AND #1434)"}} --> ARM
+  M3 -.-> ARMGATE
+  SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}} -.-> ARMGATE
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]

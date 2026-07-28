@@ -63,8 +63,14 @@ instructions subtract from it. And the capacity that goes missing is
 specifically the capacity that would have come back from commitments
 ending WITHOUT a payout; a commitment that ends by paying restores
 nothing, because those tokens genuinely left. So a chain settling
-normally and a stuck one look alike on capacity alone, and only the
-unpaid-ending total tells them apart. The result recovers once
+normally and a stuck one look alike on capacity alone.
+
+Telling them apart needs a different measure again, and getting this
+backwards would have produced an alarm that fires forever on a perfectly
+healthy chain: what identifies a stuck chain is its outstanding
+instructions — the ones it has neither paid nor written off — standing
+still. Unpaid endings say how much capacity came back; outstanding
+instructions say whether anything is happening at all. The result recovers once
 the block lifts (the totals are cumulative, so the backlog closes), but
 for the whole window the platform would fund from the canonical chain
 what the receiving chain could have funded itself — exactly the waste the
