@@ -39,6 +39,13 @@ What the suite establishes:
 - **Chains stay separate.** Activity on one receiving chain moves that
   chain's record and leaves the other's alone.
 
+One test was found during review to be asserting more than it showed, and
+is worth naming rather than quietly fixing: a check that a dropped report
+stayed dropped was undone by a later delivery sweep picking the "lost"
+message back up, so it would have passed even for an implementation that
+required every missed report to be replayed. Dropped messages are now
+dropped permanently and the test asserts that at the end.
+
 The suite also surfaced an **activation ordering requirement that had not
 been written down anywhere**. Turning on the coupling is a single,
 irreversible switch, and it is what starts creating commitments on
@@ -52,8 +59,16 @@ the block lifts (the totals are cumulative, so the backlog closes), but
 for the whole window the platform would fund from the canonical chain
 what the receiving chain could have funded itself — exactly the waste the
 mesh exists to remove. The requirement is now recorded in both the
-activation runbook and the specification, and the behaviour behind it is
-pinned by a test so it cannot quietly stop being true.
+activation runbook and the specification, and the decay itself is pinned
+by a test — two coupled days, a steadily growing commitment, steadily
+falling capacity, and nothing settled on either side.
+
+What that test deliberately does not claim is that the block is the
+*sole* cause, because that cannot be demonstrated today: the receiving
+chain's coupled-day payment path has never been reachable, and the very
+prerequisites tracked under the block are what would make it pay. The
+reasoning for the cause is recorded alongside the requirement so the
+distinction survives.
 
 No production behaviour changes: this is test coverage plus two
 documentation corrections.

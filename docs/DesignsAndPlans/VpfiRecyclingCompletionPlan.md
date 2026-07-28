@@ -515,9 +515,23 @@ GovernanceRunbook gains a recycling section, executed in order:
    > halt lifts close the backlog) rather than a permanent wedge, but
    > it silently negates B3 for the whole window, and `D*` is
    > irreversible once set. **So: #1434 lands before `D*` is chosen.**
-   > Proved end-to-end by
-   > `test_E2E_MirrorArmedDayReservationHasNoUserReachableRetirement`
-   > in `MeshThreeChainE2ETest`.
+   >
+   > *Evidence, stated precisely.* The DECAY is proved end-to-end by
+   > `test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability` in
+   > `MeshThreeChainE2ETest`: two armed days, strictly growing
+   > outstanding, strictly falling availability, zero retirement on both
+   > sides of the wire, mirror bucket untouched. The MECHANISM — that
+   > every mirror settlement path (claim, forfeit, RL-3 expiry) prices
+   > through `_dayPoolHalves`, which returns `halt` on a mirror, and
+   > that `_entryWindowSplit` derives its recycled share from the
+   > cumulative accumulator that breaks on the same halt — is
+   > established by reading those paths, and `RewardRemittanceFacet`'s
+   > consume/release are `onlyCanonical` so they do not provide an
+   > alternative route. The stronger counterfactual "lift the halt and
+   > retirement happens" is NOT currently constructible: the armed-day
+   > mirror claim path has never been reachable, and #1434's own two
+   > prerequisites are what would make it pay. Do not cite this test for
+   > that claim (Codex #1439 r1).
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
    are verified live: the free-channel pre-expiry notice (in-app
    notification center) **and the claim-center countdown surface**

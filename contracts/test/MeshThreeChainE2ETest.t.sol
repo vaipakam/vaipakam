@@ -18,6 +18,7 @@ import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 import {HelperTest} from "./HelperTest.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -265,12 +266,23 @@ contract MeshThreeChainE2ETest is Test {
         RewardReporterFacet(baseD).closeDay(dayId);
     }
 
-    /// @dev Deliver every queued-but-undelivered report to Base.
+    /// @dev Queued reports the test has deliberately DROPPED. Membership is
+    ///      permanent: a dropped message models one the lane lost, so no
+    ///      later delivery sweep may quietly pick it up — without this the
+    ///      self-heal test would deliver the "lost" report on its next sweep
+    ///      and prove nothing (the end state is identical either way, because
+    ///      the later report's cumulative subsumes it).
+    mapping(uint256 => bool) internal droppedReport;
+
+    /// @dev Deliver every queued report that is neither delivered nor
+    ///      deliberately dropped.
     function _deliverPendingReports() private {
         vm.chainId(BASE);
         uint256 n = bus.reportCount();
         for (uint256 i; i < n; ++i) {
-            if (bus.reportDeliveries(i) == 0) bus.deliverReport(i);
+            if (bus.reportDeliveries(i) == 0 && !droppedReport[i]) {
+                bus.deliverReport(i);
+            }
         }
     }
 
@@ -510,7 +522,7 @@ contract MeshThreeChainE2ETest is Test {
         _seedAllInterest(4);
         _allChainsCloseDay(4);
         uint256 arbDay4 = _findReport(4, ARB);
-        _deliverAllReportsExcept(arbDay4);
+        _dropReportAndDeliverRest(arbDay4);
 
         (uint256 reportedAfterDrop,,,) =
             _agg().getChainRecycledLedger(uint32(ARB));
@@ -521,6 +533,14 @@ contract MeshThreeChainE2ETest is Test {
         _seedAllInterest(5);
         _allChainsCloseDay(5);
         _deliverPendingReports();
+
+        // The dropped message stayed dropped for the whole test — otherwise
+        // the assertion below would be satisfied by a late delivery rather
+        // than by the self-heal, and the two are indistinguishable from the
+        // end state alone (the later cumulative subsumes the earlier one).
+        assertEq(
+            bus.reportDeliveries(arbDay4), 0, "day-4 report was never delivered"
+        );
 
         (uint256 reportedAfterHeal,,,) =
             _agg().getChainRecycledLedger(uint32(ARB));
@@ -600,89 +620,137 @@ contract MeshThreeChainE2ETest is Test {
 
     /**
      * @notice The #1434 coupling, which only a three-chain e2e can show:
-     *         while mirror armed-day pricing stays HALTED, a mirror can
-     *         RESERVE a commitment from Base's broadcast but has no user-
-     *         reachable path to RETIRE it — so Base's per-chain reservation
-     *         for that mirror is monotone.
+     *         with arming ON but mirror settlement still blocked, Base's
+     *         per-chain reservation for a mirror GROWS with every armed day
+     *         and its modelled availability FALLS — while that mirror's own
+     *         bucket is untouched and its settlement totals stay at zero.
      *
-     * @dev    The halt itself is pinned by
-     *         `test_D4_MirrorArmedDayPricingStaysHalted`. What is pinned HERE
-     *         is its mesh consequence, and the consequence is what carries
-     *         the operational rule: arming (`setGovernorCommitArmedFromDay`,
-     *         the one-shot irreversible D* cutover) is the single switch that
-     *         starts creating mirror reservations, so D* MUST NOT be set
-     *         before #1434 lifts the halt — otherwise every armed day
-     *         permanently shrinks what Base believes each mirror can
-     *         self-fund, which is precisely the pre-B3 defect B3 removed from
-     *         Base's own books.
+     * @dev    **The operational consequence, which is the point.** Arming
+     *         (`setGovernorCommitArmedFromDay`, the one-shot irreversible D*
+     *         cutover) is the single switch that starts creating mirror
+     *         reservations. While mirror armed-day pricing stays halted
+     *         (#1434), those reservations accumulate with nothing retiring
+     *         them, so Base progressively under-uses mirror-local funding and
+     *         over-funds from its own bucket — the exact waste B3 removed
+     *         from Base's own books, re-entering through the mirror end. It
+     *         is recoverable (the totals are cumulative, so settlements after
+     *         the halt lifts close the backlog) but D* cannot be walked back,
+     *         so **#1434 lands before D* is chosen**.
      *
-     *         **Anti-vacuity.** A claim that retires nothing proves nothing
-     *         if the claim never really ran. So the mirror is first taken
-     *         through an UNARMED day whose claim genuinely pays out: the
-     *         single claim call pays for the unarmed day and stops at the
-     *         armed one. A non-zero payout is what makes the zero retirement
-     *         attributable to the halt rather than to a claim path that was
-     *         unreachable in this harness all along.
+     *         **What this test does and does NOT establish (Codex #1439 r1,
+     *         P1 — a correct finding, recorded rather than papered over).**
+     *         It establishes the decay directly: two armed days, strictly
+     *         growing outstanding, strictly falling availability, zero
+     *         retirement on both sides. It does NOT establish the stronger
+     *         counterfactual "the halt is the sole cause", because that
+     *         counterfactual is not constructible today: lifting the halt in
+     *         a mutation still retires nothing, since the armed-day mirror
+     *         claim path has never been reachable and #1434's own two
+     *         prerequisites (a delivered-fresh bound; zeroed-day repricing)
+     *         are exactly what would make it pay. An earlier version of this
+     *         test asserted the negative from a claim that paid only for the
+     *         UNARMED day — which would have passed whether or not the halt
+     *         had anything to do with it. The claim below is kept as a
+     *         live-path WITNESS (it pays, and consumes zero recycled), not as
+     *         proof of causation.
      *
-     *         The last assertion guards the opposite misreading — that the
-     *         counters are simply broken: the same reservation retires
-     *         normally through the release primitive.
+     *         The halt itself is pinned separately by
+     *         `test_D4_MirrorArmedDayPricingStaysHalted`.
      */
-    function test_E2E_MirrorArmedDayReservationHasNoUserReachableRetirement()
+    function test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability()
         public
     {
-        _seedRecycled(ARB, 10);
-        _seedRecycled(OP, 10);
-        _warpPast(7);
+        _seedRecycled(ARB, 12);
+        _seedRecycled(OP, 12);
+        _warpPast(8);
 
-        // Alice has already claimed through day 3, so her walk starts at day
-        // 4 — the two days this test actually drives. Without this the claim
-        // begins at day 1 and stops on the first day whose global never
-        // reached this mirror (`InteractionDayGlobalNotFinalized`), which
-        // would have nothing to do with arming.
+        // Alice claims from day 4 on — without this the walk starts at day 1
+        // and stops on the first day whose global never reached this mirror.
         _mut(ARB).setInteractionLastClaimedDay(alice, 3);
 
-        // Day 4, UNARMED — gives alice a genuinely payable entry on ARB and
-        // lands the day's consensus globals through the real broadcast.
+        // A real reward ENTRY, because on an armed day `claimForUserWindow`
+        // deletes the legacy per-day counters and pays through the entry path
+        // only. Seeding legacy counters alone would leave the armed days with
+        // nothing to price at all.
+        uint256 entryId = _mut(ARB).pushRewardEntry(
+            alice,
+            /* loanId */ 1,
+            LibVaipakam.RewardSide.Lender,
+            /* perDayNumeraire18 */ 1e18,
+            /* startDay */ 4
+        );
+        _mut(ARB).closeRewardEntryRaw(entryId, /* endDay */ 8);
+
+        // Day 4, UNARMED — a genuinely payable day, and the day whose payout
+        // proves the claim path is live on this mirror at all.
         _seedAllInterest(4);
         _runDayCycle(4);
 
-        // Day 5, ARMED — ARB is instructed to self-fund and reserves it.
+        // Day 5, the first ARMED day.
         _seedAllInterest(5);
         _arm(5);
         _runDayCycle(5);
 
-        uint256 reserved = _localOutstanding(ARB);
-        assertGt(reserved, 0, "the mirror really is carrying a reservation");
+        uint256 outstandingAfterD5 =
+            _agg().getChainOutstandingRecycledCommit(uint32(ARB));
+        (,, uint256 availAfterD5,) = _agg().getChainRecycledLedger(uint32(ARB));
+        assertGt(outstandingAfterD5, 0, "day 5 reserved something on Base");
 
-        // Fund the mirror so a claim cannot fail merely for want of VPFI —
-        // the point is that the armed day prices to nothing, not that the
-        // payout is unfunded.
+        // Day 6, a second ARMED day. Nothing retired the day-5 reservation in
+        // between — because nothing on the mirror can.
+        _seedAllInterest(6);
+        _runDayCycle(6);
+
+        uint256 outstandingAfterD6 =
+            _agg().getChainOutstandingRecycledCommit(uint32(ARB));
+        (,, uint256 availAfterD6,) = _agg().getChainRecycledLedger(uint32(ARB));
+
+        // THE DECAY. Base's reservation for ARB only grows, and what Base
+        // believes ARB can self-fund only shrinks.
+        assertGt(
+            outstandingAfterD6,
+            outstandingAfterD5,
+            "a second armed day grew Base's reservation for ARB"
+        );
+        assertLt(
+            availAfterD6,
+            availAfterD5,
+            "and shrank the availability Base will fund ARB from"
+        );
+
+        // Nothing was retired on EITHER side of the wire across both days.
+        (uint256 baseRetired,) =
+            _agg().getChainRecycledCommitRetirement(uint32(ARB));
+        assertEq(baseRetired, 0, "Base saw no retirement from ARB");
+        (uint256 localRetired, uint256 localReleased) =
+            RewardAggregatorFacet(arbD).getLocalRecycledCommitRetirement();
+        assertEq(localRetired, 0, "ARB retired nothing locally");
+        assertEq(localReleased, 0, "ARB released nothing locally");
+
+        // ...and ARB's bucket is untouched: Base is withdrawing availability
+        // for tokens that never moved. This is the operator-visible symptom.
+        (uint256 arbReported,,,) = _agg().getChainRecycledLedger(uint32(ARB));
+        assertEq(arbReported, BUCKET_SEED, "ARB's absorbed total never moved");
+
+        // WITNESS, not proof of causation: a real claim on this mirror runs
+        // and pays — so the surface is live — and consumes zero recycled.
         vpfiOf[ARB].mint(arbD, 100_000 ether);
-
         vm.chainId(ARB);
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(arbD).claimInteractionRewards();
-        assertGt(paid, 0, "claim path is live here: the unarmed day paid");
+        assertGt(paid, 0, "the claim surface is live on this mirror");
+        (,,, uint256 paidOutRecycled) =
+            RewardAggregatorFacet(arbD).getGovernorCommitState();
+        assertEq(paidOutRecycled, 0, "and it drew nothing from the bucket");
 
-        (uint256 retired, uint256 released) =
-            RewardAggregatorFacet(arbD).getLocalRecycledCommitRetirement();
-        assertEq(retired, 0, "no user path retired the reservation");
-        assertEq(released, 0, "no user path released the reservation");
-        assertEq(
-            _localOutstanding(ARB),
-            reserved,
-            "the reservation is exactly where it was"
-        );
-
-        // The mechanism is sound — only the armed-day user path is halted.
+        // The mechanism is sound — the reservation retires normally through
+        // the release primitive, so the zeros above are about reachability,
+        // not a broken counter.
         vm.chainId(ARB);
-        _mut(ARB).releaseRecycleCommitmentRaw(reserved);
+        _mut(ARB).releaseRecycleCommitmentRaw(_localOutstanding(ARB));
         (uint256 retiredAfter,) =
             RewardAggregatorFacet(arbD).getLocalRecycledCommitRetirement();
-        assertEq(
-            retiredAfter, reserved, "the release primitive retires it fine"
-        );
+        assertGt(retiredAfter, 0, "the release primitive retires it fine");
     }
 
     /**
@@ -768,11 +836,9 @@ contract MeshThreeChainE2ETest is Test {
         revert("no such queued report");
     }
 
-    function _deliverAllReportsExcept(uint256 skip) private {
-        vm.chainId(BASE);
-        uint256 n = bus.reportCount();
-        for (uint256 i; i < n; ++i) {
-            if (i != skip && bus.reportDeliveries(i) == 0) bus.deliverReport(i);
-        }
+    /// @dev Drop queued report `skip` PERMANENTLY, then deliver the rest.
+    function _dropReportAndDeliverRest(uint256 skip) private {
+        droppedReport[skip] = true;
+        _deliverPendingReports();
     }
 }
