@@ -83,7 +83,14 @@ contract MeshThreeChainE2ETest is Test {
     ///      WITHOUT the absorption feed leaves `Ā = 0`, nothing is ever
     ///      instructed, and every ledger assertion passes vacuously.
     uint256 internal constant BUCKET_SEED = 500_000 ether;
-    uint256 internal constant ABSORB_PER_DAY = 700 ether;
+    /// @dev Per-chain daily absorption, deliberately DIFFERENT per mirror.
+    ///      Identical feeds left the per-`(day, chain)` attribution ledger
+    ///      unverifiable: swapping ARB's and OP's `recycledForDay18` preserved
+    ///      every asserted value and the aggregate `Ā` (Codex #1439 r4). That
+    ///      ledger is the headroom baseline later reports are clamped against,
+    ///      so it needs its own discriminating assertion.
+    uint256 internal constant ABSORB_ARB = 700 ether;
+    uint256 internal constant ABSORB_OP = 900 ether;
 
     address internal alice;
 
@@ -250,10 +257,32 @@ contract MeshThreeChainE2ETest is Test {
     ///      in that diamond's OWN storage and are read back by its OWN
     ///      `closeDay`, so what Base ingests is still that chain's real book.
     function _seedRecycled(uint256 chainId, uint256 throughDay) private {
+        uint256 perDay = _absorbFor(chainId);
         _mut(chainId).setRecycleBucketRaw(BUCKET_SEED);
         for (uint256 d = 1; d <= throughDay; ++d) {
-            _mut(chainId).setRecycledCreditedByDayRaw(d, ABSORB_PER_DAY);
+            _mut(chainId).setRecycledCreditedByDayRaw(d, perDay);
         }
+    }
+
+    function _absorbFor(uint256 chainId) private pure returns (uint256) {
+        return chainId == ARB ? ABSORB_ARB : ABSORB_OP;
+    }
+
+    /// @dev Every mirror learns `D*` only in-band, from the first broadcast
+    ///      applied after Base arms. If that field were dropped anywhere in
+    ///      the chain — V2 assembly, bus composition, mirror ingress — Base
+    ///      would still finalize as armed and each mirror would still reserve
+    ///      the nonzero `recycleConsume`, so every reservation and decay
+    ///      assertion would pass while the mirror was never actually armed
+    ///      (Codex #1439 r4). Any conclusion about ARMED-day behaviour has to
+    ///      pin this first.
+    function _assertMirrorsArmedFrom(uint256 day) private view {
+        (uint256 arbArmed,,,) =
+            RewardAggregatorFacet(arbD).getGovernorCommitState();
+        (uint256 opArmed,,,) =
+            RewardAggregatorFacet(opD).getGovernorCommitState();
+        assertEq(arbArmed, day, "ARB learned the arming day from the broadcast");
+        assertEq(opArmed, day, "OP learned the arming day from the broadcast");
     }
 
     /// @dev Every chain closes `dayId` for real. Base writes locally; the two
@@ -457,6 +486,49 @@ contract MeshThreeChainE2ETest is Test {
             0,
             "OP's borrower leg carries recycled funding"
         );
+
+        // Each mirror STORED exactly the packet it was sent, field for field.
+        // Positivity alone would not notice a lender-derived value copied
+        // into a borrower slot at ingest (Codex #1439 r4) — and here the
+        // fresh halves are equal by construction, so only an
+        // packet-vs-stamp comparison can catch that class.
+        _assertStampMatchesPacket(ARB, 5, arbPacket);
+        _assertStampMatchesPacket(OP, 5, opPacket);
+
+        // The finalized consensus pair: Base's own contribution is IN the
+        // denominator (2+1+1 lender, 3+5+7 borrower), and both mirrors hold
+        // that identical pair after delivery. Without this, Base omitting its
+        // own contribution or the broadcast swapping the two sides leaves
+        // funding nonzero and every reservation equality intact.
+        (bool finalized, uint256 gL, uint256 gB) = _agg().getDailyGlobalInterest(5);
+        assertTrue(finalized, "day 5 finalized");
+        assertEq(gL, 4e18, "global lender denominator = 2 + 1 + 1");
+        assertEq(gB, 15e18, "global borrower denominator = 3 + 5 + 7");
+        _assertMirrorKnowsGlobals(ARB, 5, gL, gB);
+        _assertMirrorKnowsGlobals(OP, 5, gL, gB);
+
+        // The cap family produced by REAL finalization — mode and both
+        // per-side ceilings — reaches each mirror intact. Existing ingress
+        // coverage starts from a test-constructed packet, so a regression in
+        // Base's V2 assembly that zeroed or swapped the real ceilings would
+        // not be caught there.
+        (uint256 baseCapL, uint256 baseCapB) = _agg().getDayUserSideCaps(5);
+        assertEq(arbPacket.capMode, 1, "armed day broadcasts ShareOfPool");
+        assertEq(arbPacket.capPayloadLender, baseCapL, "ARB packet lender cap");
+        assertEq(arbPacket.capPayloadBorrower, baseCapB, "ARB packet borrower cap");
+        _assertMirrorCaps(ARB, 5, baseCapL, baseCapB);
+        _assertMirrorCaps(OP, 5, baseCapL, baseCapB);
+
+        // Per-`(day, chain)` recycle attribution — the headroom baseline
+        // later reports are clamped against. Distinct per-chain feeds make a
+        // swap detectable.
+        (uint256 arbCredit, bool arbAccepted) =
+            _agg().getChainDailyRecycledCredit(5, uint32(ARB));
+        (uint256 opCredit, bool opAccepted) =
+            _agg().getChainDailyRecycledCredit(5, uint32(OP));
+        assertTrue(arbAccepted && opAccepted, "both day-5 credits accepted");
+        assertEq(arbCredit, ABSORB_ARB, "ARB's own daily credit attributed");
+        assertEq(opCredit, ABSORB_OP, "OP's own daily credit attributed");
         // NOTE on what these halves can and cannot discriminate — worth
         // recording, because the obvious assertion is the wrong one. The
         // fresh halves are a GLOBAL schedule floor (identical for every
@@ -786,6 +858,10 @@ contract MeshThreeChainE2ETest is Test {
         _arm(5);
         _runDayCycle(5);
 
+        // Before ANY conclusion about armed-day behaviour: both mirrors must
+        // actually have learned D*.
+        _assertMirrorsArmedFrom(5);
+
         uint256 outstandingAfterD5 =
             _agg().getChainOutstandingRecycledCommit(uint32(ARB));
         (,, uint256 availAfterD5,) = _agg().getChainRecycledLedger(uint32(ARB));
@@ -945,6 +1021,187 @@ contract MeshThreeChainE2ETest is Test {
         assertEq(bus.reportAt(1).arity, 8, "OP sent the eight-word shape");
         assertEq(bus.reportAt(0).srcChainId, ARB, "source identified by sender");
         assertEq(bus.reportAt(1).srcChainId, OP, "source identified by sender");
+    }
+
+    /**
+     * @notice B3's two settlement kinds are NOT the same thing, end to end: a
+     *         commitment retired by PAYING (`consume` — the tokens left the
+     *         bucket) retires the reservation but restores NO availability,
+     *         whereas a release does both.
+     *
+     * @dev    Until now the only nonzero retirement carried across the wire
+     *         had `retired == released`, so a regression reporting every
+     *         consumed claim as ALSO released would have passed the whole
+     *         suite — and Base would hand already-spent tokens back to
+     *         availability and be free to commit them a second time (Codex
+     *         #1439 r4). That is the single most consequential way B3's
+     *         signal can be wrong, and it now has a test.
+     *
+     *         Day 6 is REPORTED but deliberately NOT finalized: an armed
+     *         finalize would immediately re-instruct against the same chain
+     *         and move `consumed`, so the availability assertion below could
+     *         not attribute what it was measuring.
+     */
+    function test_E2E_ConsumedCommitmentRetiresWithoutRestoringAvailability()
+        public
+    {
+        _seedRecycled(ARB, 10);
+        _seedRecycled(OP, 10);
+        _seedAllInterest(5);
+        _arm(5);
+        _warpPast(7);
+        _runDayCycle(5);
+        _assertMirrorsArmedFrom(5);
+
+        uint256 instructed = _instructedFor(ARB);
+        assertGt(instructed, 1 ether, "ARB carries a real instruction");
+        (,, uint256 availBefore,) = _agg().getChainRecycledLedger(uint32(ARB));
+
+        // ARB PAYS out of the reservation — tokens physically leave its
+        // bucket. This is `consume`, not `releaseCommitment`.
+        uint256 spend = instructed / 2;
+        assertGt(spend, 0, "the spend is non-zero");
+        uint256 bucketBefore = _mut(ARB).getRecycleBucketRaw();
+        vm.chainId(ARB);
+        _mut(ARB).consumeRecycleRaw(spend);
+        assertEq(
+            _mut(ARB).getRecycleBucketRaw(),
+            bucketBefore - spend,
+            "the tokens really left ARB's bucket"
+        );
+
+        // The mirror's own counters: retired moved, released did NOT.
+        (uint256 localRetired, uint256 localReleased) =
+            RewardAggregatorFacet(arbD).getLocalRecycledCommitRetirement();
+        assertEq(localRetired, spend, "mirror retired the consumed amount");
+        assertEq(localReleased, 0, "a CONSUME is not a release");
+
+        // Report day 6 without finalizing it (see the note above).
+        _seedAllInterest(6);
+        _allChainsCloseDay(6);
+        _deliverPendingReports();
+
+        (uint256 baseRetired, uint256 baseReleased) =
+            _agg().getChainRecycledCommitRetirement(uint32(ARB));
+        assertEq(baseRetired, spend, "Base accepted the retirement");
+        assertEq(baseReleased, 0, "Base did NOT record a release");
+
+        // The reservation closed by exactly the spend...
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(uint32(ARB)),
+            instructed - spend,
+            "reservation closed by the consumed amount"
+        );
+        // ...and availability did NOT grow, because those tokens are gone.
+        (,, uint256 availAfter,) = _agg().getChainRecycledLedger(uint32(ARB));
+        assertEq(
+            availAfter,
+            availBefore,
+            "a CONSUMED commitment restores no availability"
+        );
+    }
+
+    /**
+     * @notice Ordering hazard: a STALE report delivered after a newer one
+     *         must not walk the availability ratchet backwards.
+     *
+     * @dev    The queue exists to let this suite reorder, duplicate and drop
+     *         messages, but every sweep until now iterated in insertion order
+     *         and the drop test suppressed the older report entirely — so a
+     *         lower cumulative arriving late was never actually delivered
+     *         (Codex #1439 r4). CCIP gives no cross-message ordering
+     *         guarantee, so this is an ordinary lane behaviour, not an edge
+     *         case.
+     */
+    function test_E2E_StaleReportDeliveredAfterANewerOneCannotRegress() public {
+        _seedRecycled(ARB, 10);
+        _seedRecycled(OP, 10);
+        _warpPast(7);
+
+        _seedAllInterest(4);
+        _allChainsCloseDay(4);
+
+        // ARB absorbs more, then closes a LATER day.
+        _mut(ARB).setRecycleBucketRaw(BUCKET_SEED + 30_000 ether);
+        _seedAllInterest(5);
+        _allChainsCloseDay(5);
+
+        // Deliver day 5 FIRST, then the stale day-4 packet.
+        uint256 idx5 = _findReport(5, ARB);
+        uint256 idx4 = _findReport(4, ARB);
+        vm.chainId(BASE);
+        bus.deliverReport(idx5);
+        (uint256 afterNewer,,,) = _agg().getChainRecycledLedger(uint32(ARB));
+        assertEq(
+            afterNewer, BUCKET_SEED + 30_000 ether, "newer cumulative accepted"
+        );
+
+        bus.deliverReport(idx4);
+        (uint256 afterStale,,,) = _agg().getChainRecycledLedger(uint32(ARB));
+        assertEq(
+            afterStale,
+            BUCKET_SEED + 30_000 ether,
+            "the stale lower cumulative did NOT walk the ratchet back"
+        );
+
+        // Both days still attribute their own credit — accepting them out of
+        // order must not lose the older day's per-day figure.
+        (uint256 c4, bool a4) = _agg().getChainDailyRecycledCredit(4, uint32(ARB));
+        (uint256 c5, bool a5) = _agg().getChainDailyRecycledCredit(5, uint32(ARB));
+        assertTrue(a4 && a5, "both days accepted");
+        assertEq(c4, ABSORB_ARB, "day 4 credit attributed");
+        assertEq(c5, ABSORB_ARB, "day 5 credit attributed");
+    }
+
+    // ─── Assertion helpers ─────────────────────────────────────────────────
+
+    /// @dev The mirror's OWN stored funding stamp equals the packet Base sent.
+    function _assertStampMatchesPacket(
+        uint256 chainId,
+        uint256 dayId,
+        RewardBroadcastV2 memory b
+    ) private view {
+        LibVaipakam.ChainDayFunding memory f = RewardAggregatorFacet(
+            diamondOf[chainId]
+        ).getChainDayRecycledFunding(dayId, uint32(chainId));
+        assertTrue(f.stamped, "mirror stamped the day");
+        assertEq(f.freshLenderHalf, b.freshLenderHalf, "stamp freshLenderHalf");
+        assertEq(
+            f.freshBorrowerHalf, b.freshBorrowerHalf, "stamp freshBorrowerHalf"
+        );
+        assertEq(
+            f.lenderHalfEquiv, b.recycledLenderHalfEquiv, "stamp lenderHalfEquiv"
+        );
+        assertEq(
+            f.borrowerHalfEquiv,
+            b.recycledBorrowerHalfEquiv,
+            "stamp borrowerHalfEquiv"
+        );
+        assertEq(f.recycleConsume, b.recycleConsume, "stamp recycleConsume");
+    }
+
+    function _assertMirrorKnowsGlobals(
+        uint256 chainId,
+        uint256 dayId,
+        uint256 gL,
+        uint256 gB
+    ) private view {
+        (uint256 l, uint256 b,) = RewardReporterFacet(diamondOf[chainId])
+            .getKnownGlobalInterestNumeraire18(dayId);
+        assertEq(l, gL, "mirror holds the finalized lender denominator");
+        assertEq(b, gB, "mirror holds the finalized borrower denominator");
+    }
+
+    function _assertMirrorCaps(
+        uint256 chainId,
+        uint256 dayId,
+        uint256 capL,
+        uint256 capB
+    ) private view {
+        (uint256 l, uint256 b) = RewardAggregatorFacet(diamondOf[chainId])
+            .getDayUserSideCaps(dayId);
+        assertEq(l, capL, "mirror stored the lender ceiling");
+        assertEq(b, capB, "mirror stored the borrower ceiling");
     }
 
     // ─── Read helpers ──────────────────────────────────────────────────────
