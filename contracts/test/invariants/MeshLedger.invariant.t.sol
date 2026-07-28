@@ -11,9 +11,11 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
+import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
@@ -32,11 +34,24 @@ import {HelperTest} from "../HelperTest.sol";
  *         The three-diamond end-to-end lives in B4-b, where a mirror's real
  *         state genuinely matters.
  *
- *         **What the fuzzer controls**, which is what makes §7 #6's
- *         sequencing clauses meaningful rather than scripted: report order,
- *         report content (including hostile magnitudes), duplicate delivery,
- *         dropped days, the wire generation used, and where `finalizeDay`
- *         falls between all of it.
+ *         **What the fuzzer controls:** report order, report content
+ *         (including hostile magnitudes), duplicate delivery, dropped days,
+ *         the wire generation used, and where `finalizeDay` falls between all
+ *         of it.
+ *
+ *         **What the fuzz campaign does NOT establish** (Codex #1437 r1 P2 —
+ *         an overclaim in this suite's first version). Every invariant below
+ *         is an algebraic UPPER BOUND on final state. §7 #6's two ordering
+ *         clauses — "a duplicate is a no-op" and "a missed report self-heals"
+ *         — are statements about a TRANSITION, and a ledger that mishandles a
+ *         duplicate (adding an already-seen cumulative instead of ratcheting
+ *         it, say) can still satisfy every bound here. Bounds cannot prove
+ *         them, and no amount of fuzzing changes that.
+ *
+ *         Those two clauses are therefore proved by the DETERMINISTIC
+ *         before/after tests at the bottom of this file, which read the
+ *         ledger, apply exactly one message, and read it again. The fuzz
+ *         campaign's job is the bounds; theirs is the transitions.
  *
  *         Invariants asserted (governor design §7 + the B3 design record §4):
  *
@@ -89,7 +104,13 @@ contract MeshLedgerInvariant is Test {
     uint32 internal constant CHAIN_ARB = 42161;
     uint32 internal constant CHAIN_OP = 10;
 
-    uint256 internal constant BUCKET_SEED = 5_000_000 ether;
+    /// Codex #1437 r1 P1 — sized so invariant 5 can BIND. At 5,000,000 the
+    /// bucket dwarfed the ~60,000 of aggregate demand 12 days × 5,000 VPFI can
+    /// generate, so `outstanding <= bucket` was never approached and a
+    /// regression that stopped netting prior commitments out of fundable
+    /// availability would have stayed green. Kept comparable to generated
+    /// demand instead.
+    uint256 internal constant BUCKET_SEED = 40_000 ether;
 
     function setUp() public {
         address owner = address(this);
@@ -106,8 +127,11 @@ contract MeshLedgerInvariant is Test {
         RewardReporterFacet reporter = new RewardReporterFacet();
         RewardAggregatorFacet aggregator = new RewardAggregatorFacet();
         TestMutatorFacet mutator = new TestMutatorFacet();
+        // #1437 r1 P1 — §7 #2's FRESH half reads `getInteractionPoolPaidOut`,
+        // which lives on the lens facet (#1306 follow-up split).
+        InteractionRewardsLensFacet lens = new InteractionRewardsLensFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
         cuts[0] = _cut(address(ac), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(admin), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(vpfiFacet), helper.getVPFITokenFacetSelectors());
@@ -121,6 +145,9 @@ contract MeshLedgerInvariant is Test {
             address(aggregator), helper.getRewardAggregatorFacetSelectors()
         );
         cuts[6] = _cut(address(mutator), helper.getTestMutatorFacetSelectors());
+        cuts[7] = _cut(
+            address(lens), helper.getInteractionRewardsLensFacetSelectors()
+        );
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -187,7 +214,7 @@ contract MeshLedgerInvariant is Test {
         // in `test_CoverageProbe_FuzzerReachesRealState`: with an unrestricted
         // target the probe showed ZERO instructions, ZERO retirements and an
         // untouched bucket after 50,000 calls.)
-        bytes4[] memory sel = new bytes4[](7);
+        bytes4[] memory sel = new bytes4[](8);
         sel[0] = MeshHandler.reportB3.selector;
         sel[1] = MeshHandler.reportLegacyB1.selector;
         sel[2] = MeshHandler.reportLegacyPre1222.selector;
@@ -195,6 +222,7 @@ contract MeshLedgerInvariant is Test {
         sel[4] = MeshHandler.finalize.selector;
         sel[5] = MeshHandler.warp.selector;
         sel[6] = MeshHandler.creditDay.selector;
+        sel[7] = MeshHandler.instructThenRetire.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
     }
 
@@ -230,10 +258,16 @@ contract MeshLedgerInvariant is Test {
                 _agg().getChainRecycledLedger(cs[i]);
             (, uint256 released) =
                 _agg().getChainRecycledCommitRetirement(cs[i]);
+            // Codex #1437 r1 P1 — SUBTRACTION form, for exactly the reason
+            // the production read uses it (#1435 r1 P1): a chain's reported
+            // cumulative is deliberately unbounded, so `reported + released`
+            // overflows on a near-max report and this invariant would FAIL
+            // against correct production code. An invariant that cannot
+            // survive the states its own subject admits is worse than none.
             assertLe(
-                consumed,
-                reported + released,
-                "SS7#6: consumed <= reported + released"
+                consumed > released ? consumed - released : 0,
+                reported,
+                "SS7#6: consumed - released <= reported"
             );
         }
     }
@@ -293,6 +327,24 @@ contract MeshLedgerInvariant is Test {
         );
     }
 
+    /// §7 #2's OTHER half — `outstandingCommitFresh + paidOutFresh <= 69M`.
+    /// Codex #1437 r1 P1: the first version of this suite asserted only the
+    /// recycled bound while claiming to encode §7 #2, so a regression that
+    /// over-reserved FRESH issuance would have stayed green. The pre-existing
+    /// interaction-rewards invariant checks paid-out alone, not paid plus
+    /// outstanding, so nothing else covered this.
+    function invariant_FreshCommitWithinLifetimeCap() public view {
+        (, uint256 outstandingFresh, , ) = _agg().getGovernorCommitState();
+        uint256 paidOutFresh =
+            InteractionRewardsLensFacet(address(diamond))
+                .getInteractionPoolPaidOut();
+        assertLe(
+            outstandingFresh + paidOutFresh,
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP,
+            "SS7#2: outstandingFresh + paidOutFresh <= 69M"
+        );
+    }
+
 
     /// ANTI-VACUITY GUARD. Runs once after each invariant campaign and
     /// asserts the fuzzer actually drove the mesh into a non-trivial state.
@@ -320,6 +372,29 @@ contract MeshLedgerInvariant is Test {
             "VACUOUS RUN: the fuzzer never instructed any mirror - every "
             "invariant above passed on an untouched ledger"
         );
+        // Codex #1437 r1 P1 — instructions alone are NOT enough. If no
+        // post-instruction retirement report ever lands (or
+        // `recordChainCommitRetirement` regresses to a no-op) then
+        // `outstanding == instructed - 0` and every clamp and ceiling still
+        // holds, so the suite stays green while never exercising the two
+        // behaviours B3 actually added. Require both halves: retirement by
+        // CONSUMPTION and restoration by RELEASE.
+        (uint256 retArb, uint256 relArb) =
+            _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        (uint256 retOp, uint256 relOp) =
+            _agg().getChainRecycledCommitRetirement(CHAIN_OP);
+        assertGt(
+            retArb + retOp,
+            0,
+            "VACUOUS RUN: no retirement was ever recorded - B3's ledger "
+            "retirement was never exercised"
+        );
+        assertGt(
+            relArb + relOp,
+            0,
+            "VACUOUS RUN: no RELEASE was ever recorded - B3's availability "
+            "restoration was never exercised"
+        );
     }
 
     /// Base never instructs itself, so its own per-chain books stay zero
@@ -338,6 +413,79 @@ contract MeshLedgerInvariant is Test {
             0,
             "Base holds no per-chain reservation"
         );
+    }
+
+    // ─── §7 #6's ORDERING clauses — deterministic, not fuzzed ────────────
+    //
+    // Codex #1437 r1 P2. These are transition properties; the invariants
+    // above are upper bounds on final state and cannot establish them.
+
+    /// §7 #6's "a duplicate is a no-op" is a MIRROR-side property (the
+    /// broadcast ingress, guarded by `broadcastV2Applied`). On BASE the
+    /// equivalent guarantee is stronger and different, and this pins it: a
+    /// second report for the same `(chain, day)` is REJECTED outright rather
+    /// than silently absorbed. Discovered by writing the no-op assertion
+    /// first and watching it revert — the mirror-side clause belongs to B4-b,
+    /// where a real mirror exists to receive a broadcast.
+    function test_Ordering_DuplicateReportIsRejectedNotAbsorbed() public {
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 3, 20e18, 10e18, 500 ether, 0, 0, 0
+        );
+        (uint256 rep0, uint256 con0, uint256 av0, uint256 att0) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+
+        vm.expectRevert();
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 3, 20e18, 10e18, 500 ether, 0, 0, 0
+        );
+
+        // Rejected, and the rejection left nothing half-applied.
+        (uint256 rep1, uint256 con1, uint256 av1, uint256 att1) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(rep1, rep0, "duplicate moved reported");
+        assertEq(con1, con0, "duplicate moved consumed");
+        assertEq(av1, av0, "duplicate moved availability");
+        assertEq(att1, att0, "duplicate moved attribution");
+    }
+
+    /// "A missed report self-heals." A chain that skips a day entirely must
+    /// be made whole by the NEXT report it does land — the cumulative is the
+    /// carrier, so the gap costs nothing permanently.
+    function test_Ordering_MissedReportSelfHeals() public {
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 3, 20e18, 10e18, 100 ether, 0, 0, 0
+        );
+        (uint256 repAfterFirst, , , ) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(repAfterFirst, 100 ether, "first report recorded");
+
+        // Day 4 is never reported at all. Day 5 lands, carrying the
+        // cumulative that spans the gap.
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 5, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+
+        (uint256 repHealed, , uint256 avail, ) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(
+            repHealed,
+            900 ether,
+            "the skipped day cost nothing - the cumulative carried it"
+        );
+        assertEq(avail, 900 ether, "and it is fully available again");
+    }
+
+    /// The ratchet is what makes both of the above safe: a stale delivery
+    /// carrying an OLDER cumulative must never walk the ledger backwards.
+    function test_Ordering_StaleReportNeverRegressesTheLedger() public {
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 3, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 4, 20e18, 10e18, 100 ether, 0, 0, 0
+        );
+        (uint256 reported, , , ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 900 ether, "ratchet held at the high-water mark");
     }
 }
 
@@ -370,10 +518,25 @@ contract MeshHandler is Test {
 
     Sent[] public sent;
 
+    /// Steps the reserved-band day pair used by {instructThenRetire}.
+    uint256 internal retireNonce;
+
     constructor(address diamond_, address messenger_) {
         agg = RewardAggregatorFacet(diamond_);
         mut = TestMutatorFacet(diamond_);
         messenger = MockRewardMessenger(payable(messenger_));
+    }
+
+    /// Codex #1437 r1 P1 — the reported cumulative is DELIBERATELY unbounded
+    /// in production (B1: it is a chain's own lifetime absorption, monotonic
+    /// guard, no cap). A generator capped at a few million never visits the
+    /// states that actually stress the arithmetic, so one seed in eight lands
+    /// in the near-`type(uint256).max` band on purpose.
+    function _cumulative(uint256 seed) internal pure returns (uint256) {
+        if (seed % 8 == 0) {
+            return type(uint256).max - (seed % 1_000_000);
+        }
+        return seed % 2_000_000 ether;
     }
 
     function _chain(uint256 seed) internal pure returns (uint32) {
@@ -395,13 +558,13 @@ contract MeshHandler is Test {
         uint256 released
     ) external {
         uint32 c = _chain(chainSeed);
-        uint256 day = daySeed % 12;
+        uint256 day = daySeed % 40;
         try messenger.deliverChainReportB3(
             c,
             day,
             bound(cumulative, 0, 1_000 ether),
             bound(cumulative, 0, 100 ether),
-            bound(cumulative, 0, 2_000_000 ether),
+            _cumulative(cumulative),
             0,
             bound(retired, 0, 3_000_000 ether),
             bound(released, 0, 3_000_000 ether)
@@ -410,7 +573,7 @@ contract MeshHandler is Test {
                 Sent({
                     chainId: c,
                     dayId: day,
-                    cumulative: bound(cumulative, 0, 2_000_000 ether),
+                    cumulative: _cumulative(cumulative),
                     retired: bound(retired, 0, 3_000_000 ether),
                     released: bound(released, 0, 3_000_000 ether)
                 })
@@ -427,7 +590,7 @@ contract MeshHandler is Test {
     ) external {
         try messenger.deliverChainReportRecycled(
             _chain(chainSeed),
-            daySeed % 12,
+            daySeed % 40,
             1e18,
             1e18,
             bound(cumulative, 0, 2_000_000 ether),
@@ -442,7 +605,7 @@ contract MeshHandler is Test {
         uint256 daySeed
     ) external {
         try messenger.deliverChainReport(
-            _chain(chainSeed), daySeed % 12, 1e18, 1e18
+            _chain(chainSeed), daySeed % 40, 1e18, 1e18
         ) {} catch {}
     }
 
@@ -459,7 +622,7 @@ contract MeshHandler is Test {
     /// directly (the mirror-side report is B4-b's territory), so the fuzzer
     /// can reach the armed funding resolution rather than stalling on a gate.
     function finalize(uint256 daySeed) external {
-        uint256 day = daySeed % 12;
+        uint256 day = daySeed % 40;
         mut.setChainDayCommitmentCompleteRaw(day, CHAIN_ARB, true);
         mut.setChainDayCommitmentCompleteRaw(day, CHAIN_OP, true);
         try agg.finalizeDay(day) {} catch {}
@@ -470,12 +633,67 @@ contract MeshHandler is Test {
         vm.warp(block.timestamp + bound(delta, 1 hours, 3 days));
     }
 
+    /// The three-step ordering retirement REQUIRES — report, finalize (which
+    /// is what creates the instruction the clamps bound against), then report
+    /// a LATER day carrying retirement figures. Codex #1437 r1 P1: leaving
+    /// this to chance meant the campaign reached instructions but never a
+    /// single retirement, so B3's actual behaviour went unexercised while the
+    /// suite stayed green. The individual steps remain separately fuzzable —
+    /// this only guarantees the path is reachable at all.
+    function instructThenRetire(
+        uint256 chainSeed,
+        uint256 daySeed,
+        uint256 retired,
+        uint256 released
+    ) external {
+        uint32 c = _chain(chainSeed);
+        if (c == CHAIN_BASE) c = CHAIN_ARB; // Base never instructs itself
+        // RESERVED day band, stepped by an internal counter. Every
+        // `(chain, day)` slot is one-shot, so sharing the general day space
+        // let ordinary reports consume this path's days before an instruction
+        // ever existed — and a campaign that lost that race recorded zero
+        // retirements. Each invariant gets its own independent sequence, so
+        // "usually reaches it" is not good enough for a coverage guard.
+        uint256 d0 = 40 + 2 * (retireNonce % 12);
+        retireNonce += 1;
+        // FULL coverage for d0, not just chain `c`. Finalization readiness is
+        // "every expected chain reported" OR "grace elapsed since the first
+        // report" — and no time passes inside a single call, so a lone report
+        // here can only ever reach the grace path, which is not yet open. That
+        // is precisely why the earlier version of this action still produced
+        // zero retirements: its `finalizeDay` always reverted, so no
+        // instruction existed for the retirement figures to clamp against.
+        try messenger.deliverChainReportB3(
+            CHAIN_BASE, d0, 10e18, 5e18, 900 ether, 0, 0, 0
+        ) {} catch {}
+        try messenger.deliverChainReportB3(
+            CHAIN_ARB, d0, 20e18, 10e18, 900 ether, 0, 0, 0
+        ) {} catch {}
+        try messenger.deliverChainReportB3(
+            CHAIN_OP, d0, 20e18, 10e18, 900 ether, 0, 0, 0
+        ) {} catch {}
+        mut.setChainDayCommitmentCompleteRaw(d0, CHAIN_ARB, true);
+        mut.setChainDayCommitmentCompleteRaw(d0, CHAIN_OP, true);
+        try agg.finalizeDay(d0) {} catch {}
+        uint256 r = bound(retired, 1, 1_000 ether);
+        try messenger.deliverChainReportB3(
+            c,
+            d0 + 1,
+            20e18,
+            10e18,
+            900 ether,
+            0,
+            r,
+            bound(released, 1, r)
+        ) {} catch {}
+    }
+
     /// Credit a day's absorption. Feeds `Ā`, which sizes the coupled target
     /// the armed funding resolution instructs against — without absorption
     /// the whole per-chain machinery is a no-op.
     function creditDay(uint256 daySeed, uint256 amount) external {
         mut.setRecycledCreditedByDayRaw(
-            daySeed % 12, bound(amount, 0, 5_000 ether)
+            daySeed % 40, bound(amount, 0, 5_000 ether)
         );
     }
 
