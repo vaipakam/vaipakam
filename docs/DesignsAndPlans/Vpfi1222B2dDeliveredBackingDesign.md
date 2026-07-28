@@ -75,8 +75,8 @@ that legitimately lights it up):
   books.** P2. `_stampOne` split (mirror avail = delivered-backed
   availability), Base books
   `chainConsumedRecycled`/`chainOutstandingRecycledCommit`, mirror
-  `LibVpfiRecycle.reserveMirrorCommit(recycleConsume)` under its own
-  once-only flag, remittance netting. **Makes the per-chain §7 invariants
+  `LibVpfiRecycle.reserveMirrorCommit(dayId, recycleConsume)` under its own
+  once-only flag `mirrorRecycleCommitReserved`, remittance netting. **Makes the per-chain §7 invariants
   bind.** *(An earlier draft of this line said
   `LibVpfiRecycle.consume(recycleConsume)`. §2e.1 superseded it before
   implementation: consuming at arrival would debit the same tokens twice,
@@ -432,7 +432,12 @@ defers to it) states the correct rule verbatim: **"commitment semantics
    path. §1's wording is superseded by this section.
 2. **Arrival = commitment.** The mirror's V2 ingress reserves the instructed
    figure into its OWN `outstandingCommitRecycled` (the existing primitive,
-   under the existing whole-day `broadcastV2Applied` idempotency). The bucket
+   under its OWN once-only flag `mirrorRecycleCommitReserved`, NOT the
+   whole-day `broadcastV2Applied` stamp this line first claimed — Codex
+   #1430 r4: a day whose broadcast was applied by a PRE-d3 implementation
+   set `broadcastV2Applied` without reserving, so gating on that stamp
+   would skip its reservation permanently; a separate flag lets a later
+   replay complete it exactly once). The bucket
    is untouched at arrival; it drains through the unchanged claim/remit
    `consume` sites, and a forfeit/expiry releases the un-drawn remainder
    through the unchanged `releaseCommitment` path. So the mirror runs exactly
