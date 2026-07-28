@@ -17,6 +17,7 @@ import {
   type CoverageGap,
 } from './chains';
 import type { Config, Env } from './env';
+import { makeBaseRedactor, makeRedactor } from './redact';
 import type {
   BaseChainBooks,
   LocalLedger,
@@ -154,7 +155,9 @@ export async function observeMesh(
   const canonical = resolveChain(env, config.canonicalChainId);
   if (isCoverageGap(canonical)) {
     throw new Error(
-      `canonical chain ${config.canonicalChainId} unreadable: ${canonical.detail}`,
+      makeBaseRedactor(env)(
+        `canonical chain ${config.canonicalChainId} unreadable: ${canonical.detail}`,
+      ),
     );
   }
 
@@ -206,6 +209,7 @@ export async function observeMesh(
     chainIds.map((id) => readBaseBooks(canonical, id, canonicalBlock)),
   );
 
+  const redact = makeRedactor(env, chainIds);
   const locals = new Map<number, LocalLedger>();
   await Promise.all(
     chainIds.map(async (id) => {
@@ -217,10 +221,15 @@ export async function observeMesh(
       try {
         locals.set(id, await readLocalLedger(target));
       } catch (err) {
+        // REDACT: viem puts the request URL in its error messages, and
+        // provider URLs carry the API key in the path or query. This
+        // string ends up in a Telegram alert (Codex #1443 r4).
         gaps.push({
           chainId: id,
           reason: 'no-rpc',
-          detail: `own-ledger read failed on chain ${id}: ${err instanceof Error ? err.message : String(err)}`,
+          detail: redact(
+            `own-ledger read failed on chain ${id}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
         });
       }
     }),

@@ -245,6 +245,43 @@ export function checkHardInvariants(
       );
     }
 
+    // ── Consumed cap (governor §7 #6) ────────────────────────────────
+    // `consumed − released ≤ reported` per chain: Base can never instruct
+    // a chain to fund more than it reported absorbing, net of what it
+    // released un-spent. The funding pass enforces it by construction
+    // (`_mirrorAvailable` bounds every instruction), and
+    // `MeshLedger.invariant.t.sol` asserts it on-chain.
+    //
+    // Checked SEPARATELY rather than inferred from the availability
+    // formula, because that formula SATURATES: if this bound broke,
+    // `expectedAvail` would floor to zero, the on-chain `avail` would
+    // also be zero, and `availability-formula` would agree — while the
+    // commit identity and both clamps stayed green too. Over-instruction
+    // would have been completely invisible (Codex #1443 r4).
+    //
+    // SUBTRACTION form, mirroring `MeshLedger.invariant.t.sol` exactly.
+    // The contracts need that form because a chain's reported cumulative
+    // is deliberately unbounded and `reported + released` overflows
+    // uint256 on a near-max report. JS bigint does not overflow, so here
+    // the reason is fidelity rather than arithmetic safety: a watcher
+    // that checks a subtly different bound than the on-chain invariant
+    // will eventually disagree with it, and the disagreement will be
+    // read as a ledger fault rather than as a watcher bug.
+    if (satSub(b.consumed, b.released) > b.reported) {
+      add(
+        'consumed-cap',
+        'vs-reported',
+        b.chainId,
+        'Instructions exceed what the chain reported absorbing',
+        `consumed - released > reported — Base has instructed this chain to fund more than it ever reported having\n` +
+          `  consumed = ${fmt(b.consumed)}\n` +
+          `  released = ${fmt(b.released)}\n` +
+          `  net      = ${fmt(satSub(b.consumed, b.released))}\n` +
+          `  reported = ${fmt(b.reported)}\n` +
+          `  excess   = ${fmt(satSub(b.consumed, b.released) - b.reported)}`,
+      );
+    }
+
     // ── Attribution ceiling ──────────────────────────────────────────
     // Σ of accepted per-day credits can never exceed the cumulative it is
     // attributed from; exceeding it would feed `Ā` absorption the
@@ -491,13 +528,39 @@ export function advanceStreak(
 export function stuckSettlementCondition(
   books: BaseChainBooks,
   local: LocalLedger | undefined,
-): { holds: boolean; marker: string; source: 'chain' | 'base' } {
-  const source = local ? 'chain' : 'base';
-  const retired = local ? local.localRetired : books.retired;
+): {
+  holds: boolean;
+  marker: string;
+  source: 'chain' | 'base';
+  /** Which window this observation should be judged against. */
+  windowKind: 'local' | 'report-cycle';
+} {
+  // BOTH halves from the SAME ledger. Mixing them — Base's outstanding
+  // against the chain's own retirement — produced a guaranteed false
+  // positive: a mirror that retires everything between day-closes zeroes
+  // its local reservation immediately while Base's copy stays positive
+  // until the next report lands, so the run would build and fire on a
+  // chain with nothing left outstanding at all (Codex #1443 r4).
+  if (local) {
+    return {
+      holds: local.outstandingRecycled > 0n,
+      marker: local.localRetired.toString(),
+      source: 'chain',
+      // Both figures are chain-local and move the instant it settles, so
+      // the short window is meaningful here.
+      windowKind: 'local',
+    };
+  }
+
+  // Fallback: both figures come from Base and therefore move only when a
+  // report lands, so judging them on the short window would fire once per
+  // report cycle on a healthy chain — the same mistake the report-lag
+  // window made. Judged on the report-cycle window instead.
   return {
     holds: books.outstanding > 0n,
-    marker: retired.toString(),
-    source,
+    marker: books.retired.toString(),
+    source: 'base',
+    windowKind: 'report-cycle',
   };
 }
 

@@ -14,7 +14,12 @@ import {
   selectAlertsToSend,
   toAlertRecords,
 } from './db';
-import { readConfig, readTelegramTarget, type Env } from './env';
+import {
+  readAlertRepeatSeconds,
+  readConfig,
+  readTelegramTarget,
+  type Env,
+} from './env';
 import {
   advanceStreak,
   checkHardInvariants,
@@ -25,6 +30,7 @@ import {
   type Finding,
 } from './invariants';
 import { observeMesh } from './mesh';
+import { makeBaseRedactor } from './redact';
 import { formatAlert, sendOpsMessage } from './telegram';
 
 const STUCK_SIGNAL = 'stuck-settlement';
@@ -50,6 +56,20 @@ export interface TickSummary {
    * while this is false.
    */
   deliveryConfigured: boolean;
+  /**
+   * Whether delivery was actually EXERCISED and succeeded this tick.
+   *
+   * `deliveryConfigured` only says a token and chat id are present —
+   * nonempty but invalid credentials, or a wrong chat id, still read as
+   * configured, and a healthy tick with no findings never calls Telegram
+   * at all. The documented post-deploy check would then certify a pager
+   * that cannot deliver (Codex #1443 r4). `POST /run` therefore sends a
+   * probe, so a green verification means a message actually landed.
+   * `null` on cron ticks that had nothing to send.
+   */
+  deliveryVerified: boolean | null;
+  /** Sends attempted this tick that Telegram rejected. */
+  deliveryFailures: number;
   chainsObserved: number;
   critical: number;
   advisory: number;
@@ -67,8 +87,13 @@ function chainLabel(chainId: number): string {
 /** Run one full tick. Never throws — failures surface as the summary's
  *  `error` plus an infrastructure alert, because a thrown scheduled
  *  handler is invisible outside the Cloudflare logs. */
-export async function runTick(env: Env): Promise<TickSummary> {
+export async function runTick(
+  env: Env,
+  options: { probeDelivery?: boolean } = {},
+): Promise<TickSummary> {
   const now = Math.floor(Date.now() / 1000);
+  let deliveryFailures = 0;
+  let deliveryVerified: boolean | null = null;
 
   try {
     // Fail before any read if the compiled ABI no longer matches what the
@@ -105,7 +130,12 @@ export async function runTick(env: Env): Promise<TickSummary> {
         stuckPrior.get(books.chainId) ?? null,
         stuck.holds,
         stuck.marker,
-        config.stuckWindowTicks,
+        // Base-only observations move solely through day-close reports,
+        // so they are judged on the report-cycle window — the short one
+        // would fire once per cycle on a healthy chain.
+        stuck.windowKind === 'local'
+          ? config.stuckWindowTicks
+          : config.reportLagWindowTicks,
       );
       streakWrites.push(
         saveStreakStatement(
@@ -130,7 +160,7 @@ export async function runTick(env: Env): Promise<TickSummary> {
           fingerprintSource: `stuck:${books.outstanding}:${local ? local.localRetired : books.retired}:${books.released}:${books.avail}`,
           detail:
             `outstanding > 0 and retirement flat for ${stuckOutcome.next?.streak ?? 0} consecutive observations\n` +
-            `  outstanding       = ${fmt(books.outstanding)}\n` +
+            `  outstanding       = ${fmt(local ? local.outstandingRecycled : books.outstanding)}\n` +
             `  retired (${stuck.source === 'chain' ? "chain's own" : 'base copy'})  = ${fmt(local ? local.localRetired : books.retired)}\n` +
             `  released          = ${fmt(books.released)}\n` +
             `  availability      = ${fmt(books.avail)}\n` +
@@ -226,7 +256,10 @@ export async function runTick(env: Env): Promise<TickSummary> {
               finding.code === STUCK_SIGNAL ? STUCK_CAVEAT : undefined,
           }),
         );
-        if (!ok) continue;
+        if (!ok) {
+          deliveryFailures += 1;
+          continue;
+        }
         sent += 1;
         // Record the quiet window only for what ACTUALLY went out, and
         // pair it with its own send rather than a positional prefix: a
@@ -242,6 +275,24 @@ export async function runTick(env: Env): Promise<TickSummary> {
       for (const f of findings) {
         console.warn(`[${f.severity}] ${f.code} ${chainLabel(f.chainId)}: ${f.title}`);
       }
+    }
+
+    // Delivery PROBE — operator verification only, never on the cron.
+    // Proves the credentials and chat id actually work, which
+    // `deliveryConfigured` cannot: it is true for a malformed token.
+    if (options.probeDelivery && config.telegram) {
+      deliveryVerified = await sendOpsMessage(
+        config.telegram,
+        `✅ vaipakam-mesh-watcher delivery probe — manual POST /run. ` +
+          `Chains observed: ${obs.books.length}. ` +
+          `Critical: ${findings.filter((f) => f.severity === 'critical').length}. ` +
+          `Advisory: ${findings.filter((f) => f.severity === 'advisory').length}. ` +
+          `If you can read this, the ops pager works.`,
+      );
+      if (!deliveryVerified) deliveryFailures += 1;
+    } else if (sent > 0) {
+      // Real alerts went out — that is its own proof.
+      deliveryVerified = deliveryFailures === 0;
     }
 
     writes.push(
@@ -262,10 +313,17 @@ export async function runTick(env: Env): Promise<TickSummary> {
     const deliveryConfigured = config.telegram !== null;
     return {
       // Undeliverable alerts are not a healthy state, however clean the
-      // ledgers are — so an unconfigured destination fails the tick and
-      // the post-deploy verification with it.
-      ok: critical === 0 && deliveryConfigured,
+      // ledgers are — so an unconfigured destination, a REJECTED send, or
+      // a failed probe all fail the tick and the post-deploy check with
+      // it. A silent pager is the one failure this Worker cannot report.
+      ok:
+        critical === 0 &&
+        deliveryConfigured &&
+        deliveryFailures === 0 &&
+        deliveryVerified !== false,
       deliveryConfigured,
+      deliveryVerified,
+      deliveryFailures,
       chainsObserved: obs.books.length,
       critical,
       advisory: findings.length - critical,
@@ -279,14 +337,23 @@ export async function runTick(env: Env): Promise<TickSummary> {
       })),
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    // REDACT before this string touches a log or an alert: a failed
+    // canonical read carries the provider URL, API key included.
+    const message = makeBaseRedactor(env)(
+      err instanceof Error ? err.message : String(err),
+    );
     console.error(`mesh-watcher tick failed: ${message}`);
 
     // Resolve the destination WITHOUT re-parsing the configuration that
     // may itself be what failed — see `readTelegramTarget`. The repeat
     // window falls back to its default here for the same reason.
     const telegram = readTelegramTarget(env);
-    const config = { telegram, alertRepeatSeconds: 21_600 };
+    const config = {
+      telegram,
+      // The operator's configured cadence, resolved independently of
+      // whatever knob made the tick throw.
+      alertRepeatSeconds: readAlertRepeatSeconds(env),
+    };
     if (config.telegram) {
       // Route the self-failure alert through the same quiet window where
       // possible: an RPC or config outage lasts hours, and one message per
@@ -333,6 +400,8 @@ export async function runTick(env: Env): Promise<TickSummary> {
     return {
       ok: false,
       deliveryConfigured: telegram !== null,
+      deliveryVerified,
+      deliveryFailures,
       chainsObserved: 0,
       critical: 0,
       advisory: 0,

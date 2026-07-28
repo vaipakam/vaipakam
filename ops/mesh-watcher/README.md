@@ -41,6 +41,7 @@ operation. These page.
 | `availability-formula` | `avail == reported − max(0, consumed − released)` | The operator view and the funding pass call one shared helper precisely so they cannot drift. Re-deriving it off-chain catches a deployed implementation that is no longer the function the plan and specs assume. |
 | `base-self-inert` | The per-chain COMMITMENT fields under the canonical chain's own id — `consumed`, `retired`, `released`, `outstanding` — are zero | Base is never a "local" funder in the commit split: its slice comes from the same bucket the global ledger governs, so it books no per-chain instruction against itself. Non-zero here means it double-booked, corrupting the global reservation *and* netting its own bucket twice. Note this is **not** every field — Base records its own chain in the ledger at day-close, so `reported`, `attributed` and `avail` are legitimately non-zero under its own id and are deliberately not checked. |
 | `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
+| `consumed-cap` | `consumed − released ≤ reported`, per chain (governor §7 #6) | Base can never instruct a chain to fund more than it reported absorbing, net of what it released un-spent — `_mirrorAvailable` bounds every instruction, and `MeshLedger.invariant.t.sol` asserts it on-chain. Checked **separately** rather than inferred from the availability formula, because that formula saturates: if this bound broke, `expectedAvail` would floor to zero, the on-chain `avail` would agree, and every other check would stay green while over-instruction went completely invisible. |
 | `bucket-coverage` | A chain's live bucket backs its own reservations | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. **Mirrors only** — see below. |
 
 **On bucket coverage being CRITICAL only on mirrors.** On a mirror the
@@ -94,11 +95,21 @@ plan's §M7 records it. Three things it deliberately is **not**:
   design work on **#1442**. Shipping it as a pager today would train the
   operator to ignore it.
 
-Retirement is read from the **chain's own** ledger when the chain is
-reachable, because that moves the instant the chain retires anything —
-independent of whether its report reached Base. Reading Base's copy
-instead would conflate stuck settlement with a stalled report pipeline,
-which is the separate signal below.
+**Both halves come from the same ledger.** When the chain is reachable,
+both the outstanding reservation and the retirement are read from *its
+own* books: those move the instant it settles anything, independent of
+whether a report reached Base. Mixing them — Base's outstanding against
+the chain's own retirement — is a guaranteed false positive, because a
+mirror that retires everything between day-closes zeroes its local
+reservation immediately while Base's copy stays positive until the next
+report lands. Reading Base's copy for *both* would instead conflate stuck
+settlement with a stalled report pipeline, which is the separate signal
+below.
+
+When the chain is **unreachable**, both figures necessarily come from
+Base and therefore move only when a report lands — so that fallback is
+judged on the report-cycle window rather than the short one, for exactly
+the reason `report-lag` is.
 
 **`report-lag`** — any of Base's accepted cumulatives for a chain sits
 below that chain's own *and has not moved* across the window. Its window
@@ -180,6 +191,15 @@ half of cron observations — forging the very evidence the operator acts
 on. An unset `WATCHER_RUN_TOKEN` therefore **closes** the endpoint rather
 than opening it.
 
+**Secrets are redacted from everything that leaves the Worker.** viem
+embeds the request URL in its error messages and providers put the API key
+in the path or query, so a provider having a bad minute would otherwise
+publish an `RPC_<chainId>` secret straight to the ops chat. Every error
+string passes through a redactor before it reaches a finding, a log or an
+alert: configured secrets become named placeholders (`<RPC_42161>`), and
+*any* URL — including ones this Worker never configured — keeps its scheme
+and host and loses its path, query and fragment.
+
 **Its own D1, its own Telegram bot.** `vaipakam-mesh-alerts-db`, not the
 shared `vaipakam-archive`; `TG_OPS_BOT_TOKEN`, not the user-facing
 `TG_BOT_TOKEN`. Same trust-boundary reasoning that gave `ops/lz-watcher`
@@ -200,7 +220,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 27 mutations applied in turn, each
+The suite is **mutation-verified**: 38 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's
@@ -262,14 +282,18 @@ undeployed.
    `ok`, `deliveryConfigured`, `chainsObserved`, `critical`, `advisory`,
    `coverageGaps`, `sent`.
 
-   Two things to check on that first run. `deliveryConfigured: false` means
-   the Telegram target is unset and every future alert would go into
-   transient Worker logs and reach no one — the tick reports `ok: false`
-   for exactly that reason, so a green first run genuinely means the pager
-   works. And `coverageGaps > 0` means a chain is wired on-chain but not
-   readable (no RPC secret, no deployment stanza) or the source set is
-   misconfigured; fix it before relying on the alerts, or the mesh is only
-   partly watched.
+   The manual path **sends a delivery probe** — you should see a message
+   in the ops chat, and `deliveryVerified: true` in the response. That is
+   the point of running it: `deliveryConfigured` only says a token and
+   chat id are present, which is equally true of a malformed token, and a
+   healthy tick with no findings never calls Telegram at all. Without the
+   probe a green verification would certify a pager that cannot deliver.
+
+   `ok` requires all of: no critical findings, a configured destination,
+   no rejected sends, and a probe that succeeded. `coverageGaps > 0`
+   means a chain is wired on-chain but not readable (no RPC secret, no
+   deployment stanza) or the source set is misconfigured — fix it before
+   relying on the alerts, or the mesh is only partly watched.
 
 The 15-minute cron slot is the one freed by retiring
 `vaipakam-lz-watcher`, whose LayerZero surface the T-068 CCIP migration

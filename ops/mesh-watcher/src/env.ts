@@ -124,6 +124,23 @@ export function readTelegramTarget(
 }
 
 /**
+ * Resolve the alert repeat interval, INDEPENDENTLY and without throwing.
+ *
+ * The tick-failure handler needs the operator's configured cadence even
+ * when some OTHER knob is what made `readConfig` throw — hard-coding the
+ * default there gave the watcher-down alert a different, undocumented
+ * cadence from every other alert (Codex #1443 r4). Falls back to the
+ * default only when THIS setting is absent or unparseable.
+ */
+export function readAlertRepeatSeconds(env: Env): number {
+  try {
+    return intVar(env.ALERT_REPEAT_SECONDS, 21_600, 'ALERT_REPEAT_SECONDS');
+  } catch {
+    return 21_600;
+  }
+}
+
+/**
  * Resolve the tick configuration.
  *
  * @throws When `CANONICAL_CHAIN_ID` is unset or unparseable — without it
@@ -154,11 +171,7 @@ export function readConfig(env: Env): Config {
       1_000_000_000_000_000n, // 1e15 wei = 0.001 VPFI
       'BUCKET_COVERAGE_TOLERANCE_WEI',
     ),
-    alertRepeatSeconds: intVar(
-      env.ALERT_REPEAT_SECONDS,
-      21_600,
-      'ALERT_REPEAT_SECONDS',
-    ),
+    alertRepeatSeconds: readAlertRepeatSeconds(env),
     telegram: readTelegramTarget(env),
   };
 }

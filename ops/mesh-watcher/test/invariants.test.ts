@@ -43,7 +43,12 @@ import {
 } from '../src/invariants';
 import { formatAlert } from '../src/telegram';
 import { bearerToken, isAuthorized, secretsMatch } from '../src/auth';
-import { readConfig, readTelegramTarget } from '../src/env';
+import {
+  readAlertRepeatSeconds,
+  readConfig,
+  readTelegramTarget,
+} from '../src/env';
+import { makeRedactor, stripUrlPaths } from '../src/redact';
 import {
   pruneStreaksStatement,
   retainOnlyActiveStatement,
@@ -357,6 +362,63 @@ describe('checkHardInvariants — bucket coverage', () => {
   });
 });
 
+describe('checkHardInvariants — consumed cap (governor §7 #6)', () => {
+  it('fires when instructions exceed what the chain reported', () => {
+    // Independent of the availability formula on purpose: that formula
+    // SATURATES, so an over-instruction floors `avail` to zero, the
+    // on-chain figure agrees, and every other check stays green (Codex
+    // #1443 r4). consumed - released = 1200 - 100 = 1100 > reported 1000.
+    expect(
+      codes({
+        mirror: {
+          consumed: 1200n * E,
+          outstanding: 950n * E, // keeps the commit identity intact
+          avail: 0n, // the saturated value — genuinely what chain returns
+        },
+      }),
+    ).toEqual(['consumed-cap']);
+  });
+
+  it('accepts the bound exactly at equality', () => {
+    // consumed - released = 1100 - 100 = 1000 == reported
+    expect(
+      codes({
+        mirror: {
+          consumed: 1100n * E,
+          outstanding: 850n * E,
+          avail: 0n,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('accepts a near-max reported cumulative, as the on-chain bound does', () => {
+    // The contracts express this bound by SUBTRACTION because
+    // `reported + released` overflows uint256 on a near-max report. JS
+    // bigint does not overflow, so this does not reproduce that — it
+    // pins the watcher to the same DOMAIN the on-chain invariant accepts,
+    // so the two cannot quietly diverge and have the divergence read as
+    // a ledger fault.
+    const huge = 2n ** 255n;
+    expect(
+      codes({
+        mirror: {
+          reported: huge,
+          consumed: 400n * E,
+          released: 100n * E,
+          retired: 250n * E,
+          outstanding: 150n * E,
+          attributed: 0n,
+          avail: huge - 300n * E,
+        },
+        // Base's copy can never exceed the chain's own — raise it too, or
+        // `base-ahead-of-chain` fires and masks what this test is about.
+        mirrorLocal: { reportedCumulative: huge },
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe('advanceStreak', () => {
   it('clears rather than decrements when the condition stops holding', () => {
     expect(advanceStreak({ marker: 'x', streak: 5 }, false, 'x', 3)).toEqual({
@@ -396,11 +458,39 @@ describe('advanceStreak', () => {
 });
 
 describe('stuckSettlementCondition', () => {
-  it('does not hold when nothing is outstanding', () => {
+  it('does not hold when the CHAIN has nothing outstanding', () => {
     expect(
-      stuckSettlementCondition({ ...mirrorBooks(), outstanding: 0n }, mirrorLocal())
-        .holds,
+      stuckSettlementCondition(mirrorBooks(), {
+        ...mirrorLocal(),
+        outstandingRecycled: 0n,
+      }).holds,
     ).toBe(false);
+  });
+
+  it('reads BOTH halves from the same ledger', () => {
+    // Mixing them — Base's outstanding against the chain's own retirement
+    // — is a guaranteed false positive: a mirror that retires everything
+    // between day-closes zeroes its local reservation immediately while
+    // Base's copy stays positive until the next report lands (Codex
+    // #1443 r4). Base still showing 150 outstanding must not make a chain
+    // with zero outstanding look stuck.
+    const settled = stuckSettlementCondition(
+      { ...mirrorBooks(), outstanding: 150n * E },
+      { ...mirrorLocal(), outstandingRecycled: 0n },
+    );
+    expect(settled.holds).toBe(false);
+    expect(settled.source).toBe('chain');
+  });
+
+  it('judges the Base-only fallback on the report-cycle window', () => {
+    // Both figures then move solely through day-close reports, so the
+    // short window would fire once per cycle on a healthy chain.
+    expect(stuckSettlementCondition(mirrorBooks(), undefined).windowKind).toBe(
+      'report-cycle',
+    );
+    expect(stuckSettlementCondition(mirrorBooks(), mirrorLocal()).windowKind).toBe(
+      'local',
+    );
   });
 
   it('holds while a reservation is open', () => {
@@ -999,5 +1089,85 @@ describe('report-lag window sizing', () => {
         REPORT_LAG_WINDOW_TICKS: '200',
       } as never).reportLagWindowTicks,
     ).toBe(200);
+  });
+});
+
+describe('redaction — secrets must not reach Telegram or logs', () => {
+  // viem embeds the request URL in its error messages and providers put
+  // the API key in the path or query, so a provider having a bad minute
+  // would have published RPC_<chainId> to the ops chat (Codex #1443 r4,
+  // confirmed by constructing a viem HttpRequestError).
+  const env = {
+    RPC_8453: 'https://base-mainnet.g.alchemy.com/v2/SUPERSECRETKEY',
+    RPC_42161: 'https://arb-mainnet.g.alchemy.com/v2/OTHERSECRET',
+    TG_OPS_BOT_TOKEN: '12345:BOTSECRET',
+    WATCHER_RUN_TOKEN: 'RUNSECRET',
+  } as never;
+
+  it('replaces a configured RPC URL with a named placeholder', () => {
+    const r = makeRedactor(env, [8453, 42161]);
+    const out = r(
+      'HTTP request failed.\nURL: https://base-mainnet.g.alchemy.com/v2/SUPERSECRETKEY\nStatus: 429',
+    );
+    expect(out).not.toContain('SUPERSECRETKEY');
+    expect(out).toContain('<RPC_8453>');
+  });
+
+  it('redacts the bot and run tokens wherever they appear', () => {
+    const r = makeRedactor(env, []);
+    expect(r('boom 12345:BOTSECRET here')).not.toContain('BOTSECRET');
+    expect(r('boom RUNSECRET here')).not.toContain('RUNSECRET');
+  });
+
+  it('strips the path of an UNCONFIGURED url, keeping the host', () => {
+    // Structural layer: catches credentials in a URL this Worker never
+    // configured — a redirect, or an upstream's own upstream.
+    const r = makeRedactor(env, []);
+    const out = r('failed: https://rpc.example.com/v3/UNKNOWNKEY?apikey=SECRET oops');
+    expect(out).not.toContain('UNKNOWNKEY');
+    expect(out).not.toContain('SECRET');
+    expect(out).toContain('rpc.example.com');
+    expect(out).toContain('oops');
+  });
+
+  it('leaves ordinary prose alone', () => {
+    const r = makeRedactor(env, [8453]);
+    expect(r('own-ledger read failed on chain 42161: timeout')).toBe(
+      'own-ledger read failed on chain 42161: timeout',
+    );
+  });
+
+  it('handles several urls and trailing punctuation', () => {
+    const out = stripUrlPaths(
+      'tried https://a.example/x/KEY1, then https://b.example/y/KEY2. done',
+    );
+    expect(out).not.toContain('KEY1');
+    expect(out).not.toContain('KEY2');
+    expect(out).toContain('a.example');
+    expect(out).toContain('b.example');
+    expect(out).toContain('done');
+  });
+
+  it('keeps a bare host untouched', () => {
+    expect(stripUrlPaths('https://rpc.example.com')).toBe('https://rpc.example.com');
+  });
+});
+
+describe('readAlertRepeatSeconds — survives an unrelated bad knob', () => {
+  it('honours the configured value when another setting is broken', () => {
+    // The tick-failure handler needs the operator's cadence even when
+    // some OTHER knob is what threw; hard-coding the default there gave
+    // the watcher-down alert an undocumented cadence (Codex #1443 r4).
+    const broken = {
+      ALERT_REPEAT_SECONDS: '900',
+      CANONICAL_CHAIN_ID: 'not-a-number',
+    } as never;
+    expect(() => readConfig(broken)).toThrow();
+    expect(readAlertRepeatSeconds(broken)).toBe(900);
+  });
+
+  it('falls back only when THIS setting is the bad one', () => {
+    expect(readAlertRepeatSeconds({ ALERT_REPEAT_SECONDS: '0' } as never)).toBe(21_600);
+    expect(readAlertRepeatSeconds({} as never)).toBe(21_600);
   });
 });

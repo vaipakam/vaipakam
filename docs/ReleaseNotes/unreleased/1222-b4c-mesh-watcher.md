@@ -73,6 +73,22 @@ healthy state however clean the ledgers are — and a source set that omits
 the canonical chain is now reported rather than silently papered over,
 since the day's global totals are summed over exactly that set.
 
+A fourth round found the one genuine security defect in the work. The
+blockchain client library embeds the request URL in its error messages,
+and RPC providers put the API key in that URL — so a provider having a
+bad minute would have published a credential straight into the operator
+chat and the logs. Every error string now passes through a redactor
+before it can reach an alert: known secrets become named placeholders,
+and any URL at all keeps its host and loses its path and query. The same
+round added a missing ledger bound — that instructions to a chain never
+exceed what it reported absorbing — which had been invisible because the
+availability figure it would otherwise have shown up in saturates at
+zero; corrected the stuck-settlement signal to read both of its inputs
+from the same chain's books rather than one from each side, which would
+have alarmed on chains that had already settled everything; and made the
+manual verification actually send a test message, since a configured
+pager and a working pager are not the same thing.
+
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the
 canonical Diamond each tick, so a mirror wired on-chain is watched as soon
