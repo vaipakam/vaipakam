@@ -26,9 +26,9 @@
  *    on the same channel.
  */
 
-import { selectAlertsToSend, toAlertRecords } from './db';
-import type { Finding } from './invariants';
-import type { Redactor } from './redact';
+import { describeFailure } from './errors';
+import type { Finding } from './finding';
+import type { AlertStore, StoreOp } from './store';
 import { sendOpsMessage, type TelegramTarget } from './telegram';
 
 export interface DeliveryReport {
@@ -42,16 +42,15 @@ export interface DeliveryReport {
 }
 
 export interface DeliveryRequest {
-  db: D1Database;
+  store: AlertStore;
   telegram: TelegramTarget | null;
   findings: readonly Finding[];
   repeatSeconds: number;
   now: number;
-  redact: Redactor;
   /** `false` when the streak read already failed — skips dedup entirely. */
   dedupAvailable: boolean;
-  /** Streak/prune statements to persist alongside the dedup records. */
-  writes: readonly D1PreparedStatement[];
+  /** Writes to persist, DESCRIBED not prepared — see `store.ts`. */
+  writes: readonly StoreOp[];
   /** Manual-verification probe text, or `null` on scheduled ticks. */
   probeText: string | null;
   format: (finding: Finding) => string;
@@ -77,38 +76,40 @@ export async function deliverFindings(
     for (const f of req.findings) {
       console.error(`[${f.severity}] ${f.code} chain=${f.chainId}: ${f.title}\n${f.detail}`);
     }
+    // The observations themselves are still valid, so the windowed
+    // detectors keep accumulating: an unconfigured pager must not also
+    // cost the runs their evidence, or restoring it would be followed by
+    // another full window of silence (#1443 r8).
+    const committed = await req.store.commit(req.writes);
+    if (!committed.ok) {
+      report.stateDegraded = true;
+      report.degradedDetail.push(describeFailure(committed.failure));
+    }
     return report;
   }
 
-  const candidates = toAlertRecords(req.findings);
+  const candidates = req.findings.map((f) => ({
+    key: f.key,
+    fingerprint: f.fingerprint,
+  }));
 
-  // Rule 2 — dedup is best-effort.
+  // Rule 2 — dedup is best-effort. The store cannot throw, so there is
+  // no path by which this decision escapes the boundary.
   let send = candidates;
-  let records: D1PreparedStatement[] = [];
   if (req.dedupAvailable && candidates.length > 0) {
-    try {
-      const picked = await selectAlertsToSend(
-        req.db,
-        candidates,
-        req.repeatSeconds,
-        req.now,
-      );
-      send = picked.send;
-      records = picked.statements;
-    } catch (err) {
+    const picked = await req.store.selectDue(candidates, req.repeatSeconds, req.now);
+    if (picked.ok) {
+      send = picked.value;
+    } else {
       report.stateDegraded = true;
-      report.degradedDetail.push('repeat-suppression query failed');
-      console.error(
-        `mesh-watcher: dedup query failed, sending unsuppressed: ${req.redact(err instanceof Error ? err.message : String(err))}`,
-      );
+      report.degradedDetail.push(describeFailure(picked.failure));
       send = candidates;
-      records = [];
     }
   }
 
   // Rule 1 — deliver.
   const byKey = new Map(req.findings.map((f) => [f.key, f]));
-  const confirmed: D1PreparedStatement[] = [];
+  const confirmed: StoreOp[] = [];
   for (let i = 0; i < send.length; i += 1) {
     const finding = byKey.get(send[i]!.key);
     if (!finding) continue;
@@ -129,8 +130,12 @@ export async function deliverFindings(
       continue;
     }
     report.sent += 1;
-    const record = records[i];
-    if (record) confirmed.push(record);
+    confirmed.push({
+      kind: 'recordAlert',
+      key: finding.key,
+      fingerprint: finding.fingerprint,
+      at: req.now,
+    });
   }
 
   if (req.probeText) {
@@ -140,18 +145,12 @@ export async function deliverFindings(
     report.verified = report.failures === 0;
   }
 
-  // Rule 3 — recording is best-effort.
-  const writes = [...req.writes, ...confirmed];
-  if (writes.length > 0) {
-    try {
-      await req.db.batch(writes);
-    } catch (err) {
-      report.stateDegraded = true;
-      report.degradedDetail.push('streak/dedup write failed');
-      console.error(
-        `mesh-watcher: alert-state write failed (alerts already delivered): ${req.redact(err instanceof Error ? err.message : String(err))}`,
-      );
-    }
+  // Rule 3 — recording is best-effort, and construction happens inside
+  // the store's own guard (`store.ts`), not here.
+  const committed = await req.store.commit([...req.writes, ...confirmed]);
+  if (!committed.ok) {
+    report.stateDegraded = true;
+    report.degradedDetail.push(describeFailure(committed.failure));
   }
 
   // Rule 4 — announce the degradation. A frozen streak table means both

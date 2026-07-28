@@ -6,14 +6,11 @@
 import { assertAbiShape } from './abi';
 import { deploymentFor } from './chains';
 import { deliverFindings } from './deliver';
-import {
-  fingerprint,
-  loadStreaks,
-  pruneStreaksStatement,
-  retainOnlyActiveStatement,
-  saveStreakStatement,
-  selectAlertsToSend,
-} from './db';
+import { classify, describeFailure } from './errors';
+import { hashIdentity, makeFinding } from './finding';
+import { assessHealth } from './health';
+import { stepSignal, type Observation } from './signal';
+import { AlertStore, type StoreOp } from './store';
 import {
   readAlertRepeatSeconds,
   readConfig,
@@ -21,7 +18,6 @@ import {
   type Env,
 } from './env';
 import {
-  advanceStreak,
   checkHardInvariants,
   fmt,
   lagPairs,
@@ -74,6 +70,8 @@ export interface TickSummary {
   deliveryFailures: number;
   /** Any alert-state read or write failed — see `deliver.ts` rule 4. */
   stateDegraded: boolean;
+  /** Which health preconditions failed. Empty when `ok`. */
+  unhealthyBecause: string[];
   chainsObserved: number;
   critical: number;
   advisory: number;
@@ -81,6 +79,22 @@ export interface TickSummary {
   sent: number;
   findings: { severity: string; code: string; chainId: number; title: string }[];
   error?: string;
+}
+
+/** Translate a signal transition into a store operation, if any. */
+function pushStreak(
+  into: StoreOp[],
+  signal: string,
+  chainId: number,
+  transition: { action: 'save'; state: StreakState } | { action: 'clear' } | { action: 'keep' },
+  at: number,
+): void {
+  if (transition.action === 'save') {
+    into.push({ kind: 'saveStreak', signal, chainId, state: transition.state, at });
+  } else if (transition.action === 'clear') {
+    into.push({ kind: 'clearStreak', signal, chainId });
+  }
+  // 'keep' — deliberately no write.
 }
 
 function chainLabel(chainId: number): string {
@@ -128,36 +142,43 @@ export async function runTick(
     // (their runs restart, which only delays them), the dedup layer is
     // bypassed so criticals go out unsuppressed, and the outage is
     // reported as its own critical finding.
+    const store = new AlertStore(env.DB);
     let stuckPrior = new Map<number, StreakState>();
     const lagPrior = new Map<string, StreakState>();
     let stateAvailable = true;
-    try {
-      const loaded = await Promise.all([
-        loadStreaks(env.DB, STUCK_SIGNAL),
-        ...lagLabels.map((l) => loadStreaks(env.DB, `${REPORT_LAG_SIGNAL}/${l}`)),
-      ]);
-      stuckPrior = loaded[0]!;
-      lagLabels.forEach((label, i) => {
-        for (const [chainId, st] of loaded[i + 1]!) {
-          lagPrior.set(`${chainId}/${label}`, st);
-        }
-      });
-    } catch (err) {
+
+    const loaded = await Promise.all([
+      store.loadStreaks(STUCK_SIGNAL),
+      ...lagLabels.map((l) => store.loadStreaks(`${REPORT_LAG_SIGNAL}/${l}`)),
+    ]);
+    const firstFailure = loaded.find((r) => !r.ok);
+    if (firstFailure && !firstFailure.ok) {
       stateAvailable = false;
-      findings.push({
-        key: 'watcher-state-unavailable:0',
-        code: 'watcher-state-unavailable',
-        severity: 'critical',
-        chainId: 0,
-        title: 'Alert state database unreachable',
-        detail:
-          `The streak/dedup database could not be read, so the windowed advisories are NOT being evaluated this tick and repeat-suppression is bypassed.\n` +
-          `Any hard ledger findings in this batch were computed BEFORE the failure and are still valid.\n\n` +
-          makeBaseRedactor(env)(err instanceof Error ? err.message : String(err)),
+      findings.push(
+        makeFinding({
+          code: 'watcher-state-unavailable',
+          variant: 'load',
+          identity: [firstFailure.failure.kind],
+          severity: 'critical',
+          chainId: 0,
+          title: 'Alert state database unreachable',
+          detail:
+            `The streak/dedup database could not be read, so the windowed advisories are NOT being evaluated this tick and repeat-suppression is bypassed.\n` +
+            `Any hard ledger findings in this batch were computed BEFORE the failure and are still valid.\n\n` +
+            describeFailure(firstFailure.failure),
+        }),
+      );
+    } else {
+      const first = loaded[0];
+      if (first?.ok) stuckPrior = first.value;
+      lagLabels.forEach((label, i) => {
+        const r = loaded[i + 1];
+        if (!r?.ok) return;
+        for (const [chainId, st] of r.value) lagPrior.set(`${chainId}/${label}`, st);
       });
     }
 
-    const streakWrites: D1PreparedStatement[] = [];
+    const streakWrites: StoreOp[] = [];
 
     for (const books of stateAvailable ? obs.books : []) {
       // Base's own books are inert by construction, so neither windowed
@@ -165,13 +186,15 @@ export async function runTick(
       // that chain id.
       if (books.chainId === obs.canonicalChainId) continue;
 
-      const local = obs.locals.get(books.chainId);
+      const local = obs.freshLocals.get(books.chainId);
 
       const stuck = stuckSettlementCondition(books, local);
-      const stuckOutcome = advanceStreak(
+      const stuckObs: Observation = stuck.holds
+        ? { state: 'holds', marker: stuck.marker }
+        : { state: 'clear' };
+      const stuckOutcome = stepSignal(
         stuckPrior.get(books.chainId) ?? null,
-        stuck.holds,
-        stuck.marker,
+        stuckObs,
         // Base-only observations move solely through day-close reports,
         // so they are judged on the report-cycle window — the short one
         // would fire once per cycle on a healthy chain.
@@ -180,31 +203,25 @@ export async function runTick(
           : config.reportLagWindowTicks,
         persistState,
       );
-      if (persistState) {
-        streakWrites.push(
-          saveStreakStatement(
-            env.DB,
-            STUCK_SIGNAL,
-            books.chainId,
-            stuckOutcome.next,
-            now,
-          ),
-        );
-      }
+      pushStreak(streakWrites, STUCK_SIGNAL, books.chainId, stuckOutcome.transition, now);
       if (stuckOutcome.fire) {
-        findings.push({
-          key: `${STUCK_SIGNAL}:${books.chainId}`,
+        findings.push(makeFinding({
           code: STUCK_SIGNAL,
+          variant: stuck.source,
           severity: 'advisory',
           chainId: books.chainId,
           title: 'Recycled commitments outstanding with no retirement',
-          // The FIGURES only — no observation count. That count rises
-          // every tick, so fingerprinting the detail made each tick look
-          // like new information and bypassed the quiet window entirely
-          // (Codex #1443 r1).
-          fingerprintSource: `stuck:${books.outstanding}:${local ? local.localRetired : books.retired}:${books.released}:${books.avail}`,
+          // The FIGURES THE BODY SHOWS — never the observation count,
+          // which rises every tick and would defeat the quiet window.
+          identity: [
+            local ? local.outstandingRecycled : books.outstanding,
+            local ? local.localRetired : books.retired,
+            books.released,
+            books.avail,
+            local ? local.bucket : 0n,
+          ],
           detail:
-            `outstanding > 0 and retirement flat for ${stuckOutcome.next?.streak ?? 0} consecutive observations\n` +
+            `outstanding > 0 and retirement flat across the window\n` +
             `  outstanding       = ${fmt(local ? local.outstandingRecycled : books.outstanding)}\n` +
             `  retired (${stuck.source === 'chain' ? "chain's own" : 'base copy'})  = ${fmt(local ? local.localRetired : books.retired)}\n` +
             `  released          = ${fmt(books.released)}\n` +
@@ -212,7 +229,7 @@ export async function runTick(
             (local
               ? `  chain bucket      = ${fmt(local.bucket)}\n`
               : `  (chain unreachable this tick — retirement read from Base's copy, which also moves only when a report lands)\n`),
-        });
+        }));
       }
 
       // One run PER CUMULATIVE. A single combined run reset every time an
@@ -224,36 +241,41 @@ export async function runTick(
       // next real observation decides whether the run continues.
       const lagObservable = local !== undefined;
       const firing = reportLagConditions(books, local).filter((c) => {
-        const outcome = advanceStreak(
+        // No local snapshot ⇒ UNKNOWN, not false. `stepSignal` keeps the
+        // run rather than erasing it — see `signal.ts`.
+        const obs: Observation = !lagObservable
+          ? { state: 'unknown' }
+          : c.holds
+            ? { state: 'holds', marker: c.marker }
+            : { state: 'clear' };
+        const outcome = stepSignal(
           lagPrior.get(`${books.chainId}/${c.label}`) ?? null,
-          c.holds,
-          c.marker,
+          obs,
           config.reportLagWindowTicks,
           persistState,
         );
-        if (persistState && lagObservable) {
-          streakWrites.push(
-            saveStreakStatement(
-              env.DB,
-              `${REPORT_LAG_SIGNAL}/${c.label}`,
-              books.chainId,
-              outcome.next,
-              now,
-            ),
-          );
-        }
+        pushStreak(
+          streakWrites,
+          `${REPORT_LAG_SIGNAL}/${c.label}`,
+          books.chainId,
+          outcome.transition,
+          now,
+        );
         return outcome.fire;
       });
 
       if (firing.length > 0 && local) {
-        findings.push({
-          key: `${REPORT_LAG_SIGNAL}:${books.chainId}`,
+        findings.push(makeFinding({
           code: REPORT_LAG_SIGNAL,
+          variant: firing.map((c) => c.label).join('+'),
+          identity: [
+            books.reported, books.retired, books.released,
+            local.reportedCumulative, local.localRetired, local.localReleased,
+          ],
           severity: 'advisory',
           chainId: books.chainId,
           title: 'Base has not accepted a newer report from this chain',
           // Figures only, for the same reason as the stuck signal above.
-          fingerprintSource: `lag:${firing.map((c) => c.label).join(',')}:${books.reported}:${books.retired}:${books.released}:${local.reportedCumulative}:${local.localRetired}:${local.localReleased}`,
           // Every pair a day-close report carries, each marked with
           // whether it is the one lagging. Showing absorption alone
           // printed `behind by = 0` whenever retirement or release was
@@ -268,7 +290,7 @@ export async function runTick(
                   (p.behind ? `\n           behind by = ${fmt(p.chain - p.base)}` : ''),
               )
               .join('\n'),
-        });
+        }));
       }
     }
 
@@ -276,36 +298,29 @@ export async function runTick(
     // Always surfaced. A watcher that quietly narrows its scope reports
     // "all clear" for chains it never looked at.
     for (const gap of obs.gaps) {
-      findings.push({
-        // Variant in the key: one chain can produce more than one gap in
-        // a tick — a source-set misconfiguration for the canonical chain
-        // AND a failed own-ledger read on that same chain — and a shared
-        // key made the delivery map keep only the last, sending it twice
-        // while the other's detail was never delivered (Codex #1443 r5).
-        key: `coverage-gap/${gap.reason}/${gap.source}:${gap.chainId}`,
+      findings.push(makeFinding({
         code: 'coverage-gap',
+        // Reason AND source: one chain can fail both its Base-side and
+        // its own-ledger read in a tick, and both are `no-rpc`.
+        variant: `${gap.reason}/${gap.source}`,
+        // NOT the detail — a stale-head detail carries an age that rises
+        // every tick and would defeat the quiet window (#1443 r8).
+        identity: [gap.reason, gap.source],
         severity: 'advisory',
         chainId: gap.chainId,
         title: 'Chain not covered this tick',
         detail: gap.detail,
-      });
+      }));
     }
 
     if (stateAvailable && persistState) {
       streakWrites.push(
         // Runs for chains that have LEFT the mesh are stale — a later
         // re-add must serve its full window, not resume the old count.
-        //
-        // Pruned against the EXPECTED set, not the successfully-read one:
-        // a chain whose Base-side read merely failed this tick is still
-        // in the mesh, and deleting its runs on a transient RPC error
-        // would let intermittent failures reset a 32.5-hour report-lag
-        // run indefinitely (Codex #1443 r7).
-        pruneStreaksStatement(env.DB, obs.expectedChainIds),
-        retainOnlyActiveStatement(
-          env.DB,
-          findings.map((f) => f.key),
-        ),
+        // Keyed on the EXPECTED set, not the successfully-read one: a
+        // chain whose read merely failed is still in the mesh.
+        { kind: 'pruneStreaks', keepChainIds: obs.expectedChainIds },
+        { kind: 'retainAlerts', keepKeys: findings.map((f) => f.key) },
       );
     }
 
@@ -313,12 +328,11 @@ export async function runTick(
     // One pipeline, one fail-open contract — see `deliver.ts` for why
     // this is not inline any more.
     const delivery = await deliverFindings({
-      db: env.DB,
+      store,
       telegram: config.telegram,
       findings,
       repeatSeconds: config.alertRepeatSeconds,
       now,
-      redact: makeBaseRedactor(env),
       dedupAvailable: stateAvailable,
       writes: streakWrites,
       probeText: options.probeDelivery
@@ -340,6 +354,14 @@ export async function runTick(
 
     const critical = findings.filter((f) => f.severity === 'critical').length;
     const deliveryConfigured = config.telegram !== null;
+    const health = assessHealth({
+      criticalFindings: critical,
+      deliveryConfigured,
+      deliveryFailures: delivery.failures,
+      deliveryVerified: delivery.verified,
+      coverageGaps: obs.gaps.length,
+      stateDegraded: delivery.stateDegraded,
+    });
     return {
       // Undeliverable alerts are not a healthy state, however clean the
       // ledgers are — so an unconfigured destination, a REJECTED send, or
@@ -349,17 +371,8 @@ export async function runTick(
       // is not observing its full mesh is not HEALTHY — `curl --fail` on
       // a first-deploy verification with a missing mirror RPC must not
       // certify it (Codex #1443 r6).
-      // Storage degradation fails the tick too: it freezes both windowed
-      // detectors below their thresholds while everything else looks
-      // fine, so certifying a degraded watcher as healthy would be the
-      // same silent-pager mistake in a different place.
-      ok:
-        critical === 0 &&
-        deliveryConfigured &&
-        delivery.failures === 0 &&
-        delivery.verified !== false &&
-        obs.gaps.length === 0 &&
-        !delivery.stateDegraded,
+      ok: health.ok,
+      unhealthyBecause: health.failing,
       deliveryConfigured,
       deliveryVerified: delivery.verified,
       deliveryFailures: delivery.failures,
@@ -379,8 +392,10 @@ export async function runTick(
   } catch (err) {
     // REDACT before this string touches a log or an alert: a failed
     // canonical read carries the provider URL, API key included.
+    // CLASSIFIED, not forwarded — see `errors.ts`. The redactor is a
+    // second layer only.
     const message = makeBaseRedactor(env)(
-      err instanceof Error ? err.message : String(err),
+      describeFailure(classify(err, 'mesh watcher tick')),
     );
     console.error(`mesh-watcher tick failed: ${message}`);
 
@@ -400,20 +415,18 @@ export async function runTick(
       // tick would bury the ledger alerts this Worker exists to deliver.
       // If D1 is itself the thing that is broken, fall back to sending —
       // noise beats silence when the watcher is blind.
-      let due = true;
-      let record: D1PreparedStatement | null = null;
-      try {
-        const picked = await selectAlertsToSend(
-          env.DB,
-          [{ key: 'watcher-tick-failed:0', fingerprint: fingerprint(message) }],
-          config.alertRepeatSeconds,
-          now,
-        );
-        due = picked.send.length > 0;
-        record = picked.statements[0] ?? null;
-      } catch {
-        due = true;
-      }
+      const store = new AlertStore(env.DB);
+      const candidate = {
+        key: 'watcher-tick-failed/tick:0',
+        fingerprint: hashIdentity(['watcher-tick-failed', message]),
+      };
+      // The store cannot throw, and a failed check degrades to "send it".
+      const picked = await store.selectDue(
+        [candidate],
+        config.alertRepeatSeconds,
+        now,
+      );
+      const due = picked.ok ? picked.value.length > 0 : true;
 
       if (due) {
         const ok = await sendOpsMessage(
@@ -428,12 +441,10 @@ export async function runTick(
           }),
         );
         if (!ok) deliveryFailures += 1;
-        if (ok && record) {
-          try {
-            await record.run();
-          } catch {
-            /* best effort — the alert already went out */
-          }
+        if (ok) {
+          await store.commit([
+            { kind: 'recordAlert', key: candidate.key, fingerprint: candidate.fingerprint, at: now },
+          ]);
         }
       }
     }
@@ -444,6 +455,7 @@ export async function runTick(
       deliveryVerified,
       deliveryFailures,
       stateDegraded: true,
+      unhealthyBecause: ['tick failed before completion'],
       chainsObserved: 0,
       critical: 0,
       advisory: 0,

@@ -29,9 +29,9 @@ import {
   assertAbiShape,
 } from '../src/abi';
 import {
-  advanceStreak,
   checkHardInvariants,
   expectedAvail,
+  markFresh,
   fmt,
   lagPairs,
   reportLagConditions,
@@ -59,11 +59,11 @@ import {
   makeRedactor,
   stripUrlPaths,
 } from '../src/redact';
-import {
-  pruneStreaksStatement,
-  retainOnlyActiveStatement,
-  toAlertRecords,
-} from '../src/db';
+import { stepSignal, type Observation } from '../src/signal';
+import { hashIdentity, makeFinding } from '../src/finding';
+import { assessHealth, statusFor } from '../src/health';
+import { classify, describeFailure } from '../src/errors';
+import { AlertStore, type StoreOp } from '../src/store';
 
 const E = 1_000_000_000_000_000_000n; // 1 VPFI
 const TOLERANCE = 1_000_000_000_000_000n; // 1e15 wei — the shipped default
@@ -102,7 +102,7 @@ function canonicalBooks(): BaseChainBooks {
 }
 
 function mirrorLocal(): LocalLedger {
-  return {
+  return markFresh({
     chainId: MIRROR,
     custodyRelocated: 0n,
     bucket: 200n * E,
@@ -114,11 +114,11 @@ function mirrorLocal(): LocalLedger {
     armedFromDay: 3n,
     paidOutRecycled: 800n * E,
     observedAt: 1_800_000_000n,
-  };
+  });
 }
 
 function canonicalLocal(): LocalLedger {
-  return {
+  return markFresh({
     chainId: CANONICAL,
     custodyRelocated: 0n,
     bucket: 800n * E,
@@ -130,7 +130,7 @@ function canonicalLocal(): LocalLedger {
     armedFromDay: 3n,
     paidOutRecycled: 0n,
     observedAt: 1_800_000_000n,
-  };
+  });
 }
 
 interface Overrides {
@@ -141,12 +141,12 @@ interface Overrides {
 }
 
 function observation(o: Overrides = {}): MeshObservation {
-  const locals = new Map<number, LocalLedger>();
+  const freshLocals = new Map<number, LocalLedger>();
   if (o.mirrorLocal !== null) {
-    locals.set(MIRROR, { ...mirrorLocal(), ...o.mirrorLocal });
+    freshLocals.set(MIRROR, markFresh({ ...mirrorLocal(), ...o.mirrorLocal }));
   }
   if (o.canonicalLocal !== null) {
-    locals.set(CANONICAL, { ...canonicalLocal(), ...o.canonicalLocal });
+    freshLocals.set(CANONICAL, markFresh({ ...canonicalLocal(), ...o.canonicalLocal }));
   }
   return {
     canonicalChainId: CANONICAL,
@@ -155,7 +155,7 @@ function observation(o: Overrides = {}): MeshObservation {
       { ...canonicalBooks(), ...o.canonical },
       { ...mirrorBooks(), ...o.mirror },
     ],
-    locals,
+    freshLocals,
     gaps: [],
   };
 }
@@ -432,41 +432,75 @@ describe('checkHardInvariants — consumed cap (governor §7 #6)', () => {
   });
 });
 
-describe('advanceStreak', () => {
+describe('stepSignal — the windowed-signal rules, stated once', () => {
+  const holds = (marker: string): Observation => ({ state: 'holds', marker });
+
   it('clears rather than decrements when the condition stops holding', () => {
-    expect(advanceStreak({ marker: 'x', streak: 5 }, false, 'x', 3)).toEqual({
-      next: null,
+    expect(stepSignal({ marker: 'x', streak: 5 }, { state: 'clear' }, 3, true)).toEqual({
+      transition: { action: 'clear' },
+      fire: false,
+    });
+  });
+
+  it('KEEPS the run on an UNKNOWN observation — never clears it', () => {
+    // The distinction that six findings kept rediscovering: a missing or
+    // untrustworthy read is not evidence that the condition ended. Both
+    // sides are monotonic, so the next real observation decides.
+    expect(stepSignal({ marker: 'x', streak: 5 }, { state: 'unknown' }, 3, true)).toEqual({
+      transition: { action: 'keep' },
       fire: false,
     });
   });
 
   it('starts at one on the first observation', () => {
-    expect(advanceStreak(null, true, 'x', 3)).toEqual({
-      next: { marker: 'x', streak: 1 },
-      fire: false,
+    expect(stepSignal(null, holds('x'), 3, true).transition).toEqual({
+      action: 'save',
+      state: { marker: 'x', streak: 1 },
     });
   });
 
   it('accumulates while the marker is unchanged', () => {
-    expect(advanceStreak({ marker: 'x', streak: 1 }, true, 'x', 3).next).toEqual(
-      { marker: 'x', streak: 2 },
-    );
+    expect(stepSignal({ marker: 'x', streak: 1 }, holds('x'), 3, true).transition).toEqual({
+      action: 'save',
+      state: { marker: 'x', streak: 2 },
+    });
   });
 
   it('restarts when the marker moves — progress ends the run', () => {
-    expect(advanceStreak({ marker: 'x', streak: 9 }, true, 'y', 3)).toEqual({
-      next: { marker: 'y', streak: 1 },
+    expect(stepSignal({ marker: 'x', streak: 9 }, holds('y'), 3, true)).toEqual({
+      transition: { action: 'save', state: { marker: 'y', streak: 1 } },
       fire: false,
     });
   });
 
   it('fires on reaching the window and keeps firing after it', () => {
-    expect(advanceStreak({ marker: 'x', streak: 2 }, true, 'x', 3).fire).toBe(
-      true,
-    );
-    expect(advanceStreak({ marker: 'x', streak: 40 }, true, 'x', 3).fire).toBe(
-      true,
-    );
+    expect(stepSignal({ marker: 'x', streak: 2 }, holds('x'), 3, true).fire).toBe(true);
+    expect(stepSignal({ marker: 'x', streak: 40 }, holds('x'), 3, true).fire).toBe(true);
+  });
+
+  describe('non-counting observations (manual runs)', () => {
+    it('does not contribute to the run', () => {
+      expect(stepSignal({ marker: 'x', streak: 5 }, holds('x'), 6, false)).toEqual({
+        transition: { action: 'keep' },
+        fire: false,
+      });
+    });
+
+    it('still fires when the STORED run already met the window', () => {
+      expect(stepSignal({ marker: 'x', streak: 6 }, holds('x'), 6, false).fire).toBe(true);
+    });
+
+    it('does not fire against a run for a different marker', () => {
+      expect(stepSignal({ marker: 'old', streak: 99 }, holds('new'), 6, false).fire).toBe(
+        false,
+      );
+    });
+
+    it('does not delete the run when the condition stops holding', () => {
+      expect(
+        stepSignal({ marker: 'x', streak: 3 }, { state: 'clear' }, 6, false).transition,
+      ).toEqual({ action: 'keep' });
+    });
   });
 });
 
@@ -900,105 +934,176 @@ describe('assertAbiShape', () => {
 // kind of logic that is easy to write backwards and impossible to notice
 // until a stale row suppresses a real alert.
 
-interface RecordedStatement {
-  sql: string;
-  bindings: unknown[];
-}
-
-function fakeDb(): { db: D1Database; recorded: RecordedStatement[] } {
-  const recorded: RecordedStatement[] = [];
-  const db = {
-    prepare(sql: string) {
-      const entry: RecordedStatement = { sql, bindings: [] };
-      recorded.push(entry);
-      const stmt = {
-        bind(...args: unknown[]) {
-          entry.bindings = args;
-          return stmt;
-        },
-      };
-      return stmt;
+describe('AlertStore — storage that cannot throw', () => {
+  // ROOT-CAUSE FIX #2. Five findings came from a D1 rejection escaping
+  // to the tick's outer catch and destroying already-computed evidence.
+  // These assert the boundary holds for every method, including the one
+  // that BUILDS statements — construction outside the guard was the
+  // fifth escape.
+  const exploding = {
+    prepare() {
+      throw new Error('D1_ERROR: database is unavailable');
+    },
+    batch() {
+      throw new Error('D1_ERROR: database is unavailable');
     },
   } as unknown as D1Database;
-  return { db, recorded };
-}
 
-describe('pruneStreaksStatement', () => {
-  it('deletes runs for chains no longer observed', () => {
-    const { db, recorded } = fakeDb();
-    pruneStreaksStatement(db, [8453, 42161]);
-    expect(recorded[0]?.sql).toContain('NOT IN');
-    expect(recorded[0]?.bindings).toEqual([8453, 42161]);
+  it('returns a failure from loadStreaks instead of throwing', async () => {
+    const r = await new AlertStore(exploding).loadStreaks('sig');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.failure.kind).toBe('storage');
   });
 
-  it('clears everything when the observation is empty', () => {
-    // A mesh read that produced nothing makes every stored run stale.
-    const { db, recorded } = fakeDb();
-    pruneStreaksStatement(db, []);
-    expect(recorded[0]?.sql).toBe('DELETE FROM streak_state');
-    expect(recorded[0]?.bindings).toEqual([]);
-  });
-});
-
-describe('retainOnlyActiveStatement', () => {
-  it('keeps only the keys firing this tick', () => {
-    const { db, recorded } = fakeDb();
-    retainOnlyActiveStatement(db, ['a:1', 'b:2']);
-    expect(recorded[0]?.sql).toContain('NOT IN');
-    expect(recorded[0]?.bindings).toEqual(['a:1', 'b:2']);
+  it('returns a failure from selectDue instead of throwing', async () => {
+    const r = await new AlertStore(exploding).selectDue(
+      [{ key: 'k', fingerprint: 'f' }],
+      100,
+      0,
+    );
+    expect(r.ok).toBe(false);
   });
 
-  it('empties the table when nothing is firing', () => {
-    // Otherwise a cleared condition leaves its row behind and a
-    // recurrence inside the quiet window is silently suppressed.
-    const { db, recorded } = fakeDb();
-    retainOnlyActiveStatement(db, []);
-    expect(recorded[0]?.sql).toBe('DELETE FROM alert_sent');
+  it('returns a failure from commit — including STATEMENT CONSTRUCTION', async () => {
+    // `prepare` throws here, which is construction, not execution. The
+    // ops are data precisely so this happens inside the guard.
+    const ops: StoreOp[] = [
+      { kind: 'pruneStreaks', keepChainIds: [1, 2] },
+      { kind: 'retainAlerts', keepKeys: ['a'] },
+    ];
+    const r = await new AlertStore(exploding).commit(ops);
+    expect(r.ok).toBe(false);
+  });
+
+  it('is a no-op for an empty op list', async () => {
+    expect((await new AlertStore(exploding).commit([])).ok).toBe(true);
   });
 });
 
-describe('toAlertRecords', () => {
+describe('assessHealth — preconditions, not a boolean expression', () => {
+  const healthy = {
+    criticalFindings: 0,
+    deliveryConfigured: true,
+    deliveryFailures: 0,
+    deliveryVerified: true,
+    coverageGaps: 0,
+    stateDegraded: false,
+  };
+
+  it('is ok when every precondition holds', () => {
+    expect(assessHealth(healthy)).toEqual({ ok: true, failing: [] });
+  });
+
+  it('names WHICH precondition failed', () => {
+    const h = assessHealth({ ...healthy, coverageGaps: 2 });
+    expect(h.ok).toBe(false);
+    expect(h.failing.join(' ')).toContain('mesh-covered');
+  });
+
+  it('fails on each input independently', () => {
+    expect(assessHealth({ ...healthy, criticalFindings: 1 }).ok).toBe(false);
+    expect(assessHealth({ ...healthy, deliveryConfigured: false }).ok).toBe(false);
+    expect(assessHealth({ ...healthy, deliveryFailures: 1 }).ok).toBe(false);
+    expect(assessHealth({ ...healthy, deliveryVerified: false }).ok).toBe(false);
+    expect(assessHealth({ ...healthy, stateDegraded: true }).ok).toBe(false);
+  });
+
+  it('treats an unexercised probe as acceptable', () => {
+    expect(assessHealth({ ...healthy, deliveryVerified: null }).ok).toBe(true);
+  });
+
+  it('derives the HTTP status from health, never restated', () => {
+    expect(statusFor({ ok: true, failing: [] }, false)).toBe(200);
+    expect(statusFor({ ok: false, failing: ['x'] }, false)).toBe(503);
+    expect(statusFor({ ok: true, failing: [] }, true)).toBe(500);
+  });
+});
+
+describe('classify — third-party text is never forwarded', () => {
+  // ROOT-CAUSE FIX #1. Four rounds found four leak paths, each a
+  // provider message forwarded outward. Classification means there is no
+  // provider text to leak in the first place.
+  const SECRET = 'https://base.example/v2/SUPERSECRETKEY';
+
+  it('never echoes the original message', () => {
+    const err = new Error(`HTTP request failed. URL: ${SECRET}`);
+    const summary = describeFailure(classify(err, 'reading chain 8453'));
+    expect(summary).not.toContain('SUPERSECRETKEY');
+    expect(summary).not.toContain(SECRET);
+    expect(summary).toContain('reading chain 8453');
+  });
+
+  it('recognises a timeout', () => {
+    const err = new Error('boom');
+    err.name = 'AbortError';
+    expect(classify(err).kind).toBe('timeout');
+  });
+
+  it('recognises an HTTP status from the cause chain', () => {
+    const f = classify({ cause: { status: 429, message: SECRET } });
+    expect(f.kind).toBe('http');
+    expect(f.status).toBe(429);
+    expect(describeFailure(f)).toContain('rate limited');
+    expect(describeFailure(f)).not.toContain('SUPERSECRETKEY');
+  });
+
+  it('recognises a decode failure and points at the ABI', () => {
+    expect(describeFailure(classify(new Error('abi decode failed')))).toContain(
+      'facet re-export',
+    );
+  });
+
+  it('falls back to a safe unknown, still without the message', () => {
+    const f = classify(new Error(`totally novel ${SECRET}`));
+    expect(f.kind).toBe('unknown');
+    expect(describeFailure(f)).not.toContain('SUPERSECRETKEY');
+  });
+});
+
+describe('makeFinding — identity is derived, never hand-built', () => {
   const base = {
-    key: 'k:1',
     code: 'c',
+    variant: 'v',
     severity: 'advisory' as const,
     chainId: 1,
     title: 't',
   };
 
-  it('fingerprints the detail when no override is given', () => {
-    const a = toAlertRecords([{ ...base, detail: 'one' }])[0]!;
-    const b = toAlertRecords([{ ...base, detail: 'two' }])[0]!;
-    expect(a.fingerprint).not.toBe(b.fingerprint);
+  it('derives the dedup key from code, variant and chain', () => {
+    expect(makeFinding({ ...base, detail: 'd', identity: ['x'] }).key).toBe('c/v:1');
   });
 
-  it('ignores a changing detail when fingerprintSource is stable', () => {
-    // THE fix for the windowed advisories: their detail carries an
-    // observation count that rises every tick, so fingerprinting it made
-    // every tick look like new information and bypassed the quiet window
-    // entirely — reposting four times an hour instead of every six
-    // (Codex #1443 r1).
-    const a = toAlertRecords([
-      { ...base, detail: 'flat for 6 observations', fingerprintSource: 'x:1' },
-    ])[0]!;
-    const b = toAlertRecords([
-      { ...base, detail: 'flat for 7 observations', fingerprintSource: 'x:1' },
-    ])[0]!;
+  it('gives two variants on one chain DIFFERENT keys', () => {
+    // Three rounds of collisions came from this being hand-written.
+    const a = makeFinding({ ...base, variant: 'one', detail: 'd', identity: ['x'] });
+    const b = makeFinding({ ...base, variant: 'two', detail: 'd', identity: ['x'] });
+    expect(a.key).not.toBe(b.key);
+  });
+
+  it('IGNORES the rendered detail when fingerprinting', () => {
+    // The fingerprint bugs all came from `detail` being the default:
+    // observation counts and ages rise every tick and defeated the quiet
+    // window entirely.
+    const a = makeFinding({ ...base, detail: 'flat for 6 observations', identity: ['x'] });
+    const b = makeFinding({ ...base, detail: 'flat for 7 observations', identity: ['x'] });
     expect(a.fingerprint).toBe(b.fingerprint);
   });
 
-  it('still re-alerts when the FIGURES move', () => {
-    const a = toAlertRecords([
-      { ...base, detail: 'd', fingerprintSource: 'x:1' },
-    ])[0]!;
-    const b = toAlertRecords([
-      { ...base, detail: 'd', fingerprintSource: 'x:2' },
-    ])[0]!;
+  it('re-alerts when the IDENTITY figures move', () => {
+    const a = makeFinding({ ...base, detail: 'd', identity: ['x'] });
+    const b = makeFinding({ ...base, detail: 'd', identity: ['y'] });
     expect(a.fingerprint).not.toBe(b.fingerprint);
   });
 
-  it('carries the key through unchanged', () => {
-    expect(toAlertRecords([{ ...base, detail: 'd' }])[0]?.key).toBe('k:1');
+  it('separates findings that differ only by variant or chain', () => {
+    const a = makeFinding({ ...base, detail: 'd', identity: ['x'] });
+    const b = makeFinding({ ...base, chainId: 2, detail: 'd', identity: ['x'] });
+    expect(a.fingerprint).not.toBe(b.fingerprint);
+  });
+
+  it('hashes bigints and numbers stably', () => {
+    expect(hashIdentity([1n, 2, 'a'])).toBe(hashIdentity([1n, 2, 'a']));
+    expect(hashIdentity([1n])).not.toBe(hashIdentity([2n]));
   });
 });
 
@@ -1347,45 +1452,6 @@ describe('stale-head freshness gate', () => {
         mirror: { reported: 99_999n * E, attributed: 0n, avail: 99_699n * E },
       }),
     ).toEqual(['base-ahead-of-chain']);
-  });
-});
-
-describe('advanceStreak — non-counting evaluation (manual runs)', () => {
-  // Manual POST /run reads the state but does not persist it. An earlier
-  // version still incremented in memory and fired from the incremented
-  // value, so a run one short of its threshold could be pushed over by a
-  // manual invocation and announce a window of stasis that never
-  // happened (Codex #1443 r7).
-  it('does not count the observation toward the run', () => {
-    const prev = { marker: 'x', streak: 5 };
-    expect(advanceStreak(prev, true, 'x', 6, false)).toEqual({
-      next: prev,
-      fire: false,
-    });
-  });
-
-  it('still FIRES when the stored run already met the window', () => {
-    const prev = { marker: 'x', streak: 6 };
-    expect(advanceStreak(prev, true, 'x', 6, false).fire).toBe(true);
-  });
-
-  it('does not fire when the stored run is for a different marker', () => {
-    expect(advanceStreak({ marker: 'old', streak: 99 }, true, 'new', 6, false).fire).toBe(
-      false,
-    );
-  });
-
-  it('leaves the stored run intact when the condition stops holding', () => {
-    // A non-counting observation must not DELETE the run either.
-    const prev = { marker: 'x', streak: 3 };
-    expect(advanceStreak(prev, false, 'x', 6, false).next).toEqual(prev);
-  });
-
-  it('counting mode is unchanged', () => {
-    expect(advanceStreak({ marker: 'x', streak: 5 }, true, 'x', 6, true)).toEqual({
-      next: { marker: 'x', streak: 6 },
-      fire: true,
-    });
   });
 });
 

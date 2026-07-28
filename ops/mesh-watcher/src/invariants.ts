@@ -22,6 +22,7 @@
  */
 
 import type { CoverageGap } from './chains';
+import { makeFinding, type Finding } from './finding';
 
 /** Base's per-chain books for one chain, read from the canonical Diamond. */
 export interface BaseChainBooks {
@@ -42,8 +43,30 @@ export interface BaseChainBooks {
   outstanding: bigint;
 }
 
+/**
+ * ROOT-CAUSE FIX #6 — freshness is a TYPE precondition.
+ *
+ * A stale RPC head makes Base legitimately ahead of a local snapshot, and
+ * comparing the two produced a false CRITICAL (#1443 r6). Fixing the one
+ * comparison that existed would have left the next cross-chain check to
+ * rediscover it, so the guarantee is carried by the type instead: a
+ * `LocalLedger` can only be produced by `mesh.ts`'s single validated
+ * construction point, which refuses a snapshot older than
+ * `STALE_LOCAL_SECONDS`. A cross-chain check that has one in hand knows
+ * it is fresh; a check that does not have one cannot compare at all.
+ */
+declare const FreshSnapshot: unique symbol;
+/** The brand key, exported so `mesh.ts` can mint validated snapshots. */
+export type FRESH = typeof FreshSnapshot;
+/** Vouch for a snapshot's freshness. Call ONLY after checking its age. */
+export function markFresh(raw: Omit<LocalLedger, FRESH>): LocalLedger {
+  return raw as LocalLedger;
+}
+
 /** A chain's OWN ledger, read from that chain's Diamond. */
 export interface LocalLedger {
+  /** Brand — set only by the validated constructor in `mesh.ts`. */
+  readonly [FreshSnapshot]: true;
   chainId: number;
   /** Base-funded remit backing sitting in this chain's bucket. */
   custodyRelocated: bigint;
@@ -87,43 +110,19 @@ export interface MeshObservation {
    * let intermittent failures reset a multi-day window forever.
    */
   expectedChainIds: readonly number[];
-  /** Own-ledger reads, keyed by chain id. Missing for chains this tick
-   *  could not reach — those appear in `gaps`. */
-  locals: ReadonlyMap<number, LocalLedger>;
+  /**
+   * VALIDATED own-ledger reads, keyed by chain id.
+   *
+   * Membership is itself the freshness guarantee — a chain that could not
+   * be read, or whose head was too old to compare against Base, is absent
+   * here and present in `gaps`. Cross-chain checks read only this map.
+   */
+  freshLocals: ReadonlyMap<number, LocalLedger>;
   gaps: readonly CoverageGap[];
 }
 
-export type Severity = 'critical' | 'advisory';
-
-export interface Finding {
-  /**
-   * Stable identity for dedup. Distinct VIOLATIONS get distinct keys even
-   * when they share a `code`: several checks can fire more than once per
-   * chain in a tick (both clamp halves; all three cross-chain
-   * comparisons), and keying them all on `code:chainId` made the delivery
-   * map keep only the last one — so an earlier violation's figures were
-   * never sent, and the shared key's fingerprint oscillated between them
-   * (Codex #1443 r1).
-   */
-  key: string;
-  /** Check family, for grouping and for the tests' assertion surface. */
-  code: string;
-  severity: Severity;
-  chainId: number;
-  title: string;
-  detail: string;
-  /**
-   * Content used for the repeat-suppression fingerprint, when it must
-   * differ from `detail`.
-   *
-   * Windowed advisories carry an observation count in their detail that
-   * increments every tick. Fingerprinting the detail therefore made every
-   * tick look like new information and bypassed the quiet window entirely,
-   * reposting four times an hour instead of every six (Codex #1443 r1).
-   * Those findings set this to the figures alone.
-   */
-  fingerprintSource?: string;
-}
+export type { Severity, Finding } from './finding';
+export type { StreakState } from './signal';
 
 const WEI = 1_000_000_000_000_000_000n;
 
@@ -187,21 +186,22 @@ export function checkHardInvariants(
    *                same family on the same chain do not collide on one
    *                dedup key and lose each other's figures.
    */
+  /**
+   * @param identity The figures whose CHANGING means new information.
+   *                 Required by {@link makeFinding} — see `finding.ts`
+   *                 for why this is not inferred from `detail`.
+   */
   const add = (
     code: string,
     variant: string,
     chainId: number,
     title: string,
     detail: string,
+    identity: readonly (string | number | bigint)[],
   ): void => {
-    out.push({
-      key: `${code}/${variant}:${chainId}`,
-      code,
-      severity: 'critical',
-      chainId,
-      title,
-      detail,
-    });
+    out.push(
+      makeFinding({ code, variant, severity: 'critical', chainId, title, detail, identity }),
+    );
   };
 
   for (const b of obs.books) {
@@ -230,6 +230,7 @@ export function checkHardInvariants(
           `  sum         = ${fmt(b.outstanding + b.retired)}\n` +
           `  consumed    = ${fmt(b.consumed)}\n` +
           `  difference  = ${fmt(b.outstanding + b.retired - b.consumed)}`,
+        [b.outstanding, b.retired, b.consumed],
       );
     }
 
@@ -249,6 +250,7 @@ export function checkHardInvariants(
         `retired > consumed — Base accepted a retirement magnitude it never instructed\n` +
           `  retired  = ${fmt(b.retired)}\n` +
           `  consumed = ${fmt(b.consumed)}`,
+        [b.retired, b.consumed],
       );
     }
     if (b.released > b.retired) {
@@ -260,6 +262,7 @@ export function checkHardInvariants(
         `released > retired — the release-only subset is larger than the set it is a subset of\n` +
           `  released = ${fmt(b.released)}\n` +
           `  retired  = ${fmt(b.retired)}`,
+        [b.released, b.retired],
       );
     }
 
@@ -297,6 +300,7 @@ export function checkHardInvariants(
           `  net      = ${fmt(satSub(b.consumed, b.released))}\n` +
           `  reported = ${fmt(b.reported)}\n` +
           `  excess   = ${fmt(satSub(b.consumed, b.released) - b.reported)}`,
+        [b.consumed, b.released, b.reported],
       );
     }
 
@@ -314,6 +318,7 @@ export function checkHardInvariants(
         `attributed > reported — the Ā feed is being credited beyond what the chain reported absorbing\n` +
           `  attributed = ${fmt(b.attributed)}\n` +
           `  reported   = ${fmt(b.reported)}`,
+        [b.attributed, b.reported],
       );
     }
 
@@ -336,6 +341,7 @@ export function checkHardInvariants(
           `  released = ${fmt(b.released)}\n` +
           `  expected = ${fmt(wantAvail)}\n` +
           `  on-chain = ${fmt(b.avail)}`,
+        [b.avail, b.reported, b.consumed, b.released],
       );
     }
 
@@ -360,11 +366,12 @@ export function checkHardInvariants(
           b.chainId,
           'Canonical chain has per-chain commit books',
           `Base never instructs itself, so every per-chain commit figure under its own chain id must stay zero:\n  ${nonZero.join('\n  ')}`,
+          [b.consumed, b.retired, b.released, b.outstanding],
         );
       }
     }
 
-    const local = obs.locals.get(b.chainId);
+    const local = obs.freshLocals.get(b.chainId);
     if (!local) continue;
 
     // ── Base never ahead of the chain's own ledger ───────────────────
@@ -387,6 +394,7 @@ export function checkHardInvariants(
           `  chain = ${fmt(local.reportedCumulative)}\n` +
           `  excess = ${fmt(b.reported - local.reportedCumulative)}\n` +
           `  (chain's relocated custody = ${fmt(local.custodyRelocated)}, which its report excludes by design)`,
+        [b.reported, local.reportedCumulative],
       );
     }
     if (b.retired > local.localRetired) {
@@ -396,6 +404,7 @@ export function checkHardInvariants(
         b.chainId,
         'Base holds a higher retirement cumulative than the chain itself',
         `base retired = ${fmt(b.retired)} > chain retired = ${fmt(local.localRetired)}`,
+        [b.retired, local.localRetired],
       );
     }
     if (b.released > local.localReleased) {
@@ -405,6 +414,7 @@ export function checkHardInvariants(
         b.chainId,
         'Base holds a higher release cumulative than the chain itself',
         `base released = ${fmt(b.released)} > chain released = ${fmt(local.localReleased)}`,
+        [b.released, local.localReleased],
       );
     }
   }
@@ -422,7 +432,7 @@ export function checkHardInvariants(
   // dust can make a day's consumption exceed its recorded commitment by
   // wei-scale amounts. An exact `bucket >= outstanding` would therefore
   // fire on healthy dust. Real shortfalls are VPFI-scale.
-  for (const local of obs.locals.values()) {
+  for (const local of obs.freshLocals.values()) {
     if (local.bucket + bucketToleranceWei >= local.outstandingRecycled) continue;
 
     // Severity splits by chain role, and the split is load-bearing.
@@ -450,9 +460,10 @@ export function checkHardInvariants(
       `  tolerance    = ${fmt(bucketToleranceWei)}\n` +
       `  (of which relocated custody = ${fmt(local.custodyRelocated)})`;
 
-    out.push({
-      key: `bucket-coverage:${local.chainId}`,
+    out.push(makeFinding({
       code: 'bucket-coverage',
+      variant: isCanonical ? 'canonical' : 'mirror',
+      identity: [local.bucket, local.outstandingRecycled, local.custodyRelocated],
       severity: isCanonical ? 'advisory' : 'critical',
       chainId: local.chainId,
       title: isCanonical
@@ -464,7 +475,7 @@ export function checkHardInvariants(
           `\n\nEXPECTED CAUSE — releasing a permanently-failed remittance restores the reservation but not the bucket, by design: those tokens sit locked in the CCIP pool, outside Diamond custody. Reconcile against the released reservations (status 3) before treating this as a fault.\n\nA release RAISES the deficit by its recycled total; it does not make the deficit EQUAL that total. Pre-release bucket headroom absorbs part of it and later credits absorb more, so the released totals BOUND and EXPLAIN this shortfall rather than matching it. Suspect a fault only if the shortfall EXCEEDS the released totals.`
         : `bucket + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
           figures,
-    });
+    }));
   }
 
   return out;
@@ -472,63 +483,9 @@ export function checkHardInvariants(
 
 // ─── Windowed advisory signals ────────────────────────────────────────
 
-/** Per-chain, per-signal streak state persisted between ticks. */
-export interface StreakState {
-  /** The value whose STAYING THE SAME is what the signal is about. */
-  marker: string;
-  /** Consecutive observations the condition has held with that marker. */
-  streak: number;
-}
-
-export interface StreakOutcome {
-  next: StreakState | null;
-  fire: boolean;
-}
-
-/**
- * Advance one streak.
- *
- * Semantics that matter:
- * - Condition false → the streak is CLEARED, not decremented. These
- *   signals are about an uninterrupted run.
- * - Condition true but the marker MOVED → the streak restarts at 1.
- *   Progress happened, so whatever run was building is over.
- * - Fires on the tick the streak REACHES the window, and on every tick
- *   after; suppressing repeats is the dedup layer's job, not this
- *   function's, so that a still-stuck chain re-alerts after the repeat
- *   interval rather than going quiet forever.
- *
- * @param prev   Stored state, or `null` on the first observation.
- * @param holds  Whether the condition is true this tick.
- * @param marker Value whose stasis defines the run.
- * @param window Observations required before the signal fires.
- */
-export function advanceStreak(
-  prev: StreakState | null,
-  holds: boolean,
-  marker: string,
-  window: number,
-  /**
-   * When false, EVALUATE the stored run without counting this
-   * observation toward it.
-   *
-   * Manual `POST /run` reads the state but does not persist it — yet an
-   * earlier version still incremented in memory and fired from the
-   * incremented value, so a run sitting one short of its threshold could
-   * be pushed over by a manual invocation and announce a window's worth
-   * of stasis that never happened (Codex #1443 r7). The windows are
-   * denominated in SCHEDULED observations; this keeps them that way.
-   */
-  counts = true,
-): StreakOutcome {
-  if (!holds) return { next: counts ? null : (prev ?? null), fire: false };
-  if (!counts) {
-    const held = prev && prev.marker === marker ? prev : null;
-    return { next: prev ?? null, fire: (held?.streak ?? 0) >= window };
-  }
-  const streak = prev && prev.marker === marker ? prev.streak + 1 : 1;
-  return { next: { marker, streak }, fire: streak >= window };
-}
+// Streak state and its transition rules now live in `signal.ts` —
+// ROOT-CAUSE FIX #3. Six findings came from each signal re-deriving
+// them at its own call site.
 
 /**
  * Stuck-settlement condition — ADVISORY.

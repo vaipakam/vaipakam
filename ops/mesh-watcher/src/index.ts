@@ -10,6 +10,7 @@
  */
 
 import { isAuthorized } from './auth';
+import { statusFor } from './health';
 import type { Env } from './env';
 import { runTick } from './runner';
 
@@ -71,15 +72,13 @@ export default {
         // denominated in CRON observations.
         persistState: false,
       });
-      // Status from `ok`, not merely from `error`. A failed delivery
-      // probe, an unconfigured pager, or a critical finding all set
-      // `ok: false` WITHOUT setting `error` — so keying the status on
-      // `error` let `curl --fail` and deployment automation certify a
-      // verification run whose pager probe had just failed (Codex #1443
-      // r5). 500 for an internal failure, 503 for a tick that ran but
-      // reports an unhealthy mesh or an undeliverable pager.
-      const status = summary.error ? 500 : summary.ok ? 200 : 503;
-      return Response.json(summary, { status });
+      // Derived from health, never restated — see `health.ts`.
+      return Response.json(summary, {
+        status: statusFor(
+          { ok: summary.ok, failing: summary.unhealthyBecause },
+          summary.error !== undefined,
+        ),
+      });
     }
 
     return Response.json({

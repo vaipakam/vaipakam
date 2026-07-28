@@ -18,11 +18,16 @@ import {
 } from './chains';
 import type { Config, Env } from './env';
 import { makeBaseRedactor, makeRedactor } from './redact';
-import type {
-  BaseChainBooks,
-  LocalLedger,
-  MeshObservation,
+import {
+  markFresh,
+  type BaseChainBooks,
+  type FRESH,
+  type LocalLedger,
+  type MeshObservation,
 } from './invariants';
+
+/** A local read before the freshness check has vouched for it. */
+type RawLocalLedger = Omit<LocalLedger, FRESH>;
 
 /**
  * Read a view whose decode shape `assertAbiShape` has already verified.
@@ -98,7 +103,7 @@ async function readBaseBooks(
 }
 
 /** A chain's own ledger — read against that chain's own Diamond. */
-async function readLocalLedger(target: ChainTarget): Promise<LocalLedger> {
+async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
   // One block for this chain's whole tuple, for the same reason as the
   // Base-side reads: bucket coverage compares a balance against a
   // reservation that a single claim moves together.
@@ -129,6 +134,8 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalLedger> {
   ]);
 
   return {
+    // The freshness brand is applied by `observeMesh` after validation —
+    // this raw read is not yet known to be comparable against Base.
     chainId: target.chainId,
     custodyRelocated: custody[0],
     bucket: custody[1],
@@ -237,7 +244,7 @@ export async function observeMesh(
   });
 
   const redact = makeRedactor(env, chainIds);
-  const locals = new Map<number, LocalLedger>();
+  const freshLocals = new Map<number, LocalLedger>();
   await Promise.all(
     chainIds.map(async (id) => {
       const target = id === canonical.chainId ? canonical : resolveChain(env, id);
@@ -264,7 +271,9 @@ export async function observeMesh(
           });
           return;
         }
-        locals.set(id, ledger);
+        // SINGLE VALIDATED CONSTRUCTION POINT — the only place a
+        // `LocalLedger` is minted, and only for a snapshot proven fresh.
+        freshLocals.set(id, markFresh(ledger));
       } catch (err) {
         // REDACT: viem puts the request URL in its error messages, and
         // provider URLs carry the API key in the path or query. This
@@ -285,7 +294,7 @@ export async function observeMesh(
     canonicalChainId: config.canonicalChainId,
     expectedChainIds: chainIds,
     books,
-    locals,
+    freshLocals,
     gaps,
   };
 }

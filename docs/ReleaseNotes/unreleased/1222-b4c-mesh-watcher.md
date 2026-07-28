@@ -118,6 +118,22 @@ freezes the two windowed signals below their thresholds while everything
 else looks fine. Each message also gets a deadline, so one request that
 hangs cannot hold up the alerts behind it.
 
+At that point the review had produced around fifty findings, and counting
+where they landed was more useful than fixing the next one: about four
+were in the ledger checks themselves and the rest were in operational
+scaffolding, clustered into six recurring causes that kept reappearing in
+whichever path had not yet been examined. Each is now closed at its
+source rather than at its symptoms. Error text from outside the system is
+classified into our own vocabulary instead of being passed along, so
+there is no borrowed text in which a credential can hide. The storage
+layer returns failures rather than raising them, so a bookkeeping problem
+cannot discard evidence that was already gathered. The repeating-signal
+logic, the identity of an alert, and the definition of a healthy run each
+live in one place instead of being restated wherever they were needed.
+And a chain snapshot now carries a marker that only the freshness check
+can apply, so comparing against a stale reading is not something that can
+be written by mistake.
+
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the
 canonical Diamond each tick, so a mirror wired on-chain is watched as soon

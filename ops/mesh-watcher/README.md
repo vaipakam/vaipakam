@@ -161,6 +161,24 @@ silently drops Base's own activity out of every day's totals.
 
 ---
 
+## How this is built, and why
+
+Seven review rounds produced ~48 findings. Roughly four were in the ledger
+checks; the rest were in operational scaffolding, and they clustered into
+six root causes that kept recurring in whichever call site had not been
+looked at yet. Rather than keep patching paths, each cause is closed at
+its source — so the class of bug becomes hard or impossible to write
+again, not merely absent today.
+
+| Module | Closes | How |
+| --- | --- | --- |
+| `errors.ts` | Secrets reaching a log, alert or response body (4 findings, 4 rounds) | Third-party error text is **classified, never forwarded**. Nothing a provider says is quoted, so a new call site has no secret to leak. Redaction survives as a second layer at the output boundary, no longer load-bearing. |
+| `store.ts` | Storage failures discarding computed evidence (5 findings, 4 rounds) | The D1 binding is owned here and every method **returns** a failure instead of throwing. There is nothing to catch, so nothing to forget to catch. Writes are described as data and **built inside** the guard — construction outside it was the fifth escape. |
+| `signal.ts` | Windowed-signal mistakes (6 findings, 4 rounds) | One abstraction owns the rules: an observation is `holds` / `clear` / **`unknown`**, and unknown never erases a run; the marker carries the observation's source; a non-counting observation cannot advance a window. |
+| `finding.ts` | Colliding dedup keys and wrong fingerprints (6 findings, 4 rounds) | Identity is **required and separate from presentation**. Callers state a `variant` and the `identity` figures; key and fingerprint are derived. The rendered `detail` never participates, so a counter or an age in the body cannot defeat repeat-suppression. |
+| `health.ts` | `ok` growing a conjunct per round (4 findings) | Health is a **list of preconditions**; adding one is a list entry, not an edit to a boolean expression. The tick reports *which* precondition failed, and the HTTP status is derived rather than restated. |
+| Fresh-snapshot brand | A CRITICAL firing on healthy state | A local snapshot carries a **type brand** only the validated constructor can apply, so a cross-chain check cannot be written against an unverified one. Attempting it is a compile error. |
+
 ## Design notes
 
 **The chain set comes from the contract, not from config.** Every tick
@@ -259,7 +277,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 57 mutations applied in turn, each
+The suite is **mutation-verified**: 63 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's
@@ -312,10 +330,17 @@ undeployed.
 
    ```bash
    npm run deploy
-   curl -s -X POST \
+   set -o pipefail
+   curl -sS --fail-with-body -X POST \
      -H "Authorization: Bearer $WATCHER_RUN_TOKEN" \
      https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run | jq
    ```
+
+   `--fail-with-body` plus `pipefail` is deliberate: the endpoint returns
+   **503** for an unhealthy tick and 500 for an internal failure, and a
+   plain `curl … | jq` exits 0 on both — so the documented verification
+   would have reported success for a run whose pager probe had just
+   failed.
 
    `POST /run` executes one tick synchronously and returns its summary —
    `ok`, `deliveryConfigured`, `chainsObserved`, `critical`, `advisory`,

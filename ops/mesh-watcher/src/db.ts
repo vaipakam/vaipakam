@@ -13,7 +13,7 @@
  * co-locate with user-facing data.
  */
 
-import type { Finding, StreakState } from './invariants';
+import type { StreakState } from './signal';
 
 export interface AlertRecord {
   key: string;
@@ -173,22 +173,6 @@ export function retainOnlyActiveStatement(
   return db
     .prepare(`DELETE FROM alert_sent WHERE alert_key NOT IN (${placeholders})`)
     .bind(...activeKeys);
-}
-
-/**
- * Build the dedup candidates for a tick's findings.
- *
- * Pure, and separated from the tick precisely so it is testable: it is
- * where `fingerprintSource` is honoured, and getting that wrong silently
- * defeats the whole quiet window rather than failing visibly.
- */
-export function toAlertRecords(
-  findings: readonly Finding[],
-): AlertRecord[] {
-  return findings.map((f) => ({
-    key: f.key,
-    fingerprint: fingerprint(f.fingerprintSource ?? `${f.title}\n${f.detail}`),
-  }));
 }
 
 /** Cheap content hash for the fingerprint field (FNV-1a, 32-bit). */
