@@ -337,16 +337,17 @@ contract MeshThreeChainE2ETest is Test {
         _seedInterest(BASE, dayId, alice, 1e18);
     }
 
-    /// @dev The same cycle on an UNARMED day — no mesh funding resolution
-    ///      runs, so nothing is instructed and nothing is reserved, but the
-    ///      day's consensus globals still reach every mirror.
-    function _runUnarmedDay(uint256 dayId) private {
-        _runArmedDay(dayId);
-    }
-
-    /// @dev One complete armed cycle for `dayId`: report → finalize →
-    ///      broadcast → deliver to both mirrors.
-    function _runArmedDay(uint256 dayId) private {
+    /// @dev One complete mesh cycle for `dayId`: every chain closes the day
+    ///      → reports reach Base → Base finalizes → Base broadcasts → each
+    ///      mirror applies its own packet.
+    ///
+    ///      The SAME sequence regardless of arming — armedness is a property
+    ///      of whether `_arm` has been called for a day at or below `dayId`,
+    ///      not of the cycle. On an armed day the finalize step additionally
+    ///      runs the mesh funding resolution and the packets carry a nonzero
+    ///      `recycleConsume`; on an unarmed day they carry zero and nothing
+    ///      is reserved.
+    function _runDayCycle(uint256 dayId) private {
         _allChainsCloseDay(dayId);
         _deliverPendingReports();
         _finalize(dayId);
@@ -377,7 +378,7 @@ contract MeshThreeChainE2ETest is Test {
         _arm(5);
         _warpPast(6);
 
-        _runArmedDay(5);
+        _runDayCycle(5);
 
         // Base instructed BOTH mirrors — a fan-out that reached only one
         // destination would leave the other's ledger at zero.
@@ -444,7 +445,7 @@ contract MeshThreeChainE2ETest is Test {
         _arm(5);
         _warpPast(6);
 
-        _runArmedDay(5);
+        _runDayCycle(5);
 
         uint256 reservedOnce = _localOutstanding(ARB);
         assertGt(reservedOnce, 0, "ARB reserved something to duplicate");
@@ -550,7 +551,7 @@ contract MeshThreeChainE2ETest is Test {
         _arm(5);
         _warpPast(7);
 
-        _runArmedDay(5);
+        _runDayCycle(5);
 
         uint256 instructed = _instructedFor(ARB);
         assertGt(instructed, 0, "ARB carries a real instruction to release");
@@ -644,12 +645,12 @@ contract MeshThreeChainE2ETest is Test {
         // Day 4, UNARMED — gives alice a genuinely payable entry on ARB and
         // lands the day's consensus globals through the real broadcast.
         _seedAllInterest(4);
-        _runUnarmedDay(4);
+        _runDayCycle(4);
 
         // Day 5, ARMED — ARB is instructed to self-fund and reserves it.
         _seedAllInterest(5);
         _arm(5);
-        _runArmedDay(5);
+        _runDayCycle(5);
 
         uint256 reserved = _localOutstanding(ARB);
         assertGt(reserved, 0, "the mirror really is carrying a reservation");
