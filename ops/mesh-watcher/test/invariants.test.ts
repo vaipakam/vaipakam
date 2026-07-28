@@ -124,9 +124,11 @@ function mirrorLocal(): LocalLedger {
     outstandingFresh: 0n,
     armedFromDay: 3n,
     paidOutRecycled: 800n * E,
-    creditedRaw: 1000n * E,
-    releasedRemitStranded: 0n,
-    isCanonicalRewardChain: false,
+    composition: {
+      creditedRaw: 1000n * E,
+      releasedRemitStranded: 0n,
+      isCanonicalRewardChain: false,
+    },
     observedAt: 1_800_000_000n,
   });
 }
@@ -149,9 +151,11 @@ function canonicalLocal(): LocalLedger {
     outstandingFresh: 50n * E,
     armedFromDay: 3n,
     paidOutRecycled: 0n,
-    creditedRaw: 800n * E,
-    releasedRemitStranded: 0n,
-    isCanonicalRewardChain: true,
+    composition: {
+      creditedRaw: 800n * E,
+      releasedRemitStranded: 0n,
+      isCanonicalRewardChain: true,
+    },
     observedAt: 1_800_000_000n,
   });
 }
@@ -179,26 +183,58 @@ function canonicalLocal(): LocalLedger {
  *
  * A test that wants to VIOLATE either check overrides those fields
  * explicitly, and the override is then visible as the deliberate act it is.
+ *
+ * The three composition slots are overridden FLAT here and nested by this
+ * helper. They live in an optional sub-object on the real type (#1448 r2 —
+ * the view is read separately so its failure cannot discard the other
+ * reads), and making every call site spell that out would have obscured what
+ * each test is actually varying. Pass `composition: null` to model the view
+ * being unreadable.
  */
+type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
+  creditedRaw?: bigint;
+  releasedRemitStranded?: bigint;
+  isCanonicalRewardChain?: boolean;
+  /** `null` = the newer view could not be read on this chain. */
+  composition?: null;
+};
+
 function coherent(
   base: LocalLedger,
-  over: Partial<LocalLedger> = {},
+  over: LocalOverrides = {},
 ): Omit<LocalLedger, FRESH> {
-  const l = { ...base, ...over };
-  if (over.creditedRaw === undefined) l.creditedRaw = l.reportedCumulative;
+  const {
+    creditedRaw,
+    releasedRemitStranded,
+    isCanonicalRewardChain,
+    composition,
+    ...rest
+  } = over;
+  const l = { ...base, ...rest };
+  if (composition === null) {
+    return { ...l, composition: undefined };
+  }
+  const baseComp = base.composition!;
+  const comp = {
+    creditedRaw: creditedRaw ?? l.reportedCumulative,
+    releasedRemitStranded:
+      releasedRemitStranded ?? baseComp.releasedRemitStranded,
+    isCanonicalRewardChain:
+      isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
+  };
   if (over.paidOutRecycled === undefined) {
-    const destinations = l.creditedRaw + l.custodyRelocated;
+    const destinations = comp.creditedRaw + l.custodyRelocated;
     l.paidOutRecycled =
       destinations > l.bucket ? destinations - l.bucket : 0n;
   }
-  return l;
+  return { ...l, composition: comp };
 }
 
 interface Overrides {
   mirror?: Partial<BaseChainBooks>;
   canonical?: Partial<BaseChainBooks>;
-  mirrorLocal?: Partial<LocalLedger> | null;
-  canonicalLocal?: Partial<LocalLedger> | null;
+  mirrorLocal?: LocalOverrides | null;
+  canonicalLocal?: LocalOverrides | null;
 }
 
 function observation(o: Overrides = {}): MeshObservation {
@@ -492,9 +528,11 @@ describe('checkHardInvariants — bucket coverage', () => {
     ).toEqual(['bucket-coverage']);
   });
 
-  it('grants it on the same figures while the chain IS canonical', () => {
-    // Same numbers, role flag flipped — so the previous test cannot pass for
-    // some unrelated reason.
+  it('does NOT grant it to a mirror that CLAIMS to be canonical either', () => {
+    // #1448 r2 — the chain's own flag is not sufficient. Base's view of which
+    // chain is canonical is separately configured, and the two are
+    // independently mutable, so a mis-flagged mirror must not be able to
+    // grant itself an allowance. The disagreement is itself reported.
     expect(
       codes({
         mirrorLocal: {
@@ -503,7 +541,47 @@ describe('checkHardInvariants — bucket coverage', () => {
           isCanonicalRewardChain: true,
         },
       }),
+    ).toEqual(['bucket-coverage', 'role-consistency']);
+  });
+
+  it('grants it on the canonical chain, where both sources agree', () => {
+    // Same shape as the mirror cases above, on the chain the mesh is actually
+    // read against — so those cannot be passing for an unrelated reason.
+    expect(
+      codes({
+        canonicalLocal: { bucket: 0n, releasedRemitStranded: 300n * E },
+      }),
     ).toEqual([]);
+  });
+
+  // #1448 r2 — the composition view is a NEWER selector, so a chain missed in
+  // a facet refresh answers the other reads and reverts this one. That must
+  // cost only the checks that need it.
+  it('stays strict on a mirror when the stranded total cannot be read', () => {
+    expect(
+      codes({ mirrorLocal: { bucket: 0n, composition: null } }),
+    ).toEqual(['bucket-coverage']);
+  });
+
+  it('does not page the canonical chain without the term that explains it', () => {
+    // A release legitimately produces a canonical shortfall, and the figure
+    // that would distinguish it from a fault is exactly what is missing.
+    // Paging here would alarm on correct behaviour — the pre-#1444 rule.
+    expect(
+      codes({ canonicalLocal: { bucket: 0n, composition: null } }),
+    ).toEqual([]);
+  });
+
+  it('does not lose the OTHER checks when only that view fails', () => {
+    // The regression this guards: bundling the new read into the same
+    // all-or-nothing fetch let one revert discard the custody, retirement and
+    // governor evidence too, turning working CRITICALs into a silent gap.
+    expect(
+      codes({
+        mirrorLocal: { composition: null },
+        mirror: { retired: 260n * E },
+      }),
+    ).toEqual(['base-ahead-of-chain', 'commit-identity']);
   });
 
   it('reports the stranded figure it actually applied', () => {
@@ -576,18 +654,27 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(finding?.detail).toContain('relocated-custody credit');
   });
 
-  it('allows a dust-scale excess rather than paging on wei', () => {
-    // Deliberately a GUARD BAND, not a reachable dust state — unlike
-    // coverage, where `LibVpfiRecycle.consume`'s bucket floor genuinely
-    // produces slack. Here the floor widens the RIGHT side (the bucket
-    // decrement is capped while `paidOutRecycled` takes the full amount), so
-    // correct code cannot push the left side over at all. The band exists
-    // because a false CRITICAL is worse than missing a wei-scale version of
-    // a bug whose real form is VPFI-scale.
+  it('is EXACT — it does not borrow the coverage tolerance', () => {
+    // #1448 r2. `BUCKET_COVERAGE_TOLERANCE_WEI` exists for the one reachable
+    // dust case: `consume` flooring the bucket. That widens the RIGHT side
+    // here, so correct accounting cannot produce ANY positive excess — and
+    // sharing the knob would both accept a custody-exclusion regression up to
+    // its value and silently widen that blind spot whenever an operator
+    // raised the tolerance for a noisy chain's coverage.
     //
-    // `reportedCumulative` moves with `creditedRaw` because it is
-    // `max(creditedRaw, ...)` — pinning it lower would be an unreachable
-    // state and would (correctly) trip `reported-derivation` instead.
+    // One wei over is a finding.
+    expect(
+      codes({
+        mirrorLocal: {
+          creditedRaw: 1000n * E + 1n,
+          reportedCumulative: 1000n * E + 1n,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
+  it('and a tolerance-sized excess is a finding, not dust', () => {
     expect(
       codes({
         mirrorLocal: {
@@ -596,6 +683,37 @@ describe('checkHardInvariants — bucket composition', () => {
           paidOutRecycled: 800n * E,
         },
       }),
+    ).toEqual(['bucket-composition']);
+  });
+});
+
+describe('checkHardInvariants — canonical-role consistency', () => {
+  it('fires when the canonical chain disclaims the role', () => {
+    expect(
+      codes({ canonicalLocal: { isCanonicalRewardChain: false } }),
+    ).toEqual(['role-consistency']);
+  });
+
+  it('names the split-brain consequence, not just the mismatch', () => {
+    const [finding] = checkHardInvariants(
+      observation({ mirrorLocal: { isCanonicalRewardChain: true } }),
+      TOLERANCE,
+    );
+    expect(finding?.code).toBe('role-consistency');
+    expect(finding?.severity).toBe('critical');
+    // The flag decides whether `closeDay` writes locally, and authorises the
+    // canonical-only remittance surface — that is why it is CRITICAL rather
+    // than a config advisory.
+    expect(finding?.detail).toContain('closeDay');
+  });
+
+  it('is silent when both sources agree', () => {
+    expect(codes()).toEqual([]);
+  });
+
+  it('is not evaluated when the role cannot be read', () => {
+    expect(
+      codes({ mirrorLocal: { composition: null } }),
     ).toEqual([]);
   });
 });
@@ -612,7 +730,7 @@ describe('checkHardInvariants — reported-cumulative derivation', () => {
    * 1000 — which is also Base's accepted copy, so nothing else fires and
    * each case below differs only in the figure under test.
    */
-  const unseeded = (reportedCumulative: bigint): Partial<LocalLedger> => ({
+  const unseeded = (reportedCumulative: bigint): LocalOverrides => ({
     creditedRaw: 0n,
     custodyRelocated: 23n * E,
     bucket: 223n * E,

@@ -583,7 +583,7 @@ sits at the single canonical point (Base finalization):
    against availability another unclaimed day already committed.
 
    **Amended (#1444).** The recycled half is stated in its universal form
-   `Σ outstandingCommit_recycled ≤ bucketBalance + releasedRemitFull`.
+   `Σ outstandingCommit_recycled ≤ bucketBalance + releasedRemitStranded`.
    This design predates M3 B2-d2's remit-release valve, which restores a
    day's commitments while deliberately NOT re-crediting the bucket — the
    sent tokens are locked in the transport's custody, genuinely outside
@@ -599,7 +599,7 @@ sits at the single canonical point (Base finalization):
 
 8. **Bucket composition (#1446)** — `recycleCreditedCumulative +
    recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
-   releasedRemitSent`, and `creditedCumulative` is reproducible from those
+   releasedRemitStranded`, and `creditedCumulative` is reproducible from those
    same slots as `max(raw, bucket + paidOut − relocated)`.
 
    Both exist because invariant 6's per-chain `consumed ≤ reported`

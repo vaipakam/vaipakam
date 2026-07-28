@@ -110,7 +110,7 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
   // reservation that a single claim moves together.
   const block = await target.client.getBlock();
   const blockNumber = block.number;
-  const [custody, retirement, governor, composition] = await Promise.all([
+  const [custody, retirement, governor] = await Promise.all([
     readView<readonly [bigint, bigint, bigint]>(
       target.client,
       target.diamond,
@@ -132,19 +132,41 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
       [],
       blockNumber,
     ),
-    // #1444 / #1446 — the raw slots, at the SAME pinned block as the three
-    // derived reads above. Same-block is load-bearing here in a way it is not
-    // for the others: both new checks compare a raw counter against the
-    // derived figures, so a mixed-block tuple would show a mid-transaction
-    // state as a violation.
-    readView<readonly [bigint, bigint, boolean]>(
+  ]);
+
+  // #1444 / #1446 — the raw slots, read SEPARATELY from the three above and
+  // at the same pinned block.
+  //
+  // Separate because this is a NEWER facet selector (#1448 r2): a chain
+  // missed during a facet refresh answers the other three and reverts this
+  // one. Inside the `Promise.all` that single revert rejected the whole local
+  // read, so `observeMesh` discarded the custody, retirement and governor
+  // evidence it had successfully fetched — turning several working CRITICAL
+  // checks into one non-paging coverage gap. Its absence must cost only the
+  // checks that need it.
+  //
+  // Same pinned block is still load-bearing: both new checks compare a raw
+  // counter against the derived figures, so a mixed-block tuple would show a
+  // mid-transaction state as a violation.
+  let composition:
+    | { creditedRaw: bigint; releasedRemitStranded: bigint; isCanonicalRewardChain: boolean }
+    | undefined;
+  try {
+    const c = await readView<readonly [bigint, bigint, boolean]>(
       target.client,
       target.diamond,
       'getRecycleCompositionPosition',
       [],
       blockNumber,
-    ),
-  ]);
+    );
+    composition = {
+      creditedRaw: c[0],
+      releasedRemitStranded: c[1],
+      isCanonicalRewardChain: c[2],
+    };
+  } catch {
+    composition = undefined;
+  }
 
   return {
     // The freshness brand is applied by `observeMesh` after validation —
@@ -159,9 +181,7 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
     outstandingFresh: governor[1],
     outstandingRecycled: governor[2],
     paidOutRecycled: governor[3],
-    creditedRaw: composition[0],
-    releasedRemitStranded: composition[1],
-    isCanonicalRewardChain: composition[2],
+    composition,
     observedAt: block.timestamp,
   };
 }
