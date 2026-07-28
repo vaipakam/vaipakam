@@ -475,6 +475,105 @@ contract MeshLedgerInvariant is Test {
         assertEq(avail, 900 ether, "and it is fully available again");
     }
 
+    /// **B3's headline behaviour, asserted exactly** (Codex #1437 r2 P1).
+    /// Nothing else in this file actually pins it: a nonzero release counter
+    /// only proves a release was RECORDED, and
+    /// `invariant_AvailNeverExceedsReported` is an upper bound, so a
+    /// regression of `mirrorAvailRecycled` to the pre-B3 formula — one that
+    /// ignores `released` entirely — would leave every other check green
+    /// while silently stranding released mirror funds and eventually forcing
+    /// Base to fund the whole mesh again. That is the exact failure B3
+    /// exists to prevent, so it gets an exact assertion.
+    function test_Transition_ReleaseRestoresAvailabilityExactly() public {
+        // Instruct ARB, which consumes its reported availability.
+        messenger.deliverChainReportB3(
+            CHAIN_BASE, 1, 10e18, 5e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_OP, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_ARB, true
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_OP, true
+        );
+        _agg().finalizeDay(1);
+
+        (, uint256 instructed, uint256 availBefore, ) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertGt(instructed, 0, "ARB was instructed");
+
+        // A release of HALF the instruction - tokens that never left ARB's
+        // bucket. Deliberately below `instructed`: a release is clamped to
+        // what Base instructed, so asking for more than that restores only
+        // the clamped amount and the one-for-one assertion below would be
+        // testing the clamp rather than the restoration. (Learned by writing
+        // it the other way first: with a release above the instruction,
+        // availability simply pins to `reported` and the delta is the
+        // instruction, not the request.)
+        uint256 release = instructed / 2;
+        assertGt(release, 0, "need a nonzero release to assert on");
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 2, 20e18, 10e18, 900 ether, 0, release, release
+        );
+
+        (, , uint256 availAfter, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(
+            availAfter,
+            availBefore + release,
+            "a release must restore availability ONE FOR ONE - not merely "
+            "leave it within its upper bound"
+        );
+    }
+
+    /// The retirement cumulatives must RATCHET (Codex #1437 r2 P1). A stale
+    /// or reordered report carrying LOWER figures must not walk them back:
+    /// an implementation that overwrote them would satisfy every clamp, the
+    /// outstanding identity and the availability ceiling, while reopening
+    /// reservations already retired and discarding restored availability.
+    /// The clamps bound the values; only this pins the direction.
+    function test_Transition_RetirementCumulativesNeverRegress() public {
+        messenger.deliverChainReportB3(
+            CHAIN_BASE, 1, 10e18, 5e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_OP, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_ARB, true
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_OP, true
+        );
+        _agg().finalizeDay(1);
+
+        // A high-water report, then a stale one carrying lower figures.
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 2, 20e18, 10e18, 900 ether, 0, 200 ether, 150 ether
+        );
+        (uint256 retHigh, uint256 relHigh) =
+            _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        (, , uint256 availHigh, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 3, 20e18, 10e18, 900 ether, 0, 10 ether, 5 ether
+        );
+
+        (uint256 retLow, uint256 relLow) =
+            _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        (, , uint256 availLow, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(retLow, retHigh, "retired ratchet walked backwards");
+        assertEq(relLow, relHigh, "released ratchet walked backwards");
+        assertEq(availLow, availHigh, "restored availability was discarded");
+    }
+
     /// The ratchet is what makes both of the above safe: a stale delivery
     /// carrying an OLDER cumulative must never walk the ledger backwards.
     function test_Ordering_StaleReportNeverRegressesTheLedger() public {

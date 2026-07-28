@@ -24,13 +24,24 @@ message sequences rather than a handful of hand-written scenarios:
 - the sizing chain's books about itself stay empty, so a single-chain
   deployment is untouched by any of this.
 
-**Why generated sequences rather than scripted ones.** Two of these rules are
-about *ordering*: a duplicate message must change nothing, and a missing
-report must heal on the next one. A scripted test can only demonstrate the
-orderings its author thought of. The generator is free to reorder, duplicate,
+**Why generated sequences.** The generator is free to reorder, duplicate,
 drop, and interleave reports with day closings, and to send deliberately
-absurd figures — which is the honest way to check a boundary that exists
-precisely because a faulty or compromised chain might lie.
+absurd figures — which is the honest way to check bounds that exist precisely
+because a faulty or compromised chain might lie. A scripted test can only
+demonstrate the cases its author thought of.
+
+**What generated sequences cannot establish, and what covers it instead.**
+The six rules above are all *upper bounds on final state*. Several further
+guarantees are about a **transition** — a repeated message must change
+nothing, a skipped report must be made whole by the next one, a settlement
+total must never move backwards, and a commitment ended without payment must
+actually give funding capacity back. A bound cannot prove any of those: a
+ledger could mishandle every one of them and still finish inside every bound.
+Those guarantees are therefore covered by deliberately scripted checks that
+read the books, apply exactly one message, and read them again. The generated
+campaign owns the bounds; the scripted checks own the transitions. Saying
+otherwise would be the kind of assurance overclaim this note is at pains to
+avoid.
 
 **A note on how this suite was built, because it matters.** All six rules are
 upper bounds, so all six hold trivially on an untouched ledger — a test driver
