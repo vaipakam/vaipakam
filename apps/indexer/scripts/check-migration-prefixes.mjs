@@ -46,12 +46,19 @@ const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
  */
 const GRANDFATHERED = new Map([
   [
-    '0011',
-    'Applied to production 2026-05-08 (offers_cancelled_at) and 2026-05-24 ' +
-      '(liquidity_confidence), i.e. in the reverse of lexicographic order. ' +
-      'Order-independent: one is a CREATE TABLE for a table nothing else in ' +
-      'the pair touches, the other an unrelated column add on `offers`. ' +
-      'Renaming either would change its d1_migrations key and re-run it.',
+    11,
+    {
+      // The EXACT membership, not just the number. A prefix-level exemption
+      // would also suppress a THIRD file landing on 0011 — i.e. precisely the
+      // future clash this guard advertises catching (Codex #1449 r1).
+      files: ['0011_liquidity_confidence.sql', '0011_offers_cancelled_at.sql'],
+      why:
+        'Applied to production 2026-05-08 (offers_cancelled_at) and 2026-05-24 ' +
+        '(liquidity_confidence), i.e. in the reverse of lexicographic order. ' +
+        'Order-independent: one is a CREATE TABLE for a table nothing else in ' +
+        'the pair touches, the other an unrelated column add on `offers`. ' +
+        'Renaming either would change its d1_migrations key and re-run it.',
+    },
   ],
 ]);
 
@@ -59,48 +66,85 @@ const files = readdirSync(MIGRATIONS_DIR)
   .filter((f) => f.endsWith('.sql'))
   .sort();
 
-/** Group filenames by their leading numeric prefix. */
-const byPrefix = new Map();
+/**
+ * Group filenames by their sequence NUMBER, not by the literal prefix text.
+ *
+ * Wrangler derives the sequence with `parseInt(name.split('_')[0])`, so
+ * `045_x.sql` and `0045_y.sql` are the same sequence to the tool that applies
+ * them — but sort adjacently-but-differently in a lexicographic replay. Text
+ * grouping would call them distinct and miss the collision entirely (Codex
+ * #1449 r1). The four-digit form is additionally REQUIRED below, so this is
+ * belt-and-braces: the format check is what keeps the numbering readable, and
+ * numeric grouping is what makes the uniqueness claim true regardless.
+ */
+const byNumber = new Map();
 const malformed = [];
 for (const file of files) {
   const match = file.match(/^(\d+)_/);
   if (!match) {
-    malformed.push(file);
+    malformed.push([file, 'does not start with digits followed by "_"']);
     continue;
   }
-  const prefix = match[1];
-  if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
-  byPrefix.get(prefix).push(file);
+  if (match[1].length !== 4) {
+    malformed.push([
+      file,
+      `prefix "${match[1]}" is not the documented four-digit NNNN_ form`,
+    ]);
+    continue;
+  }
+  const seq = Number.parseInt(match[1], 10);
+  if (!byNumber.has(seq)) byNumber.set(seq, []);
+  byNumber.get(seq).push(file);
 }
 
 const problems = [];
+const pad = (seq) => String(seq).padStart(4, '0');
 
-for (const name of malformed) {
+for (const [name, why] of malformed) {
   problems.push(
     `  ${name}\n` +
-      `      does not start with a numeric prefix followed by "_". Every ` +
-      `migration needs one so replay order is well-defined.`,
+      `      ${why}. Every migration needs one so replay order is ` +
+      `well-defined and matches what wrangler derives.`,
   );
 }
 
-for (const [prefix, group] of [...byPrefix].sort()) {
+for (const [seq, group] of [...byNumber].sort((a, b) => a[0] - b[0])) {
   if (group.length < 2) continue;
-  if (GRANDFATHERED.has(prefix)) continue;
+  const allowed = GRANDFATHERED.get(seq);
+  // Exempt ONLY the exact recorded membership. Same set, same size, or it is
+  // a fresh collision that happens to land on a grandfathered number.
+  if (
+    allowed &&
+    allowed.files.length === group.length &&
+    allowed.files.every((f) => group.includes(f))
+  ) {
+    continue;
+  }
   problems.push(
-    `  prefix ${prefix} used by ${group.length} files:\n` +
-      group.map((f) => `      ${f}`).join('\n'),
+    `  sequence ${pad(seq)} used by ${group.length} files:\n` +
+      group.map((f) => `      ${f}`).join('\n') +
+      (allowed
+        ? `\n      (sequence ${pad(seq)} IS grandfathered, but only for ` +
+          `exactly: ${allowed.files.join(', ')} — this group differs)`
+        : ''),
   );
 }
 
-// A grandfathered prefix that is no longer duplicated means the entry is
-// stale — drop it, so the allowlist cannot quietly accumulate dead
-// exemptions that would mask a genuine future collision on the same number.
-for (const prefix of GRANDFATHERED.keys()) {
-  const group = byPrefix.get(prefix) ?? [];
-  if (group.length >= 2) continue;
+// A grandfathered entry whose collision no longer exists is stale — drop it,
+// so the allowlist cannot quietly accumulate dead exemptions that would mask a
+// genuine future collision on the same number.
+for (const [seq, allowed] of GRANDFATHERED) {
+  const group = byNumber.get(seq) ?? [];
+  if (
+    group.length === allowed.files.length &&
+    allowed.files.every((f) => group.includes(f))
+  ) {
+    continue;
+  }
+  if (group.length >= 2) continue; // already reported as a differing group
   problems.push(
-    `  prefix ${prefix} is allowlisted in GRANDFATHERED but is no longer ` +
-      `duplicated (${group.length} file(s)). Remove the entry.`,
+    `  sequence ${pad(seq)} is allowlisted in GRANDFATHERED but its recorded ` +
+      `files are not present (found ${group.length}). Remove the entry.`,
   );
 }
 
@@ -121,7 +165,7 @@ if (problems.length > 0) {
 
 console.log(
   `[check-migration-prefixes] OK — ${files.length} migrations, ` +
-    `${byPrefix.size} distinct prefixes` +
+    `${byNumber.size} distinct sequence numbers` +
     (GRANDFATHERED.size > 0
       ? ` (${GRANDFATHERED.size} grandfathered collision(s))`
       : ''),
