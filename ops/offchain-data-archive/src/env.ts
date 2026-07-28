@@ -28,7 +28,6 @@
 export interface Env {
   // D1 bindings — read-only (the Worker never writes).
   DB_ARCHIVE: D1Database;
-  DB_LZ_ALERTS: D1Database;
   // R2 binding — read-only (the Worker never writes to legal-vault).
   R2_LEGAL_VAULT: R2Bucket;
   // Vars (set in wrangler.jsonc).

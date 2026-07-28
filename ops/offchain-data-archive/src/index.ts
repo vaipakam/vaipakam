@@ -158,7 +158,7 @@ export default {
    *    cron wall-time and serializing failure modes).
    *
    * Why one cron at all: free-plan account cap of 5 cron triggers
-   * across the org. apps/{keeper,agent,indexer} + ops/lz-watcher
+   * across the org. apps/{keeper,agent,indexer} + ops/mesh-watcher
    * already occupy 4. Splitting backup + healthcheck into two crons
    * would push past 5/5 and CF API rejects the deploy with 10072.
    * Split back into two crons if/when the account upgrades to
