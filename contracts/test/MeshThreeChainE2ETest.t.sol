@@ -407,6 +407,18 @@ contract MeshThreeChainE2ETest is Test {
             "the two destinations carry distinguishable figures"
         );
 
+        // Bind each instruction to ITS OWN source report. Distinguishable
+        // instructions alone do not prove correct attribution: a delivery
+        // that swapped the two chains' interest totals while keeping their
+        // source ids would still produce two unequal instructions, and each
+        // mirror would still reserve exactly what Base computed under the
+        // corrupted key (Codex #1439 r2). Asserting the ingested numerators
+        // is what detects cross-attributed demand.
+        (uint256 arbLender,) = _agg().getChainReport(5, uint32(ARB));
+        (uint256 opLender,) = _agg().getChainReport(5, uint32(OP));
+        assertEq(arbLender, 2e18, "Base ingested ARB's own lender total");
+        assertEq(opLender, 1e18, "Base ingested OP's own lender total");
+
         // Base's reservation ledger for each chain opens at the full
         // instruction (nothing retired yet).
         assertEq(
@@ -574,7 +586,14 @@ contract MeshThreeChainE2ETest is Test {
         _runDayCycle(5);
 
         uint256 instructed = _instructedFor(ARB);
-        assertGt(instructed, 0, "ARB carries a real instruction to release");
+        // Not just "> 0": the release below is `instructed / 2`, so a
+        // regression shrinking the instruction to a wei would floor the
+        // release to ZERO and every assertion in this test would pass
+        // without exercising a release at all (Codex #1439 r2). Pin a
+        // magnitude, then pin the derived release itself.
+        assertGt(
+            instructed, 1 ether, "ARB's instruction is of a meaningful size"
+        );
         (,, uint256 availBefore,) = _agg().getChainRecycledLedger(uint32(ARB));
 
         // ARB releases HALF of what it reserved. Half, not all: a release is
@@ -582,6 +601,7 @@ contract MeshThreeChainE2ETest is Test {
         // instruction would restore only the instruction and the test could
         // not tell a correct partial credit from a saturated one.
         uint256 release = instructed / 2;
+        assertGt(release, 0, "the partial release is non-zero");
         vm.chainId(ARB);
         _mut(ARB).releaseRecycleCommitmentRaw(release);
 
@@ -686,6 +706,10 @@ contract MeshThreeChainE2ETest is Test {
         _seedAllInterest(4);
         _runDayCycle(4);
 
+        // ARB's live bucket before any armed day touches it.
+        uint256 bucketBefore = _mut(ARB).getRecycleBucketRaw();
+        assertEq(bucketBefore, BUCKET_SEED, "bucket starts at the seed");
+
         // Day 5, the first ARMED day.
         _seedAllInterest(5);
         _arm(5);
@@ -695,6 +719,8 @@ contract MeshThreeChainE2ETest is Test {
             _agg().getChainOutstandingRecycledCommit(uint32(ARB));
         (,, uint256 availAfterD5,) = _agg().getChainRecycledLedger(uint32(ARB));
         assertGt(outstandingAfterD5, 0, "day 5 reserved something on Base");
+        // The MIRROR's own reservation after the first armed day.
+        uint256 localAfterD5 = _localOutstanding(ARB);
 
         // Day 6, a second ARMED day. Nothing retired the day-5 reservation in
         // between — because nothing on the mirror can.
@@ -704,6 +730,25 @@ contract MeshThreeChainE2ETest is Test {
         uint256 outstandingAfterD6 =
             _agg().getChainOutstandingRecycledCommit(uint32(ARB));
         (,, uint256 availAfterD6,) = _agg().getChainRecycledLedger(uint32(ARB));
+        uint256 localAfterD6 = _localOutstanding(ARB);
+
+        // ACCUMULATION ON THE MIRROR ITSELF. Both figures above come from
+        // Base's ledger, which Base writes at finalization — before the
+        // broadcast is even delivered. So they would still grow if the mirror
+        // ingress reserved only the cutover day and silently ignored day 6
+        // (Codex #1439 r2). The documented multi-day mirror accumulation is
+        // only established by reading the mirror's OWN books across both
+        // days, and by requiring the two models to agree.
+        assertGt(
+            localAfterD6,
+            localAfterD5,
+            "the mirror reserved a SECOND armed day, not just the cutover"
+        );
+        assertEq(
+            localAfterD6,
+            outstandingAfterD6,
+            "mirror's own reservation matches Base's model of it"
+        );
 
         // THE DECAY. Base's reservation for ARB only grows, and what Base
         // believes ARB can self-fund only shrinks.
@@ -727,10 +772,22 @@ contract MeshThreeChainE2ETest is Test {
         assertEq(localRetired, 0, "ARB retired nothing locally");
         assertEq(localReleased, 0, "ARB released nothing locally");
 
-        // ...and ARB's bucket is untouched: Base is withdrawing availability
-        // for tokens that never moved. This is the operator-visible symptom.
+        // ...and ARB's LIVE BUCKET is untouched: Base is withdrawing
+        // availability for tokens that never moved. This is the
+        // operator-visible symptom, and it must be read off the BUCKET.
+        // Base's `chainReportedRecycled[c]` cannot stand in for it: that is a
+        // monotonic lifetime-credit ratchet derived from
+        // `recycleBucket + paidOutRecycled`, so it stays flat even if the
+        // bucket were drained (Codex #1439 r2).
+        assertEq(
+            _mut(ARB).getRecycleBucketRaw(),
+            bucketBefore,
+            "ARB's live bucket never moved across either armed day"
+        );
         (uint256 arbReported,,,) = _agg().getChainRecycledLedger(uint32(ARB));
-        assertEq(arbReported, BUCKET_SEED, "ARB's absorbed total never moved");
+        assertEq(
+            arbReported, BUCKET_SEED, "and its reported absorption is flat too"
+        );
 
         // WITNESS, not proof of causation: a real claim on this mirror runs
         // and pays — so the surface is live — and consumes zero recycled.

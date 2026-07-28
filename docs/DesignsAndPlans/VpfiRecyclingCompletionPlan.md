@@ -507,8 +507,14 @@ GovernanceRunbook gains a recycling section, executed in order:
    > user-reachable way to RETIRE it — claims, forfeits and expiry all
    > price through the halted path, so its settlement totals stay at
    > zero. Base's spare-capacity figure for that chain
-   > (`reported − (consumed − released)`) then decays with every armed
-   > day while the chain's bucket is untouched, and the mesh degrades
+   > (`reported − (consumed − released)`) then decays on every armed day
+   > **that creates a nonzero mirror-local instruction** — not on every
+   > armed day as such: `LibMeshFunding.resolveAndStampDayFunding`
+   > returns without booking anything when the coupled target or both
+   > global denominators are zero, and `_stampOne` leaves
+   > `chainConsumedRecycled` unchanged for a mirror with no local
+   > commitment (Codex #1439 r2) — while the chain's bucket is
+   > untouched, and the mesh degrades
    > toward "Base funds everything" — precisely the waste B3 removed
    > from Base's own books, re-entering through the mirror end. It is
    > recoverable (the totals are cumulative, so settlements after the

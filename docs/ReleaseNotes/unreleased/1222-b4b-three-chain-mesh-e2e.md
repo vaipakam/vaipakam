@@ -53,8 +53,9 @@ receiving chains. But a receiving chain cannot yet settle those
 commitments — paying, forfeiting and lapsing all run through a pricing
 path that is deliberately still blocked there. So it can set commitments
 aside and settle none of them: its settlement totals stay at zero and the
-canonical chain's view of its spare capacity decays with every coupled
-day, while that chain's balance sits untouched. The result recovers once
+canonical chain's view of its spare capacity decays on every coupled day
+that actually instructs that chain to fund something locally, while that
+chain's balance sits untouched. The result recovers once
 the block lifts (the totals are cumulative, so the backlog closes), but
 for the whole window the platform would fund from the canonical chain
 what the receiving chain could have funded itself — exactly the waste the
