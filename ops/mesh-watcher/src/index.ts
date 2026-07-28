@@ -66,7 +66,15 @@ export default {
       // post-deploy verification, and certifying a pager without ever
       // exercising it is how a silent pager ships.
       const summary = await runTick(env, { probeDelivery: true });
-      return Response.json(summary, { status: summary.error ? 500 : 200 });
+      // Status from `ok`, not merely from `error`. A failed delivery
+      // probe, an unconfigured pager, or a critical finding all set
+      // `ok: false` WITHOUT setting `error` — so keying the status on
+      // `error` let `curl --fail` and deployment automation certify a
+      // verification run whose pager probe had just failed (Codex #1443
+      // r5). 500 for an internal failure, 503 for a tick that ran but
+      // reports an unhealthy mesh or an undeliverable pager.
+      const status = summary.error ? 500 : summary.ok ? 200 : 503;
+      return Response.json(summary, { status });
     }
 
     return Response.json({

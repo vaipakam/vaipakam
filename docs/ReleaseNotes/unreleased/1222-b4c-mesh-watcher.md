@@ -14,7 +14,7 @@ recycled books from the canonical reward chain and each chain's own bucket
 and reservation counters from that chain's own Diamond, then checks the
 relations that hold the two views together.
 
-Seven of those relations cannot legitimately break — they are maintained
+Eight of those relations cannot legitimately break — they are maintained
 by construction, so a violation means a bug, a spoofed report, or storage
 corruption, never ordinary operation. They ship as real alerts: the
 per-chain commit identity (outstanding plus retired always equals what
@@ -24,14 +24,15 @@ exceeding what a chain reported absorbing; the availability formula
 itself, re-derived off-chain so a drifted deployment is visible; the rule
 that the canonical chain never books per-chain commitments against itself;
 the rule that Base's accepted cumulatives never run ahead of the chain's
-own; and bucket coverage — that a chain's live bucket actually backs the
+own; the bound that instructions to a chain never exceed what it reported
+absorbing, net of what it released un-spent; and bucket coverage — that a chain's live bucket actually backs the
 reservations made against it, which is the check that would catch Base's
 model over-stating what a mirror holds. Bucket coverage allows a small,
 documented tolerance rather than comparing exactly, because the payout
 path deliberately floors the bucket at zero instead of reverting on
 wei-scale rounding, and an exact comparison would page on healthy dust.
 
-The eighth signal — a chain holding recycled commitments while retirement
+The ninth signal — a chain holding recycled commitments while retirement
 stays flat — ships deliberately as an **advisory**, labelled as such in
 every message. Its condition is necessary but not sufficient: a chain that
 simply had no claims, forfeits or expiries fall due in the window

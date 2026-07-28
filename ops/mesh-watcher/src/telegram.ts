@@ -10,6 +10,8 @@
  * cannot reach user alert channels.
  */
 
+import { stripUrlPaths } from './redact';
+
 const TELEGRAM_MAX_CHARS = 4096;
 
 export interface TelegramTarget {
@@ -28,6 +30,16 @@ export interface TelegramTarget {
 export async function sendOpsMessage(
   target: TelegramTarget,
   text: string,
+  /**
+   * Deliver without a notification.
+   *
+   * The critical/advisory split is only meaningful if the channel treats
+   * them differently — badging the text while buzzing the operator's
+   * phone identically is exactly how a deliberately non-sufficient signal
+   * trains someone to mute the channel (Codex #1443 r5). Advisories land
+   * silently; criticals notify.
+   */
+  silent = false,
 ): Promise<boolean> {
   const body =
     text.length > TELEGRAM_MAX_CHARS
@@ -57,22 +69,41 @@ export async function sendOpsMessage(
           chat_id: target.chatId,
           text: body,
           disable_web_page_preview: true,
+          disable_notification: silent,
         }),
       },
     );
     if (!res.ok) {
       console.error(
-        `telegram sendMessage failed: ${res.status} ${await res.text()}`,
+        `telegram sendMessage failed: ${res.status} ${redactDeliveryError(await res.text(), target.token)}`,
       );
       return false;
     }
     return true;
   } catch (err) {
     console.error(
-      `telegram sendMessage threw: ${err instanceof Error ? err.message : String(err)}`,
+      `telegram sendMessage threw: ${redactDeliveryError(err instanceof Error ? err.message : String(err), target.token)}`,
     );
     return false;
   }
+}
+
+/**
+ * Scrub a delivery-failure string before it is logged.
+ *
+ * The Telegram endpoint embeds the bot token IN THE PATH
+ * (`/bot<token>/sendMessage`), so a `fetch` rejection or an error body
+ * that echoes the request would write `TG_OPS_BOT_TOKEN` into the Worker
+ * logs — and precisely during a delivery failure, when the operator is
+ * most likely to be reading them. The general redactor never reached here
+ * because this module has no `Env` (Codex #1443 r5): the token is right
+ * at hand instead, and the structural URL pass catches the rest.
+ */
+export function redactDeliveryError(text: string, token: string): string {
+  const withoutToken = token
+    ? text.split(token).join('<TG_OPS_BOT_TOKEN>')
+    : text;
+  return stripUrlPaths(withoutToken);
 }
 
 /**

@@ -25,9 +25,11 @@ import {
   checkHardInvariants,
   fmt,
   lagPairs,
-  reportLagCondition,
+  lagLabels,
+  reportLagConditions,
   stuckSettlementCondition,
   type Finding,
+  type StreakState,
 } from './invariants';
 import { observeMesh } from './mesh';
 import { makeBaseRedactor } from './redact';
@@ -110,14 +112,46 @@ export async function runTick(
     );
 
     // ── Windowed advisories ──────────────────────────────────────────
-    const [stuckPrior, lagPrior] = await Promise.all([
-      loadStreaks(env.DB, STUCK_SIGNAL),
-      loadStreaks(env.DB, REPORT_LAG_SIGNAL),
-    ]);
+    //
+    // D1 FAILS OPEN. The hard invariants above are already computed and
+    // stateless — a database outage must not discard a real ledger
+    // violation whose complete evidence we already hold (Codex #1443 r5).
+    // A failed load means the windowed advisories are skipped this tick
+    // (their runs restart, which only delays them), the dedup layer is
+    // bypassed so criticals go out unsuppressed, and the outage is
+    // reported as its own critical finding.
+    let stuckPrior = new Map<number, StreakState>();
+    const lagPrior = new Map<string, StreakState>();
+    let stateAvailable = true;
+    try {
+      const loaded = await Promise.all([
+        loadStreaks(env.DB, STUCK_SIGNAL),
+        ...lagLabels.map((l) => loadStreaks(env.DB, `${REPORT_LAG_SIGNAL}/${l}`)),
+      ]);
+      stuckPrior = loaded[0]!;
+      lagLabels.forEach((label, i) => {
+        for (const [chainId, st] of loaded[i + 1]!) {
+          lagPrior.set(`${chainId}/${label}`, st);
+        }
+      });
+    } catch (err) {
+      stateAvailable = false;
+      findings.push({
+        key: 'watcher-state-unavailable:0',
+        code: 'watcher-state-unavailable',
+        severity: 'critical',
+        chainId: 0,
+        title: 'Alert state database unreachable',
+        detail:
+          `The streak/dedup database could not be read, so the windowed advisories are NOT being evaluated this tick and repeat-suppression is bypassed.\n` +
+          `Any hard ledger findings in this batch were computed BEFORE the failure and are still valid.\n\n` +
+          makeBaseRedactor(env)(err instanceof Error ? err.message : String(err)),
+      });
+    }
 
     const streakWrites: D1PreparedStatement[] = [];
 
-    for (const books of obs.books) {
+    for (const books of stateAvailable ? obs.books : []) {
       // Base's own books are inert by construction, so neither windowed
       // signal has a meaning there — `base-self-inert` is what guards
       // that chain id.
@@ -170,23 +204,28 @@ export async function runTick(
         });
       }
 
-      const lag = reportLagCondition(books, local);
-      const lagOutcome = advanceStreak(
-        lagPrior.get(books.chainId) ?? null,
-        lag.holds,
-        lag.marker,
-        config.reportLagWindowTicks,
-      );
-      streakWrites.push(
-        saveStreakStatement(
-          env.DB,
-          REPORT_LAG_SIGNAL,
-          books.chainId,
-          lagOutcome.next,
-          now,
-        ),
-      );
-      if (lagOutcome.fire && local) {
+      // One run PER CUMULATIVE. A single combined run reset every time an
+      // unrelated field advanced, so a permanently-stuck one never fired.
+      const firing = reportLagConditions(books, local).filter((c) => {
+        const outcome = advanceStreak(
+          lagPrior.get(`${books.chainId}/${c.label}`) ?? null,
+          c.holds,
+          c.marker,
+          config.reportLagWindowTicks,
+        );
+        streakWrites.push(
+          saveStreakStatement(
+            env.DB,
+            `${REPORT_LAG_SIGNAL}/${c.label}`,
+            books.chainId,
+            outcome.next,
+            now,
+          ),
+        );
+        return outcome.fire;
+      });
+
+      if (firing.length > 0 && local) {
         findings.push({
           key: `${REPORT_LAG_SIGNAL}:${books.chainId}`,
           code: REPORT_LAG_SIGNAL,
@@ -194,14 +233,14 @@ export async function runTick(
           chainId: books.chainId,
           title: 'Base has not accepted a newer report from this chain',
           // Figures only, for the same reason as the stuck signal above.
-          fingerprintSource: `lag:${books.reported}:${books.retired}:${books.released}:${local.reportedCumulative}:${local.localRetired}:${local.localReleased}`,
+          fingerprintSource: `lag:${firing.map((c) => c.label).join(',')}:${books.reported}:${books.retired}:${books.released}:${local.reportedCumulative}:${local.localRetired}:${local.localReleased}`,
           // Every pair a day-close report carries, each marked with
           // whether it is the one lagging. Showing absorption alone
           // printed `behind by = 0` whenever retirement or release was
           // what actually triggered the advisory — omitting the only
           // evidence of the lag (Codex #1443 r2).
           detail:
-            `Base's accepted cumulatives trail the chain's own and have not moved for ${lagOutcome.next?.streak ?? 0} consecutive observations\n` +
+            `Frozen and behind for the full window: ${firing.map((c) => c.label).join(', ')}\n` +
             lagPairs(books, local)
               .map(
                 (p) =>
@@ -218,7 +257,12 @@ export async function runTick(
     // "all clear" for chains it never looked at.
     for (const gap of obs.gaps) {
       findings.push({
-        key: `coverage-gap:${gap.chainId}`,
+        // Variant in the key: one chain can produce more than one gap in
+        // a tick — a source-set misconfiguration for the canonical chain
+        // AND a failed own-ledger read on that same chain — and a shared
+        // key made the delivery map keep only the last, sending it twice
+        // while the other's detail was never delivered (Codex #1443 r5).
+        key: `coverage-gap/${gap.reason}:${gap.chainId}`,
         code: 'coverage-gap',
         severity: 'advisory',
         chainId: gap.chainId,
@@ -255,6 +299,11 @@ export async function runTick(
             footer:
               finding.code === STUCK_SIGNAL ? STUCK_CAVEAT : undefined,
           }),
+          // Advisories land SILENTLY. The tier split is only real if the
+          // channel treats them differently — a badge in the text while
+          // the phone buzzes identically is how a deliberately
+          // non-sufficient signal trains someone to mute the channel.
+          finding.severity === 'advisory',
         );
         if (!ok) {
           deliveryFailures += 1;

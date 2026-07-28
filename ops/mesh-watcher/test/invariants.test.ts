@@ -34,14 +34,14 @@ import {
   expectedAvail,
   fmt,
   lagPairs,
-  reportLagCondition,
+  reportLagConditions,
   satSub,
   stuckSettlementCondition,
   type BaseChainBooks,
   type LocalLedger,
   type MeshObservation,
 } from '../src/invariants';
-import { formatAlert } from '../src/telegram';
+import { formatAlert, redactDeliveryError } from '../src/telegram';
 import { bearerToken, isAuthorized, secretsMatch } from '../src/auth';
 import {
   readAlertRepeatSeconds,
@@ -508,13 +508,27 @@ describe('stuckSettlementCondition', () => {
       localRetired: 999n * E,
     });
     expect(result.source).toBe('chain');
-    expect(result.marker).toBe((999n * E).toString());
+    expect(result.marker).toBe(`chain:${999n * E}`);
   });
 
   it('falls back to Base’s copy when the chain is unreachable', () => {
     const result = stuckSettlementCondition(mirrorBooks(), undefined);
     expect(result.source).toBe('base');
-    expect(result.marker).toBe((250n * E).toString());
+    expect(result.marker).toBe(`base:${250n * E}`);
+  });
+
+  it('restarts the run when the SOURCE changes, even at an equal figure', () => {
+    // A chain unreachable for a while builds a Base-fallback run judged
+    // on the long window; if its local retirement happened to equal
+    // Base's last reported figure, the run would carry over and fire
+    // immediately on the SHORT window at the first healthy read
+    // (Codex #1443 r5). The source prefix makes that impossible.
+    const viaBase = stuckSettlementCondition(mirrorBooks(), undefined);
+    const viaChain = stuckSettlementCondition(mirrorBooks(), {
+      ...mirrorLocal(),
+      localRetired: 250n * E, // deliberately EQUAL to Base's copy
+    });
+    expect(viaChain.marker).not.toBe(viaBase.marker);
   });
 
   it('does NOT key on released — a chain that only pays claims never releases', () => {
@@ -536,37 +550,61 @@ describe('stuckSettlementCondition', () => {
   });
 });
 
-describe('reportLagCondition', () => {
-  it('does not hold for an unreachable chain', () => {
-    expect(reportLagCondition(mirrorBooks(), undefined).holds).toBe(false);
+describe('reportLagConditions', () => {
+  const byLabel = (
+    books = mirrorBooks(),
+    local: LocalLedger | undefined = mirrorLocal(),
+  ) => Object.fromEntries(reportLagConditions(books, local).map((c) => [c.label, c]));
+
+  it('holds for no cumulative when the chain is unreachable', () => {
+    const all = reportLagConditions(mirrorBooks(), undefined);
+    expect(all.every((c) => !c.holds)).toBe(true);
   });
 
-  it('does not hold when Base is level with the chain', () => {
-    expect(reportLagCondition(mirrorBooks(), mirrorLocal()).holds).toBe(false);
+  it('holds for none when Base is level with the chain', () => {
+    expect(reportLagConditions(mirrorBooks(), mirrorLocal()).every((c) => !c.holds)).toBe(
+      true,
+    );
   });
 
-  it('holds when Base trails the chain', () => {
-    expect(
-      reportLagCondition(mirrorBooks(), {
-        ...mirrorLocal(),
-        reportedCumulative: 1500n * E,
-      }).holds,
-    ).toBe(true);
+  it('holds ONLY for the cumulative that trails', () => {
+    const c = byLabel(mirrorBooks(), { ...mirrorLocal(), localRetired: 260n * E });
+    expect(c.retired?.holds).toBe(true);
+    expect(c.absorption?.holds).toBe(false);
+    expect(c.released?.holds).toBe(false);
   });
 
-  it('keys the run on Base’s figure alone', () => {
-    // Keying on both sides would reset the run every time the chain
-    // absorbed more — masking exactly the case this signal exists for,
-    // where the chain keeps working and Base never hears about it.
-    const first = reportLagCondition(mirrorBooks(), {
+  it('tracks each run on its OWN field, so an unrelated advance cannot reset it', () => {
+    // The load-bearing property (Codex #1443 r5). With one combined
+    // marker, retirement ingestion being permanently broken went
+    // undetected: ordinary daily reports advanced absorption, the shared
+    // marker changed every report, and the run reset before its window
+    // could elapse.
+    const before = byLabel(mirrorBooks(), {
       ...mirrorLocal(),
-      reportedCumulative: 1500n * E,
+      localRetired: 260n * E,
     });
-    const later = reportLagCondition(mirrorBooks(), {
-      ...mirrorLocal(),
-      reportedCumulative: 2500n * E,
-    });
-    expect(first.marker).toBe(later.marker);
+    const afterAbsorptionAdvanced = byLabel(
+      { ...mirrorBooks(), reported: 5000n * E },
+      { ...mirrorLocal(), reportedCumulative: 5000n * E, localRetired: 260n * E },
+    );
+    // Base's retirement did not move, so the retirement run continues.
+    expect(afterAbsorptionAdvanced.retired?.marker).toBe(before.retired?.marker);
+  });
+
+  it('restarts a run when BASE advances that field', () => {
+    const a = byLabel(mirrorBooks(), { ...mirrorLocal(), localRetired: 260n * E });
+    const b = byLabel(
+      { ...mirrorBooks(), retired: 255n * E },
+      { ...mirrorLocal(), localRetired: 260n * E },
+    );
+    expect(a.retired?.marker).not.toBe(b.retired?.marker);
+  });
+
+  it('keys each run on Base’s side of that field alone', () => {
+    const a = byLabel(mirrorBooks(), { ...mirrorLocal(), reportedCumulative: 1500n * E });
+    const b = byLabel(mirrorBooks(), { ...mirrorLocal(), reportedCumulative: 2500n * E });
+    expect(a.absorption?.marker).toBe(b.absorption?.marker);
   });
 });
 
@@ -715,41 +753,35 @@ describe('checkHardInvariants — bucket coverage severity by chain role', () =>
   });
 });
 
-describe('reportLagCondition — all three cumulatives', () => {
-  it('holds when only RETIREMENT trails, with absorption level', () => {
+describe('reportLagConditions — per-cumulative coverage', () => {
+  const holds = (local: Partial<LocalLedger>) =>
+    Object.fromEntries(
+      reportLagConditions(mirrorBooks(), { ...mirrorLocal(), ...local }).map((c) => [
+        c.label,
+        c.holds,
+      ]),
+    );
+
+  it('detects a retirement-only lag, with absorption level', () => {
     // A quiet-but-settling chain: claims and forfeits advance while
     // absorption stays flat. Watching `reported` alone never started the
     // run even though Base was missing newer reports (Codex #1443 r1).
-    expect(
-      reportLagCondition(mirrorBooks(), {
-        ...mirrorLocal(),
-        localRetired: 260n * E,
-      }).holds,
-    ).toBe(true);
+    expect(holds({ localRetired: 260n * E }).retired).toBe(true);
   });
 
-  it('holds when only the RELEASE subset trails', () => {
-    expect(
-      reportLagCondition(mirrorBooks(), {
-        ...mirrorLocal(),
-        localReleased: 110n * E,
-      }).holds,
-    ).toBe(true);
+  it('detects a release-only lag', () => {
+    expect(holds({ localReleased: 110n * E }).released).toBe(true);
   });
 
-  it('keys the run on all three of Base’s figures', () => {
-    const marker = reportLagCondition(mirrorBooks(), {
-      ...mirrorLocal(),
-      localRetired: 260n * E,
-    }).marker;
-    expect(marker).toContain((250n * E).toString()); // base retired
-    expect(marker).toContain((100n * E).toString()); // base released
-    // Base advancing its retirement must end the run.
-    const advanced = reportLagCondition(
-      { ...mirrorBooks(), retired: 255n * E },
-      { ...mirrorLocal(), localRetired: 260n * E },
-    ).marker;
-    expect(advanced).not.toBe(marker);
+  it('detects an absorption-only lag', () => {
+    expect(holds({ reportedCumulative: 1500n * E }).absorption).toBe(true);
+  });
+
+  it('detects several at once, independently', () => {
+    const h = holds({ reportedCumulative: 1500n * E, localReleased: 110n * E });
+    expect(h.absorption).toBe(true);
+    expect(h.released).toBe(true);
+    expect(h.retired).toBe(false);
   });
 });
 
@@ -1169,5 +1201,47 @@ describe('readAlertRepeatSeconds — survives an unrelated bad knob', () => {
   it('falls back only when THIS setting is the bad one', () => {
     expect(readAlertRepeatSeconds({ ALERT_REPEAT_SECONDS: '0' } as never)).toBe(21_600);
     expect(readAlertRepeatSeconds({} as never)).toBe(21_600);
+  });
+});
+
+describe('redactDeliveryError — the pager credential must not reach the logs', () => {
+  // The Telegram endpoint embeds the bot token IN THE PATH
+  // (`/bot<token>/sendMessage`), so a fetch rejection or an error body
+  // echoing the request would write TG_OPS_BOT_TOKEN into Worker logs —
+  // precisely during a delivery failure, when the operator is most likely
+  // to be reading them. The general redactor never reached this module
+  // because it has no Env (Codex #1443 r5).
+  const TOKEN = '123456:AAH-BOTSECRET';
+
+  it('removes the token from a thrown fetch error', () => {
+    const out = redactDeliveryError(
+      `request to https://api.telegram.org/bot${TOKEN}/sendMessage failed`,
+      TOKEN,
+    );
+    expect(out).not.toContain('BOTSECRET');
+    expect(out).not.toContain(TOKEN);
+  });
+
+  it('removes the token from a non-2xx response body', () => {
+    const out = redactDeliveryError(
+      `{"ok":false,"description":"Unauthorized for bot${TOKEN}"}`,
+      TOKEN,
+    );
+    expect(out).not.toContain('BOTSECRET');
+  });
+
+  it('also strips url paths, catching a token this call does not know', () => {
+    const out = redactDeliveryError(
+      'proxied via https://relay.example.com/bot999:OTHERSECRET/sendMessage',
+      TOKEN,
+    );
+    expect(out).not.toContain('OTHERSECRET');
+    expect(out).toContain('relay.example.com');
+  });
+
+  it('leaves an ordinary failure message readable', () => {
+    expect(redactDeliveryError('429 Too Many Requests', TOKEN)).toBe(
+      '429 Too Many Requests',
+    );
   });
 });

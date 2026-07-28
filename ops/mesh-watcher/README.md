@@ -68,7 +68,11 @@ shortfalls are VPFI-scale, many orders of magnitude above the tolerance.
 
 ### ADVISORY — necessary, not sufficient
 
-These are labelled and non-paging on purpose.
+These are labelled and non-paging on purpose — and *actually* non-paging:
+they are delivered with Telegram notifications suppressed, so they land in
+the channel without buzzing anyone. A badge in the message text while the
+phone buzzes identically is how a deliberately non-sufficient signal
+trains an operator to mute the channel.
 
 **`stuck-settlement`** — a chain has recycled commitments outstanding
 while retirement stays flat across the window.
@@ -132,6 +136,14 @@ reports and its outstanding and availability books are stale. The stasis
 marker is Base's side of all three — including the chain's figures would
 reset the run every time the chain settled more, masking exactly the case
 this exists for.
+
+**`watcher-state-unavailable`** is the one CRITICAL finding that is not
+about the ledgers: the alert-state database could not be read. It matters
+because the hard invariants are computed *before* that read and are
+stateless, so a database outage must never discard a real ledger violation
+whose evidence is already in hand. On that path the windowed advisories are
+skipped for the tick and repeat-suppression is bypassed, so criticals go
+out unsuppressed rather than being lost.
 
 **`coverage-gap`** — a chain in `getExpectedSourceChainIds()` that this
 tick could not read (no committed deployment stanza, no RPC secret, or a
@@ -220,7 +232,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 38 mutations applied in turn, each
+The suite is **mutation-verified**: 48 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's

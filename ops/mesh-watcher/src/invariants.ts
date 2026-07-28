@@ -544,7 +544,13 @@ export function stuckSettlementCondition(
   if (local) {
     return {
       holds: local.outstandingRecycled > 0n,
-      marker: local.localRetired.toString(),
+      // Source kind is IN the marker: a chain that was unreachable for a
+      // while accumulates a Base-fallback run judged on the long window,
+      // and if its local retirement happened to equal Base's last
+      // reported figure the run would carry over and fire immediately on
+      // the short window at the first healthy read (Codex #1443 r5).
+      // Changing source therefore restarts the run by construction.
+      marker: `chain:${local.localRetired}`,
       source: 'chain',
       // Both figures are chain-local and move the instant it settles, so
       // the short window is meaningful here.
@@ -558,7 +564,7 @@ export function stuckSettlementCondition(
   // window made. Judged on the report-cycle window instead.
   return {
     holds: books.outstanding > 0n,
-    marker: books.retired.toString(),
+    marker: `base:${books.retired}`,
     source: 'base',
     windowKind: 'report-cycle',
   };
@@ -597,27 +603,31 @@ export function lagPairs(
  * masking exactly the case this is for, where the chain keeps working and
  * Base never hears about it.
  */
-export function reportLagCondition(
+export function reportLagConditions(
   books: BaseChainBooks,
   local: LocalLedger | undefined,
-): { holds: boolean; marker: string } {
-  if (!local) return { holds: false, marker: '' };
-  // ALL THREE cumulatives a day-close report carries, not absorption
-  // alone (Codex #1443 r1). A chain whose claims and forfeits advance
-  // while its absorption stays flat — a quiet-but-settling chain — would
-  // otherwise show Base level on `reported` and this signal would never
-  // start, even though Base is missing newer reports and its outstanding
-  // and availability books are stale.
-  const holds =
-    books.reported < local.reportedCumulative ||
-    books.retired < local.localRetired ||
-    books.released < local.localReleased;
-  return {
-    holds,
-    // Base's side alone, all three fields. Including the chain's figures
-    // would reset the run every time the chain absorbed or settled more —
-    // masking exactly the case this exists for, where the chain keeps
-    // working and Base never hears about it.
-    marker: `${books.reported}:${books.retired}:${books.released}`,
-  };
+): { label: string; holds: boolean; marker: string }[] {
+  // ONE RUN PER CUMULATIVE, not one run for all three (Codex #1443 r5).
+  // A single combined marker made partial ingestion failures
+  // undetectable: if retirement ingestion is broken while ordinary daily
+  // reports keep advancing absorption, the combined marker changes every
+  // report and resets the run long before the window elapses — so a
+  // permanently-stuck `retired` never fires, and `commit-identity` stays
+  // green too because Base's retirement and outstanding both simply sit
+  // still. Tracking each independently is what keeps that case visible.
+  //
+  // Each run's marker is BASE's side of that one field, so the chain
+  // absorbing or settling more cannot reset a run that is about Base
+  // failing to hear about it.
+  if (!local) {
+    return lagLabels.map((label) => ({ label, holds: false, marker: '' }));
+  }
+  return lagPairs(books, local).map((p) => ({
+    label: p.label,
+    holds: p.behind,
+    marker: p.base.toString(),
+  }));
 }
+
+/** Stable label set, so a streak row keeps its identity across ticks. */
+export const lagLabels = ['absorption', 'retired', 'released'] as const;
