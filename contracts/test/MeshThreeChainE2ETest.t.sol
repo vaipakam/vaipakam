@@ -23,6 +23,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MeshBusMessenger} from "./mocks/MeshBusMessenger.sol";
+import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 
 /**
  * @title  MeshThreeChainE2ETest
@@ -328,9 +329,16 @@ contract MeshThreeChainE2ETest is Test {
         uint256 chainId,
         uint256 dayId,
         address who,
-        uint256 total
+        uint256 lenderTotal,
+        uint256 borrowerTotal
     ) private {
-        _mut(chainId).setDailyLenderInterest(dayId, who, total, total);
+        _mut(chainId).setDailyLenderInterest(dayId, who, lenderTotal, lenderTotal);
+        _mut(chainId).setDailyBorrowerInterest(
+            dayId, who, borrowerTotal, borrowerTotal
+        );
+        // Clear AFTER both sides: each single-chain seeder stamps
+        // `knownGlobalSet`, and on a mirror that pair must arrive from
+        // Base's broadcast (see the note on the caller).
         if (chainId != BASE) {
             _mut(chainId).setKnownGlobalDailyInterest(dayId, 0, 0, false);
         }
@@ -344,9 +352,16 @@ contract MeshThreeChainE2ETest is Test {
     ///      would then satisfy every per-chain assertion in this suite. With
     ///      ARB at twice OP, a mis-routed packet is detectable.
     function _seedAllInterest(uint256 dayId) private {
-        _seedInterest(ARB, dayId, alice, 2e18);
-        _seedInterest(OP, dayId, alice, 1e18);
-        _seedInterest(BASE, dayId, alice, 1e18);
+        // FOUR pairwise-distinct totals across two chains and two sides. The
+        // asymmetry is load-bearing twice over: unequal per-chain figures make
+        // a cross-wired fan-out detectable, and unequal per-SIDE figures make
+        // a dropped or cross-wired BORROWER leg detectable. Seeding the lender
+        // side alone left every borrower report and every borrower funding
+        // field at zero, so half the two-sided path was untested and any
+        // regression in it passed the whole suite (Codex #1439 r3).
+        _seedInterest(ARB, dayId, alice, 2e18, 3e18);
+        _seedInterest(OP, dayId, alice, 1e18, 5e18);
+        _seedInterest(BASE, dayId, alice, 1e18, 7e18);
     }
 
     /// @dev One complete mesh cycle for `dayId`: every chain closes the day
@@ -414,10 +429,45 @@ contract MeshThreeChainE2ETest is Test {
         // mirror would still reserve exactly what Base computed under the
         // corrupted key (Codex #1439 r2). Asserting the ingested numerators
         // is what detects cross-attributed demand.
-        (uint256 arbLender,) = _agg().getChainReport(5, uint32(ARB));
-        (uint256 opLender,) = _agg().getChainReport(5, uint32(OP));
+        (uint256 arbLender, uint256 arbBorrower) =
+            _agg().getChainReport(5, uint32(ARB));
+        (uint256 opLender, uint256 opBorrower) =
+            _agg().getChainReport(5, uint32(OP));
         assertEq(arbLender, 2e18, "Base ingested ARB's own lender total");
         assertEq(opLender, 1e18, "Base ingested OP's own lender total");
+        assertEq(arbBorrower, 3e18, "Base ingested ARB's own borrower total");
+        assertEq(opBorrower, 5e18, "Base ingested OP's own borrower total");
+
+        // The BORROWER half of the funding actually reaches each mirror. A
+        // regression dropping or cross-wiring the borrower leg leaves these
+        // at zero (or swapped) while every lender-side figure stays correct.
+        RewardBroadcastV2 memory arbPacket =
+            bus.broadcastAt(bus.findBroadcast(5, ARB));
+        RewardBroadcastV2 memory opPacket =
+            bus.broadcastAt(bus.findBroadcast(5, OP));
+        assertGt(arbPacket.freshBorrowerHalf, 0, "ARB funded on the borrower side");
+        assertGt(opPacket.freshBorrowerHalf, 0, "OP funded on the borrower side");
+        assertGt(
+            arbPacket.recycledBorrowerHalfEquiv,
+            0,
+            "ARB's borrower leg carries recycled funding"
+        );
+        assertGt(
+            opPacket.recycledBorrowerHalfEquiv,
+            0,
+            "OP's borrower leg carries recycled funding"
+        );
+        // NOTE on what these halves can and cannot discriminate — worth
+        // recording, because the obvious assertion is the wrong one. The
+        // fresh halves are a GLOBAL schedule floor (identical for every
+        // destination AND both sides), and the recycled halves are
+        // GLOBAL-EQUIVALENT figures, so neither varies per chain: here all
+        // four fresh halves are 10082.19 and all four recycled halves are
+        // ~95, differing only by rounding dust. Per-chain differentiation
+        // lives in `recycleConsume` — the local funding instruction —
+        // asserted above as `arbInstructed != opInstructed`. A cross-wired
+        // BORROWER leg is therefore caught by the demand-attribution
+        // assertions, not by comparing these halves.
 
         // Base's reservation ledger for each chain opens at the full
         // instruction (nothing retired yet).
@@ -540,8 +590,22 @@ contract MeshThreeChainE2ETest is Test {
             _agg().getChainRecycledLedger(uint32(ARB));
         assertEq(reportedAfterDrop, 0, "ARB's day-4 report never landed");
 
-        // ARB absorbs more, then day 5 closes and DOES land.
-        _mut(ARB).setRecycleBucketRaw(BUCKET_SEED + 25_000 ether);
+        // SPEND part of the bucket, then absorb more. This separation is the
+        // whole point: a `closeDay` that regressed from reporting the lifetime
+        // `creditedCumulative` to reporting the LIVE `recycleBucket` would be
+        // indistinguishable while nothing had ever been consumed, because the
+        // two figures coincide (Codex #1439 r3). After a spend they diverge —
+        // `creditedCumulative = recycleBucket + paidOutRecycled` — so only a
+        // report carrying the true lifetime figure can heal Base to the value
+        // asserted below.
+        _mut(ARB).consumeRecycleRaw(40_000 ether);
+        assertEq(
+            _mut(ARB).getRecycleBucketRaw(),
+            BUCKET_SEED - 40_000 ether,
+            "the spend really left the bucket"
+        );
+        // Absorb 25k on top of the POST-SPEND balance.
+        _mut(ARB).setRecycleBucketRaw(BUCKET_SEED - 40_000 ether + 25_000 ether);
         _seedAllInterest(5);
         _allChainsCloseDay(5);
         _deliverPendingReports();
@@ -556,10 +620,17 @@ contract MeshThreeChainE2ETest is Test {
 
         (uint256 reportedAfterHeal,,,) =
             _agg().getChainRecycledLedger(uint32(ARB));
+        // The LIVE bucket is now 485k while the LIFETIME cumulative is 525k.
+        // Base must heal to the cumulative, not to the balance.
+        assertEq(
+            _mut(ARB).getRecycleBucketRaw(),
+            BUCKET_SEED - 40_000 ether + 25_000 ether,
+            "live bucket sits BELOW the lifetime cumulative"
+        );
         assertEq(
             reportedAfterHeal,
             BUCKET_SEED + 25_000 ether,
-            "one later report restored the FULL cumulative, backlog included"
+            "one later report restored the FULL lifetime cumulative, backlog and spend included"
         );
     }
 
@@ -749,6 +820,18 @@ contract MeshThreeChainE2ETest is Test {
             outstandingAfterD6,
             "mirror's own reservation matches Base's model of it"
         );
+        // ...and that agreement is only evidence if day 6 was computed from
+        // ARB's OWN demand. Cross-attributing just the day-6 figures would
+        // make Base size ARB's extra instruction from OP's demand and then
+        // broadcast that same wrong amount back to ARB — so both models drift
+        // TOGETHER and the equality above still holds (Codex #1439 r3). The
+        // day-5 report assertions elsewhere do not cover day 6.
+        (uint256 arbL6, uint256 arbB6) = _agg().getChainReport(6, uint32(ARB));
+        (uint256 opL6, uint256 opB6) = _agg().getChainReport(6, uint32(OP));
+        assertEq(arbL6, 2e18, "day 6 lender demand attributed to ARB");
+        assertEq(arbB6, 3e18, "day 6 borrower demand attributed to ARB");
+        assertEq(opL6, 1e18, "day 6 lender demand attributed to OP");
+        assertEq(opB6, 5e18, "day 6 borrower demand attributed to OP");
 
         // THE DECAY. Base's reservation for ARB only grows, and what Base
         // believes ARB can self-fund only shrinks.
