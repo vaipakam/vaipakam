@@ -61,6 +61,15 @@ export interface LocalLedger {
   outstandingFresh: bigint;
   armedFromDay: bigint;
   paidOutRecycled: bigint;
+  /**
+   * Timestamp of the block this snapshot was read at.
+   *
+   * Load-bearing for the cross-chain checks: a mirror RPC serving a stale
+   * head makes Base legitimately AHEAD of the figures read here, which
+   * `base-ahead-of-chain` would report as ledger corruption (Codex #1443
+   * r6). An unacceptably stale snapshot is treated as unreadable instead.
+   */
+  observedAt: bigint;
 }
 
 export interface MeshObservation {

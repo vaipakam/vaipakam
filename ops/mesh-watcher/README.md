@@ -203,6 +203,15 @@ half of cron observations — forging the very evidence the operator acts
 on. An unset `WATCHER_RUN_TOKEN` therefore **closes** the endpoint rather
 than opening it.
 
+**A stale RPC head is not a ledger fault.** Load-balanced RPC fleets
+routinely serve a slightly old head, and when they do, Base legitimately
+holds *newer* figures than the snapshot just read — which
+`base-ahead-of-chain` would otherwise report as ledger corruption. A
+chain whose latest block is older than `STALE_LOCAL_SECONDS` (default
+300) is therefore treated exactly like an unreadable one: surfaced as a
+coverage gap naming the age, and excluded from every cross-chain
+comparison for that tick. The Base-side checks still run.
+
 **One chain's failure does not blind the rest.** Chain reads are collected
 independently, so a transient RPC error on one mirror leaves the others
 evaluated and delivered, with the failed one surfaced as a coverage gap.
@@ -239,7 +248,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 51 mutations applied in turn, each
+The suite is **mutation-verified**: 52 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's

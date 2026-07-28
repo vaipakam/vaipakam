@@ -108,5 +108,15 @@
 
     // Seconds before an unchanged, still-firing alert is reposted.
     "ALERT_REPEAT_SECONDS": "21600",
+
+    // How old a chain's latest block may be before its snapshot is
+    // treated as UNREADABLE rather than compared against Base. Load-
+    // balanced RPC fleets routinely serve a slightly stale head, and when
+    // they do Base legitimately holds newer figures than the snapshot —
+    // which the cross-chain checks would otherwise report as ledger
+    // corruption. 300s sits well above ordinary head lag and clock skew,
+    // and well below both the 15-minute tick and the day-close cadence.
+    // Raise it only for a chain that genuinely idles between blocks.
+    "STALE_LOCAL_SECONDS": "300",
   },
 }

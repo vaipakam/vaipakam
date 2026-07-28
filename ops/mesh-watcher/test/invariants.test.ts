@@ -108,6 +108,7 @@ function mirrorLocal(): LocalLedger {
     outstandingFresh: 0n,
     armedFromDay: 3n,
     paidOutRecycled: 800n * E,
+    observedAt: 1_800_000_000n,
   };
 }
 
@@ -123,6 +124,7 @@ function canonicalLocal(): LocalLedger {
     outstandingFresh: 50n * E,
     armedFromDay: 3n,
     paidOutRecycled: 0n,
+    observedAt: 1_800_000_000n,
   };
 }
 
@@ -1296,5 +1298,48 @@ describe('makeBaseRedactor — the failure paths know every RPC secret', () => {
   it('ignores env keys that are not RPC_<chainId>', () => {
     expect(configuredRpcChainIds({ RPC_NOTANUMBER: 'x' } as never)).toEqual([]);
     expect(configuredRpcChainIds({ RPC_8453: '' } as never)).toEqual([]);
+  });
+});
+
+describe('stale-head freshness gate', () => {
+  // A mirror RPC serving a stale head makes Base legitimately AHEAD of
+  // what was just read, which `base-ahead-of-chain` would report as
+  // ledger corruption — a false CRITICAL, the worst output this Worker
+  // has (Codex #1443 r6). Too-stale snapshots are treated as unreadable.
+  it('defaults to a limit above ordinary head lag and far below the tick', () => {
+    const c = readConfig({ CANONICAL_CHAIN_ID: '84532' } as never);
+    expect(c.staleLocalSeconds).toBeGreaterThanOrEqual(60);
+    expect(c.staleLocalSeconds).toBeLessThan(900); // the cron interval
+  });
+
+  it('is overridable for a chain that idles between blocks', () => {
+    expect(
+      readConfig({
+        CANONICAL_CHAIN_ID: '84532',
+        STALE_LOCAL_SECONDS: '1800',
+      } as never).staleLocalSeconds,
+    ).toBe(1800);
+  });
+
+  it('an EXCLUDED chain skips the cross-chain checks entirely', () => {
+    // The exclusion path is the same one an unreachable chain takes, so
+    // this pins the property that matters: with no local snapshot, a
+    // Base copy that leads produces NO finding rather than a critical.
+    expect(
+      codes({
+        mirrorLocal: null,
+        mirror: { reported: 99_999n * E, attributed: 0n, avail: 99_699n * E },
+      }),
+    ).toEqual([]);
+  });
+
+  it('and the same state WITH a fresh snapshot does fire', () => {
+    // Proves the previous test is about the exclusion, not about the
+    // state being benign.
+    expect(
+      codes({
+        mirror: { reported: 99_999n * E, attributed: 0n, avail: 99_699n * E },
+      }),
+    ).toEqual(['base-ahead-of-chain']);
   });
 });

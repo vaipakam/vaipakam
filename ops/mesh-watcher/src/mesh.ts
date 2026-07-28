@@ -102,7 +102,8 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalLedger> {
   // One block for this chain's whole tuple, for the same reason as the
   // Base-side reads: bucket coverage compares a balance against a
   // reservation that a single claim moves together.
-  const blockNumber = await target.client.getBlockNumber();
+  const block = await target.client.getBlock();
+  const blockNumber = block.number;
   const [custody, retirement, governor] = await Promise.all([
     readView<readonly [bigint, bigint, bigint]>(
       target.client,
@@ -138,6 +139,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalLedger> {
     outstandingFresh: governor[1],
     outstandingRecycled: governor[2],
     paidOutRecycled: governor[3],
+    observedAt: block.timestamp,
   };
 }
 
@@ -174,6 +176,7 @@ export async function observeMesh(
   );
 
   const redactBase = makeBaseRedactor(env);
+  const wallClockSeconds = Math.floor(Date.now() / 1000);
   const gaps: CoverageGap[] = [];
   if (expected.length === 0) {
     // Either this is not the canonical reward chain, or the mesh source
@@ -240,7 +243,24 @@ export async function observeMesh(
         return;
       }
       try {
-        locals.set(id, await readLocalLedger(target));
+        const ledger = await readLocalLedger(target);
+        // FRESHNESS GATE. A mirror RPC serving a stale head makes Base
+        // legitimately ahead of what we just read, and
+        // `base-ahead-of-chain` would report that as ledger corruption —
+        // a false CRITICAL, the worst thing this Worker can emit (Codex
+        // #1443 r6). Too-stale snapshots are treated exactly like an
+        // unreadable chain: surfaced as a coverage gap, and excluded from
+        // every cross-chain comparison. Base-side checks still run.
+        const ageSeconds = wallClockSeconds - Number(ledger.observedAt);
+        if (ageSeconds > config.staleLocalSeconds) {
+          gaps.push({
+            chainId: id,
+            reason: 'stale-head',
+            detail: `chain ${id} is serving a stale head — its latest block is ${ageSeconds}s old (limit ${config.staleLocalSeconds}s), so Base can legitimately hold newer figures than this snapshot. Cross-chain comparisons for this chain are SKIPPED this tick rather than reported as ledger faults.`,
+          });
+          return;
+        }
+        locals.set(id, ledger);
       } catch (err) {
         // REDACT: viem puts the request URL in its error messages, and
         // provider URLs carry the API key in the path or query. This

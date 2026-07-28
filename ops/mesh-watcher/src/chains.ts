@@ -37,7 +37,7 @@ export interface ChainTarget {
 /** Why a chain in the expected set could not be read this tick. */
 export interface CoverageGap {
   chainId: number;
-  reason: 'no-deployment' | 'no-rpc';
+  reason: 'no-deployment' | 'no-rpc' | 'stale-head';
   detail: string;
 }
 

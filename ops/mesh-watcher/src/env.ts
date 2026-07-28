@@ -61,6 +61,12 @@ export interface Env {
   /** Var. Seconds before an already-notified alert of the same identity
    *  is sent again. Default 21600 (6h). */
   ALERT_REPEAT_SECONDS?: string;
+  /** Var. How old a chain's latest block may be before its snapshot is
+   *  treated as unreadable rather than compared against Base. Default 300
+   *  (5 min): comfortably above ordinary RPC head lag and clock skew, far
+   *  below the day-close cadence, and far below the 15-minute tick. Raise
+   *  it only for a chain that genuinely idles between blocks. */
+  STALE_LOCAL_SECONDS?: string;
 
   // ── Per-chain RPC endpoints (secrets — they carry API keys) ──────────
   //
@@ -79,6 +85,7 @@ export interface Config {
   reportLagWindowTicks: number;
   bucketCoverageToleranceWei: bigint;
   alertRepeatSeconds: number;
+  staleLocalSeconds: number;
   telegram: { token: string; chatId: string } | null;
 }
 
@@ -172,6 +179,7 @@ export function readConfig(env: Env): Config {
       'BUCKET_COVERAGE_TOLERANCE_WEI',
     ),
     alertRepeatSeconds: readAlertRepeatSeconds(env),
+    staleLocalSeconds: intVar(env.STALE_LOCAL_SECONDS, 300, 'STALE_LOCAL_SECONDS'),
     telegram: readTelegramTarget(env),
   };
 }
