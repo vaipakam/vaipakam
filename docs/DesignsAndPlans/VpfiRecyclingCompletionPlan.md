@@ -575,6 +575,19 @@ GovernanceRunbook gains a recycling section, executed in order:
    > state persists after the backlog plateaus, so a growth-keyed alert
    > would clear precisely when the condition became permanent.
    >
+   > **That condition is NECESSARY, not SUFFICIENT** (Codex #1439 r8). A
+   > perfectly healthy mirror that simply had no claims, forfeits or
+   > expiries fall due in the window satisfies both halves: commitments
+   > legitimately stay reserved until a user or horizon event retires
+   > them. Alerting on it alone produces persistent false alarms on a
+   > quiet chain. **B4-c must add a settlement-EXPECTED qualifier** —
+   > either evidence that settlement was eligible or attempted (claimable
+   > entries present, or an RL-3 horizon reached) or a deadline tied to
+   > when retirement was due. Choosing that qualifier is B4-c design
+   > work, not a wording fix, and is tracked on #1442; this paragraph
+   > deliberately stops at the necessary condition rather than
+   > pre-committing the alarm.
+   >
    > *Evidence, stated precisely.* The DECAY is proved end-to-end by
    > `test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability` in
    > `MeshThreeChainE2ETest`: two armed days, strictly growing
