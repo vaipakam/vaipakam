@@ -56,11 +56,32 @@ export interface BaseChainBooks {
  * it is fresh; a check that does not have one cannot compare at all.
  */
 declare const FreshSnapshot: unique symbol;
-/** The brand key, exported so `mesh.ts` can mint validated snapshots. */
+/** The brand key. */
 export type FRESH = typeof FreshSnapshot;
-/** Vouch for a snapshot's freshness. Call ONLY after checking its age. */
-export function markFresh(raw: Omit<LocalLedger, FRESH>): LocalLedger {
-  return raw as LocalLedger;
+
+/**
+ * The ONLY way to obtain a `LocalLedger` — and it performs the check
+ * itself rather than trusting the caller to have done it.
+ *
+ * An earlier version was an unchecked cast whose contract lived in a
+ * comment ("call only after checking the age"), which is the same
+ * enforcement-by-convention this brand exists to replace: any module
+ * could brand a stale snapshot and compile (#1443 r9). Validation now
+ * lives inside the constructor, so a caller cannot skip it without
+ * noticing — there is no code path from a raw read to a branded value
+ * that does not pass through this age check.
+ *
+ * @returns The branded snapshot, or `null` when it is too old to compare
+ *          against another chain.
+ */
+export function asFreshSnapshot(
+  raw: Omit<LocalLedger, FRESH>,
+  wallClockSeconds: number,
+  maxAgeSeconds: number,
+): { fresh: LocalLedger } | { stale: true; ageSeconds: number } {
+  const ageSeconds = wallClockSeconds - Number(raw.observedAt);
+  if (ageSeconds > maxAgeSeconds) return { stale: true, ageSeconds };
+  return { fresh: raw as LocalLedger };
 }
 
 /** A chain's OWN ledger, read from that chain's Diamond. */
@@ -115,9 +136,20 @@ export interface MeshObservation {
    *
    * Membership is itself the freshness guarantee — a chain that could not
    * be read, or whose head was too old to compare against Base, is absent
-   * here and present in `gaps`. Cross-chain checks read only this map.
+   * here and present in `gaps`. **Cross-chain** checks read only this map.
    */
   freshLocals: ReadonlyMap<number, LocalLedger>;
+  /**
+   * EVERY own-ledger read, fresh or not.
+   *
+   * Same-chain checks belong here rather than in `freshLocals`: bucket
+   * coverage compares two figures read from ONE pinned block, so it is
+   * valid however old that block is, and discarding a stale snapshot
+   * downgraded a genuine CRITICAL to a silent coverage advisory (#1443
+   * r9). Freshness is a precondition for comparing ACROSS chains, not
+   * for comparing within one.
+   */
+  allLocals: ReadonlyMap<number, Omit<LocalLedger, FRESH>>;
   gaps: readonly CoverageGap[];
 }
 
@@ -432,7 +464,7 @@ export function checkHardInvariants(
   // dust can make a day's consumption exceed its recorded commitment by
   // wei-scale amounts. An exact `bucket >= outstanding` would therefore
   // fire on healthy dust. Real shortfalls are VPFI-scale.
-  for (const local of obs.freshLocals.values()) {
+  for (const local of obs.allLocals.values()) {
     if (local.bucket + bucketToleranceWei >= local.outstandingRecycled) continue;
 
     // Severity splits by chain role, and the split is load-bearing.

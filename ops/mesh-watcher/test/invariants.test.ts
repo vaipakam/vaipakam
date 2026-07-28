@@ -31,7 +31,7 @@ import {
 import {
   checkHardInvariants,
   expectedAvail,
-  markFresh,
+  asFreshSnapshot,
   fmt,
   lagPairs,
   reportLagConditions,
@@ -39,6 +39,7 @@ import {
   stuckSettlementCondition,
   type BaseChainBooks,
   type LocalLedger,
+  type FRESH,
   type MeshObservation,
 } from '../src/invariants';
 import {
@@ -70,6 +71,15 @@ const TOLERANCE = 1_000_000_000_000_000n; // 1e15 wei — the shipped default
 
 const CANONICAL = 84532;
 const MIRROR = 42161;
+const NOW = 1_800_000_100;
+const MAX_AGE = 300;
+
+/** Brand a fixture through the real validating constructor. */
+function fresh(raw: Omit<LocalLedger, FRESH>): LocalLedger {
+  const v = asFreshSnapshot(raw, NOW, MAX_AGE);
+  if ('stale' in v) throw new Error('fixture is stale — adjust NOW/observedAt');
+  return v.fresh;
+}
 
 /** Books for the mirror — internally consistent by construction. */
 function mirrorBooks(): BaseChainBooks {
@@ -101,8 +111,9 @@ function canonicalBooks(): BaseChainBooks {
   };
 }
 
+/** Raw fixture; branded through the validating constructor below. */
 function mirrorLocal(): LocalLedger {
-  return markFresh({
+  return fresh({
     chainId: MIRROR,
     custodyRelocated: 0n,
     bucket: 200n * E,
@@ -118,7 +129,7 @@ function mirrorLocal(): LocalLedger {
 }
 
 function canonicalLocal(): LocalLedger {
-  return markFresh({
+  return fresh({
     chainId: CANONICAL,
     custodyRelocated: 0n,
     bucket: 800n * E,
@@ -142,11 +153,16 @@ interface Overrides {
 
 function observation(o: Overrides = {}): MeshObservation {
   const freshLocals = new Map<number, LocalLedger>();
+  const allLocals = new Map<number, Omit<LocalLedger, FRESH>>();
   if (o.mirrorLocal !== null) {
-    freshLocals.set(MIRROR, markFresh({ ...mirrorLocal(), ...o.mirrorLocal }));
+    const l = fresh({ ...mirrorLocal(), ...o.mirrorLocal });
+    freshLocals.set(MIRROR, l);
+    allLocals.set(MIRROR, l);
   }
   if (o.canonicalLocal !== null) {
-    freshLocals.set(CANONICAL, markFresh({ ...canonicalLocal(), ...o.canonicalLocal }));
+    const l = fresh({ ...canonicalLocal(), ...o.canonicalLocal });
+    freshLocals.set(CANONICAL, l);
+    allLocals.set(CANONICAL, l);
   }
   return {
     canonicalChainId: CANONICAL,
@@ -156,6 +172,7 @@ function observation(o: Overrides = {}): MeshObservation {
       { ...mirrorBooks(), ...o.mirror },
     ],
     freshLocals,
+    allLocals,
     gaps: [],
   };
 }
@@ -1544,5 +1561,69 @@ describe('sendOpsMessage — bounded delivery', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe('asFreshSnapshot — the brand VALIDATES, it does not just cast', () => {
+  // An earlier version was an unchecked cast whose contract lived in a
+  // comment, which is the enforcement-by-convention the brand exists to
+  // replace: any module could brand a stale snapshot and compile
+  // (#1443 r9). The check now lives inside the constructor.
+  const raw = (observedAt: bigint): Omit<LocalLedger, FRESH> => ({
+    ...mirrorLocal(),
+    observedAt,
+  });
+
+  it('accepts a snapshot inside the age limit', () => {
+    const v = asFreshSnapshot(raw(BigInt(NOW - 10)), NOW, MAX_AGE);
+    expect('fresh' in v).toBe(true);
+  });
+
+  it('REJECTS one beyond it, and reports the age', () => {
+    const v = asFreshSnapshot(raw(BigInt(NOW - MAX_AGE - 1)), NOW, MAX_AGE);
+    expect('stale' in v).toBe(true);
+    if ('stale' in v) expect(v.ageSeconds).toBe(MAX_AGE + 1);
+  });
+
+  it('accepts exactly at the boundary', () => {
+    expect('fresh' in asFreshSnapshot(raw(BigInt(NOW - MAX_AGE)), NOW, MAX_AGE)).toBe(true);
+  });
+
+  it('accepts a head slightly ahead of our clock (skew)', () => {
+    expect('fresh' in asFreshSnapshot(raw(BigInt(NOW + 5)), NOW, MAX_AGE)).toBe(true);
+  });
+});
+
+describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
+  // Freshness is a precondition for comparing ACROSS chains. Bucket
+  // coverage compares two figures from ONE pinned block, so it stays
+  // valid however old that block is — discarding the snapshot downgraded
+  // a genuine CRITICAL to a silent coverage advisory (#1443 r9).
+  function staleObservation(): MeshObservation {
+    const stale = { ...mirrorLocal(), bucket: 0n } as Omit<LocalLedger, FRESH>;
+    return {
+      canonicalChainId: CANONICAL,
+      expectedChainIds: [CANONICAL, MIRROR],
+      books: [canonicalBooks(), mirrorBooks()],
+      // Absent from freshLocals — too old to compare against Base...
+      freshLocals: new Map(),
+      // ...but present here, because its own two figures are comparable.
+      allLocals: new Map([[MIRROR, stale]]),
+      gaps: [],
+    };
+  }
+
+  it('still fires CRITICAL from a stale snapshot', () => {
+    const findings = checkHardInvariants(staleObservation(), TOLERANCE);
+    const bucket = findings.filter((f) => f.code === 'bucket-coverage');
+    expect(bucket).toHaveLength(1);
+    expect(bucket[0]?.severity).toBe('critical');
+  });
+
+  it('and the cross-chain checks stay skipped for it', () => {
+    const codes = new Set(
+      checkHardInvariants(staleObservation(), TOLERANCE).map((f) => f.code),
+    );
+    expect(codes.has('base-ahead-of-chain')).toBe(false);
   });
 });

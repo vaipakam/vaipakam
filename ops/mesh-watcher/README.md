@@ -177,7 +177,7 @@ again, not merely absent today.
 | `signal.ts` | Windowed-signal mistakes (6 findings, 4 rounds) | One abstraction owns the rules: an observation is `holds` / `clear` / **`unknown`**, and unknown never erases a run; the marker carries the observation's source; a non-counting observation cannot advance a window. |
 | `finding.ts` | Colliding dedup keys and wrong fingerprints (6 findings, 4 rounds) | Identity is **required and separate from presentation**. Callers state a `variant` and the `identity` figures; key and fingerprint are derived. The rendered `detail` never participates, so a counter or an age in the body cannot defeat repeat-suppression. |
 | `health.ts` | `ok` growing a conjunct per round (4 findings) | Health is a **list of preconditions**; adding one is a list entry, not an edit to a boolean expression. The tick reports *which* precondition failed, and the HTTP status is derived rather than restated. |
-| Fresh-snapshot brand | A CRITICAL firing on healthy state | A local snapshot carries a **type brand** only the validated constructor can apply, so a cross-chain check cannot be written against an unverified one. Attempting it is a compile error. |
+| Fresh-snapshot brand | A CRITICAL firing on healthy state | A local snapshot carries a **type brand**, and the only constructor that applies it **performs the age check itself** — a caller cannot skip validation, and a cross-chain check cannot be written against an unverified snapshot. Attempting it is a compile error. |
 
 ## Design notes
 
@@ -220,6 +220,14 @@ while ordinary commitments were outstanding to manufacture a
 half of cron observations — forging the very evidence the operator acts
 on. An unset `WATCHER_RUN_TOKEN` therefore **closes** the endpoint rather
 than opening it.
+
+**Freshness gates comparisons ACROSS chains, not within one.** Bucket
+coverage compares two figures read from a single pinned block, so it stays
+valid however old that block is and runs on every snapshot. Only the
+cross-chain comparisons require a validated one. The canonical chain is
+gated the same way: an RPC stuck on an old head answers every call
+happily, and Base merely trailing the mirrors is not a hard violation, so
+nothing else would have noticed the watcher reading stale Base books.
 
 **A stale RPC head is not a ledger fault.** Load-balanced RPC fleets
 routinely serve a slightly old head, and when they do, Base legitimately
@@ -277,7 +285,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 63 mutations applied in turn, each
+The suite is **mutation-verified**: 65 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's
@@ -295,6 +303,17 @@ this Worker is detection-only, so a red here informs rather than blocks a
 contracts merge.
 
 ---
+
+### Known limitation
+
+The relocated-custody exclusion is checked only *relatively* — Base's
+accepted cumulative never exceeding the chain's own. If
+`creditedCumulative` itself regressed to stop netting relocated custody
+out, both sides would show the same inflated figure and every check would
+stay green. Closing that needs either a view exposing the pre-exclusion
+cumulative or reconciliation against the event stream; tracked as
+**#1446**. Two smaller gaps are tracked as **#1444** (strict canonical
+bucket coverage) and **#1445** (endpoint chain-identity verification).
 
 ## Deploying — operator steps
 

@@ -17,9 +17,10 @@ import {
   type CoverageGap,
 } from './chains';
 import type { Config, Env } from './env';
-import { makeBaseRedactor, makeRedactor } from './redact';
+import { classify, describeFailure } from './errors';
+import { makeBaseRedactor } from './redact';
 import {
-  markFresh,
+  asFreshSnapshot,
   type BaseChainBooks,
   type FRESH,
   type LocalLedger,
@@ -172,7 +173,17 @@ export async function observeMesh(
 
   // Every Base-side read this tick shares one block, so the per-chain
   // books cannot straddle a transaction that updates them together.
-  const canonicalBlock = await canonical.client.getBlockNumber();
+  //
+  // And that block must be RECENT. A canonical RPC stuck on an old head
+  // answers every call happily, so the watcher would read stale Base
+  // books — and a Base that merely trails the mirrors is not a hard
+  // violation, so nothing else would notice. It could then report
+  // `ok: true` while blind to a new accounting violation or a
+  // newly-wired chain (#1443 r9).
+  const canonicalHead = await canonical.client.getBlock();
+  const canonicalBlock = canonicalHead.number;
+  const wallClockSeconds = Math.floor(Date.now() / 1000);
+  const canonicalAge = wallClockSeconds - Number(canonicalHead.timestamp);
 
   const expected = await readView<readonly number[]>(
     canonical.client,
@@ -182,9 +193,15 @@ export async function observeMesh(
     canonicalBlock,
   );
 
-  const redactBase = makeBaseRedactor(env);
-  const wallClockSeconds = Math.floor(Date.now() / 1000);
   const gaps: CoverageGap[] = [];
+  if (canonicalAge > config.staleLocalSeconds) {
+    gaps.push({
+      chainId: config.canonicalChainId,
+      reason: 'stale-head',
+      source: 'base-books',
+      detail: `the CANONICAL chain is serving a stale head — its latest block is ${canonicalAge}s old (limit ${config.staleLocalSeconds}s). Every Base-side figure below was read from that block, so newly-introduced violations and newly-wired chains may not be visible yet.`,
+    });
+  }
   if (expected.length === 0) {
     // Either this is not the canonical reward chain, or the mesh source
     // set was never configured. Both make every per-chain check below
@@ -237,14 +254,15 @@ export async function observeMesh(
       chainId: id,
       reason: 'no-rpc',
       source: 'base-books',
-      detail: redactBase(
-        `Base-side books unreadable for chain ${id}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
-      ),
+      // CLASSIFIED, never forwarded — the classification boundary has to
+      // hold here too, or a credential in an encoding the redactor does
+      // not know still reaches the alert (#1443 r9).
+      detail: describeFailure(classify(result.reason, `Base-side books for chain ${id}`)),
     });
   });
 
-  const redact = makeRedactor(env, chainIds);
   const freshLocals = new Map<number, LocalLedger>();
+  const allLocals = new Map<number, Omit<LocalLedger, FRESH>>();
   await Promise.all(
     chainIds.map(async (id) => {
       const target = id === canonical.chainId ? canonical : resolveChain(env, id);
@@ -261,19 +279,25 @@ export async function observeMesh(
         // #1443 r6). Too-stale snapshots are treated exactly like an
         // unreadable chain: surfaced as a coverage gap, and excluded from
         // every cross-chain comparison. Base-side checks still run.
-        const ageSeconds = wallClockSeconds - Number(ledger.observedAt);
-        if (ageSeconds > config.staleLocalSeconds) {
+        // Retained regardless of age: same-chain checks (bucket
+        // coverage) compare figures from ONE pinned block and stay valid
+        // however old it is.
+        allLocals.set(id, ledger);
+        const verdict = asFreshSnapshot(
+          ledger,
+          wallClockSeconds,
+          config.staleLocalSeconds,
+        );
+        if ('stale' in verdict) {
           gaps.push({
             chainId: id,
             reason: 'stale-head',
             source: 'own-ledger',
-            detail: `chain ${id} is serving a stale head — its latest block is ${ageSeconds}s old (limit ${config.staleLocalSeconds}s), so Base can legitimately hold newer figures than this snapshot. Cross-chain comparisons for this chain are SKIPPED this tick rather than reported as ledger faults.`,
+            detail: `chain ${id} is serving a stale head — its latest block is ${verdict.ageSeconds}s old (limit ${config.staleLocalSeconds}s), so Base can legitimately hold newer figures than this snapshot. CROSS-CHAIN comparisons for this chain are skipped this tick; same-chain checks still run.`,
           });
           return;
         }
-        // SINGLE VALIDATED CONSTRUCTION POINT — the only place a
-        // `LocalLedger` is minted, and only for a snapshot proven fresh.
-        freshLocals.set(id, markFresh(ledger));
+        freshLocals.set(id, verdict.fresh);
       } catch (err) {
         // REDACT: viem puts the request URL in its error messages, and
         // provider URLs carry the API key in the path or query. This
@@ -282,9 +306,7 @@ export async function observeMesh(
           chainId: id,
           reason: 'no-rpc',
           source: 'own-ledger',
-          detail: redact(
-            `own-ledger read failed on chain ${id}: ${err instanceof Error ? err.message : String(err)}`,
-          ),
+          detail: describeFailure(classify(err, `own-ledger read on chain ${id}`)),
         });
       }
     }),
@@ -295,6 +317,7 @@ export async function observeMesh(
     expectedChainIds: chainIds,
     books,
     freshLocals,
+    allLocals,
     gaps,
   };
 }
