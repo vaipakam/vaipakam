@@ -19,6 +19,7 @@ import {
   advanceStreak,
   checkHardInvariants,
   fmt,
+  lagPairs,
   reportLagCondition,
   stuckSettlementCondition,
   type Finding,
@@ -153,11 +154,20 @@ export async function runTick(env: Env): Promise<TickSummary> {
           title: 'Base has not accepted a newer report from this chain',
           // Figures only, for the same reason as the stuck signal above.
           fingerprintSource: `lag:${books.reported}:${books.retired}:${books.released}:${local.reportedCumulative}:${local.localRetired}:${local.localReleased}`,
+          // Every pair a day-close report carries, each marked with
+          // whether it is the one lagging. Showing absorption alone
+          // printed `behind by = 0` whenever retirement or release was
+          // what actually triggered the advisory — omitting the only
+          // evidence of the lag (Codex #1443 r2).
           detail:
-            `Base's accepted cumulative trails the chain's own and has not moved for ${lagOutcome.next?.streak ?? 0} consecutive observations\n` +
-            `  base accepted = ${fmt(books.reported)}\n` +
-            `  chain reports = ${fmt(local.reportedCumulative)}\n` +
-            `  behind by     = ${fmt(local.reportedCumulative - books.reported)}`,
+            `Base's accepted cumulatives trail the chain's own and have not moved for ${lagOutcome.next?.streak ?? 0} consecutive observations\n` +
+            lagPairs(books, local)
+              .map(
+                (p) =>
+                  `  ${p.behind ? 'BEHIND' : '  ok  '} ${p.label.padEnd(11)} base = ${fmt(p.base)} | chain = ${fmt(p.chain)}` +
+                  (p.behind ? `\n           behind by = ${fmt(p.chain - p.base)}` : ''),
+              )
+              .join('\n'),
         });
       }
     }

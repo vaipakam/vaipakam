@@ -502,6 +502,26 @@ export function stuckSettlementCondition(
 }
 
 /**
+ * The three Base/chain cumulative pairs a day-close report carries, each
+ * flagged with whether Base is behind on it.
+ *
+ * Exported so the alert can render what ACTUALLY lags. Printing the
+ * absorption pair alone showed `behind by = 0` whenever retirement or
+ * release was the trigger (Codex #1443 r2) — the same evidence-deletion
+ * failure the wei-exact formatter fixes elsewhere.
+ */
+export function lagPairs(
+  books: BaseChainBooks,
+  local: LocalLedger,
+): { label: string; base: bigint; chain: bigint; behind: boolean }[] {
+  return [
+    { label: 'absorption', base: books.reported, chain: local.reportedCumulative },
+    { label: 'retired', base: books.retired, chain: local.localRetired },
+    { label: 'released', base: books.released, chain: local.localReleased },
+  ].map((p) => ({ ...p, behind: p.base < p.chain }));
+}
+
+/**
  * Report-lag condition — ADVISORY.
  *
  * Base's accepted cumulative sits BELOW the chain's own and has not moved

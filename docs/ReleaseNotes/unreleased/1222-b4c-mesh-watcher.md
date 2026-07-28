@@ -57,7 +57,11 @@ unpinned read could straddle a transaction and page a violation that never
 existed — a false critical being the worst thing a watcher can produce.
 The manual trigger is authenticated and fail-closed, because running a
 tick is not a read-only probe and an unauthenticated caller could have
-forged the very evidence the operator acts on.
+forged the very evidence the operator acts on. A second round tightened
+what the alerts actually show — a report-lag message now names which of
+the three reported cumulatives is behind, rather than always printing the
+absorption pair and, when retirement was the trigger, a difference of
+zero.
 
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the

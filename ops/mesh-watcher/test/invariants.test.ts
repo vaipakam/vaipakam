@@ -33,6 +33,7 @@ import {
   checkHardInvariants,
   expectedAvail,
   fmt,
+  lagPairs,
   reportLagCondition,
   satSub,
   stuckSettlementCondition,
@@ -900,5 +901,72 @@ describe('readTelegramTarget — independent of the rest of the config', () => {
         STUCK_WINDOW_TICKS: '0',
       } as never),
     ).toThrow(/STUCK_WINDOW_TICKS/);
+  });
+});
+
+describe('lagPairs — the alert must show what ACTUALLY lags', () => {
+  // Rendering the absorption pair alone printed `behind by = 0` whenever
+  // retirement or release was the trigger, leaving the operator with no
+  // evidence of the lag that fired the advisory (Codex #1443 r2).
+  it('flags only the cumulative that is behind', () => {
+    const pairs = lagPairs(mirrorBooks(), {
+      ...mirrorLocal(),
+      localRetired: 260n * E,
+    });
+    expect(pairs.map((p) => [p.label, p.behind])).toEqual([
+      ['absorption', false],
+      ['retired', true],
+      ['released', false],
+    ]);
+  });
+
+  it('carries both sides of every pair, not just the lagging one', () => {
+    const pairs = lagPairs(mirrorBooks(), mirrorLocal());
+    expect(pairs).toHaveLength(3);
+    expect(pairs.every((p) => !p.behind)).toBe(true);
+    const released = pairs.find((p) => p.label === 'released');
+    expect(released?.base).toBe(100n * E);
+    expect(released?.chain).toBe(100n * E);
+  });
+
+  it('flags several at once', () => {
+    const pairs = lagPairs(mirrorBooks(), {
+      ...mirrorLocal(),
+      reportedCumulative: 2000n * E,
+      localReleased: 150n * E,
+    });
+    expect(pairs.filter((p) => p.behind).map((p) => p.label)).toEqual([
+      'absorption',
+      'released',
+    ]);
+  });
+});
+
+describe('base-self-inert scope', () => {
+  it('ignores absorption, attribution and capacity under the canonical id', () => {
+    // Base records its OWN chain in the ledger at day-close, so these are
+    // legitimately non-zero under its own id — only the per-chain
+    // COMMITMENT fields must stay zero (Codex #1443 r2).
+    expect(
+      codes({
+        canonical: {
+          reported: 9_999n * E,
+          attributed: 9_999n * E,
+          avail: 9_999n * E,
+        },
+        // Base's own copy can never exceed its own local ledger — that is
+        // `base-ahead-of-chain`, a different (and real) fault. Raise the
+        // local figure alongside so this test isolates self-inertness.
+        canonicalLocal: { reportedCumulative: 9_999n * E },
+      }),
+    ).toEqual([]);
+  });
+
+  it('still fires on a per-chain commitment booked against itself', () => {
+    expect(
+      codes({
+        canonical: { consumed: 1n * E, outstanding: 1n * E, avail: 499n * E },
+      }),
+    ).toEqual(['base-self-inert']);
   });
 });
