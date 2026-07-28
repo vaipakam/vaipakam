@@ -101,7 +101,14 @@ instead would conflate stuck settlement with a stalled report pipeline,
 which is the separate signal below.
 
 **`report-lag`** — any of Base's accepted cumulatives for a chain sits
-below that chain's own *and has not moved* across the window. Trailing
+below that chain's own *and has not moved* across the window. Its window
+is far larger than the stuck-settlement one (default 130 ticks ≈ 32.5h,
+against 6): these cumulatives travel only in the chain's **day-close
+report**, so between reports Base is legitimately behind and frozen for a
+whole day, and a window shorter than one report cycle would alarm daily on
+a perfectly healthy chain. The floor is one day (86400s) plus the
+finalization grace (14400s) plus CCIP delivery, divided by the cron
+interval — **retune it if you change the cron**. Trailing
 alone is normal (reports are periodic); trailing while frozen means the
 report path stalled, which is what the B2-d2 zeroed-chain manual-budget
 path exists to reconcile.
@@ -117,8 +124,17 @@ this exists for.
 
 **`coverage-gap`** — a chain in `getExpectedSourceChainIds()` that this
 tick could not read (no committed deployment stanza, no RPC secret, or a
-failed call). Always surfaced: a watcher that quietly narrows its scope
-reports "all clear" for chains it never looked at.
+failed call), **or** a misconfigured source set. Always surfaced: a
+watcher that quietly narrows its scope reports "all clear" for chains it
+never looked at.
+
+Two configuration cases ride this signal. An **empty** expected set means
+`CANONICAL_CHAIN_ID` points at a mirror, or the set was never configured —
+either way every per-chain check below it is vacuous. And a set that does
+not **contain the canonical chain itself** is reported even though the
+watcher still reads Base's books: `finalizeDay` sums the global
+denominators over exactly that list, so a canonical id missing from it
+silently drops Base's own activity out of every day's totals.
 
 ---
 
@@ -243,10 +259,17 @@ undeployed.
    ```
 
    `POST /run` executes one tick synchronously and returns its summary —
-   `chainsObserved`, `critical`, `advisory`, `coverageGaps`, `sent`. A
-   first run showing `coverageGaps > 0` means a mirror is wired on-chain
-   but has no RPC secret yet; fix that before relying on the alerts, or
-   the mesh is only partly watched.
+   `ok`, `deliveryConfigured`, `chainsObserved`, `critical`, `advisory`,
+   `coverageGaps`, `sent`.
+
+   Two things to check on that first run. `deliveryConfigured: false` means
+   the Telegram target is unset and every future alert would go into
+   transient Worker logs and reach no one — the tick reports `ok: false`
+   for exactly that reason, so a green first run genuinely means the pager
+   works. And `coverageGaps > 0` means a chain is wired on-chain but not
+   readable (no RPC secret, no deployment stanza) or the source set is
+   misconfigured; fix it before relying on the alerts, or the mesh is only
+   partly watched.
 
 The 15-minute cron slot is the one freed by retiring
 `vaipakam-lz-watcher`, whose LayerZero surface the T-068 CCIP migration

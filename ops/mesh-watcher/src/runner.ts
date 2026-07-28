@@ -39,6 +39,17 @@ const STUCK_CAVEAT =
 
 export interface TickSummary {
   ok: boolean;
+  /**
+   * Whether an alert DESTINATION is configured.
+   *
+   * Surfaced because alert delivery is the whole point of the Worker: a
+   * tick that found nothing and a tick whose findings went into transient
+   * Worker logs look identical otherwise, so the documented post-deploy
+   * `POST /run` check could not tell a working pager from one that will
+   * discard every future alert (Codex #1443 r3). A tick is never `ok`
+   * while this is false.
+   */
+  deliveryConfigured: boolean;
   chainsObserved: number;
   critical: number;
   advisory: number;
@@ -225,8 +236,8 @@ export async function runTick(env: Env): Promise<TickSummary> {
         if (statement) writes.push(statement);
       }
     } else {
-      console.warn(
-        'TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset — findings logged only, not delivered',
+      console.error(
+        'DEGRADED: TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset — findings are being written to transient Worker logs and delivered to NO ONE. The tick reports ok:false and deliveryConfigured:false until this is set.',
       );
       for (const f of findings) {
         console.warn(`[${f.severity}] ${f.code} ${chainLabel(f.chainId)}: ${f.title}`);
@@ -248,8 +259,13 @@ export async function runTick(env: Env): Promise<TickSummary> {
     if (writes.length > 0) await env.DB.batch(writes);
 
     const critical = findings.filter((f) => f.severity === 'critical').length;
+    const deliveryConfigured = config.telegram !== null;
     return {
-      ok: critical === 0,
+      // Undeliverable alerts are not a healthy state, however clean the
+      // ledgers are — so an unconfigured destination fails the tick and
+      // the post-deploy verification with it.
+      ok: critical === 0 && deliveryConfigured,
+      deliveryConfigured,
       chainsObserved: obs.books.length,
       critical,
       advisory: findings.length - critical,
@@ -316,6 +332,7 @@ export async function runTick(env: Env): Promise<TickSummary> {
 
     return {
       ok: false,
+      deliveryConfigured: telegram !== null,
       chainsObserved: 0,
       critical: 0,
       advisory: 0,

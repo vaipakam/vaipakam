@@ -61,7 +61,17 @@ forged the very evidence the operator acts on. A second round tightened
 what the alerts actually show — a report-lag message now names which of
 the three reported cumulatives is behind, rather than always printing the
 absorption pair and, when retirement was the trigger, a difference of
-zero.
+zero. A third round caught the report-lag threshold being far too tight:
+those cumulatives travel only in a chain's day-close report, so between
+reports the canonical side is legitimately behind and frozen for a whole
+day, and the original hour-and-a-half window would have alarmed daily on
+a perfectly healthy chain. It now spans more than a full report cycle
+including the finalization grace. The same round added two things a first
+deployment needs: the tick reports whether an alert destination is even
+configured and fails if it is not — undeliverable alerts are not a
+healthy state however clean the ledgers are — and a source set that omits
+the canonical chain is now reported rather than silently papered over,
+since the day's global totals are summed over exactly that set.
 
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the

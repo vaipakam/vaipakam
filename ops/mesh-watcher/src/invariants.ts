@@ -406,7 +406,7 @@ export function checkHardInvariants(
       detail: isCanonical
         ? `bucket + tolerance < outstanding reservations on the CANONICAL chain\n` +
           figures +
-          `\n\nEXPECTED CAUSE — releasing a permanently-failed remittance restores the reservation but not the bucket, by design: those tokens sit locked in the CCIP pool, outside Diamond custody. Reconcile against the released reservations (status 3) before treating this as a fault; the shortfall should equal their recycled totals.`
+          `\n\nEXPECTED CAUSE — releasing a permanently-failed remittance restores the reservation but not the bucket, by design: those tokens sit locked in the CCIP pool, outside Diamond custody. Reconcile against the released reservations (status 3) before treating this as a fault.\n\nA release RAISES the deficit by its recycled total; it does not make the deficit EQUAL that total. Pre-release bucket headroom absorbs part of it and later credits absorb more, so the released totals BOUND and EXPLAIN this shortfall rather than matching it. Suspect a fault only if the shortfall EXCEEDS the released totals.`
         : `bucket + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
           figures,
     });

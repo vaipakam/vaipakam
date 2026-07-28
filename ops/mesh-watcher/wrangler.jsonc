@@ -81,9 +81,22 @@
 
     // ── Windowed-advisory tuning ────────────────────────────────────
     // Consecutive observations a condition must hold, unchanged, before
-    // its advisory fires. 6 x 15min = 1.5h of uninterrupted stasis.
+    // its advisory fires.
+    //
+    // Stuck settlement: 6 x 15min = 1.5h of uninterrupted stasis. Fine at
+    // this size because retirement is read from the CHAIN'S OWN ledger,
+    // which moves the instant it settles anything — no report cycle sits
+    // between the event and the observation.
     "STUCK_WINDOW_TICKS": "6",
-    "REPORT_LAG_WINDOW_TICKS": "6",
+
+    // Report lag: MUCH larger, and deliberately so. Those cumulatives
+    // travel only in the chain's DAY-CLOSE report, so between reports
+    // Base is legitimately behind and frozen for a whole day — a window
+    // shorter than one report cycle makes a perfectly healthy chain alarm
+    // daily. Floor = day (86400s) + finalization grace (14400s) + CCIP
+    // delivery, over the cron interval: ~112 ticks at 15 minutes. 130 is
+    // ~32.5h. RETUNE IF YOU CHANGE THE CRON above.
+    "REPORT_LAG_WINDOW_TICKS": "130",
 
     // Slack on the bucket-coverage check, in VPFI wei. Non-zero on
     // purpose: `LibVpfiRecycle.consume` floors the bucket at zero rather

@@ -38,9 +38,18 @@ export interface Env {
    *  and FLAT retirement before the (advisory) stuck-settlement signal
    *  fires. Default 6. */
   STUCK_WINDOW_TICKS?: string;
-  /** Var. Consecutive observations where Base's accepted cumulative for a
-   *  chain trails that chain's own ledger before the (advisory) report-lag
-   *  signal fires. Default 6. */
+  /** Var. Consecutive observations where Base's accepted cumulatives for a
+   *  chain trail that chain's own ledger before the (advisory) report-lag
+   *  signal fires.
+   *
+   *  Default 130, and the size is NOT arbitrary: these cumulatives travel
+   *  only in the chain's DAY-CLOSE report, so between reports Base is
+   *  legitimately behind and frozen for a whole day. The window must
+   *  exceed one full report cycle or a perfectly healthy chain alarms
+   *  every day (Codex #1443 r3). Floor = day (86400s) + finalization
+   *  grace (14400s) + CCIP delivery, over the cron interval: at 15-minute
+   *  ticks that is ~112, so 130 (~32.5h) leaves headroom. RETUNE THIS if
+   *  you change the cron interval. */
   REPORT_LAG_WINDOW_TICKS?: string;
   /** Var. Absolute VPFI-wei slack allowed on the bucket-coverage check.
    *  See `invariants.ts` — `LibVpfiRecycle.consume` deliberately floors
@@ -137,7 +146,7 @@ export function readConfig(env: Env): Config {
     stuckWindowTicks: intVar(env.STUCK_WINDOW_TICKS, 6, 'STUCK_WINDOW_TICKS'),
     reportLagWindowTicks: intVar(
       env.REPORT_LAG_WINDOW_TICKS,
-      6,
+      130, // ~32.5h at the 15-minute cron — see the field's doc comment
       'REPORT_LAG_WINDOW_TICKS',
     ),
     bucketCoverageToleranceWei: bigintVar(

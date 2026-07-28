@@ -182,6 +182,20 @@ export async function observeMesh(
     });
   }
 
+  // The canonical chain must itself be IN the expected set — `finalizeDay`
+  // sums the global denominators over exactly that list, so a canonical id
+  // missing from it silently drops Base's own activity out of every day's
+  // totals. Injecting it unconditionally for the reads below would make
+  // the watcher look like it covers Base while masking precisely that
+  // misconfiguration (Codex #1443 r3), so say so first, then inject.
+  if (expected.length > 0 && !expected.map(Number).includes(config.canonicalChainId)) {
+    gaps.push({
+      chainId: config.canonicalChainId,
+      reason: 'no-deployment',
+      detail: `the canonical chain ${config.canonicalChainId} is NOT in getExpectedSourceChainIds() — finalizeDay sums the global denominators over that list, so Base's own activity is being dropped from every day's totals. Its books are still read below, but the on-chain source set needs fixing.`,
+    });
+  }
+
   // Base's own chain id is included on purpose: its per-chain books must
   // be inert, and `base-self-inert` is the check that proves it.
   const chainIds = [

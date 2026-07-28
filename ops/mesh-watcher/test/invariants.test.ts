@@ -970,3 +970,34 @@ describe('base-self-inert scope', () => {
     ).toEqual(['base-self-inert']);
   });
 });
+
+describe('report-lag window sizing', () => {
+  it('defaults to more than one full day-close cycle', () => {
+    // These cumulatives travel only in the day-close report, so between
+    // reports Base is legitimately behind and frozen for a whole day. A
+    // window shorter than one cycle alarms daily on a healthy chain
+    // (Codex #1443 r3). Floor = (86400 day + 14400 grace) / 900 tick.
+    const { reportLagWindowTicks } = readConfig({
+      CANONICAL_CHAIN_ID: '84532',
+    } as never);
+    const CRON_SECONDS = 900;
+    expect(reportLagWindowTicks * CRON_SECONDS).toBeGreaterThan(86_400 + 14_400);
+  });
+
+  it('is much larger than the stuck-settlement window', () => {
+    // Stuck settlement reads the chain's OWN retirement, which moves the
+    // instant it settles — no report cycle sits between event and
+    // observation, so it can stay short.
+    const c = readConfig({ CANONICAL_CHAIN_ID: '84532' } as never);
+    expect(c.reportLagWindowTicks).toBeGreaterThan(c.stuckWindowTicks * 10);
+  });
+
+  it('still honours an explicit override', () => {
+    expect(
+      readConfig({
+        CANONICAL_CHAIN_ID: '84532',
+        REPORT_LAG_WINDOW_TICKS: '200',
+      } as never).reportLagWindowTicks,
+    ).toBe(200);
+  });
+});
