@@ -171,6 +171,7 @@ jobs:
     outputs:
       contracts: ${{ steps.diff.outputs.contracts }}
       workspaces: ${{ steps.diff.outputs.workspaces }}
+      mesh_watcher: ${{ steps.diff.outputs.mesh_watcher }}
     steps:
       - name: Checkout (shallow — diff range only)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -195,6 +196,10 @@ jobs:
             echo "Schedule/manual trigger — treating everything as changed"
             echo "contracts=true" >> "$GITHUB_OUTPUT"
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
+            # Every output the jobs below gate on must be set here, or the
+            # weekly safety net silently skips that job while reporting
+            # green (Codex #1443 r3).
+            echo "mesh_watcher=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -239,6 +244,20 @@ jobs:
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
             echo "workspaces=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # ops/mesh-watcher — a standalone npm package (NOT a pnpm
+          # workspace member), so the `workspaces` job cannot reach it.
+          # It also depends on `packages/contracts/src/abis/` +
+          # `deployments.json`, which it imports RELATIVELY as its
+          # single source of truth: a facet re-export that changes a
+          # watched view's shape must therefore re-run this job, or the
+          # ABI-shape assertion would only fail at the first live tick.
+          MESH_WATCHER_RE='^(ops/mesh-watcher/|packages/contracts/src/(abis/|deployments\.json)|\.github/workflows/ci\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$MESH_WATCHER_RE"; then
+            echo "mesh_watcher=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mesh_watcher=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── analyze-jstypescript ──────────────────────────────────────────────
@@ -818,3 +837,55 @@ jobs:
       # gating against. Adding the vitest step would have shipped a red CI on
       # day one. Tracked separately; once #85 is fixed, add the
       # `pnpm -r test` step back here in a follow-up PR.
+
+  # ── ops/mesh-watcher ──────────────────────────────────────────────────
+  # The VPFI recycling mesh invariant watcher (#1222 M3 B4-c). A
+  # standalone npm package rather than a pnpm workspace member — it
+  # deploys on its own trust boundary (own D1, ops-internal Telegram bot),
+  # the same reason ops/lz-watcher sat outside the workspace — so the
+  # `workspaces` job above cannot reach it.
+  #
+  # Worth a job of its own because the Worker's whole value is that its
+  # checks are correct: the vitest suite is mutation-verified (each check
+  # has a test that goes red when that check is removed), and the ABI
+  # shape assertion is what stops a facet re-export from silently
+  # relabelling a ledger figure. Both are cheap — roughly a minute.
+  #
+  # NOT a required status check: this Worker is detection-only and moves
+  # no funds, so a red here should inform rather than block a contracts
+  # merge. The merge gate stays `contracts-fast` + Slither.
+  mesh-watcher:
+    name: ops/mesh-watcher (typecheck + tests)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.mesh_watcher == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: ops/mesh-watcher
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ops/mesh-watcher/package-lock.json
+
+      # `--ignore-scripts`: nothing in this dependency tree needs a
+      # postinstall, and skipping them keeps a transitive package from
+      # running arbitrary code in CI.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: ./node_modules/.bin/tsc --noEmit
+
+      - name: Unit tests
+        run: ./node_modules/.bin/vitest run

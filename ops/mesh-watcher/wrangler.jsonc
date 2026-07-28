@@ -1,0 +1,122 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-mesh-watcher",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Cron — every 15 minutes.
+  //
+  // The checks are detection-only: nothing here moves funds or pauses a
+  // contract, and the invariants it watches change at day-close cadence,
+  // not per block. 15 minutes gives a windowed advisory a meaningful
+  // multi-hour run at the default 6-observation window while keeping the
+  // per-tick RPC fan-out (roughly 1 + 3n reads on Base plus 3 per chain)
+  // modest. This slot is the one freed by retiring `vaipakam-lz-watcher`,
+  // whose LayerZero surface the T-068 CCIP migration and the #687-A
+  // securities excision had between them made entirely dead.
+  "triggers": {
+    "crons": ["*/15 * * * *"],
+  },
+  // D1 — windowed-advisory streak state + alert repeat suppression.
+  //
+  // SEPARATE database from the shared `vaipakam-archive` that
+  // apps/{indexer,keeper,agent} bind to, for the same trust-boundary
+  // reason `ops/lz-watcher` had its own: this Worker is internal ops
+  // only, and co-locating its alerting bookkeeping with user-facing
+  // data conflates two different audit trails. The consequence is that
+  // CLAUDE.md's "all schema changes land under apps/indexer/migrations"
+  // rule does not apply here — that rule owns the shared archive, and
+  // `migrations/` in this directory owns this database.
+  //
+  // OPERATOR STEP — not yet created. Run, from this directory:
+  //   wrangler d1 create vaipakam-mesh-alerts-db
+  //   # paste the returned id into `database_id` below
+  //   npm run db:migrate
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vaipakam-mesh-alerts-db",
+      "database_id": "",
+      "remote": false,
+    },
+  ],
+  // Secrets (set via `wrangler secret put`, never committed):
+  //   WATCHER_RUN_TOKEN — bearer token for the manual `POST /run`
+  //                      trigger. REQUIRED to use that endpoint at all:
+  //                      while it is unset the endpoint returns 401 and
+  //                      only the cron can drive a tick. A tick is not a
+  //                      read-only probe (it burns RPC quota, advances
+  //                      the streak counters and sends Telegram) and a
+  //                      workers.dev URL is public, so the endpoint is
+  //                      fail-CLOSED. `openssl rand -hex 32`.
+  //   TG_OPS_BOT_TOKEN — the OPS-internal Telegram bot, shared with
+  //                      ops/offchain-data-archive. DELIBERATELY NOT
+  //                      `TG_BOT_TOKEN`, which is the user-facing bot
+  //                      apps/keeper + apps/agent post with. See
+  //                      CLAUDE.md, "Two Telegram bots".
+  //   RPC_<chainId>    — one per reward chain, keyed by EVM chain id
+  //                      (RPC_8453, RPC_42161, RPC_84532, ...). Keying
+  //                      by chain id means a mirror newly wired into
+  //                      `getExpectedSourceChainIds()` needs a secret
+  //                      and no code change. Use a dedicated provider —
+  //                      public RPCs rate-limit these read fan-outs into
+  //                      uselessness. A chain with no RPC configured is
+  //                      reported as a COVERAGE GAP, never silently
+  //                      skipped.
+  "vars": {
+    // Numeric chat id of the internal ops channel. Not a secret — a chat
+    // id alone grants nothing without the bot token.
+    "TG_OPS_CHAT_ID": "",
+
+    // EVM chain id of the canonical REWARD chain (Base 8453 / Base
+    // Sepolia 84532). The MIRROR set is deliberately NOT configured
+    // here: it is read from the canonical Diamond's
+    // `getExpectedSourceChainIds()` every tick, so the watcher's scope
+    // follows the on-chain wiring rather than a second list that can
+    // drift from it.
+    "CANONICAL_CHAIN_ID": "84532",
+
+    // ── Windowed-advisory tuning ────────────────────────────────────
+    // Consecutive observations a condition must hold, unchanged, before
+    // its advisory fires.
+    //
+    // Stuck settlement: 6 x 15min = 1.5h of uninterrupted stasis. Fine at
+    // this size because retirement is read from the CHAIN'S OWN ledger,
+    // which moves the instant it settles anything — no report cycle sits
+    // between the event and the observation.
+    "STUCK_WINDOW_TICKS": "6",
+
+    // Report lag: MUCH larger, and deliberately so. Those cumulatives
+    // travel only in the chain's DAY-CLOSE report, so between reports
+    // Base is legitimately behind and frozen for a whole day — a window
+    // shorter than one report cycle makes a perfectly healthy chain alarm
+    // daily. Floor = day (86400s) + finalization grace (14400s) + CCIP
+    // delivery, over the cron interval: ~112 ticks at 15 minutes. 130 is
+    // ~32.5h. RETUNE IF YOU CHANGE THE CRON above.
+    "REPORT_LAG_WINDOW_TICKS": "130",
+
+    // Slack on the bucket-coverage check, in VPFI wei. Non-zero on
+    // purpose: `LibVpfiRecycle.consume` floors the bucket at zero rather
+    // than reverting, because bounded cap-trim dust can make a day's
+    // consumption exceed its recorded commitment by wei-scale amounts,
+    // so an exact comparison would fire on healthy rounding. 1e15 =
+    // 0.001 VPFI — far above that dust, far below any real shortfall.
+    "BUCKET_COVERAGE_TOLERANCE_WEI": "1000000000000000",
+
+    // Seconds before an unchanged, still-firing alert is reposted.
+    "ALERT_REPEAT_SECONDS": "21600",
+
+    // How old a chain's latest block may be before its snapshot is
+    // treated as UNREADABLE rather than compared against Base. Load-
+    // balanced RPC fleets routinely serve a slightly stale head, and when
+    // they do Base legitimately holds newer figures than the snapshot —
+    // which the cross-chain checks would otherwise report as ledger
+    // corruption. 300s sits well above ordinary head lag and clock skew,
+    // and well below both the 15-minute tick and the day-close cadence.
+    // Raise it only for a chain that genuinely idles between blocks.
+    "STALE_LOCAL_SECONDS": "300",
+  },
+}
