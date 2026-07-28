@@ -53,13 +53,18 @@ receiving chains. But a receiving chain cannot yet settle those
 commitments — paying, forfeiting and lapsing all run through a pricing
 path that is deliberately still blocked there. So it can set commitments
 aside and settle none of them: its settlement totals stay at zero and the
-canonical chain's view of its spare capacity is left permanently lower,
-by the growing stock of unsettled instructions, than it would otherwise
-be — while that chain's balance sits untouched. The defect is a
-shortfall rather than a falling number: a chain that keeps absorbing can
-raise its reported total faster than the instructions subtract from it,
-so what always holds is unsettled instructions piling up while nothing
-settles. The result recovers once
+canonical chain's view of its spare capacity is left permanently lower
+than it would otherwise be, while that chain's balance sits untouched.
+
+Two details of that are easy to state wrongly, and both were corrected
+during review. It is a shortfall rather than a falling number — a chain
+that keeps absorbing can raise its reported total faster than the
+instructions subtract from it. And the capacity that goes missing is
+specifically the capacity that would have come back from commitments
+ending WITHOUT a payout; a commitment that ends by paying restores
+nothing, because those tokens genuinely left. So a chain settling
+normally and a stuck one look alike on capacity alone, and only the
+unpaid-ending total tells them apart. The result recovers once
 the block lifts (the totals are cumulative, so the backlog closes), but
 for the whole window the platform would fund from the canonical chain
 what the receiving chain could have funded itself — exactly the waste the

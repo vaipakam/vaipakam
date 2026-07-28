@@ -493,7 +493,10 @@ GovernanceRunbook gains a recycling section, executed in order:
 
 1. **Arm the governor** (`armedFromDay`) once M1b gives absorption a
    live feed — **AND only while reward claims are Base-only / dark on
-   mirrors, or M3 (Phase B′) is complete.** Arming with active mirror
+   mirrors, or M3 (Phase B′) is complete AND #1434 has made mirror
+   settlement reachable** (the second gate below; the §4 dependency
+   graph carries it as the `SETTLE --> ARM` edge, so planning derived
+   from the graph cannot schedule `D*` straight off M3). Arming with active mirror
    claims and no mesh produces exactly the §2 failure set (mirror
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class
    drift becoming economically real). The runbook entry carries this
@@ -508,9 +511,9 @@ GovernanceRunbook gains a recycling section, executed in order:
    > price through the halted path, so its settlement totals stay at
    > zero. Base's spare-capacity figure for that chain
    > (`reported − (consumed − released)`) is then **permanently lower, by
-   > the accumulating stock of unretired instructions, than it would
-   > otherwise be** — while the chain's bucket is untouched, and the mesh
-   > degrades
+   > the accumulating stock of commitments that would have been RELEASED
+   > un-spent but cannot be** — while the chain's bucket is untouched, and
+   > the mesh degrades
    > toward "Base funds everything" — precisely the waste B3 removed
    > from Base's own books, re-entering through the mirror end. It is
    > recoverable (the totals are cumulative, so settlements after the
@@ -518,19 +521,38 @@ GovernanceRunbook gains a recycling section, executed in order:
    > it silently negates B3 for the whole window, and `D*` is
    > irreversible once set. **So: #1434 lands before `D*` is chosen.**
    >
-   > **State the defect as a SHORTFALL, not as a falling number** (Codex
-   > #1439 r2 + r5). Two qualifications, both load-bearing for anyone
-   > building monitoring against this paragraph: (a) an armed day only
-   > moves the figure if it creates a **nonzero mirror-local
-   > instruction** — `resolveAndStampDayFunding` books nothing when the
-   > coupled target or both global denominators are zero, and `_stampOne`
-   > leaves `chainConsumedRecycled` unchanged for a mirror with no local
-   > commitment; and (b) the absolute figure **need not fall at all**,
-   > because a mirror that keeps absorbing ratchets `reported` upward and
-   > can offset or exceed the instruction. **An alert keyed on
-   > "availability fell" is therefore wrong.** The correct signal is
-   > *outstanding instructions growing while retirement stays flat* —
-   > which is what B4-c should watch.
+   > **State the defect as a SHORTFALL, and scope it to RELEASES** (Codex
+   > #1439 r2, r5, r6). Three qualifications, all load-bearing for anyone
+   > building monitoring against this paragraph:
+   >
+   > (a) An armed day only moves the figure if it creates a **nonzero
+   > mirror-local instruction** — `resolveAndStampDayFunding` books
+   > nothing when the coupled target or both global denominators are
+   > zero, and `_stampOne` leaves `chainConsumedRecycled` unchanged for a
+   > mirror with no local commitment.
+   >
+   > (b) The absolute figure **need not fall at all**: a mirror that keeps
+   > absorbing ratchets `reported` upward and can offset or exceed the
+   > instruction. **An alert keyed on "availability fell" is wrong.**
+   >
+   > (c) **Only RELEASES restore capacity — not retirement generally.**
+   > `LibVpfiRecycle.mirrorAvailRecycled` is
+   > `reported − (consumed − released)` and never reads
+   > `chainRetiredRecycledCommit`. A claim that CONSUMES its commitment
+   > advances retirement while availability stays exactly as low, because
+   > those tokens really left the bucket — pinned by
+   > `test_E2E_ConsumedCommitmentRetiresWithoutRestoringAvailability`. So
+   > what #1434 unblocks, in capacity terms, is the forfeit/expiry
+   > **release** path specifically, and a flat-RETIREMENT signal would
+   > fire during perfectly healthy paid settlement.
+   >
+   > **The signal B4-c should watch** is therefore a persistent
+   > `consumed − released > 0` backlog on a chain whose `released` subset
+   > stays flat — NOT a growing backlog. Growth stops on its own once
+   > Base exhausts that mirror's reported capacity and `_stampOne` has
+   > nothing left to instruct; the stuck state persists after the backlog
+   > plateaus, so a growth-keyed alert would clear precisely when the
+   > condition became permanent.
    >
    > *Evidence, stated precisely.* The DECAY is proved end-to-end by
    > `test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability` in
@@ -621,6 +643,8 @@ flowchart LR
   M1b --> ARM[M7.1 arm governor]
   GATE{{"mesh/dark gate:<br/>mirrors dark OR M3 complete"}} --> ARM
   M3 -.-> GATE
+  M3 -.-> SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}}
+  SETTLE --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]
