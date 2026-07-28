@@ -498,6 +498,26 @@ GovernanceRunbook gains a recycling section, executed in order:
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class
    drift becoming economically real). The runbook entry carries this
    gate as a precondition checklist item, not prose.
+
+   > **SECOND ARMING GATE — #1434 must land first (added by M3 B4-b).**
+   > "M3 complete" is necessary but NOT sufficient. Arming is the single
+   > switch that starts creating per-chain commitment reservations on
+   > mirrors, and while the mirror armed-day pricing halt stands
+   > (#1434), a mirror can RESERVE what Base instructs but has no
+   > user-reachable way to RETIRE it — claims, forfeits and expiry all
+   > price through the halted path, so its settlement totals stay at
+   > zero. Base's spare-capacity figure for that chain
+   > (`reported − (consumed − released)`) then decays with every armed
+   > day while the chain's bucket is untouched, and the mesh degrades
+   > toward "Base funds everything" — precisely the waste B3 removed
+   > from Base's own books, re-entering through the mirror end. It is
+   > recoverable (the totals are cumulative, so settlements after the
+   > halt lifts close the backlog) rather than a permanent wedge, but
+   > it silently negates B3 for the whole window, and `D*` is
+   > irreversible once set. **So: #1434 lands before `D*` is chosen.**
+   > Proved end-to-end by
+   > `test_E2E_MirrorArmedDayReservationHasNoUserReachableRetirement`
+   > in `MeshThreeChainE2ETest`.
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
    are verified live: the free-channel pre-expiry notice (in-app
    notification center) **and the claim-center countdown surface**
