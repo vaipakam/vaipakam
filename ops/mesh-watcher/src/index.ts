@@ -9,6 +9,7 @@
  * Internal ops surface: ops Telegram bot, own D1, no user-facing output.
  */
 
+import { isAuthorized } from './auth';
 import type { Env } from './env';
 import { runTick } from './runner';
 
@@ -29,15 +30,38 @@ export default {
   /**
    * Manual trigger + health probe.
    *
-   * `GET /` returns the last tick's shape without running one; `POST /run`
-   * (or `GET /run`) executes a tick synchronously and returns its summary,
-   * which is how an operator verifies configuration after a deploy without
-   * waiting for the cron.
+   * `POST /run` executes a tick synchronously and returns its summary —
+   * how an operator verifies configuration after a deploy without waiting
+   * for the cron. `GET /` is an unauthenticated identity banner and
+   * nothing more.
+   *
+   * **`/run` is authenticated and fail-closed** (Codex #1443 r1). A
+   * `workers.dev` URL is public, and a tick is not a read-only probe: it
+   * performs the whole RPC fan-out, advances the D1 streak counters, and
+   * sends Telegram. An unauthenticated caller could drain the dedicated
+   * RPC quota, or fire six rapid requests while ordinary commitments were
+   * outstanding to manufacture a `stuck-settlement` advisory that is
+   * supposed to represent an hour and a half of cron observations —
+   * forging the very evidence the operator acts on. So a missing or
+   * mismatched token is rejected, and a MISSING `WATCHER_RUN_TOKEN`
+   * closes the endpoint rather than opening it.
    */
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === '/run') {
+      if (request.method !== 'POST') {
+        return Response.json(
+          { error: 'method not allowed — use POST /run' },
+          { status: 405, headers: { allow: 'POST' } },
+        );
+      }
+      if (!isAuthorized(request, env)) {
+        return Response.json(
+          { error: 'unauthorized' },
+          { status: 401, headers: { 'www-authenticate': 'Bearer' } },
+        );
+      }
       const summary = await runTick(env);
       return Response.json(summary, { status: summary.error ? 500 : 200 });
     }
@@ -45,7 +69,9 @@ export default {
     return Response.json({
       worker: 'vaipakam-mesh-watcher',
       purpose: 'VPFI recycling mesh ledger invariants (#1222 M3 B4-c)',
-      endpoints: { run: 'GET /run — execute one tick and return its summary' },
+      endpoints: {
+        run: 'POST /run — execute one tick and return its summary (requires Authorization: Bearer <WATCHER_RUN_TOKEN>)',
+      },
     });
   },
 } satisfies ExportedHandler<Env>;

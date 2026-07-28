@@ -44,6 +44,14 @@
     },
   ],
   // Secrets (set via `wrangler secret put`, never committed):
+  //   WATCHER_RUN_TOKEN — bearer token for the manual `POST /run`
+  //                      trigger. REQUIRED to use that endpoint at all:
+  //                      while it is unset the endpoint returns 401 and
+  //                      only the cron can drive a tick. A tick is not a
+  //                      read-only probe (it burns RPC quota, advances
+  //                      the streak counters and sends Telegram) and a
+  //                      workers.dev URL is public, so the endpoint is
+  //                      fail-CLOSED. `openssl rand -hex 32`.
   //   TG_OPS_BOT_TOKEN — the OPS-internal Telegram bot, shared with
   //                      ops/offchain-data-archive. DELIBERATELY NOT
   //                      `TG_BOT_TOKEN`, which is the user-facing bot

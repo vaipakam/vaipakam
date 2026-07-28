@@ -35,12 +35,21 @@ async function readView<T>(
   address: Address,
   functionName: string,
   args: readonly unknown[] = [],
+  blockNumber?: bigint,
 ): Promise<T> {
   const result = await client.readContract({
     address,
     abi: REWARD_AGGREGATOR_ABI,
     functionName,
     args: args as never,
+    // Pin to ONE block when the caller supplies it. Related ledger fields
+    // are written atomically on-chain but read over several RPC calls, so
+    // an unpinned read can straddle a funding or retirement transaction
+    // and observe, say, an old `consumed` beside a newly-incremented
+    // `outstanding` — paging a `commit-identity` violation that never
+    // existed (Codex #1443 r1). A false CRITICAL is the worst outcome
+    // this Worker can produce, so every related read shares a block.
+    ...(blockNumber === undefined ? {} : { blockNumber }),
   });
   return result as T;
 }
@@ -49,6 +58,7 @@ async function readView<T>(
 async function readBaseBooks(
   canonical: ChainTarget,
   chainId: number,
+  blockNumber: bigint,
 ): Promise<BaseChainBooks> {
   const [ledger, retirement, outstanding] = await Promise.all([
     readView<readonly [bigint, bigint, bigint, bigint]>(
@@ -56,18 +66,21 @@ async function readBaseBooks(
       canonical.diamond,
       'getChainRecycledLedger',
       [chainId],
+      blockNumber,
     ),
     readView<readonly [bigint, bigint]>(
       canonical.client,
       canonical.diamond,
       'getChainRecycledCommitRetirement',
       [chainId],
+      blockNumber,
     ),
     readView<bigint>(
       canonical.client,
       canonical.diamond,
       'getChainOutstandingRecycledCommit',
       [chainId],
+      blockNumber,
     ),
   ]);
 
@@ -85,21 +98,31 @@ async function readBaseBooks(
 
 /** A chain's own ledger — read against that chain's own Diamond. */
 async function readLocalLedger(target: ChainTarget): Promise<LocalLedger> {
+  // One block for this chain's whole tuple, for the same reason as the
+  // Base-side reads: bucket coverage compares a balance against a
+  // reservation that a single claim moves together.
+  const blockNumber = await target.client.getBlockNumber();
   const [custody, retirement, governor] = await Promise.all([
     readView<readonly [bigint, bigint, bigint]>(
       target.client,
       target.diamond,
       'getRecycleCustodyPosition',
+      [],
+      blockNumber,
     ),
     readView<readonly [bigint, bigint]>(
       target.client,
       target.diamond,
       'getLocalRecycledCommitRetirement',
+      [],
+      blockNumber,
     ),
     readView<readonly [bigint, bigint, bigint, bigint]>(
       target.client,
       target.diamond,
       'getGovernorCommitState',
+      [],
+      blockNumber,
     ),
   ]);
 
@@ -135,10 +158,16 @@ export async function observeMesh(
     );
   }
 
+  // Every Base-side read this tick shares one block, so the per-chain
+  // books cannot straddle a transaction that updates them together.
+  const canonicalBlock = await canonical.client.getBlockNumber();
+
   const expected = await readView<readonly number[]>(
     canonical.client,
     canonical.diamond,
     'getExpectedSourceChainIds',
+    [],
+    canonicalBlock,
   );
 
   const gaps: CoverageGap[] = [];
@@ -160,7 +189,7 @@ export async function observeMesh(
   ];
 
   const books = await Promise.all(
-    chainIds.map((id) => readBaseBooks(canonical, id)),
+    chainIds.map((id) => readBaseBooks(canonical, id, canonicalBlock)),
   );
 
   const locals = new Map<number, LocalLedger>();

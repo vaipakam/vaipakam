@@ -20,6 +20,12 @@ export interface Env {
   /** Var. Numeric chat id of the internal ops channel. */
   TG_OPS_CHAT_ID?: string;
 
+  /** Secret. Bearer token for the manual `POST /run` trigger. While
+   *  UNSET the endpoint is closed — a tick is not a read-only probe (it
+   *  burns RPC quota, advances streak counters and sends Telegram), and a
+   *  `workers.dev` URL is public. */
+  WATCHER_RUN_TOKEN?: string;
+
   // ── Mesh topology ────────────────────────────────────────────────────
   /** Var. EVM chain id of the canonical REWARD chain (Base / Base
    *  Sepolia). The mirror set is not configured here — it is read from
@@ -90,11 +96,32 @@ function bigintVar(raw: unknown, fallback: bigint, label: string): bigint {
 }
 
 /**
+ * Resolve the alert destination, INDEPENDENTLY of everything else.
+ *
+ * Deliberately its own function, and deliberately incapable of throwing.
+ * The failure path needs to page the operator precisely when the rest of
+ * the configuration is unparseable — and an earlier version derived the
+ * destination through {@link readConfig}, so a malformed
+ * `STUCK_WINDOW_TICKS` or `CANONICAL_CHAIN_ID` made the recovery path
+ * throw a second time, yield `null`, and leave the watcher silently blind
+ * with only a Cloudflare log to show for it (Codex #1443 r1).
+ */
+export function readTelegramTarget(
+  env: Env,
+): { token: string; chatId: string } | null {
+  const token = typeof env.TG_OPS_BOT_TOKEN === 'string' ? env.TG_OPS_BOT_TOKEN : '';
+  const chatId = typeof env.TG_OPS_CHAT_ID === 'string' ? env.TG_OPS_CHAT_ID : '';
+  return token && chatId ? { token, chatId } : null;
+}
+
+/**
  * Resolve the tick configuration.
  *
  * @throws When `CANONICAL_CHAIN_ID` is unset or unparseable — without it
  *         there is no mesh to walk, and guessing would be worse than
- *         failing loudly.
+ *         failing loudly. Callers recovering from this must resolve the
+ *         alert destination via {@link readTelegramTarget}, never by
+ *         calling this again.
  */
 export function readConfig(env: Env): Config {
   const canonicalRaw = env.CANONICAL_CHAIN_ID;
@@ -104,9 +131,6 @@ export function readConfig(env: Env): Config {
       'CANONICAL_CHAIN_ID must be set to the EVM chain id of the canonical reward chain (e.g. 8453 for Base, 84532 for Base Sepolia)',
     );
   }
-
-  const token = typeof env.TG_OPS_BOT_TOKEN === 'string' ? env.TG_OPS_BOT_TOKEN : '';
-  const chatId = typeof env.TG_OPS_CHAT_ID === 'string' ? env.TG_OPS_CHAT_ID : '';
 
   return {
     canonicalChainId,
@@ -126,7 +150,7 @@ export function readConfig(env: Env): Config {
       21_600,
       'ALERT_REPEAT_SECONDS',
     ),
-    telegram: token && chatId ? { token, chatId } : null,
+    telegram: readTelegramTarget(env),
   };
 }
 

@@ -41,7 +41,20 @@ operation. These page.
 | `availability-formula` | `avail == reported − max(0, consumed − released)` | The operator view and the funding pass call one shared helper precisely so they cannot drift. Re-deriving it off-chain catches a deployed implementation that is no longer the function the plan and specs assume. |
 | `base-self-inert` | Every per-chain figure under the canonical chain's own id is zero | Base is never a "local" funder in the commit split — its slice comes from the same bucket the global ledger governs. Non-zero here means Base double-booked itself, corrupting the global reservation *and* netting its own bucket twice. |
 | `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
-| `bucket-coverage` | A chain's live bucket backs its own reservations | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
+| `bucket-coverage` | A chain's live bucket backs its own reservations | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. **Mirrors only** — see below. |
+
+**On bucket coverage being CRITICAL only on mirrors.** On a mirror the
+relation is hard: `reserveMirrorCommit` raises the reservation, `consume`
+and `releaseCommitment` lower it, nothing else touches either side. On the
+**canonical** chain there is a legitimate path to a shortfall, so it is
+reported as advisory there instead. Releasing a verifiably-dead
+remittance (`releaseRemitReservation` → `LibVpfiRecycle.restoreReleasedRemit`)
+restores `outstandingCommitRecycled` in full while deliberately *not*
+re-crediting `recycleBucket` — those tokens are locked in the CCIP pool,
+genuinely outside Diamond custody. Paging on the contract's intended
+conservative recovery state would be a false alarm on correct behaviour.
+The advisory names that cause and tells the operator to reconcile against
+the released reservations before treating it as a fault.
 
 **On the bucket-coverage tolerance.** The comparison allows
 `BUCKET_COVERAGE_TOLERANCE_WEI` of slack (default 1e15 = 0.001 VPFI)
@@ -87,11 +100,20 @@ independent of whether its report reached Base. Reading Base's copy
 instead would conflate stuck settlement with a stalled report pipeline,
 which is the separate signal below.
 
-**`report-lag`** — Base's accepted cumulative for a chain sits below that
-chain's own *and has not moved* across the window. Trailing alone is
-normal (reports are periodic); trailing while frozen means the report path
-stalled, which is what the B2-d2 zeroed-chain manual-budget path exists to
-reconcile.
+**`report-lag`** — any of Base's accepted cumulatives for a chain sits
+below that chain's own *and has not moved* across the window. Trailing
+alone is normal (reports are periodic); trailing while frozen means the
+report path stalled, which is what the B2-d2 zeroed-chain manual-budget
+path exists to reconcile.
+
+All three cumulatives a day-close report carries are watched, not
+absorption alone: a quiet-but-settling chain whose claims and forfeits
+advance while absorption stays flat would show Base level on `reported`
+and the signal would never start, even though Base is missing newer
+reports and its outstanding and availability books are stale. The stasis
+marker is Base's side of all three — including the chain's figures would
+reset the run every time the chain settled more, masking exactly the case
+this exists for.
 
 **`coverage-gap`** — a chain in `getExpectedSourceChainIds()` that this
 tick could not read (no committed deployment stanza, no RPC secret, or a
@@ -125,6 +147,23 @@ names and types the readers assume. A facet re-export that changes a shape
 fails the first tick with a precise message instead of quietly mislabelling
 a ledger figure — and the CI job below catches it before deploy.
 
+**Reads are pinned to one block per chain.** Related ledger fields are
+written atomically on-chain but read over several RPC calls, so an
+unpinned read can straddle a funding or retirement transaction and observe
+an old `consumed` beside a newly-incremented `outstanding` — paging a
+`commit-identity` violation that never existed. A false CRITICAL is the
+worst thing this Worker can produce, so every related read shares a block.
+
+**`POST /run` is authenticated and fail-closed.** A `workers.dev` URL is
+public and a tick is not a read-only probe: it performs the whole RPC
+fan-out, advances the D1 streak counters and sends Telegram. Without auth,
+anyone could drain the dedicated RPC quota, or fire enough rapid requests
+while ordinary commitments were outstanding to manufacture a
+`stuck-settlement` advisory that is supposed to represent an hour and a
+half of cron observations — forging the very evidence the operator acts
+on. An unset `WATCHER_RUN_TOKEN` therefore **closes** the endpoint rather
+than opening it.
+
 **Its own D1, its own Telegram bot.** `vaipakam-mesh-alerts-db`, not the
 shared `vaipakam-archive`; `TG_OPS_BOT_TOKEN`, not the user-facing
 `TG_BOT_TOKEN`. Same trust-boundary reasoning that gave `ops/lz-watcher`
@@ -145,15 +184,16 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: every check has been removed or
-subtly broken in turn, and each mutation was confirmed to turn the
-specific test that targets it red — including the floor in the
+The suite is **mutation-verified**: 27 mutations applied in turn, each
+confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
-tolerance boundary, the streak's marker-reset, and each half of the
-report-lag and stuck-settlement markers. The shared fixture is a
-*healthy* mesh whose first test asserts zero findings, so a fixture that
-drifted into violating something fails loudly instead of making every
-other test pass for the wrong reason.
+tolerance boundary, the bucket-coverage severity split, the streak's
+marker reset, each half of the report-lag and stuck-settlement markers,
+the fail-closed auth (unset token, wrong scheme, correct prefix), the
+fingerprint override, and both directions of the streak prune. The shared
+fixture is a *healthy* mesh whose first test asserts zero findings, so a
+fixture that drifted into violating something fails loudly instead of
+making every other test pass for the wrong reason.
 
 CI runs both steps via the `ops/mesh-watcher (typecheck + tests)` job in
 `.github/workflows/ci.yml`, triggered by changes under this directory
@@ -181,9 +221,14 @@ undeployed.
 
    ```bash
    wrangler secret put TG_OPS_BOT_TOKEN     # the OPS bot, not TG_BOT_TOKEN
+   wrangler secret put WATCHER_RUN_TOKEN    # bearer token for POST /run
    wrangler secret put RPC_84532            # canonical (Base Sepolia)
    wrangler secret put RPC_421614           # each mirror, keyed by chain id
    ```
+
+   `WATCHER_RUN_TOKEN` is **required** to use `POST /run` at all — while
+   it is unset the endpoint returns 401 and only the cron can drive a
+   tick. Generate one with `openssl rand -hex 32`.
 
 3. **Set the vars** in `wrangler.jsonc`: `TG_OPS_CHAT_ID` and
    `CANONICAL_CHAIN_ID` (84532 for Base Sepolia, 8453 for Base).
@@ -192,10 +237,12 @@ undeployed.
 
    ```bash
    npm run deploy
-   curl -s https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run | jq
+   curl -s -X POST \
+     -H "Authorization: Bearer $WATCHER_RUN_TOKEN" \
+     https://vaipakam-mesh-watcher.<subdomain>.workers.dev/run | jq
    ```
 
-   `GET /run` executes one tick synchronously and returns its summary —
+   `POST /run` executes one tick synchronously and returns its summary —
    `chainsObserved`, `critical`, `advisory`, `coverageGaps`, `sent`. A
    first run showing `coverageGaps > 0` means a mirror is wired on-chain
    but has no RPC secret yet; fix that before relying on the alerts, or

@@ -78,25 +78,60 @@ export interface MeshObservation {
 export type Severity = 'critical' | 'advisory';
 
 export interface Finding {
-  /** Stable identity for dedup — `code:chainId`. */
+  /**
+   * Stable identity for dedup. Distinct VIOLATIONS get distinct keys even
+   * when they share a `code`: several checks can fire more than once per
+   * chain in a tick (both clamp halves; all three cross-chain
+   * comparisons), and keying them all on `code:chainId` made the delivery
+   * map keep only the last one — so an earlier violation's figures were
+   * never sent, and the shared key's fingerprint oscillated between them
+   * (Codex #1443 r1).
+   */
   key: string;
+  /** Check family, for grouping and for the tests' assertion surface. */
   code: string;
   severity: Severity;
   chainId: number;
   title: string;
   detail: string;
+  /**
+   * Content used for the repeat-suppression fingerprint, when it must
+   * differ from `detail`.
+   *
+   * Windowed advisories carry an observation count in their detail that
+   * increments every tick. Fingerprinting the detail therefore made every
+   * tick look like new information and bypassed the quiet window entirely,
+   * reposting four times an hour instead of every six (Codex #1443 r1).
+   * Those findings set this to the figures alone.
+   */
+  fingerprintSource?: string;
 }
 
 const WEI = 1_000_000_000_000_000_000n;
 
-/** Render VPFI wei as a readable decimal (6 dp, no rounding surprises). */
+/**
+ * Render VPFI wei as a readable decimal, **without ever discarding
+ * evidence**.
+ *
+ * Six decimal places is the readable form, but these are EXACT invariants:
+ * `commit-identity` and friends can fail by a single wei, and a formatter
+ * that only truncated would page the operator while displaying identical
+ * operands and a difference of `0.000000` — deleting the one piece of
+ * information needed to diagnose it (Codex #1443 r1). So whenever
+ * truncation would drop a non-zero digit, the exact wei figure is appended
+ * rather than lost.
+ */
 export function fmt(v: bigint): string {
   const neg = v < 0n;
   const abs = neg ? -v : v;
   const whole = abs / WEI;
-  const frac = (abs % WEI) / 1_000_000_000_000n; // → 6 dp
-  const body = `${whole.toString()}.${frac.toString().padStart(6, '0')}`;
-  return `${neg ? '-' : ''}${body} VPFI`;
+  const remainder = abs % WEI;
+  const frac = remainder / 1_000_000_000_000n; // → 6 dp
+  const sign = neg ? '-' : '';
+  const body = `${sign}${whole.toString()}.${frac.toString().padStart(6, '0')} VPFI`;
+  // Digits below the sixth decimal that the readable form cannot show.
+  const dropped = remainder % 1_000_000_000_000n;
+  return dropped === 0n ? body : `${body} (exactly ${sign}${abs.toString()} wei)`;
 }
 
 /** Saturating subtraction — mirrors the contracts' floored arithmetic. */
@@ -128,14 +163,21 @@ export function checkHardInvariants(
   bucketToleranceWei: bigint,
 ): Finding[] {
   const out: Finding[] = [];
+  /**
+   * @param code    Check family (the tests' assertion surface).
+   * @param variant Sub-condition discriminator, so two violations of the
+   *                same family on the same chain do not collide on one
+   *                dedup key and lose each other's figures.
+   */
   const add = (
     code: string,
+    variant: string,
     chainId: number,
     title: string,
     detail: string,
   ): void => {
     out.push({
-      key: `${code}:${chainId}`,
+      key: `${code}/${variant}:${chainId}`,
       code,
       severity: 'critical',
       chainId,
@@ -161,6 +203,7 @@ export function checkHardInvariants(
     if (b.outstanding + b.retired !== b.consumed) {
       add(
         'commit-identity',
+        'sum',
         b.chainId,
         'Per-chain commit identity broken',
         `outstanding + retired != consumed\n` +
@@ -182,6 +225,7 @@ export function checkHardInvariants(
     if (b.retired > b.consumed) {
       add(
         'clamp-chain',
+        'retired-vs-consumed',
         b.chainId,
         'Retirement exceeds instructions',
         `retired > consumed — Base accepted a retirement magnitude it never instructed\n` +
@@ -192,6 +236,7 @@ export function checkHardInvariants(
     if (b.released > b.retired) {
       add(
         'clamp-chain',
+        'released-vs-retired',
         b.chainId,
         'Release exceeds retirement',
         `released > retired — the release-only subset is larger than the set it is a subset of\n` +
@@ -208,6 +253,7 @@ export function checkHardInvariants(
     if (b.attributed > b.reported) {
       add(
         'attribution-ceiling',
+        'vs-reported',
         b.chainId,
         'Day-credit attribution exceeds reported cumulative',
         `attributed > reported — the Ā feed is being credited beyond what the chain reported absorbing\n` +
@@ -226,6 +272,7 @@ export function checkHardInvariants(
     if (b.avail !== wantAvail) {
       add(
         'availability-formula',
+        'definition',
         b.chainId,
         'Availability does not match its definition',
         `avail != reported - max(0, consumed - released)\n` +
@@ -254,6 +301,7 @@ export function checkHardInvariants(
       if (nonZero.length > 0) {
         add(
           'base-self-inert',
+          'nonzero-books',
           b.chainId,
           'Canonical chain has per-chain commit books',
           `Base never instructs itself, so every per-chain commit figure under its own chain id must stay zero:\n  ${nonZero.join('\n  ')}`,
@@ -276,6 +324,7 @@ export function checkHardInvariants(
     if (b.reported > local.reportedCumulative) {
       add(
         'base-ahead-of-chain',
+        'reported',
         b.chainId,
         'Base holds a higher reported cumulative than the chain itself',
         `Base's accepted cumulative exceeds the chain's own reported figure\n` +
@@ -288,6 +337,7 @@ export function checkHardInvariants(
     if (b.retired > local.localRetired) {
       add(
         'base-ahead-of-chain',
+        'retired',
         b.chainId,
         'Base holds a higher retirement cumulative than the chain itself',
         `base retired = ${fmt(b.retired)} > chain retired = ${fmt(local.localRetired)}`,
@@ -296,6 +346,7 @@ export function checkHardInvariants(
     if (b.released > local.localReleased) {
       add(
         'base-ahead-of-chain',
+        'released',
         b.chainId,
         'Base holds a higher release cumulative than the chain itself',
         `base released = ${fmt(b.released)} > chain released = ${fmt(local.localReleased)}`,
@@ -317,22 +368,48 @@ export function checkHardInvariants(
   // wei-scale amounts. An exact `bucket >= outstanding` would therefore
   // fire on healthy dust. Real shortfalls are VPFI-scale.
   for (const local of obs.locals.values()) {
-    if (local.bucket + bucketToleranceWei < local.outstandingRecycled) {
-      out.push({
-        key: `bucket-coverage:${local.chainId}`,
-        code: 'bucket-coverage',
-        severity: 'critical',
-        chainId: local.chainId,
-        title: 'Recycle bucket does not cover its own reservations',
-        detail:
-          `bucket + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
-          `  bucket       = ${fmt(local.bucket)}\n` +
-          `  outstanding  = ${fmt(local.outstandingRecycled)}\n` +
-          `  shortfall    = ${fmt(local.outstandingRecycled - local.bucket)}\n` +
-          `  tolerance    = ${fmt(bucketToleranceWei)}\n` +
-          `  (of which relocated custody = ${fmt(local.custodyRelocated)})`,
-      });
-    }
+    if (local.bucket + bucketToleranceWei >= local.outstandingRecycled) continue;
+
+    // Severity splits by chain role, and the split is load-bearing.
+    //
+    // On a MIRROR the relation is hard: `reserveMirrorCommit` raises the
+    // reservation, `consume` and `releaseCommitment` lower it, and nothing
+    // else touches either side — so a shortfall beyond rounding dust means
+    // the reservation is backed by tokens that are not there.
+    //
+    // On the CANONICAL chain there is a legitimate path to a shortfall
+    // (Codex #1443 r1, verified against `releaseRemitReservation` +
+    // `LibVpfiRecycle.restoreReleasedRemit`): releasing a verifiably-dead
+    // remittance restores `outstandingCommitRecycled` in full while
+    // DELIBERATELY not re-crediting `recycleBucket`, because those tokens
+    // are locked in the CCIP pool — genuinely outside Diamond custody.
+    // That is the contract's intended conservative recovery state, so
+    // paging on it would be a false alarm on correct behaviour. Reported
+    // as advisory with the likely cause named instead.
+    const isCanonical = local.chainId === obs.canonicalChainId;
+    const shortfall = local.outstandingRecycled - local.bucket;
+    const figures =
+      `  bucket       = ${fmt(local.bucket)}\n` +
+      `  outstanding  = ${fmt(local.outstandingRecycled)}\n` +
+      `  shortfall    = ${fmt(shortfall)}\n` +
+      `  tolerance    = ${fmt(bucketToleranceWei)}\n` +
+      `  (of which relocated custody = ${fmt(local.custodyRelocated)})`;
+
+    out.push({
+      key: `bucket-coverage:${local.chainId}`,
+      code: 'bucket-coverage',
+      severity: isCanonical ? 'advisory' : 'critical',
+      chainId: local.chainId,
+      title: isCanonical
+        ? 'Canonical bucket below its reservations — check for a released remit'
+        : 'Recycle bucket does not cover its own reservations',
+      detail: isCanonical
+        ? `bucket + tolerance < outstanding reservations on the CANONICAL chain\n` +
+          figures +
+          `\n\nEXPECTED CAUSE — releasing a permanently-failed remittance restores the reservation but not the bucket, by design: those tokens sit locked in the CCIP pool, outside Diamond custody. Reconcile against the released reservations (status 3) before treating this as a fault; the shortfall should equal their recycled totals.`
+        : `bucket + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
+          figures,
+    });
   }
 
   return out;
@@ -442,8 +519,22 @@ export function reportLagCondition(
   local: LocalLedger | undefined,
 ): { holds: boolean; marker: string } {
   if (!local) return { holds: false, marker: '' };
+  // ALL THREE cumulatives a day-close report carries, not absorption
+  // alone (Codex #1443 r1). A chain whose claims and forfeits advance
+  // while its absorption stays flat — a quiet-but-settling chain — would
+  // otherwise show Base level on `reported` and this signal would never
+  // start, even though Base is missing newer reports and its outstanding
+  // and availability books are stale.
+  const holds =
+    books.reported < local.reportedCumulative ||
+    books.retired < local.localRetired ||
+    books.released < local.localReleased;
   return {
-    holds: books.reported < local.reportedCumulative,
-    marker: books.reported.toString(),
+    holds,
+    // Base's side alone, all three fields. Including the chain's figures
+    // would reset the run every time the chain absorbed or settled more —
+    // masking exactly the case this exists for, where the chain keeps
+    // working and Base never hears about it.
+    marker: `${books.reported}:${books.retired}:${books.released}`,
   };
 }

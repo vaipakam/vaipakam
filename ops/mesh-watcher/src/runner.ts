@@ -8,12 +8,13 @@ import { deploymentFor } from './chains';
 import {
   fingerprint,
   loadStreaks,
+  pruneStreaksStatement,
   retainOnlyActiveStatement,
   saveStreakStatement,
   selectAlertsToSend,
-  type AlertRecord,
+  toAlertRecords,
 } from './db';
-import { readConfig, type Env } from './env';
+import { readConfig, readTelegramTarget, type Env } from './env';
 import {
   advanceStreak,
   checkHardInvariants,
@@ -110,6 +111,11 @@ export async function runTick(env: Env): Promise<TickSummary> {
           severity: 'advisory',
           chainId: books.chainId,
           title: 'Recycled commitments outstanding with no retirement',
+          // The FIGURES only — no observation count. That count rises
+          // every tick, so fingerprinting the detail made each tick look
+          // like new information and bypassed the quiet window entirely
+          // (Codex #1443 r1).
+          fingerprintSource: `stuck:${books.outstanding}:${local ? local.localRetired : books.retired}:${books.released}:${books.avail}`,
           detail:
             `outstanding > 0 and retirement flat for ${stuckOutcome.next?.streak ?? 0} consecutive observations\n` +
             `  outstanding       = ${fmt(books.outstanding)}\n` +
@@ -145,6 +151,8 @@ export async function runTick(env: Env): Promise<TickSummary> {
           severity: 'advisory',
           chainId: books.chainId,
           title: 'Base has not accepted a newer report from this chain',
+          // Figures only, for the same reason as the stuck signal above.
+          fingerprintSource: `lag:${books.reported}:${books.retired}:${books.released}:${local.reportedCumulative}:${local.localRetired}:${local.localReleased}`,
           detail:
             `Base's accepted cumulative trails the chain's own and has not moved for ${lagOutcome.next?.streak ?? 0} consecutive observations\n` +
             `  base accepted = ${fmt(books.reported)}\n` +
@@ -169,10 +177,7 @@ export async function runTick(env: Env): Promise<TickSummary> {
     }
 
     // ── Deliver ──────────────────────────────────────────────────────
-    const candidates: AlertRecord[] = findings.map((f) => ({
-      key: f.key,
-      fingerprint: fingerprint(`${f.title}\n${f.detail}`),
-    }));
+    const candidates = toAlertRecords(findings);
 
     let sent = 0;
     const writes: D1PreparedStatement[] = [...streakWrites];
@@ -219,6 +224,12 @@ export async function runTick(env: Env): Promise<TickSummary> {
     }
 
     writes.push(
+      // Runs for chains that have left the mesh are stale — a later
+      // re-add must serve its full window, not resume the old count.
+      pruneStreaksStatement(
+        env.DB,
+        obs.books.map((b) => b.chainId),
+      ),
       retainOnlyActiveStatement(
         env.DB,
         findings.map((f) => f.key),
@@ -245,14 +256,12 @@ export async function runTick(env: Env): Promise<TickSummary> {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`mesh-watcher tick failed: ${message}`);
 
-    const config = (() => {
-      try {
-        return readConfig(env);
-      } catch {
-        return null;
-      }
-    })();
-    if (config?.telegram) {
+    // Resolve the destination WITHOUT re-parsing the configuration that
+    // may itself be what failed — see `readTelegramTarget`. The repeat
+    // window falls back to its default here for the same reason.
+    const telegram = readTelegramTarget(env);
+    const config = { telegram, alertRepeatSeconds: 21_600 };
+    if (config.telegram) {
       // Route the self-failure alert through the same quiet window where
       // possible: an RPC or config outage lasts hours, and one message per
       // tick would bury the ledger alerts this Worker exists to deliver.

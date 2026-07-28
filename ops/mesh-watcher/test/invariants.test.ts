@@ -41,6 +41,13 @@ import {
   type MeshObservation,
 } from '../src/invariants';
 import { formatAlert } from '../src/telegram';
+import { bearerToken, isAuthorized, secretsMatch } from '../src/auth';
+import { readConfig, readTelegramTarget } from '../src/env';
+import {
+  pruneStreaksStatement,
+  retainOnlyActiveStatement,
+  toAlertRecords,
+} from '../src/db';
 
 const E = 1_000_000_000_000_000_000n; // 1 VPFI
 const TOLERANCE = 1_000_000_000_000_000n; // 1e15 wei — the shipped default
@@ -483,8 +490,17 @@ describe('formatting helpers', () => {
     expect(fmt(-1n * E)).toBe('-1.000000 VPFI');
   });
 
-  it('truncates below the sixth decimal rather than rounding up', () => {
-    expect(fmt(1n)).toBe('0.000000 VPFI');
+  it('never DISCARDS sub-micro digits — it appends the exact wei', () => {
+    // These are exact invariants; a one-wei break formatted as
+    // `0.000000 VPFI` next to identical operands deletes the only
+    // evidence the operator has (Codex #1443 r1).
+    expect(fmt(1n)).toBe('0.000000 VPFI (exactly 1 wei)');
+    expect(fmt(-1n)).toBe('-0.000000 VPFI (exactly -1 wei)');
+  });
+
+  it('omits the exact suffix when nothing is lost', () => {
+    expect(fmt(1n * E)).not.toContain('exactly');
+    expect(fmt(1_500_000_000_000_000_000n)).not.toContain('exactly');
   });
 
   it('saturates subtraction like the contracts do', () => {
@@ -549,6 +565,153 @@ describe('formatAlert', () => {
   });
 });
 
+describe('checkHardInvariants — dedup keys', () => {
+  it('gives every violation on a chain its own key', () => {
+    // Several checks can fire more than once per chain in one tick. When
+    // they shared `code:chainId`, the delivery map kept only the last and
+    // the earlier violation's figures were never sent (Codex #1443 r1).
+    const findings = checkHardInvariants(
+      observation({
+        mirrorLocal: {
+          reportedCumulative: 1n,
+          localRetired: 1n,
+          localReleased: 1n,
+        },
+      }),
+      TOLERANCE,
+    );
+    const baseAhead = findings.filter((f) => f.code === 'base-ahead-of-chain');
+    expect(baseAhead).toHaveLength(3);
+    expect(new Set(baseAhead.map((f) => f.key)).size).toBe(3);
+  });
+
+  it('never emits two findings sharing one key', () => {
+    const findings = checkHardInvariants(
+      observation({
+        mirror: { retired: 401n * E, released: 401n * E },
+        mirrorLocal: { localRetired: 401n * E, localReleased: 401n * E },
+      }),
+      TOLERANCE,
+    );
+    expect(new Set(findings.map((f) => f.key)).size).toBe(findings.length);
+  });
+});
+
+describe('checkHardInvariants — bucket coverage severity by chain role', () => {
+  it('is CRITICAL on a mirror', () => {
+    const [finding] = checkHardInvariants(
+      observation({ mirrorLocal: { bucket: 0n } }),
+      TOLERANCE,
+    );
+    expect(finding?.code).toBe('bucket-coverage');
+    expect(finding?.severity).toBe('critical');
+  });
+
+  it('is ADVISORY on the canonical chain — released remits do this legitimately', () => {
+    // `releaseRemitReservation` restores `outstandingCommitRecycled` in
+    // full but deliberately does NOT re-credit `recycleBucket`: those
+    // tokens are locked in the CCIP pool, outside Diamond custody. Paging
+    // on the contract's intended recovery state would be a false alarm on
+    // correct behaviour (Codex #1443 r1).
+    const [finding] = checkHardInvariants(
+      observation({ canonicalLocal: { bucket: 0n } }),
+      TOLERANCE,
+    );
+    expect(finding?.code).toBe('bucket-coverage');
+    expect(finding?.chainId).toBe(CANONICAL);
+    expect(finding?.severity).toBe('advisory');
+    expect(finding?.detail).toContain('released');
+  });
+});
+
+describe('reportLagCondition — all three cumulatives', () => {
+  it('holds when only RETIREMENT trails, with absorption level', () => {
+    // A quiet-but-settling chain: claims and forfeits advance while
+    // absorption stays flat. Watching `reported` alone never started the
+    // run even though Base was missing newer reports (Codex #1443 r1).
+    expect(
+      reportLagCondition(mirrorBooks(), {
+        ...mirrorLocal(),
+        localRetired: 260n * E,
+      }).holds,
+    ).toBe(true);
+  });
+
+  it('holds when only the RELEASE subset trails', () => {
+    expect(
+      reportLagCondition(mirrorBooks(), {
+        ...mirrorLocal(),
+        localReleased: 110n * E,
+      }).holds,
+    ).toBe(true);
+  });
+
+  it('keys the run on all three of Base’s figures', () => {
+    const marker = reportLagCondition(mirrorBooks(), {
+      ...mirrorLocal(),
+      localRetired: 260n * E,
+    }).marker;
+    expect(marker).toContain((250n * E).toString()); // base retired
+    expect(marker).toContain((100n * E).toString()); // base released
+    // Base advancing its retirement must end the run.
+    const advanced = reportLagCondition(
+      { ...mirrorBooks(), retired: 255n * E },
+      { ...mirrorLocal(), localRetired: 260n * E },
+    ).marker;
+    expect(advanced).not.toBe(marker);
+  });
+});
+
+describe('run-endpoint authorization', () => {
+  const req = (auth?: string): Request =>
+    new Request('https://example.com/run', {
+      method: 'POST',
+      headers: auth === undefined ? {} : { authorization: auth },
+    });
+
+  it('is CLOSED when no token is configured', () => {
+    // Fail-closed. Treating "unset" as "open" is how a public trigger
+    // ships by accident (Codex #1443 r1).
+    expect(isAuthorized(req('Bearer anything'), {} as never)).toBe(false);
+    expect(isAuthorized(req('Bearer '), { WATCHER_RUN_TOKEN: '' } as never)).toBe(
+      false,
+    );
+  });
+
+  it('rejects a missing or malformed header', () => {
+    const env = { WATCHER_RUN_TOKEN: 's3cret' } as never;
+    expect(isAuthorized(req(), env)).toBe(false);
+    expect(isAuthorized(req('s3cret'), env)).toBe(false);
+    expect(isAuthorized(req('Basic s3cret'), env)).toBe(false);
+  });
+
+  it('rejects a wrong token, including a correct PREFIX', () => {
+    const env = { WATCHER_RUN_TOKEN: 's3cret' } as never;
+    expect(isAuthorized(req('Bearer s3cre'), env)).toBe(false);
+    expect(isAuthorized(req('Bearer s3cretX'), env)).toBe(false);
+    expect(isAuthorized(req('Bearer S3CRET'), env)).toBe(false);
+  });
+
+  it('accepts the exact token, scheme case-insensitively', () => {
+    const env = { WATCHER_RUN_TOKEN: 's3cret' } as never;
+    expect(isAuthorized(req('Bearer s3cret'), env)).toBe(true);
+    expect(isAuthorized(req('bearer s3cret'), env)).toBe(true);
+  });
+
+  it('compares secrets without short-circuiting on the first difference', () => {
+    expect(secretsMatch('abc', 'abc')).toBe(true);
+    expect(secretsMatch('abc', 'abd')).toBe(false);
+    expect(secretsMatch('abc', 'abcd')).toBe(false);
+    expect(secretsMatch('', '')).toBe(true);
+  });
+
+  it('parses the bearer value', () => {
+    expect(bearerToken(null)).toBe('');
+    expect(bearerToken('Bearer  tok  ')).toBe('tok');
+    expect(bearerToken('Bearer')).toBe('');
+  });
+});
+
 describe('assertAbiShape', () => {
   it('passes against the compiled facet ABI', () => {
     expect(() => assertAbiShape()).not.toThrow();
@@ -591,5 +754,151 @@ describe('assertAbiShape', () => {
         !(item.type === 'function' && item.name === 'getGovernorCommitState'),
     ) as Abi;
     expect(() => assertAbiShape(drifted)).toThrow(/missing from the compiled ABI/);
+  });
+});
+
+// ─── D1 statement builders + dedup candidates ─────────────────────────
+//
+// A tiny fake D1 that records the SQL and bindings each builder produces.
+// These functions encode "which rows get deleted", which is exactly the
+// kind of logic that is easy to write backwards and impossible to notice
+// until a stale row suppresses a real alert.
+
+interface RecordedStatement {
+  sql: string;
+  bindings: unknown[];
+}
+
+function fakeDb(): { db: D1Database; recorded: RecordedStatement[] } {
+  const recorded: RecordedStatement[] = [];
+  const db = {
+    prepare(sql: string) {
+      const entry: RecordedStatement = { sql, bindings: [] };
+      recorded.push(entry);
+      const stmt = {
+        bind(...args: unknown[]) {
+          entry.bindings = args;
+          return stmt;
+        },
+      };
+      return stmt;
+    },
+  } as unknown as D1Database;
+  return { db, recorded };
+}
+
+describe('pruneStreaksStatement', () => {
+  it('deletes runs for chains no longer observed', () => {
+    const { db, recorded } = fakeDb();
+    pruneStreaksStatement(db, [8453, 42161]);
+    expect(recorded[0]?.sql).toContain('NOT IN');
+    expect(recorded[0]?.bindings).toEqual([8453, 42161]);
+  });
+
+  it('clears everything when the observation is empty', () => {
+    // A mesh read that produced nothing makes every stored run stale.
+    const { db, recorded } = fakeDb();
+    pruneStreaksStatement(db, []);
+    expect(recorded[0]?.sql).toBe('DELETE FROM streak_state');
+    expect(recorded[0]?.bindings).toEqual([]);
+  });
+});
+
+describe('retainOnlyActiveStatement', () => {
+  it('keeps only the keys firing this tick', () => {
+    const { db, recorded } = fakeDb();
+    retainOnlyActiveStatement(db, ['a:1', 'b:2']);
+    expect(recorded[0]?.sql).toContain('NOT IN');
+    expect(recorded[0]?.bindings).toEqual(['a:1', 'b:2']);
+  });
+
+  it('empties the table when nothing is firing', () => {
+    // Otherwise a cleared condition leaves its row behind and a
+    // recurrence inside the quiet window is silently suppressed.
+    const { db, recorded } = fakeDb();
+    retainOnlyActiveStatement(db, []);
+    expect(recorded[0]?.sql).toBe('DELETE FROM alert_sent');
+  });
+});
+
+describe('toAlertRecords', () => {
+  const base = {
+    key: 'k:1',
+    code: 'c',
+    severity: 'advisory' as const,
+    chainId: 1,
+    title: 't',
+  };
+
+  it('fingerprints the detail when no override is given', () => {
+    const a = toAlertRecords([{ ...base, detail: 'one' }])[0]!;
+    const b = toAlertRecords([{ ...base, detail: 'two' }])[0]!;
+    expect(a.fingerprint).not.toBe(b.fingerprint);
+  });
+
+  it('ignores a changing detail when fingerprintSource is stable', () => {
+    // THE fix for the windowed advisories: their detail carries an
+    // observation count that rises every tick, so fingerprinting it made
+    // every tick look like new information and bypassed the quiet window
+    // entirely — reposting four times an hour instead of every six
+    // (Codex #1443 r1).
+    const a = toAlertRecords([
+      { ...base, detail: 'flat for 6 observations', fingerprintSource: 'x:1' },
+    ])[0]!;
+    const b = toAlertRecords([
+      { ...base, detail: 'flat for 7 observations', fingerprintSource: 'x:1' },
+    ])[0]!;
+    expect(a.fingerprint).toBe(b.fingerprint);
+  });
+
+  it('still re-alerts when the FIGURES move', () => {
+    const a = toAlertRecords([
+      { ...base, detail: 'd', fingerprintSource: 'x:1' },
+    ])[0]!;
+    const b = toAlertRecords([
+      { ...base, detail: 'd', fingerprintSource: 'x:2' },
+    ])[0]!;
+    expect(a.fingerprint).not.toBe(b.fingerprint);
+  });
+
+  it('carries the key through unchanged', () => {
+    expect(toAlertRecords([{ ...base, detail: 'd' }])[0]?.key).toBe('k:1');
+  });
+});
+
+describe('readTelegramTarget — independent of the rest of the config', () => {
+  // The failure path needs to page the operator precisely when the rest
+  // of the configuration is unparseable. An earlier version derived the
+  // destination through `readConfig`, so a malformed knob made the
+  // recovery path throw a second time, yield null, and leave the watcher
+  // silently blind with only a Cloudflare log (Codex #1443 r1).
+  it('resolves even when readConfig would throw', () => {
+    const broken = {
+      TG_OPS_BOT_TOKEN: 'tok',
+      TG_OPS_CHAT_ID: '-100',
+      // Both of these make readConfig throw.
+      CANONICAL_CHAIN_ID: 'not-a-number',
+      STUCK_WINDOW_TICKS: '0',
+    } as never;
+    expect(() => readConfig(broken)).toThrow();
+    expect(readTelegramTarget(broken)).toEqual({
+      token: 'tok',
+      chatId: '-100',
+    });
+  });
+
+  it('is null when either half is missing', () => {
+    expect(readTelegramTarget({ TG_OPS_BOT_TOKEN: 'tok' } as never)).toBeNull();
+    expect(readTelegramTarget({ TG_OPS_CHAT_ID: '-100' } as never)).toBeNull();
+    expect(readTelegramTarget({} as never)).toBeNull();
+  });
+
+  it('rejects a zero or negative window rather than silently defaulting', () => {
+    expect(() =>
+      readConfig({
+        CANONICAL_CHAIN_ID: '8453',
+        STUCK_WINDOW_TICKS: '0',
+      } as never),
+    ).toThrow(/STUCK_WINDOW_TICKS/);
   });
 });

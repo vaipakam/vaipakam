@@ -13,7 +13,7 @@
  * co-locate with user-facing data.
  */
 
-import type { StreakState } from './invariants';
+import type { Finding, StreakState } from './invariants';
 
 export interface AlertRecord {
   key: string;
@@ -62,6 +62,34 @@ export function saveStreakStatement(
          updated_at = excluded.updated_at`,
     )
     .bind(chainId, signal, next.marker, next.streak, now);
+}
+
+/**
+ * Drop streak rows for chains no longer in the observed mesh.
+ *
+ * Streaks are loaded for every historical chain but written only for
+ * chains present this tick, so a mirror removed from
+ * `getExpectedSourceChainIds()` left its run behind indefinitely. If that
+ * chain were later re-added with the same marker and an outstanding
+ * commitment, the first new observation would resume the stale count and
+ * could fire immediately instead of waiting out the configured window
+ * (Codex #1443 r1).
+ *
+ * @param observedChainIds Chains in this tick's observation. Empty means
+ *                         the mesh read produced nothing, so every run is
+ *                         stale.
+ */
+export function pruneStreaksStatement(
+  db: D1Database,
+  observedChainIds: readonly number[],
+): D1PreparedStatement {
+  if (observedChainIds.length === 0) {
+    return db.prepare('DELETE FROM streak_state');
+  }
+  const placeholders = observedChainIds.map(() => '?').join(', ');
+  return db
+    .prepare(`DELETE FROM streak_state WHERE chain_id NOT IN (${placeholders})`)
+    .bind(...observedChainIds);
 }
 
 /**
@@ -145,6 +173,22 @@ export function retainOnlyActiveStatement(
   return db
     .prepare(`DELETE FROM alert_sent WHERE alert_key NOT IN (${placeholders})`)
     .bind(...activeKeys);
+}
+
+/**
+ * Build the dedup candidates for a tick's findings.
+ *
+ * Pure, and separated from the tick precisely so it is testable: it is
+ * where `fingerprintSource` is honoured, and getting that wrong silently
+ * defeats the whole quiet window rather than failing visibly.
+ */
+export function toAlertRecords(
+  findings: readonly Finding[],
+): AlertRecord[] {
+  return findings.map((f) => ({
+    key: f.key,
+    fingerprint: fingerprint(f.fingerprintSource ?? `${f.title}\n${f.detail}`),
+  }));
 }
 
 /** Cheap content hash for the fingerprint field (FNV-1a, 32-bit). */

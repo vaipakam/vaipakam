@@ -44,6 +44,21 @@ Two further advisories cover a stalled report path and, always, any chain
 the watcher could not read this tick — a watcher that quietly narrows its
 scope would otherwise report "all clear" for chains it never looked at.
 
+Review hardened several edges before this landed, two of which changed
+behaviour rather than wording. Bucket coverage is CRITICAL on mirrors only:
+on the canonical chain, releasing a permanently-failed remittance restores
+the reservation while deliberately not re-crediting the bucket — those
+tokens are locked in the bridge's custody, outside the platform's — so
+paging there would have raised a false alarm on the contract's intended
+recovery state. It is reported as an advisory naming that cause instead.
+And every related read is now pinned to a single block per chain: those
+fields are written together on-chain but read over several calls, so an
+unpinned read could straddle a transaction and page a violation that never
+existed — a false critical being the worst thing a watcher can produce.
+The manual trigger is authenticated and fail-closed, because running a
+tick is not a read-only probe and an unauthenticated caller could have
+forged the very evidence the operator acts on.
+
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the
 canonical Diamond each tick, so a mirror wired on-chain is watched as soon
