@@ -493,11 +493,117 @@ GovernanceRunbook gains a recycling section, executed in order:
 
 1. **Arm the governor** (`armedFromDay`) once M1b gives absorption a
    live feed — **AND only while reward claims are Base-only / dark on
-   mirrors, or M3 (Phase B′) is complete.** Arming with active mirror
+   mirrors, or M3 (Phase B′) is complete AND #1434 has made mirror
+   settlement reachable** (the second gate below; the §4 dependency
+   graph carries it as the dedicated `ARMGATE` node, so planning derived
+   from the graph cannot schedule `D*` straight off M3). Note the
+   dark-mirror branch is unchanged and does **not** require #1434 —
+   arming with reward claims dark on every mirror was always permitted,
+   and `ARMGATE` keeps that disjunct. Only the M3 branch gains the
+   settlement-reachability condition. `RL3KNOB` and `FEE` continue to
+   hang off the weaker `GATE`, which #1434 does not affect. Arming with active mirror
    claims and no mesh produces exactly the §2 failure set (mirror
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class
    drift becoming economically real). The runbook entry carries this
    gate as a precondition checklist item, not prose.
+
+   > **SECOND ARMING GATE — #1434 must land first (added by M3 B4-b).**
+   > "M3 complete" is necessary but NOT sufficient. Arming is the single
+   > switch that starts creating per-chain commitment reservations on
+   > mirrors, and while the mirror armed-day pricing halt stands
+   > (#1434), a mirror can RESERVE what Base instructs but has no
+   > user-reachable way to RETIRE it — claims, forfeits and expiry all
+   > price through the halted path, so its settlement totals stay at
+   > zero. Base's spare-capacity figure for that chain
+   > (`reported − (consumed − released)`) is then **permanently lower, by
+   > the accumulating stock of commitments that would have been RELEASED
+   > un-spent but cannot be** — while the chain's bucket is untouched, and
+   > the mesh degrades
+   > toward "Base funds everything" — precisely the waste B3 removed
+   > from Base's own books, re-entering through the mirror end. It is
+   > recoverable (the totals are cumulative, so settlements after the
+   > halt lifts close the backlog) rather than a permanent wedge, but
+   > it silently negates B3 for the whole window, and `D*` is
+   > irreversible once set. **So: #1434 lands before `D*` is chosen.**
+   >
+   > **State the defect as a SHORTFALL, and scope it to RELEASES** (Codex
+   > #1439 r2, r5, r6). Three qualifications, all load-bearing for anyone
+   > building monitoring against this paragraph:
+   >
+   > (a) An armed day only moves the figure if it creates a **nonzero
+   > mirror-local instruction** — `resolveAndStampDayFunding` books
+   > nothing when the coupled target or both global denominators are
+   > zero, and `_stampOne` leaves `chainConsumedRecycled` unchanged for a
+   > mirror with no local commitment.
+   >
+   > (b) The absolute figure **need not fall at all**: a mirror that keeps
+   > absorbing ratchets `reported` upward and can offset or exceed the
+   > instruction. **An alert keyed on "availability fell" is wrong.**
+   >
+   > (c) **Only RELEASES restore capacity — not retirement generally.**
+   > `LibVpfiRecycle.mirrorAvailRecycled` is
+   > `reported − (consumed − released)` and never reads
+   > `chainRetiredRecycledCommit`. A claim that CONSUMES its commitment
+   > advances retirement while availability stays exactly as low, because
+   > those tokens really left the bucket — pinned by
+   > `test_E2E_ConsumedCommitmentRetiresWithoutRestoringAvailability`. So
+   > what #1434 unblocks, in capacity terms, is the forfeit/expiry
+   > **release** path specifically, and a flat-RETIREMENT signal would
+   > fire during perfectly healthy paid settlement.
+   >
+   > **Two DIFFERENT questions, two different signals — do not conflate
+   > them** (Codex #1439 r6 + r7; an earlier draft of this paragraph did,
+   > and would have produced a permanently-firing alert):
+   >
+   > - *How much capacity came back?* — the **release** subset, per (c)
+   >   above. Only releases restore availability.
+   > - *Is settlement STUCK?* — the **outstanding reservation**,
+   >   `chainOutstandingRecycledCommit[c]` (B3's `consumed − retired`),
+   >   staying positive while `retired` stays flat over a window.
+   >
+   > `consumed − released` is NOT a backlog measure: a perfectly healthy
+   > mirror that pays claims and simply has no forfeits or expiries keeps
+   > it positive with `released` flat forever, so an alert keyed on it
+   > fires continuously on normal paid settlement. Retirement is what
+   > distinguishes settling from stuck; releases quantify how much
+   > capacity that settlement gave back.
+   >
+   > **B4-c's condition**: `outstanding > 0` AND `retired` unchanged
+   > across the window — deliberately NOT "outstanding is growing".
+   > Growth stops on its own once Base exhausts that mirror's reported
+   > capacity and `_stampOne` has nothing left to instruct; the stuck
+   > state persists after the backlog plateaus, so a growth-keyed alert
+   > would clear precisely when the condition became permanent.
+   >
+   > **That condition is NECESSARY, not SUFFICIENT** (Codex #1439 r8). A
+   > perfectly healthy mirror that simply had no claims, forfeits or
+   > expiries fall due in the window satisfies both halves: commitments
+   > legitimately stay reserved until a user or horizon event retires
+   > them. Alerting on it alone produces persistent false alarms on a
+   > quiet chain. **B4-c must add a settlement-EXPECTED qualifier** —
+   > either evidence that settlement was eligible or attempted (claimable
+   > entries present, or an RL-3 horizon reached) or a deadline tied to
+   > when retirement was due. Choosing that qualifier is B4-c design
+   > work, not a wording fix, and is tracked on #1442; this paragraph
+   > deliberately stops at the necessary condition rather than
+   > pre-committing the alarm.
+   >
+   > *Evidence, stated precisely.* The DECAY is proved end-to-end by
+   > `test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability` in
+   > `MeshThreeChainE2ETest`: two armed days, strictly growing
+   > outstanding, strictly falling availability, zero retirement on both
+   > sides of the wire, mirror bucket untouched. The MECHANISM — that
+   > every mirror settlement path (claim, forfeit, RL-3 expiry) prices
+   > through `_dayPoolHalves`, which returns `halt` on a mirror, and
+   > that `_entryWindowSplit` derives its recycled share from the
+   > cumulative accumulator that breaks on the same halt — is
+   > established by reading those paths, and `RewardRemittanceFacet`'s
+   > consume/release are `onlyCanonical` so they do not provide an
+   > alternative route. The stronger counterfactual "lift the halt and
+   > retirement happens" is NOT currently constructible: the armed-day
+   > mirror claim path has never been reachable, and #1434's own two
+   > prerequisites are what would make it pay. Do not cite this test for
+   > that claim (Codex #1439 r1).
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
    are verified live: the free-channel pre-expiry notice (in-app
    notification center) **and the claim-center countdown surface**
@@ -569,8 +675,11 @@ flowchart LR
   D1{{"D1: tariff formulation<br/>(a) §4.2 vs (b) rev 15"}} --> M2
   M1a[#1346 M1a flat tariff] --> M1b[#1346 M1b custody re-route]
   M1b --> ARM[M7.1 arm governor]
-  GATE{{"mesh/dark gate:<br/>mirrors dark OR M3 complete"}} --> ARM
+  GATE{{"mesh/dark gate:<br/>mirrors dark OR M3 complete"}}
   M3 -.-> GATE
+  ARMGATE{{"arming gate:<br/>mirrors dark OR<br/>(M3 complete AND #1434)"}} --> ARM
+  M3 -.-> ARMGATE
+  SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}} -.-> ARMGATE
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]

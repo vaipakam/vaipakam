@@ -749,6 +749,19 @@ contract TestMutatorFacet {
         );
     }
 
+    /// @notice Read this chain's LIVE recycle bucket — the same storage slot
+    ///         `ConfigFacet.getRecycleBucket()` returns.
+    /// @dev    #1222 M3 B4-b (Codex #1439 r2) — a mesh test asserting "this
+    ///         mirror's bucket never moved" must read the BUCKET. Base's
+    ///         `chainReportedRecycled[c]` is a monotonic lifetime-credit
+    ///         ratchet derived from `recycleBucket + paidOutRecycled`, so it
+    ///         stays flat even if the bucket were drained — it cannot stand in
+    ///         for the balance. Exposed here rather than cutting the whole
+    ///         (EIP-170-bound) ConfigFacet into a harness diamond.
+    function getRecycleBucketRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().recycleBucket;
+    }
+
     /// @notice Governor PR-3b test-only — arm commitment reservation from
     ///         `dayId` (production arms this via the PR-3c cutover).
     function setGovernorCommitArmedFromDayRaw(uint256 dayId) external {

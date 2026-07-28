@@ -87,13 +87,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](143);
+        selectors = new bytes4[](144);
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
         selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
         // #1222 M3 B3 — real forfeit/expiry release path for the
         // commitment-retirement counter tests.
         selectors[142] =
             TestMutatorFacet.releaseRecycleCommitmentRaw.selector;
+        selectors[143] = TestMutatorFacet.getRecycleBucketRaw.selector;
         selectors[132] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
