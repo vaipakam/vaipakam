@@ -26,5 +26,20 @@ Also corrected while here: several comments still described the retired
 monitor as holding one of the account's scheduled-job slots. That slot was
 freed when it was deleted and is now used by the recycling mesh watcher.
 
-Closes #1440 (repo half). The database deletion remains an operator step,
-gated on a green nightly run.
+Two further hazards surfaced in review and are closed here. The
+disaster-restore runbook still told an operator to recreate the retired
+monitor's database, wire it into config, and deploy that monitor — on a
+real restore that would resurrect a decommissioned service and consume one
+of the account's five scheduled-job slots. And the retired package itself
+was still deployable by its own documented command. Its schedule and
+database binding are now disabled and its deploy script refuses, with the
+reason stated in place; the source stays as reference.
+
+The archive format keeps its version number. Nothing about the shape
+changed except that one optional section is no longer produced, so bumping
+the version would force restore tooling to branch for no benefit — the
+runbook now states plainly that the section is optional within the current
+version, and how to handle an older archive that still carries it.
+
+Part of #1440. The card stays open for the operator steps: redeploy,
+confirm one clean nightly, then delete the database.

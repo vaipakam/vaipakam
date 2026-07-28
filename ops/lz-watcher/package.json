@@ -5,7 +5,7 @@
   "description": "Internal-only Cloudflare Worker that watches Vaipakam's LayerZero V2 surface for security drift: DVN-set / confirmation drift on every wired (OApp, eid) pair, OFT mint/burn imbalance between the Base canonical adapter and every mirror chain, and oversized single-tx VPFI flows. Alerts go to a private Telegram channel — distinct from the public hf-watcher Worker which doubles as a competitive keeper surface.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "echo \"RETIRED (#1440): vaipakam-lz-watcher was deleted 2026-07-28. Deploying it would resurrect a Worker for the LayerZero transport T-068 retired, and consume one of the five free-plan cron slots. Source kept for reference only.\" && exit 1",
     "db:migrate": "wrangler d1 migrations apply vaipakam-lz-alerts-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply vaipakam-lz-alerts-db --local",
     "typecheck": "tsc --noEmit",

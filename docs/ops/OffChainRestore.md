@@ -53,8 +53,14 @@ then deploy.
 
    ```bash
    wrangler d1 create vaipakam-archive
-   wrangler d1 create vaipakam-lz-alerts-db
    ```
+
+   > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
+   > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
+   > migration retired; both the Worker and the binding are gone. Creating it
+   > would also cost one of the five free-plan cron slots. See "Restoring a
+   > pre-#1440 archive" below if the archive you hold still carries its
+   > tables.
 
 4. Create the R2 buckets:
 
@@ -68,14 +74,14 @@ then deploy.
    - `apps/indexer/wrangler.jsonc`     → vaipakam-archive
    - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
    - `apps/agent/wrangler.jsonc`       → vaipakam-archive
-   - `ops/lz-watcher/wrangler.jsonc`   → vaipakam-lz-alerts-db
-   - `ops/offchain-data-archive/wrangler.jsonc` → vaipakam-archive + vaipakam-lz-alerts-db
+   - `ops/offchain-data-archive/wrangler.jsonc` → vaipakam-archive
+   - `ops/mesh-watcher/wrangler.jsonc` → vaipakam-mesh-alerts-db (its own
+     database; see that Worker's README — it is not part of this archive)
 
 6. Apply migrations:
 
    ```bash
    ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-archive --remote )
-   ( cd ops/lz-watcher  && wrangler d1 migrations apply vaipakam-lz-alerts-db --remote )
    ```
 
 7. NOW deploy the Workers — the bindings resolve cleanly because the
@@ -218,19 +224,31 @@ The decrypted JSON has the shape produced by `backup.ts`:
   "version": 1,
   "createdAt": "2026-05-23T03:17:00Z",
   "d1": {
-    "archive":  [ { "name": "diag_errors", "schema": [...], "rowCount": N, "rows": [...] }, ... ],
-    "lzAlerts": [ { "name": "lz_alert_state", "schema": [...], "rowCount": N, "rows": [...] }, ... ]
+    "archive":  [ { "name": "diag_errors", "schema": [...], "rowCount": N, "rows": [...] }, ... ]
   },
   "r2": { "bucket": "vaipakam-legal-vault", "objects": [ { "key": "...", "size": N, "sha256": "...", "base64Body": "..." }, ... ] }
 }
 ```
 
-**Critical**: the two D1 databases are SEPARATE — restoring lz-watcher
-tables into `vaipakam-archive` (or vice versa) lands data in the
-wrong DB and will leave the originating database empty after the
-restore. The `d1.archive[]` entries go to `vaipakam-archive`; the
-`d1.lzAlerts[]` entries go to `vaipakam-lz-alerts-db`. Match by
-source.
+### Restoring a pre-#1440 archive
+
+`d1.lzAlerts` is **OPTIONAL within version 1**. Archives written before
+2026-07-28 carry it; archives written after do not, because the binding to
+`vaipakam-lz-alerts-db` was removed with the retired LayerZero monitor
+(#1440). The format version stays `1` because nothing else about the shape
+changed — a reader must treat the key as optional rather than select a
+parser on the version marker.
+
+If you are restoring an archive that HAS the section and you genuinely need
+that data — alert de-duplication state and per-chain block cursors for a
+transport that no longer exists, so almost certainly not — restore it to a
+database you create by hand for the purpose. Do **not** recreate
+`ops/lz-watcher` to hold it: deploying that package would resurrect a
+retired Worker and take a cron slot. Otherwise ignore the section.
+
+**Critical**: `d1.archive[]` entries go to `vaipakam-archive`. Restoring
+another database's tables into it lands data in the wrong place and leaves
+the originating database empty after the restore. Match by source.
 
 For each table:
 

@@ -1,5 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // ─── RETIRED 2026-07-28 (#1440) — NOT DEPLOYABLE ────────────────────────
+  // The `vaipakam-lz-watcher` Worker was deleted. Post-T-068 it polled a
+  // decommissioned LayerZero stack, including the `OAPP_VPFI_BUY_*` surface
+  // the #687-A securities excision removed.
+  //
+  // The cron trigger and the D1 binding are commented out DELIBERATELY, not
+  // tidied away: `npm run deploy` here would otherwise recreate the Worker
+  // and take one of the five free-plan cron slots (`ops/mesh-watcher` now
+  // uses the one this freed), or fail outright once the operator deletes
+  // `vaipakam-lz-alerts-db`. `package.json`'s deploy script refuses too.
+  //
+  // The source is kept as historical reference. Removing the tree entirely
+  // is tracked on #250 Phase 2.
   "name": "vaipakam-lz-watcher",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-29",
@@ -13,7 +26,8 @@
   // levers that respond to the alert. 5-min also keeps us well under
   // the free-tier 100k-requests/day budget (5/min × 1440 = 1.4%).
   "triggers": {
-    "crons": ["*/5 * * * *"],
+    // "crons": ["*/5 * * * *"],  // RETIRED — see the header note (#1440)
+    "crons": [],
   },
   // D1 — alert dedup + per-chain block cursors for the log scanners.
   // SEPARATE database from hf-watcher's `vaipakam-alerts-db` on purpose:
@@ -23,14 +37,17 @@
   // only; co-locating its bookkeeping with user-facing data on a
   // shared DB would conflate audit trails.
   "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "vaipakam-lz-alerts-db",
-      // Created via `wrangler d1 create vaipakam-lz-alerts-db` on
-      // 2026-05-10 (APAC region) during the cf-deploy walkthrough.
-      "database_id": "edefa776-6832-46a0-84f7-e8e0cf157964",
-      "remote": false,
-    },
+    // RETIRED (#1440) — the binding to `vaipakam-lz-alerts-db` is removed so
+    // this package cannot be deployed against a database the operator is
+    // about to delete.
+//     {
+//       "binding": "DB",
+//       "database_name": "vaipakam-lz-alerts-db",
+//       // Created via `wrangler d1 create vaipakam-lz-alerts-db` on
+//       // 2026-05-10 (APAC region) during the cf-deploy walkthrough.
+//       "database_id": "edefa776-6832-46a0-84f7-e8e0cf157964",
+//       "remote": false,
+//     },
   ],
   // Env-scoped secrets (set via `wrangler secret put`):
   //   RPC_BASE / RPC_ETH / RPC_ARB / RPC_OP / RPC_ZKEVM / RPC_BNB

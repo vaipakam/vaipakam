@@ -53,8 +53,11 @@
 #                        Cloudflare Worker was DELETED 2026-07-28 (the
 #                        T-068 CCIP migration and the #687-A securities
 #                        excision had between them made every surface it
-#                        polled dead); removing the source tree is
-#                        tracked on #1440.
+#                        polled dead). Its package is now NON-DEPLOYABLE —
+#                        cron trigger and D1 binding commented out, deploy
+#                        script refuses (#1440) — so it cannot be
+#                        resurrected by accident. Removing the source tree
+#                        entirely is tracked on #250 Phase 2.
 #
 # `vaipakam-keeper-bot` is a separate sibling repo (extracted
 # Phase 9.A) and stays separate — not part of this workspace.
