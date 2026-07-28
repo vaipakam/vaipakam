@@ -228,6 +228,17 @@ alert: configured secrets become named placeholders (`<RPC_42161>`), and
 *any* URL — including ones this Worker never configured — keeps its scheme
 and host and loses its path, query and fragment.
 
+**Storage failures degrade; they never discard evidence.** `deliver.ts`
+states the contract once, because the same defect was found in four
+different call sites across review: findings are computed from chain
+reads that already succeeded, so storage only decides whether to
+*suppress* a repeat — "we could not check" degrades to "send it", never
+to "send nothing". Dedup and recording are both best-effort; a failure of
+either is announced on the same channel and fails the tick, because a
+frozen streak table leaves both windowed detectors below their thresholds
+indefinitely while everything else looks fine. Every send is bounded, so
+one hung request cannot block the alerts behind it.
+
 **Its own D1, its own Telegram bot.** `vaipakam-mesh-alerts-db`, not the
 shared `vaipakam-archive`; `TG_OPS_BOT_TOKEN`, not the user-facing
 `TG_BOT_TOKEN`. Same trust-boundary reasoning that gave `ops/lz-watcher`
@@ -248,7 +259,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 52 mutations applied in turn, each
+The suite is **mutation-verified**: 57 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's

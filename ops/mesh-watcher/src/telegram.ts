@@ -14,6 +14,10 @@ import { stripUrlPaths } from './redact';
 
 const TELEGRAM_MAX_CHARS = 4096;
 
+/** Per-message deadline. Well under the Worker's own tick budget, so a
+ *  stalled endpoint costs one message rather than the whole tick. */
+const SEND_TIMEOUT_MS = 10_000;
+
 export interface TelegramTarget {
   token: string;
   chatId: string;
@@ -46,6 +50,13 @@ export async function sendOpsMessage(
       ? `${text.slice(0, TELEGRAM_MAX_CHARS - 24)}\n… (truncated)`
       : text;
 
+  // BOUNDED. Telegram can accept the connection and never complete the
+  // response; with no deadline the sequential delivery loop stalls there,
+  // so one hung ADVISORY blocks every later CRITICAL and the state batch
+  // is never written (Codex #1443 r7). An expiry is treated like any
+  // other per-message delivery failure.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
   try {
     const res = await fetch(
       `https://api.telegram.org/bot${target.token}/sendMessage`,
@@ -65,6 +76,7 @@ export async function sendOpsMessage(
         // delivered. Bold titles and code fences are not worth an
         // injection surface on a channel whose whole job is faithful
         // reporting.
+        signal: controller.signal,
         body: JSON.stringify({
           chat_id: target.chatId,
           text: body,
@@ -81,10 +93,17 @@ export async function sendOpsMessage(
     }
     return true;
   } catch (err) {
-    console.error(
-      `telegram sendMessage threw: ${redactDeliveryError(err instanceof Error ? err.message : String(err), target.token)}`,
-    );
+    const reason =
+      err instanceof Error && err.name === 'AbortError'
+        ? `no response within ${SEND_TIMEOUT_MS}ms`
+        : redactDeliveryError(
+            err instanceof Error ? err.message : String(err),
+            target.token,
+          );
+    console.error(`telegram sendMessage threw: ${reason}`);
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -38,6 +38,15 @@ export interface ChainTarget {
 export interface CoverageGap {
   chainId: number;
   reason: 'no-deployment' | 'no-rpc' | 'stale-head';
+  /**
+   * Which read produced the gap.
+   *
+   * One chain can fail BOTH its Base-side book read and its own-ledger
+   * read in a tick, and both are `no-rpc` — so the reason alone still
+   * collided on one dedup key, sending one detail twice and discarding
+   * the other (Codex #1443 r7).
+   */
+  source: 'config' | 'base-books' | 'own-ledger';
   detail: string;
 }
 
@@ -71,6 +80,7 @@ export function resolveChain(
     return {
       chainId,
       reason: 'no-deployment',
+      source: 'config',
       detail: `no stanza for chain ${chainId} in packages/contracts/src/deployments.json — run contracts/script/exportFrontendDeployments.sh after the deploy`,
     };
   }
@@ -80,6 +90,7 @@ export function resolveChain(
     return {
       chainId,
       reason: 'no-rpc',
+      source: 'config',
       detail: `no RPC_${chainId} secret configured (chain ${row.chainSlug})`,
     };
   }

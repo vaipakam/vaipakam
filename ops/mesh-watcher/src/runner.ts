@@ -5,6 +5,7 @@
 
 import { assertAbiShape } from './abi';
 import { deploymentFor } from './chains';
+import { deliverFindings } from './deliver';
 import {
   fingerprint,
   loadStreaks,
@@ -12,7 +13,6 @@ import {
   retainOnlyActiveStatement,
   saveStreakStatement,
   selectAlertsToSend,
-  toAlertRecords,
 } from './db';
 import {
   readAlertRepeatSeconds,
@@ -72,6 +72,8 @@ export interface TickSummary {
   deliveryVerified: boolean | null;
   /** Sends attempted this tick that Telegram rejected. */
   deliveryFailures: number;
+  /** Any alert-state read or write failed — see `deliver.ts` rule 4. */
+  stateDegraded: boolean;
   chainsObserved: number;
   critical: number;
   advisory: number;
@@ -176,6 +178,7 @@ export async function runTick(
         stuck.windowKind === 'local'
           ? config.stuckWindowTicks
           : config.reportLagWindowTicks,
+        persistState,
       );
       if (persistState) {
         streakWrites.push(
@@ -214,14 +217,21 @@ export async function runTick(
 
       // One run PER CUMULATIVE. A single combined run reset every time an
       // unrelated field advanced, so a permanently-stuck one never fired.
+      // With no local snapshot the lag conditions are UNKNOWN, not
+      // false — and clearing a run on an unknown observation lets
+      // intermittent RPC gaps erase up to 32.5 hours of valid evidence
+      // repeatedly (Codex #1443 r7). Both sides are monotonic, so the
+      // next real observation decides whether the run continues.
+      const lagObservable = local !== undefined;
       const firing = reportLagConditions(books, local).filter((c) => {
         const outcome = advanceStreak(
           lagPrior.get(`${books.chainId}/${c.label}`) ?? null,
           c.holds,
           c.marker,
           config.reportLagWindowTicks,
+          persistState,
         );
-        if (persistState) {
+        if (persistState && lagObservable) {
           streakWrites.push(
             saveStreakStatement(
               env.DB,
@@ -272,7 +282,7 @@ export async function runTick(
         // AND a failed own-ledger read on that same chain — and a shared
         // key made the delivery map keep only the last, sending it twice
         // while the other's detail was never delivered (Codex #1443 r5).
-        key: `coverage-gap/${gap.reason}:${gap.chainId}`,
+        key: `coverage-gap/${gap.reason}/${gap.source}:${gap.chainId}`,
         code: 'coverage-gap',
         severity: 'advisory',
         chainId: gap.chainId,
@@ -281,116 +291,52 @@ export async function runTick(
       });
     }
 
-    // ── Deliver ──────────────────────────────────────────────────────
-    const candidates = toAlertRecords(findings);
-
-    let sent = 0;
-    const writes: D1PreparedStatement[] = [...streakWrites];
-
-    if (config.telegram) {
-      // FAIL OPEN, for real this time. Setting `stateAvailable = false`
-      // above preserved the already-computed hard findings, but delivery
-      // then queried the SAME dead D1 — the rejection reached the outer
-      // catch and discarded both the ledger findings and the
-      // state-unavailable notice, leaving only a generic tick-failed
-      // alert (Codex #1443 r6). When state is gone, dedup is skipped
-      // entirely: every finding is sent, unsuppressed, and nothing is
-      // recorded.
-      const { send, statements } = stateAvailable
-        ? await selectAlertsToSend(
-            env.DB,
-            candidates,
-            config.alertRepeatSeconds,
-            now,
-          )
-        : { send: candidates, statements: [] as D1PreparedStatement[] };
-      const byKey = new Map(findings.map((f) => [f.key, f]));
-      for (let i = 0; i < send.length; i += 1) {
-        const record = send[i]!;
-        const finding = byKey.get(record.key);
-        if (!finding) continue;
-        const ok = await sendOpsMessage(
-          config.telegram,
-          formatAlert({
-            severity: finding.severity,
-            title: finding.title,
-            chainLabel: chainLabel(finding.chainId),
-            detail: finding.detail,
-            footer:
-              finding.code === STUCK_SIGNAL ? STUCK_CAVEAT : undefined,
-          }),
-          // Advisories land SILENTLY. The tier split is only real if the
-          // channel treats them differently — a badge in the text while
-          // the phone buzzes identically is how a deliberately
-          // non-sufficient signal trains someone to mute the channel.
-          finding.severity === 'advisory',
-        );
-        if (!ok) {
-          deliveryFailures += 1;
-          continue;
-        }
-        sent += 1;
-        // Record the quiet window only for what ACTUALLY went out, and
-        // pair it with its own send rather than a positional prefix: a
-        // Telegram failure on one alert must not consume the window of a
-        // different alert that succeeded after it.
-        const statement = statements[i];
-        if (statement) writes.push(statement);
-      }
-    } else {
-      console.error(
-        'DEGRADED: TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID unset — findings are being written to transient Worker logs and delivered to NO ONE. The tick reports ok:false and deliveryConfigured:false until this is set.',
-      );
-      for (const f of findings) {
-        console.warn(`[${f.severity}] ${f.code} ${chainLabel(f.chainId)}: ${f.title}`);
-      }
-    }
-
-    // Delivery PROBE — operator verification only, never on the cron.
-    // Proves the credentials and chat id actually work, which
-    // `deliveryConfigured` cannot: it is true for a malformed token.
-    if (options.probeDelivery && config.telegram) {
-      deliveryVerified = await sendOpsMessage(
-        config.telegram,
-        `✅ vaipakam-mesh-watcher delivery probe — manual POST /run. ` +
-          `Chains observed: ${obs.books.length}. ` +
-          `Critical: ${findings.filter((f) => f.severity === 'critical').length}. ` +
-          `Advisory: ${findings.filter((f) => f.severity === 'advisory').length}. ` +
-          `If you can read this, the ops pager works.`,
-      );
-      if (!deliveryVerified) deliveryFailures += 1;
-    } else if (sent > 0) {
-      // Real alerts went out — that is its own proof.
-      deliveryVerified = deliveryFailures === 0;
-    }
-
     if (stateAvailable && persistState) {
-      writes.push(
-        // Runs for chains that have left the mesh are stale — a later
+      streakWrites.push(
+        // Runs for chains that have LEFT the mesh are stale — a later
         // re-add must serve its full window, not resume the old count.
-        pruneStreaksStatement(
-          env.DB,
-          obs.books.map((b) => b.chainId),
-        ),
+        //
+        // Pruned against the EXPECTED set, not the successfully-read one:
+        // a chain whose Base-side read merely failed this tick is still
+        // in the mesh, and deleting its runs on a transient RPC error
+        // would let intermittent failures reset a 32.5-hour report-lag
+        // run indefinitely (Codex #1443 r7).
+        pruneStreaksStatement(env.DB, obs.expectedChainIds),
         retainOnlyActiveStatement(
           env.DB,
           findings.map((f) => f.key),
         ),
       );
     }
-    if (writes.length > 0) {
-      try {
-        await env.DB.batch(writes);
-      } catch (err) {
-        // Alerts have ALREADY been delivered by this point. Letting a
-        // write failure reach the outer catch would report the tick as
-        // failed after it had in fact done its job, and would hide the
-        // findings that went out.
-        console.error(
-          `mesh-watcher: alert-state write failed (alerts already delivered): ${makeBaseRedactor(env)(err instanceof Error ? err.message : String(err))}`,
-        );
-      }
-    }
+
+    // ── Deliver ─────────────────────────────────────────────────────
+    // One pipeline, one fail-open contract — see `deliver.ts` for why
+    // this is not inline any more.
+    const delivery = await deliverFindings({
+      db: env.DB,
+      telegram: config.telegram,
+      findings,
+      repeatSeconds: config.alertRepeatSeconds,
+      now,
+      redact: makeBaseRedactor(env),
+      dedupAvailable: stateAvailable,
+      writes: streakWrites,
+      probeText: options.probeDelivery
+        ? `✅ vaipakam-mesh-watcher delivery probe — manual POST /run. ` +
+          `Chains observed: ${obs.books.length}. ` +
+          `Critical: ${findings.filter((f) => f.severity === 'critical').length}. ` +
+          `Advisory: ${findings.filter((f) => f.severity === 'advisory').length}. ` +
+          `If you can read this, the ops pager works.`
+        : null,
+      format: (finding) =>
+        formatAlert({
+          severity: finding.severity,
+          title: finding.title,
+          chainLabel: chainLabel(finding.chainId),
+          detail: finding.detail,
+          footer: finding.code === STUCK_SIGNAL ? STUCK_CAVEAT : undefined,
+        }),
+    });
 
     const critical = findings.filter((f) => f.severity === 'critical').length;
     const deliveryConfigured = config.telegram !== null;
@@ -403,20 +349,26 @@ export async function runTick(
       // is not observing its full mesh is not HEALTHY — `curl --fail` on
       // a first-deploy verification with a missing mirror RPC must not
       // certify it (Codex #1443 r6).
+      // Storage degradation fails the tick too: it freezes both windowed
+      // detectors below their thresholds while everything else looks
+      // fine, so certifying a degraded watcher as healthy would be the
+      // same silent-pager mistake in a different place.
       ok:
         critical === 0 &&
         deliveryConfigured &&
-        deliveryFailures === 0 &&
-        deliveryVerified !== false &&
-        obs.gaps.length === 0,
+        delivery.failures === 0 &&
+        delivery.verified !== false &&
+        obs.gaps.length === 0 &&
+        !delivery.stateDegraded,
       deliveryConfigured,
-      deliveryVerified,
-      deliveryFailures,
+      deliveryVerified: delivery.verified,
+      deliveryFailures: delivery.failures,
+      stateDegraded: delivery.stateDegraded,
       chainsObserved: obs.books.length,
       critical,
       advisory: findings.length - critical,
       coverageGaps: obs.gaps.length,
-      sent,
+      sent: delivery.sent,
       findings: findings.map((f) => ({
         severity: f.severity,
         code: f.code,
@@ -491,6 +443,7 @@ export async function runTick(
       deliveryConfigured: telegram !== null,
       deliveryVerified,
       deliveryFailures,
+      stateDegraded: true,
       chainsObserved: 0,
       critical: 0,
       advisory: 0,

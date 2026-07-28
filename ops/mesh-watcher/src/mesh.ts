@@ -185,6 +185,7 @@ export async function observeMesh(
     gaps.push({
       chainId: config.canonicalChainId,
       reason: 'no-deployment',
+      source: 'config',
       detail: `getExpectedSourceChainIds() is empty on the configured canonical Diamond (${canonical.diamond} on chain ${config.canonicalChainId}) — the mesh source set is unconfigured, or CANONICAL_CHAIN_ID points at a mirror`,
     });
   }
@@ -199,6 +200,7 @@ export async function observeMesh(
     gaps.push({
       chainId: config.canonicalChainId,
       reason: 'no-deployment',
+      source: 'config',
       detail: `the canonical chain ${config.canonicalChainId} is NOT in getExpectedSourceChainIds() — finalizeDay sums the global denominators over that list, so Base's own activity is being dropped from every day's totals. Its books are still read below, but the on-chain source set needs fixing.`,
     });
   }
@@ -227,6 +229,7 @@ export async function observeMesh(
     gaps.push({
       chainId: id,
       reason: 'no-rpc',
+      source: 'base-books',
       detail: redactBase(
         `Base-side books unreadable for chain ${id}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
       ),
@@ -256,6 +259,7 @@ export async function observeMesh(
           gaps.push({
             chainId: id,
             reason: 'stale-head',
+            source: 'own-ledger',
             detail: `chain ${id} is serving a stale head — its latest block is ${ageSeconds}s old (limit ${config.staleLocalSeconds}s), so Base can legitimately hold newer figures than this snapshot. Cross-chain comparisons for this chain are SKIPPED this tick rather than reported as ledger faults.`,
           });
           return;
@@ -268,6 +272,7 @@ export async function observeMesh(
         gaps.push({
           chainId: id,
           reason: 'no-rpc',
+          source: 'own-ledger',
           detail: redact(
             `own-ledger read failed on chain ${id}: ${err instanceof Error ? err.message : String(err)}`,
           ),
@@ -278,6 +283,7 @@ export async function observeMesh(
 
   return {
     canonicalChainId: config.canonicalChainId,
+    expectedChainIds: chainIds,
     books,
     locals,
     gaps,

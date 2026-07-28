@@ -105,6 +105,19 @@ and a run that cannot see its whole mesh no longer reports itself healthy.
 Verifying that each configured endpoint really is the chain it claims to
 be is deferred to its own change.
 
+A seventh round made clear that patching those storage-failure paths one
+at a time was the wrong shape — the same defect had by then been found in
+four different places, each time in whichever call site had not been
+looked at yet. The delivery and bookkeeping half of a run is now one
+piece of code stating one rule: findings are computed from chain reads
+that already succeeded, so the bookkeeping database only decides whether
+to suppress a repeat, and "could not check" has to mean "send it" rather
+than "send nothing". A bookkeeping failure is now announced on the same
+channel and makes the run report itself unhealthy, because it quietly
+freezes the two windowed signals below their thresholds while everything
+else looks fine. Each message also gets a deadline, so one request that
+hangs cannot hold up the alerts behind it.
+
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the
 canonical Diamond each tick, so a mirror wired on-chain is watched as soon

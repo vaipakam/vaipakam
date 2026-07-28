@@ -78,6 +78,15 @@ export interface MeshObservation {
    *  canonical chain itself (whose books must be inert — see
    *  `base-self-inert`). */
   books: readonly BaseChainBooks[];
+  /**
+   * Every chain the mesh EXPECTS, including ones whose reads failed.
+   *
+   * Distinct from `books`, which holds only the chains successfully read.
+   * Streak pruning keys on this: a chain whose read merely failed is
+   * still in the mesh, and deleting its runs on a transient error would
+   * let intermittent failures reset a multi-day window forever.
+   */
+  expectedChainIds: readonly number[];
   /** Own-ledger reads, keyed by chain id. Missing for chains this tick
    *  could not reach — those appear in `gaps`. */
   locals: ReadonlyMap<number, LocalLedger>;
@@ -499,8 +508,24 @@ export function advanceStreak(
   holds: boolean,
   marker: string,
   window: number,
+  /**
+   * When false, EVALUATE the stored run without counting this
+   * observation toward it.
+   *
+   * Manual `POST /run` reads the state but does not persist it — yet an
+   * earlier version still incremented in memory and fired from the
+   * incremented value, so a run sitting one short of its threshold could
+   * be pushed over by a manual invocation and announce a window's worth
+   * of stasis that never happened (Codex #1443 r7). The windows are
+   * denominated in SCHEDULED observations; this keeps them that way.
+   */
+  counts = true,
 ): StreakOutcome {
-  if (!holds) return { next: null, fire: false };
+  if (!holds) return { next: counts ? null : (prev ?? null), fire: false };
+  if (!counts) {
+    const held = prev && prev.marker === marker ? prev : null;
+    return { next: prev ?? null, fire: (held?.streak ?? 0) >= window };
+  }
   const streak = prev && prev.marker === marker ? prev.streak + 1 : 1;
   return { next: { marker, streak }, fire: streak >= window };
 }

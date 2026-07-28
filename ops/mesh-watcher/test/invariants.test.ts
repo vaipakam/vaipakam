@@ -41,7 +41,11 @@ import {
   type LocalLedger,
   type MeshObservation,
 } from '../src/invariants';
-import { formatAlert, redactDeliveryError } from '../src/telegram';
+import {
+  formatAlert,
+  redactDeliveryError,
+  sendOpsMessage,
+} from '../src/telegram';
 import { bearerToken, isAuthorized, secretsMatch } from '../src/auth';
 import {
   readAlertRepeatSeconds,
@@ -50,6 +54,7 @@ import {
 } from '../src/env';
 import {
   configuredRpcChainIds,
+  credentialComponents,
   makeBaseRedactor,
   makeRedactor,
   stripUrlPaths,
@@ -145,6 +150,7 @@ function observation(o: Overrides = {}): MeshObservation {
   }
   return {
     canonicalChainId: CANONICAL,
+    expectedChainIds: [CANONICAL, MIRROR],
     books: [
       { ...canonicalBooks(), ...o.canonical },
       { ...mirrorBooks(), ...o.mirror },
@@ -1341,5 +1347,136 @@ describe('stale-head freshness gate', () => {
         mirror: { reported: 99_999n * E, attributed: 0n, avail: 99_699n * E },
       }),
     ).toEqual(['base-ahead-of-chain']);
+  });
+});
+
+describe('advanceStreak — non-counting evaluation (manual runs)', () => {
+  // Manual POST /run reads the state but does not persist it. An earlier
+  // version still incremented in memory and fired from the incremented
+  // value, so a run one short of its threshold could be pushed over by a
+  // manual invocation and announce a window of stasis that never
+  // happened (Codex #1443 r7).
+  it('does not count the observation toward the run', () => {
+    const prev = { marker: 'x', streak: 5 };
+    expect(advanceStreak(prev, true, 'x', 6, false)).toEqual({
+      next: prev,
+      fire: false,
+    });
+  });
+
+  it('still FIRES when the stored run already met the window', () => {
+    const prev = { marker: 'x', streak: 6 };
+    expect(advanceStreak(prev, true, 'x', 6, false).fire).toBe(true);
+  });
+
+  it('does not fire when the stored run is for a different marker', () => {
+    expect(advanceStreak({ marker: 'old', streak: 99 }, true, 'new', 6, false).fire).toBe(
+      false,
+    );
+  });
+
+  it('leaves the stored run intact when the condition stops holding', () => {
+    // A non-counting observation must not DELETE the run either.
+    const prev = { marker: 'x', streak: 3 };
+    expect(advanceStreak(prev, false, 'x', 6, false).next).toEqual(prev);
+  });
+
+  it('counting mode is unchanged', () => {
+    expect(advanceStreak({ marker: 'x', streak: 5 }, true, 'x', 6, true)).toEqual({
+      next: { marker: 'x', streak: 6 },
+      fire: true,
+    });
+  });
+});
+
+describe('credentialComponents — a key echoed without its URL', () => {
+  // Registering only the whole URL missed the case where a provider
+  // echoes just the key back: the exact match fails because the string
+  // is not the full URL, and the structural pass does nothing because it
+  // is not a URL at all (Codex #1443 r7).
+  it('extracts a path-segment key', () => {
+    expect(credentialComponents('https://base.example/v2/SUPERSECRETKEY123')).toContain(
+      'SUPERSECRETKEY123',
+    );
+  });
+
+  it('extracts a query-parameter key', () => {
+    expect(
+      credentialComponents('https://rpc.example/rpc?apikey=QUERYSECRET123'),
+    ).toContain('QUERYSECRET123');
+  });
+
+  it('extracts userinfo', () => {
+    expect(credentialComponents('https://user:USERINFOSECRET@rpc.example/')).toContain(
+      'USERINFOSECRET',
+    );
+  });
+
+  it('ignores common path words and short segments', () => {
+    const parts = credentialComponents('https://base-mainnet.example/v2/rpc');
+    expect(parts).not.toContain('v2');
+    expect(parts).not.toContain('rpc');
+  });
+
+  it('redacts a bare echoed key through the full redactor', () => {
+    const r = makeRedactor(
+      { RPC_8453: 'https://base.example/v2/SUPERSECRETKEY123' } as never,
+      [8453],
+    );
+    // The provider echoes ONLY the key, with no URL around it.
+    const out = r('upstream rejected credential SUPERSECRETKEY123');
+    expect(out).not.toContain('SUPERSECRETKEY123');
+  });
+});
+
+describe('sendOpsMessage — bounded delivery', () => {
+  // Telegram can accept the connection and never complete the response.
+  // Without a deadline the sequential delivery loop stalls there, so one
+  // hung ADVISORY blocks every later CRITICAL and the state batch is
+  // never written (Codex #1443 r7).
+  const target = { token: 'tok', chatId: '-100' };
+
+  it('gives up on a response that never arrives, rather than hanging', async () => {
+    const original = globalThis.fetch;
+    // A server that accepts and never answers — resolves only if aborted.
+    globalThis.fetch = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      })) as typeof fetch;
+    try {
+      await expect(sendOpsMessage(target, 'hello')).resolves.toBe(false);
+    } finally {
+      globalThis.fetch = original;
+    }
+  }, 20_000);
+
+  it('passes an abort signal on every send', async () => {
+    const original = globalThis.fetch;
+    let sawSignal = false;
+    globalThis.fetch = ((_url: string, init?: RequestInit) => {
+      sawSignal = init?.signal instanceof AbortSignal;
+      return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+    }) as typeof fetch;
+    try {
+      await sendOpsMessage(target, 'hello');
+      expect(sawSignal).toBe(true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('reports a rejected send as a failure rather than throwing', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response('nope', { status: 429 }))) as typeof fetch;
+    try {
+      await expect(sendOpsMessage(target, 'hello')).resolves.toBe(false);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

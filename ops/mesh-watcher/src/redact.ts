@@ -26,13 +26,77 @@ import { rpcFor, type Env } from './env';
 /** Placeholder for a path/query that may carry credentials. */
 const STRIPPED = '/<redacted>';
 
+/**
+ * Credential-looking components of a configured URL — userinfo, path
+ * segments and query values.
+ *
+ * Filters out segments too short or too common to be secrets, because
+ * registering `v2` or `rpc` as a redaction target would replace those
+ * substrings throughout otherwise-readable prose.
+ */
+export function credentialComponents(url: string): string[] {
+  const out: string[] = [];
+  let rest = url;
+
+  const schemeAt = rest.indexOf('://');
+  if (schemeAt !== -1) rest = rest.slice(schemeAt + 3);
+
+  // userinfo
+  const at = rest.indexOf('@');
+  if (at !== -1) {
+    for (const part of rest.slice(0, at).split(':')) out.push(part);
+    rest = rest.slice(at + 1);
+  }
+
+  const hashAt = rest.indexOf('#');
+  if (hashAt !== -1) rest = rest.slice(0, hashAt);
+
+  const queryAt = rest.indexOf('?');
+  if (queryAt !== -1) {
+    for (const pair of rest.slice(queryAt + 1).split('&')) {
+      const eq = pair.indexOf('=');
+      out.push(eq === -1 ? pair : pair.slice(eq + 1));
+    }
+    rest = rest.slice(0, queryAt);
+  }
+
+  const slashAt = rest.indexOf('/');
+  if (slashAt !== -1) {
+    for (const segment of rest.slice(slashAt + 1).split('/')) out.push(segment);
+  }
+
+  // A credential is long and not a well-known path word. Below this
+  // length the false-positive risk to readable prose outweighs the leak
+  // risk, and real provider keys are far longer.
+  const COMMON = new Set([
+    'v1', 'v2', 'v3', 'rpc', 'api', 'eth', 'ws', 'http', 'https', 'mainnet',
+    'testnet', 'sepolia', 'base', 'arbitrum', 'optimism', 'public', 'node',
+  ]);
+  return [
+    ...new Set(
+      out
+        .map((c) => c.trim())
+        .filter((c) => c.length >= 8 && !COMMON.has(c.toLowerCase())),
+    ),
+  ];
+}
+
 /** Longest-first, so a secret that contains another is replaced whole. */
 function collectSecrets(env: Env, chainIds: readonly number[]): [string, string][] {
   const pairs: [string, string][] = [];
 
   for (const chainId of chainIds) {
     const url = rpcFor(env, chainId);
-    if (url) pairs.push([url, `<RPC_${chainId}>`]);
+    if (!url) continue;
+    pairs.push([url, `<RPC_${chainId}>`]);
+    // ...and every CREDENTIAL-BEARING COMPONENT of it, independently.
+    // Registering only the whole URL missed the case where a provider
+    // echoes just the key back in an error body: the exact match fails
+    // because the string is not the full URL, and the structural pass
+    // does nothing because it is not a URL at all (Codex #1443 r7).
+    for (const component of credentialComponents(url)) {
+      pairs.push([component, `<RPC_${chainId}_SECRET>`]);
+    }
   }
   if (typeof env.TG_OPS_BOT_TOKEN === 'string' && env.TG_OPS_BOT_TOKEN) {
     pairs.push([env.TG_OPS_BOT_TOKEN, '<TG_OPS_BOT_TOKEN>']);
