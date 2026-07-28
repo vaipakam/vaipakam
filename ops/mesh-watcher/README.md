@@ -42,8 +42,8 @@ operation. These page.
 | `base-self-inert` | The per-chain COMMITMENT fields under the canonical chain's own id — `consumed`, `retired`, `released`, `outstanding` — are zero | Base is never a "local" funder in the commit split: its slice comes from the same bucket the global ledger governs, so it books no per-chain instruction against itself. Non-zero here means it double-booked, corrupting the global reservation *and* netting its own bucket twice. Note this is **not** every field — Base records its own chain in the ledger at day-close, so `reported`, `attributed` and `avail` are legitimately non-zero under its own id and are deliberately not checked. |
 | `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
 | `consumed-cap` | `consumed − released ≤ reported`, per chain (governor §7 #6) | Base can never instruct a chain to fund more than it reported absorbing, net of what it released un-spent — `_mirrorAvailable` bounds every instruction, and `MeshLedger.invariant.t.sol` asserts it on-chain. Checked **separately** rather than inferred from the availability formula, because that formula saturates: if this bound broke, `expectedAvail` would floor to zero, the on-chain `avail` would agree, and every other check would stay green while over-instruction went completely invisible. |
-| `bucket-coverage` | `bucket + releasedRemitFull ≥ outstanding`, per chain | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
-| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitSent` | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. This is the only check that can see the **B2-d5 custody exclusion itself** regressing — see below. |
+| `bucket-coverage` | `bucket + releasedRemitStranded ≥ outstanding`, per chain (the stranded term applies only while the chain is currently canonical) | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
+| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitStranded` | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. This is the only check that can see the **B2-d5 custody exclusion itself** regressing — see below. |
 | `reported-derivation` | `reported == max(creditedRaw, bucket + paidOut − relocated)` | The published lifetime-absorption figure is re-derived here from the raw slots at the same block. Catches the exclusion being dropped from the pre-upgrade floor branch, which binds on a Diamond refreshed over live pre-#1222 state. |
 
 **On bucket coverage applying to every chain (#1444).** This originally
@@ -57,9 +57,25 @@ conservative recovery state would have been a false alarm on correct
 behaviour.
 
 Rather than keep a role exception, the contract now **records what that
-path moved** (`getRecycleCompositionPosition`), so the released total
+path moved** (`getRecycleCompositionPosition`), so the stranded total
 enters the relation as backing that exists but is in transit. One rule
 now covers both roles and the exception is gone rather than documented.
+
+Two things the allowance deliberately is **not**:
+
+- **Not the pre-clamp commitment restored.** A liability-clamped remit
+  sends only part of its recycled commitment; the residual is retired
+  without moving tokens, so it never left the bucket. Counting it would
+  add `recycledFull − recycledSent` of backing that does not exist, and a
+  later real shortfall could hide inside that slack. The stranded figure
+  restores the relation *exactly* — the release lowered the bucket by
+  precisely that amount.
+- **Not applied to a chain that is not currently canonical.** Only the
+  canonical chain can release, but the role is a **mutable admin
+  setting**: a Diamond can accrue a stranded total as canonical and later
+  be switched to mirror mode without it being cleared. The role is read
+  from each chain per tick rather than inferred, so a demoted chain is
+  checked strictly instead of inheriting an allowance.
 
 Note the on-chain **funding gate** is deliberately *not* changed to match:
 `fundable = bucket − outstanding` stays conservative, which is what makes

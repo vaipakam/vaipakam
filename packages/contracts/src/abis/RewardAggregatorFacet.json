@@ -457,14 +457,14 @@
         "internalType": "uint256"
       },
       {
-        "name": "releasedRemitFull",
+        "name": "releasedRemitStranded",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "releasedRemitSent",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "isCanonicalRewardChain",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

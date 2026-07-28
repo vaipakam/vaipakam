@@ -988,8 +988,7 @@ contract RewardRemitLedgerTest is SetupTest {
         view
         returns (
             uint256 raw,
-            uint256 releasedFull,
-            uint256 releasedSent,
+            uint256 releasedStranded,
             uint256 relocated,
             uint256 bucket,
             uint256 reported,
@@ -998,7 +997,7 @@ contract RewardRemitLedgerTest is SetupTest {
         )
     {
         RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
-        (raw, releasedFull, releasedSent) = agg.getRecycleCompositionPosition();
+        (raw, releasedStranded, ) = agg.getRecycleCompositionPosition();
         (relocated, bucket, reported) = agg.getRecycleCustodyPosition();
         (, , outstanding, paidOut) = agg.getGovernorCommitState();
     }
@@ -1009,8 +1008,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function _assertComposition(string memory ctx) internal view {
         (
             uint256 raw,
-            ,
-            uint256 releasedSent,
+            uint256 releasedStranded,
             uint256 relocated,
             uint256 bucket,
             ,
@@ -1019,8 +1017,8 @@ contract RewardRemitLedgerTest is SetupTest {
         ) = _composition();
         assertLe(
             raw + relocated,
-            bucket + paidOut + releasedSent,
-            string.concat("composition: raw+relocated <= bucket+paidOut+releasedSent @ ", ctx)
+            bucket + paidOut + releasedStranded,
+            string.concat("composition: raw+relocated <= bucket+paidOut+stranded @ ", ctx)
         );
     }
 
@@ -1032,7 +1030,6 @@ contract RewardRemitLedgerTest is SetupTest {
     function _assertDerivation(string memory ctx) internal view {
         (
             uint256 raw,
-            ,
             ,
             uint256 relocated,
             uint256 bucket,
@@ -1077,27 +1074,32 @@ contract RewardRemitLedgerTest is SetupTest {
         (uint256 recycledFull, uint256 recycledSent) =
             _remitRecycledWithResidual();
 
-        (uint256 rawBefore, uint256 fullBefore, uint256 sentBefore) =
+        (uint256 rawBefore, uint256 strandedBefore, bool canonBefore) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
-        assertEq(fullBefore, 0, "no release yet");
-        assertEq(sentBefore, 0, "no release yet");
+        assertEq(strandedBefore, 0, "no release yet");
+        assertTrue(canonBefore, "fixture: this diamond is the canonical chain");
 
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
 
-        (uint256 raw, uint256 releasedFull, uint256 releasedSent) =
+        (uint256 raw, uint256 stranded, ) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
+        // Codex #1448 r1 P1 — the SENT share, never the pre-clamp total. The
+        // residual was retired by `releaseCommitment` without moving tokens,
+        // so it is still sitting in the bucket; recording the full figure
+        // would count it twice and hand the coverage check
+        // `recycledFull - recycledSent` of backing that does not exist.
         assertEq(
-            releasedFull,
-            recycledFull,
-            "records the PRE-clamp total whose commitment it restored"
-        );
-        assertEq(
-            releasedSent,
+            stranded,
             recycledSent,
-            "records the paidOut reversal for the CLAMPED share actually sent"
+            "records the paidOut reversal: what actually left the bucket"
+        );
+        assertLt(
+            stranded,
+            recycledFull,
+            "and NOT the pre-clamp commitment restored (fixture has a residual)"
         );
         assertEq(raw, rawBefore, "release is not absorption");
 
@@ -1109,27 +1111,55 @@ contract RewardRemitLedgerTest is SetupTest {
     /// @dev #1444 — the point of the counter. After a release the plain
     ///      relation `bucket >= outstanding` is FALSE on correct, intended
     ///      behaviour, which is why bucket coverage could only ship as a
-    ///      canonical advisory. Adding the released term restores a HARD
-    ///      relation that holds on both chain roles, so the watcher pages on
+    ///      canonical advisory. Adding the stranded term restores a HARD
+    ///      relation that holds on every chain role, so the watcher pages on
     ///      one rule instead of splitting severity by role.
-    function test_Coverage_ReleasedTermRestoresTheHardRelation() public {
-        (uint256 recycledFull, ) = _remitRecycledWithResidual();
+    ///
+    ///      EXACTLY, not approximately: the release lowered the bucket by
+    ///      precisely the stranded amount, so `bucket + stranded` returns to
+    ///      the pre-remit figure. That exactness is the argument against the
+    ///      pre-clamp total, which would overshoot by the residual (Codex
+    ///      #1448 r1 P1) and leave slack a later real shortfall could hide in.
+    function test_Coverage_StrandedTermRestoresTheHardRelation() public {
+        (uint256 recycledFull, uint256 recycledSent) =
+            _remitRecycledWithResidual();
+        // The bucket the fixture SEEDED, i.e. before the remit debited it.
+        // `bucket + stranded` must return to exactly this: the remit removed
+        // only the sent share, and the release strands exactly that share.
+        uint256 bucketBeforeRemit = 1_000e18;
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
 
-        (, uint256 releasedFull, , , uint256 bucket, , , uint256 outstanding) =
+        (, uint256 stranded, , uint256 bucket, , , uint256 outstanding) =
             _composition();
 
         // The naive form is genuinely violated here — assert that, so this
         // test fails if the release path ever stops being able to produce
-        // the state the released term exists to explain.
+        // the state the stranded term exists to explain.
         assertLt(bucket, outstanding, "precondition: naive coverage IS broken");
         assertGe(
-            bucket + releasedFull,
+            bucket + stranded,
             outstanding,
-            "#1444: bucket + releasedRemitFull covers the reservations"
+            "#1444: bucket + stranded covers the reservations"
         );
-        assertEq(releasedFull, recycledFull, "the released term is the cause");
+        assertEq(
+            bucket + stranded,
+            bucketBeforeRemit,
+            "the correction is EXACT: back to the pre-remit bucket"
+        );
+
+        // And the over-correction is real if the pre-clamp total were used:
+        // it would exceed the true backing by the untouched residual.
+        assertGt(
+            bucket + recycledFull,
+            bucketBeforeRemit,
+            "pre-clamp total overshoots: the residual never left the bucket"
+        );
+        assertEq(
+            recycledFull - recycledSent,
+            (bucket + recycledFull) - bucketBeforeRemit,
+            "and it overshoots by exactly the residual"
+        );
     }
 
     /// @dev #1446 — the composition and derivation bounds across the
@@ -1168,7 +1198,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
         );
-        (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
+        (uint256 raw, , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
         assertEq(bucket, 63e18, "fixture: bucket took the top-up");

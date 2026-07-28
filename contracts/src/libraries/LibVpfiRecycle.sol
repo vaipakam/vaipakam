@@ -387,21 +387,27 @@ library LibVpfiRecycle {
      *         conservative direction while the re-opened days await
      *         re-funding.
      *
-     *         #1444 / #1446 — both movements are RECORDED, because this is
-     *         the only primitive that shifts a recycled ledger figure with no
-     *         matching token movement, and two external invariants could not
-     *         be checked strictly without knowing how much it shifted. See
-     *         the storage docs on `recycleReleasedRemitFullCumulative` /
-     *         `recycleReleasedRemitSentCumulative`.
+     *         #1444 / #1446 — the STRANDED amount is recorded, because this
+     *         is the only primitive that shifts a recycled ledger figure with
+     *         no matching token movement, and two external invariants could
+     *         not be checked strictly without knowing how much it shifted.
+     *         See the storage docs on
+     *         `recycleReleasedRemitStrandedCumulative`.
      *
-     *         NEITHER counter is decremented, because nothing currently
-     *         re-credits these tokens on the canonical chain:
-     *         {creditCustodyRelocated} runs only on the mirror-side ARRIVAL
-     *         path. If a canonical physical-recovery ceremony is ever added
-     *         (the B2-d5 class applied to a returned remit), it MUST decrement
-     *         both here — otherwise the coverage check silently slackens by
-     *         the recovered amount, since it would then be counted twice
-     *         (once in the bucket, once here).
+     *         What is recorded is the `paidOutRecycled` REVERSAL — the share
+     *         that physically left the bucket — never the pre-clamp
+     *         `recycledFull`. The residual (`recycledFull - recycledSent`)
+     *         was retired by {releaseCommitment} without moving tokens, so it
+     *         is still sitting in `recycleBucket`; counting it as separate
+     *         backing would count it twice (Codex #1448 r1 P1).
+     *
+     *         It is NOT decremented, and a future canonical physical-recovery
+     *         ceremony must NOT simply start decrementing it — recovery via
+     *         {creditCustodyRelocated} raises the bucket and the relocated
+     *         cumulative together, which already keeps the composition
+     *         relation true; decrementing here as well would page on every
+     *         healthy recovery. See the storage docs for the split that a
+     *         recovery path needs instead.
      */
     function restoreReleasedRemit(
         uint256 recycledFull,
@@ -421,15 +427,14 @@ library LibVpfiRecycle {
             uint256 cumulative = creditedCumulative(s);
             if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
         }
-        s.recycleReleasedRemitFullCumulative += recycledFull;
         uint256 paid = s.paidOutRecycled;
         // Record the ACTUAL decrement, not the request: the reversal floors
         // at zero, and counting `recycledSent` on an exhausted counter would
-        // overstate the composition identity's correction term (same rule
-        // `consume` applies to `retired`).
+        // overstate the correction term (same rule `consume` applies to
+        // `retired`).
         uint256 reversed = paid > recycledSent ? recycledSent : paid;
         s.paidOutRecycled = paid - reversed;
-        s.recycleReleasedRemitSentCumulative += reversed;
+        s.recycleReleasedRemitStrandedCumulative += reversed;
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

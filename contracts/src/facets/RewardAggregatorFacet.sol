@@ -1118,32 +1118,48 @@ contract RewardAggregatorFacet is
      *            the subtraction being dropped from the floor branch.
      *
      *         Also completes BUCKET COVERAGE (#1444): `bucket +
-     *         releasedRemitFull >= outstandingCommitRecycled` is a hard
-     *         relation on every chain, where plain `bucket >= outstanding`
-     *         had a legitimate canonical failure path.
-     * @return creditedRaw       Stored `recycleCreditedCumulative` BEFORE the
-     *                           derived pre-upgrade floor is applied. Zero on
-     *                           a Diamond refreshed over live pre-#1222 state
-     *                           until its first credit — which is exactly the
-     *                           case the floor exists for, and the reason the
-     *                           derived figure cannot serve here.
-     * @return releasedRemitFull Σ commitment restored by released remittances.
-     * @return releasedRemitSent Σ `paidOutRecycled` actually reversed by them.
+     *         releasedRemitStranded >= outstandingCommitRecycled` is a hard
+     *         relation, where plain `bucket >= outstanding` had a legitimate
+     *         canonical failure path.
+     * @return creditedRaw           Stored `recycleCreditedCumulative` BEFORE
+     *                               the derived pre-upgrade floor is applied.
+     *                               Zero on a Diamond refreshed over live
+     *                               pre-#1222 state until its first credit —
+     *                               exactly the case the floor exists for, and
+     *                               the reason the derived figure cannot serve
+     *                               here.
+     * @return releasedRemitStranded Σ VPFI a released remittance took out of
+     *                               the bucket and did not return (the
+     *                               `paidOutRecycled` reversal). NOT the
+     *                               pre-clamp commitment restored — that
+     *                               figure's residual never left the bucket.
+     * @return isCanonicalRewardChain Whether this Diamond currently acts as
+     *                               the canonical reward chain. Published
+     *                               with the figures because
+     *                               `releaseRemitReservation` is
+     *                               `onlyCanonical` but the role is a MUTABLE
+     *                               admin setting: a Diamond can accrue the
+     *                               stranded total as canonical and later be
+     *                               switched to mirror mode without it being
+     *                               cleared (Codex #1448 r1). A checker must
+     *                               therefore apply the allowance only while
+     *                               the role still holds, rather than assuming
+     *                               a mirror's total is structurally zero.
      */
     function getRecycleCompositionPosition()
         external
         view
         returns (
             uint256 creditedRaw,
-            uint256 releasedRemitFull,
-            uint256 releasedRemitSent
+            uint256 releasedRemitStranded,
+            bool isCanonicalRewardChain
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
             s.recycleCreditedCumulative,
-            s.recycleReleasedRemitFullCumulative,
-            s.recycleReleasedRemitSentCumulative
+            s.recycleReleasedRemitStrandedCumulative,
+            s.isCanonicalRewardChain
         );
     }
 

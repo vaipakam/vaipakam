@@ -5705,52 +5705,78 @@ library LibVaipakam {
         //   deliberately excluded from the reported cumulative ("phantom
         //   availability").
         mapping(uint32 => uint256) chainReleasedRecycledCommit;
-        // ─── #1444 / #1446 — released-remit cumulatives ────────────────────
-        // APPEND-ONLY TAIL. CANONICAL-ONLY in practice:
+        // ─── #1444 / #1446 — released-remit stranded cumulative ────────────
+        // APPEND-ONLY TAIL. CANONICAL-ONLY:
         // {RewardRemittanceFacet.releaseRemitReservation} is `onlyCanonical`,
-        // so both stay 0 on every mirror.
+        // so this stays 0 on every mirror.
         //
-        // Why these exist: {LibVpfiRecycle.restoreReleasedRemit} is the one
+        // Why it exists: {LibVpfiRecycle.restoreReleasedRemit} is the one
         // primitive that moves a recycled ledger figure WITHOUT a matching
         // token movement, which left two external checks unable to be strict
         // (`ops/mesh-watcher`, #1443). Recording what it moved makes both
         // exact from view calls alone — no log scanning.
         //
-        // `recycleReleasedRemitFullCumulative` — Σ of the PRE-clamp recycled
-        //   totals whose commitments were restored. Completes BUCKET
-        //   COVERAGE: a release raises `outstandingCommitRecycled` while
-        //   deliberately not re-crediting `recycleBucket` (the tokens are
-        //   locked in the CCIP pool), so `bucket >= outstanding` has a
-        //   legitimate failure path on Base and could only ship as an
-        //   advisory. `bucket + released >= outstanding` restores the hard
-        //   relation, letting the watcher page on BOTH roles with one rule
-        //   instead of a role-split severity (#1444).
-        uint256 recycleReleasedRemitFullCumulative;
-        // `recycleReleasedRemitSentCumulative` — Σ of the ACTUAL
-        //   `paidOutRecycled` decrements applied (never the requested
-        //   `recycledSent`: the reversal floors at zero, and counting the
-        //   request would overstate on a chain whose counter is exhausted —
-        //   the same discipline `consume`/`releaseCommitment` apply to
-        //   `retired`). Completes the BUCKET COMPOSITION identity
+        // `recycleReleasedRemitStrandedCumulative` — Σ of the ACTUAL
+        //   `paidOutRecycled` decrements applied by a release. That is the
+        //   VPFI that physically left the bucket and did not come back: it
+        //   sits in the transport's custody.
         //
-        //       recycleCreditedCumulative + recycleCustodyRelocatedCumulative
-        //         <= recycleBucket + paidOutRecycled + <this counter>
+        //   Deliberately the SENT share, never the pre-clamp `recycledFull`
+        //   (Codex #1448 r1 P1). A liability-clamped remit sends only part of
+        //   its recycled commitment; `consume` debits that part while
+        //   `releaseCommitment` retires the residual WITHOUT moving tokens —
+        //   so the residual is still sitting in `recycleBucket`. Counting
+        //   `recycledFull` as backing would count that residual twice and
+        //   introduce `recycledFull - recycledSent` of nonexistent slack in
+        //   the coverage check below, which a later real shortfall could hide
+        //   inside. It also records the actual decrement rather than the
+        //   request, because the reversal floors at zero — the same
+        //   discipline `consume`/`releaseCommitment` apply to `retired`.
         //
-        //   which holds at every write site (`credit` and
-        //   `creditCustodyRelocated` add to exactly one term on each side;
-        //   `consume` moves bucket → paidOut; `releaseCommitment` touches
-        //   neither side; this primitive moves paidOut → here). It is an
-        //   inequality rather than an equality ONLY because `consume` floors
-        //   the bucket for bounded cap-trim dust, which can only widen the
-        //   right side.
+        //   It completes TWO relations:
         //
-        //   It is the check that catches a regression in the B2-d5 custody
-        //   EXCLUSION itself (#1446): if `creditCustodyRelocated` ever also
-        //   advanced `recycleCreditedCumulative`, the left side would jump by
-        //   twice the credit against a right side that moved once. Comparing
-        //   the reported cumulative against Base cannot see that — both sides
-        //   derive from the same helper and would inflate together.
-        uint256 recycleReleasedRemitSentCumulative;
+        //   1. BUCKET COVERAGE — `recycleBucket + <this> >=
+        //      outstandingCommitRecycled`. A release restores the commitment
+        //      while deliberately not re-crediting the bucket, so plain
+        //      `bucket >= outstanding` has a legitimate failure path on the
+        //      canonical chain and could only ship as an advisory there.
+        //      Adding the stranded total restores the relation EXACTLY:
+        //      the release lowered the bucket by exactly this amount.
+        //
+        //   2. BUCKET COMPOSITION —
+        //        recycleCreditedCumulative + recycleCustodyRelocatedCumulative
+        //          <= recycleBucket + paidOutRecycled + <this>
+        //      which holds at every write site (`credit` and
+        //      `creditCustodyRelocated` add to exactly one term on each side;
+        //      `consume` moves bucket → paidOut; `releaseCommitment` touches
+        //      neither; this primitive moves paidOut → here). An inequality
+        //      rather than an equality ONLY because `consume` floors the
+        //      bucket for bounded cap-trim dust, which can only widen the
+        //      right side. It is what catches a regression in the B2-d5
+        //      custody EXCLUSION itself (#1446): if `creditCustodyRelocated`
+        //      ever also advanced `recycleCreditedCumulative`, the left side
+        //      would jump by twice the credit against a right side that moved
+        //      once. Comparing the reported cumulative against Base cannot see
+        //      that — both derive from the same helper and inflate together.
+        //
+        //   NEVER DECREMENTED, and the two relations disagree about whether a
+        //   future canonical physical-recovery ceremony should change that —
+        //   so adding one is a design step, not a mechanical edit:
+        //     - COMPOSITION requires it stay. Recovery via
+        //       {creditCustodyRelocated} raises `recycleBucket` AND
+        //       `recycleCustodyRelocatedCumulative` by the same amount, so
+        //       both sides move together and the relation still holds.
+        //       Decrementing here would lower the right side alone and page
+        //       on every healthy recovery (Codex #1448 r1).
+        //     - COVERAGE wants a LIVE figure. Once tokens are back in the
+        //       bucket they are counted there, so continuing to add them here
+        //       leaves permanent slack.
+        //   Nothing re-credits released backing on the canonical chain today
+        //   ({creditCustodyRelocated} runs only on the mirror-side arrival
+        //   path), so live == cumulative and one counter is exact. A recovery
+        //   ceremony must SPLIT them: keep this one for composition, and add
+        //   a separate recovered total for coverage to net against.
+        uint256 recycleReleasedRemitStrandedCumulative;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

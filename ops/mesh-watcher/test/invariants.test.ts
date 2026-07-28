@@ -125,8 +125,8 @@ function mirrorLocal(): LocalLedger {
     armedFromDay: 3n,
     paidOutRecycled: 800n * E,
     creditedRaw: 1000n * E,
-    releasedRemitFull: 0n,
-    releasedRemitSent: 0n,
+    releasedRemitStranded: 0n,
+    isCanonicalRewardChain: false,
     observedAt: 1_800_000_000n,
   });
 }
@@ -150,8 +150,8 @@ function canonicalLocal(): LocalLedger {
     armedFromDay: 3n,
     paidOutRecycled: 0n,
     creditedRaw: 800n * E,
-    releasedRemitFull: 0n,
-    releasedRemitSent: 0n,
+    releasedRemitStranded: 0n,
+    isCanonicalRewardChain: true,
     observedAt: 1_800_000_000n,
   });
 }
@@ -442,20 +442,23 @@ describe('checkHardInvariants — bucket coverage', () => {
   });
 
   // ── #1444 ────────────────────────────────────────────────────────────
-  it('counts released-remit backing, so a release is not a false alarm', () => {
+  it('counts stranded released-remit backing, so a release is not a false alarm', () => {
     // `releaseRemitReservation` restores the reservation without re-crediting
     // the bucket — the tokens are locked in transport custody. That is the
     // intended recovery state, and it is why this check could previously only
     // ship as an advisory on the canonical chain.
     expect(
-      codes({ canonicalLocal: { bucket: 0n, releasedRemitFull: 300n * E } }),
+      codes({ canonicalLocal: { bucket: 0n, releasedRemitStranded: 300n * E } }),
     ).toEqual([]);
   });
 
-  it('still fires when the shortfall EXCEEDS the released total', () => {
+  it('still fires when the shortfall EXCEEDS the stranded total', () => {
     expect(
       codes({
-        canonicalLocal: { bucket: 0n, releasedRemitFull: 300n * E - TOLERANCE - 1n },
+        canonicalLocal: {
+          bucket: 0n,
+          releasedRemitStranded: 300n * E - TOLERANCE - 1n,
+        },
       }),
     ).toEqual(['bucket-coverage']);
   });
@@ -469,6 +472,54 @@ describe('checkHardInvariants — bucket coverage', () => {
     expect(finding?.chainId).toBe(CANONICAL);
     // The whole point of #1444: this used to be 'advisory' here.
     expect(finding?.severity).toBe('critical');
+  });
+
+  // Codex #1448 r1 — a Diamond that released remits while canonical and was
+  // LATER demoted still carries a non-zero stranded total. Only the canonical
+  // chain can release, but the role is a mutable admin setting, so "a mirror's
+  // total is structurally zero" is an assumption, not a guarantee. Granting a
+  // mirror the inherited allowance would hide an under-backed reservation —
+  // exactly the strictness this check is supposed to keep on mirrors.
+  it('does NOT grant the allowance to a chain that is no longer canonical', () => {
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 0n,
+          releasedRemitStranded: 150n * E,
+          isCanonicalRewardChain: false,
+        },
+      }),
+    ).toEqual(['bucket-coverage']);
+  });
+
+  it('grants it on the same figures while the chain IS canonical', () => {
+    // Same numbers, role flag flipped — so the previous test cannot pass for
+    // some unrelated reason.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 0n,
+          releasedRemitStranded: 150n * E,
+          isCanonicalRewardChain: true,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports the stranded figure it actually applied', () => {
+    const [finding] = checkHardInvariants(
+      observation({
+        mirrorLocal: {
+          bucket: 0n,
+          releasedRemitStranded: 150n * E,
+          isCanonicalRewardChain: false,
+        },
+      }),
+      TOLERANCE,
+    );
+    // Zero, not 150 — the detail must show the allowance USED, or an operator
+    // reading it would conclude the shortfall was already accounted for.
+    expect(finding?.detail).toContain('stranded      = 0.000000 VPFI');
   });
 });
 

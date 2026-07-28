@@ -51,6 +51,17 @@ the watcher deliberately does not do (every read it makes is a view call at
 a pinned block). Publishing the raw counters turned out to be enough for
 both, so the watcher keeps its read shape.
 
+Two corrections came out of review and are worth recording, because both
+were cases of the correction itself being subtly wrong. The amount a
+release strands is the share that actually left the balance, not the whole
+commitment it restores — a partly-sent remittance retires its remainder
+without moving anything, so that remainder is still sitting in the
+balance and counting it would have credited it twice. And the allowance
+only applies while a chain still holds the canonical role: only the
+canonical chain can release, but the role is an administrative setting
+that can be changed, so a chain could otherwise carry an allowance into a
+role where it must be checked strictly.
+
 One incidental finding worth recording: the new reproduce-the-figure check
 immediately failed against the watcher's own healthy-mesh test fixture,
 because that fixture described a chain reporting less lifetime absorption

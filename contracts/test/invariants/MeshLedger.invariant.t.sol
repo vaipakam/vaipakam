@@ -318,7 +318,7 @@ contract MeshLedgerInvariant is Test {
     /// §7 #2 — a day can never size against availability another unclaimed
     /// day already committed.
     ///
-    /// #1444 — stated in its UNIVERSAL form (`+ releasedRemitFull`), because
+    /// #1444 — stated in its UNIVERSAL form (`+ stranded`), because
     /// the governor design predates B2-d2's remit-release valve and the bare
     /// `outstanding <= bucket` is genuinely false after a release: the
     /// commitment is restored while the bucket deliberately is not, since
@@ -333,17 +333,16 @@ contract MeshLedgerInvariant is Test {
     function invariant_GlobalRecycledCommitWithinBucket() public view {
         (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
         (, uint256 bucket, ) = _agg().getRecycleCustodyPosition();
-        (, uint256 releasedRemitFull, ) =
-            _agg().getRecycleCompositionPosition();
+        (, uint256 stranded, ) = _agg().getRecycleCompositionPosition();
         assertEq(
-            releasedRemitFull,
+            stranded,
             0,
             "this handler never releases a remit: strict bound is under test"
         );
         assertLe(
             outstandingRecycled,
-            bucket + releasedRemitFull,
-            "SS7#2: outstanding recycled commitments <= bucket + released remit"
+            bucket + stranded,
+            "SS7#2: outstanding recycled commitments <= bucket + stranded remit"
         );
     }
 
@@ -361,15 +360,15 @@ contract MeshLedgerInvariant is Test {
     /// Inequality rather than equality: `consume` floors the bucket at zero
     /// for bounded cap-trim dust, which can only widen the right side.
     function invariant_BucketCompositionWithinDestinations() public view {
-        (uint256 raw, , uint256 releasedRemitSent) =
+        (uint256 raw, uint256 stranded, ) =
             _agg().getRecycleCompositionPosition();
         (uint256 relocated, uint256 bucket, ) =
             _agg().getRecycleCustodyPosition();
         (, , , uint256 paidOut) = _agg().getGovernorCommitState();
         assertLe(
             raw + relocated,
-            bucket + paidOut + releasedRemitSent,
-            "#1446: creditedRaw + relocated <= bucket + paidOut + releasedRemitSent"
+            bucket + paidOut + stranded,
+            "#1446: creditedRaw + relocated <= bucket + paidOut + stranded"
         );
     }
 
