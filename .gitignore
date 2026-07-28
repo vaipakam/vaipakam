@@ -15,6 +15,15 @@ dist/
 package-lock.json
 yarn.lock
 
+# ...EXCEPT under ops/. Those are standalone npm packages deliberately
+# outside the pnpm workspace (each deploys on its own trust boundary —
+# see pnpm-workspace.yaml), so npm IS their package manager and their
+# lockfiles are the pinned dependency set. `npm ci` requires one, which
+# makes this load-bearing for the `ops/mesh-watcher` CI job. The existing
+# ops lockfiles were force-added one at a time; stating the exception
+# here means the next ops Worker doesn't have to rediscover it.
+!ops/*/package-lock.json
+
 # Debug info
 *.dbg.json
 *.tsbuildinfo

@@ -36,13 +36,25 @@
 # repo change. If a fallback is ever needed, `git checkout main~ -- alpha`
 # from the commit that deleted the tree restores it byte-for-byte.
 #
-# `ops/{lz-watcher,subgraph,tenderly}` are ACTIVE production
-# tooling (LayerZero security monitor, drift subgraph, Tenderly
-# alert presets) and stay outside the apps/* workspace because
-# they deploy to platforms other than Cloudflare Workers
-# (lz-watcher is a Cloudflare Worker but deliberately separate
-# for trust-boundary reasons; subgraph runs on The Graph;
-# Tenderly alerts deploy via the Tenderly CLI).
+# `ops/*` is internal operator tooling and stays outside the apps/*
+# workspace:
+#   - ops/mesh-watcher   VPFI recycling mesh invariant watcher
+#                        (#1222 M3 B4-c). A Cloudflare Worker, but
+#                        deliberately separate for trust-boundary
+#                        reasons — its own D1 and the ops-internal
+#                        Telegram bot, never the user-facing one. Its
+#                        typecheck + vitest run in ci.yml's
+#                        `ops/mesh-watcher` job, not the `workspaces`
+#                        job, precisely because it is not a member here.
+#   - ops/subgraph       drift subgraph; runs on The Graph.
+#   - ops/tenderly       alert presets; deploy via the Tenderly CLI.
+#   - ops/offchain-data-archive  nightly D1 backup Worker.
+#   - ops/lz-watcher     the retired LayerZero security monitor. Its
+#                        Cloudflare Worker was DELETED 2026-07-28 (the
+#                        T-068 CCIP migration and the #687-A securities
+#                        excision had between them made every surface it
+#                        polled dead); removing the source tree is
+#                        tracked on #1440.
 #
 # `vaipakam-keeper-bot` is a separate sibling repo (extracted
 # Phase 9.A) and stays separate — not part of this workspace.

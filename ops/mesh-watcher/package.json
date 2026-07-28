@@ -1,0 +1,25 @@
+{
+  "name": "vaipakam-mesh-watcher",
+  "private": true,
+  "type": "module",
+  "description": "Internal-only Cloudflare Worker that watches the VPFI recycling mesh (#1222 M3 B4-c). Reads every reward chain's recycled ledger — Base's per-chain books plus each mirror's own bucket and reservation counters — and alerts on accounting invariants that cannot legitimately break. Ops-internal Telegram bot, separate D1, distinct from the user-facing keeper/agent surfaces.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply vaipakam-mesh-alerts-db --remote",
+    "db:migrate:local": "wrangler d1 migrations apply vaipakam-mesh-alerts-db --local",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.4",
+    "wrangler": "^4.85.0"
+  }
+}
