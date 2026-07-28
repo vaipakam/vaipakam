@@ -40,6 +40,7 @@ import {
   type LocalLedger,
   type MeshObservation,
 } from '../src/invariants';
+import { formatAlert } from '../src/telegram';
 
 const E = 1_000_000_000_000_000_000n; // 1 VPFI
 const TOLERANCE = 1_000_000_000_000_000n; // 1e15 wei — the shipped default
@@ -489,6 +490,62 @@ describe('formatting helpers', () => {
   it('saturates subtraction like the contracts do', () => {
     expect(satSub(1n, 5n)).toBe(0n);
     expect(satSub(5n, 1n)).toBe(4n);
+  });
+});
+
+describe('formatAlert', () => {
+  // These lock the PLAIN-TEXT decision in. Alert bodies carry chain slugs
+  // and raw RPC error strings — text this Worker does not author. Under a
+  // markup mode each needs escaping, and an escape that misses one
+  // metacharacter lets the input break back out, mangling the alert
+  // exactly when something is already going wrong. Reintroducing markup
+  // without escaping should turn these red.
+  const withMetachars = {
+    severity: 'critical' as const,
+    title: 'Bucket *short* by _a lot_',
+    chainLabel: 'arb-sepolia [42161]',
+    detail: 'error: `eth_call` failed\\nbackslash \\ and ``` fence',
+    footer: 'see #1442 for the [qualifier]',
+  };
+
+  it('passes markup metacharacters through verbatim', () => {
+    const out = formatAlert(withMetachars);
+    expect(out).toContain('Bucket *short* by _a lot_');
+    expect(out).toContain('arb-sepolia [42161]');
+    expect(out).toContain('backslash \\ and ``` fence');
+    expect(out).toContain('see #1442 for the [qualifier]');
+  });
+
+  it('adds no escape sequences of its own', () => {
+    // One backslash in, one backslash out. An escaper would double it.
+    const out = formatAlert(withMetachars);
+    expect(out.match(/\\/g)?.length).toBe(
+      withMetachars.detail.match(/\\/g)?.length,
+    );
+  });
+
+  it('wraps the detail in no code fence', () => {
+    const out = formatAlert({ ...withMetachars, detail: 'plain detail' });
+    expect(out).not.toContain('```\nplain detail');
+  });
+
+  it('marks severity distinguishably and includes the chain', () => {
+    expect(formatAlert({ ...withMetachars, severity: 'critical' })).toContain(
+      'CRITICAL',
+    );
+    expect(formatAlert({ ...withMetachars, severity: 'advisory' })).toContain(
+      'ADVISORY',
+    );
+  });
+
+  it('omits the footer block when there is no footer', () => {
+    const out = formatAlert({
+      severity: 'advisory',
+      title: 't',
+      chainLabel: 'c',
+      detail: 'd',
+    });
+    expect(out.endsWith('d')).toBe(true);
   });
 });
 

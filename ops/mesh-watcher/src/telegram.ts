@@ -17,11 +17,6 @@ export interface TelegramTarget {
   chatId: string;
 }
 
-/** Escape for Telegram's legacy `Markdown` parse mode. */
-function escapeMarkdown(text: string): string {
-  return text.replace(/([_*`[\]])/g, '\\$1');
-}
-
 /**
  * Post one message, truncating to Telegram's limit.
  *
@@ -45,10 +40,22 @@ export async function sendOpsMessage(
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        // No `parse_mode` — PLAIN TEXT, deliberately.
+        //
+        // Alert bodies carry chain slugs and, on the failure path, raw RPC
+        // error strings: text this Worker does not author and cannot
+        // constrain. Under a markup mode every such string needs escaping,
+        // and an escape that misses one metacharacter (backslash, say) lets
+        // the input break back out — the alert then renders wrong, or
+        // silently loses the figures the operator needs, exactly when
+        // something is already going badly. Plain text has no
+        // metacharacters to miss, so what is constructed is what is
+        // delivered. Bold titles and code fences are not worth an
+        // injection surface on a channel whose whole job is faithful
+        // reporting.
         body: JSON.stringify({
           chat_id: target.chatId,
           text: body,
-          parse_mode: 'Markdown',
           disable_web_page_preview: true,
         }),
       },
@@ -68,7 +75,13 @@ export async function sendOpsMessage(
   }
 }
 
-/** Render one finding as an operator-readable message. */
+/**
+ * Render one finding as an operator-readable message.
+ *
+ * Structure comes from emoji, indentation and blank lines rather than
+ * markup, so the output needs no escaping and every figure survives
+ * verbatim. See {@link sendOpsMessage} for why plain text.
+ */
 export function formatAlert(args: {
   severity: 'critical' | 'advisory';
   title: string;
@@ -79,13 +92,11 @@ export function formatAlert(args: {
   const badge = args.severity === 'critical' ? '🔴 CRITICAL' : '🟡 ADVISORY';
   const lines = [
     `${badge} — VPFI recycling mesh`,
-    `*${escapeMarkdown(args.title)}*`,
-    `chain: ${escapeMarkdown(args.chainLabel)}`,
+    args.title,
+    `chain: ${args.chainLabel}`,
     '',
-    '```',
     args.detail,
-    '```',
   ];
-  if (args.footer) lines.push('', escapeMarkdown(args.footer));
+  if (args.footer) lines.push('', args.footer);
   return lines.join('\n');
 }
