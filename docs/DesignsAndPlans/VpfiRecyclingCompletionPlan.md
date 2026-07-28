@@ -507,20 +507,30 @@ GovernanceRunbook gains a recycling section, executed in order:
    > user-reachable way to RETIRE it — claims, forfeits and expiry all
    > price through the halted path, so its settlement totals stay at
    > zero. Base's spare-capacity figure for that chain
-   > (`reported − (consumed − released)`) then decays on every armed day
-   > **that creates a nonzero mirror-local instruction** — not on every
-   > armed day as such: `LibMeshFunding.resolveAndStampDayFunding`
-   > returns without booking anything when the coupled target or both
-   > global denominators are zero, and `_stampOne` leaves
-   > `chainConsumedRecycled` unchanged for a mirror with no local
-   > commitment (Codex #1439 r2) — while the chain's bucket is
-   > untouched, and the mesh degrades
+   > (`reported − (consumed − released)`) is then **permanently lower, by
+   > the accumulating stock of unretired instructions, than it would
+   > otherwise be** — while the chain's bucket is untouched, and the mesh
+   > degrades
    > toward "Base funds everything" — precisely the waste B3 removed
    > from Base's own books, re-entering through the mirror end. It is
    > recoverable (the totals are cumulative, so settlements after the
    > halt lifts close the backlog) rather than a permanent wedge, but
    > it silently negates B3 for the whole window, and `D*` is
    > irreversible once set. **So: #1434 lands before `D*` is chosen.**
+   >
+   > **State the defect as a SHORTFALL, not as a falling number** (Codex
+   > #1439 r2 + r5). Two qualifications, both load-bearing for anyone
+   > building monitoring against this paragraph: (a) an armed day only
+   > moves the figure if it creates a **nonzero mirror-local
+   > instruction** — `resolveAndStampDayFunding` books nothing when the
+   > coupled target or both global denominators are zero, and `_stampOne`
+   > leaves `chainConsumedRecycled` unchanged for a mirror with no local
+   > commitment; and (b) the absolute figure **need not fall at all**,
+   > because a mirror that keeps absorbing ratchets `reported` upward and
+   > can offset or exceed the instruction. **An alert keyed on
+   > "availability fell" is therefore wrong.** The correct signal is
+   > *outstanding instructions growing while retirement stays flat* —
+   > which is what B4-c should watch.
    >
    > *Evidence, stated precisely.* The DECAY is proved end-to-end by
    > `test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability` in

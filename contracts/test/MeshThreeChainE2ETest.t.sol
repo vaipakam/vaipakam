@@ -529,6 +529,30 @@ contract MeshThreeChainE2ETest is Test {
         assertTrue(arbAccepted && opAccepted, "both day-5 credits accepted");
         assertEq(arbCredit, ABSORB_ARB, "ARB's own daily credit attributed");
         assertEq(opCredit, ABSORB_OP, "OP's own daily credit attributed");
+        // ...and the INSTRUCTIONS themselves follow each chain's own
+        // numerators. Storing the reports under the right source ids does not
+        // bind the funding CALCULATION: if `resolveAndStampDayFunding` read
+        // OP's demand while building ARB's work item, every attribution
+        // assertion above still passes, the two instructions stay unequal,
+        // and each mirror faithfully reserves the wrong figure recorded for
+        // it (Codex #1439 r5). Pinning both magnitudes is what closes that.
+        //
+        // ARB carries the larger lender share (2/4 vs 1/4) and the smaller
+        // borrower share (3/15 vs 5/15); netted against the day's halves that
+        // resolves to ~76 vs ~63.33. A cross-read swaps them, so both
+        // assertions fail. Re-derive these two figures if the emission
+        // schedule or the seeded demand changes.
+        assertApproxEqAbs(
+            arbInstructed, 76 ether, 1e12, "ARB's instruction follows ARB's demand"
+        );
+        assertApproxEqAbs(
+            opInstructed, 63.3333e18, 1e15, "OP's instruction follows OP's demand"
+        );
+        assertGt(
+            arbInstructed,
+            opInstructed,
+            "and their ORDERING follows demand, so a swap inverts it"
+        );
         // NOTE on what these halves can and cannot discriminate — worth
         // recording, because the obvious assertion is the wrong one. The
         // fresh halves are a GLOBAL schedule floor (identical for every
@@ -753,6 +777,17 @@ contract MeshThreeChainE2ETest is Test {
             RewardAggregatorFacet(arbD).getLocalRecycledCommitRetirement();
         assertEq(localRetired, release, "mirror retired the released amount");
         assertEq(localReleased, release, "a release counts on both counters");
+        // ...and the mirror's OWN reservation actually fell. Counters alone
+        // would not notice a `releaseCommitment` that advanced both
+        // cumulatives without decrementing `outstandingCommitRecycled`: the
+        // mirror would stay encumbered while Base restored its availability,
+        // and the two ledgers would drift until Base instructed more than the
+        // mirror can fund (Codex #1439 r5).
+        assertEq(
+            _localOutstanding(ARB),
+            instructed - release,
+            "the mirror's own reservation fell by the release"
+        );
 
         // Day 6 closes on ARB and carries those counters to Base for real.
         _seedAllInterest(6);
@@ -916,10 +951,18 @@ contract MeshThreeChainE2ETest is Test {
             outstandingAfterD5,
             "a second armed day grew Base's reservation for ARB"
         );
+        // NOTE — this strict decrease holds HERE because the fixture holds
+        // ARB's absorption constant across the two armed days. It is not the
+        // general property: a mirror that keeps absorbing ratchets `reported`
+        // upward and can offset or exceed the instruction, so the absolute
+        // figure need not fall (Codex #1439 r5). The invariant that always
+        // holds is the one asserted just below — unretired instructions
+        // accumulating while settlement stays at zero. Monitoring must key on
+        // THAT, not on "availability fell".
         assertLt(
             availAfterD6,
             availAfterD5,
-            "and shrank the availability Base will fund ARB from"
+            "with absorption held constant, availability shrank"
         );
 
         // Nothing was retired on EITHER side of the wire across both days.
@@ -1075,6 +1118,15 @@ contract MeshThreeChainE2ETest is Test {
             RewardAggregatorFacet(arbD).getLocalRecycledCommitRetirement();
         assertEq(localRetired, spend, "mirror retired the consumed amount");
         assertEq(localReleased, 0, "a CONSUME is not a release");
+        // Same reasoning as the release path: a `consume` that debited the
+        // bucket and advanced the retired cumulative but left
+        // `outstandingCommitRecycled` stale would subtract the spend TWICE
+        // from the mirror's fundable balance while Base counted it once.
+        assertEq(
+            _localOutstanding(ARB),
+            instructed - spend,
+            "the mirror's own reservation fell by the spend"
+        );
 
         // Report day 6 without finalizing it (see the note above).
         _seedAllInterest(6);
