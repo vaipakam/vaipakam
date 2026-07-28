@@ -117,10 +117,27 @@ export interface LocalLedger {
    * re-derivation from these can.
    */
   creditedRaw: bigint;
-  /** Σ commitment restored by released remittances (canonical-only). */
-  releasedRemitFull: bigint;
-  /** Σ `paidOutRecycled` actually reversed by them (canonical-only). */
-  releasedRemitSent: bigint;
+  /**
+   * Σ VPFI a released remittance took out of the bucket and did not return.
+   *
+   * The `paidOutRecycled` reversal, NOT the pre-clamp commitment restored: a
+   * liability-clamped remit sends only part of its recycled commitment, and
+   * the residual is retired without moving tokens, so it is still in the
+   * bucket. Counting the full figure would count that residual twice
+   * (#1448 r1).
+   */
+  releasedRemitStranded: bigint;
+  /**
+   * Whether the chain currently acts as the canonical reward chain, read
+   * from the chain itself rather than inferred.
+   *
+   * Only the canonical chain can release a remittance, but the role is a
+   * MUTABLE admin setting — a Diamond can accrue a stranded total as
+   * canonical and later be switched to mirror mode without it being cleared
+   * (#1448 r1). Treating a mirror's total as structurally zero would then
+   * hand that mirror an inherited coverage allowance it must not have.
+   */
+  isCanonicalRewardChain: boolean;
   /**
    * Timestamp of the block this snapshot was read at.
    *
@@ -490,11 +507,29 @@ export function checkHardInvariants(
   // state and paging on it would have alarmed on correct behaviour.
   //
   // Rather than keep a role exception, the contract now RECORDS what that
-  // path moved, so the released total enters the relation as backing that
+  // path moved, so the stranded total enters the relation as backing that
   // exists but is in transit. The relation is hard again on every chain, and
   // the exception is gone rather than documented.
+  //
+  // Two things the allowance deliberately is NOT (both Codex #1448 r1):
+  //
+  // - Not the pre-clamp commitment restored. A liability-clamped remit sends
+  //   only part of its recycled commitment; `consume` debits that part while
+  //   `releaseCommitment` retires the residual WITHOUT moving tokens, so the
+  //   residual never left the bucket. Counting it would introduce slack a
+  //   later real shortfall could hide inside. The stranded figure restores
+  //   the relation exactly — the release lowered the bucket by precisely it.
+  // - Not applied on a chain that is not currently canonical. Only the
+  //   canonical chain can release, but the role is a MUTABLE admin setting,
+  //   so a demoted Diamond carries a non-zero total into mirror mode and
+  //   would otherwise inherit an allowance that hides an under-backed mirror
+  //   reservation. The role is read from the chain itself each tick rather
+  //   than inferred from mesh topology.
   for (const local of obs.allLocals.values()) {
-    const backing = local.bucket + local.releasedRemitFull;
+    const allowance = local.isCanonicalRewardChain
+      ? local.releasedRemitStranded
+      : 0n;
+    const backing = local.bucket + allowance;
     if (backing + bucketToleranceWei >= local.outstandingRecycled) continue;
 
     const shortfall = local.outstandingRecycled - backing;
@@ -503,7 +538,7 @@ export function checkHardInvariants(
       variant: 'shortfall',
       identity: [
         local.bucket,
-        local.releasedRemitFull,
+        allowance,
         local.outstandingRecycled,
         local.custodyRelocated,
       ],
@@ -513,7 +548,7 @@ export function checkHardInvariants(
       detail:
         `bucket + released-in-transit + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
-        `  released      = ${fmt(local.releasedRemitFull)}  (restored commitments whose tokens sit in transport custody)\n` +
+        `  stranded      = ${fmt(allowance)}  (VPFI a released remittance took out of the bucket and has not returned)\n` +
         `  backing       = ${fmt(backing)}\n` +
         `  outstanding   = ${fmt(local.outstandingRecycled)}\n` +
         `  shortfall     = ${fmt(shortfall)}\n` +
@@ -530,11 +565,11 @@ export function checkHardInvariants(
   // Every recycled credit lands in the bucket exactly once, so the two
   // lifetime cumulatives can never exceed where the tokens actually went:
   //
-  //     creditedRaw + relocated <= bucket + paidOut + releasedRemitSent
+  //     creditedRaw + relocated <= bucket + paidOut + releasedRemitStranded
   //
   // `credit` and `creditCustodyRelocated` each add to one term on each
   // side; `consume` moves bucket → paidOut; `releaseCommitment` moves
-  // neither; `restoreReleasedRemit` moves paidOut → releasedRemitSent.
+  // neither; `restoreReleasedRemit` moves paidOut → releasedRemitStranded.
   //
   // Why it is the only check that sees this class: `reportedCumulative`
   // is built by the SAME helper that builds the outbound day-close report,
@@ -548,7 +583,7 @@ export function checkHardInvariants(
   for (const local of obs.allLocals.values()) {
     const claimed = local.creditedRaw + local.custodyRelocated;
     const destinations =
-      local.bucket + local.paidOutRecycled + local.releasedRemitSent;
+      local.bucket + local.paidOutRecycled + local.releasedRemitStranded;
     if (claimed <= destinations + bucketToleranceWei) continue;
 
     out.push(makeFinding({
@@ -559,19 +594,19 @@ export function checkHardInvariants(
         local.custodyRelocated,
         local.bucket,
         local.paidOutRecycled,
-        local.releasedRemitSent,
+        local.releasedRemitStranded,
       ],
       severity: 'critical',
       chainId: local.chainId,
       title: 'Recycled cumulatives claim more credit than the bucket received',
       detail:
-        `creditedRaw + relocated > bucket + paidOut + releasedRemitSent — a counter advanced without tokens landing in the bucket\n` +
+        `creditedRaw + relocated > bucket + paidOut + releasedRemitStranded — a counter advanced without tokens landing in the bucket\n` +
         `  creditedRaw   = ${fmt(local.creditedRaw)}\n` +
         `  relocated     = ${fmt(local.custodyRelocated)}\n` +
         `  claimed       = ${fmt(claimed)}\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
-        `  releasedSent  = ${fmt(local.releasedRemitSent)}\n` +
+        `  stranded      = ${fmt(local.releasedRemitStranded)}\n` +
         `  destinations  = ${fmt(destinations)}\n` +
         `  excess        = ${fmt(claimed - destinations)}\n\n` +
         `LIKELIEST CAUSE — a relocated-custody credit also advancing the absorption cumulative. That would let this chain report Base's own already-spent top-up back as its own local absorption, and Base would re-offer it as this chain's funding.`,

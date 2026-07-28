@@ -103,8 +103,8 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     inputs: [],
     outputs: [
       'creditedRaw:uint256',
-      'releasedRemitFull:uint256',
-      'releasedRemitSent:uint256',
+      'releasedRemitStranded:uint256',
+      'isCanonicalRewardChain:bool',
     ],
   },
 ] as const;
