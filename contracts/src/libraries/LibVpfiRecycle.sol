@@ -386,6 +386,22 @@ library LibVpfiRecycle {
      *         the bucket shrinks `fundable` (bucket − outstanding) — the
      *         conservative direction while the re-opened days await
      *         re-funding.
+     *
+     *         #1444 / #1446 — both movements are RECORDED, because this is
+     *         the only primitive that shifts a recycled ledger figure with no
+     *         matching token movement, and two external invariants could not
+     *         be checked strictly without knowing how much it shifted. See
+     *         the storage docs on `recycleReleasedRemitFullCumulative` /
+     *         `recycleReleasedRemitSentCumulative`.
+     *
+     *         NEITHER counter is decremented, because nothing currently
+     *         re-credits these tokens on the canonical chain:
+     *         {creditCustodyRelocated} runs only on the mirror-side ARRIVAL
+     *         path. If a canonical physical-recovery ceremony is ever added
+     *         (the B2-d5 class applied to a returned remit), it MUST decrement
+     *         both here — otherwise the coverage check silently slackens by
+     *         the recovered amount, since it would then be counted twice
+     *         (once in the bucket, once here).
      */
     function restoreReleasedRemit(
         uint256 recycledFull,
@@ -405,8 +421,15 @@ library LibVpfiRecycle {
             uint256 cumulative = creditedCumulative(s);
             if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
         }
+        s.recycleReleasedRemitFullCumulative += recycledFull;
         uint256 paid = s.paidOutRecycled;
-        s.paidOutRecycled = paid > recycledSent ? paid - recycledSent : 0;
+        // Record the ACTUAL decrement, not the request: the reversal floors
+        // at zero, and counting `recycledSent` on an exhausted counter would
+        // overstate the composition identity's correction term (same rule
+        // `consume` applies to `retired`).
+        uint256 reversed = paid > recycledSent ? recycledSent : paid;
+        s.paidOutRecycled = paid - reversed;
+        s.recycleReleasedRemitSentCumulative += reversed;
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

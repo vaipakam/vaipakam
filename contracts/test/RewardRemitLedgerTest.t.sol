@@ -977,6 +977,221 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(relocated, 0, "no custody relocated");
     }
 
+    // ─── #1444 / #1446: externally verifiable bucket accounting ───────────
+
+    /// @dev Read the composition view and re-derive both published figures
+    ///      from the raw slots, exactly as `ops/mesh-watcher` does. Returning
+    ///      the re-derivation (rather than asserting inside) keeps each test's
+    ///      failure message about ITS invariant.
+    function _composition()
+        internal
+        view
+        returns (
+            uint256 raw,
+            uint256 releasedFull,
+            uint256 releasedSent,
+            uint256 relocated,
+            uint256 bucket,
+            uint256 reported,
+            uint256 paidOut,
+            uint256 outstanding
+        )
+    {
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        (raw, releasedFull, releasedSent) = agg.getRecycleCompositionPosition();
+        (relocated, bucket, reported) = agg.getRecycleCustodyPosition();
+        (, , outstanding, paidOut) = agg.getGovernorCommitState();
+    }
+
+    /// @dev The composition bound of #1446, as an external checker computes
+    ///      it: every credit lands in the bucket exactly once, so the two
+    ///      cumulative counters can never exceed where the tokens went.
+    function _assertComposition(string memory ctx) internal view {
+        (
+            uint256 raw,
+            ,
+            uint256 releasedSent,
+            uint256 relocated,
+            uint256 bucket,
+            ,
+            uint256 paidOut,
+
+        ) = _composition();
+        assertLe(
+            raw + relocated,
+            bucket + paidOut + releasedSent,
+            string.concat("composition: raw+relocated <= bucket+paidOut+releasedSent @ ", ctx)
+        );
+    }
+
+    /// @dev The derivation of #1446: the REPORTED cumulative must be
+    ///      reproducible from the raw slots by an outside party. If the
+    ///      library stopped netting relocated custody out of the floor, the
+    ///      reported figure and Base's accepted copy would inflate together
+    ///      and no cross-chain comparison could see it — this one can.
+    function _assertDerivation(string memory ctx) internal view {
+        (
+            uint256 raw,
+            ,
+            ,
+            uint256 relocated,
+            uint256 bucket,
+            uint256 reported,
+            uint256 paidOut,
+
+        ) = _composition();
+        uint256 gross = bucket + paidOut;
+        uint256 floorTerm = gross > relocated ? gross - relocated : 0;
+        uint256 expected = raw >= floorTerm ? raw : floorTerm;
+        assertEq(
+            reported,
+            expected,
+            string.concat("derivation: reported == max(raw, bucket+paidOut-relocated) @ ", ctx)
+        );
+    }
+
+    /// @dev Set up a recycled-only armed slice to ARB with a residual, remit
+    ///      it, and return the reservation's pre-clamp / clamped recycled
+    ///      figures. `bucket` and `outstanding` both start at 1_000e18.
+    function _remitRecycledWithResidual()
+        internal
+        returns (uint256 recycledFull, uint256 recycledSent)
+    {
+        _finalizeDay(1);
+        _armDayForArb(1, 0, 50e18); // recycled-only slice
+        mutator.setRecycleBucketRaw(1_000e18);
+        mutator.setRecycleCreditedCumulativeRaw(1_000e18);
+        mutator.setOutstandingCommitRaw(0, 1_000e18);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        assertGt(r.recycledFull, r.recycled, "fixture: residual must exist");
+        return (r.recycledFull, r.recycled);
+    }
+
+    /// @dev #1444 — a release records what it moved. This is the ONE
+    ///      primitive that shifts a recycled ledger figure with no matching
+    ///      token movement, so without these counters an outside checker
+    ///      cannot tell intended recovery from ledger corruption.
+    function test_Release_RecordsBothReleasedRemitCumulatives() public {
+        (uint256 recycledFull, uint256 recycledSent) =
+            _remitRecycledWithResidual();
+
+        (uint256 rawBefore, uint256 fullBefore, uint256 sentBefore) =
+            RewardAggregatorFacet(address(diamond))
+                .getRecycleCompositionPosition();
+        assertEq(fullBefore, 0, "no release yet");
+        assertEq(sentBefore, 0, "no release yet");
+
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+
+        (uint256 raw, uint256 releasedFull, uint256 releasedSent) =
+            RewardAggregatorFacet(address(diamond))
+                .getRecycleCompositionPosition();
+        assertEq(
+            releasedFull,
+            recycledFull,
+            "records the PRE-clamp total whose commitment it restored"
+        );
+        assertEq(
+            releasedSent,
+            recycledSent,
+            "records the paidOut reversal for the CLAMPED share actually sent"
+        );
+        assertEq(raw, rawBefore, "release is not absorption");
+
+        (, , , uint256 paidOut) =
+            RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
+        assertEq(paidOut, 0, "the clamped share was never paid to anyone");
+    }
+
+    /// @dev #1444 — the point of the counter. After a release the plain
+    ///      relation `bucket >= outstanding` is FALSE on correct, intended
+    ///      behaviour, which is why bucket coverage could only ship as a
+    ///      canonical advisory. Adding the released term restores a HARD
+    ///      relation that holds on both chain roles, so the watcher pages on
+    ///      one rule instead of splitting severity by role.
+    function test_Coverage_ReleasedTermRestoresTheHardRelation() public {
+        (uint256 recycledFull, ) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+
+        (, uint256 releasedFull, , , uint256 bucket, , , uint256 outstanding) =
+            _composition();
+
+        // The naive form is genuinely violated here — assert that, so this
+        // test fails if the release path ever stops being able to produce
+        // the state the released term exists to explain.
+        assertLt(bucket, outstanding, "precondition: naive coverage IS broken");
+        assertGe(
+            bucket + releasedFull,
+            outstanding,
+            "#1444: bucket + releasedRemitFull covers the reservations"
+        );
+        assertEq(releasedFull, recycledFull, "the released term is the cause");
+    }
+
+    /// @dev #1446 — the composition and derivation bounds across the
+    ///      canonical chain's full lifecycle: credit, consume (via the remit
+    ///      send), commitment release, and the released-remit restore.
+    function test_Composition_HoldsAcrossTheCanonicalLifecycle() public {
+        _assertComposition("genesis");
+        _assertDerivation("genesis");
+
+        _remitRecycledWithResidual();
+        _assertComposition("after remit consume + residual release");
+        _assertDerivation("after remit consume + residual release");
+
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        _assertComposition("after released-remit restore");
+        _assertDerivation("after released-remit restore");
+    }
+
+    /// @dev #1446 — the mirror half, and the case the check exists for.
+    ///      Relocated custody raises the bucket without advancing the
+    ///      reported cumulative; if `creditCustodyRelocated` ever ALSO
+    ///      advanced `recycleCreditedCumulative`, the left side of the
+    ///      composition bound would jump by twice the credit against a right
+    ///      side that moved once. Comparing the reported figure against
+    ///      Base's copy cannot see that — both derive from the same helper.
+    function test_Composition_HoldsAcrossRelocatedCustodyAndConsume() public {
+        _configureMirror();
+        mutator.setRecycleBucketRaw(40e18);
+        mutator.setRecycleCreditedCumulativeRaw(40e18);
+        _assertComposition("mirror genesis");
+        _assertDerivation("mirror genesis");
+
+        // Base tops up 23 recycled inside a 30-token delivery.
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
+            23e18
+        );
+        (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
+            _composition();
+        assertEq(relocated, 23e18, "fixture: custody relocated");
+        assertEq(bucket, 63e18, "fixture: bucket took the top-up");
+        // ORDER IS DELIBERATE: the composition bound is asserted BEFORE the
+        // precise `raw` fixture check, because the bound is what
+        // `ops/mesh-watcher` actually evaluates — it has no fixture knowledge
+        // of what `raw` "should" be. Asserting the fixture first would let a
+        // mutation be caught by an oracle the watcher does not have, and this
+        // test would then overstate what is externally detectable.
+        _assertComposition("after relocation");
+        _assertDerivation("after relocation");
+        assertEq(raw, 40e18, "the RAW counter must not move on relocation");
+
+        // Consuming moves the custody value from one term of the derived
+        // floor into the other — the exclusion has to survive that.
+        mutator.consumeRecycleRaw(63e18);
+        assertEq(
+            ConfigFacet(address(diamond)).getRecycleBucket(), 0, "drained"
+        );
+        _assertComposition("after consuming the relocated tokens");
+        _assertDerivation("after consuming the relocated tokens");
+    }
+
     /// @dev Accept ETH refunds from the remit fee path.
     receive() external payable {}
 }

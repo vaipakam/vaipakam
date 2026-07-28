@@ -448,6 +448,29 @@
   },
   {
     "type": "function",
+    "name": "getRecycleCompositionPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "creditedRaw",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedRemitFull",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedRemitSent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRecycleCustodyPosition",
     "inputs": [],
     "outputs": [

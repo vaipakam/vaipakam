@@ -106,6 +106,22 @@ export interface LocalLedger {
   armedFromDay: bigint;
   paidOutRecycled: bigint;
   /**
+   * #1444 / #1446 — the RAW stored slots, as opposed to every field above
+   * that the contract derives.
+   *
+   * `creditedRaw` is `recycleCreditedCumulative` BEFORE the pre-upgrade floor
+   * is applied; `reportedCumulative` above is what that floor produces. The
+   * difference is the whole point: a regression in the derivation moves the
+   * reported figure and Base's accepted copy of it in lockstep, so comparing
+   * those two can never see it, while comparing the derived figure against a
+   * re-derivation from these can.
+   */
+  creditedRaw: bigint;
+  /** Σ commitment restored by released remittances (canonical-only). */
+  releasedRemitFull: bigint;
+  /** Σ `paidOutRecycled` actually reversed by them (canonical-only). */
+  releasedRemitSent: bigint;
+  /**
    * Timestamp of the block this snapshot was read at.
    *
    * Load-bearing for the cross-chain checks: a mirror RPC serving a stale
@@ -464,49 +480,147 @@ export function checkHardInvariants(
   // dust can make a day's consumption exceed its recorded commitment by
   // wei-scale amounts. An exact `bucket >= outstanding` would therefore
   // fire on healthy dust. Real shortfalls are VPFI-scale.
+  //
+  // #1444 — ONE rule for both chain roles. This shipped as a role-split
+  // severity (CRITICAL on mirrors, advisory on Base) because
+  // `releaseRemitReservation` → `restoreReleasedRemit` restores the
+  // reservation while DELIBERATELY not re-crediting the bucket — the sent
+  // tokens are locked in the transport's custody, genuinely outside Diamond
+  // custody — so a canonical shortfall was the contract's intended recovery
+  // state and paging on it would have alarmed on correct behaviour.
+  //
+  // Rather than keep a role exception, the contract now RECORDS what that
+  // path moved, so the released total enters the relation as backing that
+  // exists but is in transit. The relation is hard again on every chain, and
+  // the exception is gone rather than documented.
   for (const local of obs.allLocals.values()) {
-    if (local.bucket + bucketToleranceWei >= local.outstandingRecycled) continue;
+    const backing = local.bucket + local.releasedRemitFull;
+    if (backing + bucketToleranceWei >= local.outstandingRecycled) continue;
 
-    // Severity splits by chain role, and the split is load-bearing.
-    //
-    // On a MIRROR the relation is hard: `reserveMirrorCommit` raises the
-    // reservation, `consume` and `releaseCommitment` lower it, and nothing
-    // else touches either side — so a shortfall beyond rounding dust means
-    // the reservation is backed by tokens that are not there.
-    //
-    // On the CANONICAL chain there is a legitimate path to a shortfall
-    // (Codex #1443 r1, verified against `releaseRemitReservation` +
-    // `LibVpfiRecycle.restoreReleasedRemit`): releasing a verifiably-dead
-    // remittance restores `outstandingCommitRecycled` in full while
-    // DELIBERATELY not re-crediting `recycleBucket`, because those tokens
-    // are locked in the CCIP pool — genuinely outside Diamond custody.
-    // That is the contract's intended conservative recovery state, so
-    // paging on it would be a false alarm on correct behaviour. Reported
-    // as advisory with the likely cause named instead.
-    const isCanonical = local.chainId === obs.canonicalChainId;
-    const shortfall = local.outstandingRecycled - local.bucket;
-    const figures =
-      `  bucket       = ${fmt(local.bucket)}\n` +
-      `  outstanding  = ${fmt(local.outstandingRecycled)}\n` +
-      `  shortfall    = ${fmt(shortfall)}\n` +
-      `  tolerance    = ${fmt(bucketToleranceWei)}\n` +
-      `  (of which relocated custody = ${fmt(local.custodyRelocated)})`;
-
+    const shortfall = local.outstandingRecycled - backing;
     out.push(makeFinding({
       code: 'bucket-coverage',
-      variant: isCanonical ? 'canonical' : 'mirror',
-      identity: [local.bucket, local.outstandingRecycled, local.custodyRelocated],
-      severity: isCanonical ? 'advisory' : 'critical',
+      variant: 'shortfall',
+      identity: [
+        local.bucket,
+        local.releasedRemitFull,
+        local.outstandingRecycled,
+        local.custodyRelocated,
+      ],
+      severity: 'critical',
       chainId: local.chainId,
-      title: isCanonical
-        ? 'Canonical bucket below its reservations — check for a released remit'
-        : 'Recycle bucket does not cover its own reservations',
-      detail: isCanonical
-        ? `bucket + tolerance < outstanding reservations on the CANONICAL chain\n` +
-          figures +
-          `\n\nEXPECTED CAUSE — releasing a permanently-failed remittance restores the reservation but not the bucket, by design: those tokens sit locked in the CCIP pool, outside Diamond custody. Reconcile against the released reservations (status 3) before treating this as a fault.\n\nA release RAISES the deficit by its recycled total; it does not make the deficit EQUAL that total. Pre-release bucket headroom absorbs part of it and later credits absorb more, so the released totals BOUND and EXPLAIN this shortfall rather than matching it. Suspect a fault only if the shortfall EXCEEDS the released totals.`
-        : `bucket + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
-          figures,
+      title: 'Recycle bucket does not cover its own reservations',
+      detail:
+        `bucket + released-in-transit + tolerance < outstanding reservations — commitments are reserved against tokens that are not there\n` +
+        `  bucket        = ${fmt(local.bucket)}\n` +
+        `  released      = ${fmt(local.releasedRemitFull)}  (restored commitments whose tokens sit in transport custody)\n` +
+        `  backing       = ${fmt(backing)}\n` +
+        `  outstanding   = ${fmt(local.outstandingRecycled)}\n` +
+        `  shortfall     = ${fmt(shortfall)}\n` +
+        `  tolerance     = ${fmt(bucketToleranceWei)}\n` +
+        `  (of which relocated custody = ${fmt(local.custodyRelocated)})`,
+    }));
+  }
+
+  // ── Bucket composition ─────────────────────────────────────────────
+  //
+  // #1446 — the check that catches a regression in the B2-d5 custody
+  // EXCLUSION itself, which nothing else can.
+  //
+  // Every recycled credit lands in the bucket exactly once, so the two
+  // lifetime cumulatives can never exceed where the tokens actually went:
+  //
+  //     creditedRaw + relocated <= bucket + paidOut + releasedRemitSent
+  //
+  // `credit` and `creditCustodyRelocated` each add to one term on each
+  // side; `consume` moves bucket → paidOut; `releaseCommitment` moves
+  // neither; `restoreReleasedRemit` moves paidOut → releasedRemitSent.
+  //
+  // Why it is the only check that sees this class: `reportedCumulative`
+  // is built by the SAME helper that builds the outbound day-close report,
+  // so a regression that stopped excluding relocated custody would inflate
+  // this chain's figure and Base's accepted copy of it identically, and
+  // `base-ahead-of-chain` would see two equal numbers. This one compares
+  // against where the tokens are, not against another copy of the claim.
+  //
+  // Same tolerance and the same reason: `consume` floors the bucket for
+  // bounded cap-trim dust, which can only widen the right-hand side.
+  for (const local of obs.allLocals.values()) {
+    const claimed = local.creditedRaw + local.custodyRelocated;
+    const destinations =
+      local.bucket + local.paidOutRecycled + local.releasedRemitSent;
+    if (claimed <= destinations + bucketToleranceWei) continue;
+
+    out.push(makeFinding({
+      code: 'bucket-composition',
+      variant: 'over-credited',
+      identity: [
+        local.creditedRaw,
+        local.custodyRelocated,
+        local.bucket,
+        local.paidOutRecycled,
+        local.releasedRemitSent,
+      ],
+      severity: 'critical',
+      chainId: local.chainId,
+      title: 'Recycled cumulatives claim more credit than the bucket received',
+      detail:
+        `creditedRaw + relocated > bucket + paidOut + releasedRemitSent — a counter advanced without tokens landing in the bucket\n` +
+        `  creditedRaw   = ${fmt(local.creditedRaw)}\n` +
+        `  relocated     = ${fmt(local.custodyRelocated)}\n` +
+        `  claimed       = ${fmt(claimed)}\n` +
+        `  bucket        = ${fmt(local.bucket)}\n` +
+        `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
+        `  releasedSent  = ${fmt(local.releasedRemitSent)}\n` +
+        `  destinations  = ${fmt(destinations)}\n` +
+        `  excess        = ${fmt(claimed - destinations)}\n\n` +
+        `LIKELIEST CAUSE — a relocated-custody credit also advancing the absorption cumulative. That would let this chain report Base's own already-spent top-up back as its own local absorption, and Base would re-offer it as this chain's funding.`,
+    }));
+  }
+
+  // ── Reported-cumulative derivation ─────────────────────────────────
+  //
+  // #1446, second half — re-derive the PUBLISHED figure from the raw
+  // slots and disagree with the chain if it does not match:
+  //
+  //     reported == max(creditedRaw, bucket + paidOut - relocated)
+  //
+  // i.e. the stored counter, floored by the pre-upgrade derivation with
+  // the relocation netted out. The composition bound above catches a
+  // counter advancing wrongly; this catches the DERIVATION dropping the
+  // subtraction, which matters on a Diamond refreshed over live pre-#1222
+  // state where the floor is the branch that binds.
+  //
+  // NOTE for maintainers: this formula is a deliberate SECOND
+  // implementation of `LibVpfiRecycle.creditedCumulative`. That is the
+  // point — an independent restatement is what makes disagreement
+  // meaningful — but it means a legitimate change to the library's
+  // derivation must be mirrored here in the same change, or this check
+  // will alarm on correct behaviour.
+  for (const local of obs.allLocals.values()) {
+    const gross = local.bucket + local.paidOutRecycled;
+    const floorTerm =
+      gross > local.custodyRelocated ? gross - local.custodyRelocated : 0n;
+    const expected =
+      local.creditedRaw >= floorTerm ? local.creditedRaw : floorTerm;
+    if (local.reportedCumulative === expected) continue;
+
+    out.push(makeFinding({
+      code: 'reported-derivation',
+      variant: 'mismatch',
+      identity: [local.reportedCumulative, expected],
+      severity: 'critical',
+      chainId: local.chainId,
+      title: 'Reported cumulative does not match its own inputs',
+      detail:
+        `the chain publishes a lifetime absorption figure this Worker cannot re-derive from the raw slots at the same block\n` +
+        `  reported      = ${fmt(local.reportedCumulative)}\n` +
+        `  re-derived    = ${fmt(expected)}  = max(creditedRaw, bucket + paidOut - relocated)\n` +
+        `  creditedRaw   = ${fmt(local.creditedRaw)}\n` +
+        `  bucket        = ${fmt(local.bucket)}\n` +
+        `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
+        `  relocated     = ${fmt(local.custodyRelocated)}\n\n` +
+        `Either the derivation changed on-chain without this Worker being updated in the same change, or the relocated-custody exclusion has regressed. The figure is what mirrors report to Base and what sizes their funding, so treat a mismatch as load-bearing either way.`,
     }));
   }
 

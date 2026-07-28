@@ -1090,6 +1090,63 @@ contract RewardAggregatorFacet is
         );
     }
 
+    /**
+     * @notice #1444 / #1446 — the three raw figures an EXTERNAL checker needs
+     *         to verify this chain's recycle-bucket accounting without
+     *         trusting the accounting itself.
+     * @dev    Every other recycled read exposes a value the library DERIVES.
+     *         That is fine for reporting and useless for verification: if
+     *         {LibVpfiRecycle.creditedCumulative} stopped netting relocated
+     *         custody out, the reported figure and Base's accepted copy would
+     *         inflate together and stay equal, so no comparison between them
+     *         could see it (#1446). These three are stored slots, so a checker
+     *         can RE-DERIVE the published figures and disagree.
+     *
+     *         Two invariants become checkable from view calls alone, both
+     *         read at one pinned block alongside {getRecycleCustodyPosition}
+     *         and {getGovernorCommitState}:
+     *
+     *         1. COMPOSITION — `creditedRaw + custodyRelocated <= bucket +
+     *            paidOutRecycled + releasedRemitSent`. Every credit lands in
+     *            the bucket exactly once; a counter that advanced without one
+     *            breaks it. Inequality, not equality: `consume` floors the
+     *            bucket for bounded cap-trim dust, which only widens the
+     *            right side.
+     *         2. DERIVATION — `reportedCumulative == max(creditedRaw,
+     *            bucket + paidOutRecycled − custodyRelocated)`, i.e. the
+     *            pre-upgrade floor with the B2-d5 exclusion applied. Catches
+     *            the subtraction being dropped from the floor branch.
+     *
+     *         Also completes BUCKET COVERAGE (#1444): `bucket +
+     *         releasedRemitFull >= outstandingCommitRecycled` is a hard
+     *         relation on every chain, where plain `bucket >= outstanding`
+     *         had a legitimate canonical failure path.
+     * @return creditedRaw       Stored `recycleCreditedCumulative` BEFORE the
+     *                           derived pre-upgrade floor is applied. Zero on
+     *                           a Diamond refreshed over live pre-#1222 state
+     *                           until its first credit — which is exactly the
+     *                           case the floor exists for, and the reason the
+     *                           derived figure cannot serve here.
+     * @return releasedRemitFull Σ commitment restored by released remittances.
+     * @return releasedRemitSent Σ `paidOutRecycled` actually reversed by them.
+     */
+    function getRecycleCompositionPosition()
+        external
+        view
+        returns (
+            uint256 creditedRaw,
+            uint256 releasedRemitFull,
+            uint256 releasedRemitSent
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.recycleCreditedCumulative,
+            s.recycleReleasedRemitFullCumulative,
+            s.recycleReleasedRemitSentCumulative
+        );
+    }
+
     // ─── Broadcast trigger ─────────────────────────────────────────────────
 
     /**

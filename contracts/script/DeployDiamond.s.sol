@@ -2501,7 +2501,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](29);
         // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
         // ConfigFacet (which hit the EIP-170 ceiling); they join the rest of
         // the Base-side finalization records.
@@ -2509,6 +2509,9 @@ contract DeployDiamond is Script {
         s[27] = RewardAggregatorFacet.getChainDailyRecycledCredit.selector;
         // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
         s[22] = RewardAggregatorFacet.getRecycleCustodyPosition.selector;
+        // #1444 / #1446 — raw stored slots so an external checker can
+        // re-derive the published cumulative instead of trusting it.
+        s[28] = RewardAggregatorFacet.getRecycleCompositionPosition.selector;
         // #1222 M3 B3 — the eight-word report ingress (a THIRD overload of
         // `onChainReportReceived`, so it too must be pinned by signature) and
         // the commitment-retirement transparency reads.

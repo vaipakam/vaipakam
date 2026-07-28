@@ -42,20 +42,47 @@ operation. These page.
 | `base-self-inert` | The per-chain COMMITMENT fields under the canonical chain's own id — `consumed`, `retired`, `released`, `outstanding` — are zero | Base is never a "local" funder in the commit split: its slice comes from the same bucket the global ledger governs, so it books no per-chain instruction against itself. Non-zero here means it double-booked, corrupting the global reservation *and* netting its own bucket twice. Note this is **not** every field — Base records its own chain in the ledger at day-close, so `reported`, `attributed` and `avail` are legitimately non-zero under its own id and are deliberately not checked. |
 | `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
 | `consumed-cap` | `consumed − released ≤ reported`, per chain (governor §7 #6) | Base can never instruct a chain to fund more than it reported absorbing, net of what it released un-spent — `_mirrorAvailable` bounds every instruction, and `MeshLedger.invariant.t.sol` asserts it on-chain. Checked **separately** rather than inferred from the availability formula, because that formula saturates: if this bound broke, `expectedAvail` would floor to zero, the on-chain `avail` would agree, and every other check would stay green while over-instruction went completely invisible. |
-| `bucket-coverage` | A chain's live bucket backs its own reservations | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. **Mirrors only** — see below. |
+| `bucket-coverage` | `bucket + releasedRemitFull ≥ outstanding`, per chain | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
+| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitSent` | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. This is the only check that can see the **B2-d5 custody exclusion itself** regressing — see below. |
+| `reported-derivation` | `reported == max(creditedRaw, bucket + paidOut − relocated)` | The published lifetime-absorption figure is re-derived here from the raw slots at the same block. Catches the exclusion being dropped from the pre-upgrade floor branch, which binds on a Diamond refreshed over live pre-#1222 state. |
 
-**On bucket coverage being CRITICAL only on mirrors.** On a mirror the
-relation is hard: `reserveMirrorCommit` raises the reservation, `consume`
-and `releaseCommitment` lower it, nothing else touches either side. On the
-**canonical** chain there is a legitimate path to a shortfall, so it is
-reported as advisory there instead. Releasing a verifiably-dead
+**On bucket coverage applying to every chain (#1444).** This originally
+shipped CRITICAL on mirrors and advisory on Base, because the canonical
+chain had a legitimate path to a shortfall: releasing a verifiably-dead
 remittance (`releaseRemitReservation` → `LibVpfiRecycle.restoreReleasedRemit`)
 restores `outstandingCommitRecycled` in full while deliberately *not*
 re-crediting `recycleBucket` — those tokens are locked in the CCIP pool,
 genuinely outside Diamond custody. Paging on the contract's intended
-conservative recovery state would be a false alarm on correct behaviour.
-The advisory names that cause and tells the operator to reconcile against
-the released reservations before treating it as a fault.
+conservative recovery state would have been a false alarm on correct
+behaviour.
+
+Rather than keep a role exception, the contract now **records what that
+path moved** (`getRecycleCompositionPosition`), so the released total
+enters the relation as backing that exists but is in transit. One rule
+now covers both roles and the exception is gone rather than documented.
+
+Note the on-chain **funding gate** is deliberately *not* changed to match:
+`fundable = bucket − outstanding` stays conservative, which is what makes
+further funding on a source wait, open, until the recovery ceremony. "Is
+this a fault?" and "may this fund another day?" are different questions
+and keep different answers.
+
+**On composition being the only check for the custody exclusion (#1446).**
+`reportedCumulative` is produced by the same helper that builds a mirror's
+outbound day-close report. If that helper stopped netting relocated custody
+out, this chain's figure and Base's accepted copy of it would inflate
+*together* and stay equal — `base-ahead-of-chain` would see two matching
+numbers and every other check would stay green. The composition bound does
+not compare the claim against another copy of the claim; it compares it
+against where the tokens went. A relocated-custody credit that also
+advanced the absorption cumulative raises the left side twice against a
+right side that moved once.
+
+The `reported-derivation` check is a deliberate **second implementation**
+of `LibVpfiRecycle.creditedCumulative`. That independence is the point,
+but it means a legitimate change to the library's derivation must be
+mirrored in `invariants.ts` in the same change, or this check will alarm
+on correct behaviour.
 
 **On the bucket-coverage tolerance.** The comparison allows
 `BUCKET_COVERAGE_TOLERANCE_WEI` of slack (default 1e15 = 0.001 VPFI)
@@ -306,14 +333,19 @@ contracts merge.
 
 ### Known limitation
 
-The relocated-custody exclusion is checked only *relatively* — Base's
-accepted cumulative never exceeding the chain's own. If
-`creditedCumulative` itself regressed to stop netting relocated custody
-out, both sides would show the same inflated figure and every check would
-stay green. Closing that needs either a view exposing the pre-exclusion
-cumulative or reconciliation against the event stream; tracked as
-**#1446**. Two smaller gaps are tracked as **#1444** (strict canonical
-bucket coverage) and **#1445** (endpoint chain-identity verification).
+**Endpoint identity is unverified.** Each chain's read target is resolved
+from an `RPC_<chainId>` secret plus the committed deployment address, and
+nothing checks that the endpoint actually *is* that chain. A mis-set
+secret pointing at a network where the same address carries compatible
+code would produce a clean report about the wrong chain — confident
+silence, the worst failure mode a watcher has. Tracked as **#1445**.
+
+*(Resolved since the initial version: the custody-exclusion gap that was
+tracked as **#1446** is now covered by `bucket-composition` +
+`reported-derivation` above, and the canonical bucket-coverage gap tracked
+as **#1444** is closed by the released-remit cumulatives. Neither needed
+the event-stream scanning originally assumed — both are computable from
+the raw stored slots at a pinned block.)*
 
 ## Deploying — operator steps
 

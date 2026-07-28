@@ -110,7 +110,7 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
   // reservation that a single claim moves together.
   const block = await target.client.getBlock();
   const blockNumber = block.number;
-  const [custody, retirement, governor] = await Promise.all([
+  const [custody, retirement, governor, composition] = await Promise.all([
     readView<readonly [bigint, bigint, bigint]>(
       target.client,
       target.diamond,
@@ -132,6 +132,18 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
       [],
       blockNumber,
     ),
+    // #1444 / #1446 — the raw slots, at the SAME pinned block as the three
+    // derived reads above. Same-block is load-bearing here in a way it is not
+    // for the others: both new checks compare a raw counter against the
+    // derived figures, so a mixed-block tuple would show a mid-transaction
+    // state as a violation.
+    readView<readonly [bigint, bigint, bigint]>(
+      target.client,
+      target.diamond,
+      'getRecycleCompositionPosition',
+      [],
+      blockNumber,
+    ),
   ]);
 
   return {
@@ -147,6 +159,9 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
     outstandingFresh: governor[1],
     outstandingRecycled: governor[2],
     paidOutRecycled: governor[3],
+    creditedRaw: composition[0],
+    releasedRemitFull: composition[1],
+    releasedRemitSent: composition[2],
     observedAt: block.timestamp,
   };
 }

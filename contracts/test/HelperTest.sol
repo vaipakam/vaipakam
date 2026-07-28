@@ -1929,7 +1929,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
         // ConfigFacet (which hit the EIP-170 ceiling).
         selectors[26] =
@@ -1939,6 +1939,10 @@ contract HelperTest {
         // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
         selectors[22] =
             RewardAggregatorFacet.getRecycleCustodyPosition.selector;
+        // #1444 / #1446 — raw stored slots so an external checker can
+        // re-derive the published cumulative instead of trusting it.
+        selectors[28] =
+            RewardAggregatorFacet.getRecycleCompositionPosition.selector;
         // #1222 M3 B3 — the eight-word report ingress (a THIRD overload, so
         // pinned by signature) + the commitment-retirement reads.
         selectors[23] = bytes4(

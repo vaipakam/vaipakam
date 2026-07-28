@@ -124,6 +124,9 @@ function mirrorLocal(): LocalLedger {
     outstandingFresh: 0n,
     armedFromDay: 3n,
     paidOutRecycled: 800n * E,
+    creditedRaw: 1000n * E,
+    releasedRemitFull: 0n,
+    releasedRemitSent: 0n,
     observedAt: 1_800_000_000n,
   });
 }
@@ -133,15 +136,62 @@ function canonicalLocal(): LocalLedger {
     chainId: CANONICAL,
     custodyRelocated: 0n,
     bucket: 800n * E,
-    reportedCumulative: 500n * E,
+    // #1444/#1446 — was 500e18, which is a state the contract CANNOT reach:
+    // the reported cumulative is floored by `bucket + paidOut`, so a chain
+    // holding 800 in its bucket can never report having absorbed only 500.
+    // The `reported-derivation` check found this the moment it was added,
+    // which is the point of cross-validating a published figure against the
+    // slots it is computed from.
+    reportedCumulative: 800n * E,
     localRetired: 0n,
     localReleased: 0n,
     outstandingRecycled: 300n * E,
     outstandingFresh: 50n * E,
     armedFromDay: 3n,
     paidOutRecycled: 0n,
+    creditedRaw: 800n * E,
+    releasedRemitFull: 0n,
+    releasedRemitSent: 0n,
     observedAt: 1_800_000_000n,
   });
+}
+
+/**
+ * Apply overrides so the result stays a state the CONTRACT could reach.
+ *
+ * Fixtures used to be plain spreads, which let a test raise
+ * `reportedCumulative` on its own to probe a cross-chain check. That was
+ * harmless while every check read one field, and became wrong the moment
+ * `bucket-composition` / `reported-derivation` started cross-validating the
+ * published figures against the slots they derive from: an unreachable
+ * fixture would have produced findings that say more about the fixture than
+ * the code.
+ *
+ * Deriving the two "where the tokens went" fields here fixes the whole class
+ * at once, rather than hand-patching each of the eleven call sites that
+ * override `reportedCumulative` or `bucket` — and keeps future ones correct
+ * by default:
+ *
+ * - `creditedRaw` tracks `reportedCumulative` (`credit` advances both).
+ * - `paidOutRecycled` absorbs the slack so
+ *   `bucket + paidOut − relocated == creditedRaw`, which is the identity
+ *   normal operation maintains.
+ *
+ * A test that wants to VIOLATE either check overrides those fields
+ * explicitly, and the override is then visible as the deliberate act it is.
+ */
+function coherent(
+  base: LocalLedger,
+  over: Partial<LocalLedger> = {},
+): Omit<LocalLedger, FRESH> {
+  const l = { ...base, ...over };
+  if (over.creditedRaw === undefined) l.creditedRaw = l.reportedCumulative;
+  if (over.paidOutRecycled === undefined) {
+    const destinations = l.creditedRaw + l.custodyRelocated;
+    l.paidOutRecycled =
+      destinations > l.bucket ? destinations - l.bucket : 0n;
+  }
+  return l;
 }
 
 interface Overrides {
@@ -155,12 +205,12 @@ function observation(o: Overrides = {}): MeshObservation {
   const freshLocals = new Map<number, LocalLedger>();
   const allLocals = new Map<number, Omit<LocalLedger, FRESH>>();
   if (o.mirrorLocal !== null) {
-    const l = fresh({ ...mirrorLocal(), ...o.mirrorLocal });
+    const l = fresh(coherent(mirrorLocal(), o.mirrorLocal));
     freshLocals.set(MIRROR, l);
     allLocals.set(MIRROR, l);
   }
   if (o.canonicalLocal !== null) {
-    const l = fresh({ ...canonicalLocal(), ...o.canonicalLocal });
+    const l = fresh(coherent(canonicalLocal(), o.canonicalLocal));
     freshLocals.set(CANONICAL, l);
     allLocals.set(CANONICAL, l);
   }
@@ -389,6 +439,178 @@ describe('checkHardInvariants — bucket coverage', () => {
 
   it('is not evaluated for a chain that could not be read', () => {
     expect(codes({ mirrorLocal: null, canonicalLocal: null })).toEqual([]);
+  });
+
+  // ── #1444 ────────────────────────────────────────────────────────────
+  it('counts released-remit backing, so a release is not a false alarm', () => {
+    // `releaseRemitReservation` restores the reservation without re-crediting
+    // the bucket — the tokens are locked in transport custody. That is the
+    // intended recovery state, and it is why this check could previously only
+    // ship as an advisory on the canonical chain.
+    expect(
+      codes({ canonicalLocal: { bucket: 0n, releasedRemitFull: 300n * E } }),
+    ).toEqual([]);
+  });
+
+  it('still fires when the shortfall EXCEEDS the released total', () => {
+    expect(
+      codes({
+        canonicalLocal: { bucket: 0n, releasedRemitFull: 300n * E - TOLERANCE - 1n },
+      }),
+    ).toEqual(['bucket-coverage']);
+  });
+
+  it('pages on the canonical chain too — one rule, no role exception', () => {
+    const [finding] = checkHardInvariants(
+      observation({ canonicalLocal: { bucket: 0n } }),
+      TOLERANCE,
+    );
+    expect(finding?.code).toBe('bucket-coverage');
+    expect(finding?.chainId).toBe(CANONICAL);
+    // The whole point of #1444: this used to be 'advisory' here.
+    expect(finding?.severity).toBe('critical');
+  });
+});
+
+// ── #1446 ──────────────────────────────────────────────────────────────
+describe('checkHardInvariants — bucket composition', () => {
+  it('fires when a relocated-custody credit also advanced absorption', () => {
+    // The exact regression #1446 exists for. A 30-VPFI relocation arrives:
+    // the bucket correctly grows to 230, but the absorption cumulative ALSO
+    // advances to 1030 instead of staying at the 1000 this chain really
+    // absorbed. Both `reportedCumulative` and Base's accepted copy of it
+    // inflate together, so no cross-chain comparison can see it.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 230n * E,
+          custodyRelocated: 30n * E,
+          creditedRaw: 1030n * E,
+          reportedCumulative: 1030n * E,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
+  it('accepts the same relocation when absorption correctly stays put', () => {
+    // Identical state except the cumulative did NOT move — the healthy shape.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 230n * E,
+          custodyRelocated: 30n * E,
+          creditedRaw: 1000n * E,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports where the tokens went, not just that a bound broke', () => {
+    const [finding] = checkHardInvariants(
+      observation({
+        mirrorLocal: {
+          bucket: 230n * E,
+          custodyRelocated: 30n * E,
+          creditedRaw: 1030n * E,
+          reportedCumulative: 1030n * E,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+      TOLERANCE,
+    );
+    expect(finding?.severity).toBe('critical');
+    expect(finding?.detail).toContain('30.000000 VPFI'); // the excess
+    expect(finding?.detail).toContain('relocated-custody credit');
+  });
+
+  it('allows a dust-scale excess rather than paging on wei', () => {
+    // Deliberately a GUARD BAND, not a reachable dust state — unlike
+    // coverage, where `LibVpfiRecycle.consume`'s bucket floor genuinely
+    // produces slack. Here the floor widens the RIGHT side (the bucket
+    // decrement is capped while `paidOutRecycled` takes the full amount), so
+    // correct code cannot push the left side over at all. The band exists
+    // because a false CRITICAL is worse than missing a wei-scale version of
+    // a bug whose real form is VPFI-scale.
+    //
+    // `reportedCumulative` moves with `creditedRaw` because it is
+    // `max(creditedRaw, ...)` — pinning it lower would be an unreachable
+    // state and would (correctly) trip `reported-derivation` instead.
+    expect(
+      codes({
+        mirrorLocal: {
+          creditedRaw: 1000n * E + TOLERANCE,
+          reportedCumulative: 1000n * E + TOLERANCE,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe('checkHardInvariants — reported-cumulative derivation', () => {
+  /**
+   * An UN-SEEDED (in-place-upgraded) diamond, which is the case that makes
+   * this check matter: `creditedRaw` is still 0, so the published figure
+   * comes from the DERIVED floor rather than the stored counter, and the
+   * relocation subtraction is the only thing keeping Base's own top-up out
+   * of it.
+   *
+   * `bucket + paidOut` = 1023, relocated = 23, so the correct report is
+   * 1000 — which is also Base's accepted copy, so nothing else fires and
+   * each case below differs only in the figure under test.
+   */
+  const unseeded = (reportedCumulative: bigint): Partial<LocalLedger> => ({
+    creditedRaw: 0n,
+    custodyRelocated: 23n * E,
+    bucket: 223n * E,
+    paidOutRecycled: 800n * E,
+    reportedCumulative,
+  });
+
+  it('accepts the correctly-netted figure', () => {
+    expect(codes({ mirrorLocal: unseeded(1000n * E) })).toEqual([]);
+  });
+
+  it('fires when the relocation subtraction is dropped from the floor', () => {
+    // Dropping `- relocated` publishes the full gross, 1023.
+    expect(codes({ mirrorLocal: unseeded(1023n * E) })).toEqual([
+      'reported-derivation',
+    ]);
+  });
+
+  it('is the ONLY check that sees that — composition stays green', () => {
+    // Load-bearing division of labour, asserted rather than assumed. With
+    // `creditedRaw` at 0 the composition bound (0 + 23 <= 1023) holds
+    // comfortably, so shipping composition alone would NOT have closed
+    // #1446 — and conversely composition catches the counter-inflation case
+    // that derivation cannot. Both are required.
+    const findings = checkHardInvariants(
+      observation({ mirrorLocal: unseeded(1023n * E) }),
+      TOLERANCE,
+    );
+    expect(findings.map((f) => f.code)).not.toContain('bucket-composition');
+  });
+
+  it('is exact — no tolerance, because it is a computation not a balance', () => {
+    // Coverage and composition tolerate dust because each compares a ledger
+    // against a balance the contract deliberately floors. This one re-runs a
+    // pure function on the same inputs at the same block, so any difference
+    // at all is a real disagreement.
+    expect(codes({ mirrorLocal: unseeded(1000n * E + 1n) })).toEqual([
+      'reported-derivation',
+    ]);
+  });
+
+  it('names both figures so the operator can see which side moved', () => {
+    const [finding] = checkHardInvariants(
+      observation({ mirrorLocal: unseeded(1023n * E) }),
+      TOLERANCE,
+    );
+    expect(finding?.severity).toBe('critical');
+    expect(finding?.detail).toContain('1023.000000 VPFI');
+    expect(finding?.detail).toContain('1000.000000 VPFI');
   });
 });
 
@@ -790,7 +1012,7 @@ describe('checkHardInvariants — dedup keys', () => {
   });
 });
 
-describe('checkHardInvariants — bucket coverage severity by chain role', () => {
+describe('checkHardInvariants — bucket coverage severity', () => {
   it('is CRITICAL on a mirror', () => {
     const [finding] = checkHardInvariants(
       observation({ mirrorLocal: { bucket: 0n } }),
@@ -800,21 +1022,14 @@ describe('checkHardInvariants — bucket coverage severity by chain role', () =>
     expect(finding?.severity).toBe('critical');
   });
 
-  it('is ADVISORY on the canonical chain — released remits do this legitimately', () => {
-    // `releaseRemitReservation` restores `outstandingCommitRecycled` in
-    // full but deliberately does NOT re-credit `recycleBucket`: those
-    // tokens are locked in the CCIP pool, outside Diamond custody. Paging
-    // on the contract's intended recovery state would be a false alarm on
-    // correct behaviour (Codex #1443 r1).
-    const [finding] = checkHardInvariants(
-      observation({ canonicalLocal: { bucket: 0n } }),
-      TOLERANCE,
-    );
-    expect(finding?.code).toBe('bucket-coverage');
-    expect(finding?.chainId).toBe(CANONICAL);
-    expect(finding?.severity).toBe('advisory');
-    expect(finding?.detail).toContain('released');
-  });
+  // #1444 — the canonical case used to be ADVISORY here, because
+  // `releaseRemitReservation` restores `outstandingCommitRecycled` in full
+  // while deliberately NOT re-crediting `recycleBucket` (those tokens are
+  // locked in transport custody), making a canonical shortfall the intended
+  // recovery state. The contract now records what that path moved, so the
+  // released total enters the relation as backing-in-transit and the role
+  // exception is gone. Both roles are asserted in the
+  // '#1444' cases under 'bucket coverage' above.
 });
 
 describe('reportLagConditions — per-cumulative coverage', () => {
