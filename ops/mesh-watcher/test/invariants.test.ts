@@ -48,7 +48,12 @@ import {
   readConfig,
   readTelegramTarget,
 } from '../src/env';
-import { makeRedactor, stripUrlPaths } from '../src/redact';
+import {
+  configuredRpcChainIds,
+  makeBaseRedactor,
+  makeRedactor,
+  stripUrlPaths,
+} from '../src/redact';
 import {
   pruneStreaksStatement,
   retainOnlyActiveStatement,
@@ -1243,5 +1248,53 @@ describe('redactDeliveryError — the pager credential must not reach the logs',
     expect(redactDeliveryError('429 Too Many Requests', TOKEN)).toBe(
       '429 Too Many Requests',
     );
+  });
+});
+
+describe('redaction — credentials in the URL authority', () => {
+  // `stripUrlPaths` kept the whole authority, so a credential that lives
+  // entirely inside it survived: `https://user:secret@rpc.example/…`
+  // (Codex #1443 r6).
+  it('scrubs userinfo while keeping the host', () => {
+    const out = stripUrlPaths('failed: https://user:SECRET@rpc.example.com/v2/KEY oops');
+    expect(out).not.toContain('SECRET');
+    expect(out).not.toContain('KEY');
+    expect(out).toContain('rpc.example.com');
+    expect(out).toContain('oops');
+  });
+
+  it('handles a userinfo-only credential with no path', () => {
+    const out = stripUrlPaths('https://tok:SECRET@rpc.example.com');
+    expect(out).not.toContain('SECRET');
+    expect(out).toContain('rpc.example.com');
+  });
+});
+
+describe('makeBaseRedactor — the failure paths know every RPC secret', () => {
+  // It passed an EMPTY chain list, so every RPC_<id> value went
+  // unredacted on exactly the path a canonical-read failure takes — the
+  // one place the redactor was added for (Codex #1443 r6).
+  const env = {
+    RPC_8453: 'https://base.example/v2/BASESECRET',
+    RPC_42161: 'https://arb.example/v2/ARBSECRET',
+    NOT_AN_RPC: 'https://other.example/v2/IGNORED',
+  } as never;
+
+  it('discovers configured chains from the environment', () => {
+    expect(configuredRpcChainIds(env).sort()).toEqual([8453, 42161].sort());
+  });
+
+  it('redacts every configured RPC secret without being told the chain set', () => {
+    const r = makeBaseRedactor(env);
+    const out = r(
+      'canonical chain 8453 unreadable: HTTP failed URL: https://base.example/v2/BASESECRET',
+    );
+    expect(out).not.toContain('BASESECRET');
+    expect(out).toContain('<RPC_8453>');
+  });
+
+  it('ignores env keys that are not RPC_<chainId>', () => {
+    expect(configuredRpcChainIds({ RPC_NOTANUMBER: 'x' } as never)).toEqual([]);
+    expect(configuredRpcChainIds({ RPC_8453: '' } as never)).toEqual([]);
   });
 });

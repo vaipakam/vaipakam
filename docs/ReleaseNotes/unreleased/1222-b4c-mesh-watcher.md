@@ -90,6 +90,21 @@ have alarmed on chains that had already settled everything; and made the
 manual verification actually send a test message, since a configured
 pager and a working pager are not the same thing.
 
+A fifth and sixth round were mostly about the hardening itself being
+incomplete. Two fixes from an earlier round turned out not to hold: the
+database-outage path that was supposed to preserve already-computed
+findings still consulted the same unavailable database a moment later and
+lost them anyway, and the credential scrubbing missed the one shape where
+a secret lives entirely inside a URL's authority rather than its path.
+Both are closed. Alongside them: the alert channel now delivers advisories
+without notifying, so the non-paging tier is actually non-paging rather
+than merely labelled; the manual verification endpoint no longer advances
+the observation counters, which are denominated in scheduled runs; one
+chain being unreadable no longer discards every other chain's evidence;
+and a run that cannot see its whole mesh no longer reports itself healthy.
+Verifying that each configured endpoint really is the chain it claims to
+be is deferred to its own change.
+
 Two design choices are worth recording. The chain set is not configured
 anywhere in the Worker: it reads the expected source chains from the
 canonical Diamond each tick, so a mirror wired on-chain is watched as soon

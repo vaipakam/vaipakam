@@ -65,7 +65,12 @@ export default {
       // Probe delivery on the manual path: this is the documented
       // post-deploy verification, and certifying a pager without ever
       // exercising it is how a silent pager ships.
-      const summary = await runTick(env, { probeDelivery: true });
+      const summary = await runTick(env, {
+        probeDelivery: true,
+        // Read the windowed state, never advance it: those windows are
+        // denominated in CRON observations.
+        persistState: false,
+      });
       // Status from `ok`, not merely from `error`. A failed delivery
       // probe, an unconfigured pager, or a critical finding all set
       // `ok: false` WITHOUT setting `error` — so keying the status on

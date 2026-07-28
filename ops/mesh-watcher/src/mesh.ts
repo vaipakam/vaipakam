@@ -173,6 +173,7 @@ export async function observeMesh(
     canonicalBlock,
   );
 
+  const redactBase = makeBaseRedactor(env);
   const gaps: CoverageGap[] = [];
   if (expected.length === 0) {
     // Either this is not the canonical reward chain, or the mesh source
@@ -205,9 +206,29 @@ export async function observeMesh(
     ...new Set<number>([config.canonicalChainId, ...expected.map(Number)]),
   ];
 
-  const books = await Promise.all(
+  // allSettled, not all: one chain's transient RPC error or revert would
+  // otherwise discard every SUCCESSFUL chain's books and abort the whole
+  // observation, so hard violations already readable elsewhere went
+  // unevaluated and undelivered (Codex #1443 r6). A rejected chain
+  // becomes a coverage gap; the rest are still checked.
+  const bookResults = await Promise.allSettled(
     chainIds.map((id) => readBaseBooks(canonical, id, canonicalBlock)),
   );
+  const books: BaseChainBooks[] = [];
+  bookResults.forEach((result, i) => {
+    const id = chainIds[i]!;
+    if (result.status === 'fulfilled') {
+      books.push(result.value);
+      return;
+    }
+    gaps.push({
+      chainId: id,
+      reason: 'no-rpc',
+      detail: redactBase(
+        `Base-side books unreadable for chain ${id}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      ),
+    });
+  });
 
   const redact = makeRedactor(env, chainIds);
   const locals = new Map<number, LocalLedger>();

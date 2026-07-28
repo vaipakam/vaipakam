@@ -91,8 +91,14 @@ function chainLabel(chainId: number): string {
  *  handler is invisible outside the Cloudflare logs. */
 export async function runTick(
   env: Env,
-  options: { probeDelivery?: boolean } = {},
+  options: { probeDelivery?: boolean; persistState?: boolean } = {},
 ): Promise<TickSummary> {
+  // Manual `POST /run` reads the windowed state but never ADVANCES it.
+  // The 6- and 130-tick windows are denominated in CRON observations, so
+  // an operator running the endpoint a few times — during a delivery
+  // outage, say — could otherwise manufacture a stuck-settlement
+  // advisory advertised as 1.5 hours of stasis (Codex #1443 r6).
+  const persistState = options.persistState ?? true;
   const now = Math.floor(Date.now() / 1000);
   let deliveryFailures = 0;
   let deliveryVerified: boolean | null = null;
@@ -171,15 +177,17 @@ export async function runTick(
           ? config.stuckWindowTicks
           : config.reportLagWindowTicks,
       );
-      streakWrites.push(
-        saveStreakStatement(
-          env.DB,
-          STUCK_SIGNAL,
-          books.chainId,
-          stuckOutcome.next,
-          now,
-        ),
-      );
+      if (persistState) {
+        streakWrites.push(
+          saveStreakStatement(
+            env.DB,
+            STUCK_SIGNAL,
+            books.chainId,
+            stuckOutcome.next,
+            now,
+          ),
+        );
+      }
       if (stuckOutcome.fire) {
         findings.push({
           key: `${STUCK_SIGNAL}:${books.chainId}`,
@@ -213,15 +221,17 @@ export async function runTick(
           c.marker,
           config.reportLagWindowTicks,
         );
-        streakWrites.push(
-          saveStreakStatement(
-            env.DB,
-            `${REPORT_LAG_SIGNAL}/${c.label}`,
-            books.chainId,
-            outcome.next,
-            now,
-          ),
-        );
+        if (persistState) {
+          streakWrites.push(
+            saveStreakStatement(
+              env.DB,
+              `${REPORT_LAG_SIGNAL}/${c.label}`,
+              books.chainId,
+              outcome.next,
+              now,
+            ),
+          );
+        }
         return outcome.fire;
       });
 
@@ -278,12 +288,22 @@ export async function runTick(
     const writes: D1PreparedStatement[] = [...streakWrites];
 
     if (config.telegram) {
-      const { send, statements } = await selectAlertsToSend(
-        env.DB,
-        candidates,
-        config.alertRepeatSeconds,
-        now,
-      );
+      // FAIL OPEN, for real this time. Setting `stateAvailable = false`
+      // above preserved the already-computed hard findings, but delivery
+      // then queried the SAME dead D1 — the rejection reached the outer
+      // catch and discarded both the ledger findings and the
+      // state-unavailable notice, leaving only a generic tick-failed
+      // alert (Codex #1443 r6). When state is gone, dedup is skipped
+      // entirely: every finding is sent, unsuppressed, and nothing is
+      // recorded.
+      const { send, statements } = stateAvailable
+        ? await selectAlertsToSend(
+            env.DB,
+            candidates,
+            config.alertRepeatSeconds,
+            now,
+          )
+        : { send: candidates, statements: [] as D1PreparedStatement[] };
       const byKey = new Map(findings.map((f) => [f.key, f]));
       for (let i = 0; i < send.length; i += 1) {
         const record = send[i]!;
@@ -344,19 +364,33 @@ export async function runTick(
       deliveryVerified = deliveryFailures === 0;
     }
 
-    writes.push(
-      // Runs for chains that have left the mesh are stale — a later
-      // re-add must serve its full window, not resume the old count.
-      pruneStreaksStatement(
-        env.DB,
-        obs.books.map((b) => b.chainId),
-      ),
-      retainOnlyActiveStatement(
-        env.DB,
-        findings.map((f) => f.key),
-      ),
-    );
-    if (writes.length > 0) await env.DB.batch(writes);
+    if (stateAvailable && persistState) {
+      writes.push(
+        // Runs for chains that have left the mesh are stale — a later
+        // re-add must serve its full window, not resume the old count.
+        pruneStreaksStatement(
+          env.DB,
+          obs.books.map((b) => b.chainId),
+        ),
+        retainOnlyActiveStatement(
+          env.DB,
+          findings.map((f) => f.key),
+        ),
+      );
+    }
+    if (writes.length > 0) {
+      try {
+        await env.DB.batch(writes);
+      } catch (err) {
+        // Alerts have ALREADY been delivered by this point. Letting a
+        // write failure reach the outer catch would report the tick as
+        // failed after it had in fact done its job, and would hide the
+        // findings that went out.
+        console.error(
+          `mesh-watcher: alert-state write failed (alerts already delivered): ${makeBaseRedactor(env)(err instanceof Error ? err.message : String(err))}`,
+        );
+      }
+    }
 
     const critical = findings.filter((f) => f.severity === 'critical').length;
     const deliveryConfigured = config.telegram !== null;
@@ -365,11 +399,16 @@ export async function runTick(
       // ledgers are — so an unconfigured destination, a REJECTED send, or
       // a failed probe all fail the tick and the post-deploy check with
       // it. A silent pager is the one failure this Worker cannot report.
+      // Coverage gaps keep their non-paging severity, but a watcher that
+      // is not observing its full mesh is not HEALTHY — `curl --fail` on
+      // a first-deploy verification with a missing mirror RPC must not
+      // certify it (Codex #1443 r6).
       ok:
         critical === 0 &&
         deliveryConfigured &&
         deliveryFailures === 0 &&
-        deliveryVerified !== false,
+        deliveryVerified !== false &&
+        obs.gaps.length === 0,
       deliveryConfigured,
       deliveryVerified,
       deliveryFailures,
@@ -436,6 +475,7 @@ export async function runTick(
               'The watcher itself is down — every invariant it checks is UNVERIFIED until this clears.',
           }),
         );
+        if (!ok) deliveryFailures += 1;
         if (ok && record) {
           try {
             await record.run();

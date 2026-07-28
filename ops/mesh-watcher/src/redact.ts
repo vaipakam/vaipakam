@@ -91,8 +91,16 @@ export function stripUrlPaths(text: string): string {
       return url.length;
     })();
 
+    // USERINFO is a credential too. `https://user:secret@rpc.example/…`
+    // keeps its secret entirely inside the authority, so stripping only
+    // the path would have preserved it verbatim (Codex #1443 r6).
+    const authority = url.slice(schemeEnd, hostEnd);
+    const at = authority.lastIndexOf('@');
+    const safeAuthority =
+      at === -1 ? authority : `<redacted>@${authority.slice(at + 1)}`;
+
     out += text.slice(i, httpsAt);
-    out += url.slice(0, hostEnd);
+    out += url.slice(0, schemeEnd) + safeAuthority;
     if (hostEnd < url.length) out += STRIPPED;
     i = end;
   }
@@ -123,10 +131,34 @@ export function makeRedactor(env: Env, chainIds: readonly number[]): Redactor {
 }
 
 /**
+ * Every chain id with an `RPC_<id>` secret configured.
+ *
+ * Discovered from the environment rather than taken from the caller, so
+ * the failure paths — which run BEFORE the chain set is known — still
+ * redact every configured endpoint.
+ */
+export function configuredRpcChainIds(env: Env): number[] {
+  const ids: number[] = [];
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith('RPC_')) continue;
+    const id = Number(key.slice(4));
+    if (Number.isInteger(id) && typeof env[key] === 'string' && env[key]) {
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
+/**
  * Redactor for paths where the chain set is not yet known — the
- * canonical-read failure and the tick-failure handler. Still covers the
- * bot/run tokens and strips every URL path structurally.
+ * canonical-read failure and the tick-failure handler.
+ *
+ * Passing an empty chain list here left every `RPC_<id>` value
+ * unredacted on exactly the path a canonical-read failure takes, so a
+ * credential in the URL authority reached the log, the alert and the
+ * `/run` body (Codex #1443 r6). It now discovers the configured chains
+ * from the environment itself.
  */
 export function makeBaseRedactor(env: Env): Redactor {
-  return makeRedactor(env, []);
+  return makeRedactor(env, configuredRpcChainIds(env));
 }

@@ -203,6 +203,13 @@ half of cron observations — forging the very evidence the operator acts
 on. An unset `WATCHER_RUN_TOKEN` therefore **closes** the endpoint rather
 than opening it.
 
+**One chain's failure does not blind the rest.** Chain reads are collected
+independently, so a transient RPC error on one mirror leaves the others
+evaluated and delivered, with the failed one surfaced as a coverage gap.
+The endpoint's *identity* is not yet verified, though — a misconfigured
+`RPC_<chainId>` pointing at the wrong network would be labelled with the
+configured id. Tracked as **#1445**.
+
 **Secrets are redacted from everything that leaves the Worker.** viem
 embeds the request URL in its error messages and providers put the API key
 in the path or query, so a provider having a bad minute would otherwise
@@ -232,7 +239,7 @@ npm ci --ignore-scripts
 ./node_modules/.bin/vitest run
 ```
 
-The suite is **mutation-verified**: 48 mutations applied in turn, each
+The suite is **mutation-verified**: 51 mutations applied in turn, each
 confirmed to turn only the test that targets it red — the floor in the
 availability model, the direction of the identity comparison, the
 tolerance boundary, the bucket-coverage severity split, the streak's
@@ -294,7 +301,10 @@ undeployed.
    `ok`, `deliveryConfigured`, `chainsObserved`, `critical`, `advisory`,
    `coverageGaps`, `sent`.
 
-   The manual path **sends a delivery probe** — you should see a message
+   The manual path **reads the windowed state but never advances it** —
+   those windows are denominated in cron observations, so repeated manual
+   runs must not be able to manufacture a run's worth of stasis. It also
+   **sends a delivery probe** — you should see a message
    in the ops chat, and `deliveryVerified: true` in the response. That is
    the point of running it: `deliveryConfigured` only says a token and
    chat id are present, which is equally true of a malformed token, and a
@@ -302,7 +312,9 @@ undeployed.
    probe a green verification would certify a pager that cannot deliver.
 
    `ok` requires all of: no critical findings, a configured destination,
-   no rejected sends, and a probe that succeeded. `coverageGaps > 0`
+   no rejected sends, a probe that succeeded, **and zero coverage gaps** —
+   a watcher not observing its full mesh is not healthy, however clean the
+   chains it can see happen to be. `coverageGaps > 0`
    means a chain is wired on-chain but not readable (no RPC secret, no
    deployment stanza) or the source set is misconfigured — fix it before
    relying on the alerts, or the mesh is only partly watched.
