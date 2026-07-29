@@ -729,22 +729,68 @@ contract MeshThreeChainE2ETest is Test {
             "#1442: the canonical top-up pass reserved against the global ledger"
         );
 
-        // ── The two passes are DISTINCT, not one figure counted twice ────
-        // ARB was funded MORE than it was instructed to self-fund: the
-        // difference is precisely what Base supplied. Asserting only the
-        // total could not tell those apart.
-        assertGt(arb.fundedLender + arb.fundedBorrower, 0, "ARB was funded");
+        // ── The two passes are DISTINCT, and tied to each other EXACTLY ──
+        //
+        // `recycleConsume` is the LOCALLY-funded share in the same units as
+        // `fundedLender + fundedBorrower` — measured, not assumed: OP, which
+        // self-funds entirely, has the two exactly equal. So a chain's top-up
+        // is precisely `funded - recycleConsume`, and Base's global
+        // reservation is the sum of those across chains.
+        //
+        // Do NOT use `lenderHalfEquiv`/`borrowerHalfEquiv` here (Codex #1454
+        // r2): those are the GLOBAL-equivalent halves and are IDENTICAL for
+        // every chain, so comparing them against `recycleConsume` holds
+        // whether or not a top-up happened — a vacuous assertion an earlier
+        // revision of this test made.
+        uint256 opFunded = op.fundedLender + op.fundedBorrower;
+        uint256 opTopUp =
+            opFunded > op.recycleConsume ? opFunded - op.recycleConsume : 0;
+        // Wei-scale bound, not bit-exact: the per-side pro-rata split floors,
+        // so a fully self-funded chain lands a few wei off. Against ARB's
+        // ~288 ether top-up the distinction is unambiguous.
+        assertLt(opTopUp, 1e4, "OP self-funded - it received NO top-up");
+        assertGt(opFunded, 0, "and its slice is real, not zero");
+
+        uint256 arbFunded = arb.fundedLender + arb.fundedBorrower;
         assertGt(
-            arb.lenderHalfEquiv + arb.borrowerHalfEquiv,
-            arb.recycleConsume,
-            "ARB's funded slice exceeds its locally-funded share"
+            arbFunded, arb.recycleConsume, "ARB was funded beyond its bucket"
+        );
+        uint256 arbTopUp = arbFunded - arb.recycleConsume;
+
+        // The exact tie. `baseOutstanding > 0` alone would pass on a second
+        // pass that under-booked the ledger by 1 wei, or that mis-allocated
+        // Base's funding to OP while leaving ARB locally-funded only. Pinning
+        // it to ARB's shortfall rules out both.
+        assertApproxEqAbs(
+            baseOutstanding,
+            arbTopUp,
+            1e4,
+            "#1442: Base reserved EXACTLY ARB's shortfall, and nothing else"
         );
 
-        // OP, comfortable, contributes NOTHING to the top-up pool — so the
-        // global figure cannot be OP's shortfall in disguise.
-        (, , uint256 opAvail, ) = _agg().getChainRecycledLedger(uint32(OP));
-        assertGt(opAvail, 0, "OP still has availability, i.e. no shortfall");
-        assertGt(op.recycleConsume, 0, "and funded its own slice locally");
+        // ── ...and the top-up was SUFFICIENT, not merely present ─────────
+        //
+        // The identity above holds by construction however LITTLE is topped
+        // up — both sides shrink together — so on its own it cannot catch a
+        // second pass that under-funds. Found by mutating the lender-side
+        // allocation to zero: the identity survived it.
+        //
+        // This is the one legitimate use of the global-equivalent halves:
+        // they are the same figure for every chain that is FULLY funded, so
+        // comparing ARB's against comfortable OP's proves Base's top-up
+        // brought ARB all the way to its target rather than part-way.
+        assertApproxEqAbs(
+            arb.lenderHalfEquiv,
+            op.lenderHalfEquiv,
+            1e4,
+            "the top-up made ARB WHOLE on the lender side, not merely larger"
+        );
+        assertApproxEqAbs(
+            arb.borrowerHalfEquiv,
+            op.borrowerHalfEquiv,
+            1e4,
+            "and on the borrower side"
+        );
     }
 
     function test_E2E_DuplicateBroadcastToMirrorDoesNotDoubleTheReservation()
@@ -888,10 +934,27 @@ contract MeshThreeChainE2ETest is Test {
         _seedAllInterest(5);
         _runDayCycle(5);
 
-        (uint256 reportedAfterHeal, , uint256 availAfterHeal, ) =
+        (uint256 reportedAfterHeal, uint256 instructedAfterHeal,
+            uint256 availAfterHeal, ) =
             _agg().getChainRecycledLedger(uint32(ARB));
-        assertGt(reportedAfterHeal, 0, "the later report healed the ledger");
-        assertGt(availAfterHeal, 0, "and restored committable availability");
+        // EXACT, not merely non-zero (Codex #1454 r2). A report advancing the
+        // ledger by only a small current-day amount would satisfy `> 0` while
+        // the dropped backlog stayed lost, so this pins the whole lifetime
+        // cumulative the fixture seeded. ARB consumes nothing here, so its
+        // `creditedCumulative` is exactly the seeded bucket.
+        assertEq(
+            reportedAfterHeal,
+            BUCKET_SEED,
+            "the later report carried the WHOLE lifetime cumulative"
+        );
+        // Availability is derived from it, so it cannot drift into a
+        // tautology of its own.
+        assertEq(
+            availAfterHeal,
+            BUCKET_SEED - instructedAfterHeal,
+            "availability is the healed cumulative less the instructions"
+        );
+        assertGt(availAfterHeal, 0, "and real capacity remains");
 
         // THE POINT, read directly (Codex #1454 r1). The numerator and the
         // finalized bit below do NOT move if a regression re-admits the chain
