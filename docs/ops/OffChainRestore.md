@@ -196,11 +196,20 @@ then deploy.
    - `vaipakam.com` (apex — the canonical, indexable hostname) →
      `vaipakam-www`, plus `labs.vaipakam.com` → `vaipakam-www` if the
      legacy hostname is still wanted
-   - `www.vaipakam.com`: **not** a Worker binding. Recreate the
-     Cloudflare Bulk Redirect rule `www.vaipakam.com/* →
-     https://vaipakam.com/$1` (301). It is a zone-level rule, so it does
-     not travel with the Worker and is easy to miss — without it the
-     `www` host does not resolve to the site at all.
+   - `www.vaipakam.com`: **not** a Worker binding, and it needs TWO
+     things, both zone-level and neither travelling with any Worker
+     config:
+     1. a **proxied DNS record** for `www` (orange-clouded `CNAME
+        www → vaipakam.com`). A Bulk Redirect rule only fires on traffic
+        that reaches Cloudflare, and on a fresh account nothing resolves
+        `www` until this exists — so without it `www` stays NXDOMAIN and
+        the rule below never runs, while the apex works perfectly and
+        hides the gap;
+     2. the **Bulk Redirect rule** `www.vaipakam.com/* →
+        https://vaipakam.com/$1` (301).
+
+     Both are easy to miss precisely because the apex site comes back
+     looking healthy without them.
 
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    updated configs all exist first.
@@ -406,7 +415,11 @@ that data — alert de-duplication state and per-chain block cursors for a
 transport that no longer exists, so almost certainly not — restore it to a
 database you create by hand for the purpose. Do **not** recreate
 `ops/lz-watcher` to hold it: deploying that package would resurrect a
-retired Worker and take a cron slot. Otherwise ignore the section.
+retired Worker, and THAT is what would take one of the account's five
+cron-trigger slots. Creating the database costs no slot — slots are consumed
+by deploying a Worker with a scheduled trigger, never by a D1 database — so
+do not let the warning stop you creating an inert one to inspect or restore
+the rows. Otherwise ignore the section.
 
 **Create the tables first.** The generated import below is `INSERT`
 statements only, and #1440 deleted the watcher's migration along with the

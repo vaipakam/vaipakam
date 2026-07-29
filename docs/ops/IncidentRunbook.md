@@ -583,74 +583,79 @@ No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.
 
 ### Execute — Push channel signer rotation
-1. From the **current** channel-owner wallet, log in to
-   <https://app.push.org/> and open the channel admin page.
-2. **Transfer channel ownership** to a fresh EOA you control. Push
-   surfaces this as a transfer tx that hands the channel + remaining
-   stake to the new owner. Wait for confirmation.
-3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`, again in
-   the **account-level Secrets Store** — `apps/agent` and `apps/keeper`
-   both bind it from there, and `ops/hf-watcher` no longer exists:
+
+**Read this first: there is no signer rotation, and there is no ownership
+transfer.** Both Workers derive the channel identity from the signing key
+(`channelCaip = eip155:1:<wallet(PUSH_CHANNEL_PK).address>`), so changing the
+key changes *which channel the platform posts as*. And Push does not
+implement channel-ownership transfer at all — `PushCoreV2` declares a
+`ChannelOwnershipTransfer` event that is never emitted, and the primitive
+with that shape is `PushCommV2.addDelegate`, which grants delegated SENDING
+rights while the channel stays with its creator. Earlier versions of this
+runbook told the operator to transfer ownership; do not go looking for it.
+
+So rotating this key is a **channel migration**, and subscribers do not come
+with it. Budget for that before you start.
+
+**Failure mode to know before you act:** a send to a channel Push does not
+know does not throw anything user-visible. `sendPush` catches and logs
+`[push] send failed subscriber=… err=…` and moves on — fail-soft and
+UNALERTED. Nothing pages, nothing appears in the app. The only place it shows
+is `wrangler tail`, so verify there rather than assuming success.
+
+1. From a clean EOA you control, **create a new Push channel** —
+   `createChannelWithPUSH`, which requires a **50 PUSH stake**. This is not
+   optional and not avoidable: the new key must be a channel Push recognises
+   or every send is rejected. Acquiring PUSH mid-incident is not a fast path,
+   so treat the stake as a standing prerequisite for being able to rotate.
+2. Write that EOA's private key over `PUSH_CHANNEL_PK` in the **account-level
+   Secrets Store** — `apps/agent` and `apps/keeper` both bind it from there,
+   so one write covers both and a per-Worker `wrangler secret put` would
+   rotate neither:
 
    ```bash
    STORE=<the vaipakam-credentials store id>
-   # --per-page 100: the default page size is 10, well under the ~22
-   # secrets this store holds, so PUSH_CHANNEL_PK can otherwise be absent
-   # from the listing with no indication anything was truncated.
+   # --per-page 100: the default page size is 10 against ~22 secrets, so the
+   # flag is required or PUSH_CHANNEL_PK may simply be absent from the page.
    wrangler secrets-store secret list "$STORE" --remote --per-page 100
    printf '%s' "<new privkey>" | wrangler secrets-store secret update \
      "$STORE" --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
-4. Redeploy **both** live consumers to invalidate their cached PushAPI
-   clients (`pnpm --filter @vaipakam/agent deploy` and
-   `pnpm --filter @vaipakam/keeper deploy`); each module-scope cache
-   rebuilds on the next tick.
-5. **The channel our Workers post to DOES change.** Both
-   `apps/agent/src/push.ts` and `apps/keeper/src/push.ts` derive
-   `channelCaip` from `new Wallet(PUSH_CHANNEL_PK).address`, so after
-   rotating the key they send as the NEW EOA regardless of what happened
-   to the original channel's ownership on Push's side. Existing
-   subscribers are subscribed to the OLD address and stop receiving.
-
-   Transferring channel ownership does not fix that on its own: preserving
-   the original channel id would require the senders to read it from
-   config rather than derive it from the key. See **#1456** for making the
-   channel id configurable so a future rotation is genuinely just a signer
-   swap. Until then, rotating the signer IS a channel migration — treat it
-   as one.
-6. **Point the frontend at the new channel.** Because the Workers now
-   publish as the new EOA, `VITE_PUSH_CHANNEL_ADDRESS` must be set to
-   that address and `apps/defi` redeployed. Leaving it on the old
-   address sends every user who opens the Alerts page to subscribe to a
-   channel nothing will ever post to — which makes subscriber migration
-   impossible rather than merely slow, and it fails silently: the
-   subscribe flow succeeds.
+3. Redeploy **both** consumers to drop their cached PushAPI clients:
+   `pnpm --filter @vaipakam/agent deploy` and
+   `pnpm --filter @vaipakam/keeper deploy`.
+4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
+   the new EOA and redeploy `apps/defi`. Leaving it on the old address sends
+   every user who opens the Alerts page to subscribe to a channel the
+   platform no longer posts to — and that subscribe succeeds, so nothing
+   signals the mistake.
 
    ```bash
    # apps/defi env: VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
    pnpm --filter @vaipakam/defi build && pnpm --filter @vaipakam/defi deploy
    ```
+5. Update the **Vaipakam Push channel reference** block at the top of this
+   section, so the next incident does not cross-reference a dead channel.
+6. Verify with `wrangler tail` on both Workers that the next scheduled send
+   succeeds. Given the fail-soft behaviour above, this is the only
+   confirmation you get.
+7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
+   to the OLD channel and nothing migrates them.
 
-   Update the channel URL in this runbook's **Vaipakam Push channel
-   reference** block above in the same change, so the next incident does
-   not cross-reference a dead channel.
-7. Then ask existing subscribers to re-subscribe (see **Communicate**) —
-   they are subscribed to the old address and no transfer moves them.
-8. **If ownership transfer is impossible** (compromised wallet refuses
-   to sign), one step has to be ADDED, not skipped. Step 2 is what makes
-   the new EOA a registered Push channel; without it the Workers would
-   sign as an address Push does not know, and every send fails while the
-   Alerts page invites users to subscribe to a channel that does not
-   exist — the alert rail down for the whole incident.
+**The old channel stays with the compromised key.** There is no way to take
+it back, so assume the attacker can keep posting to the original subscriber
+set until Push acts on an abuse report. That is the strongest argument for
+announcing the migration loudly and quickly, and for the guard rail below
+about never reusing this wallet.
 
-   So from the clean EOA, **create a new Push channel and stake the
-   50 PUSH it requires** (see `AdminKeysAndPause.md`, channel-address
-   row), then run steps 3–7 unchanged. Budget for the stake before you
-   need it: acquiring PUSH mid-incident is not a fast path.
+**What #1456 changes.** It makes the channel id a configured value rather
+than something derived from the key. Once it lands, the compromised key can
+be replaced by `addDelegate`-ing a fresh sending EOA from the channel owner
+and pointing `PUSH_CHANNEL_PK` at it — the channel id, the stake and every
+subscriber stay put, and this whole section collapses to a two-line secret
+swap. Until then, plan for migration. If a rotation is foreseeable rather
+than an emergency, landing #1456 first is strictly better.
 
-   Transfer, where it works, is what avoids that stake — it does not
-   preserve delivery to existing subscribers either way. Subscribers are
-   subscribed to the OLD address and must re-subscribe in both branches.
 
 ### Communicate
 - Within 30 min of detection: post on official channels (X, Discord)
