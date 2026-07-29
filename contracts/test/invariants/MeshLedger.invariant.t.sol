@@ -16,6 +16,7 @@ import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
@@ -458,6 +459,117 @@ contract MeshLedgerInvariant is Test {
             0,
             "Base holds no per-chain reservation"
         );
+    }
+
+    // ─── §7 #2's FRESH half, at its boundary — deterministic ────────────
+    //
+    // #1222 M3 B4-d. `invariant_FreshCommitWithinLifetimeCap` asserts
+    // `outstandingFresh + paidOutFresh <= 69M`, and like every bound in this
+    // suite it holds trivially on state that never approaches the cap. The
+    // fuzzer works in ether-scale amounts against a 69,000,000e18 ceiling, so
+    // it will never get within seven orders of magnitude of it: the bound is
+    // green because the boundary is unreachable, not because it is enforced.
+    //
+    // These two tests place the ledger AT the boundary and assert the cap
+    // actually bites. They are deliberately deterministic — a fuzzer cannot
+    // usefully search a region it cannot reach.
+
+    /// The cap must reserve against OUTSTANDING fresh commitments, not only
+    /// against what has already been paid out. That is the whole content of
+    /// §7 #2's fresh half: a day already committed to fresh issuance has
+    /// spent that headroom even though no tokens have moved, so the next
+    /// day's schedule must size against what remains.
+    ///
+    /// Driven through the commitment term alone, with nothing paid out, so a
+    /// regression that dropped `outstandingCommitFresh` from the reserved sum
+    /// fails here and nowhere else — every bound in this suite would stay
+    /// green while the platform issued past 69M across two open days.
+    function test_Boundary_FreshScheduleClampsToRemainingCapHeadroom()
+        public
+    {
+        uint256 headroom = 1_234 ether;
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom, 0
+        );
+
+        uint256 schedule = _scheduleForDay(1);
+        assertGt(
+            schedule,
+            headroom,
+            "fixture must place the schedule ABOVE the headroom, or the "
+            "clamp is not under test"
+        );
+
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "the fresh floor must clamp to the cap headroom left by the "
+            "outstanding commitment, not to the day's own schedule"
+        );
+    }
+
+    /// At the boundary EXACTLY, fresh goes to zero — and recycled does not.
+    /// §7 #1 says the cap bounds fresh drawdown ONLY, so a day at the cap
+    /// must still be able to pay from the recycle bucket. An implementation
+    /// that zeroed the whole day would satisfy the fresh bound perfectly
+    /// while silently ending recycling, and an implementation that let fresh
+    /// through would breach the 30% allocation.
+    function test_Boundary_AtTheCapFreshIsZeroAndRecycledIsNot() public {
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP, 0
+        );
+
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, uint256 recycledBudget, uint256 aBar, ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            0,
+            "no fresh headroom remains, so the day funds no fresh at all"
+        );
+        assertGt(aBar, 0, "fixture must supply absorption, or recycled is "
+            "trivially zero and the second half of this test is vacuous");
+        assertGt(
+            recycledBudget,
+            0,
+            "the cap bounds FRESH drawdown only - a day at the cap must "
+            "still fund from the recycle bucket"
+        );
+    }
+
+    /// @dev The day's uncapped fresh schedule, as the governor computes it
+    ///      before the cap headroom clamps it.
+    function _scheduleForDay(uint256 dayId) internal pure returns (uint256) {
+        return LibInteractionRewards.halfPoolForDay(dayId) * 2;
+    }
+
+    /// @dev Day 1 finalized with every expected chain reported and both
+    ///      mirrors marked commitment-complete — the shape the release and
+    ///      retirement transition tests above already use.
+    function _finalizeDayOne() internal {
+        messenger.deliverChainReportB3(
+            CHAIN_BASE, 1, 10e18, 5e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_OP, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_ARB, true
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_OP, true
+        );
+        _agg().finalizeDay(1);
     }
 
     // ─── §7 #6's ORDERING clauses — deterministic, not fuzzed ────────────
