@@ -57,10 +57,10 @@ then deploy.
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
    > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
-   > migration retired; both the Worker and the binding are gone. Creating it
-   > would also cost one of the five free-plan cron slots. See "Restoring a
-   > pre-#1440 archive" below if the archive you hold still carries its
-   > tables.
+   > migration retired; the Worker, its binding **and its source tree** are
+   > all gone. Creating it would also cost one of the five free-plan cron
+   > slots. See "Restoring a pre-#1440 archive" below if the archive you
+   > hold still carries its tables.
 
 4. Create the R2 buckets:
 

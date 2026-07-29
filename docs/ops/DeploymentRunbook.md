@@ -1900,9 +1900,12 @@ describing this; keep them in sync if you change the schema.
 > the five free-plan cron slots. That slot now belongs to
 > `ops/mesh-watcher` (see its own README for its setup).
 >
-> The package cannot be deployed: its Wrangler config is renamed to
-> `wrangler.jsonc.retired` and its `deploy` script exits 1. Removing the
-> source tree entirely is tracked on **#250 Phase 2**.
+> **The source tree is GONE** — `ops/lz-watcher/` was removed in #1440.
+> Review established that no config edit can make a source tree
+> undeployable (the positional `wrangler deploy src/index.ts --triggers
+> ...` form bypasses `main` entirely, and `wrangler secret put` can create
+> a draft Worker by name), so deleting it was the only way to make the
+> claim true. Recover from git history if ever needed.
 >
 > The cross-chain surface it used to watch is CCIP now; ops alerting for
 > that is separately tracked and does not reuse any of this.
