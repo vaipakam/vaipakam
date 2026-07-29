@@ -2298,20 +2298,30 @@ stranded counter existed. A Diamond can easily have both: active
 recycling (so `accountingSeeded == true`) and historical releases with
 nothing recorded against them.
 
-Decide from the release history instead. The ceremony is needed exactly
-when BOTH hold:
+Nor from `releasedRemitStranded` being non-zero, which is the same
+mistake in different clothes: that counter reads non-zero as soon as ANY
+release lands after the upgrade — including one that arrives while you
+are still working through the refresh. A historical amount can sit
+unrecovered behind a perfectly non-zero counter, and that is precisely
+the state the ceremony exists for. The contract itself rejected
+value-keyed gating for this reason (its one-shot is an explicit applied
+flag, not a "counter is non-zero" test); do not reintroduce it here.
 
-1. `getRecycleCompositionPosition().releasedRemitStranded == 0`, and
-2. the reservation history contains at least one RELEASED entry — walk
-   `getRemitReservation(i)` for `i` in `1..getRemitReservationNonce()`
-   and look for status `Released`.
+**The rule is one condition:** run the ceremony if the reservation
+history contains at least one `Released` entry. Walk
+`getRemitReservation(i)` for `i` in `1..getRemitReservationNonce()`.
 
-Both together mean releases happened before the counter existed, which
-is the only state the ceremony addresses. Either alone means it is not
-needed: a non-zero counter is already recording releases, and no
-released entry means there is nothing to recover. Running it when it is
-not needed is harmless but pointless — it would scan to a total of zero
-and refuse to publish a figure that shrinks nothing.
+Running it when the counter already happens to be complete is safe, not
+merely tolerable: the scan covers every id in the range and **assigns**
+the total rather than adding to it, so a redundant run recomputes the
+same figure rather than doubling it. What it does spend is the one-shot,
+so run it once, deliberately, rather than speculatively.
+
+To check whether it has already run, read
+`getReleasedRemitStrandedSeedState()`. Its `applied` flag is the only
+sound answer to "has this happened" — `target` non-zero means a ceremony
+is part-way through and `cursor` says how far. If no reservation exists
+at all, the call reverts `SeedNothingToScan`: nothing to recover.
 
 The mesh watcher's "composition unverifiable" advisory is a weaker
 signal than this and should not be used on its own: it clears at the

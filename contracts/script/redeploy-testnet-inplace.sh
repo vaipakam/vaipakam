@@ -336,10 +336,15 @@ cat <<'EOF'
 
 POST-REFRESH — recycled accounting (canonical chain only):
 
-  If this Diamond has ANY released remittance predating the stranded
-  cumulative (check: getRemitReservationNonce() > 0 with any status-3
-  reservation, or simply the watcher paging bucket-coverage +
-  bucket-composition immediately after the refresh), run ONCE:
+  Run ONCE if the reservation history holds ANY released (status-3)
+  reservation — walk getRemitReservation(i) over 1..getRemitReservationNonce().
+  That single condition is the whole rule. Do NOT additionally require the
+  published stranded cumulative to be zero: a release landing after the
+  refresh makes it non-zero while a historical amount is still unrecovered
+  behind it, which is exactly the case this recovers.
+
+  To check whether it already ran, read getReleasedRemitStrandedSeedState()
+  — its `applied` flag, never the published figure.
 
     NONCE=$(cast call $DIAMOND "getRemitReservationNonce()(uint256)" ...)
     cast send $DIAMOND "seedReleasedRemitStranded(uint256)" $NONCE ...
@@ -349,13 +354,18 @@ POST-REFRESH — recycled accounting (canonical chain only):
   first call. On a Diamond with a long reservation history, split it:
   `seedReleasedRemitStranded(500)`, `(1000)`, ... up to the nonce; a single
   transaction could otherwise exceed the block gas limit, and the ceremony is
-  one-shot. It reverts if a remittance is released mid-ceremony (restart it)
-  or if the result does not reconcile both relations. Verify:
+  one-shot. It reverts if a remittance is released mid-ceremony — restart with
+  resetReleasedRemitStrandedSeed() and re-run; a restart is an expected
+  outcome on a busy chain, not an incident — or if the result does not
+  reconcile both relations. Verify:
 
     cast call $DIAMOND "getRecycleCompositionPosition()(uint256,uint256,bool,bool)"
 
-  The second value must be non-zero and the watcher's two CRITICALs must
-  clear on the next tick. On a chain with no pre-existing release this is a
+  The watcher's two CRITICALs must clear on the next tick, and
+  getReleasedRemitStrandedSeedState() must report `applied`. Do not verify by
+  asserting the stranded cumulative is non-zero — that check is itself
+  defeated in the mixed case above, where it was already non-zero before the
+  ceremony ran. On a chain with no released reservation at all this step is a
   no-op and can be skipped.
 
 EOF

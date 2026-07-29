@@ -1314,7 +1314,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _preUpgradeReleasedState();
         remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
-        uint256 seedTo = remit.getRemitReservationNonce();
+        uint256 seedTo = 2;
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
@@ -1703,6 +1703,91 @@ contract RewardRemitLedgerTest is SetupTest {
             seen = true;
         }
         assertTrue(seen, "completion event was emitted");
+    }
+
+    /// #1448 r10 — the race guard used to pin ONLY the stranded VALUE, which
+    /// is blind to the release most likely to corrupt the emitted count: one
+    /// whose recycled share is zero. `releaseRemitReservation` flips the
+    /// status to Released unconditionally, but `restoreReleasedRemit` returns
+    /// early when there is nothing to restore, so the value counter never
+    /// moves. Landing in an already-scanned range, the scan misses it too —
+    /// so the ceremony completed and reported a found-count the runbook tells
+    /// operators to reconcile against the release history independently.
+    ///
+    /// The state under test is "a release happened, the value did not move".
+    /// It is reproduced here by rewinding the value counter after a real
+    /// release rather than by building a fresh-only slice, because the shape
+    /// is what matters and the two are indistinguishable to the guard. In
+    /// production it arises whenever a released reservation carries no
+    /// recycled backing — a fresh-only remittance, or one whose recycled
+    /// share clamped to zero.
+    ///
+    /// Guarding on the release COUNT closes it: nothing can flip a status
+    /// without moving that.
+    function test_Seed_RaceGuardCatchesAZeroRecycledRelease() public {
+        _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        mutator.setReleasedRemitStrandedRaw(0);
+
+        // A PARTIAL scan: target pins at 2, cursor reaches 1. Reservation 2
+        // is inside the pinned range but not yet scanned, and still Pending.
+        remit.seedReleasedRemitStranded(1);
+        (, uint256 valueMid, , , , , , ) = _composition();
+        (, , , , , uint256 countMid) =
+            remit.getReleasedRemitStrandedSeedState();
+
+        // Release it, then rewind the value so the counter reads exactly as
+        // it would after a release that stranded nothing.
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(2);
+        mutator.setReleasedRemitStrandedRaw(valueMid);
+
+        (, uint256 valueAfter, , , , , , ) = _composition();
+        (, , , , , uint256 countAfter) =
+            remit.getReleasedRemitStrandedSeedState();
+        assertEq(
+            valueAfter,
+            valueMid,
+            "precondition: the value counter did NOT move - a value-only "
+            "guard is blind to this release by construction"
+        );
+        assertEq(countAfter, countMid + 1, "but the release COUNT did move");
+
+        // The guard must still fire, on the count. `seedTo` is hoisted: a
+        // nested getter would be "the next call" and eat the expectRevert.
+        uint256 seedTo = remit.getRemitReservationNonce();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.SeedRaceDetected.selector,
+                valueMid,
+                valueAfter
+            )
+        );
+        remit.seedReleasedRemitStranded(seedTo);
+    }
+
+    /// The ceremony's own state must be readable. Without it an operator can
+    /// only infer "has this already run?" from the published figure — which
+    /// is exactly the value-based reasoning that is wrong here, since a
+    /// non-zero total can be a post-upgrade release with a historical amount
+    /// still unrecovered behind it.
+    function test_Seed_StateIsExternallyReadable() public {
+        _preUpgradeReleasedState();
+        (bool appliedBefore, uint256 targetBefore, , , , ) =
+            remit.getReleasedRemitStrandedSeedState();
+        assertFalse(appliedBefore, "not yet run");
+        assertEq(targetBefore, 0, "none in flight");
+
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+
+        (bool appliedAfter, , , uint256 accum, uint256 counted, ) =
+            remit.getReleasedRemitStrandedSeedState();
+        assertTrue(appliedAfter, "one-shot is visibly spent");
+        assertGt(accum, 0, "and what it recovered is readable");
+        assertEq(counted, 1, "one release behind it");
     }
 
     /// @dev Accept ETH refunds from the remit fee path.
