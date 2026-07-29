@@ -2276,3 +2276,52 @@ solver window) is tracked under Backlog card #389. No operator env
 config needed until that card lands — the operator-side change there
 will be one new aggregator API key, documented as part of that card
 when it ships.
+
+## #1448 Released-remit stranded seed — one-time, upgrade-only ceremony
+
+Applies **only** when upgrading a canonical reward Diamond that was
+already remitting before the recycle-composition counters existed. A
+fresh deployment never needs this, and a mirror chain cannot run it.
+
+**Why it exists.** A remittance released before the counters shipped
+already restored its commitment and reversed its payout figure, but
+nothing recorded how much it stranded. Both composition relations would
+therefore read as broken from the first check after the upgrade — on
+state the supported path produced. The ceremony recovers that one figure
+from the platform's own reservation records.
+
+**Deciding whether you need it.** Read
+`getRecycleCompositionPosition()`. If `accountingSeeded` is already
+true, this Diamond has been crediting under the new counters and there
+is no pre-upgrade gap — do nothing. Otherwise check whether the mesh
+watcher reports the composition relation unverifiable; that advisory is
+the signal, and it clears itself at the first credit if no release ever
+predated the upgrade.
+
+**Running it.** `seedReleasedRemitStranded(upTo)` is ADMIN-only and
+**chunked**: the first call pins the range end at the current
+reservation nonce, and each subsequent call must advance strictly toward
+it. Pick a chunk size the chain's block gas limit comfortably accepts —
+a Diamond with a large reservation history cannot be scanned in one
+transaction, which is the whole reason the call takes a bound. Nothing
+is published until the final chunk reaches the pinned end, so a partial
+scan can never leave a half-counted figure visible.
+
+**If a release lands while the ceremony is in flight**, the next chunk
+reverts rather than mixing a pre- and post-release view of the same
+range. That is a stop, not a failure: call
+`resetReleasedRemitStrandedSeed()` (ADMIN-only) to discard the partial
+scan, then start again from the current state. Quiet periods make this
+less likely but nothing enforces one, so expect a restart on a busy
+canonical chain rather than treating it as an incident.
+
+**The completion event reports the amount recovered and the number of
+released reservations behind it** — the latter is the count of releases
+actually found, not the reservation nonce, so it can be reconciled
+against the release history independently.
+
+**It cannot be used to quiet a real discrepancy.** On completion the
+figure must reconcile both composition relations in both directions; if
+it does not, the whole ceremony reverts and publishes nothing. It also
+refuses to run twice — once a figure is published, `reset` refuses too,
+so there is no lever that edits an already-published number.

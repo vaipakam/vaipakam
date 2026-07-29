@@ -2006,7 +2006,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](28);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2032,6 +2032,9 @@ contract HelperTest {
         // #1448 r3 — one-time stranded-cumulative seed.
         selectors[26] =
             RewardRemittanceFacet.seedReleasedRemitStranded.selector;
+        // #1448 r8 — restart lever after a detected seed race.
+        selectors[27] =
+            RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
         selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
         selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;

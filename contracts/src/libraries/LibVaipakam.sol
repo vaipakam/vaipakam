@@ -5858,6 +5858,12 @@ library LibVaipakam {
         //   sources would disagree. Cheaper and safer to detect it and make
         //   the operator restart than to try to reconcile it.
         uint256 recycleStrandedSeedBaseline;
+        // `recycleStrandedSeedCounted` — how many RELEASED reservations the
+        //   scan has found. Distinct from the target, which is the reservation
+        //   NONCE and therefore includes pending and acked entries; emitting
+        //   the latter as the released count would inflate what operational
+        //   and audit consumers read (#1448 r8).
+        uint256 recycleStrandedSeedCounted;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

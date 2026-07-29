@@ -573,6 +573,13 @@
   },
   {
     "type": "function",
+    "name": "resetReleasedRemitStrandedSeed",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "seedReleasedRemitStranded",
     "inputs": [
       {
@@ -693,6 +700,12 @@
         "internalType": "uint256"
       }
     ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeedReset",
+    "inputs": [],
     "anonymous": false
   },
   {
@@ -2065,6 +2078,11 @@
   {
     "type": "error",
     "name": "SeedDoesNotReconcile",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedNotStarted",
     "inputs": []
   },
   {

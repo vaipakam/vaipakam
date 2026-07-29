@@ -88,7 +88,14 @@ the upgrade, on state the supported path produced. A one-time operator
 ceremony seeds that figure. It derives the amount from the platform's own
 records rather than accepting one, and refuses outright if the result does
 not reconcile both relations, so it cannot be used to quiet a real
-discrepancy.
+discrepancy. Because a long-lived deployment can hold more history than
+one transaction can scan, the ceremony runs in operator-chosen chunks
+and publishes nothing until the last one completes; and because a
+remittance can be released while it is part-way through, it stops rather
+than mixing two views of the same range, and can be discarded and
+restarted from the current state. It still refuses to run twice, so
+no lever edits a figure once published. The operator procedure is in
+the Deployment Runbook.
 
 One incidental finding worth recording: the new reproduce-the-figure check
 immediately failed against the watcher's own healthy-mesh test fixture,

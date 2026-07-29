@@ -1306,6 +1306,8 @@ contract RewardRemittanceFacet is
     error SeedRaceDetected(uint256 baseline, uint256 current);
     /// @notice No reservations exist, so there is nothing to seed.
     error SeedNothingToScan();
+    /// @notice There is no in-flight ceremony to reset.
+    error SeedNotStarted();
     /// @notice The derived seed leaves a recycled relation still violated,
     ///         so the state was not produced by pre-upgrade releases alone.
     error SeedDoesNotReconcile();
@@ -1359,6 +1361,40 @@ contract RewardRemittanceFacet is
     ///         One-shot: refuses once the counter is non-zero, so a repeat
     ///         (or a run after an organic release already recorded some) can
     ///         never double-count.
+    /// @notice #1448 r8 — abandon an in-flight seed ceremony so it can be
+    ///         restarted from scratch.
+    /// @dev    Required because the race guard is otherwise a BRICK: once a
+    ///         remittance is released mid-ceremony the live counter
+    ///         permanently differs from the pinned baseline, so every
+    ///         subsequent range call reverts and nothing can ever publish —
+    ///         the exact liveness failure the resumable design was added to
+    ///         remove, reintroduced by the guard that protects it.
+    ///
+    ///         Clears only the ceremony's own scratch state. It CANNOT touch
+    ///         `recycleReleasedRemitStrandedCumulative`, and it refuses once
+    ///         the ceremony has completed — so this is a restart lever, never
+    ///         a way to re-run a finished seed or to edit the published
+    ///         figure.
+    function resetReleasedRemitStrandedSeed()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.recycleStrandedSeedApplied) {
+            revert ReleasedRemitStrandedAlreadySeeded(
+                s.recycleReleasedRemitStrandedCumulative
+            );
+        }
+        if (s.recycleStrandedSeedTarget == 0) revert SeedNotStarted();
+        delete s.recycleStrandedSeedTarget;
+        delete s.recycleStrandedSeedCursor;
+        delete s.recycleStrandedSeedAccum;
+        delete s.recycleStrandedSeedCounted;
+        delete s.recycleStrandedSeedBaseline;
+        emit ReleasedRemitStrandedSeedReset();
+    }
+
     /// @param  upTo Highest reservation id to scan in THIS call. Must be
     ///              greater than the current cursor and at most the pinned
     ///              target. Pass the target itself to finish in one call on a
@@ -1395,14 +1431,21 @@ contract RewardRemittanceFacet is
         }
 
         uint256 accum = s.recycleStrandedSeedAccum;
+        uint256 counted = s.recycleStrandedSeedCounted;
         for (uint256 id = cursor + 1; id <= upTo; ) {
             LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (r.status == 3) accum += r.recycled;
+            if (r.status == 3) {
+                accum += r.recycled;
+                unchecked {
+                    ++counted;
+                }
+            }
             unchecked {
                 ++id;
             }
         }
         s.recycleStrandedSeedAccum = accum;
+        s.recycleStrandedSeedCounted = counted;
         s.recycleStrandedSeedCursor = upTo;
         emit ReleasedRemitStrandedSeedProgress(upTo, target, accum);
 
@@ -1448,7 +1491,7 @@ contract RewardRemittanceFacet is
         if (destinations > claimed + SEED_COMPOSITION_SLACK_WEI) {
             revert SeedDoesNotReconcile();
         }
-        emit ReleasedRemitStrandedSeeded(accum, target);
+        emit ReleasedRemitStrandedSeeded(accum, counted);
     }
 
     /// @notice #1448 r3 — the one-time stranded-cumulative seed ran.
@@ -1463,6 +1506,11 @@ contract RewardRemittanceFacet is
     ///         is published until `cursor == target`; this exists so an
     ///         operator can see progress across a multi-transaction ceremony.
     /// @custom:event-category informational/reward-governor
+    /// @notice #1448 r8 — an in-flight seed ceremony was abandoned; the next
+    ///         call starts a fresh one with a newly pinned target.
+    /// @custom:event-category informational/reward-governor
+    event ReleasedRemitStrandedSeedReset();
+
     event ReleasedRemitStrandedSeedProgress(
         uint256 cursor,
         uint256 target,

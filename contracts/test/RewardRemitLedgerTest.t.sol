@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
@@ -1614,6 +1615,94 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         remit.seedReleasedRemitStranded(2);
+    }
+
+    /// @dev #1448 r8 — detecting the race must not BRICK the ceremony. Once a
+    ///      release lands mid-flight the baseline check reverts every
+    ///      subsequent call, so without a reset nothing can ever publish —
+    ///      the same liveness failure the resumable design was added to
+    ///      remove, reintroduced by the guard protecting it.
+    function test_Seed_ResetRecoversFromADetectedRace() public {
+        _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        mutator.setReleasedRemitStrandedRaw(0);
+
+        remit.seedReleasedRemitStranded(1);
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(2); // the race
+
+        (, uint256 raced, , , , , , ) = _composition();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.SeedRaceDetected.selector, 0, raced
+            )
+        );
+        remit.seedReleasedRemitStranded(2);
+
+        // Reset re-pins from the CURRENT state and the ceremony completes.
+        remit.resetReleasedRemitStrandedSeed();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+
+        (, uint256 finalTotal, , , , , , ) = _composition();
+        LibVaipakam.RemitReservation memory r1 = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        assertEq(
+            finalTotal,
+            r1.recycled + r2.recycled,
+            "restart counted both releases, exactly once each"
+        );
+    }
+
+    /// @dev The reset is a restart lever, never a way to re-run a finished
+    ///      ceremony or edit the published figure.
+    function test_Seed_ResetRefusesOnceApplied() public {
+        _preUpgradeReleasedState();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        (, uint256 stranded, , , , , , ) = _composition();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
+                stranded
+            )
+        );
+        remit.resetReleasedRemitStrandedSeed();
+    }
+
+    /// @dev And it refuses when nothing is in flight, so it cannot be used to
+    ///      poke at a Diamond that has never started one.
+    function test_Seed_ResetRefusesWhenNothingInFlight() public {
+        _preUpgradeReleasedState();
+        vm.expectRevert(RewardRemittanceFacet.SeedNotStarted.selector);
+        remit.resetReleasedRemitStrandedSeed();
+    }
+
+    /// @dev The completion event must report RELEASED reservations, not the
+    ///      reservation nonce — the latter includes pending and acked entries
+    ///      and would inflate what audit consumers read (#1448 r8).
+    function test_Seed_EventReportsReleasedCountNotTheNonce() public {
+        _preUpgradeReleasedState();
+        // Fixture: one released reservation, plus a pending one, so nonce > count.
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        uint256 nonce = remit.getRemitReservationNonce();
+        assertEq(nonce, 2, "fixture: 2 reservations, only 1 released");
+
+        vm.recordLogs();
+        remit.seedReleasedRemitStranded(nonce);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("ReleasedRemitStrandedSeeded(uint256,uint256)");
+        bool seen;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != sig) continue;
+            (, uint256 reservations) =
+                abi.decode(logs[i].data, (uint256, uint256));
+            assertEq(reservations, 1, "the RELEASED count, not the nonce");
+            seen = true;
+        }
+        assertTrue(seen, "completion event was emitted");
     }
 
     /// @dev Accept ETH refunds from the remit fee path.
