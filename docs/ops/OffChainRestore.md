@@ -134,11 +134,19 @@ then deploy.
       and then fail at 03:17 UTC — silently, which is the exact failure
       mode the nightly exists to prevent. Set them before step 8:
 
+      The first seven are HARD-REQUIRED — `assertRequiredEnv()` in
+      `ops/offchain-data-archive/src/index.ts` aborts every scheduled
+      invocation if any is missing, so omitting one produces a Worker that
+      deploys green and then never backs anything up. The two `TG_OPS_*`
+      values are optional (their absence downgrades to a console warn):
+
       ```bash
       ( cd ops/offchain-data-archive
-        for NAME in BACKUP_ENCRYPTION_KEY B2_WRITE_ACCESS_KEY_ID \
-                    B2_WRITE_SECRET_ACCESS_KEY TG_OPS_BOT_TOKEN \
-                    TG_OPS_CHAT_ID; do
+        for NAME in BACKUP_ENCRYPTION_KEY \
+                    B2_ENDPOINT B2_BUCKET \
+                    B2_WRITE_ACCESS_KEY_ID B2_WRITE_SECRET_ACCESS_KEY \
+                    B2_READ_ACCESS_KEY_ID B2_READ_SECRET_ACCESS_KEY \
+                    TG_OPS_BOT_TOKEN TG_OPS_CHAT_ID; do
           wrangler secret put "$NAME"
         done )
       ```
@@ -172,6 +180,16 @@ then deploy.
 8. NOW deploy the Workers — the bindings resolve cleanly because the
    D1 + R2 + updated configs all exist first.
 
+   > **DO NOT deploy `ops/offchain-data-archive` yet.** Deploy it LAST,
+   > after §2 has selected the archive and the D1/R2 data is actually
+   > restored. A fresh archive Worker reaching its 03:17 cron before then
+   > writes a validly encrypted, correctly checksummed backup **of the new
+   > account's empty databases** — and the `sort … | tail -5` selection
+   > later in this runbook would present that object as the NEWEST
+   > recovery candidate. An operator part-way through a restore could
+   > mistake it for the pre-loss backup and restore nothing over nothing.
+   > Its own step is at the end of this section.
+
    > **ORDER MATTERS for the frontend, and it is not obvious.** Vite
    > embeds `VITE_INDEXER_ORIGIN` and `VITE_AGENT_ORIGIN` at BUILD time,
    > and `apps/defi/.env.production` still carries the OLD account's
@@ -199,8 +217,29 @@ then deploy.
    pnpm --filter @vaipakam/indexer deploy
    pnpm --filter @vaipakam/keeper deploy
    pnpm --filter @vaipakam/agent deploy
+   ```
+
+   THEN provision origins — this is a real pause, not a formality:
+
+   - create `apps/agent`'s custom domain (its Wrangler config declares no
+     route, so nothing binds it automatically);
+   - note the new `indexer` and `agent` subdomains;
+   - set `VITE_INDEXER_ORIGIN` / `VITE_AGENT_ORIGIN` in
+     `apps/defi/.env.production`.
+
+   ONLY THEN build and deploy the frontends. Vite embeds those origins at
+   BUILD time, so a bundle produced before this point calls the lost
+   account's hosts and editing the env afterwards changes nothing:
+
+   ```bash
    pnpm --filter @vaipakam/defi deploy
    pnpm --filter @vaipakam/www deploy
+   ```
+
+   Finally the archive Worker, once the data it would back up actually
+   exists (see the warning above):
+
+   ```bash
    ( cd ops/offchain-data-archive && npm ci && npm run deploy )
    ```
 

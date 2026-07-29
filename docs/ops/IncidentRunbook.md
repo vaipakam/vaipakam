@@ -527,15 +527,25 @@ identity), so rotation is time-sensitive.
 1. From `@BotFather`: `/revoke` → confirms token revocation. Old
    token stops working within seconds.
 2. `/token` to issue a fresh token.
-3. `cd ops/hf-watcher && npx wrangler secret put TG_BOT_TOKEN`
-   → paste the new token.
+3. Rotate the token in the **account-level Secrets Store**, NOT per
+   Worker. `ops/hf-watcher` was removed by the Stage 3 split; the live
+   consumers are `apps/agent` and `apps/keeper`, and both resolve
+   `TG_BOT_TOKEN` from the shared store — so one write covers both, and
+   a per-Worker `wrangler secret put` would rotate neither:
+
+   ```bash
+   STORE=<the vaipakam-credentials store id>
+   printf '%s' "<new token>" | wrangler secrets-store secret create \
+     "$STORE" --name TG_BOT_TOKEN --scopes workers --remote
+   ```
 4. Re-register the webhook:
    ```bash
    curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
         --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
    ```
-5. `npm run deploy` to flush any in-memory clients tied to the old
-   token.
+5. Redeploy the live consumers to flush in-memory clients tied to the
+   old token: `pnpm --filter @vaipakam/agent deploy` and
+   `pnpm --filter @vaipakam/keeper deploy`.
 
 No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.
@@ -546,12 +556,19 @@ No subscriber action required — the bot's @-handle stays
 2. **Transfer channel ownership** to a fresh EOA you control. Push
    surfaces this as a transfer tx that hands the channel + remaining
    stake to the new owner. Wait for confirmation.
-3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`:
+3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`, again in
+   the **account-level Secrets Store** — `apps/agent` and `apps/keeper`
+   both bind it from there, and `ops/hf-watcher` no longer exists:
+
    ```bash
-   cd ops/hf-watcher && npx wrangler secret put PUSH_CHANNEL_PK
+   STORE=<the vaipakam-credentials store id>
+   printf '%s' "<new privkey>" | wrangler secrets-store secret create \
+     "$STORE" --name PUSH_CHANNEL_PK --scopes workers --remote
    ```
-4. `npm run deploy` to invalidate the cached PushAPI client (the
-   worker module-scope cache rebuilds on next cron tick).
+4. Redeploy **both** live consumers to invalidate their cached PushAPI
+   clients (`pnpm --filter @vaipakam/agent deploy` and
+   `pnpm --filter @vaipakam/keeper deploy`); each module-scope cache
+   rebuilds on the next tick.
 5. The channel **address** stays the same iff the channel itself is
    transferred (Push lets you change the signer, not the channel id).
    No frontend redeploy needed — `VITE_PUSH_CHANNEL_ADDRESS` is
@@ -594,8 +611,15 @@ No subscriber action required — the bot's @-handle stays
 >
 > **Cross-chain ops alerting for CCIP does not exist yet** — that gap is
 > tracked on #250 Phase 1 (Tenderly presets). For a suspected cross-chain
-> problem today, use the pause levers in `AdminKeysAndPause.md` directly:
-> every cross-chain contract carries `GuardianPausable`.
+> problem today, go to **`contracts/RUNBOOK.md` §10**, which carries the
+> concrete `GuardianPausable.pause()` sequence for `VPFIMirrorToken`, the
+> CCIP messengers and the remittance receivers.
+>
+> Deliberately NOT `AdminKeysAndPause.md`: that document describes the
+> Diamond's `AdminFacet.pause()` and states explicitly that **CCIP ingress
+> is not blocked by it** — so during a suspected message forge or
+> unexpected mint it is the wrong lever, and reaching for it would leave
+> the ingress path open (#1450 r4).
 >
 > Retained below as historical record of what was monitored and why.
 

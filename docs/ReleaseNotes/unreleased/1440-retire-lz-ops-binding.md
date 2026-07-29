@@ -30,10 +30,14 @@ Two further hazards surfaced in review and are closed here. The
 disaster-restore runbook still told an operator to recreate the retired
 monitor's database, wire it into config, and deploy that monitor — on a
 real restore that would resurrect a decommissioned service and consume one
-of the account's five scheduled-job slots. And the retired package itself
-was still deployable by its own documented command. Its schedule and
-database binding are now disabled and its deploy script refuses, with the
-reason stated in place; the source stays as reference.
+of the account's five scheduled-job slots. And the retired monitor's own source tree
+was still deployable by its documented command. Review then established
+that **no configuration edit can make a source tree undeployable** — every
+guard sits inside the artifact an operator overrides, and removing the
+config is worse still, because the tool then inherits a parent one and
+deploys under the wrong name. So the tree was **deleted outright**. Git
+history is the rollback path; there is no retained copy in the working
+tree.
 
 The archive format keeps its version number. Nothing about the shape
 changed except that one optional section is no longer produced, so bumping

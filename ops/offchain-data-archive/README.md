@@ -38,8 +38,10 @@ avoids exact-minute B2 contention). On every invocation:
 
 Why one cron instead of two: the Cloudflare Workers free plan caps
 an account at 5 cron triggers, and the rest of the org already
-occupies 4 (`apps/{keeper,agent,indexer}` + `ops/mesh-watcher`, which
-took the slot `ops/lz-watcher` freed when it was retired — #1440).
+occupies 4 (`apps/{keeper,agent,indexer}` + this Worker). One slot is
+SPARE today: `ops/mesh-watcher` is code-complete but UNDEPLOYED and takes
+the fifth on its first deploy, at which point the cap binds. (`ops/lz-watcher`
+held a slot until #1440 removed it.)
 Folding healthcheck into the same cron keeps the account at 5/5.
 Split back into two crons if/when the account upgrades to Workers
 Paid ($5/mo, removes the cap).

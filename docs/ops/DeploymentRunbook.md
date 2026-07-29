@@ -234,7 +234,8 @@ mainnet without preflight discipline:
   submit time on certain RPCs, fixed in v1 → v2 of today's run);
   otherwise leave the multiplier at its 130 % default.
 - **Silent watcher chain-skip on missing per-chain RPC secret.**
-  `getChainConfigs(env)` (`ops/hf-watcher/src/env.ts:151`) drops any
+  `getChainConfigs(env)` (historically `ops/hf-watcher/src/env.ts:151`;
+  the same logic now lives in the `apps/*` Workers) drops any
   chain whose `RPC_<CHAIN>` Cloudflare secret is unset — the
   watcher's round-robin cron then never visits that chain, D1 stays
   empty for its `chain_id`, and the OfferBook / loan tables show
@@ -246,6 +247,20 @@ mainnet without preflight discipline:
   next section).
 
 ### Prerequisites: one-time watcher RPC-secret setup
+
+> **STALE — `ops/hf-watcher` no longer exists.** It was removed by the
+> Stage 3 split; its role is now `apps/{keeper,indexer,agent}`, and their
+> per-chain `RPC_*` values live in the **account-level Secrets Store**, not
+> in per-Worker `wrangler secret put`. The database is `vaipakam-archive`,
+> not `vaipakam-alerts-db`.
+>
+> A normal contract deployment following the commands below stops on
+> directories that do not exist, or verifies the wrong database. Use the
+> Secrets Store form (see `SecretsStoreMigration.md` §9) against the live
+> Workers instead. Bringing this whole section up to date is tracked
+> separately — it predates #1440 and is not that removal's doing, but it is
+> live imperative text and should not be followed as written (#1450 r4).
+
 
 Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
 and live ONLY as Cloudflare Worker secrets — never in the repo. Set
