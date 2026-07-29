@@ -476,10 +476,18 @@ contract MeshLedgerInvariant is Test {
     //
     // #1222 M3 B4-d. `invariant_FreshCommitWithinLifetimeCap` asserts
     // `outstandingFresh + paidOutFresh <= 69M`, and like every bound in this
-    // suite it holds trivially on state that never approaches the cap. The
-    // fuzzer works in ether-scale amounts against a 69,000,000e18 ceiling, so
-    // it will never get within seven orders of magnitude of it: the bound is
-    // green because the boundary is unreachable, not because it is enforced.
+    // suite it holds trivially on state that never approaches the cap.
+    //
+    // How far the campaign can actually get (Codex #1457 r2 P3 — the first
+    // version of this comment said "seven orders of magnitude", which is
+    // simply wrong and overstated the gap by a factor of ~10^5): fresh
+    // reservations are sized from the fixed schedule, ~20,164 VPFI on an
+    // early day, and the handler exposes fewer than 40 finalizable day
+    // slots. Even if EVERY one of them finalized, the reachable fresh total
+    // is under ~1M VPFI against a 69,000,000 ceiling — under two orders of
+    // magnitude. Still unreachable, so the bound is green because the
+    // boundary cannot be approached rather than because it is enforced; but
+    // the honest figure is ~10^2, not ~10^7.
     //
     // These two tests place the ledger AT the boundary and assert the cap
     // actually bites. They are deliberately deterministic — a fuzzer cannot
@@ -559,6 +567,27 @@ contract MeshLedgerInvariant is Test {
             "the cap bounds FRESH drawdown only - a day at the cap must "
             "still fund from the recycle bucket"
         );
+
+        // Codex #1457 r2 P2 — the SAME publish-versus-reserve gap, on the
+        // recycled side. Continuing to stamp `funded` while no longer
+        // reserving lets a later day re-offer the same recycled availability,
+        // and the stamp alone cannot see it. This test claims recycled
+        // funding continues SAFELY past fresh exhaustion, so it has to check
+        // the reservation, and that §7 #2's recycled half still holds.
+        (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
+        assertGt(
+            outstandingRecycled,
+            0,
+            "a stamped recycled budget with NO reservation behind it lets a "
+            "later day size against the same availability twice"
+        );
+        (, uint256 bucketNow, ) = _agg().getRecycleCustodyPosition();
+        assertLe(
+            outstandingRecycled,
+            bucketNow,
+            "SS7#2 recycled half must still hold at the fresh boundary"
+        );
+
         assertEq(
             _outstandingFresh(),
             LibVaipakam.VPFI_INTERACTION_POOL_CAP,
