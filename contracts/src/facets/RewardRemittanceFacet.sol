@@ -1290,12 +1290,24 @@ contract RewardRemittanceFacet is
         return LibVaipakam.storageSlot().remitReservationNonce;
     }
 
-    /// @notice The seed ceremony has already run (or a release recorded the
-    ///         counter organically) — re-running would double-count.
+    /// @notice The seed ceremony has already run. Keyed on a dedicated
+    ///         applied-flag, NOT on the counter being non-zero: a release
+    ///         landing after the upgrade but before the ceremony would
+    ///         otherwise reject it permanently (#1448 r5).
     error ReleasedRemitStrandedAlreadySeeded(uint256 current);
+    /// @notice The derived total is below what the counter already holds,
+    ///         which would silently discard recorded state.
+    error SeedWouldShrinkStrandedTotal(uint256 derived, uint256 current);
     /// @notice The derived seed leaves a recycled relation still violated,
     ///         so the state was not produced by pre-upgrade releases alone.
     error SeedDoesNotReconcile();
+
+    /// @notice Slack allowed on the REVERSE composition direction when
+    ///         validating a seed. Mirrors the watcher's
+    ///         `COMPOSITION_SLACK_TOLERANCE_WEI` default (1e15 = 0.001 VPFI):
+    ///         `consume`'s bucket floor widens that side by bounded cap-trim
+    ///         dust, and the ceremony must not refuse over it.
+    uint256 internal constant SEED_COMPOSITION_SLACK_WEI = 1e15;
 
     /// @notice #1448 r3 — one-time seed of
     ///         `recycleReleasedRemitStrandedCumulative` on a Diamond that
@@ -1346,7 +1358,9 @@ contract RewardRemittanceFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 current = s.recycleReleasedRemitStrandedCumulative;
-        if (current != 0) revert ReleasedRemitStrandedAlreadySeeded(current);
+        if (s.recycleStrandedSeedApplied) {
+            revert ReleasedRemitStrandedAlreadySeeded(current);
+        }
 
         uint256 total;
         uint256 counted;
@@ -1363,7 +1377,15 @@ contract RewardRemittanceFacet is
                 ++id;
             }
         }
+        // ASSIGN, not add. The scan covers EVERY released reservation, so the
+        // total already subsumes any release recorded organically after the
+        // upgrade — adding would double-count those. It can never shrink the
+        // counter for the same reason, but assert rather than assume.
+        if (total < current) {
+            revert SeedWouldShrinkStrandedTotal(total, current);
+        }
         s.recycleReleasedRemitStrandedCumulative = total;
+        s.recycleStrandedSeedApplied = true;
 
         // POST-CONDITION, not a comment. If the seed does not actually
         // reconcile both relations, the divergence was NOT produced by
@@ -1373,9 +1395,21 @@ contract RewardRemittanceFacet is
         if (bucket + total < s.outstandingCommitRecycled) {
             revert SeedDoesNotReconcile();
         }
-        uint256 claimed = LibVpfiRecycle.creditedCumulative(s)
+        // BOTH directions, with the same shapes the external checker uses
+        // (#1448 r5). The one-sided form only rejected excess CLAIMS, so a
+        // chain whose raw or relocated counter was independently short could
+        // pass, permanently arm the ceremony, and clear the release alert
+        // while the reverse discrepancy survived.
+        //
+        // Uses the RAW stored counter, not `creditedCumulative`, deliberately:
+        // the derived floor can manufacture the very value that is missing out
+        // of `bucket + paidOut`, which is exactly how a short counter slipped
+        // through the one-sided check.
+        uint256 destinations = bucket + s.paidOutRecycled + total;
+        uint256 claimed = s.recycleCreditedCumulative
             + s.recycleCustodyRelocatedCumulative;
-        if (claimed > bucket + s.paidOutRecycled + total) {
+        if (claimed > destinations) revert SeedDoesNotReconcile();
+        if (destinations > claimed + SEED_COMPOSITION_SLACK_WEI) {
             revert SeedDoesNotReconcile();
         }
         emit ReleasedRemitStrandedSeeded(total, counted);

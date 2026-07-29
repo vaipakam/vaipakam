@@ -5748,9 +5748,22 @@ library LibVaipakam {
         //      Adding the stranded total restores the relation EXACTLY:
         //      the release lowered the bucket by exactly this amount.
         //
-        //   2. BUCKET COMPOSITION —
+        //   2. BUCKET COMPOSITION — checked in BOTH directions:
         //        recycleCreditedCumulative + recycleCustodyRelocatedCumulative
-        //          <= recycleBucket + paidOutRecycled + <this>
+        //          <= recycleBucket + paidOutRecycled + <this>          (exact)
+        //      and the reverse, with its own slack:
+        //        recycleBucket + paidOutRecycled + <this>
+        //          <= recycleCreditedCumulative
+        //             + recycleCustodyRelocatedCumulative + slack
+        //
+        //      The REVERSE direction is the one that catches an arrival
+        //      raising `recycleBucket` WITHOUT advancing
+        //      `recycleCustodyRelocatedCumulative` — that makes the forward
+        //      form LOOSER, and the derived-cumulative check agrees with the
+        //      chain because it reads the same missing slot. A write-site
+        //      audit against the forward form alone would therefore call that
+        //      regression compliant. Slack only on the reverse, because
+        //      `consume`'s bucket floor widens that side only.
         //      which holds at every write site (`credit` and
         //      `creditCustodyRelocated` add to exactly one term on each side;
         //      `consume` moves bucket → paidOut; `releaseCommitment` touches
@@ -5802,6 +5815,17 @@ library LibVaipakam {
         //
         // This flag distinguishes them: only (1) has it false.
         bool recycleAccountingSeeded;
+        // `recycleStrandedSeedApplied` — #1448 r5. Records that the one-time
+        // `seedReleasedRemitStranded` ceremony has RUN, tracked separately
+        // from whether the counter is non-zero.
+        //
+        // Guarding on the value instead was a trap: a NEW release after the
+        // upgrade but before the ceremony makes the counter non-zero, which
+        // would have rejected the seed permanently and stranded the historical
+        // amount forever, with no recovery entry point. The redeploy script
+        // only PRINTS the ceremony after all refresh work, so that ordering is
+        // reachable by an operator doing nothing wrong.
+        bool recycleStrandedSeedApplied;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

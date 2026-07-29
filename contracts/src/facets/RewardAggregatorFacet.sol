@@ -1140,8 +1140,17 @@ contract RewardAggregatorFacet is
      *                               `paidOutRecycled` reversal). NOT the
      *                               pre-clamp commitment restored — that
      *                               figure's residual never left the bucket.
-     * @return accountingSeeded   Whether any recycled credit has ever run on
-     *                           this chain. Disambiguates `creditedRaw == 0`:
+     * @return accountingSeeded   Whether recycled accounting has ever run on
+     *                           this chain. DERIVED, not the raw slot: the
+     *                           flag is appended storage, so a Diamond
+     *                           refreshed over state that ALREADY has
+     *                           post-#1222 credits would read false forever
+     *                           (no historical credit replays the setter) and
+     *                           an under-credited composition there would be
+     *                           downgraded to an advisory until the next
+     *                           credit happened to run (#1448 r5). Either
+     *                           cumulative being non-zero proves the chain
+     *                           was already seeded, so that is folded in. Disambiguates `creditedRaw == 0`:
      *                           false means a Diamond refreshed over live
      *                           pre-#1222 state, where composition is
      *                           genuinely unverifiable; true means a chain
@@ -1175,7 +1184,9 @@ contract RewardAggregatorFacet is
         return (
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
-            s.recycleAccountingSeeded,
+            s.recycleAccountingSeeded
+                || s.recycleCreditedCumulative != 0
+                || s.recycleCustodyRelocatedCumulative != 0,
             s.isCanonicalRewardChain
         );
     }

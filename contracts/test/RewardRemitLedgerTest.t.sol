@@ -1380,6 +1380,109 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.seedReleasedRemitStranded();
     }
 
+    // ─── #1448 r5: upgrade-path robustness ────────────────────────────────
+
+    /// @dev A NEW release landing after the upgrade but BEFORE the ceremony
+    ///      must not brick recovery. Guarding the one-shot on "the counter is
+    ///      non-zero" did exactly that: the historical amount would have been
+    ///      stranded forever with no entry point, and the redeploy script only
+    ///      prints the ceremony after all refresh work, so an operator doing
+    ///      nothing wrong could reach it.
+    function test_Seed_StillRunsAfterAPostUpgradeReleaseRecordedSome() public {
+        (, uint256 sentA) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        // The pre-upgrade shape: the historical release recorded nothing.
+        mutator.setReleasedRemitStrandedRaw(0);
+
+        // Now a SECOND release lands organically, before the ceremony runs.
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(2);
+
+        (, uint256 before, , , , , , ) = _composition();
+        assertEq(before, r2.recycled, "only the NEW release is recorded");
+        assertGt(before, 0, "so the value-based guard would have refused");
+
+        remit.seedReleasedRemitStranded();
+
+        (, uint256 after_, , , , , , ) = _composition();
+        assertEq(after_, sentA + r2.recycled, "seed subsumes BOTH");
+        assertGt(after_, before, "the historical amount was recovered");
+    }
+
+    /// @dev The scan ASSIGNS rather than adds, so a release already recorded
+    ///      organically is not counted twice.
+    function test_Seed_DoesNotDoubleCountAnAlreadyRecordedRelease() public {
+        (, uint256 sent) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        // Counter left AS RECORDED — not rewound. The ceremony must be a
+        // no-op in value terms here.
+        (, uint256 before, , , , , , ) = _composition();
+        assertEq(before, sent, "recorded organically");
+
+        remit.seedReleasedRemitStranded();
+        (, uint256 after_, , , , , , ) = _composition();
+        assertEq(after_, sent, "assigned, not added");
+    }
+
+    /// @dev One-shot is keyed on the APPLIED flag, so a second run refuses
+    ///      even though the value is unchanged.
+    function test_Seed_AppliedFlagIsWhatBlocksASecondRun() public {
+        _preUpgradeReleasedState();
+        remit.seedReleasedRemitStranded();
+        (, uint256 stranded, , , , , , ) = _composition();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
+                stranded
+            )
+        );
+        remit.seedReleasedRemitStranded();
+    }
+
+    /// @dev The post-condition now checks BOTH directions. A chain whose
+    ///      relocated counter is independently SHORT leaves the reverse
+    ///      discrepancy alive; the one-sided form accepted that and armed the
+    ///      ceremony anyway.
+    function test_Seed_RefusesWhenTheReverseDirectionStaysBroken() public {
+        _preUpgradeReleasedState();
+        // Bucket holds more than any counter accounts for — an arrival that
+        // credited without advancing the relocated cumulative.
+        mutator.setRecycleBucketRaw(
+            ConfigFacet(address(diamond)).getRecycleBucket() + 50e18
+        );
+        vm.expectRevert(RewardRemittanceFacet.SeedDoesNotReconcile.selector);
+        remit.seedReleasedRemitStranded();
+    }
+
+    /// @dev #1448 r5 — the seeded marker is DERIVED, so a Diamond refreshed
+    ///      over state that already has post-#1222 credits does not read as
+    ///      never-seeded. Otherwise its under-credited composition would be
+    ///      downgraded to an advisory until some later credit ran.
+    function test_SeededMarker_DerivedFromExistingCumulatives() public {
+        _configureMirror();
+        // Raw slot false (appended storage), but real absorption exists.
+        mutator.setRecycleBucketRaw(40e18);
+        mutator.setRecycleCreditedCumulativeRaw(40e18);
+
+        (, , bool seeded, ) = RewardAggregatorFacet(address(diamond))
+            .getRecycleCompositionPosition();
+        assertTrue(seeded, "existing absorption proves the chain was seeded");
+    }
+
+    /// @dev And it is still FALSE on a genuinely untouched chain — otherwise
+    ///      the derivation would just always return true.
+    function test_SeededMarker_FalseOnAnUntouchedChain() public {
+        _configureMirror();
+        (, , bool seeded, ) = RewardAggregatorFacet(address(diamond))
+            .getRecycleCompositionPosition();
+        assertFalse(seeded, "nothing has ever run here");
+    }
+
     /// @dev Accept ETH refunds from the remit fee path.
     receive() external payable {}
 }

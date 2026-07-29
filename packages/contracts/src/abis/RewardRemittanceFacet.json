@@ -2038,6 +2038,22 @@
   },
   {
     "type": "error",
+    "name": "SeedWouldShrinkStrandedTotal",
+    "inputs": [
+      {
+        "name": "derived",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SelfCollateralizedOffer",
     "inputs": []
   },
