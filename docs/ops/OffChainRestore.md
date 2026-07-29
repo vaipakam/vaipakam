@@ -182,10 +182,25 @@ then deploy.
 
    `apps/indexer/wrangler.jsonc` declares `indexer.vaipakam.com` as a
    deploy-time custom-domain route, so its deploy FAILS outright until the
-   zone is present — this is not a post-deploy tidy-up. `apps/agent` is the
-   opposite shape: it declares no route, so its custom domain must be
-   created by hand afterwards. `defi` and `www` are Pages projects and
-   carry their own domain attachment.
+   zone is present — this is not a post-deploy tidy-up.
+
+   Every OTHER Worker is the opposite shape: it declares no route, so its
+   hostname must be bound by hand in the dashboard after deploy. That
+   includes both public surfaces — `apps/defi` and `apps/www` are
+   **Workers Static Assets** deployments, NOT Pages projects, so nothing
+   in their configs attaches a domain and deploying them leaves the sites
+   reachable only on their `*.workers.dev` URLs. Bind, after deploying:
+
+   - `agent.vaipakam.com` → `vaipakam-agent`
+   - `defi.vaipakam.com` → `vaipakam-defi`
+   - `vaipakam.com` (apex — the canonical, indexable hostname) →
+     `vaipakam-www`, plus `labs.vaipakam.com` → `vaipakam-www` if the
+     legacy hostname is still wanted
+   - `www.vaipakam.com`: **not** a Worker binding. Recreate the
+     Cloudflare Bulk Redirect rule `www.vaipakam.com/* →
+     https://vaipakam.com/$1` (301). It is a zone-level rule, so it does
+     not travel with the Worker and is easy to miss — without it the
+     `www` host does not resolve to the site at all.
 
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    updated configs all exist first.
@@ -393,6 +408,21 @@ database you create by hand for the purpose. Do **not** recreate
 `ops/lz-watcher` to hold it: deploying that package would resurrect a
 retired Worker and take a cron slot. Otherwise ignore the section.
 
+**Create the tables first.** The generated import below is `INSERT`
+statements only, and #1440 deleted the watcher's migration along with the
+package — so an empty database fails every insert with `no such table`,
+and the general restore steps will not create them for you. Recover the
+schema from git history and apply it by hand:
+
+```bash
+wrangler d1 create vaipakam-lz-alerts-db          # or any name you like
+git show 24641f98:ops/lz-watcher/migrations/0001_init.sql > /tmp/lz.sql
+wrangler d1 execute <that database> --file=/tmp/lz.sql --remote
+```
+
+`24641f98` is the last commit on `main` that still carried the file; any
+commit before #1440 merged works. Only then run the row import.
+
 **Critical**: `d1.archive[]` entries go to `vaipakam-archive`. Restoring
 another database's tables into it lands data in the wrong place and leaves
 the originating database empty after the restore. Match by source.
@@ -546,18 +576,12 @@ the frontend silently switches back to the cached fast path.
    random hold from the archive's `diag_legal_hold_audit` and
    confirm the chain of `action_type` + `created_at` entries is
    present and ordered.
-4. Run the weekly healthcheck manually on the freshly-recreated
-   `vaipakam-offchain-data-archive`:
 
-   ```bash
-   wrangler tail vaipakam-offchain-data-archive
-   # Trigger the cron manually from the CF dashboard's "Trigger" button.
-   ```
+(The backup Worker is deliberately NOT smoke-tested here — it does not
+exist yet. It is deployed and exercised in §7b, for the reason given
+there.)
 
-   The first run should produce a fresh archive + green Telegram
-   alert.
-
-5. Update DNS / frontend env vars to point at the new Worker
+4. Update DNS / frontend env vars to point at the new Worker
    subdomains. Take a final on-chain snapshot of total offers /
    loans counts before the cut-over so any post-restore drift is
    detectable.
@@ -586,9 +610,21 @@ same encryption, same manifest shape, a later timestamp. The only defence
 is not creating it, which is why this step sits here rather than beside
 the deploys that logically resemble it.
 
+Then exercise it once, immediately — this is the smoke test deliberately
+left out of §7, since the Worker did not exist at that point:
+
+```bash
+wrangler tail vaipakam-offchain-data-archive
+# Trigger the cron manually from the CF dashboard's "Trigger" button.
+```
+
+The run should produce a fresh archive plus a green Telegram alert. It is
+safe to trigger here precisely because §§4–5 have already restored the
+data — the archive it writes is of the RESTORED account, not an empty one.
+
 Confirm one clean nightly before considering the restore complete — the
-first successful run is the evidence that the whole pipeline, not just the
-Worker, came back.
+first successful unattended run is the evidence that the whole pipeline,
+not just the Worker, came back.
 
 ## 8. Key-rotation procedure for `BACKUP_ENCRYPTION_KEY`
 

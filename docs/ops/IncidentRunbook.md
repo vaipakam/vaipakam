@@ -524,30 +524,46 @@ identity), so rotation is time-sensitive.
   against our own send log.
 
 ### Execute — Telegram bot rotation
-1. From `@BotFather`: `/revoke` → confirms token revocation. Old
-   token stops working within seconds.
-2. `/token` to issue a fresh token.
-3. Rotate the token in the **account-level Secrets Store**, NOT per
-   Worker. `ops/hf-watcher` was removed by the Stage 3 split; the live
-   consumers are `apps/agent` and `apps/keeper`, and both resolve
-   `TG_BOT_TOKEN` from the shared store — so one write covers both, and
-   a per-Worker `wrangler secret put` would rotate neither:
 
-   `TG_BOT_TOKEN` ALREADY EXISTS in the store, so this is an UPDATE, not a
-   create — `secret create` fails on a duplicate name, and it would fail
-   here only *after* `/revoke` has already killed the old token, leaving no
-   working credential on either side:
+**There is no overlap window to engineer.** A Telegram bot has exactly
+one token, and `@BotFather`'s `/revoke` invalidates the old one and
+issues the replacement in the same reply — you cannot hold a working
+new token before the old one dies. (`/token` only *displays* the
+current token; it does not mint one.) So the outage is unavoidable and
+the only thing under your control is its LENGTH. Every step that does
+not need the new token is therefore pre-staged, and exactly one command
+runs after revocation.
+
+1. **Pre-stage, while the old token still works.** Resolve the store id
+   and the existing secret's id. `TG_BOT_TOKEN` ALREADY EXISTS in the
+   account-level Secrets Store, so the rotation is an UPDATE and needs
+   that id — `secret create` fails on a duplicate name, and discovering
+   that *after* `/revoke` is what leaves both sides with no working
+   credential.
 
    ```bash
    STORE=<the vaipakam-credentials store id>
-   # The existing secret's id — `update` needs it.
-   wrangler secrets-store secret list "$STORE" --remote
-   printf '%s' "<new token>" | wrangler secrets-store secret update \
-     "$STORE" --secret-id <TG_BOT_TOKEN's id> --remote
+   # --per-page: the default is 10 and the store holds ~22 secrets, so
+   # the flag is required or TG_BOT_TOKEN may simply not be on the page.
+   wrangler secrets-store secret list "$STORE" --remote --per-page 100
+   SECRET_ID=<TG_BOT_TOKEN's id from that listing>
    ```
 
-   Do this BEFORE `/revoke` where the compromise allows it: the window in
-   which neither credential works is the part that hurts.
+   Rotation is in the **account-level Secrets Store**, NOT per Worker.
+   `ops/hf-watcher` was removed by the Stage 3 split; the live consumers
+   are `apps/agent` and `apps/keeper`, and both resolve `TG_BOT_TOKEN`
+   from the shared store — so one write covers both, and a per-Worker
+   `wrangler secret put` would rotate neither.
+2. From `@BotFather`: `/revoke`. The old token dies within seconds and
+   BotFather's reply contains the NEW token. The outage starts here.
+3. Write the new token with the id resolved in step 1 — a single
+   command, no lookups:
+
+   ```bash
+   printf '%s' "<new token from BotFather>" | \
+     wrangler secrets-store secret update \
+       "$STORE" --secret-id "$SECRET_ID" --remote
+   ```
 4. Re-register the webhook:
    ```bash
    curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
@@ -578,7 +594,10 @@ No subscriber action required — the bot's @-handle stays
 
    ```bash
    STORE=<the vaipakam-credentials store id>
-   wrangler secrets-store secret list "$STORE" --remote
+   # --per-page 100: the default page size is 10, well under the ~22
+   # secrets this store holds, so PUSH_CHANNEL_PK can otherwise be absent
+   # from the listing with no indication anything was truncated.
+   wrangler secrets-store secret list "$STORE" --remote --per-page 100
    printf '%s' "<new privkey>" | wrangler secrets-store secret update \
      "$STORE" --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
@@ -595,16 +614,32 @@ No subscriber action required — the bot's @-handle stays
 
    Transferring channel ownership does not fix that on its own: preserving
    the original channel id would require the senders to read it from
-   config rather than derive it from the key. Treat subscriber migration
-   as part of this rotation, and see **#1456** for making the channel id
-   configurable so a future rotation is genuinely just a signer swap.
-   No frontend redeploy needed — `VITE_PUSH_CHANNEL_ADDRESS` is
-   unchanged.
-6. If transfer is impossible (compromised wallet refuses to sign),
-   create a fresh Push channel from a clean EOA, update both
-   `PUSH_CHANNEL_PK` (worker) **and** `VITE_PUSH_CHANNEL_ADDRESS`
-   (frontend), redeploy both. Subscribers must re-subscribe to the
-   new channel; communicate clearly.
+   config rather than derive it from the key. See **#1456** for making the
+   channel id configurable so a future rotation is genuinely just a signer
+   swap. Until then, rotating the signer IS a channel migration — treat it
+   as one.
+6. **Point the frontend at the new channel.** Because the Workers now
+   publish as the new EOA, `VITE_PUSH_CHANNEL_ADDRESS` must be set to
+   that address and `apps/defi` redeployed. Leaving it on the old
+   address sends every user who opens the Alerts page to subscribe to a
+   channel nothing will ever post to — which makes subscriber migration
+   impossible rather than merely slow, and it fails silently: the
+   subscribe flow succeeds.
+
+   ```bash
+   # apps/defi env: VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
+   pnpm --filter @vaipakam/defi build && pnpm --filter @vaipakam/defi deploy
+   ```
+
+   Update the channel URL in this runbook's **Vaipakam Push channel
+   reference** block above in the same change, so the next incident does
+   not cross-reference a dead channel.
+7. Then ask existing subscribers to re-subscribe (see **Communicate**) —
+   they are subscribed to the old address and no transfer moves them.
+8. If ownership transfer is impossible (compromised wallet refuses to
+   sign), the procedure is unchanged: steps 3–7 already create and cut
+   over to a fresh channel. Transfer only denies the attacker continued
+   use of the ORIGINAL channel; it never preserves delivery.
 
 ### Communicate
 - Within 30 min of detection: post on official channels (X, Discord)

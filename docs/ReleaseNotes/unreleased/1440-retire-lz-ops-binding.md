@@ -45,5 +45,35 @@ the version would force restore tooling to branch for no benefit — the
 runbook now states plainly that the section is optional within the current
 version, and how to handle an older archive that still carries it.
 
+Review of those runbook edits then turned up several procedures that were
+already wrong independently of this change, and they are corrected here
+rather than left for the incident that would find them:
+
+- The credential-rotation sequence destroyed the working bot token as its
+  first step and only afterwards went looking for where to write the
+  replacement. Telegram allows no overlap — revoking a token is what
+  issues its successor — so the outage cannot be removed, only shortened.
+  Everything that does not need the new credential now happens first, and
+  exactly one command runs during the outage.
+- Rotating the notification signer changes which channel the platform
+  publishes to, but the procedure left the app pointing users at the old
+  one. Anyone opening the alerts page would have subscribed, successfully
+  and silently, to a channel that would never post again. Updating the
+  app is now part of the main path rather than a footnote to a fallback.
+- The disaster restore claimed both public websites carried their own
+  domain attachments. They do not — they are plain Worker deployments,
+  so a restore that followed the steps exactly brought the platform back
+  with neither public address resolving, and the redirect that serves the
+  `www` hostname is a zone-level rule that travels with nothing at all.
+  Each binding is now listed explicitly.
+- The restore also smoke-tested the backup writer one section before
+  deploying it, and offered to import the retired monitor's rows into a
+  database whose table definitions were deleted along with the monitor.
+  Both now sequence correctly, and the schema is recovered from history.
+- Two credential lookups listed the account's secrets with the default
+  page size, which is smaller than the number of secrets held — so the
+  one being rotated could simply be absent from the output, with nothing
+  to indicate the list had been truncated.
+
 Part of #1440. The card stays open for the operator steps: redeploy,
 confirm one clean nightly, then delete the database.
