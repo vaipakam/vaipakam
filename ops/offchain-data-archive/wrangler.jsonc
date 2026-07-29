@@ -21,12 +21,14 @@
   //
   // Why one cron instead of two: Cloudflare Workers free plan caps an
   // account at 5 cron triggers total. apps/{keeper,agent,indexer} take
-  // one each (every-minute). The ops/lz-watcher slot was freed when that
-  // Worker was deleted (#1440); ops/mesh-watcher now uses it.
-  // — that's 4 of 5. Splitting backup + healthcheck into two crons
-  // here would push the account to 6 and the deploy fails with
-  // CF API error 10072. Folding healthcheck under the same cron keeps
-  // us at 5/5 cleanly. If/when the account upgrades to Workers Paid
+  // one each (every-minute), and this Worker takes the fourth — 4 of 5
+  // in use today. The ops/lz-watcher slot was freed when that Worker was
+  // deleted (#1440) and is currently SPARE: ops/mesh-watcher is the
+  // intended occupant but is code-complete and UNDEPLOYED, so it holds no
+  // slot yet. Deploying it takes the account to 5 of 5. Splitting backup +
+  // healthcheck into two crons here would therefore push past the cap once
+  // mesh-watcher lands, and the deploy fails with CF API error 10072.
+  // Folding healthcheck under the same cron keeps the budget intact. If/when the account upgrades to Workers Paid
   // ($5/mo, removes the cap), this can split back into two crons.
   "triggers": {
     "crons": ["17 3 * * *"],

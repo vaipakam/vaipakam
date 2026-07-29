@@ -560,9 +560,14 @@ runs after revocation.
    command, no lookups:
 
    ```bash
-   printf '%s' "<new token from BotFather>" | \
-     wrangler secrets-store secret update \
-       "$STORE" --secret-id "$SECRET_ID" --remote
+   # No --value and no pipe: wrangler prompts for the secret and it never
+   # enters the command line, so it cannot be recovered from shell history
+   # afterwards. Wrangler's own help calls --value "Only for testing. Not
+   # secure as this will leave secret value in plain-text in terminal
+   # history". A credential minted to evict an attacker is the last one that
+   # should be left lying on the workstation.
+   wrangler secrets-store secret update "$STORE" \
+     --secret-id "$SECRET_ID" --remote
    ```
 4. Re-register the webhook:
    ```bash
@@ -618,8 +623,10 @@ is `wrangler tail`, so verify there rather than assuming success.
    # --per-page 100: the default page size is 10 against ~22 secrets, so the
    # flag is required or PUSH_CHANNEL_PK may simply be absent from the page.
    wrangler secrets-store secret list "$STORE" --remote --per-page 100
-   printf '%s' "<new privkey>" | wrangler secrets-store secret update \
-     "$STORE" --secret-id <PUSH_CHANNEL_PK's id> --remote
+   # No --value and no pipe — wrangler prompts, so the key never enters
+   # shell history (see the Telegram step above for why that matters).
+   wrangler secrets-store secret update "$STORE" \
+     --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
 3. Redeploy **both** consumers to drop their cached PushAPI clients:
    `pnpm --filter @vaipakam/agent deploy` and
@@ -630,15 +637,31 @@ is `wrangler tail`, so verify there rather than assuming success.
    platform no longer posts to — and that subscribe succeeds, so nothing
    signals the mistake.
 
+   This is a BUILD-time value, so it has to be present when the bundle is
+   built — a shell comment does nothing, and `apps/defi/.env.production`
+   does not currently carry the key at all (only `.env.example` and
+   `.env.local` do, and Vite loads neither for a production build). Set it
+   in the production env file, then deploy:
+
    ```bash
-   # apps/defi env: VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
-   pnpm --filter @vaipakam/defi build && pnpm --filter @vaipakam/defi deploy
+   # Add (or update) in apps/defi/.env.production:
+   #   VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
+   pnpm --filter @vaipakam/defi deploy
    ```
+
+   `deploy` builds as part of its own pipeline, so a separate `build` is
+   redundant. Confirm afterwards that `/app/alerts` renders the subscribe
+   link — the page treats an unset value as "no channel" and hides the link
+   entirely, which looks like a deliberate design rather than a broken
+   deploy.
 5. Update the **Vaipakam Push channel reference** block at the top of this
    section, so the next incident does not cross-reference a dead channel.
-6. Verify with `wrangler tail` on both Workers that the next scheduled send
-   succeeds. Given the fail-soft behaviour above, this is the only
-   confirmation you get.
+6. Verify with `wrangler tail` on both Workers that a send actually
+   SUCCEEDS — look for `[push] sent subscriber=… channel=…` carrying the new
+   channel address. Two quiet tails are NOT confirmation: sends only happen
+   when an eligible subscriber event occurs, so silence means "nothing has
+   been attempted yet" and "every attempt is failing" equally. Wait for a
+   real send, or trigger one, before calling the migration done.
 7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
    to the OLD channel and nothing migrates them.
 

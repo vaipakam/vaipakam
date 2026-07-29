@@ -60,14 +60,17 @@ rather than left for the incident that would find them:
   one. Anyone opening the alerts page would have subscribed, successfully
   and silently, to a channel that would never post again. Updating the
   app is now part of the main path rather than a footnote to a fallback.
-  The branch where the compromised wallet refuses to co-operate needed an
-  extra step rather than fewer: the transfer is what registers the
-  replacement identity with the notification service, so without it the
-  platform would have signed as an identity that service does not know
-  and every alert would have failed silently — while the app invited
-  users to subscribe to it. That branch now creates and stakes a
-  replacement first, with a note to budget for the stake before it is
-  needed.
+  The procedure was also built on an operation the notification service
+  does not implement. It described transferring ownership of the existing
+  channel to a replacement identity, with a fallback for when the
+  compromised wallet refuses to co-operate — but there is no ownership
+  transfer to attempt, so there was no fallback either, just one path
+  presented as two. Rotating the signing key always changes which
+  identity the platform posts as, and the service will reject posts from
+  an identity it has no record of. So the procedure is now written as
+  what it is: a migration to a newly created channel, which costs a stake
+  and does not bring existing subscribers with it. Both facts are stated
+  up front rather than discovered mid-incident.
 - The disaster restore claimed both public websites carried their own
   domain attachments. They do not — they are plain Worker deployments,
   so a restore that followed the steps exactly brought the platform back

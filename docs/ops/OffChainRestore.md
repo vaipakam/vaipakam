@@ -67,9 +67,12 @@ then deploy.
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
    > `ops/lz-watcher`, a monitor for the LayerZero transport the T-068 CCIP
    > migration retired; the Worker, its binding **and its source tree** are
-   > all gone. Creating it would also cost one of the five free-plan cron
-   > slots. See "Restoring a pre-#1440 archive" below if the archive you
-   > hold still carries its tables.
+   > all gone. (Creating the database itself would cost no cron slot —
+   > slots are consumed by deploying a Worker with a scheduled trigger,
+   > never by a D1 database — so if you DO need the legacy rows, creating
+   > an inert database for them is free and supported.) See "Restoring a
+   > pre-#1440 archive" below if the archive you hold still carries its
+   > tables.
 
 4. Create the R2 buckets:
 
@@ -211,8 +214,19 @@ then deploy.
      Both are easy to miss precisely because the apex site comes back
      looking healthy without them.
 
+9. Register the **rate-limit namespaces** before deploying `agent` or
+   `indexer`. Cloudflare validates at deploy time that every `namespace_id`
+   in a `ratelimit` binding is registered to the account, so on a
+   replacement account both deploys stop at binding validation — the D1,
+   R2 and Secrets Store work above does not cover this. `apps/agent`
+   binds `1001`, `1002`, `1004`, `1005` (and `555` where the Fusion
+   endpoint is enabled); `apps/indexer` binds `2001` and `2002`. The ids
+   are arbitrary per Worker, so either register those numbers on the new
+   account or renumber the bindings to match its scheme — but do one of
+   the two first.
+
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
-   updated configs all exist first.
+   rate-limit namespaces + updated configs all exist first.
 
    > **DO NOT deploy `ops/offchain-data-archive` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually

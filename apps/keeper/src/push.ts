@@ -116,6 +116,16 @@ export async function sendPush(
       channel: channelCaip,
       env: 'prod',
     });
+    // #1450 — a POSITIVE signal, deliberately. Only the unset-key and
+    // failure branches logged before, so a channel Push does not recognise
+    // produced two quiet tails and looked exactly like "no eligible events
+    // yet". That made the incident runbook's post-rotation verification step
+    // unsound: an operator could watch nothing happen and conclude the
+    // migration worked. The channel is logged because it is the field a
+    // rotation changes and the one worth eyeballing.
+    console.log(
+      `[push] sent subscriber=${payload.subscriber} channel=${channelCaip}`,
+    );
   } catch (err) {
     console.error(
       `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,
