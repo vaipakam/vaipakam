@@ -1278,7 +1278,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      says which reservations to count — and both relations reconcile.
     function test_Seed_DerivesTheStrandedTotalAndReconciles() public {
         uint256 sent = _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
 
         (, uint256 stranded, , , uint256 bucket, , uint256 paidOut, uint256 outstanding) =
             _composition();
@@ -1301,7 +1301,7 @@ contract RewardRemitLedgerTest is SetupTest {
             r = remit.getRemitReservation(1);
             assertGt(recycledFull, r.recycled, "fixture: residual exists");
         }
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, r.recycled, "sent share");
         assertLt(stranded, r.recycledFull, "NOT the pre-clamp total");
@@ -1311,15 +1311,16 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      already recorded some — would double-count.
     function test_Seed_RefusesWhenAlreadySeeded() public {
         _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
+        uint256 seedTo = remit.getRemitReservationNonce();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
                 stranded
             )
         );
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(seedTo);
     }
 
     /// @dev COMPLETENESS, the property the id-list shape could not provide
@@ -1348,7 +1349,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertGt(r2.recycled, 0, "fixture: the second stranded something too");
         mutator.setReleasedRemitStrandedRaw(0);
 
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, sentA + r2.recycled, "summed BOTH releases");
         assertGt(stranded, sentA, "not just the first");
@@ -1360,7 +1361,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _finalizeDay(1);
         _remitDay1ToArb();
         assertEq(uint256(remit.getRemitReservation(1).status), 1, "pending");
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, 0, "a pending reservation stranded nothing");
     }
@@ -1374,10 +1375,11 @@ contract RewardRemitLedgerTest is SetupTest {
         // An unexplained shortfall on top of the historical one: the seed
         // cannot account for this, so it must not be applied at all.
         mutator.setRecycleBucketRaw(0);
+        uint256 seedTo = remit.getRemitReservationNonce();
         vm.expectRevert(
             RewardRemittanceFacet.SeedDoesNotReconcile.selector
         );
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(seedTo);
     }
 
     // ─── #1448 r5: upgrade-path robustness ────────────────────────────────
@@ -1406,7 +1408,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(before, r2.recycled, "only the NEW release is recorded");
         assertGt(before, 0, "so the value-based guard would have refused");
 
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
 
         (, uint256 after_, , , , , , ) = _composition();
         assertEq(after_, sentA + r2.recycled, "seed subsumes BOTH");
@@ -1424,7 +1426,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (, uint256 before, , , , , , ) = _composition();
         assertEq(before, sent, "recorded organically");
 
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 after_, , , , , , ) = _composition();
         assertEq(after_, sent, "assigned, not added");
     }
@@ -1433,15 +1435,16 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      even though the value is unchanged.
     function test_Seed_AppliedFlagIsWhatBlocksASecondRun() public {
         _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
+        uint256 seedTo = remit.getRemitReservationNonce();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
                 stranded
             )
         );
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(seedTo);
     }
 
     /// @dev The post-condition now checks BOTH directions. A chain whose
@@ -1455,8 +1458,9 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setRecycleBucketRaw(
             ConfigFacet(address(diamond)).getRecycleBucket() + 50e18
         );
+        uint256 seedTo = remit.getRemitReservationNonce();
         vm.expectRevert(RewardRemittanceFacet.SeedDoesNotReconcile.selector);
-        remit.seedReleasedRemitStranded();
+        remit.seedReleasedRemitStranded(seedTo);
     }
 
     /// @dev #1448 r5 — the seeded marker is DERIVED, so a Diamond refreshed
@@ -1505,6 +1509,111 @@ contract RewardRemitLedgerTest is SetupTest {
         (, , bool seeded, ) = RewardAggregatorFacet(address(diamond))
             .getRecycleCompositionPosition();
         assertFalse(seeded, "nothing has ever run here");
+    }
+
+    // ─── #1448 r7: the seed is resumable and bounded ──────────────────────
+
+    /// @dev A Diamond with a long reservation history cannot scan `1..nonce`
+    ///      in one transaction, and because the ceremony is one-shot it would
+    ///      then NEVER seed — leaving the watcher permanently reporting valid
+    ///      pre-upgrade state as CRITICAL. Ranges fix the liveness without
+    ///      giving up completeness: the finish line is pinned from the nonce,
+    ///      so `1..target` is still covered structurally.
+    function test_Seed_ResumesAcrossRangesAndOnlyPublishesAtTheEnd() public {
+        (, uint256 sentA) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(2);
+        mutator.setReleasedRemitStrandedRaw(0);
+        assertEq(remit.getRemitReservationNonce(), 2, "fixture: two ids");
+
+        // Range 1 of 2 — NOTHING is published yet, so every relation over the
+        // ledger is exactly as it was. A partial total would make bucket
+        // coverage more permissive, which is the direction that hides a real
+        // shortfall.
+        remit.seedReleasedRemitStranded(1);
+        (, uint256 midway, , , , , , ) = _composition();
+        assertEq(midway, 0, "partial scan publishes nothing");
+
+        // Range 2 finishes it, and the total is BOTH releases.
+        remit.seedReleasedRemitStranded(2);
+        (, uint256 finalTotal, , , , , , ) = _composition();
+        assertEq(finalTotal, sentA + r2.recycled, "both releases counted once");
+    }
+
+    /// @dev A release landing mid-ceremony records organically AND may sit in
+    ///      an already-scanned range, so the scan and the live counter
+    ///      disagree. Refuse rather than guess.
+    function test_Seed_DetectsAReleaseLandingMidCeremony() public {
+        _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        mutator.setReleasedRemitStrandedRaw(0);
+
+        remit.seedReleasedRemitStranded(1); // range 1, ceremony now in flight
+
+        // Reservation 2 is released before the operator runs range 2.
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(2);
+
+        (, uint256 nowCounter, , , , , , ) = _composition();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.SeedRaceDetected.selector, 0, nowCounter
+            )
+        );
+        remit.seedReleasedRemitStranded(2);
+    }
+
+    /// @dev Ranges must move forward and stay inside the pinned target — a
+    ///      repeated or overlapping range is the double-count route the id
+    ///      list had.
+    function test_Seed_RejectsNonAdvancingOrOverrunningRanges() public {
+        _preUpgradeReleasedState();
+        uint256 target = remit.getRemitReservationNonce();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.SeedRangeInvalid.selector,
+                target + 1, 0, target
+            )
+        );
+        remit.seedReleasedRemitStranded(target + 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.SeedRangeInvalid.selector, 0, 0, target
+            )
+        );
+        remit.seedReleasedRemitStranded(0);
+    }
+
+    /// @dev The target is PINNED at the first call, so a reservation created
+    ///      later cannot move the finish line — the ceremony still completes.
+    function test_Seed_TargetIsPinnedAgainstLaterReservations() public {
+        _preUpgradeReleasedState();
+        remit.seedReleasedRemitStranded(1);
+        // A new reservation appears after the ceremony started.
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        assertEq(remit.getRemitReservationNonce(), 2, "nonce moved");
+        // Completion is judged against the pinned target of 1, not the new
+        // nonce, so the ceremony is already finished and refuses a re-run.
+        (, uint256 stranded, , , , , , ) = _composition();
+        assertGt(stranded, 0, "published at the pinned target");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
+                stranded
+            )
+        );
+        remit.seedReleasedRemitStranded(2);
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

@@ -574,7 +574,13 @@
   {
     "type": "function",
     "name": "seedReleasedRemitStranded",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "upTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -657,6 +663,31 @@
       },
       {
         "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeedProgress",
+    "inputs": [
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accumulated",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2035,6 +2066,48 @@
     "type": "error",
     "name": "SeedDoesNotReconcile",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedNothingToScan",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedRaceDetected",
+    "inputs": [
+      {
+        "name": "baseline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedRangeInvalid",
+    "inputs": [
+      {
+        "name": "upTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

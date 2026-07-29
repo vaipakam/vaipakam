@@ -1298,6 +1298,14 @@ contract RewardRemittanceFacet is
     /// @notice The derived total is below what the counter already holds,
     ///         which would silently discard recorded state.
     error SeedWouldShrinkStrandedTotal(uint256 derived, uint256 current);
+    /// @notice `upTo` does not advance the cursor, or runs past the pinned
+    ///         target. Ranges must move forward and stay within `1..target`.
+    error SeedRangeInvalid(uint256 upTo, uint256 cursor, uint256 target);
+    /// @notice A remittance was released while the ceremony was part-way
+    ///         through, so the scan and the live counter disagree about it.
+    error SeedRaceDetected(uint256 baseline, uint256 current);
+    /// @notice No reservations exist, so there is nothing to seed.
+    error SeedNothingToScan();
     /// @notice The derived seed leaves a recycled relation still violated,
     ///         so the state was not produced by pre-upgrade releases alone.
     error SeedDoesNotReconcile();
@@ -1351,7 +1359,11 @@ contract RewardRemittanceFacet is
     ///         One-shot: refuses once the counter is non-zero, so a repeat
     ///         (or a run after an organic release already recorded some) can
     ///         never double-count.
-    function seedReleasedRemitStranded()
+    /// @param  upTo Highest reservation id to scan in THIS call. Must be
+    ///              greater than the current cursor and at most the pinned
+    ///              target. Pass the target itself to finish in one call on a
+    ///              Diamond with a short history.
+    function seedReleasedRemitStranded(uint256 upTo)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
         onlyCanonical
@@ -1362,37 +1374,61 @@ contract RewardRemittanceFacet is
             revert ReleasedRemitStrandedAlreadySeeded(current);
         }
 
-        uint256 total;
-        uint256 counted;
-        uint256 nonce = s.remitReservationNonce;
-        for (uint256 id = 1; id <= nonce; ) {
+        // First call pins the finish line and the race baseline.
+        uint256 target = s.recycleStrandedSeedTarget;
+        if (target == 0) {
+            target = s.remitReservationNonce;
+            if (target == 0) revert SeedNothingToScan();
+            s.recycleStrandedSeedTarget = target;
+            s.recycleStrandedSeedBaseline = current;
+        } else if (current != s.recycleStrandedSeedBaseline) {
+            // A release landed mid-ceremony. It recorded organically, and it
+            // may sit in an already-scanned range, so the scan and the live
+            // counter now disagree about it. Detect and refuse rather than
+            // guess: the operator resets and re-runs.
+            revert SeedRaceDetected(s.recycleStrandedSeedBaseline, current);
+        }
+
+        uint256 cursor = s.recycleStrandedSeedCursor;
+        if (upTo <= cursor || upTo > target) {
+            revert SeedRangeInvalid(upTo, cursor, target);
+        }
+
+        uint256 accum = s.recycleStrandedSeedAccum;
+        for (uint256 id = cursor + 1; id <= upTo; ) {
             LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (r.status == 3) {
-                total += r.recycled;
-                unchecked {
-                    ++counted;
-                }
-            }
+            if (r.status == 3) accum += r.recycled;
             unchecked {
                 ++id;
             }
         }
-        // ASSIGN, not add. The scan covers EVERY released reservation, so the
-        // total already subsumes any release recorded organically after the
-        // upgrade — adding would double-count those. It can never shrink the
-        // counter for the same reason, but assert rather than assume.
-        if (total < current) {
-            revert SeedWouldShrinkStrandedTotal(total, current);
+        s.recycleStrandedSeedAccum = accum;
+        s.recycleStrandedSeedCursor = upTo;
+        emit ReleasedRemitStrandedSeedProgress(upTo, target, accum);
+
+        // Not finished yet — nothing is published, so the ledger and every
+        // relation over it stay exactly as they were.
+        if (upTo < target) return;
+
+        // ── COMPLETION ───────────────────────────────────────────────────
+        // ASSIGN, not add. The scan covered EVERY id in `1..target`, so the
+        // total already subsumes anything recorded organically before the
+        // ceremony began — adding would double-count those. It can never
+        // shrink the counter for the same reason, but assert rather than
+        // assume.
+        if (accum < current) {
+            revert SeedWouldShrinkStrandedTotal(accum, current);
         }
-        s.recycleReleasedRemitStrandedCumulative = total;
+        s.recycleReleasedRemitStrandedCumulative = accum;
         s.recycleStrandedSeedApplied = true;
 
         // POST-CONDITION, not a comment. If the seed does not actually
         // reconcile both relations, the divergence was NOT produced by
         // pre-upgrade releases and this ceremony must not half-silence a
-        // real alert. Revert loudly instead.
+        // real alert. Revert loudly instead — which also unwinds the
+        // assignment above, so a failed completion leaves nothing published.
         uint256 bucket = s.recycleBucket;
-        if (bucket + total < s.outstandingCommitRecycled) {
+        if (bucket + accum < s.outstandingCommitRecycled) {
             revert SeedDoesNotReconcile();
         }
         // BOTH directions, with the same shapes the external checker uses
@@ -1405,14 +1441,14 @@ contract RewardRemittanceFacet is
         // the derived floor can manufacture the very value that is missing out
         // of `bucket + paidOut`, which is exactly how a short counter slipped
         // through the one-sided check.
-        uint256 destinations = bucket + s.paidOutRecycled + total;
+        uint256 destinations = bucket + s.paidOutRecycled + accum;
         uint256 claimed = s.recycleCreditedCumulative
             + s.recycleCustodyRelocatedCumulative;
         if (claimed > destinations) revert SeedDoesNotReconcile();
         if (destinations > claimed + SEED_COMPOSITION_SLACK_WEI) {
             revert SeedDoesNotReconcile();
         }
-        emit ReleasedRemitStrandedSeeded(total, counted);
+        emit ReleasedRemitStrandedSeeded(accum, target);
     }
 
     /// @notice #1448 r3 — the one-time stranded-cumulative seed ran.
@@ -1422,6 +1458,16 @@ contract RewardRemittanceFacet is
     ///                      full `1..nonce` scan.
     /// @custom:event-category state-change/treasury-mutation
     event ReleasedRemitStrandedSeeded(uint256 total, uint256 reservations);
+
+    /// @notice #1448 r7 — one RANGE of the resumable seed completed. Nothing
+    ///         is published until `cursor == target`; this exists so an
+    ///         operator can see progress across a multi-transaction ceremony.
+    /// @custom:event-category informational/reward-governor
+    event ReleasedRemitStrandedSeedProgress(
+        uint256 cursor,
+        uint256 target,
+        uint256 accumulated
+    );
 
     /// @notice Σ VPFI in PENDING (in-flight, un-acked) reservations to
     ///         `chainId`.

@@ -341,10 +341,16 @@ POST-REFRESH — recycled accounting (canonical chain only):
   reservation, or simply the watcher paging bucket-coverage +
   bucket-composition immediately after the refresh), run ONCE:
 
-    cast send $DIAMOND "seedReleasedRemitStranded()" --rpc-url $RPC ...
+    NONCE=$(cast call $DIAMOND "getRemitReservationNonce()(uint256)" ...)
+    cast send $DIAMOND "seedReleasedRemitStranded(uint256)" $NONCE ...
 
-  It scans 1..nonce itself — there is no id list to get wrong — and reverts
-  if the result does not reconcile both relations. Verify:
+  It scans 1..upTo itself — there is no id list to get wrong — and publishes
+  nothing until the cursor reaches the target it pinned from the nonce on the
+  first call. On a Diamond with a long reservation history, split it:
+  `seedReleasedRemitStranded(500)`, `(1000)`, ... up to the nonce; a single
+  transaction could otherwise exceed the block gas limit, and the ceremony is
+  one-shot. It reverts if a remittance is released mid-ceremony (restart it)
+  or if the result does not reconcile both relations. Verify:
 
     cast call $DIAMOND "getRecycleCompositionPosition()(uint256,uint256,bool,bool)"
 

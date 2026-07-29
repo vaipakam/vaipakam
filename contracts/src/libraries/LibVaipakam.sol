@@ -5826,6 +5826,38 @@ library LibVaipakam {
         // only PRINTS the ceremony after all refresh work, so that ordering is
         // reachable by an operator doing nothing wrong.
         bool recycleStrandedSeedApplied;
+        // ─── #1448 r7 — the seed ceremony is RESUMABLE ─────────────────────
+        // A single-transaction scan of `1..remitReservationNonce` can exceed
+        // the block gas limit on a Diamond with a long reservation history —
+        // and because the ceremony is one-shot, such an instance could then
+        // NEVER seed, leaving the watcher permanently reporting valid
+        // pre-upgrade state as CRITICAL. Liveness, not just cost.
+        //
+        // Splitting it into ranges is in tension with r4, which rejected a
+        // caller-supplied id LIST precisely because completeness could not be
+        // proved. These three fields resolve that: the caller chooses how far
+        // to go per call, but the ceremony only COMPLETES when the cursor has
+        // reached a target captured from the nonce at the start, so coverage
+        // of `1..target` is still structural.
+        //
+        // `recycleStrandedSeedTarget` — the nonce snapshotted on the first
+        //   call. 0 means "not started". Pinned so reservations created later
+        //   cannot move the finish line.
+        uint256 recycleStrandedSeedTarget;
+        // `recycleStrandedSeedCursor` — highest id scanned so far.
+        uint256 recycleStrandedSeedCursor;
+        // `recycleStrandedSeedAccum` — running Σ. Deliberately NOT written
+        //   into `recycleReleasedRemitStrandedCumulative` until completion:
+        //   a partial total would make bucket coverage MORE permissive
+        //   mid-ceremony, which is exactly the direction that hides a real
+        //   shortfall.
+        uint256 recycleStrandedSeedAccum;
+        // `recycleStrandedSeedBaseline` — the live counter at ceremony start.
+        //   Re-checked on every call: a release landing mid-ceremony records
+        //   organically AND may fall in an already-scanned range, so the two
+        //   sources would disagree. Cheaper and safer to detect it and make
+        //   the operator restart than to try to reconcile it.
+        uint256 recycleStrandedSeedBaseline;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
