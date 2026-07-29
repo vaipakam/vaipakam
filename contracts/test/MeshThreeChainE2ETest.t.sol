@@ -16,6 +16,7 @@ import {
 } from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -127,7 +128,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](9);
+        cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -160,6 +161,15 @@ contract MeshThreeChainE2ETest is Test {
         cuts[8] = _cut(
             address(new TestMutatorFacet()),
             helper.getTestMutatorFacetSelectors()
+        );
+        // #1442 (Codex #1454 r1) — cut in for `getChainDayCommitments`. The
+        // force-finalize test claimed the day-4 remit-ineligibility SURVIVES
+        // the day-5 heal, but asserted only the numerator and the finalized
+        // bit — neither of which moves if a regression silently re-admits the
+        // chain. Pinning the post-heal flag needs to read it.
+        cuts[9] = _cut(
+            address(new RewardCommitmentFacet()),
+            helper.getRewardCommitmentFacetSelectors()
         );
     }
 
@@ -236,6 +246,14 @@ contract MeshThreeChainE2ETest is Test {
 
     // ─── Cycle drivers ─────────────────────────────────────────────────────
 
+    function _commit(uint256 chainId)
+        private
+        view
+        returns (RewardCommitmentFacet)
+    {
+        return RewardCommitmentFacet(diamondOf[chainId]);
+    }
+
     function _agg() private view returns (RewardAggregatorFacet) {
         return RewardAggregatorFacet(baseD);
     }
@@ -259,6 +277,28 @@ contract MeshThreeChainE2ETest is Test {
     function _seedRecycled(uint256 chainId, uint256 throughDay) private {
         uint256 perDay = _absorbFor(chainId);
         _mut(chainId).setRecycleBucketRaw(BUCKET_SEED);
+        for (uint256 d = 1; d <= throughDay; ++d) {
+            _mut(chainId).setRecycledCreditedByDayRaw(d, perDay);
+        }
+    }
+
+    /// @dev #1442 — as `_seedRecycled`, but with an explicit bucket so a
+    ///      mirror can be given real absorption it cannot fully self-fund.
+    ///      The two are COUPLED and that is the whole difficulty of this
+    ///      fixture: a chain's reported cumulative derives from
+    ///      `bucket + paidOut`, and Base clamps its day attribution to
+    ///      `min(forDay, reported - attributed)` — so lowering the bucket to
+    ///      create a shortfall also shrinks that chain's contribution to `Ā`,
+    ///      which shrinks the very target the shortfall is measured against.
+    ///      Seeding the per-day feed high while the bucket stays low is what
+    ///      keeps a genuine gap between target and availability.
+    function _seedRecycledWithBucket(
+        uint256 chainId,
+        uint256 throughDay,
+        uint256 bucket
+    ) private {
+        uint256 perDay = _absorbFor(chainId);
+        _mut(chainId).setRecycleBucketRaw(bucket);
         for (uint256 d = 1; d <= throughDay; ++d) {
             _mut(chainId).setRecycledCreditedByDayRaw(d, perDay);
         }
@@ -380,6 +420,19 @@ contract MeshThreeChainE2ETest is Test {
     ///      figures — and a fan-out that cross-wired the two destinations
     ///      would then satisfy every per-chain assertion in this suite. With
     ///      ARB at twice OP, a mis-routed packet is detectable.
+    /// @dev #1442 — seed the two MIRRORS only, leaving Base with zero
+    ///      interest for the day. Base then earns no slice of its own, so
+    ///      its global `outstandingCommitRecycled` is composed ENTIRELY of
+    ///      top-ups it funded for other chains — which is what makes the
+    ///      canonical-funded remainder separately assertable. Base still
+    ///      needs a BUCKET (availability to fund from); that is independent
+    ///      of having demand.
+    function _seedMirrorInterestOnly(uint256 dayId) private {
+        _seedInterest(ARB, dayId, alice, 2e18, 3e18);
+        _seedInterest(OP, dayId, alice, 1e18, 5e18);
+        _seedInterest(BASE, dayId, alice, 0, 0);
+    }
+
     function _seedAllInterest(uint256 dayId) private {
         // FOUR pairwise-distinct totals across two chains and two sides. The
         // asymmetry is load-bearing twice over: unequal per-chain figures make
@@ -606,6 +659,140 @@ contract MeshThreeChainE2ETest is Test {
      *         double what Base instructed and under-report availability
      *         forever.
      */
+    /**
+     * @notice #1442 — the CANONICAL TOP-UP pass, which no test reached.
+     *
+     *         Every existing case seeds both mirrors far above their targets,
+     *         so `availBase` is zero, `topUpPool` is zero, and the two-pass
+     *         funding's SECOND pass sits at zero in the whole suite. A
+     *         regression disabling Base-funded top-ups, or booking their
+     *         reservation against the wrong ledger, would pass a suite that
+     *         calls itself a three-chain mesh e2e — while underfunding any
+     *         live mirror whose own bucket is short.
+     *
+     *         Pins the two passes SEPARATELY, which asserting only the total
+     *         cannot do: `LibMeshFunding._stampOne` splits each chain's capped
+     *         commit by FUNDING SOURCE — the locally-funded share books into
+     *         `chainConsumedRecycled[c]` and rides the wire as
+     *         `recycleConsume`, while Base's top-up books into the GLOBAL
+     *         `outstandingCommitRecycled`. Never both.
+     */
+    function test_E2E_CanonicalTopUpFundsAMirrorShortfall() public {
+        // ARB gets real absorption it CANNOT self-fund; OP is comfortable.
+        // Base is seeded with a BUCKET but NO interest, so it earns no slice
+        // of its own — its global reservation is then composed entirely of
+        // top-ups, which is what makes the canonical-funded remainder
+        // separately assertable. No existing test seeds Base's bucket at all,
+        // which is exactly why the second pass never ran.
+        _seedRecycledWithBucket(ARB, 8, 100 ether);
+        _seedRecycled(OP, 8);
+        _seedRecycled(BASE, 8);
+        _seedMirrorInterestOnly(5);
+        _arm(5);
+        _warpPast(6);
+
+        _runDayCycle(5);
+
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, uint32(ARB));
+        LibVaipakam.ChainDayFunding memory op =
+            _agg().getChainDayRecycledFunding(5, uint32(OP));
+        LibVaipakam.ChainDayFunding memory base =
+            _agg().getChainDayRecycledFunding(5, uint32(BASE));
+        (, , uint256 baseOutstanding, ) = _agg().getGovernorCommitState();
+        (, uint256 arbInstructed, uint256 arbAvail, ) =
+            _agg().getChainRecycledLedger(uint32(ARB));
+
+        // ── PASS 1: the mirror funded what it could, and no more ─────────
+        // Its availability is EXHAUSTED (bar rounding dust), which is what
+        // makes the remainder a genuine shortfall rather than a slice Base
+        // took for no reason.
+        assertGt(arb.recycleConsume, 0, "ARB self-funded a real amount");
+        assertApproxEqAbs(
+            arbInstructed, 100 ether, 1e3, "instructed up to its bucket"
+        );
+        assertLt(arbAvail, 1e3, "ARB's availability is spent");
+
+        // ── PASS 2: Base funded the remainder, against its GLOBAL ledger ──
+        // Base is never a local funder in the split, so it books no
+        // per-chain instruction against itself — and with zero interest it
+        // has no slice of its own either. Everything here is top-up.
+        assertEq(base.recycleConsume, 0, "Base books no local instruction");
+        assertEq(
+            base.fundedLender + base.fundedBorrower,
+            0,
+            "and earns no slice of its own this day"
+        );
+        assertGt(
+            baseOutstanding,
+            0,
+            "#1442: the canonical top-up pass reserved against the global ledger"
+        );
+
+        // ── The two passes are DISTINCT, and tied to each other EXACTLY ──
+        //
+        // `recycleConsume` is the LOCALLY-funded share in the same units as
+        // `fundedLender + fundedBorrower` — measured, not assumed: OP, which
+        // self-funds entirely, has the two exactly equal. So a chain's top-up
+        // is precisely `funded - recycleConsume`, and Base's global
+        // reservation is the sum of those across chains.
+        //
+        // Do NOT use `lenderHalfEquiv`/`borrowerHalfEquiv` here (Codex #1454
+        // r2): those are the GLOBAL-equivalent halves and are IDENTICAL for
+        // every chain, so comparing them against `recycleConsume` holds
+        // whether or not a top-up happened — a vacuous assertion an earlier
+        // revision of this test made.
+        uint256 opFunded = op.fundedLender + op.fundedBorrower;
+        uint256 opTopUp =
+            opFunded > op.recycleConsume ? opFunded - op.recycleConsume : 0;
+        // Wei-scale bound, not bit-exact: the per-side pro-rata split floors,
+        // so a fully self-funded chain lands a few wei off. Against ARB's
+        // ~288 ether top-up the distinction is unambiguous.
+        assertLt(opTopUp, 1e4, "OP self-funded - it received NO top-up");
+        assertGt(opFunded, 0, "and its slice is real, not zero");
+
+        uint256 arbFunded = arb.fundedLender + arb.fundedBorrower;
+        assertGt(
+            arbFunded, arb.recycleConsume, "ARB was funded beyond its bucket"
+        );
+        uint256 arbTopUp = arbFunded - arb.recycleConsume;
+
+        // The exact tie. `baseOutstanding > 0` alone would pass on a second
+        // pass that under-booked the ledger by 1 wei, or that mis-allocated
+        // Base's funding to OP while leaving ARB locally-funded only. Pinning
+        // it to ARB's shortfall rules out both.
+        assertApproxEqAbs(
+            baseOutstanding,
+            arbTopUp,
+            1e4,
+            "#1442: Base reserved EXACTLY ARB's shortfall, and nothing else"
+        );
+
+        // ── ...and the top-up was SUFFICIENT, not merely present ─────────
+        //
+        // The identity above holds by construction however LITTLE is topped
+        // up — both sides shrink together — so on its own it cannot catch a
+        // second pass that under-funds. Found by mutating the lender-side
+        // allocation to zero: the identity survived it.
+        //
+        // This is the one legitimate use of the global-equivalent halves:
+        // they are the same figure for every chain that is FULLY funded, so
+        // comparing ARB's against comfortable OP's proves Base's top-up
+        // brought ARB all the way to its target rather than part-way.
+        assertApproxEqAbs(
+            arb.lenderHalfEquiv,
+            op.lenderHalfEquiv,
+            1e4,
+            "the top-up made ARB WHOLE on the lender side, not merely larger"
+        );
+        assertApproxEqAbs(
+            arb.borrowerHalfEquiv,
+            op.borrowerHalfEquiv,
+            1e4,
+            "and on the borrower side"
+        );
+    }
+
     function test_E2E_DuplicateBroadcastToMirrorDoesNotDoubleTheReservation()
         public
     {
@@ -671,6 +858,130 @@ contract MeshThreeChainE2ETest is Test {
      *         Base's availability model catches up without any replay of the
      *         dropped message.
      */
+    /// #1442 — the events the force-finalize fallback emits. Re-declared
+    /// locally so `vm.expectEmit` can match them; both are indexed on
+    /// `(dayId, chainId)`.
+    event ChainContributionZeroed(
+        uint256 indexed dayId,
+        uint32 indexed sourceChainId,
+        bool forced
+    );
+    event CommitmentRemitIneligible(
+        uint256 indexed dayId,
+        uint32 indexed chainId
+    );
+
+    /**
+     * @notice #1442 — the missed day closed through the REAL fallback, then
+     *         healed by a later report.
+     *
+     *         `test_E2E_DroppedMirrorReportSelfHealsOnTheNextOne` drops ARB's
+     *         day-4 report and immediately accepts day 5, so day 4 is left
+     *         permanently unfinalized. The operational path is different and
+     *         was untested: an operator force-closes the incomplete day, ARB
+     *         is zeroed out of that day's denominator and marked
+     *         remit-ineligible pending reconciliation, and only THEN does a
+     *         later cumulative heal availability.
+     *
+     *         What this pins that the existing test cannot: the day-4
+     *         ineligibility SURVIVES the day-5 heal. Availability recovering
+     *         must not silently re-open a day that was closed without that
+     *         chain's numbers — those are separate facts about separate days,
+     *         and conflating them would re-admit a chain to a denominator it
+     *         was never part of.
+     */
+    function test_E2E_ForceFinalizedMissedDayStaysIneligibleAfterHealing()
+        public
+    {
+        _seedRecycled(ARB, 8);
+        _seedRecycled(OP, 8);
+        // ARMED from day 4. Load-bearing: remit-ineligibility only exists on
+        // an armed day, because that is when there are commitments to be
+        // remitted at all — `markIneligible` is gated on
+        // `governorCommitArmedFromDay`. An unarmed fixture zeroes the chain
+        // out of the denominator and stops there, which is the weaker half of
+        // what this test is about.
+        _arm(4);
+        _warpPast(6);
+
+        // Day 4: every chain closes; ARB's queued report is DROPPED.
+        _seedAllInterest(4);
+        _allChainsCloseDay(4);
+        _dropReportAndDeliverRest(_findReport(4, ARB));
+
+        (uint256 reportedAfterDrop, , , ) =
+            _agg().getChainRecycledLedger(uint32(ARB));
+        assertEq(reportedAfterDrop, 0, "precondition: ARB's report never landed");
+
+        // The REAL fallback: ops force-closes the incomplete day. ARB is
+        // zeroed out of the denominator AND marked remit-ineligible — the
+        // second is the part no test exercised.
+        vm.expectEmit(true, true, false, true, baseD);
+        emit ChainContributionZeroed(4, uint32(ARB), true);
+        vm.expectEmit(true, true, false, true, baseD);
+        emit CommitmentRemitIneligible(4, uint32(ARB));
+        vm.chainId(BASE);
+        _agg().forceFinalizeDay(4);
+
+        // OP, which DID report, stays in the day-4 denominator — so the
+        // zeroing is targeted, not a blanket wipe of the day.
+        (uint256 opLender4, ) = _agg().getChainReport(4, uint32(OP));
+        assertGt(opLender4, 0, "OP's day-4 contribution survives the force-close");
+
+        // ARB now absorbs more and reports day 5 normally. Its cumulative
+        // carries the whole lifetime figure, so Base's availability heals
+        // past the gap without day 4 ever being re-run.
+        _seedAllInterest(5);
+        _runDayCycle(5);
+
+        (uint256 reportedAfterHeal, uint256 instructedAfterHeal,
+            uint256 availAfterHeal, ) =
+            _agg().getChainRecycledLedger(uint32(ARB));
+        // EXACT, not merely non-zero (Codex #1454 r2). A report advancing the
+        // ledger by only a small current-day amount would satisfy `> 0` while
+        // the dropped backlog stayed lost, so this pins the whole lifetime
+        // cumulative the fixture seeded. ARB consumes nothing here, so its
+        // `creditedCumulative` is exactly the seeded bucket.
+        assertEq(
+            reportedAfterHeal,
+            BUCKET_SEED,
+            "the later report carried the WHOLE lifetime cumulative"
+        );
+        // Availability is derived from it, so it cannot drift into a
+        // tautology of its own.
+        assertEq(
+            availAfterHeal,
+            BUCKET_SEED - instructedAfterHeal,
+            "availability is the healed cumulative less the instructions"
+        );
+        assertGt(availAfterHeal, 0, "and real capacity remains");
+
+        // THE POINT, read directly (Codex #1454 r1). The numerator and the
+        // finalized bit below do NOT move if a regression re-admits the chain
+        // during the heal, so asserting only those proves nothing about
+        // survival — the event expectation earlier proves the flag was SET,
+        // not that it is still set. This reads the post-heal state itself.
+        assertTrue(
+            _commit(BASE).getChainDayCommitments(4, uint32(ARB)).remitIneligible,
+            "day 4 is STILL remit-ineligible for ARB after the day-5 heal"
+        );
+        // OP, which reported on time, was never marked — so the flag is not
+        // simply set for everyone.
+        assertFalse(
+            _commit(BASE).getChainDayCommitments(4, uint32(OP)).remitIneligible,
+            "OP reported on time and stays eligible"
+        );
+
+        // Healing availability is not a licence to re-admit a chain to a
+        // denominator it missed.
+        (uint256 arbLender4, uint256 arbBorrower4) =
+            _agg().getChainReport(4, uint32(ARB));
+        assertEq(arbLender4, 0, "ARB still absent from day 4's numerator");
+        assertEq(arbBorrower4, 0, "on both sides");
+        (bool day4Finalized, , ) = _agg().getDailyGlobalInterest(4);
+        assertTrue(day4Finalized, "day 4 stays closed, not re-opened");
+    }
+
     function test_E2E_DroppedMirrorReportSelfHealsOnTheNextOne() public {
         _seedRecycled(ARB, 8);
         _seedRecycled(OP, 8);
