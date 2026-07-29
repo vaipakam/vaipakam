@@ -347,16 +347,27 @@ contract MeshLedgerInvariant is Test {
         );
     }
 
-    /// #1446 — the BUCKET COMPOSITION bound, the one relation that catches a
-    /// regression in the B2-d5 custody exclusion itself.
+    /// #1446 — the BUCKET COMPOSITION bound. It catches ONE class of
+    /// regression in the B2-d5 custody exclusion, and it is worth being
+    /// exact about which, because an overclaimed check is worse than a
+    /// known gap: it stops anyone looking.
     ///
     /// Every recycled credit lands in the bucket exactly once, so the two
     /// lifetime cumulatives can never exceed where the tokens actually went.
     /// A regression that advanced `recycleCreditedCumulative` on a custody
-    /// relocation would raise the left side twice against a right side that
-    /// moved once. No comparison of the REPORTED cumulative can see that,
-    /// on this chain or against Base's accepted copy, because both derive
-    /// from the same helper and would inflate together.
+    /// relocation raises the left side twice against a right side that moved
+    /// once, and fails here. No comparison of the REPORTED cumulative can
+    /// see that, on this chain or against Base's accepted copy, because both
+    /// derive from the same helper and would inflate together.
+    ///
+    /// What it does NOT catch (#1452, filed): a relocation arrival routed
+    /// through ordinary `credit` rather than `creditCustodyRelocated`. That
+    /// path raises `creditedRaw` and `bucket` TOGETHER, so both sides move
+    /// by the same amount and every bound here stays satisfied — while the
+    /// receiving chain reports Base's own already-remitted top-up as its own
+    /// absorption, which is precisely what the exclusion exists to prevent.
+    /// Catching it needs a record INDEPENDENT of these counters (what Base
+    /// says it remitted), which is what #1452 adds.
     ///
     /// Inequality rather than equality: `consume` floors the bucket at zero
     /// for bounded cap-trim dust, which can only widen the right side.
