@@ -1075,6 +1075,17 @@ contract TestMutatorFacet {
     ///         ledgers directly (production reserves them in the armed
     ///         finalize) so remit-clamp retirement assertions have a
     ///         non-zero baseline without driving an armed finalization.
+    /// @notice #1222 M3 B4-d test-only — set the lifetime remitted-to-mirrors
+    ///         total directly. It is one of the three terms the fresh cap
+    ///         reserves against, and the only one no test could previously
+    ///         place at the boundary: reaching it for real needs a mirror to
+    ///         have been remitted almost the whole allocation, which no
+    ///         harness drives. Without it, dropping the term from the reserved
+    ///         sum is invisible (Codex #1457 r1).
+    function setRewardBudgetRemittedGlobalRaw(uint256 v) external {
+        LibVaipakam.storageSlot().rewardBudgetRemittedGlobal = v;
+    }
+
     function setOutstandingCommitRaw(
         uint256 fresh,
         uint256 recycled

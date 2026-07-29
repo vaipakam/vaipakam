@@ -87,7 +87,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](146);
+        selectors = new bytes4[](147);
         // #1448 r6 — pre-seed-fold relocated-custody shape.
         selectors[145] =
             TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
@@ -120,6 +120,9 @@ contract HelperTest {
         // #1222 M3 B2-d3 — reconstruct a pre-d3 applied broadcast.
         selectors[139] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
         selectors[140] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;
+        // #1222 M3 B4-d — place the remitted term at the fresh-cap boundary.
+        selectors[146] =
+            TestMutatorFacet.setRewardBudgetRemittedGlobalRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.

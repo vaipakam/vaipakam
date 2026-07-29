@@ -511,6 +511,12 @@ contract MeshLedgerInvariant is Test {
             "the fresh floor must clamp to the cap headroom left by the "
             "outstanding commitment, not to the day's own schedule"
         );
+
+        // Codex #1457 r1 P1 — the STAMP is not the reservation. Finalization
+        // could stamp the clamped floor and still reserve commitments sized
+        // from the unclamped schedule, which walks the counter past the cap
+        // while every assertion above stays green. Assert the counter itself.
+        _assertFreshCapNotBreached("after a clamped finalize");
     }
 
     /// At the boundary EXACTLY, fresh goes to zero — and recycled does not.
@@ -542,6 +548,68 @@ contract MeshLedgerInvariant is Test {
             "the cap bounds FRESH drawdown only - a day at the cap must "
             "still fund from the recycle bucket"
         );
+        assertEq(
+            _outstandingFresh(),
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP,
+            "at the cap exactly, finalization must reserve NO further fresh - "
+            "a stamped zero floor with a non-zero reservation is the same "
+            "breach, one indirection away"
+        );
+    }
+
+    /// The third term in the fresh reservation is value already REMITTED to
+    /// mirrors, and it is the one no other test can place at the boundary:
+    /// reaching it for real needs a mirror to have been sent almost the whole
+    /// allocation. With the other two terms carrying the fixture, dropping
+    /// this one from the reserved sum is invisible — Base would keep stamping
+    /// full fresh schedules for its own claimants against an allocation it has
+    /// already shipped elsewhere, issuing the same value twice
+    /// (Codex #1457 r1 P1).
+    function test_Boundary_RemittedValueAlsoReservesAgainstTheCap() public {
+        uint256 headroom = 1_234 ether;
+        TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+
+        assertGt(
+            _scheduleForDay(1),
+            headroom,
+            "fixture must place the schedule ABOVE the headroom"
+        );
+
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "already-remitted value reserves against the cap exactly as an "
+            "outstanding commitment does"
+        );
+        _assertFreshCapNotBreached("after a remit-clamped finalize");
+    }
+
+    /// @dev The §7 #2 fresh half, read from live state. `remaining` is the
+    ///      allocation net of what has been paid out AND what has been
+    ///      remitted to mirrors, so "outstanding commitments fit inside what
+    ///      is left" is exactly `outstanding + paidOut + remitted <= cap` —
+    ///      stated in the form the platform itself publishes, so the check
+    ///      cannot drift from the number operators read.
+    function _assertFreshCapNotBreached(string memory ctx) internal view {
+        (, , uint256 remaining, , , ) =
+            InteractionRewardsLensFacet(address(diamond))
+                .getInteractionSnapshot();
+        assertLe(
+            _outstandingFresh(),
+            remaining,
+            string.concat("SS7#2 breached ", ctx)
+        );
+    }
+
+    function _outstandingFresh() internal view returns (uint256 v) {
+        (, v, , ) = _agg().getGovernorCommitState();
     }
 
     /// @dev The day's uncapped fresh schedule, as the governor computes it
