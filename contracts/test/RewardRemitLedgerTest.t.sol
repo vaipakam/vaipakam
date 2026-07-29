@@ -1474,6 +1474,30 @@ contract RewardRemitLedgerTest is SetupTest {
         assertTrue(seeded, "existing absorption proves the chain was seeded");
     }
 
+    /// @dev #1448 r6 — the OTHER direction of the same trap. A mirror with a
+    ///      pre-#1222 bucket that took a relocation credit BEFORE the seed-fold
+    ///      existed has a non-zero relocated cumulative and a still-ZERO raw
+    ///      counter: the old `creditCustodyRelocated` advanced only the former
+    ///      and never snapshotted the historical floor. Treating that as proof
+    ///      of seeding turns the correct un-seeded advisory into a false
+    ///      CRITICAL on valid upgrade state — the mirror image of the r5 bug.
+    function test_SeededMarker_RelocatedAloneIsNotProofOfSeeding() public {
+        _configureMirror();
+        // The exact pre-commit shape: historical bucket, relocated custody
+        // recorded, raw counter never written.
+        mutator.setRecycleBucketRaw(63e18);
+        mutator.setRecycleCustodyRelocatedRaw(23e18);
+        mutator.setRecycleCreditedCumulativeRaw(0);
+
+        (uint256 raw, , bool seeded, ) = RewardAggregatorFacet(address(diamond))
+            .getRecycleCompositionPosition();
+        assertEq(raw, 0, "fixture: the raw counter was never written");
+        assertFalse(
+            seeded,
+            "relocated custody alone must NOT count as proof of seeding"
+        );
+    }
+
     /// @dev And it is still FALSE on a genuinely untouched chain — otherwise
     ///      the derivation would just always return true.
     function test_SeededMarker_FalseOnAnUntouchedChain() public {

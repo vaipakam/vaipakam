@@ -725,6 +725,15 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycleCreditedCumulative = amount;
     }
 
+    /// @notice #1448 r6 test-only — force the relocated-custody cumulative.
+    ///         Reproduces the PRE-seed-fold shape: a mirror that took a
+    ///         relocation credit while the old `creditCustodyRelocated`
+    ///         advanced only this counter and never snapshotted the
+    ///         historical floor into `recycleCreditedCumulative`.
+    function setRecycleCustodyRelocatedRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().recycleCustodyRelocatedCumulative = amount;
+    }
+
     /// @notice #1448 r3 test-only — force the released-remit stranded
     ///         cumulative. Used to reproduce the PRE-UPGRADE state: a
     ///         Diamond that released remittances before the counter

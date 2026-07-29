@@ -87,7 +87,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](145);
+        selectors = new bytes4[](146);
+        // #1448 r6 — pre-seed-fold relocated-custody shape.
+        selectors[145] =
+            TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
         // #1448 r3 — reproduce the pre-upgrade state for the seed ceremony.
         selectors[144] =
             TestMutatorFacet.setReleasedRemitStrandedRaw.selector;

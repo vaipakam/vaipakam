@@ -1148,9 +1148,21 @@ contract RewardAggregatorFacet is
      *                           (no historical credit replays the setter) and
      *                           an under-credited composition there would be
      *                           downgraded to an advisory until the next
-     *                           credit happened to run (#1448 r5). Either
-     *                           cumulative being non-zero proves the chain
-     *                           was already seeded, so that is folded in. Disambiguates `creditedRaw == 0`:
+     *                           credit happened to run (#1448 r5). A non-zero
+     *                           `recycleCreditedCumulative` proves the chain
+     *                           was already seeded, so that is folded in.
+     *
+     *                           Deliberately NOT `custodyRelocated != 0`
+     *                           (#1448 r6). A mirror with a pre-#1222 bucket
+     *                           that took a relocation credit BEFORE this
+     *                           change has a non-zero relocated cumulative
+     *                           and a still-zero raw counter, because the old
+     *                           `creditCustodyRelocated` advanced only the
+     *                           former and never snapshotted the historical
+     *                           floor. Treating that as proof of seeding
+     *                           would turn the correct un-seeded advisory
+     *                           into a false CRITICAL on valid upgrade state
+     *                           — the opposite error to the one r5 fixed. Disambiguates `creditedRaw == 0`:
      *                           false means a Diamond refreshed over live
      *                           pre-#1222 state, where composition is
      *                           genuinely unverifiable; true means a chain
@@ -1184,9 +1196,7 @@ contract RewardAggregatorFacet is
         return (
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
-            s.recycleAccountingSeeded
-                || s.recycleCreditedCumulative != 0
-                || s.recycleCustodyRelocatedCumulative != 0,
+            s.recycleAccountingSeeded || s.recycleCreditedCumulative != 0,
             s.isCanonicalRewardChain
         );
     }
