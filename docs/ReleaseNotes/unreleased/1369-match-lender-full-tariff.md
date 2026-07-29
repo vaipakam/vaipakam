@@ -19,6 +19,19 @@ so both sides are resolved from the artifact each of them actually signed.
 A lender who opted in is charged exactly as on a direct acceptance; a lender
 who opted into nothing is charged nothing, whatever the counterparty did.
 
+There is a second half to "honoured whichever venue fills it", and review
+caught that the first version only did the first half. When the feature is
+switched off — which is how it ships today, and permanently so on chains that
+do not host the token — a lender who opted in and refused a downgrade has said
+"charge me or do not open this loan". A direct acceptance of that offer
+correctly refuses to open. A matched fill did not: the decision about whether
+to price the fee at all still looked only at the borrower's offer, so it
+skipped the step entirely and opened the loan un-priced. The guarantee was
+venue-dependent in exactly the configuration that ships. That decision now
+consults the lender's offer too, so both venues refuse alike — and a lender
+who *did* permit a downgrade still gets their loan opened, un-priced, as they
+asked.
+
 The carried reference cannot outlive its match. Two independent guards stop
 it: the substitution is permitted only while a match is in progress, and that
 flag has a single clearing point, while the reference itself is cleared beside

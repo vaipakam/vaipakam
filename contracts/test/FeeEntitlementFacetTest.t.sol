@@ -437,6 +437,83 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
     }
 
+    /// The kill switch must be fail-closed on EVERY venue. A lender who
+    /// armed Full with no downgrade permission has said "charge me or do not
+    /// open this loan"; with the feature off the tariff cannot complete, so
+    /// the fill must revert. Silently continuing as non-Full is named
+    /// Forbidden by the design (rev-14 kill-switch rule).
+    ///
+    /// This is the half #1369 originally missed: it taught the CHARGE path
+    /// where lender auth lives but left the ROUTING predicate reading only
+    /// the accepted (borrower) offer, so with the switch off the tariff was
+    /// never entered at all and the loan opened — while the identical
+    /// authorization taken by a direct accept reverted. The guarantee was
+    /// venue-dependent in exactly the configuration that ships today.
+    function testMatch_LenderStrictFullRevertsWhileFeatureIsOff() public {
+        // Deliberately NOT enabling fee entitlement — that is the point.
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+
+        // The lender arms Full and refuses a downgrade. Only the lender.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            lenderOfferId, true, 1_000 ether, /*allowDowngrade=*/ false
+        );
+
+        vm.expectRevert(LibFeeEntitlement.FeeEntitlementDisabled.selector);
+        OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+    }
+
+    /// The same lender, having permitted a downgrade, must instead open the
+    /// loan un-tariffed rather than revert — so the fix above cannot be
+    /// satisfied by simply failing every matched fill while the switch is off.
+    function testMatch_LenderFullWithDowngradeOpensWhileFeatureIsOff() public {
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            lenderOfferId, true, 1_000 ether, /*allowDowngrade=*/ true
+        );
+
+        address lVault = _vault(lender);
+        uint256 lBefore = vpfiToken.balanceOf(lVault);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+
+        assertEq(
+            vpfiToken.balanceOf(lVault),
+            lBefore,
+            "downgraded: the loan opens and nothing is charged"
+        );
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(
+            fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full,
+            "not stamped Full - the tariff could not complete"
+        );
+    }
+
     /// The carried lender-offer id must never outlive its match. If it did, a
     /// LATER direct accept would resolve the lender side from a stale offer —
     /// charging a lender the tariff of a loan they had nothing to do with.
