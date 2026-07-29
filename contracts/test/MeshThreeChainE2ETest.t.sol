@@ -794,6 +794,97 @@ contract MeshThreeChainE2ETest is Test {
      *         Base's availability model catches up without any replay of the
      *         dropped message.
      */
+    /// #1442 — the events the force-finalize fallback emits. Re-declared
+    /// locally so `vm.expectEmit` can match them; both are indexed on
+    /// `(dayId, chainId)`.
+    event ChainContributionZeroed(
+        uint256 indexed dayId,
+        uint32 indexed sourceChainId,
+        bool forced
+    );
+    event CommitmentRemitIneligible(
+        uint256 indexed dayId,
+        uint32 indexed chainId
+    );
+
+    /**
+     * @notice #1442 — the missed day closed through the REAL fallback, then
+     *         healed by a later report.
+     *
+     *         `test_E2E_DroppedMirrorReportSelfHealsOnTheNextOne` drops ARB's
+     *         day-4 report and immediately accepts day 5, so day 4 is left
+     *         permanently unfinalized. The operational path is different and
+     *         was untested: an operator force-closes the incomplete day, ARB
+     *         is zeroed out of that day's denominator and marked
+     *         remit-ineligible pending reconciliation, and only THEN does a
+     *         later cumulative heal availability.
+     *
+     *         What this pins that the existing test cannot: the day-4
+     *         ineligibility SURVIVES the day-5 heal. Availability recovering
+     *         must not silently re-open a day that was closed without that
+     *         chain's numbers — those are separate facts about separate days,
+     *         and conflating them would re-admit a chain to a denominator it
+     *         was never part of.
+     */
+    function test_E2E_ForceFinalizedMissedDayStaysIneligibleAfterHealing()
+        public
+    {
+        _seedRecycled(ARB, 8);
+        _seedRecycled(OP, 8);
+        // ARMED from day 4. Load-bearing: remit-ineligibility only exists on
+        // an armed day, because that is when there are commitments to be
+        // remitted at all — `markIneligible` is gated on
+        // `governorCommitArmedFromDay`. An unarmed fixture zeroes the chain
+        // out of the denominator and stops there, which is the weaker half of
+        // what this test is about.
+        _arm(4);
+        _warpPast(6);
+
+        // Day 4: every chain closes; ARB's queued report is DROPPED.
+        _seedAllInterest(4);
+        _allChainsCloseDay(4);
+        _dropReportAndDeliverRest(_findReport(4, ARB));
+
+        (uint256 reportedAfterDrop, , , ) =
+            _agg().getChainRecycledLedger(uint32(ARB));
+        assertEq(reportedAfterDrop, 0, "precondition: ARB's report never landed");
+
+        // The REAL fallback: ops force-closes the incomplete day. ARB is
+        // zeroed out of the denominator AND marked remit-ineligible — the
+        // second is the part no test exercised.
+        vm.expectEmit(true, true, false, true, baseD);
+        emit ChainContributionZeroed(4, uint32(ARB), true);
+        vm.expectEmit(true, true, false, true, baseD);
+        emit CommitmentRemitIneligible(4, uint32(ARB));
+        vm.chainId(BASE);
+        _agg().forceFinalizeDay(4);
+
+        // OP, which DID report, stays in the day-4 denominator — so the
+        // zeroing is targeted, not a blanket wipe of the day.
+        (uint256 opLender4, ) = _agg().getChainReport(4, uint32(OP));
+        assertGt(opLender4, 0, "OP's day-4 contribution survives the force-close");
+
+        // ARB now absorbs more and reports day 5 normally. Its cumulative
+        // carries the whole lifetime figure, so Base's availability heals
+        // past the gap without day 4 ever being re-run.
+        _seedAllInterest(5);
+        _runDayCycle(5);
+
+        (uint256 reportedAfterHeal, , uint256 availAfterHeal, ) =
+            _agg().getChainRecycledLedger(uint32(ARB));
+        assertGt(reportedAfterHeal, 0, "the later report healed the ledger");
+        assertGt(availAfterHeal, 0, "and restored committable availability");
+
+        // THE POINT: day 4 is still closed without ARB. Healing availability
+        // is not a licence to re-admit a chain to a denominator it missed.
+        (uint256 arbLender4, uint256 arbBorrower4) =
+            _agg().getChainReport(4, uint32(ARB));
+        assertEq(arbLender4, 0, "ARB still absent from day 4's numerator");
+        assertEq(arbBorrower4, 0, "on both sides");
+        (bool day4Finalized, , ) = _agg().getDailyGlobalInterest(4);
+        assertTrue(day4Finalized, "day 4 stays closed, not re-opened");
+    }
+
     function test_E2E_DroppedMirrorReportSelfHealsOnTheNextOne() public {
         _seedRecycled(ARB, 8);
         _seedRecycled(OP, 8);
