@@ -1055,6 +1055,10 @@ contract RewardRemittanceFacet is
             revert RemitReleaseTooEarly(remitId, earliest);
         }
         r.status = 3;
+        // #1448 r10 — beside the status flip, deliberately: the seed
+        // ceremony's race guard keys on this, and a release that moved the
+        // status without moving the count would be invisible to it.
+        ++s.remitReleasedCount;
         uint32 dst = r.dstChainId;
         uint256[] storage closed = r.dayIds;
         uint256 n = closed.length;
@@ -1290,6 +1294,83 @@ contract RewardRemittanceFacet is
         return LibVaipakam.storageSlot().remitReservationNonce;
     }
 
+    /**
+     * @notice The released-remit stranded seed ceremony's state, for the
+     *         operator deciding whether to run it and for watching one in
+     *         flight.
+     * @dev    #1448 r10. `recycleStrandedSeedApplied` had NO external view,
+     *         so an operator could not answer "has this already run?" and had
+     *         to infer it from the published figure — which is exactly the
+     *         value-based reasoning that is WRONG here: a non-zero stranded
+     *         total can be a post-upgrade release recorded organically, with
+     *         a historical amount still unrecovered behind it. The one-shot
+     *         flag is the only sound answer, so it is published.
+     * @return applied        The ceremony has completed; it cannot run again.
+     * @return target         The pinned range end (0 = none in flight).
+     * @return cursor         How far the scan has reached.
+     * @return accum          Stranded backing accumulated so far (published
+     *                        only at completion).
+     * @return counted        Released reservations found so far.
+     * @return releasedCount  Lifetime count of releases, the figure the race
+     *                        guard pins against.
+     */
+    function getReleasedRemitStrandedSeedState()
+        external
+        view
+        returns (
+            bool applied,
+            uint256 target,
+            uint256 cursor,
+            uint256 accum,
+            uint256 counted,
+            uint256 releasedCount
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.recycleStrandedSeedApplied,
+            s.recycleStrandedSeedTarget,
+            s.recycleStrandedSeedCursor,
+            s.recycleStrandedSeedAccum,
+            s.recycleStrandedSeedCounted,
+            s.remitReleasedCount
+        );
+    }
+
+    /// @notice #1448 r8 — abandon an in-flight seed ceremony so it can be
+    ///         restarted from scratch.
+    /// @dev    Required because the race guard is otherwise a BRICK: once a
+    ///         remittance is released mid-ceremony the live counter
+    ///         permanently differs from the pinned baseline, so every
+    ///         subsequent range call reverts and nothing can ever publish —
+    ///         the exact liveness failure the resumable design was added to
+    ///         remove, reintroduced by the guard that protects it.
+    ///
+    ///         Clears only the ceremony's own scratch state. It CANNOT touch
+    ///         `recycleReleasedRemitStrandedCumulative`, and it refuses once
+    ///         the ceremony has completed — so this is a restart lever, never
+    ///         a way to re-run a finished seed or to edit the published
+    ///         figure.
+    function resetReleasedRemitStrandedSeed()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.recycleStrandedSeedApplied) {
+            revert ReleasedRemitStrandedAlreadySeeded(
+                s.recycleReleasedRemitStrandedCumulative
+            );
+        }
+        if (s.recycleStrandedSeedTarget == 0) revert SeedNotStarted();
+        delete s.recycleStrandedSeedTarget;
+        delete s.recycleStrandedSeedCursor;
+        delete s.recycleStrandedSeedAccum;
+        delete s.recycleStrandedSeedCounted;
+        delete s.recycleStrandedSeedBaseline;
+        delete s.recycleStrandedSeedBaselineCount;
+        emit ReleasedRemitStrandedSeedReset();
+    }
     /// @notice The seed ceremony has already run. Keyed on a dedicated
     ///         applied-flag, NOT on the counter being non-zero: a release
     ///         landing after the upgrade but before the ceremony would
@@ -1358,42 +1439,15 @@ contract RewardRemittanceFacet is
     ///         wrong. It is a one-time admin call, so the bounded loop is the
     ///         right trade against an operator-error class.
     ///
-    ///         One-shot: refuses once the counter is non-zero, so a repeat
-    ///         (or a run after an organic release already recorded some) can
-    ///         never double-count.
-    /// @notice #1448 r8 — abandon an in-flight seed ceremony so it can be
-    ///         restarted from scratch.
-    /// @dev    Required because the race guard is otherwise a BRICK: once a
-    ///         remittance is released mid-ceremony the live counter
-    ///         permanently differs from the pinned baseline, so every
-    ///         subsequent range call reverts and nothing can ever publish —
-    ///         the exact liveness failure the resumable design was added to
-    ///         remove, reintroduced by the guard that protects it.
-    ///
-    ///         Clears only the ceremony's own scratch state. It CANNOT touch
-    ///         `recycleReleasedRemitStrandedCumulative`, and it refuses once
-    ///         the ceremony has completed — so this is a restart lever, never
-    ///         a way to re-run a finished seed or to edit the published
-    ///         figure.
-    function resetReleasedRemitStrandedSeed()
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-        onlyCanonical
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.recycleStrandedSeedApplied) {
-            revert ReleasedRemitStrandedAlreadySeeded(
-                s.recycleReleasedRemitStrandedCumulative
-            );
-        }
-        if (s.recycleStrandedSeedTarget == 0) revert SeedNotStarted();
-        delete s.recycleStrandedSeedTarget;
-        delete s.recycleStrandedSeedCursor;
-        delete s.recycleStrandedSeedAccum;
-        delete s.recycleStrandedSeedCounted;
-        delete s.recycleStrandedSeedBaseline;
-        emit ReleasedRemitStrandedSeedReset();
-    }
+    ///         One-shot keyed on a dedicated APPLIED FLAG, deliberately not
+    ///         on the counter being non-zero (#1448 r5, restated here because
+    ///         the stale wording this replaces is where a wrong operator rule
+    ///         came from). A release landing after the upgrade but before the
+    ///         ceremony makes the counter non-zero while a historical amount
+    ///         is still unrecovered behind it — a value-keyed guard would
+    ///         refuse exactly the run that is needed. Re-running cannot
+    ///         double-count regardless: the scan covers every id in
+    ///         `1..target` and ASSIGNS the total rather than adding to it.
 
     /// @param  upTo Highest reservation id to scan in THIS call. Must be
     ///              greater than the current cursor and at most the pinned
@@ -1417,11 +1471,23 @@ contract RewardRemittanceFacet is
             if (target == 0) revert SeedNothingToScan();
             s.recycleStrandedSeedTarget = target;
             s.recycleStrandedSeedBaseline = current;
-        } else if (current != s.recycleStrandedSeedBaseline) {
+            s.recycleStrandedSeedBaselineCount = s.remitReleasedCount;
+        } else if (
+            current != s.recycleStrandedSeedBaseline ||
+            s.remitReleasedCount != s.recycleStrandedSeedBaselineCount
+        ) {
             // A release landed mid-ceremony. It recorded organically, and it
             // may sit in an already-scanned range, so the scan and the live
             // counter now disagree about it. Detect and refuse rather than
             // guess: the operator resets and re-runs.
+            //
+            // #1448 r10 — the COUNT is checked as well as the value, because
+            // the value alone is blind to exactly the release the scan is
+            // most likely to miss: one whose recycled share is zero moves the
+            // status to Released and leaves the stranded cumulative untouched,
+            // so a value-only guard passes while the emitted found-count is
+            // already wrong. The value check stays because it is the cheaper
+            // signal and states the ledger property directly.
             revert SeedRaceDetected(s.recycleStrandedSeedBaseline, current);
         }
 

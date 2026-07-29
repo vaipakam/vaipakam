@@ -5864,6 +5864,21 @@ library LibVaipakam {
         //   the latter as the released count would inflate what operational
         //   and audit consumers read (#1448 r8).
         uint256 recycleStrandedSeedCounted;
+        // `remitReleasedCount` — #1448 r10. A monotonic count of remittance
+        //   RELEASES, incremented on every release regardless of how much
+        //   recycled backing it stranded. The seed ceremony's race guard used
+        //   to pin only the stranded VALUE, which is blind to a release whose
+        //   recycled share is zero (a fresh-only remit, or one whose share
+        //   clamped to zero): the status flips to Released, the value counter
+        //   does not move, and the guard sees nothing. A release like that,
+        //   landing in an ALREADY-SCANNED range, is missed by the scan too, so
+        //   the completion event under-reports how many releases it found.
+        //   Counting every release makes the guard complete on that axis:
+        //   nothing can flip a status without moving this.
+        uint256 remitReleasedCount;
+        // `recycleStrandedSeedBaselineCount` — the above, pinned when the
+        //   ceremony starts, so the guard compares like for like.
+        uint256 recycleStrandedSeedBaselineCount;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

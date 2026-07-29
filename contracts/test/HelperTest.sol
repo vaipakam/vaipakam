@@ -2006,7 +2006,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2035,6 +2035,10 @@ contract HelperTest {
         // #1448 r8 — restart lever after a detected seed race.
         selectors[27] =
             RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
+        // #1448 r10 — the ceremony's own state, so "has it already run?" has
+        // an answer that is not the published figure.
+        selectors[28] =
+            RewardRemittanceFacet.getReleasedRemitStrandedSeedState.selector;
         selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
         selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;

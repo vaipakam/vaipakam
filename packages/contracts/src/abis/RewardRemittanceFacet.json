@@ -84,6 +84,44 @@
   },
   {
     "type": "function",
+    "name": "getReleasedRemitStrandedSeedState",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "applied",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "counted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRemitAckedTotal",
     "inputs": [
       {
