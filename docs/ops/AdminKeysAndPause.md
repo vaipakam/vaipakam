@@ -188,12 +188,18 @@ off-chain notification rails, never on-chain protocol authority.
 | `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `frontend/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
 | `RPC_*` (one per chain) | Dedicated RPC URLs — Alchemy / QuickNode / Infura. | `wrangler secret put RPC_BASE` etc. | Quota theft (attacker exhausts our RPC budget). Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
 
-### `ops/lz-watcher` (internal-only — LEGACY LayerZero security alerts; deferred for decommission post-T-068)
+### `ops/lz-watcher` — REMOVED 2026-07-28 (#1440)
 
-This Worker is internal ops only. Its alerts go to a private
-Telegram channel. No public surface, no autonomous keeper, no
-user-facing notifications. See `IncidentRunbook.md` §5 for the
-per-alert response SOPs.
+> The Worker was **deleted** and its source tree removed; the secrets
+> below no longer exist anywhere and nothing rotates them. Retained only
+> so an operator who finds a stale reference elsewhere can confirm the
+> disposition. `IncidentRunbook.md` §5 is likewise retired — do not
+> follow it. The `vaipakam-lz-alerts-db` database deletion is the one
+> remaining operator step, gated on a clean nightly backup.
+>
+> The live ops-internal watcher is now `ops/mesh-watcher` (VPFI recycling
+> mesh invariants), which has its own D1 and uses the same
+> `TG_OPS_BOT_TOKEN` ops bot.
 
 > **T-068 status:** The cross-chain layer migrated from LayerZero to
 > Chainlink CCIP in PR #46 (2026-05-18). The three checks this

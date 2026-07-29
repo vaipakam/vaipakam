@@ -582,10 +582,28 @@ No subscriber action required — the bot's @-handle stays
 
 ---
 
-## 5. LayerZero security alerts (lz-watcher)
+## 5. LayerZero security alerts (lz-watcher) — RETIRED (#1440)
+
+> **DO NOT FOLLOW THIS SECTION DURING AN INCIDENT.** The
+> `vaipakam-lz-watcher` Worker was deleted on 2026-07-28 and its source
+> tree removed; it emits no alerts, so nothing below can fire. The
+> LayerZero transport it watched was retired by the T-068 CCIP migration
+> and the contracts these SOPs tell you to pause are decommissioned —
+> following them would send a responder down an obsolete path while the
+> real incident continues.
+>
+> **Cross-chain ops alerting for CCIP does not exist yet** — that gap is
+> tracked on #250 Phase 1 (Tenderly presets). For a suspected cross-chain
+> problem today, use the pause levers in `AdminKeysAndPause.md` directly:
+> every cross-chain contract carries `GuardianPausable`.
+>
+> Retained below as historical record of what was monitored and why.
+
+<details>
+<summary>Historical SOPs (retired — reference only)</summary>
 
 The `ops/lz-watcher` Cloudflare Worker (separate from
-`ops/hf-watcher` — see DeploymentRunbook.md §9 for setup) fires
+`ops/hf-watcher`) fired
 three alert kinds into the internal ops Telegram channel. Each
 has its own SOP. All three are **detection-only** — there is no
 automated response wired up. The watcher pages humans; humans
@@ -800,6 +818,8 @@ pause sequence for the affected chain only.
 Internal only unless §5.2 has also fired. The threshold is set
 low enough that we expect periodic benign hits — do not
 publicly comment on each one.
+
+</details>
 
 ---
 

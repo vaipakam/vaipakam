@@ -146,6 +146,23 @@ then deploy.
       Check that Worker's `wrangler.jsonc` for the current full list —
       it is the authoritative inventory, not this snippet.
 
+   e. `apps/agent` ALSO carries per-Worker secrets that are not in the
+      Secrets Store, and therefore in no binding list —
+      `TG_OPS_BOT_TOKEN` and `TG_OPS_CHAT_ID` (`apps/agent/README.md`).
+      Not deploy-validated either, and while unset the agent looks
+      healthy: `notifyOpsNewTicket()` silently skips every instant
+      support-ticket alert and tickets land in D1 unannounced.
+
+      ```bash
+      ( cd apps/agent
+        wrangler secret put TG_OPS_BOT_TOKEN
+        wrangler secret put TG_OPS_CHAT_ID )
+      ```
+
+      The general rule: a Worker's `secrets_store_secrets` array is the
+      authoritative list of its STORE bindings, NOT of its secrets. Check
+      each Worker's README for plain `wrangler secret put` values too.
+
 7. Apply migrations:
 
    ```bash
@@ -154,6 +171,20 @@ then deploy.
 
 8. NOW deploy the Workers — the bindings resolve cleanly because the
    D1 + R2 + updated configs all exist first.
+
+   > **ORDER MATTERS for the frontend, and it is not obvious.** Vite
+   > embeds `VITE_INDEXER_ORIGIN` and `VITE_AGENT_ORIGIN` at BUILD time,
+   > and `apps/defi/.env.production` still carries the OLD account's
+   > hosts. So a `defi` bundle built here calls hosts that no longer
+   > answer, and editing the env afterwards changes nothing until it is
+   > rebuilt. `apps/agent` additionally needs an operator-created
+   > custom-domain binding — its Wrangler config declares no route.
+   >
+   > Deploy the WORKERS here, then choose the new origins and create the
+   > agent's custom domain, then update `apps/defi/.env.production` and
+   > **rebuild and redeploy `defi` and `www`** before the smoke test.
+   > The smoke-test step assumes the frontend already points at the
+   > restored Workers; it does not do the rebuild for you.
 
    The `apps/*` Workers are in the pnpm workspace, so the root
    `pnpm install` from step 2 already populated their node_modules.

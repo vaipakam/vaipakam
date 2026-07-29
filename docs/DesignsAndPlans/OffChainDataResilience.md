@@ -212,9 +212,14 @@ read-only for healthcheck). The healthcheck:
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
-Workers free plan caps an account at 5 cron triggers — apps/keeper,
-apps/agent, apps/indexer, ops/mesh-watcher already occupy four, so
-this Worker is restricted to one. Folding the healthcheck into the
+Workers free plan caps an account at 5 cron triggers. TODAY four are
+occupied — apps/keeper, apps/agent, apps/indexer and this Worker
+itself — leaving one spare; `ops/mesh-watcher` takes that fifth on
+its FIRST DEPLOY, and it is code-complete but undeployed (§4.5). So
+the cap BINDS from that deploy onward rather than today, and this
+Worker is designed for a single cron on that basis rather than
+because the account is already full. (`ops/lz-watcher` held a slot
+until #1440 removed it.) Folding the healthcheck into the
 daily cron via a `getUTCDay() === 1` guard preserves the weekly
 cadence at the cost of running the alert at 03:17 UTC instead of
 09:00 UTC. Acceptable trade-off — ops alerts aren't real-time
