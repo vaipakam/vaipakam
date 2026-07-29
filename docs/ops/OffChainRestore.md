@@ -24,6 +24,15 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   of keys from the write-only key the Worker uses. The read keys
   live in the operator's offline secret store too. NEVER put read
   keys in any Cloudflare Worker — that re-introduces the SPOF.
+- **Offline copies of every Worker secret.** The B2 archive backs up D1
+  rows and R2 objects ONLY. Nothing in it restores the
+  `vaipakam-credentials` Secrets Store or the per-Worker secrets — the
+  per-chain RPC URLs (which carry API keys), `KEEPER_PRIVATE_KEY`,
+  `PUSH_CHANNEL_PK`, `TG_BOT_TOKEN`, `DIAG_WALLET_HMAC_KEY`, the
+  0x / 1inch / OpenSea keys, the Alchemy webhook signing keys, and the
+  archive Worker's own nine. An operator holding only the AES key and the
+  B2 read keys will get as far as the deploy step and stop. Treat this
+  bullet as the reason the list above is not exhaustive.
 - A workstation with `wrangler ≥ 4`, `node ≥ 22`, and `openssl`.
 - Network access to GitHub (for the monorepo) + B2 + the target
   chain RPCs.
@@ -83,13 +92,67 @@ then deploy.
    > procedure; adding a half-step here would leave an operator holding a
    > database id this runbook never produced.
 
-6. Apply migrations:
+6. Recreate the CREDENTIALS. The archive does not contain any of them,
+   and this must happen before the deploy: wrangler validates every
+   `secrets_store_secrets` binding at deploy time, so `apps/{indexer,
+   keeper,agent}` fail outright on a fresh account until the store exists
+   and is populated.
+
+   a. Create a replacement account-level Secrets Store and capture its id:
+
+      ```bash
+      wrangler secrets-store store create vaipakam-credentials --remote
+      ```
+
+   b. Substitute that new id for the OLD account's
+      `1e66429d0fa24aa38a27bc05b7bcf63e` in every `wrangler.jsonc` that
+      carries a `store_id` — `apps/indexer`, `apps/keeper`, `apps/agent`.
+      Same class of work as step 5; do both in one pass rather than
+      discovering this one after migrations.
+
+   c. Populate every secret the three configs bind, from your offline
+      copies. The binding lists in those files are the authoritative
+      inventory; as of this writing they are the per-chain `RPC_*` URLs
+      (mainnet + testnet), `KEEPER_PRIVATE_KEY`, `PUSH_CHANNEL_PK`,
+      `TG_BOT_TOKEN`, `DIAG_WALLET_HMAC_KEY`, `ZEROEX_API_KEY`,
+      `ONEINCH_API_KEY`, `OPENSEA_API_KEY` and the
+      `ALCHEMY_WEBHOOK_SIGNING_KEY_*` set:
+
+      ```bash
+      STORE=<the new store id>
+      printf '%s' "<value>" | wrangler secrets-store secret create "$STORE" \
+        --name RPC_BASE --scopes workers --remote
+      ```
+
+      `--scopes workers` is REQUIRED. Use this positional-store-id form —
+      it is the one verified against the live API
+      (`docs/DesignsAndPlans/SecretsStoreMigration.md` §9).
+
+   d. `ops/offchain-data-archive` does NOT use the Secrets Store; its nine
+      secrets are per-Worker `wrangler secret put`. Those are **not**
+      validated at deploy, so skipping them lets the Worker deploy green
+      and then fail at 03:17 UTC — silently, which is the exact failure
+      mode the nightly exists to prevent. Set them before step 8:
+
+      ```bash
+      ( cd ops/offchain-data-archive
+        for NAME in BACKUP_ENCRYPTION_KEY B2_WRITE_ACCESS_KEY_ID \
+                    B2_WRITE_SECRET_ACCESS_KEY TG_OPS_BOT_TOKEN \
+                    TG_OPS_CHAT_ID; do
+          wrangler secret put "$NAME"
+        done )
+      ```
+
+      Check that Worker's `wrangler.jsonc` for the current full list —
+      it is the authoritative inventory, not this snippet.
+
+7. Apply migrations:
 
    ```bash
    ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-archive --remote )
    ```
 
-7. NOW deploy the Workers — the bindings resolve cleanly because the
+8. NOW deploy the Workers — the bindings resolve cleanly because the
    D1 + R2 + updated configs all exist first.
 
    The `apps/*` Workers are in the pnpm workspace, so the root

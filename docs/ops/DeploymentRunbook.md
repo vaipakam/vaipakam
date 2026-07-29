@@ -2201,8 +2201,12 @@ Set the value once at the account level:
 ```bash
 # Account-level Secrets Store (store: vaipakam-credentials).
 # Both agent and indexer bindings resolve from this single value.
-wrangler secrets-store secret create OPENSEA_API_KEY \
-  --store-id 1e66429d0fa24aa38a27bc05b7bcf63e
+# Positional store id + --name + --scopes workers. `--scopes` is REQUIRED
+# (SecretsStoreMigration.md §9, verified against the live API 2026-05-17);
+# the earlier `--store-id` flag form here would have failed.
+printf '%s' "<value>" | wrangler secrets-store secret create \
+  1e66429d0fa24aa38a27bc05b7bcf63e \
+  --name OPENSEA_API_KEY --scopes workers --remote
 ```
 
 (Wrangler prompts for the value; redeploy each Worker afterwards

@@ -33,7 +33,7 @@ A Cloudflare account loss (compromised credentials, billing dispute,
 lockout) wipes all of the above. The **re-derivable** subset (chain-
 sourced) is recoverable but expensive — a fresh indexer + 6+ months of
 chain history is hours of wall-clock to replay. The **born off-chain**
-subset (legal docs, diagnostic stream, alert dispatch history) is
+subset (legal docs, diagnostic stream) is
 irrecoverable.
 
 A subtler risk: a partial-credential compromise (e.g. CF account access
@@ -59,7 +59,7 @@ footprint have **completely different recovery requirements**:
   every row deterministically. Backup, if any, is a **performance**
   optimization (faster restore) not a **correctness** requirement.
 - **Born off-chain** (diag_errors, legal-holds register + audit trail,
-  R2 legal-vault, lz-alerts dispatch history) MUST be cross-cloud
+  R2 legal-vault) MUST be cross-cloud
   replicated because no external source-of-truth exists.
 
 This bifurcation cuts the cross-replication surface roughly in half.
@@ -74,9 +74,9 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
 
 1. Exports the **born off-chain** D1 tables — `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
-   `notify_state`, `telegram_links`, `support_tickets` from `vaipakam-archive`, plus
-   `lz_alert_state`, `scan_cursor`, `oft_balance_history` from
-   `vaipakam-lz-alerts-db`.
+   `notify_state`, `telegram_links`, `support_tickets` from `vaipakam-archive`.
+   (Pre-#1440 this step also exported `vaipakam-lz-alerts-db`; see the
+   surface table in §1 for why it no longer does.)
 2. Exports the **re-derivable** D1 tables (`offers`, `loans`,
    `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`,
    `indexer_cursor`) — as a *performance* optimisation only;
@@ -213,7 +213,7 @@ read-only for healthcheck). The healthcheck:
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
 Workers free plan caps an account at 5 cron triggers — apps/keeper,
-apps/agent, apps/indexer, ops/lz-watcher already occupy four, so
+apps/agent, apps/indexer, ops/mesh-watcher already occupy four, so
 this Worker is restricted to one. Folding the healthcheck into the
 daily cron via a `getUTCDay() === 1` guard preserves the weekly
 cadence at the cost of running the alert at 03:17 UTC instead of
@@ -318,8 +318,11 @@ realistic threat.
 
 ### 4.5 Cold standby for other Workers
 
-For `apps/keeper`, `apps/agent`, `ops/lz-watcher`, `ops/hf-watcher`:
-**cold standby**, not active-active. Same Worker code deployed to a
+For `apps/keeper`, `apps/agent`, `ops/mesh-watcher`,
+`ops/offchain-data-archive`: **cold standby**, not active-active.
+(`ops/mesh-watcher` is code-complete but UNDEPLOYED today; the standby
+applies from its first deploy. `ops/lz-watcher` and `ops/hf-watcher` were
+removed — #1440 and the Stage 3 split respectively.) Same Worker code deployed to a
 second CF account (different billing + 2FA) **paused**, with a 1-page
 runbook for the operator to flip DNS / feature flag on primary
 failure. Pre-mainnet a 5-minute manual recovery is fine; the protocol
