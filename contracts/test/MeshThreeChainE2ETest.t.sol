@@ -16,6 +16,7 @@ import {
 } from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -127,7 +128,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](9);
+        cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -160,6 +161,15 @@ contract MeshThreeChainE2ETest is Test {
         cuts[8] = _cut(
             address(new TestMutatorFacet()),
             helper.getTestMutatorFacetSelectors()
+        );
+        // #1442 (Codex #1454 r1) — cut in for `getChainDayCommitments`. The
+        // force-finalize test claimed the day-4 remit-ineligibility SURVIVES
+        // the day-5 heal, but asserted only the numerator and the finalized
+        // bit — neither of which moves if a regression silently re-admits the
+        // chain. Pinning the post-heal flag needs to read it.
+        cuts[9] = _cut(
+            address(new RewardCommitmentFacet()),
+            helper.getRewardCommitmentFacetSelectors()
         );
     }
 
@@ -235,6 +245,14 @@ contract MeshThreeChainE2ETest is Test {
     }
 
     // ─── Cycle drivers ─────────────────────────────────────────────────────
+
+    function _commit(uint256 chainId)
+        private
+        view
+        returns (RewardCommitmentFacet)
+    {
+        return RewardCommitmentFacet(diamondOf[chainId]);
+    }
 
     function _agg() private view returns (RewardAggregatorFacet) {
         return RewardAggregatorFacet(baseD);
@@ -875,8 +893,24 @@ contract MeshThreeChainE2ETest is Test {
         assertGt(reportedAfterHeal, 0, "the later report healed the ledger");
         assertGt(availAfterHeal, 0, "and restored committable availability");
 
-        // THE POINT: day 4 is still closed without ARB. Healing availability
-        // is not a licence to re-admit a chain to a denominator it missed.
+        // THE POINT, read directly (Codex #1454 r1). The numerator and the
+        // finalized bit below do NOT move if a regression re-admits the chain
+        // during the heal, so asserting only those proves nothing about
+        // survival — the event expectation earlier proves the flag was SET,
+        // not that it is still set. This reads the post-heal state itself.
+        assertTrue(
+            _commit(BASE).getChainDayCommitments(4, uint32(ARB)).remitIneligible,
+            "day 4 is STILL remit-ineligible for ARB after the day-5 heal"
+        );
+        // OP, which reported on time, was never marked — so the flag is not
+        // simply set for everyone.
+        assertFalse(
+            _commit(BASE).getChainDayCommitments(4, uint32(OP)).remitIneligible,
+            "OP reported on time and stays eligible"
+        );
+
+        // Healing availability is not a licence to re-admit a chain to a
+        // denominator it missed.
         (uint256 arbLender4, uint256 arbBorrower4) =
             _agg().getChainReport(4, uint32(ARB));
         assertEq(arbLender4, 0, "ARB still absent from day 4's numerator");
