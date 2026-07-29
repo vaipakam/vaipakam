@@ -113,18 +113,37 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         // acceptor side reads as non-Full — the borrower can never have their
         // vault drained by a keeper they didn't sign for.
         //
-        // KNOWN LIMITATION (matched fills): `matchOffers` routes
-        // `acceptOfferInternal` with the BORROWER offer id, so `offer` here is
-        // the borrower offer and the counterparty lender's `creatorFull` (which
-        // lives on the SEPARATE lender offer, not read here) is silently ignored
-        // — a matched fill therefore resolves the lender side as non-Full rather
-        // than charging or downgrading it. This is SAFE (no wrong charge; the
-        // design treats matched-fill lender-Full as a "may", rev-15 §3) and dark;
-        // honoring lender Full on the match path (threading the lender offer's
-        // auth through `OfferMatchFacet`) is tracked as follow-up #1369. Borrower
-        // Full on a matched borrower offer IS honored via `offer.creatorFull`.
         bool acceptorFull = s.acceptAckActive && s.acceptAckAcceptorFull;
         bool isLenderOffer = offer.offerType == LibVaipakam.OfferType.Lender;
+
+        // #1369 — MATCHED fills. `matchOffers` routes `acceptOfferInternal`
+        // with the BORROWER offer id, so `offer` above is the borrower offer
+        // and the lender's own Full authorization lives on a SEPARATE lender
+        // offer this frame would never read. Left unresolved, the lender side
+        // falls through to the acceptor transient — which a match deliberately
+        // leaves inactive — and a lender who signed Full is resolved as
+        // non-Full: neither charged nor downgraded, silently.
+        //
+        // `OfferMatchFacet` therefore carries the lender offer's id across the
+        // hop, and the lender side reads its authorization from that offer:
+        // still a durable, party-signed artifact, never a copy. Gating on
+        // `matchOverride.active` is what makes a stale id inert — that flag
+        // has exactly one clearing site, at the end of the match.
+        //
+        // Guarded on `!isLenderOffer` as well, so the substitution can only
+        // ever REPLACE the acceptor-transient read. A match accepts the
+        // borrower offer today; were that ever to change, a matched lender
+        // offer keeps reading its own creator authorization, which is already
+        // the correct source for that shape.
+        LibVaipakam.Offer storage lenderAuthOffer = offer;
+        bool lenderAuthFromMatch;
+        if (s.matchOverride.active && !isLenderOffer) {
+            uint256 lenderAuthOfferId = s.matchLenderAuthOfferId;
+            if (lenderAuthOfferId != 0) {
+                lenderAuthOffer = s.offers[lenderAuthOfferId];
+                lenderAuthFromMatch = true;
+            }
+        }
 
         (uint256 cStar, bool numeraireOk) = LibFeeEntitlement.computeCStar(
             offer.lendingAsset,
@@ -141,7 +160,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         // at-viaIR-budget frame (#1353 PR-5c added the reward-cap stamp below).
         (LibVaipakam.FeeEntitlementMode bMode, uint256 bPaid) = _resolveParty(
             s,
-            offer,
+            /*authOffer=*/ offer,
             loanId,
             borrower,
             /*useAcceptorAuth=*/ isLenderOffer,
@@ -157,10 +176,10 @@ contract FeeEntitlementFacet is IVaipakamErrors {
         // the loan lien is on the borrower's collateral, not the lender's vault.
         (LibVaipakam.FeeEntitlementMode lMode, uint256 lPaid) = _resolveParty(
             s,
-            offer,
+            /*authOffer=*/ lenderAuthOffer,
             loanId,
             lender,
-            /*useAcceptorAuth=*/ !isLenderOffer,
+            /*useAcceptorAuth=*/ !isLenderOffer && !lenderAuthFromMatch,
             acceptorFull,
             /*isBorrowerSide=*/ false,
             principalLiquid,
@@ -188,7 +207,9 @@ contract FeeEntitlementFacet is IVaipakamErrors {
     /// @dev Resolve + charge ONE party's Full tariff in its own frame. Selects
     ///      the party's signed authorization by side — the ACCEPTOR's from the
     ///      transient `s.acceptAck*` injection when `useAcceptorAuth`, else the
-    ///      CREATOR's from the offer — then resolves hold-eligibility and calls
+    ///      CREATOR's from `authOffer`. `authOffer` is the offer that party
+    ///      SIGNED, which on a matched fill is not the offer being accepted
+    ///      (#1369) — then resolves hold-eligibility and calls
     ///      {LibFeeEntitlement.resolveAndCharge}. `acceptorFull` is the
     ///      already-gated (`acceptAckActive && …`) acceptor opt-in; the raw
     ///      transient `maxCStar` / `allowDowngrade` are safe to read unguarded
@@ -197,7 +218,7 @@ contract FeeEntitlementFacet is IVaipakamErrors {
     ///      per-side ternary temporaries.
     function _resolveParty(
         LibVaipakam.Storage storage s,
-        LibVaipakam.Offer storage offer,
+        LibVaipakam.Offer storage authOffer,
         uint256 loanId,
         address party,
         bool useAcceptorAuth,
@@ -212,13 +233,13 @@ contract FeeEntitlementFacet is IVaipakamErrors {
             LibFeeEntitlement.resolveAndCharge(
                 loanId,
                 party,
-                useAcceptorAuth ? acceptorFull : offer.creatorFull,
+                useAcceptorAuth ? acceptorFull : authOffer.creatorFull,
                 useAcceptorAuth
                     ? s.acceptAckAcceptorMaxCStar
-                    : offer.creatorMaxCStar,
+                    : authOffer.creatorMaxCStar,
                 useAcceptorAuth
                     ? s.acceptAckAcceptorAllowFullDowngrade
-                    : offer.creatorAllowFullDowngrade,
+                    : authOffer.creatorAllowFullDowngrade,
                 _holdEligible(s, party, principalLiquid, isBorrowerSide),
                 principalLiquid,
                 partyFreeVpfi,

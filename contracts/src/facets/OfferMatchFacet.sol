@@ -946,6 +946,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         mo.counterparty = s.offers[lenderOfferId].creator;
         mo.matcher = msg.sender;
         mo.active = true;
+        // #1369 — the lender's Full-tariff authorization lives on THEIR offer,
+        // which `acceptOfferInternal` never sees (it is handed the borrower
+        // offer). Carry the id so `FeeEntitlementFacet.chargeFullTariff` can
+        // resolve the lender side from the artifact that party signed, instead
+        // of falling through to the direct-accept transient and resolving a
+        // Full lender as non-Full. Read is gated on `mo.active`, cleared below.
+        s.matchLenderAuthOfferId = lenderOfferId;
 
         // T-407-C (#566) — decrement the lender's offer-principal lock
         // by this fill BEFORE `acceptOfferInternal` withdraws the same
@@ -1014,6 +1021,8 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // strategic flow) MUST fall through to the legacy field-read
         // path.
         delete s.matchOverride;
+        delete s.matchLenderAuthOfferId;
+
 
         // ── Borrower-side excess-collateral refund (Range Orders
         // Phase 1, symmetric with the lender-side dust-close below).
