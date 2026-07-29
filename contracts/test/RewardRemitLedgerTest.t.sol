@@ -1222,6 +1222,151 @@ contract RewardRemitLedgerTest is SetupTest {
         _assertDerivation("after consuming the relocated tokens");
     }
 
+    // ─── #1448 r3: the pre-upgrade seed ceremony ──────────────────────────
+
+    /// @dev The state a Diamond is IN immediately after an in-place upgrade
+    ///      that added the stranded counter: a real released reservation, but
+    ///      the counter still zero because the old `restoreReleasedRemit` had
+    ///      nothing to record it in. Both externally-checkable relations read
+    ///      as violated on state the supported release path produced.
+    function _preUpgradeReleasedState()
+        internal
+        returns (uint256 recycledSent)
+    {
+        (, recycledSent) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        // Rewind the counter to reproduce the pre-upgrade shape.
+        mutator.setReleasedRemitStrandedRaw(0);
+    }
+
+    function _seedIds() internal pure returns (uint256[] memory ids) {
+        ids = new uint256[](1);
+        ids[0] = 1;
+    }
+
+    /// @dev Without the seed, BOTH relations are violated by exactly the
+    ///      historical stranded amount — so the watcher would page CRITICAL
+    ///      twice, immediately on upgrade, on correct behaviour. This test
+    ///      pins that precondition so the seed cannot look useful for the
+    ///      wrong reason.
+    function test_Seed_PreUpgradeStateViolatesBothRelations() public {
+        uint256 sent = _preUpgradeReleasedState();
+        (
+            uint256 raw,
+            uint256 stranded,
+            uint256 relocated,
+            uint256 bucket,
+            ,
+            uint256 paidOut,
+            uint256 outstanding
+        ) = _composition();
+        assertEq(stranded, 0, "precondition: counter unwritten");
+        assertLt(bucket + stranded, outstanding, "coverage reads violated");
+        assertGt(
+            raw + relocated,
+            bucket + paidOut + stranded,
+            "composition reads violated"
+        );
+        assertEq(
+            raw + relocated - (bucket + paidOut + stranded),
+            sent,
+            "violated by EXACTLY the historical stranded amount"
+        );
+    }
+
+    /// @dev The ceremony DERIVES the amount from storage — the caller only
+    ///      says which reservations to count — and both relations reconcile.
+    function test_Seed_DerivesTheStrandedTotalAndReconciles() public {
+        uint256 sent = _preUpgradeReleasedState();
+        remit.seedReleasedRemitStranded(_seedIds());
+
+        (, uint256 stranded, , uint256 bucket, , uint256 paidOut, uint256 outstanding) =
+            _composition();
+        assertEq(stranded, sent, "derived the CLAMPED sent share");
+        assertGe(bucket + stranded, outstanding, "coverage reconciles");
+        _assertComposition("after the seed");
+        _assertDerivation("after the seed");
+    }
+
+    /// @dev It must sum the SENT share, never the pre-clamp commitment —
+    ///      the same distinction Codex #1448 r1 established. Summing
+    ///      `recycledFull` would leave permanent slack.
+    function test_Seed_SumsTheSentShareNotThePreClampTotal() public {
+        LibVaipakam.RemitReservation memory r;
+        {
+            (uint256 recycledFull, ) = _remitRecycledWithResidual();
+            vm.warp(block.timestamp + 7 days);
+            remit.releaseRemitReservation(1);
+            mutator.setReleasedRemitStrandedRaw(0);
+            r = remit.getRemitReservation(1);
+            assertGt(recycledFull, r.recycled, "fixture: residual exists");
+        }
+        remit.seedReleasedRemitStranded(_seedIds());
+        (, uint256 stranded, , , , , ) = _composition();
+        assertEq(stranded, r.recycled, "sent share");
+        assertLt(stranded, r.recycledFull, "NOT the pre-clamp total");
+    }
+
+    /// @dev One-shot. A second run — or a run after an organic release
+    ///      already recorded some — would double-count.
+    function test_Seed_RefusesWhenAlreadySeeded() public {
+        _preUpgradeReleasedState();
+        remit.seedReleasedRemitStranded(_seedIds());
+        (, uint256 stranded, , , , , ) = _composition();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
+                stranded
+            )
+        );
+        remit.seedReleasedRemitStranded(_seedIds());
+    }
+
+    /// @dev A repeated id inside ONE call is the other double-count route.
+    function test_Seed_RejectsNonIncreasingIds() public {
+        _preUpgradeReleasedState();
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = 1;
+        ids[1] = 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RemitIdsNotStrictlyIncreasing.selector,
+                1
+            )
+        );
+        remit.seedReleasedRemitStranded(ids);
+    }
+
+    /// @dev Only RELEASED (status 3) reservations may be counted — an acked
+    ///      or pending one stranded nothing.
+    function test_Seed_RejectsAReservationThatWasNotReleased() public {
+        _finalizeDay(1);
+        _remitDay1ToArb();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RemitReservationNotReleased.selector,
+                1
+            )
+        );
+        remit.seedReleasedRemitStranded(_seedIds());
+    }
+
+    /// @dev The post-condition is the load-bearing safety property: if the
+    ///      derived seed does NOT reconcile, the divergence was not produced
+    ///      by pre-upgrade releases and the ceremony must refuse rather than
+    ///      half-silence a real alert.
+    function test_Seed_RevertsWhenItWouldNotReconcile() public {
+        _preUpgradeReleasedState();
+        // An unexplained shortfall on top of the historical one: the seed
+        // cannot account for this, so it must not be applied at all.
+        mutator.setRecycleBucketRaw(0);
+        vm.expectRevert(
+            RewardRemittanceFacet.SeedDoesNotReconcile.selector
+        );
+        remit.seedReleasedRemitStranded(_seedIds());
+    }
+
     /// @dev Accept ETH refunds from the remit fee path.
     receive() external payable {}
 }

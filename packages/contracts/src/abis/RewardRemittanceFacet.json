@@ -573,6 +573,19 @@
   },
   {
     "type": "function",
+    "name": "seedReleasedRemitStranded",
+    "inputs": [
+      {
+        "name": "remitIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sendRemitAck",
     "inputs": [
       {
@@ -650,6 +663,25 @@
       },
       {
         "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeeded",
+    "inputs": [
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservations",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1757,6 +1789,17 @@
   },
   {
     "type": "error",
+    "name": "ReleasedRemitStrandedAlreadySeeded",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitAckChainMismatch",
     "inputs": [
       {
@@ -1826,6 +1869,17 @@
   },
   {
     "type": "error",
+    "name": "RemitIdsNotStrictlyIncreasing",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitReleaseTooEarly",
     "inputs": [
       {
@@ -1843,6 +1897,17 @@
   {
     "type": "error",
     "name": "RemitReservationNotPending",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationNotReleased",
     "inputs": [
       {
         "name": "remitId",
@@ -1992,6 +2057,11 @@
   {
     "type": "error",
     "name": "SanctionsOracleUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedDoesNotReconcile",
     "inputs": []
   },
   {

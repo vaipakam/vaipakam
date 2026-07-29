@@ -588,30 +588,19 @@ sits at the single canonical point (Base finalization):
    day's commitments while deliberately NOT re-crediting the bucket — the
    sent tokens are locked in the transport's custody, genuinely outside
    Diamond custody — so the bare form is false on the canonical chain after
-   a release. `releasedRemitFull` is the recorded Σ of what those releases
+   a release. `releasedRemitStranded` is the recorded Σ of what those releases
    stranded, i.e. backing that exists and is in transit. On every mirror it
-   is zero, so the bound is unchanged there.
+   is zero — but the role is a MUTABLE admin setting, so a demoted
+   Diamond keeps whatever it accrued. An external checker must admit the
+   term only while the chain still holds the role, and must require its
+   own configured canonical chain and the chain's own `isCanonicalRewardChain`
+   flag to AGREE — a disagreement is itself a reportable fault.
 
    The `fundable = bucket − outstanding` FUNDING GATE is deliberately NOT
    amended to match: a day whose backing was stranded stays unfundable
    until the recovery ceremony. Fault detection and funding eligibility are
    different questions and keep different answers.
 
-8. **Bucket composition (#1446)** — `recycleCreditedCumulative +
-   recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
-   releasedRemitStranded`, and `creditedCumulative` is reproducible from those
-   same slots as `max(raw, bucket + paidOut − relocated)`.
-
-   Both exist because invariant 6's per-chain `consumed ≤ reported`
-   compares the reported cumulative against the canonical chain's accepted
-   COPY of it, and both are produced by the same helper — a regression in
-   that helper inflates them together and the comparison stays green. These
-   two compare the published figures against where the tokens actually
-   went, which is independent of the accounting under test. The first
-   catches a counter advancing without a matching bucket credit (notably a
-   custody relocation also advancing absorption); the second catches the
-   relocation exclusion being dropped from the derived floor. Neither
-   subsumes the other.
 3. Bucket separation, commitment-aware (Codex r7 — recycled commitments
    must not be counted twice): `diamondVpfiBalance ≥ userLifCustody +
    unclaimedRewardBudget_fresh + recycleBucket`, where recycled reward
@@ -639,6 +628,22 @@ sits at the single canonical point (Base finalization):
    `scheduleFloor` is capturable by whoever has eligible activity regardless
    of recycling; that is a pre-existing property of the reward program that
    this design neither creates nor changes.
+
+8. **Bucket composition (#1446)** — `recycleCreditedCumulative +
+   recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
+   releasedRemitStranded`, and `creditedCumulative` is reproducible from those
+   same slots as `max(raw, bucket + paidOut − relocated)`.
+
+   Both exist because invariant 6's per-chain `consumed ≤ reported`
+   compares the reported cumulative against the canonical chain's accepted
+   COPY of it, and both are produced by the same helper — a regression in
+   that helper inflates them together and the comparison stays green. These
+   two compare the published figures against where the tokens actually
+   went, which is independent of the accounting under test. The first
+   catches a counter advancing without a matching bucket credit (notably a
+   custody relocation also advancing absorption); the second catches the
+   relocation exclusion being dropped from the derived floor. Neither
+   subsumes the other.
 
 ## 8. Phasing (re-cut)
 

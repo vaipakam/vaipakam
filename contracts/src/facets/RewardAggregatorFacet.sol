@@ -1091,7 +1091,8 @@ contract RewardAggregatorFacet is
     }
 
     /**
-     * @notice #1444 / #1446 — the three raw figures an EXTERNAL checker needs
+     * @notice #1444 / #1446 — the two raw counters plus the live role flag an
+     *         EXTERNAL checker needs
      *         to verify this chain's recycle-bucket accounting without
      *         trusting the accounting itself.
      * @dev    Every other recycled read exposes a value the library DERIVES.
@@ -1107,7 +1108,7 @@ contract RewardAggregatorFacet is
      *         and {getGovernorCommitState}:
      *
      *         1. COMPOSITION — `creditedRaw + custodyRelocated <= bucket +
-     *            paidOutRecycled + releasedRemitSent`. Every credit lands in
+     *            paidOutRecycled + releasedRemitStranded`. Every credit lands in
      *            the bucket exactly once; a counter that advanced without one
      *            breaks it. Inequality, not equality: `consume` floors the
      *            bucket for bounded cap-trim dust, which only widens the

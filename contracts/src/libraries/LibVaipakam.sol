@@ -5706,9 +5706,14 @@ library LibVaipakam {
         //   availability").
         mapping(uint32 => uint256) chainReleasedRecycledCommit;
         // ─── #1444 / #1446 — released-remit stranded cumulative ────────────
-        // APPEND-ONLY TAIL. CANONICAL-ONLY:
-        // {RewardRemittanceFacet.releaseRemitReservation} is `onlyCanonical`,
-        // so this stays 0 on every mirror.
+        // APPEND-ONLY TAIL. CANONICAL-WRITE-ONLY — which is NOT the same as
+        // "zero on every mirror" (Codex #1448 r1). Only
+        // {RewardRemittanceFacet.releaseRemitReservation} advances it and
+        // that is `onlyCanonical`, so a Diamond that has only ever been a
+        // mirror holds 0 — but the role is a MUTABLE admin setting, so a
+        // Diamond demoted after accruing this keeps whatever it accrued.
+        // A consumer must scope the allowance to the LIVE role and never
+        // assume the stored value is zero.
         //
         // Why it exists: {LibVpfiRecycle.restoreReleasedRemit} is the one
         // primitive that moves a recycled ledger figure WITHOUT a matching

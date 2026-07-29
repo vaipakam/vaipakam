@@ -264,6 +264,7 @@ export function expectedAvail(b: BaseChainBooks): bigint {
 export function checkHardInvariants(
   obs: MeshObservation,
   bucketToleranceWei: bigint,
+  compositionSlackToleranceWei: bigint = bucketToleranceWei,
 ): Finding[] {
   const out: Finding[] = [];
   /**
@@ -607,7 +608,7 @@ export function checkHardInvariants(
           `  bucket        = ${fmt(local.bucket)}\n` +
           `  outstanding   = ${fmt(local.outstandingRecycled)}\n` +
           `  shortfall     = ${fmt(local.outstandingRecycled - local.bucket)}\n\n` +
-          `The released-remit allowance could not be read on this chain, but it does not apply to a mirror in any case: only the canonical chain can release a remittance.`,
+          `The released-remit allowance is admitted only for the mesh's configured canonical chain, and this chain is not it — so the strict relation applies regardless of what the unread counter holds.`,
       }));
       continue;
     }
@@ -645,8 +646,11 @@ export function checkHardInvariants(
 
   // ── Bucket composition ─────────────────────────────────────────────
   //
-  // #1446 — the check that catches a regression in the B2-d5 custody
-  // EXCLUSION itself, which nothing else can.
+  // #1446 — the check that catches a B2-d5 custody EXCLUSION regression in
+  // EITHER direction. `reported-derivation` covers the sibling failure (the
+  // subtraction dropped from the floor branch); this one covers a counter
+  // moving when it should not, and — via the reverse bound below — a counter
+  // NOT moving when it should.
   //
   // Every recycled credit lands in the bucket exactly once, so the two
   // lifetime cumulatives can never exceed where the tokens actually went:
@@ -681,6 +685,67 @@ export function checkHardInvariants(
       local.bucket +
       local.paidOutRecycled +
       local.composition.releasedRemitStranded;
+    // ── REVERSE bound (#1448 r3) ──────────────────────────────────
+    //
+    // The forward bound alone is defeated by the very regression this
+    // check exists for. If a custody arrival credits `recycleBucket` but
+    // omits `recycleCustodyRelocatedCumulative`, `claimed` stays flat
+    // while `destinations` RISES — so the forward bound gets LOOSER, and
+    // `reported-derivation` agrees with the chain because it trusts the
+    // same missing slot. Verified: bucket 200→223, creditedRaw 1000,
+    // paidOut 800, relocated 0 makes the contract and this Worker both
+    // derive a false report of 1023 while the forward bound passes.
+    //
+    // So the relation is checked BOTH ways: tokens in the bucket that no
+    // counter claims are as much a fault as counters claiming tokens that
+    // are not there.
+    //
+    // Its own tolerance, never the coverage knob: `consume`'s bucket floor
+    // widens `destinations`, which is exactly this direction, and raising
+    // the coverage tolerance for a noisy chain must not silently widen a
+    // custody-exclusion blind spot (#1448 r2).
+    //
+    // ADVISORY rather than CRITICAL when `creditedRaw` is 0: that is an
+    // un-seeded Diamond refreshed over live pre-#1222 state, where the
+    // whole historical bucket legitimately has no counter behind it. Not
+    // silent — the operator is told the relation is unverifiable until the
+    // first credit seeds the cumulative.
+    if (destinations > claimed + compositionSlackToleranceWei) {
+      const unseeded = local.composition.creditedRaw === 0n;
+      out.push(makeFinding({
+        code: 'bucket-composition',
+        variant: unseeded ? 'unverifiable-unseeded' : 'under-credited',
+        identity: [
+          local.composition.creditedRaw,
+          local.custodyRelocated,
+          local.bucket,
+          local.paidOutRecycled,
+          local.composition.releasedRemitStranded,
+        ],
+        severity: unseeded ? 'advisory' : 'critical',
+        chainId: local.chainId,
+        title: unseeded
+          ? 'Recycled composition cannot be verified — the cumulative is unseeded'
+          : 'Bucket holds more than the recycled cumulatives account for',
+        detail:
+          (unseeded
+            ? `creditedRaw is 0, so this chain's bucket has no counter behind it yet — a Diamond refreshed over live pre-#1222 state. The composition relation is UNVERIFIABLE until the first credit seeds the cumulative; reported here so the gap is visible rather than silently passing.\n`
+            : `bucket + paidOut + stranded > creditedRaw + relocated — VPFI is in the bucket that no cumulative claims\n`) +
+          `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
+          `  relocated     = ${fmt(local.custodyRelocated)}\n` +
+          `  claimed       = ${fmt(claimed)}\n` +
+          `  bucket        = ${fmt(local.bucket)}\n` +
+          `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
+          `  stranded      = ${fmt(local.composition.releasedRemitStranded)}\n` +
+          `  destinations  = ${fmt(destinations)}\n` +
+          `  unaccounted   = ${fmt(destinations - claimed)}\n` +
+          `  tolerance     = ${fmt(compositionSlackToleranceWei)}\n\n` +
+          (unseeded
+            ? `EXPECTED on a freshly-upgraded chain and it self-heals: the first credit stamps the cumulative through the pre-upgrade floor.`
+            : `LIKELIEST CAUSE — an arriving remit credited the bucket WITHOUT advancing the relocated-custody cumulative. That is the mirror image of the over-credit case: it leaves this chain reporting Base's own top-up as its own absorption, and no other check sees it because they all read the same missing slot.\n\nNOTE this does NOT cover an arrival routed through the ordinary credit path instead of the custody-relocation one — that advances both sides and needs a Base-side acked-remittance cross-check.`),
+      }));
+    }
+
     if (claimed <= destinations) continue;
 
     out.push(makeFinding({

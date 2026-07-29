@@ -1290,6 +1290,101 @@ contract RewardRemittanceFacet is
         return LibVaipakam.storageSlot().remitReservationNonce;
     }
 
+    /// @notice The seed ceremony has already run (or a release recorded the
+    ///         counter organically) — re-running would double-count.
+    error ReleasedRemitStrandedAlreadySeeded(uint256 current);
+    /// @notice `remitIds` must be strictly increasing, so the same released
+    ///         reservation cannot be counted twice in one call.
+    error RemitIdsNotStrictlyIncreasing(uint256 index);
+    /// @notice A supplied id is not a RELEASED (status 3) reservation.
+    error RemitReservationNotReleased(uint256 remitId);
+    /// @notice The derived seed leaves a recycled relation still violated,
+    ///         so the state was not produced by pre-upgrade releases alone.
+    error SeedDoesNotReconcile();
+
+    /// @notice #1448 r3 — one-time seed of
+    ///         `recycleReleasedRemitStrandedCumulative` on a Diamond that
+    ///         released remittances BEFORE that counter existed.
+    /// @dev    Why this is needed at all: the old `restoreReleasedRemit`
+    ///         already restored `outstandingCommitRecycled` and decremented
+    ///         `paidOutRecycled`, but nothing recorded how much it stranded.
+    ///         After an in-place upgrade the new counter starts at zero, so
+    ///         BOTH externally-checkable recycled relations — bucket coverage
+    ///         and bucket composition — read as violated by exactly that
+    ///         historical amount, on state the supported release path
+    ///         produced. Without this the watcher pages CRITICAL twice, on
+    ///         correct behaviour, from the first tick after the upgrade.
+    ///
+    ///         DERIVED, never operator-supplied. The caller passes only WHICH
+    ///         reservations to count; the amount comes from storage. An
+    ///         operator-supplied figure that ran high would manufacture
+    ///         permanent slack in both relations — precisely the defect
+    ///         Codex #1448 r1 removed when it rejected `recycledFull`.
+    ///
+    ///         Sums `r.recycled` (the CLAMPED share actually sent), never
+    ///         `r.recycledFull`: the residual was retired by
+    ///         {LibVpfiRecycle.releaseCommitment} without moving tokens, so
+    ///         it never left the bucket. The derivation is EXACT rather than
+    ///         an upper bound because `consume(st.recycled)` added the whole
+    ///         of `r.recycled` to `paidOutRecycled` in the same transaction
+    ///         that stamped it, so the old reversal's zero-floor never bound.
+    ///
+    ///         Ids are passed explicitly rather than scanned from
+    ///         `getRemitReservationNonce()` so the call cannot become
+    ///         unbounded on a Diamond with a long reservation history; they
+    ///         must be strictly increasing so one cannot be counted twice.
+    ///
+    ///         One-shot: refuses once the counter is non-zero, so a repeat
+    ///         (or a run after an organic release already recorded some) can
+    ///         never double-count.
+    /// @param  remitIds Strictly-increasing ids of RELEASED (status 3)
+    ///                  reservations whose stranded VPFI predates the counter.
+    function seedReleasedRemitStranded(
+        uint256[] calldata remitIds
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 current = s.recycleReleasedRemitStrandedCumulative;
+        if (current != 0) revert ReleasedRemitStrandedAlreadySeeded(current);
+
+        uint256 total;
+        uint256 prev;
+        uint256 n = remitIds.length;
+        for (uint256 i; i < n; ) {
+            uint256 id = remitIds[i];
+            if (i != 0 && id <= prev) revert RemitIdsNotStrictlyIncreasing(i);
+            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
+            if (r.status != 3) revert RemitReservationNotReleased(id);
+            total += r.recycled;
+            prev = id;
+            unchecked {
+                ++i;
+            }
+        }
+        s.recycleReleasedRemitStrandedCumulative = total;
+
+        // POST-CONDITION, not a comment. If the seed does not actually
+        // reconcile both relations, the divergence was NOT produced by
+        // pre-upgrade releases and this ceremony must not half-silence a
+        // real alert. Revert loudly instead.
+        uint256 bucket = s.recycleBucket;
+        if (bucket + total < s.outstandingCommitRecycled) {
+            revert SeedDoesNotReconcile();
+        }
+        uint256 claimed = LibVpfiRecycle.creditedCumulative(s)
+            + s.recycleCustodyRelocatedCumulative;
+        if (claimed > bucket + s.paidOutRecycled + total) {
+            revert SeedDoesNotReconcile();
+        }
+        emit ReleasedRemitStrandedSeeded(total, n);
+    }
+
+    /// @notice #1448 r3 — the one-time stranded-cumulative seed ran.
+    /// @param  total       Derived Σ of `recycled` over the supplied
+    ///                     released reservations.
+    /// @param  reservations How many ids were counted.
+    /// @custom:event-category state-change/treasury-mutation
+    event ReleasedRemitStrandedSeeded(uint256 total, uint256 reservations);
+
     /// @notice Σ VPFI in PENDING (in-flight, un-acked) reservations to
     ///         `chainId`.
     function getRemitPendingTotal(

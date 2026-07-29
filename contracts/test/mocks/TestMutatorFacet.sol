@@ -725,6 +725,15 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycleCreditedCumulative = amount;
     }
 
+    /// @notice #1448 r3 test-only — force the released-remit stranded
+    ///         cumulative. Used to reproduce the PRE-UPGRADE state: a
+    ///         Diamond that released remittances before the counter
+    ///         existed, so the released state is real but the counter is 0.
+    function setReleasedRemitStrandedRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().recycleReleasedRemitStrandedCumulative =
+            amount;
+    }
+
     /// @notice #1222 M3 B2-d5 test-only — drive the REAL consume path
     ///         (bucket → `paidOutRecycled`), which is what a mirror's claims
     ///         do. Deliberately the genuine {LibVpfiRecycle.consume} rather

@@ -216,6 +216,21 @@ library LibVpfiRecycle {
         if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active) dayId = 0;
+        // #1448 r3 — SEED the stored cumulative from the derived floor
+        // before relocating, on an in-place-upgraded Diamond whose slot is
+        // still unwritten. Same snapshot {restoreReleasedRemit} performs and
+        // for a related reason: while the slot is 0, no counter accounts for
+        // the historical bucket, so an external checker cannot verify the
+        // bucket's composition at all. Seeding at the first relocation makes
+        // that verifiable from then on, instead of leaving a permanent
+        // unverifiable window on exactly the class this exclusion protects.
+        //
+        // Read BEFORE the bucket write below, or this relocation would be
+        // folded into the seed as if it were absorption.
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
         s.recycleBucket = needed;
         s.recycleCustodyRelocatedCumulative += amount;
         emit VpfiCustodyRelocated(

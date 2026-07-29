@@ -43,9 +43,9 @@ operation. These page.
 | `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
 | `consumed-cap` | `consumed − released ≤ reported`, per chain (governor §7 #6) | Base can never instruct a chain to fund more than it reported absorbing, net of what it released un-spent — `_mirrorAvailable` bounds every instruction, and `MeshLedger.invariant.t.sol` asserts it on-chain. Checked **separately** rather than inferred from the availability formula, because that formula saturates: if this bound broke, `expectedAvail` would floor to zero, the on-chain `avail` would agree, and every other check would stay green while over-instruction went completely invisible. |
 | `bucket-coverage` | `bucket + releasedRemitStranded ≥ outstanding`, per chain (the stranded term applies only when BOTH the mesh config and the chain itself agree it is canonical) | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
-| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitStranded`, **exact** | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. This is the only check that can see the **B2-d5 custody exclusion itself** regressing — see below. |
-| `reported-derivation` | `reported == max(creditedRaw, bucket + paidOut − relocated)` |
-| `role-consistency` | The mesh config and the chain's own `isCanonicalRewardChain` agree | The two are independently mutable and nothing on-chain reconciles them. The flag decides whether `closeDay` writes locally or reports to Base, and it authorises the canonical-only remittance surface — so a mirror carrying it is a split-brain mesh that can close its own days and release remittances while Base still expects reports from it. | The published lifetime-absorption figure is re-derived here from the raw slots at the same block. Catches the exclusion being dropped from the pre-upgrade floor branch, which binds on a Diamond refreshed over live pre-#1222 state. |
+| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitStranded` (exact) **and** the reverse, `bucket + paidOut + stranded ≤ claimed + slack` | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. This is the check that sees a **B2-d5 custody exclusion** regression in either direction — see below. |
+| `reported-derivation` | `reported == max(creditedRaw, bucket + paidOut − relocated)` | The published lifetime-absorption figure is re-derived here from the raw slots at the same block. Catches the exclusion being dropped from the pre-upgrade floor branch, which binds on a Diamond refreshed over live pre-#1222 state. |
+| `role-consistency` | The mesh config and the chain's own `isCanonicalRewardChain` agree | The two are independently mutable and nothing on-chain reconciles them. The flag decides whether `closeDay` writes locally or reports to Base, and it authorises the canonical-only remittance surface — so a mirror carrying it is a split-brain mesh that can close its own days and release remittances while Base still expects reports from it. |
 
 **On bucket coverage applying to every chain (#1444).** This originally
 shipped CRITICAL on mirrors and advisory on Base, because the canonical
@@ -99,7 +99,7 @@ further funding on a source wait, open, until the recovery ceremony. "Is
 this a fault?" and "may this fund another day?" are different questions
 and keep different answers.
 
-**On composition being the only check for the custody exclusion (#1446).**
+**On composition and the custody exclusion (#1446).**
 `reportedCumulative` is produced by the same helper that builds a mirror's
 outbound day-close report. If that helper stopped netting relocated custody
 out, this chain's figure and Base's accepted copy of it would inflate
@@ -222,7 +222,7 @@ silently drops Base's own activity out of every day's totals.
 
 ## How this is built, and why
 
-Seven review rounds produced ~48 findings. Roughly four were in the ledger
+Seven review rounds during B4-c produced ~48 findings (the programme total across B4-c and its #1448 follow-up is higher — see the completion plan). Roughly four were in the ledger
 checks; the rest were in operational scaffolding, and they clustered into
 six root causes that kept recurring in whichever call site had not been
 looked at yet. Rather than keep patching paths, each cause is closed at
@@ -375,7 +375,7 @@ silence, the worst failure mode a watcher has. Tracked as **#1445**.
 *(Resolved since the initial version: the custody-exclusion gap that was
 tracked as **#1446** is now covered by `bucket-composition` +
 `reported-derivation` above, and the canonical bucket-coverage gap tracked
-as **#1444** is closed by the released-remit cumulatives. Neither needed
+as **#1444** is closed by the released-remit stranded cumulative. Neither needed
 the event-stream scanning originally assumed — both are computable from
 the raw stored slots at a pinned block.)*
 

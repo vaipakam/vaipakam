@@ -87,7 +87,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](144);
+        selectors = new bytes4[](145);
+        // #1448 r3 — reproduce the pre-upgrade state for the seed ceremony.
+        selectors[144] =
+            TestMutatorFacet.setReleasedRemitStrandedRaw.selector;
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
         selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
         // #1222 M3 B3 — real forfeit/expiry release path for the
@@ -2000,7 +2003,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](27);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2023,6 +2026,9 @@ contract HelperTest {
         selectors[18] = RewardRemittanceFacet.getRemitReservation.selector;
         selectors[19] = RewardRemittanceFacet.getRemitIdByMessageId.selector;
         selectors[20] = RewardRemittanceFacet.getRemitReservationNonce.selector;
+        // #1448 r3 — one-time stranded-cumulative seed.
+        selectors[26] =
+            RewardRemittanceFacet.seedReleasedRemitStranded.selector;
         selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
         selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;

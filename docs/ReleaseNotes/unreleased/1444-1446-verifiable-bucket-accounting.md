@@ -56,11 +56,39 @@ were cases of the correction itself being subtly wrong. The amount a
 release strands is the share that actually left the balance, not the whole
 commitment it restores — a partly-sent remittance retires its remainder
 without moving anything, so that remainder is still sitting in the
-balance and counting it would have credited it twice. And the allowance
-only applies while a chain still holds the canonical role: only the
-canonical chain can release, but the role is an administrative setting
-that can be changed, so a chain could otherwise carry an allowance into a
-role where it must be checked strictly.
+balance and counting it would have credited it twice. And the allowance is admitted
+only when two independently-changeable statements of the canonical role
+agree — the platform's own record of which chain is canonical, and that
+chain's own claim to be. Only the canonical chain can release, but the
+role is an administrative setting, so requiring both closes two gaps at
+once: a chain demoted after accruing an allowance keeping it, and a
+mis-flagged chain granting itself one. A disagreement between those two
+statements is now itself a paging alert, because a chain wrongly holding
+that flag can close its own reward days and release remittances while the
+platform still expects reports from it.
+
+Reviewed further, the checks also gained a mirror image. Verifying only
+that the counters do not claim more than the balance received left the
+opposite corruption invisible — a transfer arriving and crediting the
+balance while the counter that marks it as relocated custody is skipped
+makes the original check *looser*, not tighter, and the re-derivation
+agrees because it reads the same missing figure. The relation is now
+checked in both directions: value in the balance that no counter accounts
+for is as much a fault as counters claiming value that is not there. On a
+platform upgraded in place, where the historical balance legitimately has
+no counter behind it, that reverse direction reports as an advisory
+stating the relation is unverifiable rather than either paging or staying
+silent — and it resolves itself at the first credit.
+
+Upgrading an existing deployment needed one more thing. A remittance
+released *before* these counters existed already restored its commitment
+and reversed its payout figure, but nothing recorded how much it stranded
+— so both relations would have read as broken, from the first check after
+the upgrade, on state the supported path produced. A one-time operator
+ceremony seeds that figure. It derives the amount from the platform's own
+records rather than accepting one, and refuses outright if the result does
+not reconcile both relations, so it cannot be used to quiet a real
+discrepancy.
 
 One incidental finding worth recording: the new reproduce-the-figure check
 immediately failed against the watcher's own healthy-mesh test fixture,

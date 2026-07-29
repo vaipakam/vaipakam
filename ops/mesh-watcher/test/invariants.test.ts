@@ -42,6 +42,7 @@ import {
   type FRESH,
   type MeshObservation,
 } from '../src/invariants';
+import { compositionUnavailableGap } from '../src/mesh';
 import {
   formatAlert,
   redactDeliveryError,
@@ -223,9 +224,13 @@ function coherent(
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
   };
   if (over.paidOutRecycled === undefined) {
+    // `bucket + paidOut + stranded == creditedRaw + relocated`. Subtracting
+    // the stranded total is load-bearing: a release moves paidOut INTO it,
+    // so it never adds to the destinations side. Omitting it invented tokens
+    // the chain never held and tripped the reverse bound (#1448 r3).
     const destinations = comp.creditedRaw + l.custodyRelocated;
-    l.paidOutRecycled =
-      destinations > l.bucket ? destinations - l.bucket : 0n;
+    const already = l.bucket + comp.releasedRemitStranded;
+    l.paidOutRecycled = destinations > already ? destinations - already : 0n;
   }
   return { ...l, composition: comp };
 }
@@ -654,6 +659,102 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(finding?.detail).toContain('relocated-custody credit');
   });
 
+  // ── #1448 r3: the REVERSE bound ──────────────────────────────────────
+  it('fires when the bucket holds more than any counter claims', () => {
+    // The regression the forward bound CANNOT see: a custody arrival credits
+    // the bucket but omits `custodyRelocated`. `claimed` stays flat while
+    // `destinations` rises, so the forward bound gets LOOSER — and
+    // `reported-derivation` agrees with the chain, because it reads the same
+    // missing slot. Verified numbers from the finding: bucket 200 -> 223.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 223n * E,
+          custodyRelocated: 0n,
+          creditedRaw: 1000n * E,
+          reportedCumulative: 1023n * E,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
+  it('accepts the same arrival when relocation IS recorded', () => {
+    // Identical tokens, correctly accounted — so the previous test cannot be
+    // passing for an unrelated reason.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 223n * E,
+          custodyRelocated: 23n * E,
+          creditedRaw: 1000n * E,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('reports the unaccounted amount and names the likely cause', () => {
+    const [finding] = checkHardInvariants(
+      observation({
+        mirrorLocal: {
+          bucket: 223n * E,
+          custodyRelocated: 0n,
+          creditedRaw: 1000n * E,
+          reportedCumulative: 1023n * E,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+      TOLERANCE,
+    );
+    expect(finding?.severity).toBe('critical');
+    expect(finding?.detail).toContain('23.000000 VPFI');
+    expect(finding?.detail).toContain('WITHOUT advancing the relocated');
+  });
+
+  it('is ADVISORY, not silent, on an un-seeded diamond', () => {
+    // creditedRaw 0 = a Diamond refreshed over live pre-#1222 state, where
+    // the whole historical bucket legitimately has no counter behind it.
+    // Paging would alarm on correct behaviour; silence would hide that the
+    // relation is unverifiable.
+    const [finding] = checkHardInvariants(
+      observation({
+        mirrorLocal: {
+          creditedRaw: 0n,
+          bucket: 200n * E,
+          paidOutRecycled: 800n * E,
+          reportedCumulative: 1000n * E,
+        },
+      }),
+      TOLERANCE,
+    );
+    expect(finding?.code).toBe('bucket-composition');
+    expect(finding?.severity).toBe('advisory');
+    expect(finding?.detail).toContain('UNVERIFIABLE');
+  });
+
+  it('uses its OWN tolerance, so raising the coverage knob cannot widen it', () => {
+    // Same state, two different composition tolerances. If the reverse bound
+    // read the coverage knob, the first call would also be silent.
+    const obs = observation({
+      mirrorLocal: {
+        bucket: 200n * E + TOLERANCE * 2n,
+        custodyRelocated: 0n,
+        creditedRaw: 1000n * E,
+        reportedCumulative: 1000n * E + TOLERANCE * 2n,
+        paidOutRecycled: 800n * E,
+      },
+    });
+    // Coverage tolerance huge, composition tolerance tight -> still fires.
+    expect(
+      checkHardInvariants(obs, TOLERANCE * 1000n, TOLERANCE).map((f) => f.code),
+    ).toContain('bucket-composition');
+    // Composition tolerance wide enough -> silent.
+    expect(
+      checkHardInvariants(obs, TOLERANCE, TOLERANCE * 4n).map((f) => f.code),
+    ).not.toContain('bucket-composition');
+  });
+
   it('is EXACT — it does not borrow the coverage tolerance', () => {
     // #1448 r2. `BUCKET_COVERAGE_TOLERANCE_WEI` exists for the one reachable
     // dust case: `consume` flooring the bucket. That widens the RIGHT side
@@ -739,12 +840,20 @@ describe('checkHardInvariants — reported-cumulative derivation', () => {
   });
 
   it('accepts the correctly-netted figure', () => {
-    expect(codes({ mirrorLocal: unseeded(1000n * E) })).toEqual([]);
+    // The lone `bucket-composition` here is the #1448 r3 ADVISORY: an
+    // un-seeded diamond's bucket has no counter behind it, so composition is
+    // unverifiable until the first credit seeds the cumulative. Reported so
+    // the gap is visible; `reported-derivation` itself stays silent, which is
+    // what this case is about.
+    expect(codes({ mirrorLocal: unseeded(1000n * E) })).toEqual([
+      'bucket-composition',
+    ]);
   });
 
   it('fires when the relocation subtraction is dropped from the floor', () => {
     // Dropping `- relocated` publishes the full gross, 1023.
     expect(codes({ mirrorLocal: unseeded(1023n * E) })).toEqual([
+      'bucket-composition', // the un-seeded advisory, as above
       'reported-derivation',
     ]);
   });
@@ -759,7 +868,12 @@ describe('checkHardInvariants — reported-cumulative derivation', () => {
       observation({ mirrorLocal: unseeded(1023n * E) }),
       TOLERANCE,
     );
-    expect(findings.map((f) => f.code)).not.toContain('bucket-composition');
+    // By VARIANT, not code: the un-seeded ADVISORY shares the code but says
+    // the opposite thing ("cannot be verified"), so matching on the code
+    // alone would let it stand in for the over-credit finding.
+    const composition = findings.filter((f) => f.code === 'bucket-composition');
+    expect(composition.map((f) => f.variant)).not.toContain('over-credited');
+    expect(composition.every((f) => f.severity === 'advisory')).toBe(true);
   });
 
   it('is exact — no tolerance, because it is a computation not a balance', () => {
@@ -768,15 +882,18 @@ describe('checkHardInvariants — reported-cumulative derivation', () => {
     // pure function on the same inputs at the same block, so any difference
     // at all is a real disagreement.
     expect(codes({ mirrorLocal: unseeded(1000n * E + 1n) })).toEqual([
+      'bucket-composition', // the un-seeded advisory, as above
       'reported-derivation',
     ]);
   });
 
   it('names both figures so the operator can see which side moved', () => {
-    const [finding] = checkHardInvariants(
+    // Select by code: on an un-seeded fixture the composition ADVISORY is
+    // emitted first, and `[finding]` would silently pick that instead.
+    const finding = checkHardInvariants(
       observation({ mirrorLocal: unseeded(1023n * E) }),
       TOLERANCE,
-    );
+    ).find((f) => f.code === 'reported-derivation');
     expect(finding?.severity).toBe('critical');
     expect(finding?.detail).toContain('1023.000000 VPFI');
     expect(finding?.detail).toContain('1000.000000 VPFI');
@@ -2009,5 +2126,38 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
       checkHardInvariants(staleObservation(), TOLERANCE).map((f) => f.code),
     );
     expect(codes.has('base-ahead-of-chain')).toBe(false);
+  });
+});
+
+
+// ── #1448 r3 ────────────────────────────────────────────────────────────
+describe('compositionUnavailableGap', () => {
+  it('is its own reason and source, so it cannot collide with a dead chain', () => {
+    // A whole-chain read failure is `no-rpc`/`own-ledger`. Reusing either
+    // would collide on the dedup key and let one gap suppress the other —
+    // the #1443 r7 class the `source` field was added for.
+    const gap = compositionUnavailableGap(42161, new Error('boom'));
+    expect(gap.chainId).toBe(42161);
+    expect(gap.reason).toBe('view-unavailable');
+    expect(gap.source).toBe('own-ledger-composition');
+  });
+
+  it('names exactly which checks did not run, and the coverage fallback', () => {
+    const gap = compositionUnavailableGap(10, new Error('boom'));
+    expect(gap.detail).toContain('bucket composition');
+    expect(gap.detail).toContain('derivation');
+    expect(gap.detail).toContain('canonical-role');
+    expect(gap.detail).toContain('pre-#1444 rule');
+  });
+
+  it('never forwards provider text — the RPC URL carries the API key', () => {
+    const gap = compositionUnavailableGap(
+      8453,
+      new Error(
+        'HTTP request failed. URL: https://base.example/v2/SUPERSECRETKEY',
+      ),
+    );
+    expect(gap.detail).not.toContain('SUPERSECRETKEY');
+    expect(gap.detail).not.toContain('base.example');
   });
 });

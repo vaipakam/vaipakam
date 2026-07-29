@@ -2564,7 +2564,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](26);
+        s = new bytes4[](27);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2587,6 +2587,9 @@ contract DeployDiamond is Script {
         s[18] = RewardRemittanceFacet.getRemitReservation.selector;
         s[19] = RewardRemittanceFacet.getRemitIdByMessageId.selector;
         s[20] = RewardRemittanceFacet.getRemitReservationNonce.selector;
+        // #1448 r3 — one-time stranded-cumulative seed for a Diamond that
+        // released remittances before that counter existed.
+        s[26] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
         s[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
         s[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         s[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;
