@@ -636,10 +636,21 @@ No subscriber action required — the bot's @-handle stays
    not cross-reference a dead channel.
 7. Then ask existing subscribers to re-subscribe (see **Communicate**) —
    they are subscribed to the old address and no transfer moves them.
-8. If ownership transfer is impossible (compromised wallet refuses to
-   sign), the procedure is unchanged: steps 3–7 already create and cut
-   over to a fresh channel. Transfer only denies the attacker continued
-   use of the ORIGINAL channel; it never preserves delivery.
+8. **If ownership transfer is impossible** (compromised wallet refuses
+   to sign), one step has to be ADDED, not skipped. Step 2 is what makes
+   the new EOA a registered Push channel; without it the Workers would
+   sign as an address Push does not know, and every send fails while the
+   Alerts page invites users to subscribe to a channel that does not
+   exist — the alert rail down for the whole incident.
+
+   So from the clean EOA, **create a new Push channel and stake the
+   50 PUSH it requires** (see `AdminKeysAndPause.md`, channel-address
+   row), then run steps 3–7 unchanged. Budget for the stake before you
+   need it: acquiring PUSH mid-incident is not a fast path.
+
+   Transfer, where it works, is what avoids that stake — it does not
+   preserve delivery to existing subscribers either way. Subscribers are
+   subscribed to the OLD address and must re-subscribe in both branches.
 
 ### Communicate
 - Within 30 min of detection: post on official channels (X, Discord)
