@@ -128,6 +128,7 @@ function mirrorLocal(): LocalLedger {
     composition: {
       creditedRaw: 1000n * E,
       releasedRemitStranded: 0n,
+      accountingSeeded: true,
       isCanonicalRewardChain: false,
     },
     observedAt: 1_800_000_000n,
@@ -155,6 +156,7 @@ function canonicalLocal(): LocalLedger {
     composition: {
       creditedRaw: 800n * E,
       releasedRemitStranded: 0n,
+      accountingSeeded: true,
       isCanonicalRewardChain: true,
     },
     observedAt: 1_800_000_000n,
@@ -195,6 +197,7 @@ function canonicalLocal(): LocalLedger {
 type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
   creditedRaw?: bigint;
   releasedRemitStranded?: bigint;
+  accountingSeeded?: boolean;
   isCanonicalRewardChain?: boolean;
   /** `null` = the newer view could not be read on this chain. */
   composition?: null;
@@ -207,6 +210,7 @@ function coherent(
   const {
     creditedRaw,
     releasedRemitStranded,
+    accountingSeeded,
     isCanonicalRewardChain,
     composition,
     ...rest
@@ -220,6 +224,7 @@ function coherent(
     creditedRaw: creditedRaw ?? l.reportedCumulative,
     releasedRemitStranded:
       releasedRemitStranded ?? baseComp.releasedRemitStranded,
+    accountingSeeded: accountingSeeded ?? baseComp.accountingSeeded,
     isCanonicalRewardChain:
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
   };
@@ -712,15 +717,15 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(finding?.detail).toContain('WITHOUT advancing the relocated');
   });
 
-  it('is ADVISORY, not silent, on an un-seeded diamond', () => {
-    // creditedRaw 0 = a Diamond refreshed over live pre-#1222 state, where
-    // the whole historical bucket legitimately has no counter behind it.
-    // Paging would alarm on correct behaviour; silence would hide that the
-    // relation is unverifiable.
+  it('is ADVISORY, not silent, on a NEVER-SEEDED diamond', () => {
+    // A Diamond refreshed over live pre-#1222 state: the whole historical
+    // bucket legitimately has no counter behind it. Paging would alarm on
+    // correct behaviour; silence would hide that the relation is unverifiable.
     const [finding] = checkHardInvariants(
       observation({
         mirrorLocal: {
           creditedRaw: 0n,
+          accountingSeeded: false,
           bucket: 200n * E,
           paidOutRecycled: 800n * E,
           reportedCumulative: 1000n * E,
@@ -731,6 +736,30 @@ describe('checkHardInvariants — bucket composition', () => {
     expect(finding?.code).toBe('bucket-composition');
     expect(finding?.severity).toBe('advisory');
     expect(finding?.detail).toContain('UNVERIFIABLE');
+  });
+
+  // #1448 r4 — the state the old `creditedRaw === 0` discriminator got wrong.
+  it('PAGES on a fresh SEEDED chain with the same zero raw counter', () => {
+    // Identical figures, `accountingSeeded` true: a chain whose recycled
+    // accounting has run and whose first custody arrival credited the bucket
+    // without advancing the relocated counter. Reading the zero as
+    // "un-seeded" downgraded exactly this to a non-paging advisory and let
+    // the chain report a Base-funded top-up as its own absorption.
+    const [finding] = checkHardInvariants(
+      observation({
+        mirrorLocal: {
+          creditedRaw: 0n,
+          accountingSeeded: true,
+          bucket: 200n * E,
+          paidOutRecycled: 800n * E,
+          reportedCumulative: 1000n * E,
+        },
+      }),
+      TOLERANCE,
+    );
+    expect(finding?.code).toBe('bucket-composition');
+    expect(finding?.severity).toBe('critical');
+    expect(finding?.variant).toBe('under-credited');
   });
 
   it('uses its OWN tolerance, so raising the coverage knob cannot widen it', () => {
@@ -833,6 +862,9 @@ describe('checkHardInvariants — reported-cumulative derivation', () => {
    */
   const unseeded = (reportedCumulative: bigint): LocalOverrides => ({
     creditedRaw: 0n,
+    // Genuinely never seeded — otherwise this is a fresh chain whose bucket
+    // has no counter behind it, which composition correctly PAGES on (#1448 r4).
+    accountingSeeded: false,
     custodyRelocated: 23n * E,
     bucket: 223n * E,
     paidOutRecycled: 800n * E,
@@ -2119,6 +2151,42 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
     const bucket = findings.filter((f) => f.code === 'bucket-coverage');
     expect(bucket).toHaveLength(1);
     expect(bucket[0]?.severity).toBe('critical');
+  });
+
+  // #1448 r4 — role consistency compares the chain's own flag against the
+  // mesh CONFIG, so it is a cross-SOURCE check and must inherit the same
+  // freshness precondition. A mirror serving a stale head across a
+  // legitimate role change would otherwise be reported split-brain on the
+  // strength of a superseded flag.
+  it('does not report split-brain from a STALE role flag', () => {
+    const stale = {
+      ...mirrorLocal(),
+      composition: {
+        ...mirrorLocal().composition!,
+        // The superseded value: this chain WAS canonical at the old head.
+        isCanonicalRewardChain: true,
+      },
+    } as Omit<LocalLedger, FRESH>;
+    const findings = checkHardInvariants(
+      {
+        canonicalChainId: CANONICAL,
+        expectedChainIds: [CANONICAL, MIRROR],
+        books: [canonicalBooks(), mirrorBooks()],
+        freshLocals: new Map(),
+        allLocals: new Map([[MIRROR, stale]]),
+        gaps: [],
+      },
+      TOLERANCE,
+    );
+    expect(findings.map((f) => f.code)).not.toContain('role-consistency');
+  });
+
+  it('but DOES report it from a fresh one', () => {
+    // Same flag, fresh snapshot — so the previous test cannot pass because
+    // the check is simply broken.
+    expect(
+      codes({ mirrorLocal: { isCanonicalRewardChain: true } }),
+    ).toContain('role-consistency');
   });
 
   it('and the cross-chain checks stay skipped for it', () => {

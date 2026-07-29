@@ -462,6 +462,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "accountingSeeded",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "isCanonicalRewardChain",
         "type": "bool",
         "internalType": "bool"

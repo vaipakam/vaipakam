@@ -574,13 +574,7 @@
   {
     "type": "function",
     "name": "seedReleasedRemitStranded",
-    "inputs": [
-      {
-        "name": "remitIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -1869,17 +1863,6 @@
   },
   {
     "type": "error",
-    "name": "RemitIdsNotStrictlyIncreasing",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RemitReleaseTooEarly",
     "inputs": [
       {
@@ -1897,17 +1880,6 @@
   {
     "type": "error",
     "name": "RemitReservationNotPending",
-    "inputs": [
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RemitReservationNotReleased",
     "inputs": [
       {
         "name": "remitId",

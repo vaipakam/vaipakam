@@ -319,4 +319,39 @@ Broadcast complete. Next (artifact sync):
 EOF
 fi
 
+# ── [7] Post-refresh accounting ceremonies (operator, evidence-gated) ─────────
+#
+# #1448 — a facet refresh over a Diamond that RELEASED a remittance before
+# `recycleReleasedRemitStrandedCumulative` existed leaves that slot at zero
+# while the released state is real. Both externally-checkable recycled
+# relations (bucket coverage and bucket composition) then read as violated by
+# exactly the historical amount, so `ops/mesh-watcher` pages CRITICAL twice
+# from its first tick — on state the supported release path produced.
+#
+# The seed is NOT run automatically: it is ADMIN + onlyCanonical, one-shot,
+# and it reverts if the derived total does not reconcile both relations. That
+# refusal is the point — it must not be able to quiet a real discrepancy — so
+# it stays a deliberate operator action with the readback below.
+cat <<'EOF'
+
+POST-REFRESH — recycled accounting (canonical chain only):
+
+  If this Diamond has ANY released remittance predating the stranded
+  cumulative (check: getRemitReservationNonce() > 0 with any status-3
+  reservation, or simply the watcher paging bucket-coverage +
+  bucket-composition immediately after the refresh), run ONCE:
+
+    cast send $DIAMOND "seedReleasedRemitStranded()" --rpc-url $RPC ...
+
+  It scans 1..nonce itself — there is no id list to get wrong — and reverts
+  if the result does not reconcile both relations. Verify:
+
+    cast call $DIAMOND "getRecycleCompositionPosition()(uint256,uint256,bool,bool)"
+
+  The second value must be non-zero and the watcher's two CRITICALs must
+  clear on the next tick. On a chain with no pre-existing release this is a
+  no-op and can be skipped.
+
+EOF
+
 banner "DONE"

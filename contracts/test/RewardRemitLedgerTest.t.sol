@@ -989,6 +989,7 @@ contract RewardRemitLedgerTest is SetupTest {
         returns (
             uint256 raw,
             uint256 releasedStranded,
+            bool seeded,
             uint256 relocated,
             uint256 bucket,
             uint256 reported,
@@ -997,7 +998,7 @@ contract RewardRemitLedgerTest is SetupTest {
         )
     {
         RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
-        (raw, releasedStranded, ) = agg.getRecycleCompositionPosition();
+        (raw, releasedStranded, seeded, ) = agg.getRecycleCompositionPosition();
         (relocated, bucket, reported) = agg.getRecycleCustodyPosition();
         (, , outstanding, paidOut) = agg.getGovernorCommitState();
     }
@@ -1009,6 +1010,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (
             uint256 raw,
             uint256 releasedStranded,
+            bool seeded,
             uint256 relocated,
             uint256 bucket,
             ,
@@ -1030,6 +1032,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function _assertDerivation(string memory ctx) internal view {
         (
             uint256 raw,
+            ,
             ,
             uint256 relocated,
             uint256 bucket,
@@ -1074,7 +1077,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (uint256 recycledFull, uint256 recycledSent) =
             _remitRecycledWithResidual();
 
-        (uint256 rawBefore, uint256 strandedBefore, bool canonBefore) =
+        (uint256 rawBefore, uint256 strandedBefore, , bool canonBefore) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
         assertEq(strandedBefore, 0, "no release yet");
@@ -1083,7 +1086,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
 
-        (uint256 raw, uint256 stranded, ) =
+        (uint256 raw, uint256 stranded, , ) =
             RewardAggregatorFacet(address(diamond))
                 .getRecycleCompositionPosition();
         // Codex #1448 r1 P1 — the SENT share, never the pre-clamp total. The
@@ -1130,7 +1133,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
 
-        (, uint256 stranded, , uint256 bucket, , , uint256 outstanding) =
+        (, uint256 stranded, , , uint256 bucket, , , uint256 outstanding) =
             _composition();
 
         // The naive form is genuinely violated here — assert that, so this
@@ -1198,7 +1201,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
         );
-        (uint256 raw, , uint256 relocated, uint256 bucket, , , ) =
+        (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
         assertEq(bucket, 63e18, "fixture: bucket took the top-up");
@@ -1240,11 +1243,6 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setReleasedRemitStrandedRaw(0);
     }
 
-    function _seedIds() internal pure returns (uint256[] memory ids) {
-        ids = new uint256[](1);
-        ids[0] = 1;
-    }
-
     /// @dev Without the seed, BOTH relations are violated by exactly the
     ///      historical stranded amount — so the watcher would page CRITICAL
     ///      twice, immediately on upgrade, on correct behaviour. This test
@@ -1255,6 +1253,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (
             uint256 raw,
             uint256 stranded,
+            ,
             uint256 relocated,
             uint256 bucket,
             ,
@@ -1279,9 +1278,9 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      says which reservations to count — and both relations reconcile.
     function test_Seed_DerivesTheStrandedTotalAndReconciles() public {
         uint256 sent = _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded(_seedIds());
+        remit.seedReleasedRemitStranded();
 
-        (, uint256 stranded, , uint256 bucket, , uint256 paidOut, uint256 outstanding) =
+        (, uint256 stranded, , , uint256 bucket, , uint256 paidOut, uint256 outstanding) =
             _composition();
         assertEq(stranded, sent, "derived the CLAMPED sent share");
         assertGe(bucket + stranded, outstanding, "coverage reconciles");
@@ -1302,8 +1301,8 @@ contract RewardRemitLedgerTest is SetupTest {
             r = remit.getRemitReservation(1);
             assertGt(recycledFull, r.recycled, "fixture: residual exists");
         }
-        remit.seedReleasedRemitStranded(_seedIds());
-        (, uint256 stranded, , , , , ) = _composition();
+        remit.seedReleasedRemitStranded();
+        (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, r.recycled, "sent share");
         assertLt(stranded, r.recycledFull, "NOT the pre-clamp total");
     }
@@ -1312,44 +1311,58 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      already recorded some — would double-count.
     function test_Seed_RefusesWhenAlreadySeeded() public {
         _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded(_seedIds());
-        (, uint256 stranded, , , , , ) = _composition();
+        remit.seedReleasedRemitStranded();
+        (, uint256 stranded, , , , , , ) = _composition();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
                 stranded
             )
         );
-        remit.seedReleasedRemitStranded(_seedIds());
+        remit.seedReleasedRemitStranded();
     }
 
-    /// @dev A repeated id inside ONE call is the other double-count route.
-    function test_Seed_RejectsNonIncreasingIds() public {
-        _preUpgradeReleasedState();
-        uint256[] memory ids = new uint256[](2);
-        ids[0] = 1;
-        ids[1] = 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRemittanceFacet.RemitIdsNotStrictlyIncreasing.selector,
-                1
-            )
-        );
-        remit.seedReleasedRemitStranded(ids);
+    /// @dev COMPLETENESS, the property the id-list shape could not provide
+    ///      (Codex #1448 r4). A caller-supplied list could omit a release,
+    ///      still satisfy both post-condition inequalities because ordinary
+    ///      bucket headroom absorbed the gap, and permanently arm the
+    ///      one-shot guard with a short total. Scanning `1..nonce` makes
+    ///      completeness structural: with TWO historical releases the seed
+    ///      must equal their sum, not either one alone.
+    function test_Seed_CountsEveryReleasedReservationNotJustOne() public {
+        (, uint256 sentA) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+
+        // A second remit of the re-opened day, released in turn.
+        rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
+        _remitDay1ToArb();
+        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        // 8 days, not another 7: two IDENTICAL `vm.warp(block.timestamp + N)`
+        // expressions get common-subexpression-eliminated under viaIR and the
+        // second is a no-op, so the release would revert RemitReleaseTooEarly.
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(2);
+
+        assertEq(remit.getRemitReservationNonce(), 2, "fixture: two reservations");
+        assertGt(r2.recycled, 0, "fixture: the second stranded something too");
+        mutator.setReleasedRemitStrandedRaw(0);
+
+        remit.seedReleasedRemitStranded();
+        (, uint256 stranded, , , , , , ) = _composition();
+        assertEq(stranded, sentA + r2.recycled, "summed BOTH releases");
+        assertGt(stranded, sentA, "not just the first");
     }
 
-    /// @dev Only RELEASED (status 3) reservations may be counted — an acked
-    ///      or pending one stranded nothing.
-    function test_Seed_RejectsAReservationThatWasNotReleased() public {
+    /// @dev A non-released reservation contributes nothing — the scan filters
+    ///      on status rather than trusting the caller to pick.
+    function test_Seed_IgnoresReservationsThatWereNotReleased() public {
         _finalizeDay(1);
         _remitDay1ToArb();
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRemittanceFacet.RemitReservationNotReleased.selector,
-                1
-            )
-        );
-        remit.seedReleasedRemitStranded(_seedIds());
+        assertEq(uint256(remit.getRemitReservation(1).status), 1, "pending");
+        remit.seedReleasedRemitStranded();
+        (, uint256 stranded, , , , , , ) = _composition();
+        assertEq(stranded, 0, "a pending reservation stranded nothing");
     }
 
     /// @dev The post-condition is the load-bearing safety property: if the
@@ -1364,7 +1377,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.expectRevert(
             RewardRemittanceFacet.SeedDoesNotReconcile.selector
         );
-        remit.seedReleasedRemitStranded(_seedIds());
+        remit.seedReleasedRemitStranded();
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

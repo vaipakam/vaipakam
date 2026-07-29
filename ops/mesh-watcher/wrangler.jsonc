@@ -106,6 +106,14 @@
     // 0.001 VPFI — far above that dust, far below any real shortfall.
     "BUCKET_COVERAGE_TOLERANCE_WEI": "1000000000000000",
 
+    // Slack on the REVERSE composition bound ONLY (#1448). Deliberately a
+    // SEPARATE knob from the coverage tolerance above: `consume`'s bucket
+    // floor widens exactly this direction, so raising the coverage value for
+    // a chain with noisy dust would otherwise silently widen a
+    // custody-exclusion blind spot the operator has no reason to connect to
+    // it. Same default; tune independently.
+    "COMPOSITION_SLACK_TOLERANCE_WEI": "1000000000000000",
+
     // Seconds before an unchanged, still-firing alert is reposted.
     "ALERT_REPEAT_SECONDS": "21600",
 

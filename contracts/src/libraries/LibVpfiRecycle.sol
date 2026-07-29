@@ -139,6 +139,10 @@ library LibVpfiRecycle {
         s.recycleBucket = needed;
         s.recycledCreditedByDay[dayId] += amount;
         s.recycleCreditedCumulative = cumulativeBefore + amount;
+        // #1448 r4 — see the storage docs: `recycleCreditedCumulative == 0`
+        // cannot by itself distinguish an un-seeded upgraded Diamond from a
+        // fresh chain that has absorbed nothing yet.
+        s.recycleAccountingSeeded = true;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
     }
 
@@ -233,6 +237,13 @@ library LibVpfiRecycle {
         }
         s.recycleBucket = needed;
         s.recycleCustodyRelocatedCumulative += amount;
+        // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
+        // first recycled event is an arrival is no longer indistinguishable
+        // from an un-seeded upgrade. Deliberately set even when the seed
+        // snapshot above wrote nothing (a genuinely empty chain): what this
+        // records is "recycled accounting has run here", not "the cumulative
+        // is non-zero".
+        s.recycleAccountingSeeded = true;
         emit VpfiCustodyRelocated(
             uint8(RecycleSource.RemittedCustodyRelocation), refId, amount, dayId
         );

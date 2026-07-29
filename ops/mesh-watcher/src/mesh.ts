@@ -186,10 +186,15 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
   // counter against the derived figures, so a mixed-block tuple would show a
   // mid-transaction state as a violation.
   let composition:
-    | { creditedRaw: bigint; releasedRemitStranded: bigint; isCanonicalRewardChain: boolean }
+    | {
+        creditedRaw: bigint;
+        releasedRemitStranded: bigint;
+        accountingSeeded: boolean;
+        isCanonicalRewardChain: boolean;
+      }
     | undefined;
   try {
-    const c = await readView<readonly [bigint, bigint, boolean]>(
+    const c = await readView<readonly [bigint, bigint, boolean, boolean]>(
       target.client,
       target.diamond,
       'getRecycleCompositionPosition',
@@ -199,7 +204,8 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     composition = {
       creditedRaw: c[0],
       releasedRemitStranded: c[1],
-      isCanonicalRewardChain: c[2],
+      accountingSeeded: c[2],
+      isCanonicalRewardChain: c[3],
     };
   } catch (err) {
     composition = undefined;

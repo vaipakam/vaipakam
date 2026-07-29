@@ -333,7 +333,7 @@ contract MeshLedgerInvariant is Test {
     function invariant_GlobalRecycledCommitWithinBucket() public view {
         (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
         (, uint256 bucket, ) = _agg().getRecycleCustodyPosition();
-        (, uint256 stranded, ) = _agg().getRecycleCompositionPosition();
+        (, uint256 stranded, , ) = _agg().getRecycleCompositionPosition();
         assertEq(
             stranded,
             0,
@@ -360,7 +360,7 @@ contract MeshLedgerInvariant is Test {
     /// Inequality rather than equality: `consume` floors the bucket at zero
     /// for bounded cap-trim dust, which can only widen the right side.
     function invariant_BucketCompositionWithinDestinations() public view {
-        (uint256 raw, uint256 stranded, ) =
+        (uint256 raw, uint256 stranded, , ) =
             _agg().getRecycleCompositionPosition();
         (uint256 relocated, uint256 bucket, ) =
             _agg().getRecycleCustodyPosition();

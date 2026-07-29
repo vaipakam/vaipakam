@@ -1091,7 +1091,7 @@ contract RewardAggregatorFacet is
     }
 
     /**
-     * @notice #1444 / #1446 — the two raw counters plus the live role flag an
+     * @notice #1444 / #1446 — the two raw counters plus the two live flags an
      *         EXTERNAL checker needs
      *         to verify this chain's recycle-bucket accounting without
      *         trusting the accounting itself.
@@ -1112,7 +1112,13 @@ contract RewardAggregatorFacet is
      *            the bucket exactly once; a counter that advanced without one
      *            breaks it. Inequality, not equality: `consume` floors the
      *            bucket for bounded cap-trim dust, which only widens the
-     *            right side.
+     *            right side. Checked in BOTH directions: the reverse
+     *            (`bucket + paidOut + stranded <= claimed + slack`) is what
+     *            catches an arrival crediting the bucket WITHOUT advancing
+     *            the relocated cumulative, which makes the forward bound
+     *            looser and leaves the derivation check agreeing with the
+     *            chain. `accountingSeeded` distinguishes the one state where
+     *            the reverse direction is legitimately unverifiable.
      *         2. DERIVATION — `reportedCumulative == max(creditedRaw,
      *            bucket + paidOutRecycled − custodyRelocated)`, i.e. the
      *            pre-upgrade floor with the B2-d5 exclusion applied. Catches
@@ -1134,6 +1140,14 @@ contract RewardAggregatorFacet is
      *                               `paidOutRecycled` reversal). NOT the
      *                               pre-clamp commitment restored — that
      *                               figure's residual never left the bucket.
+     * @return accountingSeeded   Whether any recycled credit has ever run on
+     *                           this chain. Disambiguates `creditedRaw == 0`:
+     *                           false means a Diamond refreshed over live
+     *                           pre-#1222 state, where composition is
+     *                           genuinely unverifiable; true means a chain
+     *                           that has simply absorbed nothing, where a
+     *                           bucket with no counter behind it IS a fault
+     *                           (#1448 r4).
      * @return isCanonicalRewardChain Whether this Diamond currently acts as
      *                               the canonical reward chain. Published
      *                               with the figures because
@@ -1153,6 +1167,7 @@ contract RewardAggregatorFacet is
         returns (
             uint256 creditedRaw,
             uint256 releasedRemitStranded,
+            bool accountingSeeded,
             bool isCanonicalRewardChain
         )
     {
@@ -1160,6 +1175,7 @@ contract RewardAggregatorFacet is
         return (
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
+            s.recycleAccountingSeeded,
             s.isCanonicalRewardChain
         );
     }

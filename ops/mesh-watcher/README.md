@@ -78,7 +78,14 @@ Two things the allowance deliberately is **not**:
   inheriting an allowance in mirror mode *and* a mis-flagged mirror
   granting itself one. Disagreement is reported as `role-consistency`.
 
-**On composition being exact while coverage has a tolerance.** The
+**Two tolerance knobs, and they are deliberately separate.**
+`BUCKET_COVERAGE_TOLERANCE_WEI` governs bucket coverage;
+`COMPOSITION_SLACK_TOLERANCE_WEI` governs the REVERSE composition bound
+only. Both are declared in `wrangler.jsonc` and default to 1e15 wei
+(0.001 VPFI). They are not one setting because raising the coverage value
+for a chain with noisy dust must not widen a custody-exclusion blind spot.
+
+**On the FORWARD composition bound being exact.** The
 tolerance exists for one reachable case — `consume` flooring the bucket —
 and that widens the *right* side of the composition bound, so correct
 accounting cannot produce any positive excess there. Sharing the knob

@@ -590,7 +590,8 @@ sits at the single canonical point (Base finalization):
    Diamond custody — so the bare form is false on the canonical chain after
    a release. `releasedRemitStranded` is the recorded Σ of what those releases
    stranded, i.e. backing that exists and is in transit. On every mirror it
-   is zero — but the role is a MUTABLE admin setting, so a demoted
+   is zero ONLY for a Diamond that has ALWAYS been a mirror — the role is a
+   MUTABLE admin setting, so a demoted
    Diamond keeps whatever it accrued. An external checker must admit the
    term only while the chain still holds the role, and must require its
    own configured canonical chain and the chain's own `isCanonicalRewardChain`
@@ -629,9 +630,28 @@ sits at the single canonical point (Base finalization):
    of recycling; that is a pre-existing property of the reward program that
    this design neither creates nor changes.
 
-8. **Bucket composition (#1446)** — `recycleCreditedCumulative +
-   recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
-   releasedRemitStranded`, and `creditedCumulative` is reproducible from those
+8. **Bucket composition (#1446)** — checked in BOTH directions:
+
+   - forward, EXACT: `recycleCreditedCumulative +
+     recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
+     releasedRemitStranded`
+   - reverse, with its OWN slack: `recycleBucket + paidOutRecycled +
+     releasedRemitStranded ≤ (the same left side) + slack`
+
+   The reverse direction is load-bearing, not symmetry for its own sake: a
+   custody arrival that credits `recycleBucket` while failing to advance
+   `recycleCustodyRelocatedCumulative` makes the FORWARD bound looser, and
+   the derivation check agrees with the chain because it reads the same
+   missing slot — so the forward bound alone is defeated by the exact
+   regression this invariant exists to catch. The slack is a separate
+   constant because `consume`'s bucket floor widens this direction only.
+
+   EXCEPTION: while a chain has never run any recycled credit
+   (`recycleAccountingSeeded == false` — a Diamond refreshed over live
+   pre-#1222 state), its historical bucket legitimately has no counter
+   behind it and the relation is UNVERIFIABLE. That state is REPORTED, not
+   assumed away, and it is distinguished by the seeded flag rather than by
+   `recycleCreditedCumulative == 0`, which a fresh chain also satisfies, and `creditedCumulative` is reproducible from those
    same slots as `max(raw, bucket + paidOut − relocated)`.
 
    Both exist because invariant 6's per-chain `consumed ≤ reported`

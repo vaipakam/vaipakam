@@ -104,6 +104,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     outputs: [
       'creditedRaw:uint256',
       'releasedRemitStranded:uint256',
+      'accountingSeeded:bool',
       'isCanonicalRewardChain:bool',
     ],
   },

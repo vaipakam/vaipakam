@@ -5782,6 +5782,26 @@ library LibVaipakam {
         //   ceremony must SPLIT them: keep this one for composition, and add
         //   a separate recovered total for coverage to net against.
         uint256 recycleReleasedRemitStrandedCumulative;
+        // `recycleAccountingSeeded` — #1448 r4. Set true by the FIRST recycled
+        // credit of any class on this chain (ordinary absorption or relocated
+        // custody), and never cleared.
+        //
+        // It exists because `recycleCreditedCumulative == 0` is ambiguous, and
+        // an external checker was reading it as "un-seeded" (Codex #1448 r4).
+        // Two states share that zero:
+        //   1. a Diamond refreshed over live pre-#1222 state, whose historical
+        //      bucket genuinely has no counter behind it — composition is
+        //      UNVERIFIABLE there, and must not page; and
+        //   2. a FRESH chain that has simply absorbed nothing yet — where a
+        //      first custody arrival crediting the bucket WITHOUT advancing
+        //      `recycleCustodyRelocatedCumulative` is exactly the regression
+        //      the exclusion exists to catch, and MUST page.
+        // Treating (2) as (1) downgraded that regression to a non-paging
+        // advisory and let the chain report a Base-funded top-up as its own
+        // absorption while the watcher still reported healthy.
+        //
+        // This flag distinguishes them: only (1) has it false.
+        bool recycleAccountingSeeded;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

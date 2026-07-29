@@ -148,6 +148,18 @@ export interface LocalLedger {
      */
     releasedRemitStranded: bigint;
     /**
+     * Whether ANY recycled credit has ever run on this chain.
+     *
+     * Disambiguates `creditedRaw === 0`, which two very different states
+     * share (#1448 r4): a Diamond refreshed over live pre-#1222 state, where
+     * the historical bucket genuinely has no counter behind it and
+     * composition is UNVERIFIABLE — and a fresh chain that has simply
+     * absorbed nothing, where a bucket with no counter behind it is a real
+     * fault. Inferring "un-seeded" from the zero alone downgraded the exact
+     * regression this check exists for to a non-paging advisory.
+     */
+    accountingSeeded: boolean;
+    /**
      * Whether the chain ITSELF reports acting as the canonical reward chain.
      *
      * Read from the chain rather than inferred, because the role is a MUTABLE
@@ -519,7 +531,14 @@ export function checkHardInvariants(
   // can close its own days and release remittances, while Base still expects
   // reports from it. It also feeds the coverage allowance above, which is why
   // this is checked BEFORE that allowance is trusted rather than after.
-  for (const local of obs.allLocals.values()) {
+  //
+  // Reads `freshLocals`, not `allLocals` (#1448 r4). This compares the chain's
+  // own flag against the mesh's configuration — two independent SOURCES — so
+  // it is a cross-source check and inherits the same freshness precondition
+  // the cross-chain ones have. A mirror serving a stale head across a
+  // legitimate role change would otherwise be reported as split-brain on the
+  // strength of a superseded flag.
+  for (const local of obs.freshLocals.values()) {
     if (!local.composition) continue;
     const baseSaysCanonical = local.chainId === obs.canonicalChainId;
     const chainSaysCanonical = local.composition.isCanonicalRewardChain;
@@ -711,7 +730,9 @@ export function checkHardInvariants(
     // silent — the operator is told the relation is unverifiable until the
     // first credit seeds the cumulative.
     if (destinations > claimed + compositionSlackToleranceWei) {
-      const unseeded = local.composition.creditedRaw === 0n;
+      // NOT `creditedRaw === 0` (#1448 r4) — a fresh chain reads zero too,
+      // and there the same state is a genuine fault that must page.
+      const unseeded = !local.composition.accountingSeeded;
       out.push(makeFinding({
         code: 'bucket-composition',
         variant: unseeded ? 'unverifiable-unseeded' : 'under-credited',
@@ -729,7 +750,7 @@ export function checkHardInvariants(
           : 'Bucket holds more than the recycled cumulatives account for',
         detail:
           (unseeded
-            ? `creditedRaw is 0, so this chain's bucket has no counter behind it yet — a Diamond refreshed over live pre-#1222 state. The composition relation is UNVERIFIABLE until the first credit seeds the cumulative; reported here so the gap is visible rather than silently passing.\n`
+            ? `no recycled credit has ever run on this chain, so its bucket has no counter behind it — a Diamond refreshed over live pre-#1222 state. The composition relation is UNVERIFIABLE until the first credit seeds the cumulative; reported here so the gap is visible rather than silently passing.\n`
             : `bucket + paidOut + stranded > creditedRaw + relocated — VPFI is in the bucket that no cumulative claims\n`) +
           `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
           `  relocated     = ${fmt(local.custodyRelocated)}\n` +

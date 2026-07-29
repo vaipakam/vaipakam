@@ -1293,11 +1293,6 @@ contract RewardRemittanceFacet is
     /// @notice The seed ceremony has already run (or a release recorded the
     ///         counter organically) — re-running would double-count.
     error ReleasedRemitStrandedAlreadySeeded(uint256 current);
-    /// @notice `remitIds` must be strictly increasing, so the same released
-    ///         reservation cannot be counted twice in one call.
-    error RemitIdsNotStrictlyIncreasing(uint256 index);
-    /// @notice A supplied id is not a RELEASED (status 3) reservation.
-    error RemitReservationNotReleased(uint256 remitId);
     /// @notice The derived seed leaves a recycled relation still violated,
     ///         so the state was not produced by pre-upgrade releases alone.
     error SeedDoesNotReconcile();
@@ -1329,35 +1324,43 @@ contract RewardRemittanceFacet is
     ///         of `r.recycled` to `paidOutRecycled` in the same transaction
     ///         that stamped it, so the old reversal's zero-floor never bound.
     ///
-    ///         Ids are passed explicitly rather than scanned from
-    ///         `getRemitReservationNonce()` so the call cannot become
-    ///         unbounded on a Diamond with a long reservation history; they
-    ///         must be strictly increasing so one cannot be counted twice.
+    ///         SCANS `1..getRemitReservationNonce()` rather than taking a
+    ///         caller-supplied id list (Codex #1448 r4). A supplied list
+    ///         cannot be proved COMPLETE: the post-condition below checks
+    ///         inequalities, and pre-existing bucket headroom can absorb an
+    ///         omitted release, so an operator could pass one id, omit
+    ///         another, satisfy both checks, and permanently arm the one-shot
+    ///         guard with a short total. Reservation ids are dense (`1..nonce`,
+    ///         both allocation sites pre-increment), so scanning is complete
+    ///         by construction and there is no completeness argument to get
+    ///         wrong. It is a one-time admin call, so the bounded loop is the
+    ///         right trade against an operator-error class.
     ///
     ///         One-shot: refuses once the counter is non-zero, so a repeat
     ///         (or a run after an organic release already recorded some) can
     ///         never double-count.
-    /// @param  remitIds Strictly-increasing ids of RELEASED (status 3)
-    ///                  reservations whose stranded VPFI predates the counter.
-    function seedReleasedRemitStranded(
-        uint256[] calldata remitIds
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
+    function seedReleasedRemitStranded()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 current = s.recycleReleasedRemitStrandedCumulative;
         if (current != 0) revert ReleasedRemitStrandedAlreadySeeded(current);
 
         uint256 total;
-        uint256 prev;
-        uint256 n = remitIds.length;
-        for (uint256 i; i < n; ) {
-            uint256 id = remitIds[i];
-            if (i != 0 && id <= prev) revert RemitIdsNotStrictlyIncreasing(i);
+        uint256 counted;
+        uint256 nonce = s.remitReservationNonce;
+        for (uint256 id = 1; id <= nonce; ) {
             LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (r.status != 3) revert RemitReservationNotReleased(id);
-            total += r.recycled;
-            prev = id;
+            if (r.status == 3) {
+                total += r.recycled;
+                unchecked {
+                    ++counted;
+                }
+            }
             unchecked {
-                ++i;
+                ++id;
             }
         }
         s.recycleReleasedRemitStrandedCumulative = total;
@@ -1375,13 +1378,14 @@ contract RewardRemittanceFacet is
         if (claimed > bucket + s.paidOutRecycled + total) {
             revert SeedDoesNotReconcile();
         }
-        emit ReleasedRemitStrandedSeeded(total, n);
+        emit ReleasedRemitStrandedSeeded(total, counted);
     }
 
     /// @notice #1448 r3 — the one-time stranded-cumulative seed ran.
     /// @param  total       Derived Σ of `recycled` over the supplied
     ///                     released reservations.
-    /// @param  reservations How many ids were counted.
+    /// @param  reservations How many RELEASED reservations were found in the
+    ///                      full `1..nonce` scan.
     /// @custom:event-category state-change/treasury-mutation
     event ReleasedRemitStrandedSeeded(uint256 total, uint256 reservations);
 
