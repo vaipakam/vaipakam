@@ -2290,13 +2290,32 @@ therefore read as broken from the first check after the upgrade — on
 state the supported path produced. The ceremony recovers that one figure
 from the platform's own reservation records.
 
-**Deciding whether you need it.** Read
-`getRecycleCompositionPosition()`. If `accountingSeeded` is already
-true, this Diamond has been crediting under the new counters and there
-is no pre-upgrade gap — do nothing. Otherwise check whether the mesh
-watcher reports the composition relation unverifiable; that advisory is
-the signal, and it clears itself at the first credit if no release ever
-predated the upgrade.
+**Deciding whether you need it.** Do NOT decide from
+`accountingSeeded` — it does not answer this question. That flag reads
+true whenever ordinary recycled accounting has ever run on the chain,
+which says nothing about whether a remittance was released before the
+stranded counter existed. A Diamond can easily have both: active
+recycling (so `accountingSeeded == true`) and historical releases with
+nothing recorded against them.
+
+Decide from the release history instead. The ceremony is needed exactly
+when BOTH hold:
+
+1. `getRecycleCompositionPosition().releasedRemitStranded == 0`, and
+2. the reservation history contains at least one RELEASED entry — walk
+   `getRemitReservation(i)` for `i` in `1..getRemitReservationNonce()`
+   and look for status `Released`.
+
+Both together mean releases happened before the counter existed, which
+is the only state the ceremony addresses. Either alone means it is not
+needed: a non-zero counter is already recording releases, and no
+released entry means there is nothing to recover. Running it when it is
+not needed is harmless but pointless — it would scan to a total of zero
+and refuse to publish a figure that shrinks nothing.
+
+The mesh watcher's "composition unverifiable" advisory is a weaker
+signal than this and should not be used on its own: it clears at the
+first credit whether or not a pre-upgrade release was ever recorded.
 
 **Running it.** `seedReleasedRemitStranded(upTo)` is ADMIN-only and
 **chunked**: the first call pins the range end at the current

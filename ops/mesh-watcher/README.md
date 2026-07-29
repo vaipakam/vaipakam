@@ -43,7 +43,7 @@ operation. These page.
 | `base-ahead-of-chain` | Base's accepted cumulatives never exceed the chain's own | Base accepts clamped, lagging copies. Trailing is normal; leading is impossible without a spoofed or replayed report. This is also what makes the B2-d5 custody exclusion observable — the chain's own reported figure nets relocated custody out, so Base reading higher means it folded its own remitted top-up back in as that chain's local absorption. |
 | `consumed-cap` | `consumed − released ≤ reported`, per chain (governor §7 #6) | Base can never instruct a chain to fund more than it reported absorbing, net of what it released un-spent — `_mirrorAvailable` bounds every instruction, and `MeshLedger.invariant.t.sol` asserts it on-chain. Checked **separately** rather than inferred from the availability formula, because that formula saturates: if this bound broke, `expectedAvail` would floor to zero, the on-chain `avail` would agree, and every other check would stay green while over-instruction went completely invisible. |
 | `bucket-coverage` | `bucket + releasedRemitStranded ≥ outstanding`, per chain (the stranded term applies only when BOTH the mesh config and the chain itself agree it is canonical) | Reservation on arrival is **unclamped** — the mirror adds whatever Base instructed, bounded only by Base's model. This is the check that catches the model over-stating the bucket. |
-| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitStranded` (exact) **and** the reverse, `bucket + paidOut + stranded ≤ claimed + slack` | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. This is the check that sees a **B2-d5 custody exclusion** regression in either direction — see below. |
+| `bucket-composition` | `creditedRaw + relocated ≤ bucket + paidOut + releasedRemitStranded` (exact) **and** the reverse, `bucket + paidOut + stranded ≤ claimed + slack` | Every recycled credit lands in the bucket exactly once, so the lifetime cumulatives can never claim more than the bucket actually received. Sees a **B2-d5 custody exclusion** regression that mislabels or double-counts an arrival, in either direction — but NOT one that never labels it at all (that moves both sides equally; #1452). See below. |
 | `reported-derivation` | `reported == max(creditedRaw, bucket + paidOut − relocated)` | The published lifetime-absorption figure is re-derived here from the raw slots at the same block. Catches the exclusion being dropped from the pre-upgrade floor branch, which binds on a Diamond refreshed over live pre-#1222 state. |
 | `role-consistency` | The mesh config and the chain's own `isCanonicalRewardChain` agree | The two are independently mutable and nothing on-chain reconciles them. The flag decides whether `closeDay` writes locally or reports to Base, and it authorises the canonical-only remittance surface — so a mirror carrying it is a split-brain mesh that can close its own days and release remittances while Base still expects reports from it. |
 
@@ -116,6 +116,23 @@ not compare the claim against another copy of the claim; it compares it
 against where the tokens went. A relocated-custody credit that also
 advanced the absorption cumulative raises the left side twice against a
 right side that moved once.
+
+**What it does not catch, stated plainly (#1452).** An arrival routed
+through the ordinary recycled credit instead of the custody-relocation
+one raises `creditedRaw` and `bucket` TOGETHER. Both composition bounds
+compare those two sides, so both stay satisfied, and `reported-derivation`
+agrees because it reads the same slots — while the receiving chain is now
+reporting Base's own already-remitted top-up as its own local absorption
+and Base will re-offer it as that chain's funding. `base-ahead-of-chain`
+is directionally incapable here: Base's copy ratchets toward the chain's
+claim from below, so an inflated mirror figure can never make Base the one
+that reads ahead.
+
+Nothing built from the receiving chain's own counters can see this — the
+counters agree with each other precisely because both moved. It needs a
+record the receiving chain does not author: what Base says it remitted.
+That is #1452. Until it lands, treat the custody exclusion as verified
+against mislabelling and double-counting, and NOT against omission.
 
 The `reported-derivation` check is a deliberate **second implementation**
 of `LibVpfiRecycle.creditedCumulative`. That independence is the point,
