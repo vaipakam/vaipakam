@@ -177,8 +177,18 @@ then deploy.
    ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-archive --remote )
    ```
 
-8. NOW deploy the Workers — the bindings resolve cleanly because the
-   D1 + R2 + updated configs all exist first.
+8. Add the `vaipakam.com` ZONE to the replacement account BEFORE any
+   Worker deploy.
+
+   `apps/indexer/wrangler.jsonc` declares `indexer.vaipakam.com` as a
+   deploy-time custom-domain route, so its deploy FAILS outright until the
+   zone is present — this is not a post-deploy tidy-up. `apps/agent` is the
+   opposite shape: it declares no route, so its custom domain must be
+   created by hand afterwards. `defi` and `www` are Pages projects and
+   carry their own domain attachment.
+
+   Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
+   updated configs all exist first.
 
    > **DO NOT deploy `ops/offchain-data-archive` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
@@ -236,12 +246,12 @@ then deploy.
    pnpm --filter @vaipakam/www deploy
    ```
 
-   Finally the archive Worker, once the data it would back up actually
-   exists (see the warning above):
-
-   ```bash
-   ( cd ops/offchain-data-archive && npm ci && npm run deploy )
-   ```
+   **The archive Worker is NOT deployed here.** Its step is at the END of
+   this runbook, after §§4–5 have actually restored D1 and R2. Deploying it
+   now means its 03:17 cron can fire while you are still working through
+   those sections, writing a valid backup of the freshly-migrated but EMPTY
+   account into the same B2 bucket — which the newest-manifest selection in
+   §2 would then pick. See "Last: activate the backup writer" below.
 
 > **Stop here and reassess if this is the right move.** Standing up a
 > new CF account is appropriate for total loss; for live tampering or
@@ -553,6 +563,32 @@ the frontend silently switches back to the cached fast path.
    detectable.
 
 ---
+
+## 7b. LAST: activate the backup writer
+
+Only now — after §§4–5 have restored D1 and R2, and §7's smoke test says
+the stack is real — deploy `ops/offchain-data-archive`:
+
+```bash
+( cd ops/offchain-data-archive && npm ci && npm run deploy )
+```
+
+**Why it is last, and not with the other Workers.** Its cron fires at
+03:17 UTC. Deployed at the start of a restore, it will happily write a
+validly encrypted, correctly checksummed archive **of the freshly-migrated
+empty account** into the same B2 bucket the restore reads from — and §2's
+"pick the newest manifest" step would then select that object. An operator
+part-way through a multi-hour restore could restore nothing over nothing
+and see every checksum pass.
+
+Nothing distinguishes that empty archive from a real one by inspection:
+same encryption, same manifest shape, a later timestamp. The only defence
+is not creating it, which is why this step sits here rather than beside
+the deploys that logically resemble it.
+
+Confirm one clean nightly before considering the restore complete — the
+first successful run is the evidence that the whole pipeline, not just the
+Worker, came back.
 
 ## 8. Key-rotation procedure for `BACKUP_ENCRYPTION_KEY`
 

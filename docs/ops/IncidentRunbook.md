@@ -533,16 +533,32 @@ identity), so rotation is time-sensitive.
    `TG_BOT_TOKEN` from the shared store — so one write covers both, and
    a per-Worker `wrangler secret put` would rotate neither:
 
+   `TG_BOT_TOKEN` ALREADY EXISTS in the store, so this is an UPDATE, not a
+   create — `secret create` fails on a duplicate name, and it would fail
+   here only *after* `/revoke` has already killed the old token, leaving no
+   working credential on either side:
+
    ```bash
    STORE=<the vaipakam-credentials store id>
-   printf '%s' "<new token>" | wrangler secrets-store secret create \
-     "$STORE" --name TG_BOT_TOKEN --scopes workers --remote
+   # The existing secret's id — `update` needs it.
+   wrangler secrets-store secret list "$STORE" --remote
+   printf '%s' "<new token>" | wrangler secrets-store secret update \
+     "$STORE" --secret-id <TG_BOT_TOKEN's id> --remote
    ```
+
+   Do this BEFORE `/revoke` where the compromise allows it: the window in
+   which neither credential works is the part that hurts.
 4. Re-register the webhook:
    ```bash
    curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
+        --data-urlencode "url=https://agent.vaipakam.com/tg/webhook"
    ```
+
+   `agent.vaipakam.com`, NOT `api.vaipakam.com` — the latter belonged to
+   the removed hf-watcher and no current Worker binds it; `/tg/webhook`
+   exists only in `apps/agent`. Telegram accepts `setWebhook` against a
+   dead host without complaint, so getting this wrong fails SILENTLY: the
+   bot simply stops receiving updates.
 5. Redeploy the live consumers to flush in-memory clients tied to the
    old token: `pnpm --filter @vaipakam/agent deploy` and
    `pnpm --filter @vaipakam/keeper deploy`.
@@ -562,15 +578,26 @@ No subscriber action required — the bot's @-handle stays
 
    ```bash
    STORE=<the vaipakam-credentials store id>
-   printf '%s' "<new privkey>" | wrangler secrets-store secret create \
-     "$STORE" --name PUSH_CHANNEL_PK --scopes workers --remote
+   wrangler secrets-store secret list "$STORE" --remote
+   printf '%s' "<new privkey>" | wrangler secrets-store secret update \
+     "$STORE" --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
 4. Redeploy **both** live consumers to invalidate their cached PushAPI
    clients (`pnpm --filter @vaipakam/agent deploy` and
    `pnpm --filter @vaipakam/keeper deploy`); each module-scope cache
    rebuilds on the next tick.
-5. The channel **address** stays the same iff the channel itself is
-   transferred (Push lets you change the signer, not the channel id).
+5. **The channel our Workers post to DOES change.** Both
+   `apps/agent/src/push.ts` and `apps/keeper/src/push.ts` derive
+   `channelCaip` from `new Wallet(PUSH_CHANNEL_PK).address`, so after
+   rotating the key they send as the NEW EOA regardless of what happened
+   to the original channel's ownership on Push's side. Existing
+   subscribers are subscribed to the OLD address and stop receiving.
+
+   Transferring channel ownership does not fix that on its own: preserving
+   the original channel id would require the senders to read it from
+   config rather than derive it from the key. Treat subscriber migration
+   as part of this rotation, and see **#1456** for making the channel id
+   configurable so a future rotation is genuinely just a signer swap.
    No frontend redeploy needed — `VITE_PUSH_CHANNEL_ADDRESS` is
    unchanged.
 6. If transfer is impossible (compromised wallet refuses to sign),
@@ -611,9 +638,16 @@ No subscriber action required — the bot's @-handle stays
 >
 > **Cross-chain ops alerting for CCIP does not exist yet** — that gap is
 > tracked on #250 Phase 1 (Tenderly presets). For a suspected cross-chain
-> problem today, go to **`contracts/RUNBOOK.md` §10**, which carries the
-> concrete `GuardianPausable.pause()` sequence for `VPFIMirrorToken`, the
-> CCIP messengers and the remittance receivers.
+> problem today, the authoritative enumeration of the live pausable
+> cross-chain set is **`contracts/script/pause-all-chains.sh`** — it names
+> `ccipMessenger`, `buybackRemittanceReceiver` and
+> `rewardRemittanceReceiver` alongside the mirror token.
+>
+> `contracts/RUNBOOK.md` §10 describes the pause MECHANICS, but its list is
+> itself stale: it names the removed `VpfiBuyAdapter` / `VpfiBuyReceiver`
+> and omits both remittance receivers, which are live and expose
+> `whenNotPaused` CCIP ingress. Take the *how* from §10 and the *what* from
+> the script, or a forged buyback or reward message stays executable.
 >
 > Deliberately NOT `AdminKeysAndPause.md`: that document describes the
 > Diamond's `AdminFacet.pause()` and states explicitly that **CCIP ingress
