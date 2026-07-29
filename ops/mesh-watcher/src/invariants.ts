@@ -610,7 +610,25 @@ export function checkHardInvariants(
     // the canonical chain, where a release legitimately produces a shortfall
     // and the term that would explain it is exactly what is missing. Paging
     // there without it would alarm on correct behaviour (#1448 r2).
-    const isCanonicalHere = local.chainId === obs.canonicalChainId;
+    // #1448 r11 — the VALUE comparison below is valid at any snapshot age
+    // (both figures come from one pinned block, which is why this loop reads
+    // `allLocals`). The ROLE decision is not: `obs.canonicalChainId` is
+    // today's topology while `local` may predate a canonical-role migration,
+    // so pairing them compares two different points in time. A former
+    // canonical chain with a stale RPC then reports its healthy
+    // pre-demotion state, gets classified as a mirror, loses the stranded
+    // allowance and pages a CRITICAL on correct behaviour.
+    //
+    // So the two-source agreement rule (r2) applies only where both sources
+    // are contemporaneous. On a STALE snapshot, fall back to the chain's own
+    // same-block claim: it is internally consistent with the figures it is
+    // being compared against, which is the property that matters here.
+    // `role-consistency` still reports the disagreement itself, and does so
+    // from `freshLocals`, so nothing is hidden by this.
+    const roleIsFresh = obs.freshLocals.has(local.chainId);
+    const isCanonicalHere = roleIsFresh
+      ? local.chainId === obs.canonicalChainId
+      : (local.composition?.isCanonicalRewardChain ?? false);
     if (!local.composition) {
       if (isCanonicalHere) continue; // reported via the coverage gap below
       const backingRaw = local.bucket;
@@ -627,14 +645,17 @@ export function checkHardInvariants(
           `  bucket        = ${fmt(local.bucket)}\n` +
           `  outstanding   = ${fmt(local.outstandingRecycled)}\n` +
           `  shortfall     = ${fmt(local.outstandingRecycled - local.bucket)}\n\n` +
-          `The released-remit allowance is admitted only for the mesh's configured canonical chain, and this chain is not it — so the strict relation applies regardless of what the unread counter holds.`,
+          `The released-remit allowance is admitted only for the canonical chain, and this chain is not it — so the strict relation applies regardless of what the unread counter holds.` +
+          (obs.freshLocals.has(local.chainId)
+            ? ''
+            : `\n\nNOTE: this chain's snapshot is STALE, and its composition view could not be read, so the role was resolved from neither source. Confirm the role before treating this as corruption.`),
       }));
       continue;
     }
-    const allowance =
-      isCanonicalHere && local.composition.isCanonicalRewardChain
-        ? local.composition.releasedRemitStranded
-        : 0n;
+    // Fresh: BOTH sources must agree (r2). Stale: `isCanonicalHere` already
+    // IS the chain's own claim, so this collapses to that one source rather
+    // than demanding agreement with a view from another point in time.
+    const allowance = isCanonicalHere ? local.composition.releasedRemitStranded : 0n;
     const backing = local.bucket + allowance;
     if (backing + bucketToleranceWei >= local.outstandingRecycled) continue;
 

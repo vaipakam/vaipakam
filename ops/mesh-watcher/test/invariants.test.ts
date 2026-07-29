@@ -280,6 +280,88 @@ function codes(o: Overrides = {}): string[] {
   ].sort();
 }
 
+describe('bucket-coverage — role resolution across a stale snapshot (#1448 r11)', () => {
+  // The VALUE comparison is age-independent: both figures come from one
+  // pinned block. The ROLE decision is not — `canonicalChainId` is today's
+  // topology while a stale `allLocals` entry can predate a role migration.
+  // Pairing them compares two points in time, and the failure is a CRITICAL
+  // on correct behaviour, which is the worst direction for an alert to be
+  // wrong in.
+
+  /** A chain holding a stranded allowance it genuinely needs to stay covered. */
+  function demotedCanonical() {
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 100_000_000_000_000_000_000n,
+        outstandingRecycled: 150_000_000_000_000_000_000n,
+        // The 5e19 shortfall is exactly covered by the stranded allowance,
+        // and dwarfs the 1e15 tolerance, so tolerance cannot mask it.
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        isCanonicalRewardChain: true,
+      }),
+    );
+    return l;
+  }
+
+  it('does not page when a STALE snapshot predates a role migration', () => {
+    const l = demotedCanonical();
+    const obs = observation();
+    // Topology has moved on: MIRROR is canonical now. The stale snapshot
+    // still reports the pre-demotion state, self-consistently.
+    const stale: MeshObservation = {
+      ...obs,
+      canonicalChainId: MIRROR,
+      freshLocals: new Map(), // nothing fresh — this is the point
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(stale, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found).toEqual([]);
+  });
+
+  it('DOES page when the same state is read FRESH under the new topology', () => {
+    // The r2 two-source rule must survive: with a contemporaneous read, a
+    // chain claiming a role the mesh does not grant it gets no allowance.
+    const l = demotedCanonical();
+    const obs = observation();
+    const live: MeshObservation = {
+      ...obs,
+      canonicalChainId: MIRROR,
+      freshLocals: new Map([[CANONICAL, l]]),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(live, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found.length).toBe(1);
+    expect(found[0].severity).toBe('critical');
+  });
+
+  it('still pages a STALE chain whose own claim is mirror', () => {
+    // The stale fallback reads the chain's OWN same-block claim, so it must
+    // not become a blanket amnesty: a chain that says it is a mirror is held
+    // to the strict relation however old the snapshot is.
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 100_000_000_000_000_000_000n,
+        outstandingRecycled: 150_000_000_000_000_000_000n,
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        isCanonicalRewardChain: false,
+      }),
+    );
+    const obs = observation();
+    const stale: MeshObservation = {
+      ...obs,
+      canonicalChainId: CANONICAL,
+      freshLocals: new Map(),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(stale, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found.length).toBe(1);
+    expect(found[0].severity).toBe('critical');
+  });
+});
+
 describe('checkHardInvariants — baseline', () => {
   it('reports nothing on a healthy mesh', () => {
     // Load-bearing: every violation test below mutates one field off this
