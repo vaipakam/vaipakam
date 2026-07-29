@@ -31,9 +31,14 @@ without knowing the chain's real demand; an operator funds it separately
 against evidence.
 
 The specification also now states what the lifetime ceiling actually limits:
-**drawdown from a balance set aside at launch**, not issuance. Nothing is
-minted per claim, so calling it an issuance ceiling would hand anyone reading
-downstream the wrong model of the token supply. Value recycled back into the
+**drawdown**, not issuance. Nothing is minted per claim, so calling it an
+issuance ceiling would hand anyone reading downstream the wrong model of the
+token supply. It is equally not a balance that exists by virtue of deploying —
+deployment mints a smaller initial amount elsewhere, and the balance claims
+are paid from has to be funded into the platform separately. The practical
+consequence is worth stating plainly, because it is the kind of thing found
+the hard way: the platform can report ample headroom while holding nothing to
+pay it with. Value recycled back into the
 reward bucket is value the platform already received and is re-spending, so it
 is not drawn from that allocation at all — which is why a day whose fresh
 headroom is exhausted can still pay from the recycled bucket, and must, or the
@@ -95,5 +100,8 @@ the receive path is exercised by the remittance ledger's own tests and made
 observable by the published-counter relations, with the case of an arrival
 never labelled at all left open as #1452. These boundary tests do **not**
 evidence it — they exercise allocation-ceiling behaviour and never deliver a
-remittance. The mirror-side half of that work describes behaviour that does
-not exist yet and becomes reachable only with #1434.
+remittance. The half of that work concerning chains other than the canonical
+one is only partly future: value arriving on such a chain is already labelled
+and credited to its local pool today. What does not exist yet is that chain
+pricing its own claims, and therefore settling or releasing what it has
+committed — reachable only with #1434.

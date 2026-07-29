@@ -478,16 +478,22 @@ contract MeshLedgerInvariant is Test {
     // `outstandingFresh + paidOutFresh <= 69M`, and like every bound in this
     // suite it holds trivially on state that never approaches the cap.
     //
-    // How far the campaign can actually get (Codex #1457 r2 P3 — the first
-    // version of this comment said "seven orders of magnitude", which is
-    // simply wrong and overstated the gap by a factor of ~10^5): fresh
-    // reservations are sized from the fixed schedule, ~20,164 VPFI on an
-    // early day, and the handler exposes fewer than 40 finalizable day
-    // slots. Even if EVERY one of them finalized, the reachable fresh total
-    // is under ~1M VPFI against a 69,000,000 ceiling — under two orders of
-    // magnitude. Still unreachable, so the bound is green because the
-    // boundary cannot be approached rather than because it is enforced; but
-    // the honest figure is ~10^2, not ~10^7.
+    // How far the campaign can actually get. Counted twice, because both
+    // earlier versions of this comment were wrong: "seven orders of
+    // magnitude" (out by ~10^5) and then "fewer than 40 slots, under ~1M"
+    // (which missed a whole band). The handler finalizes days from TWO
+    // disjoint spaces: `finalize`/`creditDay` take `daySeed % 40` → days
+    // 0-39, and `instructThenRetire` takes `40 + 2 * (nonce % 12)` → the 12
+    // even days 40-62, reserved deliberately so the two cannot collide.
+    // That is 52 slots, 51 with a non-zero schedule (day 0 pays nothing).
+    // At ~20,164 VPFI on an early day, the reachable fresh total is
+    // ~1.03M — just OVER a million, so "under ~1M" was wrong too.
+    //
+    // Against a 69,000,000 ceiling that is a factor of ~67: under two
+    // orders of magnitude. The conclusion is unchanged and is the only
+    // thing this comment needs — the boundary cannot be approached, so the
+    // bound is green for the wrong reason — but the figure is now the one
+    // the handler actually produces.
     //
     // These two tests place the ledger AT the boundary and assert the cap
     // actually bites. They are deliberately deterministic — a fuzzer cannot
@@ -519,6 +525,7 @@ contract MeshLedgerInvariant is Test {
             "clamp is not under test"
         );
 
+        uint256 freshBefore = _outstandingFresh();
         _finalizeDayOne();
 
         (bool stamped, uint256 scheduleFloor, , , ) =
@@ -534,7 +541,18 @@ contract MeshLedgerInvariant is Test {
         // Codex #1457 r1 P1 — the STAMP is not the reservation. Finalization
         // could stamp the clamped floor and still reserve commitments sized
         // from the unclamped schedule, which walks the counter past the cap
-        // while every assertion above stays green. Assert the counter itself.
+        // while every assertion above stays green.
+        //
+        // r2 P2 — and asserting only `<= remaining` is still a BOUND: an
+        // implementation that under-books, or skips the reservation entirely
+        // when the clamp binds, satisfies it just as well. The published
+        // funding must be FULLY reserved, so assert the exact delta.
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "the reservation must equal the published floor exactly - a "
+            "smaller one means the day funds value it never reserved"
+        );
         _assertFreshCapNotBreached("after a clamped finalize");
     }
 
@@ -549,6 +567,7 @@ contract MeshLedgerInvariant is Test {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP, 0
         );
 
+        (, , uint256 recycledBefore, ) = _agg().getGovernorCommitState();
         _finalizeDayOne();
 
         (bool stamped, uint256 scheduleFloor, uint256 recycledBudget, uint256 aBar, ) =
@@ -574,12 +593,28 @@ contract MeshLedgerInvariant is Test {
         // and the stamp alone cannot see it. This test claims recycled
         // funding continues SAFELY past fresh exhaustion, so it has to check
         // the reservation, and that §7 #2's recycled half still holds.
+        //
+        // r2 P2 — `> 0` is a lower bound and a partial under-booking passes
+        // it, so assert the exact figure. The published recycled budget is
+        // reserved in TWO books, not one: Base's own slice lands in the
+        // global `outstandingCommitRecycled`, and each mirror's slice in its
+        // own per-chain reservation. Summing them is the "fully reserved"
+        // identity — checking only the global half would have accepted a day
+        // that published a mesh-wide budget and reserved just Base's part of
+        // it. (Written the other way first, and it failed 19e18 != 95e18,
+        // which is what surfaced the split.)
         (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
-        assertGt(
-            outstandingRecycled,
-            0,
-            "a stamped recycled budget with NO reservation behind it lets a "
-            "later day size against the same availability twice"
+        uint256 reservedNow = outstandingRecycled - recycledBefore;
+        uint32[3] memory cs = _chains();
+        for (uint256 i; i < cs.length; ++i) {
+            reservedNow += _agg().getChainOutstandingRecycledCommit(cs[i]);
+        }
+        assertEq(
+            reservedNow,
+            recycledBudget,
+            "everything the day published as recycled must be reserved "
+            "somewhere - a stamped budget with no reservation behind it lets "
+            "a later day size against the same availability twice"
         );
         (, uint256 bucketNow, ) = _agg().getRecycleCustodyPosition();
         assertLe(
@@ -617,6 +652,7 @@ contract MeshLedgerInvariant is Test {
             "fixture must place the schedule ABOVE the headroom"
         );
 
+        uint256 freshBefore = _outstandingFresh();
         _finalizeDayOne();
 
         (bool stamped, uint256 scheduleFloor, , , ) =
@@ -627,6 +663,11 @@ contract MeshLedgerInvariant is Test {
             headroom,
             "already-remitted value reserves against the cap exactly as an "
             "outstanding commitment does"
+        );
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "and the clamped floor is fully reserved here too"
         );
         _assertFreshCapNotBreached("after a remit-clamped finalize");
     }
