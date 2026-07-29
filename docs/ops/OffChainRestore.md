@@ -75,8 +75,13 @@ then deploy.
    - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
    - `apps/agent/wrangler.jsonc`       → vaipakam-archive
    - `ops/offchain-data-archive/wrangler.jsonc` → vaipakam-archive
-   - `ops/mesh-watcher/wrangler.jsonc` → vaipakam-mesh-alerts-db (its own
-     database; see that Worker's README — it is not part of this archive)
+
+   > `ops/mesh-watcher` is deliberately NOT part of this runbook. It owns a
+   > SEPARATE database (`vaipakam-mesh-alerts-db`) that this archive does not
+   > back up, and the Worker is undeployed — so there is nothing here to
+   > restore. Its own README carries the create / migrate / secrets / deploy
+   > procedure; adding a half-step here would leave an operator holding a
+   > database id this runbook never produced.
 
 6. Apply migrations:
 
@@ -102,7 +107,6 @@ then deploy.
    pnpm --filter @vaipakam/agent deploy
    pnpm --filter @vaipakam/defi deploy
    pnpm --filter @vaipakam/www deploy
-   ( cd ops/lz-watcher            && npm ci && npm run deploy )
    ( cd ops/offchain-data-archive && npm ci && npm run deploy )
    ```
 

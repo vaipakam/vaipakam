@@ -14,7 +14,15 @@
   // The source is kept as historical reference. Removing the tree entirely
   // is tracked on #250 Phase 2.
   "name": "vaipakam-lz-watcher",
-  "main": "src/index.ts",
+  // RETIRED (#1440) — deliberately points at a file that does not exist, so
+  // `wrangler deploy` fails immediately with "Could not resolve" and names
+  // the reason. The npm `deploy` script refuses too, but that guard is
+  // bypassed by invoking wrangler directly (Codex #1450 r2).
+  //
+  // The config file itself is KEPT rather than renamed: without it wrangler
+  // walks UP the tree and picks up a PARENT config, which is far worse than
+  // a clean failure — it would bundle and deploy under the wrong Worker.
+  "main": "src/RETIRED-see-issue-1440-do-not-deploy.ts",
   "compatibility_date": "2026-04-29",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {

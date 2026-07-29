@@ -1886,7 +1886,29 @@ describing this; keep them in sync if you change the schema.
 
 ---
 
-## 9. LayerZero security watcher (one-time, not per-chain)
+## 9. LayerZero security watcher — RETIRED (#1440)
+
+> **This section is historical. Do NOT follow it.**
+>
+> The `vaipakam-lz-watcher` Worker was **deleted on 2026-07-28**. After the
+> T-068 migration to Chainlink CCIP it was polling a decommissioned stack
+> every five minutes, including the `OAPP_VPFI_BUY_*` surface the #687-A
+> securities excision removed.
+>
+> Following the steps below would **create `vaipakam-lz-alerts-db`** — a
+> database the operator is in the middle of deleting — and consume one of
+> the five free-plan cron slots. That slot now belongs to
+> `ops/mesh-watcher` (see its own README for its setup).
+>
+> The package cannot be deployed: its Wrangler config is renamed to
+> `wrangler.jsonc.retired` and its `deploy` script exits 1. Removing the
+> source tree entirely is tracked on **#250 Phase 2**.
+>
+> The cross-chain surface it used to watch is CCIP now; ops alerting for
+> that is separately tracked and does not reuse any of this.
+
+<details>
+<summary>Historical procedure (retained for reference only)</summary>
 
 The `ops/lz-watcher` Cloudflare Worker is **separate from** the
 hf-watcher in §8. It is internal-only — it has no public HTTP
@@ -2057,6 +2079,8 @@ not Vaipakam Diamond selectors.
 
 
 ---
+
+</details>
 
 ## Appendix: 2026-05-10 testnet rehearsal record (F1 / F2 / F3)
 

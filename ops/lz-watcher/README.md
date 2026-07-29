@@ -1,4 +1,21 @@
-# vaipakam-lz-watcher
+# vaipakam-lz-watcher — RETIRED (#1440)
+
+> **Deleted 2026-07-28. This package is not deployable and its setup
+> instructions must not be followed.**
+>
+> Post-T-068 (LayerZero → Chainlink CCIP) it polled a decommissioned stack,
+> including the `OAPP_VPFI_BUY_*` surface the #687-A securities excision
+> removed. Its Wrangler config is renamed to `wrangler.jsonc.retired` and
+> `npm run deploy` exits 1, so neither `npm run deploy` nor a direct
+> `wrangler deploy` can recreate the Worker.
+>
+> **Do not run the "First-time deploy" section below.** It creates
+> `vaipakam-lz-alerts-db`, which the operator is in the process of deleting,
+> and takes one of the five free-plan cron slots — the slot `ops/mesh-watcher`
+> now uses.
+>
+> Removing this tree entirely is tracked on **#250 Phase 2**; it is kept for
+> reference until then. Everything below is historical.
 
 > **⚠ T-068 deprecation banner (added 2026-05-23).** This Worker watches
 > the pre-T-068 LayerZero V2 surface (DVN config drift, OFT mint/burn
@@ -52,7 +69,7 @@ hf-watcher Worker which doubles as a competitive keeper surface.
 Co-locating ops alerts on the same chat as user notifications would
 risk leaking incident state to the world.
 
-## First-time deploy
+## First-time deploy — HISTORICAL, DO NOT RUN (#1440)
 
 ```bash
 cd ops/lz-watcher
