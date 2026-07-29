@@ -264,6 +264,28 @@ contract MeshThreeChainE2ETest is Test {
         }
     }
 
+    /// @dev #1442 — as `_seedRecycled`, but with an explicit bucket so a
+    ///      mirror can be given real absorption it cannot fully self-fund.
+    ///      The two are COUPLED and that is the whole difficulty of this
+    ///      fixture: a chain's reported cumulative derives from
+    ///      `bucket + paidOut`, and Base clamps its day attribution to
+    ///      `min(forDay, reported - attributed)` — so lowering the bucket to
+    ///      create a shortfall also shrinks that chain's contribution to `Ā`,
+    ///      which shrinks the very target the shortfall is measured against.
+    ///      Seeding the per-day feed high while the bucket stays low is what
+    ///      keeps a genuine gap between target and availability.
+    function _seedRecycledWithBucket(
+        uint256 chainId,
+        uint256 throughDay,
+        uint256 bucket
+    ) private {
+        uint256 perDay = _absorbFor(chainId);
+        _mut(chainId).setRecycleBucketRaw(bucket);
+        for (uint256 d = 1; d <= throughDay; ++d) {
+            _mut(chainId).setRecycledCreditedByDayRaw(d, perDay);
+        }
+    }
+
     function _absorbFor(uint256 chainId) private pure returns (uint256) {
         return chainId == ARB ? ABSORB_ARB : ABSORB_OP;
     }
@@ -380,6 +402,19 @@ contract MeshThreeChainE2ETest is Test {
     ///      figures — and a fan-out that cross-wired the two destinations
     ///      would then satisfy every per-chain assertion in this suite. With
     ///      ARB at twice OP, a mis-routed packet is detectable.
+    /// @dev #1442 — seed the two MIRRORS only, leaving Base with zero
+    ///      interest for the day. Base then earns no slice of its own, so
+    ///      its global `outstandingCommitRecycled` is composed ENTIRELY of
+    ///      top-ups it funded for other chains — which is what makes the
+    ///      canonical-funded remainder separately assertable. Base still
+    ///      needs a BUCKET (availability to fund from); that is independent
+    ///      of having demand.
+    function _seedMirrorInterestOnly(uint256 dayId) private {
+        _seedInterest(ARB, dayId, alice, 2e18, 3e18);
+        _seedInterest(OP, dayId, alice, 1e18, 5e18);
+        _seedInterest(BASE, dayId, alice, 0, 0);
+    }
+
     function _seedAllInterest(uint256 dayId) private {
         // FOUR pairwise-distinct totals across two chains and two sides. The
         // asymmetry is load-bearing twice over: unequal per-chain figures make
@@ -606,6 +641,94 @@ contract MeshThreeChainE2ETest is Test {
      *         double what Base instructed and under-report availability
      *         forever.
      */
+    /**
+     * @notice #1442 — the CANONICAL TOP-UP pass, which no test reached.
+     *
+     *         Every existing case seeds both mirrors far above their targets,
+     *         so `availBase` is zero, `topUpPool` is zero, and the two-pass
+     *         funding's SECOND pass sits at zero in the whole suite. A
+     *         regression disabling Base-funded top-ups, or booking their
+     *         reservation against the wrong ledger, would pass a suite that
+     *         calls itself a three-chain mesh e2e — while underfunding any
+     *         live mirror whose own bucket is short.
+     *
+     *         Pins the two passes SEPARATELY, which asserting only the total
+     *         cannot do: `LibMeshFunding._stampOne` splits each chain's capped
+     *         commit by FUNDING SOURCE — the locally-funded share books into
+     *         `chainConsumedRecycled[c]` and rides the wire as
+     *         `recycleConsume`, while Base's top-up books into the GLOBAL
+     *         `outstandingCommitRecycled`. Never both.
+     */
+    function test_E2E_CanonicalTopUpFundsAMirrorShortfall() public {
+        // ARB gets real absorption it CANNOT self-fund; OP is comfortable.
+        // Base is seeded with a BUCKET but NO interest, so it earns no slice
+        // of its own — its global reservation is then composed entirely of
+        // top-ups, which is what makes the canonical-funded remainder
+        // separately assertable. No existing test seeds Base's bucket at all,
+        // which is exactly why the second pass never ran.
+        _seedRecycledWithBucket(ARB, 8, 100 ether);
+        _seedRecycled(OP, 8);
+        _seedRecycled(BASE, 8);
+        _seedMirrorInterestOnly(5);
+        _arm(5);
+        _warpPast(6);
+
+        _runDayCycle(5);
+
+        LibVaipakam.ChainDayFunding memory arb =
+            _agg().getChainDayRecycledFunding(5, uint32(ARB));
+        LibVaipakam.ChainDayFunding memory op =
+            _agg().getChainDayRecycledFunding(5, uint32(OP));
+        LibVaipakam.ChainDayFunding memory base =
+            _agg().getChainDayRecycledFunding(5, uint32(BASE));
+        (, , uint256 baseOutstanding, ) = _agg().getGovernorCommitState();
+        (, uint256 arbInstructed, uint256 arbAvail, ) =
+            _agg().getChainRecycledLedger(uint32(ARB));
+
+        // ── PASS 1: the mirror funded what it could, and no more ─────────
+        // Its availability is EXHAUSTED (bar rounding dust), which is what
+        // makes the remainder a genuine shortfall rather than a slice Base
+        // took for no reason.
+        assertGt(arb.recycleConsume, 0, "ARB self-funded a real amount");
+        assertApproxEqAbs(
+            arbInstructed, 100 ether, 1e3, "instructed up to its bucket"
+        );
+        assertLt(arbAvail, 1e3, "ARB's availability is spent");
+
+        // ── PASS 2: Base funded the remainder, against its GLOBAL ledger ──
+        // Base is never a local funder in the split, so it books no
+        // per-chain instruction against itself — and with zero interest it
+        // has no slice of its own either. Everything here is top-up.
+        assertEq(base.recycleConsume, 0, "Base books no local instruction");
+        assertEq(
+            base.fundedLender + base.fundedBorrower,
+            0,
+            "and earns no slice of its own this day"
+        );
+        assertGt(
+            baseOutstanding,
+            0,
+            "#1442: the canonical top-up pass reserved against the global ledger"
+        );
+
+        // ── The two passes are DISTINCT, not one figure counted twice ────
+        // ARB was funded MORE than it was instructed to self-fund: the
+        // difference is precisely what Base supplied. Asserting only the
+        // total could not tell those apart.
+        assertGt(arb.fundedLender + arb.fundedBorrower, 0, "ARB was funded");
+        assertGt(
+            arb.lenderHalfEquiv + arb.borrowerHalfEquiv,
+            arb.recycleConsume,
+            "ARB's funded slice exceeds its locally-funded share"
+        );
+
+        // OP, comfortable, contributes NOTHING to the top-up pool — so the
+        // global figure cannot be OP's shortfall in disguise.
+        (, , uint256 opAvail, ) = _agg().getChainRecycledLedger(uint32(OP));
+        assertGt(opAvail, 0, "OP still has availability, i.e. no shortfall");
+        assertGt(op.recycleConsume, 0, "and funded its own slice locally");
+    }
+
     function test_E2E_DuplicateBroadcastToMirrorDoesNotDoubleTheReservation()
         public
     {
