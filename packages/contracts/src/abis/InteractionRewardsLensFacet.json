@@ -284,6 +284,11 @@
         "name": "paidOutRecycled",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "keeperBudget",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
