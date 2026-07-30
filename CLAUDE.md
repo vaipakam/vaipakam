@@ -726,7 +726,12 @@ Three profiles live in `contracts/foundry.toml`:
   regression command above excludes it): `forge test --match-path
   "test/invariants/*"` — default profile.
 - Pre-PR sanity check (compile + targeted tests): default profile.
-- CI (`ci.yml` + Slither + Build docs): runs under `cifast`. The
+- CI (`ci.yml` + Slither): runs under `cifast`. The Build docs job's
+  `forge doc --build` runs under `quick` instead (#1493): forge doc
+  performs its own solc pass over the active profile's source glob
+  (it never reuses `out/`), and cifast's per-file test-skip
+  enumeration lets newly added test suites drift back into that
+  compile — quick's `test/**`/`script/**` globs can't. The
   `mainnet-gate.yml` workflow runs `predeploy-check.sh --full`
   under the default profile on `ubuntu-latest` and shares the
   16 GB ceiling — see ADR-0011 for the pre-release-track caveat.

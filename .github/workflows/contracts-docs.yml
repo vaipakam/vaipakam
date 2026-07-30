@@ -82,6 +82,17 @@ jobs:
         # Builds an mdbook tree under `contracts/docs/book` from the
         # per-function NatSpec comments in `contracts/src/`. No CI-side
         # config — the output is governed by `foundry.toml [doc]`.
+        #
+        # QUICK profile, same as ci.yml's Build docs (#1493): forge doc
+        # runs its own solc pass over the ACTIVE profile's source glob
+        # (it does not reuse cached out/), and the default profile's
+        # test-inclusive unit exceeds the 16 GB runner ceiling — the
+        # OOM killer takes the runner down after ~29 silent minutes.
+        # quick's test/** + script/** skip globs keep the doc compile
+        # src-only (~2 min / ~1.5 GB), which is the scope the site
+        # documents anyway.
+        env:
+          FOUNDRY_PROFILE: quick
         run: |
           cd contracts
           forge doc --build

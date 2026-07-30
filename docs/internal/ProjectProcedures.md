@@ -725,7 +725,7 @@ Ten independent gates on every merge:
  5. ✅ detect-changes check SUCCESS (CI path-filter job)
  6. ✅ contracts-fast check SUCCESS (forge build + deploy-sanity + positive-flow scenarios; FOUNDRY_PROFILE=cifast)
  7. ✅ workspaces check SUCCESS (pnpm typecheck per workspace)
- 8. ✅ Build docs check SUCCESS (forge doc; FOUNDRY_PROFILE=cifast)
+ 8. ✅ Build docs check SUCCESS (forge doc; FOUNDRY_PROFILE=quick — #1493)
  9. ✅ Slither static analysis check SUCCESS (FOUNDRY_PROFILE=cifast)
 10. ✅ signed commits
 ```

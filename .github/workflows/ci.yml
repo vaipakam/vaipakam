@@ -18,8 +18,11 @@
 #       │                                     Includes deploy-sanity tests
 #       │                                     + positive-flow scenarios at
 #       │                                     runtime.
-#       ├── build-docs     (informational; `forge doc --build`, also under
-#       │                   FOUNDRY_PROFILE=cifast)
+#       ├── build-docs     (informational; `forge doc --build` under
+#       │                   FOUNDRY_PROFILE=quick — forge doc runs its
+#       │                   own solc pass over the active profile's
+#       │                   glob, so the doc step needs quick's src-only
+#       │                   scope; #1493)
 #       └── slither        (informational; Solidity static analysis,
 #                           reads slither.config.json filter_paths; under
 #                           FOUNDRY_PROFILE=cifast)
@@ -29,9 +32,11 @@
 # CodeQL-pack drift, submodule pin drift, and dep-bump-triggered
 # failures between commit-driven runs.
 #
-# All forge-using jobs in this workflow share the identical content-
-# based cache key + run under the same `cifast` foundry profile — one
-# forge cold-build per PR, the rest restore-and-go.
+# contracts-fast + slither share the identical content-based cache key
+# and the `cifast` foundry profile — one forge cold-build per PR,
+# slither restores-and-goes. build-docs is self-contained under the
+# `quick` profile (#1493): `forge doc` runs its own solc pass and never
+# reads the shared artifacts.
 #
 # Why no full regression on CI (policy locked 2026-05-27, #290 + #296):
 # the full-scope `forge build` peaks at ~17.7 GB RSS, over the 16 GB
@@ -340,7 +345,7 @@ jobs:
   #   contracts-fast (FOUNDRY_PROFILE=cifast, ~5 min cold, ~3.2 GB
   #                    peak RSS, required gate)
   #     ↓ (cache saved at job end → fan-out below restores)
-  #   ├── build-docs (informational, also cifast)
+  #   ├── build-docs (informational; doc step runs under quick — #1493)
   #   └── slither    (informational, also cifast)
   #
   #   contracts-fast — `predeploy-check.sh` (no `--full`) + `forge test
@@ -358,11 +363,12 @@ jobs:
   #                    before cutover.
   #
   # Cache-save / restore mechanics: `actions/cache` saves at job END
-  # (post-action hook fires when the job finishes). build-docs +
-  # slither restore that just-saved cache by key. All three jobs share
-  # the identical content-based cache key + run under the same `cifast`
-  # foundry profile (so what contracts-fast saved is exactly what the
-  # downstream jobs read).
+  # (post-action hook fires when the job finishes). slither restores
+  # that just-saved cache by key — both jobs share the identical
+  # content-based cache key + the `cifast` foundry profile (so what
+  # contracts-fast saved is exactly what slither reads). build-docs
+  # does NOT restore it (#1493): `forge doc` runs its own solc pass
+  # under `quick` and never read the shared artifacts.
   contracts-fast:
     name: contracts-fast (forge + predeploy-check)
     # Fail-fast ordering: gate the expensive forge build on the cheap
@@ -514,14 +520,13 @@ jobs:
         run: forge test --match-path "test/scenarios/*.t.sol"
 
       # #1221 — publish the cifast-compiled out/+cache as a workflow
-      # ARTIFACT so build-docs can run `forge doc --build` WARM instead of
-      # paying its own ~30 min cold src compile. Workflow artifacts are
-      # reliable across jobs within a run (the actions/cache cross-job
-      # restore build-docs used before MISSED on any .sol change, leaving
-      # forge doc to cold-compile and OOM-reclaim the runner at exit 143).
-      # retention-days:1 keeps storage minimal — it is only consumed by the
-      # same run's build-docs job.
-      - name: Upload forge artifacts (for build-docs warm doc build)
+      # ARTIFACT (reliable across jobs within a run, unlike the
+      # actions/cache cross-job restore used before, which MISSED on any
+      # .sol change). Consumed by the same run's slither job; build-docs
+      # no longer downloads it (#1493 — `forge doc` runs its own solc
+      # pass and never actually read these artifacts).
+      # retention-days:1 keeps storage minimal.
+      - name: Upload forge artifacts (for slither warm analysis)
         # #1267 (Codex P2) — non-blocking: this is a warm-cache optimization
         # only (build-docs downloads it continue-on-error and still has the
         # deterministic forge-build fallback). A transient artifact-service /
@@ -670,21 +675,18 @@ jobs:
       needs.detect-changes.outputs.contracts == 'true'
       && needs.contracts-fast.result == 'success'
     runs-on: ubuntu-latest
-    # `forge doc --build` only reads src/ NatSpec — it doesn't need test/.
-    # It runs under FOUNDRY_PROFILE=cifast, and the "Warm compile (in-job,
-    # memory-safe)" step below runs `forge build --skip test` FIRST so the
-    # doc step always reuses warm `out/` artifacts regardless of whether the
-    # cross-job `actions/cache` restore hit (on #1122 it MISSED — a 3 s
-    # restore — leaving forge doc to cold-compile the full unit, which
-    # overran the old 30 min cap and got the job cancelled, blocking the
-    # merge). With the in-job warm compile the doc step is just src+script
-    # (memory-safe ~3 GB) + mdbook rendering. Cap kept generous for the one
-    # cold src compile per PR on a slow runner. (History: 15 → 30 for #640's
-    # cold-cache overrun; the in-job warm step is the real fix so a cache
-    # miss can't cancel the job again.)
+    # The doc build runs under FOUNDRY_PROFILE=quick (#1493): `forge
+    # doc` performs its OWN solc pass (AST output) over the active
+    # profile's full source glob — it does NOT reuse `out/` artifacts,
+    # contrary to what the pre-#1493 warm-cache design assumed
+    # (#640/#1122/#1221 all iterated on warming a cache the doc step
+    # never read; those steps are gone). quick's src-only scope is what
+    # the docs site documents and is the memory-safe unit (~2 min /
+    # ~1.5 GB vs the test-inclusive unit that OOM-killed the runner).
+    # Cap kept generous for slow runners.
     timeout-minutes: 75
     env:
-      FOUNDRY_PROFILE: cifast
+      FOUNDRY_PROFILE: quick
     defaults:
       run:
         working-directory: contracts
@@ -703,56 +705,30 @@ jobs:
       - name: Snapshot submodule SHAs (for content-based cache key)
         run: git submodule status --recursive > .submodule-state
 
-      # #1221 — download contracts-fast's cifast-compiled out/+cache from a
-      # workflow ARTIFACT (reliable within a run, unlike the actions/cache
-      # cross-job restore this replaces — that MISSED on any .sol change and
-      # left `forge doc --build` to cold-compile the full unit, OOM-
-      # reclaiming the runner at exit 143). With warm artifacts present the
-      # in-job warm compile below is an instant no-op and forge doc only
-      # renders NatSpec -> mdbook. `continue-on-error` keeps the deterministic
-      # warm-compile fallback authoritative if the download ever glitches.
-      - name: Download forge artifacts (warm from contracts-fast)
-        continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: forge-out-${{ github.sha }}
-          path: contracts
-
-      - name: Warm compile (in-job, fallback safety net)
-        # With the download-artifact step above providing contracts-fast's
-        # warm out/+cache, this is a near-instant no-op (nothing to compile).
-        # It stays as a deterministic FALLBACK: if the artifact download ever
-        # glitches (continue-on-error above), this cold-compiles src+script so
-        # `forge doc --build` still never depends on a shared-state hit.
-        # `--skip test` compiles `src/` + `script/` only (the exact graph
-        # `forge doc` reads — it never needs `test/`), which is also the
-        # memory-safe scope: the test-inclusive whole unit peaks ~17.7 GB RSS
-        # (over the 16 GB runner ceiling → thrash), while src+script stays
-        # ~3 GB. `forge doc --build` below then hits warm artifacts and only
-        # renders the NatSpec → mdbook (fast). One cold src compile per PR.
-        run: forge build --skip test
-
+      # The #1221 warm-artifact download + in-job warm compile that used
+      # to sit here were REMOVED in #1493: `forge doc` performs its own
+      # solc pass (AST output, different artifact settings) over the
+      # active profile's source glob, so it never read those warmed
+      # `out/` artifacts — the doc step below is self-contained.
       - name: Forge doc --build
         # Builds an mdbook tree under `contracts/docs/book` from the
         # per-function NatSpec comments in `contracts/src/`. Output is
         # governed by `foundry.toml [doc]`.
         #
-        # Runs under the QUICK profile, not the job-level cifast (#1493).
-        # `forge doc` does NOT reuse `out/` — it runs its own solc pass
-        # (AST output, different artifact settings) over the ACTIVE
-        # profile's full source glob. cifast's test-skip is an explicit
-        # per-file enumeration, so every top-level test suite added after
-        # that list was written silently re-enters the doc compile —
-        # which crossed the single-unit memory ceiling with #1457's
-        # rewards suites: solc grew unbounded for ~29 min until the
-        # OOM killer took the RUNNER SERVICE down ("runner received a
-        # shutdown signal", exit 143), red on every push since. quick's
+        # QUICK profile (job-level env, #1493). `forge doc` does NOT
+        # reuse `out/` — it runs its own solc pass (AST output,
+        # different artifact settings) over the ACTIVE profile's full
+        # source glob. cifast's test-skip is an explicit per-file
+        # enumeration, so every top-level test suite added after that
+        # list was written silently re-entered the doc compile — which
+        # crossed the single-unit memory ceiling with #1457's rewards
+        # suites: solc grew unbounded for ~29 min until the OOM killer
+        # took the RUNNER SERVICE down ("runner received a shutdown
+        # signal", exit 143), red on every push since. quick's
         # `test/**` + `script/**` skip GLOBS can never drift that way,
         # and src-only is the exact scope the docs site documents:
         # measured ~2 min / ~1.5 GB peak vs >10 min / >5.7 GB-and-
         # climbing under cifast.
-        env:
-          FOUNDRY_PROFILE: quick
         run: forge doc --build
 
       - name: Inject site root breadcrumb
