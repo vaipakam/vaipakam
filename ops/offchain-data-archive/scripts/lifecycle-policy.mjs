@@ -46,8 +46,29 @@
  * against a forged overwrite, since the Worker's write key holds `writeFiles`
  * but not `deleteFiles` (an attacker can shadow an archive, never delete one).
  *
- * The floor is derived from the CADENCE of the only routine inspection these
- * objects get — the healthcheck, which runs on Mondays off the daily cron — and
+ * WHAT THE WINDOW ACTUALLY GUARANTEES — it is an UPPER BOUND, not a floor per
+ * incident (#1471 r12). `daysFromHidingToDeleting` counts from the moment a
+ * version became non-current, and that happens two ways: superseded by a new
+ * upload at the same key, OR hidden by the age rule. Only the first restarts
+ * the clock. So a version the age rule hid on day 20 is deleted on day 29
+ * whatever happens afterwards: an attacker who overwrites it on day 28 leaves
+ * about ONE day of recovery, not nine.
+ *
+ * The window therefore reads: up to N days, decaying to zero as a version
+ * approaches its own deletion date. Within a total lifetime the privacy promise
+ * caps (see above), that decay cannot be designed away — extending the recovery
+ * term shortens the current-version window by the same amount.
+ *
+ * Why this is still worth having, stated rather than assumed: the archive an
+ * attacker gains most from forging is the NEWEST one, because that is what a
+ * restore reaches for — and the newest archive is current, not aged-hidden, so
+ * it gets the full window. Recovery time decays exactly as an archive's restore
+ * value decays. What the window does NOT cover is a targeted overwrite of a
+ * nearly-expired archive; bounding that needs immutability (Object Lock or
+ * retention, #1469) rather than lifecycle arithmetic.
+ *
+ * The floor below is derived from the CADENCE of the only routine inspection
+ * these objects get — the healthcheck, which runs on Mondays off the daily cron — and
  * NOT from any alert. Per the note above, no alert fires for an authenticated
  * forgery. So the floor says: the window must outlive one full inspection
  * cycle, which is 7 days plus a day of slack. Under it, a window can open and
@@ -169,6 +190,26 @@ export function assertPolicyCeilings(decl, fail) {
       floor: MIN_RECOVERY_DAYS_MONTHLY, promise:
         'PrivacyPolicy.md: monthly archives kept 12 months, then age out' },
   ];
+
+  // NESTED RULES UNDER *ANY* BOUNDED PREFIX (#1471 r12). r11 fixed this for the
+  // yearly prefixes and left the same hole on the bounded ones: `byPrefix` is an
+  // exact-match map, so a rule for `archives/2025/` was neither matched as the
+  // daily prefix nor rejected — while B2 applies it to daily objects, under a
+  // ceiling nothing checked. Same defect, other half of the same function.
+  const BOUNDED = [...DAILY_PREFIXES, ...MONTHLY_PREFIXES];
+  for (const r of decl.rules) {
+    const p = String(r.fileNamePrefix ?? '');
+    if (BOUNDED.includes(p)) continue;
+    const under = BOUNDED.find((b) => p.startsWith(b));
+    if (under) {
+      fail(
+        `bucket-lifecycle.json declares a NESTED rule "${p}" beneath the bounded ` +
+          `prefix "${under}". B2 applies it to those objects, but the ceiling and ` +
+          `floor checks key on the exact prefix, so a nested rule bypasses both. ` +
+          `Declare retention on "${under}" itself, or the bound is unenforced.`,
+      );
+    }
+  }
 
   for (const { prefixes, max, floor, promise } of groups) {
     for (const prefix of prefixes) {

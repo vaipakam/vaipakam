@@ -174,6 +174,29 @@ async function main() {
       process.exit(1);
     }
   }
+  // VALIDATE AT THE PARSE BOUNDARY, ONCE (#1471 r12). Three guards in this file
+  // have now been placed where the SYMPTOM appeared rather than where the value
+  // first becomes usable — this one sat 60 lines below the first
+  // `declared.bucket` read, so a `null` declaration still threw
+  // "Cannot read properties of null" before reaching it. A non-object
+  // declaration PARSES (null, a number, an array are all valid JSON), so shape
+  // is checked here, next to the parse, and nothing downstream re-checks it.
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
+    if (mode === 'print') {
+      console.warn(
+        '(bucket-lifecycle.json is not a JSON object — printing live state ' +
+          'anyway, which needs nothing from it.)',
+      );
+      declared = { bucket: process.env.BACKBLAZE_BUCKET || null, rules: [] };
+    } else {
+      console.error(
+        'bucket-lifecycle.json must be a JSON object with `bucket` and `rules`.',
+      );
+      process.exit(1);
+    }
+  }
+
+
   // `setup-backblaze.mjs` supports a `BUCKET_NAME` override — the README tells
   // forks to pick a unique name, since B2 bucket names are globally unique — so
   // setup can legitimately be operating on a bucket this declaration does not
@@ -234,6 +257,19 @@ async function main() {
   const listed = await b2(`${api.apiUrl}/b2api/v3/b2_list_buckets?${qs}`, {
     headers: { Authorization: token },
   });
+  // APPLY REQUIRES A DECLARED BUCKET (#1471 r12). r11 let print mode fall back
+  // to the scoped key's only bucket, which is right for a read — but the same
+  // relaxation reached the write path, where "whichever bucket this key can
+  // see" is not an acceptable target for reconfiguring retention.
+  if (mode === 'apply' && !declared.bucket) {
+    console.error(
+      'Refusing to apply: the declaration names no bucket. --apply must write to ' +
+        'an explicitly declared target, never to whichever bucket the key happens ' +
+        'to be scoped to.',
+    );
+    process.exit(2);
+  }
+
   // With a scoped key and an unreadable declaration there is exactly one
   // bucket in the response and no name to compare against; take it.
   const bucket = declared.bucket
