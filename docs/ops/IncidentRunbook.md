@@ -569,11 +569,32 @@ runs after revocation.
    wrangler secrets-store secret update "$STORE" \
      --secret-id "$SECRET_ID" --remote
    ```
-4. Re-register the webhook:
+4. Re-register the webhook. The token goes in the URL path, so it must not
+   be typed into the command — that would undo step 3's prompted upload by
+   writing the freshly minted credential straight into shell history, and
+   into the process list where any other user on the box can read it from
+   `ps`. Prompt for it and hand curl its options on **stdin**, so the token
+   appears in neither:
+
    ```bash
-   curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://agent.vaipakam.com/tg/webhook"
+   read -rsp 'New bot token: ' TG_TOKEN; echo
+
+   printf 'url = "https://api.telegram.org/bot%s/setWebhook"\ndata-urlencode = "url=https://agent.vaipakam.com/tg/webhook"\n' \
+     "$TG_TOKEN" | curl -K -
+
+   # Confirm it took — same pattern, same reason:
+   printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' \
+     "$TG_TOKEN" | curl -K -
+
+   unset TG_TOKEN
    ```
+
+   `curl -K -` reads its options from standard input, so the assembled URL
+   never becomes a command-line argument. `read -rs` keeps the typed value
+   off the screen and out of history. `unset` drops it from the shell's
+   environment when you are done — a rotation performed to evict an
+   attacker should not leave the replacement credential lying around the
+   workstation.
 
    `agent.vaipakam.com`, NOT `api.vaipakam.com` — the latter belonged to
    the removed hf-watcher and no current Worker binds it; `/tg/webhook`

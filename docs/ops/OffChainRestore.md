@@ -328,8 +328,20 @@ then deploy.
    > — then deploy. **Confirm it, do not assume it:** an empty list is what
    > unregisters the schedule, but a mistyped or wrongly-nested key silently
    > leaves the committed cron in place, so read the schedules back before
-   > moving on (the Worker's *Settings → Trigger Events* pane, or
-   > `wrangler deployments status`). Nothing in §§2–6 needs a cron to run.
+   > moving on. The readback has to be **trigger-aware** — check the
+   > Worker's *Settings → Trigger Events* pane, or query the schedules
+   > directly:
+   >
+   > ```bash
+   > curl -s -H "Authorization: Bearer $CF_API_TOKEN" \
+   >   "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/<worker-name>/schedules"
+   > ```
+   >
+   > Do **not** use `wrangler deployments status` for this: it reports
+   > deployment metadata and versions, not cron triggers, so it shows a
+   > healthy latest deployment while an every-minute schedule is still
+   > live — it cannot see the exact mistake this readback exists to catch.
+   > Nothing in §§2–6 needs a cron to run.
    >
    > These are restored later, deliberately split in two: the indexer's at
    > the end of §6 (once its cursor is reset), and the keeper's and agent's
@@ -766,26 +778,50 @@ caught at the cheapest stage.
 
 3. **Only then set the keeper's operational flags**, from the offline
    record captured in §1 step 6f. These arm signing from a real key, so
-   they are deliberately last and deliberately separate from the deploy:
+   they are deliberately last and deliberately separate from the deploy.
 
-   ```bash
-   ( cd apps/keeper
-     wrangler deploy --var KEEPER_ENABLED:true )
+   **Set them by editing `apps/keeper/wrangler.jsonc`'s `vars` block — all
+   of the ones that were on, together — and deploying once:**
+
+   ```jsonc
+   "vars": {
+     "TG_BOT_USERNAME": "…",
+     "KEEPER_ENABLED": "true",
+     // only those that were on before the outage:
+     "REWARD_REMIT_ENABLED": "true",
+     "REWARD_COMMIT_ENABLED": "true"
+   }
    ```
 
-   Set `REWARD_REMIT_ENABLED` and `REWARD_COMMIT_ENABLED` the same way, and
-   only if they were on before — `REWARD_REMIT_ENABLED` additionally
-   requires the keeper EOA to be authorized on-chain and D1 migration 0044
-   applied, neither of which a restore re-establishes.
+   ```bash
+   ( cd apps/keeper && wrangler deploy )
+   ```
 
-   > **`--var` does not persist, and that is a trap here.** It overrides the
-   > var for THAT deployment only; it does not write the config. The next
-   > `wrangler deploy` from a checkout whose `vars` block still omits the
-   > flag silently disarms every duty again — the same invisible-off state
-   > this step exists to fix, now with a restore behind it that looked
-   > complete. Prefer committing the values into `apps/keeper/wrangler.jsonc`
-   > and deploying normally: it survives the next deploy and leaves a
-   > reviewable record. Use `--var` only for a deliberately temporary arm.
+   `REWARD_REMIT_ENABLED` additionally requires the keeper EOA to be
+   authorized on-chain and D1 migration 0044 applied, neither of which a
+   restore re-establishes — leave it off until both are true.
+
+   > **Do NOT arm these with `--var`, one flag per deploy.** It fails two
+   > separate ways, and the second is silent and immediate.
+   >
+   > `wrangler deploy --help` on the pinned version states it plainly:
+   > *"When not used (or set to false), Wrangler will delete all vars before
+   > setting those found in the Wrangler configuration."* So each deploy
+   > rebuilds the var set from the config plus that invocation's `--var`
+   > flags. `KEEPER_ENABLED` is not in the committed config, so a follow-up
+   > `wrangler deploy --var REWARD_REMIT_ENABLED:true` **deletes it** — the
+   > final deployment leaves `isKeeperEnabled()` false and every signing
+   > duty off, with the last command having looked like it succeeded.
+   >
+   > Second, `--var` does not persist: it applies to that deployment only.
+   > Even done correctly in one invocation, the next `wrangler deploy` from
+   > a checkout whose `vars` still omit the flags disarms everything again —
+   > the same invisible-off state this step exists to fix, now with a
+   > completed-looking restore behind it.
+   >
+   > Committing the values avoids both, and leaves a reviewable record. If
+   > you must arm temporarily without editing the config, pass **every**
+   > flag in a **single** `wrangler deploy` and add `--keep-vars`.
 
 4. **Confirm each armed duty actually runs**, rather than assuming the flag
    took. `isKeeperEnabled()` reads the string, so a typo reads as false and

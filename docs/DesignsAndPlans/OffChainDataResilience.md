@@ -323,17 +323,36 @@ realistic threat.
 
 ### 4.5 Cold standby for other Workers
 
-For `apps/keeper`, `apps/agent`, `ops/mesh-watcher`,
-`ops/offchain-data-archive`: **cold standby**, not active-active.
-(`ops/mesh-watcher` is code-complete but UNDEPLOYED today; the standby
-applies from its first deploy. `ops/lz-watcher` and `ops/hf-watcher` were
-removed — #1440 and the Stage 3 split respectively.) Same Worker code deployed to a
-second CF account (different billing + 2FA) **paused**, with a 1-page
-runbook for the operator to flip DNS / feature flag on primary
-failure. Pre-mainnet a 5-minute manual recovery is fine; the protocol
-survives keeper / agent downtime by design (liquidations are
-permissionless — anyone with the `vaipakam-keeper-bot` reference repo
-can race for the bonus).
+For `apps/keeper`, `apps/agent` and `ops/mesh-watcher`: **cold standby**,
+not active-active. (`ops/mesh-watcher` is code-complete but UNDEPLOYED
+today; the standby applies from its first deploy. `ops/lz-watcher` and
+`ops/hf-watcher` were removed — #1440 and the Stage 3 split
+respectively.) Same Worker code deployed to a second CF account
+(different billing + 2FA) **paused**, with a 1-page runbook for the
+operator to flip DNS / feature flag on primary failure. Pre-mainnet a
+5-minute manual recovery is fine; the protocol survives keeper / agent
+downtime by design (liquidations are permissionless — anyone with the
+`vaipakam-keeper-bot` reference repo can race for the bonus).
+
+**`ops/offchain-data-archive` is deliberately NOT part of this
+mechanism**, and it was listed here in error. Cold standby works for the
+Workers above because each is stateless with respect to the lost account:
+flipping DNS or a feature flag makes the paused copy useful immediately.
+The archive Worker is the opposite on both counts. Its `DB_ARCHIVE` and
+`R2_LEGAL_VAULT` bindings can only address resources **in the account it
+is deployed to**, so a paused copy in the second account is bound to that
+account's empty D1 and R2 — it cannot read the lost account's data, which
+is the only data that matters in this scenario. And unlike the others it
+has no DNS record and no feature flag: there is nothing to flip.
+
+Its recovery path is the restore, not a standby: the encrypted archives
+live in B2, outside Cloudflare entirely and reachable with the offline
+keys, so the Worker becomes useful only *after* replacement D1 and R2
+resources exist and the archive has been restored into them. That is why
+[`OffChainRestore.md`](../ops/OffChainRestore.md) deploys it **last**,
+after the data is real — deploying it earlier lets its 03:17 cron write a
+valid-looking backup of empty databases and present it as the newest
+recovery candidate.
 
 Active-active for these Workers would require non-trivial coordination
 (nonce locking for keeper, deduplication for agent's Telegram /

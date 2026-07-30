@@ -128,7 +128,33 @@ rather than left for the incident that would find them:
   belongs to one service alone, and two of the per-chain endpoints are
   held by services the section does not even name. A responder reading it
   would have scoped both the exposure and the post-rotation check to the
-  wrong set. Each entry now names its actual consumers.
+  wrong set. Each entry now names its actual consumers. Further down, the
+  same document still explained at length why the two services keep
+  *separate* copies of a shared credential — the pre-split arrangement,
+  and the exact opposite of how they are configured now. That reasoning
+  is marked superseded and replaced with what shared storage actually
+  implies for an incident: exposure is shared by default, one rotation
+  covers every consumer, and the per-service rotation command updates
+  nothing.
+- The Telegram rotation put the freshly minted replacement token into a
+  command line, one step after taking care to accept the same token
+  through a prompt so it would not be recorded. That wrote it into shell
+  history and into the process list, where any other user of the machine
+  could read it — undoing the precaution and leaving the credential
+  behind on the workstation an attacker was just evicted from. The
+  request is now assembled so the token reaches neither.
+- The instruction to confirm the schedules were really switched off named
+  a command that cannot see schedules — it reports deployments and
+  versions. It would have shown a healthy deployment while the
+  every-minute schedule was still live, which is precisely the mistake
+  the check exists to catch. Replaced with a schedule-aware query.
+- The resilience plan listed the nightly backup writer among the services
+  a paused copy in a second account could take over. It cannot: its
+  database and object-store bindings can only address resources in the
+  account it runs in, so a standby copy is attached to that account's
+  empty storage rather than to the lost data, and unlike the others it
+  has no address or switch to redirect. Its recovery is the restore
+  itself, which is why it is deployed last. Described that way now.
 
 Part of #1440. The card stays open for the operator steps: redeploy,
 confirm one clean nightly, then delete the database.
