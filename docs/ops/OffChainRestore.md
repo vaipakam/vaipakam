@@ -569,17 +569,51 @@ then deploy.
 >    extra data loss. A few days of born-off-chain rows is recoverable
 >    ground; a restore of attacker-chosen legal-hold and support-ticket rows
 >    is not.
-> 4. **List every object for the chosen date, not just one.** The
->    immutable-naming nonce means an attacker cannot overwrite the genuine
->    archive — so the original survives, and **two objects under one date is
->    itself evidence of tampering**, not a duplicate to shrug at. Expect
->    exactly one per date from the legitimate nightly.
-> 5. **Cross-check what you can from outside B2.** The re-derivable tables
+> 4. **Do not rely on the naming nonce to preserve the genuine archive.** An
+>    earlier revision of this step claimed it did — that a forgery must land
+>    under a different nonce, so the original survives beside it and two
+>    objects under one date is evidence of tampering. **Verified against the
+>    live bucket, that is wrong**, and wrong in the unsafe direction:
+>
+>    - the read key carries `listFiles`, so an attacker can enumerate the
+>      genuine nonce and upload a new version **at that exact key**. The
+>      ordinary listing then shows one nonce and the download returns the
+>      forgery;
+>    - **Object Lock is not enabled** on `vaipakam-offchain-data-archive`
+>      (`isFileLockEnabled: false`, no default retention), so nothing makes
+>      any object immutable;
+>    - the lifecycle rules set `daysFromHidingToDeleting: 1`, so a superseded
+>      version is **deleted about a day later**. The genuine copy does not
+>      persist as an older version you can fall back to — it is gone.
+>
+>    So list **file VERSIONS**, not files, and do it early — within a day of
+>    the overwrite is the whole window:
+>
+>    ```bash
+>    b2 ls vaipakam-offchain-data-archive --recursive --long --versions manifests/
+>    ```
+>
+>    More than one version at a key is strong evidence of tampering. One
+>    version is **not** evidence of safety: the original may already have
+>    aged out.
+>
+>    Making a forged overwrite *impossible* rather than
+>    detectable-within-a-day needs Object Lock on the bucket, which is a
+>    configuration decision with cost and irreversibility consequences —
+>    tracked as **#1469**.
+>
+> 5. **Mind the retention floor.** `archives/` and `manifests/` are hidden at
+>    30 days and deleted a day later, so the daily series reaches back only
+>    ~31 days. Beyond that only the `archives-monthly/` / `manifests-monthly/`
+>    prefixes survive (365 + 1 days). If the compromise window opened more
+>    than a month ago, **the daily series cannot supply a clean archive at
+>    all** and the monthly ones are the only candidates.
+> 6. **Cross-check what you can from outside B2.** The re-derivable tables
 >    are rebuilt from chain in §6, so poisoning those is self-correcting —
 >    the exposure is the born-off-chain set. Compare the manifest's row
 >    counts against any out-of-band record you hold (monitoring history, the
 >    ops Telegram backup notifications) before restoring them.
-> 6. **Do not re-encrypt the history forward until after selection.**
+> 7. **Do not re-encrypt the history forward until after selection.**
 >    Re-encrypting under a fresh key launders the poisoned objects into the
 >    new key's set and destroys the upload-time signal you just used.
 >

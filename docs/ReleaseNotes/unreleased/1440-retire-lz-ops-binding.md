@@ -166,6 +166,19 @@ rather than left for the incident that would find them:
   attacker whose role was revoked could still move reward budget. The
   branch now revokes both, on every chain rather than only the secondary
   ones, and says to read both back before re-arming.
+- The archive-selection guidance was checked against the live backup
+  storage rather than reasoned about, and two of its assumptions turned out
+  to be wrong in the unsafe direction. It had said the naming scheme
+  guarantees a forged archive cannot displace the genuine one, so two files
+  under one date would be evidence of tampering. In fact a forgery can be
+  written at the genuine file's own name, and the storage is configured to
+  delete a superseded copy about a day later — so the original does not
+  persist as something to fall back on, and finding a single copy is not
+  evidence of safety. The step now inspects versions rather than files, says
+  so explicitly, and records that the daily series only reaches back about a
+  month, so a compromise older than that leaves the monthly copies as the
+  only candidates. Making forgery impossible rather than detectable is a
+  storage-configuration decision and is filed separately.
 - The archive-selection flow reads "take the most recent one that
   verifies". After a compromise that is the attack. Whoever can read the
   services holds both the storage write credential and the encryption key,
