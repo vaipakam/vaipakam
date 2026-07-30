@@ -49,10 +49,12 @@ copying what the code does.
 | 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. apps/alpha02 scales by the payment asset's decimals instead (PR #887); the two live apps now diverge and defi's behaviour looks like the bug. | pending triage |
 | 2026-07-15 | `LibVPFIDiscount.settleBorrowerLifProper` — consent-off zeros an already-prepaid borrower LIF rebate (forfeits `vpfiHeld` to treasury), reachable on mirrors via the `(0,0)` tier broadcast | TokenomicsTechSpec §6a | **Pass-2 E2 — RE-OPENED.** Originally triaged "UPDATE SPEC — carve out the prepaid rebate", but the code confiscates it (instantaneous effective-discount read at settlement, T-087). Needs owner re-decision: FIX CODE (snapshot/floor the prepaid rebate basis) OR ACCEPT + describe the confiscation. | #1255 |
 
+
 ## Resolved findings
 
 | Date opened | Divergent symbol | Resolution | Closed by |
 |-------------|------------------|------------|-----------|
+| 2026-07-30 | `chainRewardBudgetSideSplitForDay` / `_dayPoolHalves` zero recycled half on an unarmed day vs TokenomicsTechSpec §4a "an unarmed day is NOT fresh-only" | **NOT A DIVERGENCE — refuted; the two observations are about different layers.** `RewardAggregatorFacet._stampGovernorDayPool`'s UNARMED branch (`:850`) stamps `recycledBudget = min(fundable, coupled)`, a recycled portion (possibly zero — the formula yields 0 on day 0 or an empty bucket) measured against the canonical bucket — the spec's subject, and correct. The cited functions are the CLAIM/reservation layer, where an unarmed stamp is deliberately a record only and claims pay the scheduled portion, because reserving with no consume side would collapse `freshAvailable` (`LibVaipakam` storage doc). Both true; neither needed changing. What WAS wrong: the spec sentence did not name its layer, which is what made the confusion look like a contradiction — it now does. Full write-up in `D-#1457-01` below. The real adjacent risk (non-empty bucket + fresh-only claims pre-arming) is **#1460**, still open — reachable already on an unarmed deployment AND still an unconditional arming prerequisite (three conditions; see the D-#1457-01 write-up below). | #1457 (umbrella #1349) |
 | 2026-07-13 | Stale-spec + stale-comment cluster (A4/B4/F1/F2/F3/F5/E2/C5 + comments A5/C2/C3/D6/E1) | **Pass-2 spec/comment edits — Done (code ratified; UPDATE SPEC/COMMENTS).** **Spec** (ProjectDetailsREADME unless noted): A4 refinance repayment made mode-aware (full-term vs pro-rata-opted, #1003) at the frontend-warning, payoff-step, and Original-Lender-Protection sites; B4 §885 refinance-tagged offer principal now stated as frozen (not adjustable); F1 removed the deleted `setStakingApr` knob; F2 replaced retired `updateRiskParams.liqThresholdBps` with per-tier `setTierLiquidationLtvBps` + `T1≤T2≤T3`; F3 §812 carves out the live prepay-listing transfer-lock; F5 §2647 carves out never-flagged wallets (fail-open during outage, #1006); C5 §1350 FLL profit headroom softened to off-chain keeper policy. **E2 REVERTED → re-triaged as #1255** (see Open findings): the "carve out the prepaid rebate" spec edit conflicts with ratified code — `settleBorrowerLifProper` reads an instantaneous effective discount at settlement, so consent-off (incl. the mirror `(0,0)` broadcast) zeros the prepaid rebate and forfeits `vpfiHeld` to treasury; not a clean UPDATE-SPEC. **Comments**: A5 `RiskFacet` partial-liq docstring rewritten to the post-#641 interest-clock-only re-stamp; C2 `LibVaipakam` tier-liquidation NatSpec fixed (Tier-1=80%/Tier-3=90% de-inverted; tier-0 alias → Tier-1); C3 `RiskFacet` sequencer-down comment corrected (DefaultedFacet reverts, doesn't full-transfer); D6 `RepayFacet` rental-NFT comment corrected to vault-escrow custody. **E1** (residual retired-terminology NatSpec) is NOT edited here — split into its own sweep issue **#1253** (the referenced #1018 was closed + scoped to CLAUDE.md; correct replacement terminology needs care). No ABI change (comment-only source edits). | spec-doc PR (umbrella #1196) |
 | 2026-07-13 | Low-severity code cluster (B1/B2/B3/C4/E3/F4) | **Pass-2 Low group — Fixed, all six as recommended.** **B1** (§1083) `LibSignedOffer.toCreateOfferParams` honors the `amountMax==0 ⇒ amount` sentinel on the direct fill path (matched the matcher path). **B2** (§1075) `LibMetricsTypes.OfferState` gains an append-only `Expired` value; `deriveOfferState` returns it for a lapsed GTT offer via `isOfferExpired` (wire-compatible uint8, no ABI JSON change). **B3** (§1075) `OfferMatchFacet` GTT vet uses `>=` (expired at-and-after the deadline). **C4** `DefaultedFacet` liquid time-default records the treasury accrual (`recordTreasuryAccrual`), matching the HF paths. **E3** `RewardReporterFacet.closeDay` rejects a post-finalization self-report (`ReportAfterFinalization`), matching the mirror ingress guard. **F4** `DeployTimelock` asserts `minDelay >= 48h` on Phase-1 mainnets (Ethereum/Base/Polygon/Arbitrum/Optimism). No ABI change (B2's enum stays uint8). Tests: `_amountMaxZeroSentinel`, `getOfferState_expiredGtt`, `gtt_boundary_atExpiresAt`, `CloseDayRevertsAfterFinalization`, `DeployTimelockGuardTest` (C4 covered by the DefaultedFacet regression + the identical tested HF-path mirror). Regression: SignedOfferBook/Matcher, Enumeration, BulkDashboard, DefaultedFacet, FacetSizeLimit all green. | #1195 (umbrella #1196) |
 | 2026-07-13 | `PrecloseFacet.transferObligationViaOffer` used ERC-20 APR math (`proRataInterestSeconds`) on the rental per-day fee → undeducted elapsed rent lost to the lender | **Pass-2 D4 (Med) — Fixed (arm a).** The APR settlement is 0 for a rental (`interestRateBps == 0`), so the rent accrued between `lastDeductTime` and the transfer was silently dropped by the section-5b prepay reset and stayed withdrawable in the exiting borrower's un-liened vault. The transfer now runs a rent settlement BEFORE the loan rewrite (mirroring `RepayPeriodicFacet.autoDeductDaily`), keyed off ASSET TYPE (not the stored rate; the APR path is neutralized for rentals so there's no overlap): (a) elapsed rent `principal × min(elapsedDays, remainingRentalDays)` counting from `max(lastDeductTime, startTime)` (treasury-split via `effectiveTreasuryFeeBps`) PLUS (b) the **term shortfall** `principal × max(0, (remainingRentalDays − catchUpDays) − offer.durationDays)` — the UNPAID days after catch-up the shorter incoming term won't cover (goes fully to the lender, mirroring the ERC-20 path's `shortfall` leg — §1420). Total clamped to funded prepay; lender share forwarded to the current lender-position holder from the prepay vault via `freezeOrPayActiveLenderFromVault` (fail-closed park if flagged), treasury share withdrawn + accrued, `loan.prepayAmount` decremented. The exiting borrower's genuinely-unused prepay + buffer stay theirs to withdraw. **Codex #1249 r1+r2 (6×P2, all fixed):** r1 — guard the elapsed subtraction against a future `lastDeductTime` (prepaid days via `repayPartial`), add the shortfall leg (2nd half of arm-a), avoid double-bill vs the APR path; r2 — key off asset type (a rental can carry a non-zero rate after takeover, so a rate gate would drop rent), base the shortfall on UNPAID days after catch-up (wall-clock double-charged prepaid days), and start the clock at `max(lastDeductTime, startTime)` (legacy `lastDeductTime==0` drained the full prepay). Original-lender-not-disadvantaged invariant (§1512/§1420) now holds for rentals as for interest loans. No ABI/selector change; PrecloseFacet stays under EIP-170. Tests (6): catch-up 693e, shortfall 993e, prepaid-clock no-brick, prepaid-days-shortfall 500e, nonzero-rate-still-settles 693e, legacy-zero-clock 693e; PrecloseFacetTest 86/86. | #1194 (umbrella #1196) |
@@ -108,3 +110,81 @@ copying what the code does.
 
 *Maintained by the project owner; review-surfaced findings appended by
 reviewers (human or AI) with a one-line description.*
+
+## D-#1457-01 — Unarmed-day recycled portion — **NOT A DIVERGENCE (refuted 2026-07-30)**
+
+**Status:** CLOSED. The spec is correct and the code matches it. The report
+compared two different layers.
+
+**What was reported:** that `TokenomicsTechSpec` §4a's "an unarmed day is NOT
+fresh-only: it already carries a recycled portion, sized from the canonical
+chain's own bucket (Phase A′)" is contradicted by
+`chainRewardBudgetSideSplitForDay` / `_dayPoolHalves` returning a zero recycled
+half for an unarmed day.
+
+**Both observations are accurate. They are about different layers.**
+
+- **Budget layer — the spec's subject.** `RewardAggregatorFacet._stampGovernorDayPool`
+  (`:776`, called from `_finalizeAndWrite` at `:602`) stamps every finalized
+  day, and its UNARMED branch (`:850`) sets
+  `recycledBudget = schedule == 0 ? 0 : min(fundable, coupled)` — a recycled
+  portion MEASURED AGAINST the canonical chain's own bucket (not drawn from it —
+  see the follow-up below), and **possibly zero**: the formula yields 0 on day 0
+  and whenever `fundable` or `coupled` is 0. (This line said "NON-zero" until
+  #1457 r18. The summary row and the release note were corrected a round
+  earlier and this one was missed, leaving the entry internally inconsistent —
+  the overstatement was load-bearing for the refutation, which is exactly why it
+  should not have survived anywhere.) Written into
+  `dayPoolStamp[dayId].recycledBudget`. That is Phase A′ exactly as specified.
+- **Claim / reservation layer — the cited functions.** While
+  `governorCommitArmedFromDay == 0`, the stamp is deliberately a RECORD ONLY and
+  the claim math pays the scheduled portion. `LibVaipakam`'s own storage doc
+  states the reason: accumulating reservations with no consume side "would
+  silently collapse `freshAvailable`". Arming wires reservation and consumption
+  together, atomically, which is when the recorded recycled portion becomes
+  payable.
+
+So an unarmed day genuinely does carry a recycled portion (recorded), and
+genuinely does not pay one (claims). Neither statement needs changing.
+
+**What was actually wrong:** the spec sentence did not say which layer it
+described, which is what made a layer confusion look like a contradiction. It
+now says so explicitly, and names this entry so the next reader does not re-file
+it.
+
+**The adjacent risk that IS real, and is tracked elsewhere.** Pre-arming the
+recycle bucket can be non-empty — `LibNotificationFee` credits it with no
+arming or fee-entitlement gate, as "the first live non-forfeit absorption
+class" — while claims are fresh-only. A fresh-only claim reaching recycle-bucket
+backing is **#1460**, a P1 that is **both already reachable on an unarmed
+deployment AND an unconditional `BACKING --> ARM` arming prerequisite** — not
+alternatives (#1457 r21; an earlier revision of this line said "rather than
+arming-gated", which the plan's §M7 step 0 and §4 no longer support). It needs
+THREE conditions, not two: a non-empty bucket, a scheduled-only claim, **and**
+the scheduled side short (`balanceOf − recycleBucket < scheduledPayout`) — with
+ample unearmarked funding the first two hold and nothing is corrupted. The edge
+governs sequencing; reachability governs urgency. This entry is closed;
+that one is not.
+
+**Follow-up (2026-07-30, #1457 r16) — a second, narrower error in the same
+sentence, and this one was real.** After the layer confusion was refuted, review
+pointed at the surviving words "and remitted from there". Verified across four
+paths: `_stampGovernorDayPool`'s unarmed branch (`:850`) only WRITES the stamp;
+`RewardRemittanceFacet._planDay`'s unarmed branch carries `p.recycled == 0`;
+`chainRewardBudgetSideSplitForDay`'s unarmed else-branch never assigns the
+recycled locals; and both `LibVpfiRecycle.consume` call sites are unreachable
+with a non-zero argument on an unarmed day. The operator `remitManualBudget`
+path is fresh-only by construction and gated on a flag only armed days set.
+
+So on an unarmed day the code supports exactly ONE of three things —
+**recording** a budget — and neither reserves against the bucket nor remits
+value. The spec now says "sized against", states the two negatives explicitly,
+and the release note records both errors. Collapsing record / reserve / remit
+into one word is what made the original sentence read as a contradiction.
+
+**Method note.** The reviewer's suggested remedy was to change the spec, and the
+first instinct on this side was to treat it as a spec-versus-code coin flip. It
+was neither: reading the finalization branch settled it in one look. Recording
+that because "which layer is this claim about?" would have resolved it before it
+was ever filed as a divergence.
+

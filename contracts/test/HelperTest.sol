@@ -87,278 +87,317 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](147);
+        selectors = new bytes4[](148);
+        // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
+        //
+        // Hand-numbered slots made a specific merge outcome silent: two
+        // branches starting from the same base both bump the length to the
+        // same number and both assign the same index. Git coalesces the
+        // identical length edit and keeps BOTH assignments, so the second
+        // overwrites the first — one selector is simply lost, every slot is
+        // still non-zero, and the array length still matches. That is the
+        // shape in this repository's own `b33a12d` merge.
+        //
+        // The zero-slot scan that used to live at the end of this function
+        // could not see it, which is worth stating plainly: the guard was
+        // vacuous for the exact case it was written for. A cursor removes the
+        // case instead of detecting it — two surviving appends both land, and
+        // if the length was not bumped far enough the array access reverts
+        // loudly rather than dropping a selector.
+        uint256 n;
         // #1448 r6 — pre-seed-fold relocated-custody shape.
-        selectors[145] =
+        selectors[n++] =
             TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
         // #1448 r3 — reproduce the pre-upgrade state for the seed ceremony.
-        selectors[144] =
+        selectors[n++] =
             TestMutatorFacet.setReleasedRemitStrandedRaw.selector;
         // #1448 r14 — the other appended slot of that same shape.
-        selectors[146] =
+        selectors[n++] =
             TestMutatorFacet.setRemitReleasedCountRaw.selector;
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
-        selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
+        selectors[n++] = TestMutatorFacet.consumeRecycleRaw.selector;
         // #1222 M3 B3 — real forfeit/expiry release path for the
         // commitment-retirement counter tests.
-        selectors[142] =
+        selectors[n++] =
             TestMutatorFacet.releaseRecycleCommitmentRaw.selector;
-        selectors[143] = TestMutatorFacet.getRecycleBucketRaw.selector;
-        selectors[132] =
+        selectors[n++] = TestMutatorFacet.getRecycleBucketRaw.selector;
+        selectors[n++] =
             TestMutatorFacet.setChainDayCommitmentCompleteRaw.selector;
         // #1222 M3 B2-d1 — local interest-close marker for the send race guard.
-        selectors[133] = TestMutatorFacet.setChainReportSentAtRaw.selector;
+        selectors[n++] = TestMutatorFacet.setChainReportSentAtRaw.selector;
         // #1222 M3 B2-d2 — destination-chain funding stamp for remit clamp tests.
-        selectors[134] = TestMutatorFacet.setChainDayFundingRaw.selector;
+        selectors[n++] = TestMutatorFacet.setChainDayFundingRaw.selector;
         // #1222 M3 B2-d2 — remit-ineligible flag for the manual-budget anchor.
-        selectors[135] = TestMutatorFacet.setChainDayRemitIneligibleRaw.selector;
+        selectors[n++] = TestMutatorFacet.setChainDayRemitIneligibleRaw.selector;
         // #1222 M3 B2-d2 — outstanding-commitment baseline for retire asserts.
-        selectors[136] = TestMutatorFacet.setOutstandingCommitRaw.selector;
+        selectors[n++] = TestMutatorFacet.setOutstandingCommitRaw.selector;
         // #1222 M3 B2-d3 — per-chain remit split for the netting identity.
-        selectors[137] =
+        selectors[n++] =
             TestMutatorFacet.chainRewardBudgetSplitForDayRaw.selector;
         // #1222 M3 B2-d3 — stamp a local commit for the clamp test.
-        selectors[138] =
+        selectors[n++] =
             TestMutatorFacet.setChainDayFundingLocalCommitRaw.selector;
         // #1222 M3 B2-d3 — reconstruct a pre-d3 applied broadcast.
-        selectors[139] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
-        selectors[140] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;
-        selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
-        selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
+        selectors[n++] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;
+        // #1222 M3 B4-d — place the remitted term at the fresh-cap boundary.
+        // Slot 147, not 146: #1448 r14 claimed 146 for
+        // `setRemitReleasedCountRaw` on the base branch. Both branches picked
+        // "the next free slot" independently and git merged them without a
+        // textual conflict, so the later write silently won and the other
+        // mutator went unrouted (#1457 r7). The zero-slot assert below is
+        // what makes that class impossible to ship again.
+        selectors[n++] =
+            TestMutatorFacet.setRewardBudgetRemittedGlobalRaw.selector;
+        selectors[n++] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
         // #1222 M3 B1 — seed the reported recycled cumulative.
-        selectors[130] = TestMutatorFacet.setRecycleCreditedCumulativeRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRecycleCreditedCumulativeRaw.selector;
         // #1222 M3 B2-b — threshold read for the V2-ingress atomicity tests.
-        selectors[131] = TestMutatorFacet.dayCapThreshold18Raw.selector;
-        selectors[0] = TestMutatorFacet.setLoan.selector;
-        selectors[1] = TestMutatorFacet.setOffer.selector;
-        selectors[2] = TestMutatorFacet.setNextLoanId.selector;
-        selectors[3] = TestMutatorFacet.setNextOfferId.selector;
-        selectors[4] = TestMutatorFacet.setTreasuryAddress.selector;
-        selectors[5] = TestMutatorFacet.setKYCEnforcementFlag.selector;
+        selectors[n++] = TestMutatorFacet.dayCapThreshold18Raw.selector;
+        selectors[n++] = TestMutatorFacet.setLoan.selector;
+        selectors[n++] = TestMutatorFacet.setOffer.selector;
+        selectors[n++] = TestMutatorFacet.setNextLoanId.selector;
+        selectors[n++] = TestMutatorFacet.setNextOfferId.selector;
+        selectors[n++] = TestMutatorFacet.setTreasuryAddress.selector;
+        selectors[n++] = TestMutatorFacet.setKYCEnforcementFlag.selector;
         // #687-B: 5 staking accrual mutator/getters removed with the 5% yield;
         // the 5 former tail entries fill the freed slots ([6],[11]-[14]) so this
         // fixed-size set stays complete.
-        selectors[6] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
-        selectors[7] = TestMutatorFacet.setInteractionPoolPaidOut.selector;
-        selectors[8] = TestMutatorFacet.setInteractionLastClaimedDay.selector;
-        selectors[9] = TestMutatorFacet.setDailyLenderInterest.selector;
-        selectors[10] = TestMutatorFacet.setDailyBorrowerInterest.selector;
-        selectors[11] = TestMutatorFacet.pushUserLoanIdRaw.selector;
-        selectors[12] = TestMutatorFacet.vpfiTokenRaw.selector;
-        selectors[13] = TestMutatorFacet.setLenderProceedsEncumberedRaw.selector;
-        selectors[14] = TestMutatorFacet.setVpfiTokenRaw.selector;
-        selectors[15] = TestMutatorFacet.setKnownGlobalDailyInterest.selector;
-        selectors[16] = TestMutatorFacet.setKnownGlobalSet.selector;
-        selectors[17] = TestMutatorFacet.pushUserLoanId.selector;
-        selectors[18] = TestMutatorFacet.pushUserOfferId.selector;
-        selectors[19] = TestMutatorFacet.setOfferCancelled.selector;
-        selectors[20] = TestMutatorFacet.scaffoldActiveLoan.selector;
-        selectors[21] = TestMutatorFacet.scaffoldOpenOffer.selector;
-        selectors[22] = TestMutatorFacet.scaffoldLoanStatusChange.selector;
-        selectors[23] = TestMutatorFacet.getActiveLoanIdsListLength.selector;
-        selectors[24] = TestMutatorFacet.getActiveLoanIdAt.selector;
-        selectors[25] = TestMutatorFacet.getActiveLoanIdPos.selector;
-        selectors[26] = TestMutatorFacet.getActiveOfferIdsListLength.selector;
-        selectors[27] = TestMutatorFacet.getActiveOfferIdAt.selector;
-        selectors[28] = TestMutatorFacet.getActiveOfferIdPos.selector;
-        selectors[29] = TestMutatorFacet.getActiveLoansCounter.selector;
-        selectors[30] = TestMutatorFacet.getActiveOffersCounter.selector;
-        selectors[31] = TestMutatorFacet.getTotalLoansEverCreatedCounter.selector;
-        selectors[32] = TestMutatorFacet.getTerminalBadOrSettledCounter.selector;
-        selectors[33] = TestMutatorFacet.getInterestRateBpsSumCounter.selector;
-        selectors[34] = TestMutatorFacet.getUniqueUserCounter.selector;
-        selectors[35] = TestMutatorFacet.getUserSeenFlag.selector;
-        selectors[36] = TestMutatorFacet.setEthUsdFeedRaw.selector;
-        selectors[37] = TestMutatorFacet.setInteractionCapVpfiPerEthRaw.selector;
+        selectors[n++] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInteractionPoolPaidOut.selector;
+        selectors[n++] = TestMutatorFacet.setInteractionLastClaimedDay.selector;
+        selectors[n++] = TestMutatorFacet.setDailyLenderInterest.selector;
+        selectors[n++] = TestMutatorFacet.setDailyBorrowerInterest.selector;
+        selectors[n++] = TestMutatorFacet.pushUserLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.vpfiTokenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderProceedsEncumberedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setVpfiTokenRaw.selector;
+        selectors[n++] = TestMutatorFacet.setKnownGlobalDailyInterest.selector;
+        selectors[n++] = TestMutatorFacet.setKnownGlobalSet.selector;
+        selectors[n++] = TestMutatorFacet.pushUserLoanId.selector;
+        selectors[n++] = TestMutatorFacet.pushUserOfferId.selector;
+        selectors[n++] = TestMutatorFacet.setOfferCancelled.selector;
+        selectors[n++] = TestMutatorFacet.scaffoldActiveLoan.selector;
+        selectors[n++] = TestMutatorFacet.scaffoldOpenOffer.selector;
+        selectors[n++] = TestMutatorFacet.scaffoldLoanStatusChange.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoanIdsListLength.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoanIdAt.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoanIdPos.selector;
+        selectors[n++] = TestMutatorFacet.getActiveOfferIdsListLength.selector;
+        selectors[n++] = TestMutatorFacet.getActiveOfferIdAt.selector;
+        selectors[n++] = TestMutatorFacet.getActiveOfferIdPos.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoansCounter.selector;
+        selectors[n++] = TestMutatorFacet.getActiveOffersCounter.selector;
+        selectors[n++] = TestMutatorFacet.getTotalLoansEverCreatedCounter.selector;
+        selectors[n++] = TestMutatorFacet.getTerminalBadOrSettledCounter.selector;
+        selectors[n++] = TestMutatorFacet.getInterestRateBpsSumCounter.selector;
+        selectors[n++] = TestMutatorFacet.getUniqueUserCounter.selector;
+        selectors[n++] = TestMutatorFacet.getUserSeenFlag.selector;
+        selectors[n++] = TestMutatorFacet.setEthUsdFeedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInteractionCapVpfiPerEthRaw.selector;
         // Vestigial (T-068): writes the deprecated `localEid` legacy
         // slot. The canonical-buy path now keys the per-wallet cap by
         // `block.chainid`, so no stamping is needed — kept only so the
         // 62-entry selector list need not be re-indexed.
-        selectors[38] = TestMutatorFacet.setLocalEidForTest.selector;
-        selectors[39] = TestMutatorFacet.pushRewardEntry.selector;
+        selectors[n++] = TestMutatorFacet.setLocalEidForTest.selector;
+        selectors[n++] = TestMutatorFacet.pushRewardEntry.selector;
         // Gated default-DENY country-pair check — exposed for the
         // industrial-fork coverage in `CountryPairGatedTest`. Retail
         // never calls the gated branch.
-        selectors[40] = TestMutatorFacet.canTradeBetweenStorageGated.selector;
+        selectors[n++] = TestMutatorFacet.canTradeBetweenStorageGated.selector;
         // T-032 — direct `s.wethContract` writer for the
         // `NotificationFeeTest` fixture (OracleAdminFacet isn't cut
         // into the minimal test diamond, so the production
         // owner-gated setter isn't reachable from test setUp).
-        selectors[41] = TestMutatorFacet.setWethContractRaw.selector;
+        selectors[n++] = TestMutatorFacet.setWethContractRaw.selector;
         // Layout-resilient `loan.liquidationLtvBpsAtInit` writer.
         // PR2 of internal-match work replaced the old
         // `setLiqThresholdBpsRaw` (which wrote the retired per-asset
         // `RiskParams.liqThresholdBps`) with this per-loan snapshot
         // writer. Used by HF tests to stress the
         // `liquidationLtvBpsAtInit == 0` branch.
-        selectors[42] = TestMutatorFacet.setLiquidationLtvBpsAtInitRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLiquidationLtvBpsAtInitRaw.selector;
         // Layout-resilient mapping writers used by EarlyWithdrawal
         // tests to scaffold loan-sale state without slot math.
-        selectors[43] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
-        selectors[44] = TestMutatorFacet.setHeldForLenderRaw.selector;
+        selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.
-        selectors[45] = TestMutatorFacet.setLenderClaimAmountRaw.selector;
-        selectors[46] = TestMutatorFacet.setBorrowerClaimAmountRaw.selector;
-        selectors[47] = TestMutatorFacet.setLenderClaimAssetRaw.selector;
-        selectors[48] = TestMutatorFacet.setBorrowerClaimAssetRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderClaimAmountRaw.selector;
+        selectors[n++] = TestMutatorFacet.setBorrowerClaimAmountRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderClaimAssetRaw.selector;
+        selectors[n++] = TestMutatorFacet.setBorrowerClaimAssetRaw.selector;
         // NFT-claim field setters (assetType + tokenId + quantity) for
         // ERC721 / ERC1155 claim-asset coverage tests.
-        selectors[49] = TestMutatorFacet.setLenderClaimNFTFieldsRaw.selector;
-        selectors[50] = TestMutatorFacet.setBorrowerClaimNFTFieldsRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderClaimNFTFieldsRaw.selector;
+        selectors[n++] = TestMutatorFacet.setBorrowerClaimNFTFieldsRaw.selector;
         // T-048 — layout-resilient treasury IOU writer used by
         // TreasuryFacetTest.
-        selectors[51] = TestMutatorFacet.setTreasuryBalanceRaw.selector;
+        selectors[n++] = TestMutatorFacet.setTreasuryBalanceRaw.selector;
         // Layout-resilient sale/offset/vault-version/min-partial
         // mutators used by the LoanFacet, RefinanceFacet, OfferFacet,
         // VaultFactoryFacet and RepayFacet test suites — replaces
         // the previous `vm.store` + hardcoded slot offset pattern.
-        selectors[52] = TestMutatorFacet.setSaleOfferToLoanIdRaw.selector;
-        selectors[53] = TestMutatorFacet.setOffsetOfferToLoanIdRaw.selector;
-        selectors[54] = TestMutatorFacet.setVaultVersionRaw.selector;
-        selectors[55] = TestMutatorFacet.setMinPartialBpsRaw.selector;
+        selectors[n++] = TestMutatorFacet.setSaleOfferToLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.setOffsetOfferToLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.setVaultVersionRaw.selector;
+        selectors[n++] = TestMutatorFacet.setMinPartialBpsRaw.selector;
         // Layout-resilient read of `s.userVaipakamVaults[user]` for
         // tests that need a user's vault address bypassing the
         // mandatory-version check on the production getter.
-        selectors[56] = TestMutatorFacet.getUserVaipakamVaultRaw.selector;
+        selectors[n++] = TestMutatorFacet.getUserVaipakamVaultRaw.selector;
         // FlashLoanLiquidationPath.md — flip the discount-path master
         // kill-switch in fixtures that don't cut ConfigFacet.
-        selectors[57] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDiscountPathEnabledRaw.selector;
         // MarketRateWidgetAndDepthTieredLTV.md — same pattern for the
         // depth-tiered-LTV master kill-switch. Refinance / Preclose /
         // OfferMatch test fixtures use this to assert both regimes
         // (switch ON tier-aware caps + relaxed HF floor; switch OFF
         // legacy `LTV ≤ loanInitMaxLtvBps` + `HF ≥ 1.5`) without cutting
         // ConfigFacet into their minimal diamonds.
-        selectors[58] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDepthTieredLtvEnabledRaw.selector;
         // PR2 of internal-match work — per-tier liquidation-LTV
         // direct-write helper for fixtures that don't cut
         // ConfigFacet. Used in test setUps to pin all three tiers
         // to a single value (e.g. 8500) and preserve legacy HF math
         // that assumed an 85% per-asset threshold.
-        selectors[59] = TestMutatorFacet.setTierLiquidationLtvBpsAllRaw.selector;
+        selectors[n++] = TestMutatorFacet.setTierLiquidationLtvBpsAllRaw.selector;
         // PR5 — direct write to `protocolTrackedVaultBalance` so
         // execution-body tests can scaffold loans without running
         // the `initiateLoan` flow.
-        selectors[60] = TestMutatorFacet.setProtocolTrackedVaultBalanceRaw.selector;
+        selectors[n++] = TestMutatorFacet.setProtocolTrackedVaultBalanceRaw.selector;
         // EC-003 Phase 1 — direct write to `fallbackSnapshot[loanId]`
         // so FallbackPending fixtures can scaffold the snap (lender /
         // treasury / borrower entitlements + active flag) without
         // running the full at-fallback liquidation flow.
-        selectors[61] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
+        selectors[n++] = TestMutatorFacet.setFallbackSnapshotRaw.selector;
         // LibERC721 lock-state + mint direct manipulators — exposed for
         // the focused setApprovalForAll-during-lock unit test. Names
         // intentionally avoid the `test*` prefix so Foundry's test
         // discovery doesn't try to run these as fuzz cases.
-        selectors[62] = TestMutatorFacet.mintNFTRaw.selector;
-        selectors[63] = TestMutatorFacet.lockNFTRaw.selector;
-        selectors[64] = TestMutatorFacet.unlockNFTRaw.selector;
-        selectors[65] = TestMutatorFacet.getLockedTokenCount.selector;
+        selectors[n++] = TestMutatorFacet.mintNFTRaw.selector;
+        selectors[n++] = TestMutatorFacet.lockNFTRaw.selector;
+        selectors[n++] = TestMutatorFacet.unlockNFTRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLockedTokenCount.selector;
         // Burn + epoch readers — Codex P1 follow-ups on the
         // setApprovalForAll-during-lock hardening (PR #282, L145 burn
         // counter drift; L151 pre-lock operator approval survives the
         // lock/unlock cycle).
-        selectors[66] = TestMutatorFacet.burnNFTRaw.selector;
-        selectors[67] = TestMutatorFacet.getOperatorApprovalEpoch.selector;
-        selectors[68] = TestMutatorFacet.getOperatorApprovalGrantEpoch.selector;
+        selectors[n++] = TestMutatorFacet.burnNFTRaw.selector;
+        selectors[n++] = TestMutatorFacet.getOperatorApprovalEpoch.selector;
+        selectors[n++] = TestMutatorFacet.getOperatorApprovalGrantEpoch.selector;
         // Codex P1 round-2 follow-up — direct `locks[tokenId]` writer
         // that skips the counter increment, used to simulate a
         // pre-PR-#282 diamond upgrade state where a token is locked but
         // the owner's `lockedTokenCount` is 0.
-        selectors[69] = TestMutatorFacet.forceSetLockWithoutCounter.selector;
+        selectors[n++] = TestMutatorFacet.forceSetLockWithoutCounter.selector;
         // T-086 step 3 — LibCollateralSettlement view proxies + raw
         // treasury-fee setter for the focused floor-formula tests.
-        selectors[70] = TestMutatorFacet.getLiveFloor.selector;
-        selectors[71] = TestMutatorFacet.getPrincipalPlusAccruedInterest.selector;
-        selectors[72] = TestMutatorFacet.getTreasuryAndPrecloseFee.selector;
-        selectors[73] = TestMutatorFacet.setTreasuryFeeBpsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLiveFloor.selector;
+        selectors[n++] = TestMutatorFacet.getPrincipalPlusAccruedInterest.selector;
+        selectors[n++] = TestMutatorFacet.getTreasuryAndPrecloseFee.selector;
+        selectors[n++] = TestMutatorFacet.setTreasuryFeeBpsRaw.selector;
         // T-086 step 10 — test-only direct invoke of LibPrepayCleanup.
-        selectors[74] = TestMutatorFacet.invokePrepayCleanup.selector;
+        selectors[n++] = TestMutatorFacet.invokePrepayCleanup.selector;
         // T-086 Round-7 (#355) — auto-list state mutators.
-        selectors[75] = TestMutatorFacet.setPrepayListingOrderHash.selector;
-        selectors[76] = TestMutatorFacet.setPrepayListingExecutor.selector;
-        selectors[77] = TestMutatorFacet.setPrepayListingAutoListOptedOut.selector;
+        selectors[n++] = TestMutatorFacet.setPrepayListingOrderHash.selector;
+        selectors[n++] = TestMutatorFacet.setPrepayListingExecutor.selector;
+        selectors[n++] = TestMutatorFacet.setPrepayListingAutoListOptedOut.selector;
         // (getPrepayListingAutoListOptedOut removed — production reads
         // it via NFTPrepayListingFacet.getPrepayListingAutoListOptedOut
         // after the Codex round-13 P2 #3 follow-up.)
-        selectors[78] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
+        selectors[n++] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
         // #407 PR 4 (T-407-B, 2026-06-12) — direct write to the
         // encumbrance aggregate so the withdraw-guard tests can pin
         // the lien state without driving the full loan-init lifecycle.
-        selectors[79] = TestMutatorFacet.setEncumberedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setEncumberedRaw.selector;
         // #569 Codex #572 round-4 P2 — encumbrance-aggregate reader so
         // lifecycle tests can assert the lien is HELD across a proper-
         // close terminal and RELEASED only at `claimAsBorrower`.
-        selectors[80] = TestMutatorFacet.getEncumberedRaw.selector;
+        selectors[n++] = TestMutatorFacet.getEncumberedRaw.selector;
         // #577 — loan-collateral lien row setter/reader for internal-match
         // residual tests (drain-block + claimability).
-        selectors[81] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
-        selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
+        selectors[n++] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
         // #953 — sale-forfeit sweep-reachability test scaffolding.
-        selectors[83] = TestMutatorFacet.setLoanActiveLenderEntryId.selector;
-        selectors[84] = TestMutatorFacet.callTransferLenderEntry.selector;
-        selectors[85] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
-        selectors[86] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
-        selectors[87] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
-        selectors[88] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
-        selectors[89] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
-        selectors[90] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
-        selectors[91] = TestMutatorFacet.setVaultBannedSourceRaw.selector; // #1123 (Codex #1126 r4 P2) recovery-ban leg
-        selectors[92] = TestMutatorFacet.setSanctionsFrozenClaimant.selector; // #1006 (S10)
-        selectors[93] = TestMutatorFacet.getSanctionsFrozenClaimant.selector; // #1006 (S10)
+        selectors[n++] = TestMutatorFacet.setLoanActiveLenderEntryId.selector;
+        selectors[n++] = TestMutatorFacet.callTransferLenderEntry.selector;
+        selectors[n++] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
+        selectors[n++] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
+        selectors[n++] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        selectors[n++] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
+        selectors[n++] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
+        selectors[n++] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
+        selectors[n++] = TestMutatorFacet.setVaultBannedSourceRaw.selector; // #1123 (Codex #1126 r4 P2) recovery-ban leg
+        selectors[n++] = TestMutatorFacet.setSanctionsFrozenClaimant.selector; // #1006 (S10)
+        selectors[n++] = TestMutatorFacet.getSanctionsFrozenClaimant.selector; // #1006 (S10)
         // #1006 (S10) Class B — Active-loan inline lender-share freeze harness.
-        selectors[94] = TestMutatorFacet.getHeldForLenderRaw.selector;
-        selectors[95] = TestMutatorFacet.getLenderProceedsEncumberedRaw.selector;
-        selectors[96] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
-        selectors[97] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
-        selectors[98] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
+        selectors[n++] = TestMutatorFacet.getHeldForLenderRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLenderProceedsEncumberedRaw.selector;
+        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderResident.selector;
+        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderFromPayer.selector;
+        selectors[n++] = TestMutatorFacet.callFreezeOrPayActiveLenderFromVault.selector;
         // #1006 (S10) Class B — dedicated active-held reservation harness.
-        selectors[99] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
-        selectors[100] = TestMutatorFacet.callEncumberLenderProceeds.selector;
-        selectors[101] = TestMutatorFacet.callMigrateActiveHeld.selector;
+        selectors[n++] = TestMutatorFacet.getHeldForLenderEncumberedRaw.selector;
+        selectors[n++] = TestMutatorFacet.callEncumberLenderProceeds.selector;
+        selectors[n++] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
-        selectors[102] = TestMutatorFacet.setOfferIdToLoanId.selector;
+        selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
         // #1008 (S13) — entry-path per-day-cap test scaffolding.
-        selectors[103] = TestMutatorFacet.closeRewardEntryRaw.selector;
-        selectors[104] = TestMutatorFacet.setDayCapThreshold18.selector;
+        selectors[n++] = TestMutatorFacet.closeRewardEntryRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayCapThreshold18.selector;
         // #1067 (S13 Part 2) — terminal re-anchor + O(1) index test scaffolding.
-        selectors[105] = TestMutatorFacet.setLoanBorrowerEntryId.selector;
-        selectors[106] = TestMutatorFacet.callRepointRewardEntry.selector;
+        selectors[n++] = TestMutatorFacet.setLoanBorrowerEntryId.selector;
+        selectors[n++] = TestMutatorFacet.callRepointRewardEntry.selector;
         // getUserRewardEntryIds now routes to the REAL facet view (RL-3
         // Codex r2 promoted it); the mutator's duplicate stays un-routed.
-        selectors[107] = TestMutatorFacet.getRewardEntryUserIdx.selector;
+        selectors[n++] = TestMutatorFacet.getRewardEntryUserIdx.selector;
         // RL-1 — claim-to-vault delivery test scaffolding.
-        selectors[108] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
-        selectors[109] = TestMutatorFacet.getStakeRollupStateRaw.selector;
+        selectors[n++] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
+        selectors[n++] = TestMutatorFacet.getStakeRollupStateRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
-        selectors[110] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // Governor PR-3b — day-pool stamp test scaffolding.
-        selectors[111] = TestMutatorFacet.setRecycleBucketRaw.selector;
-        selectors[112] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
-        selectors[113] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
-        selectors[114] = TestMutatorFacet.setBorrowerLifVpfiHeldRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRecycleBucketRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRecycledCreditedByDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.setGovernorCommitArmedFromDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.setBorrowerLifVpfiHeldRaw.selector;
         // #1353 (M2 PR-5c) — direct fee-entitlement stamp + armed day-pool stamp
         // for loan-side cap tests.
-        selectors[115] = TestMutatorFacet.setFeeEntitlementRaw.selector;
-        selectors[116] = TestMutatorFacet.setDayPoolStampRaw.selector;
-        selectors[117] = TestMutatorFacet.dayCapModeRaw.selector;
-        selectors[118] = TestMutatorFacet.dayUserSideCapVpfi18Raw.selector;
-        selectors[119] = TestMutatorFacet.processUserSideDayRaw.selector;
-        selectors[120] = TestMutatorFacet.setUserSideDayPaidRaw.selector;
-        selectors[121] = TestMutatorFacet.setDayCapModeRaw.selector;
-        selectors[122] = TestMutatorFacet.setDayUserSideCapRaw.selector;
-        selectors[123] = TestMutatorFacet.seedCumLenderDayRaw.selector;
-        selectors[124] = TestMutatorFacet.setRewardEntryClaimNextDayRaw.selector;
-        selectors[125] = TestMutatorFacet.seedCumBorrowerDayRaw.selector;
-        selectors[126] = TestMutatorFacet.setRewardEntryEndDayRaw.selector;
-        selectors[127] = TestMutatorFacet.userSideDayPaidRaw.selector;
+        selectors[n++] = TestMutatorFacet.setFeeEntitlementRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayPoolStampRaw.selector;
+        selectors[n++] = TestMutatorFacet.dayCapModeRaw.selector;
+        selectors[n++] = TestMutatorFacet.dayUserSideCapVpfi18Raw.selector;
+        selectors[n++] = TestMutatorFacet.processUserSideDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.setUserSideDayPaidRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayCapModeRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayUserSideCapRaw.selector;
+        selectors[n++] = TestMutatorFacet.seedCumLenderDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardEntryClaimNextDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.seedCumBorrowerDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardEntryEndDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.userSideDayPaidRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed
         // staking accrual mutator/getters.
+
+        // The cursor must have filled the array exactly. Too few appends
+        // leaves trailing zero slots (a selector dropped, or a length bumped
+        // without an entry); too many cannot get here at all, because the
+        // append itself reverts. Either way the count is the invariant, not
+        // the contents.
+        require(
+            n == selectors.length,
+            "HelperTest: mutator selector count does not match the declared "
+            "length - an entry was added without bumping the length, or the "
+            "length was bumped without adding an entry"
+        );
+
         return selectors;
     }
 

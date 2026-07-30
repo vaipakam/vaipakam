@@ -16,6 +16,7 @@ import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
@@ -386,7 +387,7 @@ contract MeshLedgerInvariant is Test {
     /// §7 #2's OTHER half — `outstandingCommitFresh + paidOutFresh <= 69M`.
     /// Codex #1437 r1 P1: the first version of this suite asserted only the
     /// recycled bound while claiming to encode §7 #2, so a regression that
-    /// over-reserved FRESH issuance would have stayed green. The pre-existing
+    /// over-reserved FRESH drawdown would have stayed green. The pre-existing
     /// interaction-rewards invariant checks paid-out alone, not paid plus
     /// outstanding, so nothing else covered this.
     function invariant_FreshCommitWithinLifetimeCap() public view {
@@ -469,6 +470,456 @@ contract MeshLedgerInvariant is Test {
             0,
             "Base holds no per-chain reservation"
         );
+    }
+
+    // ─── §7 #2's FRESH half, at its boundary — deterministic ────────────
+    //
+    // #1222 M3 B4-d. `invariant_FreshCommitWithinLifetimeCap` asserts
+    // `outstandingFresh + paidOutFresh <= 69M`, and like every bound in this
+    // suite it holds trivially on state that never approaches the cap.
+    //
+    // How far the campaign can actually get. Counted twice, because both
+    // earlier versions of this comment were wrong: "seven orders of
+    // magnitude" (out by ~10^5) and then "fewer than 40 slots, under ~1M"
+    // (which missed a whole band). The handler finalizes days from TWO
+    // disjoint spaces: `finalize`/`creditDay` take `daySeed % 40` → days
+    // 0-39, and `instructThenRetire` takes `40 + 2 * (nonce % 12)` → the 12
+    // even days 40-62, reserved deliberately so the two cannot collide.
+    // That is 52 slots, 51 with a non-zero schedule (day 0 pays nothing).
+    // At ~20,164 VPFI on an early day, the reachable fresh total is
+    // ~1.03M — just OVER a million, so "under ~1M" was wrong too.
+    //
+    // Against a 69,000,000 ceiling that is a factor of ~67: under two
+    // orders of magnitude. The conclusion is unchanged and is the only
+    // thing this comment needs — the boundary cannot be approached, so the
+    // bound is green for the wrong reason — but the figure is now the one
+    // the handler actually produces.
+    //
+    // The five tests below place the ledger AT the boundary and assert the
+    // cap actually bites: one per reservation term (outstanding commitment,
+    // exact-cap/recycled, already-remitted value), then TWO combination
+    // fixtures. The combinations are not redundant — every single-term
+    // fixture is satisfied by a formula that takes the LARGEST reservation
+    // instead of summing them, so isolating a term proves that term is
+    // READ but not that the terms ADD. Each combination kills a distinct
+    // such formula; see their own comments. Deliberately deterministic —
+    // a fuzzer cannot usefully search a region it cannot reach.
+
+    /// The cap must reserve against OUTSTANDING fresh commitments, not only
+    /// against what has already been paid out. That is the whole content of
+    /// §7 #2's fresh half: a day already committed to fresh drawdown has
+    /// spent that headroom even though no tokens have moved, so the next
+    /// day's schedule must size against what remains.
+    ///
+    /// Driven through the commitment term alone, with nothing paid out, so a
+    /// regression that dropped `outstandingCommitFresh` from the reserved sum
+    /// is caught here — the platform would otherwise draw down past 69M
+    /// across two open days. (Four of the five fixtures catch that mutation;
+    /// see the table below. An earlier version of this sentence said "and
+    /// nowhere else", which the table directly contradicts.)
+    // ─────────────────────────────────────────────────────────────────────
+    // §7 #2 FRESH-CAP BOUNDARY — MUTATION EVIDENCE
+    //
+    // Kept HERE, beside the fixtures, and deliberately NOT restated in the
+    // release note or the completion plan (#1457 r11). Three rounds running,
+    // a per-mutation "and only this one" claim in prose went stale the moment
+    // a fixture was added, because nothing ties the prose to the fixture set.
+    // A table next to the tests is edited by whoever edits the tests.
+    //
+    // Read it as: this mutation is caught by these fixtures. NOT as "only".
+    //
+    // Exclusivity was the wrong property, and so was the ORDER criterion that
+    // briefly replaced it: the measured sets are NOT nested, so "fails while
+    // every fixture below it passes" establishes nothing either — see the note
+    // under the table. What earns a fixture its place is that it pins a
+    // distinct BEHAVIOUR at the boundary and documents that behaviour, whether
+    // or not another fixture happens to catch the same mutation.
+    //
+    // The mutation site is `RewardAggregatorFacet._…` where the three terms
+    // are summed and the schedule is floored — NOT `RewardRemittanceFacet`'s
+    // own headroom helper. Worth naming, because mutating the latter changes
+    // none of these tests, and reading that as "the fixtures are weak" would
+    // be exactly backwards: it is not the code they cover.
+    //
+    // Every row below was RUN, not reasoned about. The first row is the reason
+    // that matters: I had it as "the three single-term fixtures" and it is
+    // actually all five.
+    //
+    //   mutation                                   | fixtures that FAIL
+    //   -------------------------------------------|--------------------------
+    //   size from unclamped schedule (skip floor)   | all 5
+    //   drop `outstandingCommitFresh`               | 4 — all but remitted-only
+    //   drop `rewardBudgetRemittedGlobal`           | 3 — remitted-only + both
+    //                                               |     combination fixtures
+    //   `max(remitted, outstanding)` for the sum    | 2 — both combinations
+    //   drop `interactionPoolPaidOut`               | 1 — three-term only
+    //   publish clamped figure, reserve unclamped   | every fixture's
+    //                                               | reservation assertion
+    //                                               | (its stamp stays green)
+    //
+    // WHAT THIS TABLE DOES AND DOES NOT ESTABLISH. It is a COVERAGE record:
+    // for each mutation, which fixtures notice. It does NOT establish that
+    // every fixture is necessary, and an earlier version of this comment
+    // claimed the descending 5/4/3/2/1 column proved exactly that. It does
+    // not, because THE SETS ARE NOT NESTED: drop the remitted-only fixture
+    // and its mutation is still caught by both combination fixtures; drop the
+    // two-term fixture and `max(remitted, outstanding)` is still caught by the
+    // three-term one. For mutation detection alone, some of these are
+    // genuinely redundant.
+    //
+    // That is fine, because mutation detection is not why they exist. Each
+    // fixture pins a distinct BEHAVIOUR at the boundary — clamp-to-headroom;
+    // at the cap, fresh zero while recycled keeps funding; remitted value
+    // reserves identically; two terms sum; three terms sum. Those are the
+    // reasons to keep them, and a fixture whose mutation is also caught
+    // elsewhere still documents its own property.
+    //
+    // Noting this because the failed reasoning is instructive: I replaced an
+    // exclusivity claim with a minimality claim, which was the same error one
+    // level up — inferring a property of the SUITE from a table that only
+    // reports coverage.
+    //
+    // The last row is why each fixture asserts the RESERVATION and not only
+    // the day's published stamp: a mutation that stamps the clamped number
+    // while reserving the unclamped one leaves every stamp assertion green.
+    // ─────────────────────────────────────────────────────────────────────
+    function test_Boundary_FreshScheduleClampsToRemainingCapHeadroom()
+        public
+    {
+        uint256 headroom = 1_234 ether;
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom, 0
+        );
+
+        uint256 schedule = _scheduleForDay(1);
+        assertGt(
+            schedule,
+            headroom,
+            "fixture must place the schedule ABOVE the headroom, or the "
+            "clamp is not under test"
+        );
+
+        uint256 freshBefore = _outstandingFresh();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "the fresh floor must clamp to the cap headroom left by the "
+            "outstanding commitment, not to the day's own schedule"
+        );
+
+        // Codex #1457 r1 P1 — the STAMP is not the reservation. Finalization
+        // could stamp the clamped floor and still reserve commitments sized
+        // from the unclamped schedule, which walks the counter past the cap
+        // while every assertion above stays green.
+        //
+        // r2 P2 — and asserting only `<= remaining` is still a BOUND: an
+        // implementation that under-books, or skips the reservation entirely
+        // when the clamp binds, satisfies it just as well. The published
+        // funding must be FULLY reserved, so assert the exact delta.
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "the reservation must equal the published floor exactly - a "
+            "smaller one means the day funds value it never reserved"
+        );
+        _assertFreshCapNotBreached("after a clamped finalize");
+    }
+
+    /// At the boundary EXACTLY, fresh goes to zero — and recycled does not.
+    /// §7 #1 says the cap bounds fresh drawdown ONLY, so a day at the cap
+    /// must still be able to pay from the recycle bucket. An implementation
+    /// that zeroed the whole day would satisfy the fresh bound perfectly
+    /// while silently ending recycling, and an implementation that let fresh
+    /// through would breach the 30% allocation.
+    function test_Boundary_AtTheCapFreshIsZeroAndRecycledIsNot() public {
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP, 0
+        );
+
+        (, , uint256 recycledBefore, ) = _agg().getGovernorCommitState();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, uint256 recycledBudget, uint256 aBar, ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            0,
+            "no fresh headroom remains, so the day funds no fresh at all"
+        );
+        assertGt(aBar, 0, "fixture must supply absorption, or recycled is "
+            "trivially zero and the second half of this test is vacuous");
+        assertGt(
+            recycledBudget,
+            0,
+            "the cap bounds FRESH drawdown only - a day at the cap must "
+            "still fund from the recycle bucket"
+        );
+
+        // Codex #1457 r2 P2 — the SAME publish-versus-reserve gap, on the
+        // recycled side. Continuing to stamp `funded` while no longer
+        // reserving lets a later day re-offer the same recycled availability,
+        // and the stamp alone cannot see it. This test claims recycled
+        // funding continues SAFELY past fresh exhaustion, so it has to check
+        // the reservation, and that §7 #2's recycled half still holds.
+        //
+        // r2 P2 — `> 0` is a lower bound and a partial under-booking passes
+        // it, so assert the exact figure. The published recycled budget is
+        // reserved in TWO books, not one: Base's own slice lands in the
+        // global `outstandingCommitRecycled`, and each mirror's slice in its
+        // own per-chain reservation. Summing them is the "fully reserved"
+        // identity — checking only the global half would have accepted a day
+        // that published a mesh-wide budget and reserved just Base's part of
+        // it. (Written the other way first, and it failed 19e18 != 95e18,
+        // which is what surfaced the split.)
+        (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
+        uint256 reservedNow = outstandingRecycled - recycledBefore;
+        uint32[3] memory cs = _chains();
+        for (uint256 i; i < cs.length; ++i) {
+            reservedNow += _agg().getChainOutstandingRecycledCommit(cs[i]);
+        }
+        assertEq(
+            reservedNow,
+            recycledBudget,
+            "everything the day published as recycled must be reserved "
+            "somewhere - a stamped budget with no reservation behind it lets "
+            "a later day size against the same availability twice"
+        );
+        (, uint256 bucketNow, ) = _agg().getRecycleCustodyPosition();
+        assertLe(
+            outstandingRecycled,
+            bucketNow,
+            "SS7#2 recycled half must still hold at the fresh boundary"
+        );
+
+        assertEq(
+            _outstandingFresh(),
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP,
+            "at the cap exactly, finalization must reserve NO further fresh - "
+            "a stamped zero floor with a non-zero reservation is the same "
+            "breach, one indirection away"
+        );
+    }
+
+    /// The third term in the fresh reservation is value already REMITTED to
+    /// mirrors, and this is the only fixture that places it at the boundary
+    /// ALONE — the two combination fixtures carry it alongside other terms
+    /// (#1457 r13; the earlier "no other test can place it at the boundary"
+    /// overstated that):
+    /// reaching it for real needs a mirror to have been sent almost the whole
+    /// allocation. With the other two terms carrying the fixture, dropping
+    /// this one from the reserved sum is invisible — Base would keep stamping
+    /// full fresh schedules for its own claimants against an allocation it has
+    /// already shipped elsewhere, drawing the same value down twice
+    /// (Codex #1457 r1 P1).
+    function test_Boundary_RemittedValueAlsoReservesAgainstTheCap() public {
+        uint256 headroom = 1_234 ether;
+        TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+
+        assertGt(
+            _scheduleForDay(1),
+            headroom,
+            "fixture must place the schedule ABOVE the headroom"
+        );
+
+        uint256 freshBefore = _outstandingFresh();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "already-remitted value reserves against the cap exactly as an "
+            "outstanding commitment does"
+        );
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "and the clamped floor is fully reserved here too"
+        );
+        _assertFreshCapNotBreached("after a remit-clamped finalize");
+    }
+
+    /// Every fixture above leaves exactly ONE reservation term non-zero, and
+    /// that is a real gap rather than a stylistic one: a regression computing
+    /// `paidOut + max(remitted, outstanding)` instead of SUMMING the terms
+    /// produces the correct headroom in each of them and passes every
+    /// assertion. Only a state carrying two terms at once separates the two
+    /// formulas — and it is a reachable state, not a contrived one: a mirror
+    /// funded earlier while one of Base's own days is still open.
+    ///
+    /// Split so neither term alone reaches the boundary. With `max`, the
+    /// headroom reads as `cap − larger` and the day's floor clamps to that,
+    /// over-allocating by the smaller term; with the sum it clamps to
+    /// `cap − (remitted + outstanding)`. The assertion below is the
+    /// difference between the two.
+    function test_Boundary_RemittedAndOutstandingReserveAdditively() public {
+        // Two unequal terms, so a `max` regression is off by the smaller one
+        // rather than coincidentally right.
+        uint256 outstanding = 334 ether;
+        uint256 headroom = 1_234 ether;
+        // DERIVED, not declared (#1457 r11). This used to read
+        // `remitted = 900 ether` while the seed below computed something
+        // else entirely, so the named figure was decorative: editing it
+        // changed nothing, and the comment claiming the headroom came from
+        // the named split was false. What the fixture needs is the SUM at
+        // the boundary, so the remitted term is whatever leaves exactly
+        // `headroom` once `outstanding` is also counted.
+        uint256 remitted =
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom - outstanding;
+
+        TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
+            remitted
+        );
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            outstanding, 0
+        );
+
+        assertGt(
+            _scheduleForDay(1),
+            headroom,
+            "fixture must place the schedule ABOVE the summed headroom"
+        );
+
+        uint256 freshBefore = _outstandingFresh();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "the floor must clamp to the headroom left by BOTH terms summed - "
+            "clamping to cap-minus-the-larger over-allocates by the smaller, "
+            "and that is exactly what a max() regression does"
+        );
+        // The RESERVATION, not just the stamp — publishing a clamped figure
+        // while reserving an unclamped one is the omission r1 caught.
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "and the summed-clamped floor is what actually gets reserved"
+        );
+        _assertFreshCapNotBreached("after a two-term clamped finalize");
+    }
+
+    /// The two-term fixture above still leaves `interactionPoolPaidOut` at
+    /// zero, so it proves only that the two COMMITMENT-side terms add. A
+    /// formula that took `max(paidOut, remitted + outstanding)` — or that
+    /// dropped `paidOut` from the reserved sum outright — produces the right
+    /// headroom in all four fixtures above and passes every assertion. The
+    /// campaign cannot reach the boundary to catch it either.
+    ///
+    /// This is the ordinary steady state, not an edge: once any claim has
+    /// been paid, `paidOut` is non-zero for the rest of the programme's
+    /// life. So the surviving formula would have over-allocated on every
+    /// day after the first payout.
+    ///
+    /// All three terms non-zero and mutually unequal, split so no subset
+    /// reaches the boundary: only the full sum yields `headroom`.
+    function test_Boundary_AllThreeFreshTermsReserveAdditively() public {
+        uint256 paidOut = 700 ether;
+        uint256 outstanding = 34 ether;
+        uint256 headroom = 1_234 ether;
+        // DERIVED — see the note in the two-term fixture above. The declared
+        // `500 ether` was never seeded.
+        uint256 remitted = LibVaipakam.VPFI_INTERACTION_POOL_CAP
+            - headroom
+            - paidOut
+            - outstanding;
+
+        TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(paidOut);
+        TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
+            remitted
+        );
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            outstanding, 0
+        );
+
+        assertGt(
+            _scheduleForDay(1),
+            headroom,
+            "fixture must place the schedule ABOVE the summed headroom"
+        );
+
+        uint256 freshBefore = _outstandingFresh();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "the floor must clamp to the headroom left by ALL THREE terms "
+            "summed - dropping paidOut, or taking the larger of it and the "
+            "commitment side, over-allocates and passes every other fixture"
+        );
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "and the summed-clamped floor is what actually gets reserved"
+        );
+        _assertFreshCapNotBreached("after a three-term clamped finalize");
+    }
+
+    /// @dev The §7 #2 fresh half, read from live state. `remaining` is the
+    ///      allocation net of what has been paid out AND what has been
+    ///      remitted to mirrors, so "outstanding commitments fit inside what
+    ///      is left" is exactly `outstanding + paidOut + remitted <= cap` —
+    ///      stated in the form the platform itself publishes, so the check
+    ///      cannot drift from the number operators read.
+    function _assertFreshCapNotBreached(string memory ctx) internal view {
+        (, , uint256 remaining, , , ) =
+            InteractionRewardsLensFacet(address(diamond))
+                .getInteractionSnapshot();
+        assertLe(
+            _outstandingFresh(),
+            remaining,
+            string.concat("SS7#2 breached ", ctx)
+        );
+    }
+
+    function _outstandingFresh() internal view returns (uint256 v) {
+        (, v, , ) = _agg().getGovernorCommitState();
+    }
+
+    /// @dev The day's uncapped fresh schedule, as the governor computes it
+    ///      before the cap headroom clamps it.
+    function _scheduleForDay(uint256 dayId) internal pure returns (uint256) {
+        return LibInteractionRewards.halfPoolForDay(dayId) * 2;
+    }
+
+    /// @dev Day 1 finalized with every expected chain reported and both
+    ///      mirrors marked commitment-complete — the shape the release and
+    ///      retirement transition tests above already use.
+    function _finalizeDayOne() internal {
+        messenger.deliverChainReportB3(
+            CHAIN_BASE, 1, 10e18, 5e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        messenger.deliverChainReportB3(
+            CHAIN_OP, 1, 20e18, 10e18, 900 ether, 0, 0, 0
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_ARB, true
+        );
+        TestMutatorFacet(address(diamond)).setChainDayCommitmentCompleteRaw(
+            1, CHAIN_OP, true
+        );
+        _agg().finalizeDay(1);
     }
 
     // ─── §7 #6's ORDERING clauses — deterministic, not fuzzed ────────────
