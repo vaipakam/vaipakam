@@ -24,6 +24,11 @@ forged overwrite left nothing to fall back on (#1469).
 # none of these scripts, so copying the block without it fails with a
 # missing-script error rather than anything that hints at the cause (#1471 r4).
 cd ops/offchain-data-archive
+# CREDENTIALS MUST BE IN THE ENVIRONMENT. Unlike setup-backblaze.mjs, this
+# script does not load the repo `.env` — the npm scripts invoke plain `node`,
+# and it reads BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY from `process.env` only.
+# Without this the commands exit before contacting B2 at all.
+set -a; . ../../.env; set +a          # or export the two vars by hand
 npm run bucket:lifecycle:print   # what B2 currently has
 npm run bucket:lifecycle:check   # does live match the declaration?
 npm run bucket:lifecycle:apply   # make live match the declaration

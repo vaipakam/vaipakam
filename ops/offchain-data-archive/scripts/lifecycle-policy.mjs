@@ -65,9 +65,12 @@ export const MONTHLY_MAX_TOTAL_DAYS = 365;
  * Recovery-window floors, PER TIER, because the two tiers have different
  * detectors — and the monthly tier has none at all (#1471 r6).
  *
- * Daily: the weekly healthcheck (Mon 09:00 UTC) examines
- * `manifests/<recent dates>/`, so 8 days puts detection strictly inside the
- * window.
+ * Daily: 8 is the weekly healthcheck's cadence (Mon 09:00 UTC) plus a day.
+ * Read that as the interval at which SOMETHING routinely looks at these
+ * objects — not as response time after an alert. Per the note above, the
+ * healthcheck cannot raise one for an authenticated forgery, so the floor is
+ * "the window outlives one full cycle of the only routine inspection there
+ * is", which is the weakest defensible reading and the honest one.
  *
  * Monthly: `healthcheck.ts` NEVER looks at the monthly prefixes. So a monthly
  * overwrite is not detected by anything today, and a 9-day window could not be
@@ -159,9 +162,11 @@ export function assertPolicyCeilings(decl, fail) {
             `window in which a superseded (possibly forged-over) object can be ` +
             `recovered.\n` +
             (DAILY_PREFIXES.includes(prefix)
-              ? `The daily detector is the WEEKLY healthcheck, so at 7 days a ` +
-                `forgery landing just after one Monday becomes deletable as the ` +
-                `next Monday's alert fires — the alert races the deletion (#1469).`
+              ? `The only routine inspection of these objects is the WEEKLY ` +
+                `healthcheck, so under 8 days the window can close inside a ` +
+                `single inspection cycle. Note it cannot raise an alert for an ` +
+                `authenticated forgery at all (#1473) — this floor buys a full ` +
+                `cycle of routine looking, not response time (#1469).`
               : `There is NO detector for the monthly prefixes: healthcheck.ts ` +
                 `examines only \`manifests/<recent dates>/\`. So this window ` +
                 `cannot be justified by detection at all, and must at least ` +
