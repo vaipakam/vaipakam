@@ -127,6 +127,14 @@ const ERA_GATED_TABLES = {
 // hold's legal_doc_ref").
 const LEGAL_REF_TABLES = ['diag_legal_holds', 'diag_legal_hold_audit'];
 
+// The ingestion path's byte invariants (`diagLegalDoc.ts`): non-empty,
+// capped, starting with the PDF magic. The key SHAPE guarantees none
+// of this — a correctly content-addressed key can sit over arbitrary
+// bytes, and restoring those as `application/pdf` re-launders content
+// production would have refused (Codex #1484 r3). Mirror the gate.
+const MAX_LEGAL_DOC_BYTES = 15 * 1024 * 1024;
+const PDF_MAGIC = Buffer.from('%PDF-');
+
 // ── Errors ────────────────────────────────────────────────────────────
 
 export class RestoreError extends Error {}
@@ -209,7 +217,21 @@ export function tableToSql(table) {
 
 /** Write every archived table's SQL file; returns apply-ordered
  *  entries {name, file, rowCount, database}. */
+/** Everything this converter knows — allowlists, required sections,
+ *  row semantics — is specific to archive version 1. A future format
+ *  whose arrays happen to resemble v1 must stop HERE, not be silently
+ *  interpreted under obsolete assumptions (Codex #1484 r3). */
+export function assertVersion(archive) {
+  if (archive?.version !== 1) {
+    fail(
+      `archive version is ${JSON.stringify(archive?.version)} — this converter understands ` +
+        `exactly version 1; a newer archive needs a newer converter`,
+    );
+  }
+}
+
 export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db' } = {}) {
+  assertVersion(archive);
   // A version-1 archive ALWAYS carries d1.archive — backup.ts emits it
   // unconditionally. Treating its absence like the genuinely optional
   // legacy lzAlerts section would let a truncated or hostile archive
@@ -305,13 +327,13 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       // (Codex #1484 r2).
       const parent = tables.find((t) => t.name === 'user_thresholds');
       const parentKeys = new Set(
-        parent.rows.map((r) => CASCADE_FK_COLUMNS.map((c) => String(r[c])).join('\u001f')),
+        parent.rows.map((r) => JSON.stringify(CASCADE_FK_COLUMNS.map((c) => r[c]))),
       );
       for (const child of CASCADE_CHILDREN) {
         const childTable = tables.find((t) => t.name === child);
         if (!childTable) continue;
         for (const [i, row] of childTable.rows.entries()) {
-          const key = CASCADE_FK_COLUMNS.map((c) => String(row[c])).join('\u001f');
+          const key = JSON.stringify(CASCADE_FK_COLUMNS.map((c) => row[c]));
           if (!parentKeys.has(key)) {
             fail(
               `${child} row ${i} references (${CASCADE_FK_COLUMNS.map((c) => `${c}=${row[c]}`).join(', ')}) ` +
@@ -358,6 +380,7 @@ export function validateR2Key(key) {
 
 /** Decode, write under <outDir>/r2/<key>, verify SHA-256. */
 export function materializeR2(archive, outDir) {
+  assertVersion(archive);
   // Like d1.archive, backup.ts always emits r2.objects (possibly
   // empty for a vault with no documents — but the FIELD is present).
   // A missing field means a truncated/wrong archive, and reporting it
@@ -397,6 +420,19 @@ export function materializeR2(archive, outDir) {
           `the document this key was minted for; treat as tampering, not as a glitch`,
       );
     }
+    // Same byte gate the ingestion path enforces — a content-addressed
+    // key over non-PDF bytes means the vault held something production
+    // would have refused to store.
+    if (bytes.length === 0 || bytes.length > MAX_LEGAL_DOC_BYTES) {
+      fail(`r2 key ${obj.key}: ${bytes.length} bytes — outside the vault's (0, ${MAX_LEGAL_DOC_BYTES}] ingestion bounds (diagLegalDoc.ts)`);
+    }
+    if (!bytes.subarray(0, PDF_MAGIC.length).equals(PDF_MAGIC)) {
+      fail(
+        `r2 key ${obj.key}: bytes do not start with the PDF magic — the ingestion path ` +
+          `would have refused this document, so its presence in the vault/archive is ` +
+          `itself suspect (diagLegalDoc.ts)`,
+      );
+    }
     mkdirSync(path.dirname(local), { recursive: true });
     writeFileSync(local, bytes);
     written.push({ key: obj.key, local, size: bytes.length });
@@ -412,19 +448,39 @@ export function materializeR2(archive, outDir) {
  *  over that is the unrecoverable-legal-document failure this whole
  *  pipeline exists to prevent (Codex #1484 r2). Returns the missing
  *  refs (with their table) for the caller to fail on. */
-export function missingLegalDocRefs(archive) {
+export function invalidLegalDocRefs(archive) {
   const r2Keys = new Set((archive?.r2?.objects ?? []).map((o) => o.key));
-  const missing = [];
+  const invalid = [];
   for (const table of archive?.d1?.archive ?? []) {
     if (!LEGAL_REF_TABLES.includes(table?.name)) continue;
     for (const row of table.rows ?? []) {
       const ref = row.legal_doc_ref;
-      if (ref !== null && ref !== undefined && ref !== '' && !r2Keys.has(ref)) {
-        missing.push({ table: table.name, ref });
+      if (ref === null || ref === undefined) continue; // legitimately doc-less rows
+      // The full PAIR must hold, not just key membership (Codex #1484
+      // r3): an empty ref, an off-shape ref, and a recorded sha that
+      // disagrees with the hash embedded in its own key are all
+      // pre-backup D1 tampering shapes that key-membership alone
+      // waves through.
+      if (typeof ref !== 'string' || !R2_KEY_SHAPE.test(ref)) {
+        invalid.push({ table: table.name, ref, problem: 'ref is not a canonical vault key' });
+        continue;
+      }
+      if (!r2Keys.has(ref)) {
+        invalid.push({ table: table.name, ref, problem: 'document absent from the archive' });
+        continue;
+      }
+      const keyHash = ref.slice('legal-holds/'.length, -'.pdf'.length);
+      const recorded = row.legal_doc_sha256;
+      if (recorded !== null && recorded !== undefined && recorded !== keyHash) {
+        invalid.push({
+          table: table.name,
+          ref,
+          problem: `recorded sha ${recorded} disagrees with the key's own hash`,
+        });
       }
     }
   }
-  return missing;
+  return invalid;
 }
 
 /** Upload each materialized object. argv ARRAY, never a shell string —
@@ -489,16 +545,16 @@ export function main(argv) {
 
   // Cross-halves check: legal holds must not reference documents the
   // archive does not carry.
-  const missingDocs = missingLegalDocRefs(archive);
-  if (missingDocs.length > 0) {
-    for (const { table, ref } of missingDocs) {
-      console.error(`✗ ${table} references ${ref} — NOT in the archive's R2 objects`);
+  const badDocs = invalidLegalDocRefs(archive);
+  if (badDocs.length > 0) {
+    for (const { table, ref, problem } of badDocs) {
+      console.error(`✗ ${table} ref ${JSON.stringify(ref)}: ${problem}`);
     }
     fail(
-      `${missingDocs.length} legal-hold row(s) reference document(s) this archive does not ` +
-        `carry — restoring would produce holds whose authorizing documents are permanently ` +
-        `missing. Pick a different archive, or escalate: this may be evidence of pre-backup ` +
-        `deletion in the vault`,
+      `${badDocs.length} legal-hold row(s) fail the document-reference invariants — ` +
+        `restoring would produce holds whose authorizing documents are missing, mislabelled ` +
+        `or mismatched. Pick a different archive, or escalate: this can be evidence of ` +
+        `pre-backup tampering in D1 or the vault`,
     );
   }
 

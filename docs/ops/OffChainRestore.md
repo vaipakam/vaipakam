@@ -1047,7 +1047,7 @@ For each table:
    the manifest lets you spot drift without diffing column-by-column.
 
 2. Convert each archived table's `rows[]` array into a
-   `restore/<table>.sql` `INSERT` batch, using the **committed,
+   `restore/d1/<table>.sql` `INSERT` batch, using the **committed,
    tested converter** (#1477):
 
    ```bash
@@ -1071,7 +1071,8 @@ For each table:
    implements these requirements, which remain the spec if it ever
    needs to be reproduced by hand:
 
-   - one output file per table, named `restore/<table>.sql`;
+   - one output file per table, named `restore/d1/<table>.sql`
+     (`restore/d1-lz-alerts/<table>.sql` for a legacy `lzAlerts` section);
    - **each file begins with `DELETE FROM <table>;`** so the import
      REPLACES the table instead of merging into it. On a fresh
      account (tables just created by §1 step 7's migrations) the
@@ -1113,14 +1114,14 @@ For each table:
    archives), `telegram_links`, `support_tickets`.
 
    ```bash
-   wrangler d1 execute vaipakam-archive --file=restore/<table>.sql --remote
+   wrangler d1 execute vaipakam-archive --file=restore/d1/<table>.sql --remote
    ```
 
    **`vaipakam-lz-alerts-db` tables** (lz-watcher): `lz_alert_state`,
    `scan_cursor`, `oft_balance_history`.
 
    ```bash
-   wrangler d1 execute vaipakam-lz-alerts-db --file=restore/<table>.sql --remote
+   wrangler d1 execute vaipakam-lz-alerts-db --file=restore/d1-lz-alerts/<table>.sql --remote
    ```
 
 4. Verify row counts match the manifest before moving to the next

@@ -20,7 +20,7 @@ import {
   applyOrder,
   convertD1,
   materializeR2,
-  missingLegalDocRefs,
+  invalidLegalDocRefs,
   shQuote,
   sqlLiteral,
   tableToSql,
@@ -129,6 +129,7 @@ test('convertD1 writes files in apply order and routes lzAlerts separately', () 
   const dir = outDir();
   const entries = convertD1(
     {
+      version: 1,
       d1: {
         archive: baselineArchive(),
         lzAlerts: [tableFixture('lz_alert_state', ['a'], [{ a: 3 }])],
@@ -148,15 +149,15 @@ test('convertD1 writes files in apply order and routes lzAlerts separately', () 
 
 test('an empty or baseline-incomplete d1.archive is truncated, not small', () => {
   const dir = outDir();
-  assert.throws(() => convertD1({ d1: { archive: [] } }, dir), /baseline/);
+  assert.throws(() => convertD1({ version: 1, d1: { archive: [] } }, dir), /baseline/);
   const missingNotify = baselineArchive().filter((t) => t.name !== 'notify_state');
-  assert.throws(() => convertD1({ d1: { archive: missingNotify } }, dir), /baseline/);
+  assert.throws(() => convertD1({ version: 1, d1: { archive: missingNotify } }, dir), /baseline/);
 });
 
 test('duplicate table entries are rejected, not last-writer-wins', () => {
   const dir = outDir();
   const dup = [...baselineArchive(), tableFixture('telegram_links', ['wallet'], [{ wallet: '0xb' }])];
-  assert.throws(() => convertD1({ d1: { archive: dup } }, dir), /exactly once/);
+  assert.throws(() => convertD1({ version: 1, d1: { archive: dup } }, dir), /exactly once/);
 });
 
 test('a child row whose FK key is absent from the archived parent is fatal', () => {
@@ -166,7 +167,7 @@ test('a child row whose FK key is absent from the archived parent is fatal', () 
     .find((t) => t.name === 'notify_state')
     .rows.push({ wallet: '0xORPHAN', chain_id: 1 });
   tables.find((t) => t.name === 'notify_state').rowCount = 2;
-  assert.throws(() => convertD1({ d1: { archive: tables } }, dir), /inconsistent/);
+  assert.throws(() => convertD1({ version: 1, d1: { archive: tables } }, dir), /inconsistent/);
 });
 
 // ── R2 key validation ─────────────────────────────────────────────────
@@ -193,7 +194,7 @@ test('rejects traversal, absolute, metacharacter, off-shape keys', () => {
 test('writes objects under outdir/r2 and verifies the SHA', () => {
   const dir = outDir();
   const bytes = Buffer.from('%PDF-1.4 fixture');
-  const written = materializeR2({ r2: { objects: [r2Fixture(bytes)] } }, dir);
+  const written = materializeR2({ version: 1, r2: { objects: [r2Fixture(bytes)] } }, dir);
   assert.equal(written.length, 1);
   assert.ok(written[0].local.startsWith(path.resolve(dir, 'r2') + path.sep));
   assert.deepEqual(readFileSync(written[0].local), bytes);
@@ -203,10 +204,10 @@ test('a SHA mismatch is fatal, and nothing is written for a bad key', () => {
   const dir = outDir();
   const obj = r2Fixture(Buffer.from('real'));
   obj.sha256 = 'f'.repeat(64);
-  assert.throws(() => materializeR2({ r2: { objects: [obj] } }, dir), RestoreError);
+  assert.throws(() => materializeR2({ version: 1, r2: { objects: [obj] } }, dir), RestoreError);
 
   const evil = r2Fixture(Buffer.from('x'), '../escape.pdf');
-  assert.throws(() => materializeR2({ r2: { objects: [evil] } }, dir), RestoreError);
+  assert.throws(() => materializeR2({ version: 1, r2: { objects: [evil] } }, dir), RestoreError);
   assert.ok(!existsSync(path.resolve(dir, '..', 'escape.pdf')));
 });
 
@@ -216,7 +217,7 @@ test('content addressing: bytes whose hash differs from the KEY hex are tamperin
   // a DIFFERENT document's key — the exact shape a pre-backup
   // replacement produces.
   const obj = r2Fixture(Buffer.from('attacker document'), `legal-holds/${HEX64}.pdf`);
-  assert.throws(() => materializeR2({ r2: { objects: [obj] } }, dir), /content-addressed/);
+  assert.throws(() => materializeR2({ version: 1, r2: { objects: [obj] } }, dir), /content-addressed/);
 });
 
 test('missing required archive sections are fatal, not empty successes', () => {
@@ -228,6 +229,7 @@ test('missing required archive sections are fatal, not empty successes', () => {
 test('tables the backup never exports are rejected before any batch is emitted', () => {
   const dir = outDir();
   const hostile = {
+    version: 1,
     d1: { archive: [tableFixture('d1_migrations', ['name'], [{ name: 'x' }])] },
   };
   assert.throws(() => convertD1(hostile, dir), /never exports/);
@@ -236,10 +238,14 @@ test('tables the backup never exports are rejected before any batch is emitted',
 
 test('a parent without its archived cascade child is dependency-incomplete', () => {
   const dir = outDir();
+  // notify_state is ALSO baseline, so its absence trips the baseline
+  // check first — either message is a correct refusal; the cascade
+  // fatal stays as defense in depth should the baseline set change.
   const incomplete = {
+    version: 1,
     d1: { archive: [tableFixture('user_thresholds', ['a'], [{ a: 1 }])] },
   };
-  assert.throws(() => convertD1(incomplete, dir), /notify_state/);
+  assert.throws(() => convertD1(incomplete, dir), /baseline|notify_state/);
 });
 
 test('shQuote yields one shell argument for hostile paths', () => {
@@ -265,19 +271,57 @@ test('uploads via argv array, restoring content-type; non-zero exit is fatal', (
   );
 });
 
-test('legal-hold rows referencing documents the archive lacks are caught', () => {
+test('legal-hold reference PAIR invariants: missing, malformed, and sha-mismatched refs', () => {
   const doc = r2Fixture(Buffer.from('%PDF doc'));
-  const holds = tableFixture('diag_legal_holds', ['id', 'legal_doc_ref'], [
-    { id: 1, legal_doc_ref: doc.key },
-    { id: 2, legal_doc_ref: null },
+  const docHash = doc.key.slice('legal-holds/'.length, -'.pdf'.length);
+  const holds = tableFixture('diag_legal_holds', ['id', 'legal_doc_ref', 'legal_doc_sha256'], [
+    { id: 1, legal_doc_ref: doc.key, legal_doc_sha256: docHash },
+    { id: 2, legal_doc_ref: null, legal_doc_sha256: null },
   ]);
   const ok = { d1: { archive: [holds] }, r2: { objects: [doc] } };
-  assert.deepEqual(missingLegalDocRefs(ok), []);
+  assert.deepEqual(invalidLegalDocRefs(ok), []);
 
   const gone = `legal-holds/${'b'.repeat(64)}.pdf`;
-  holds.rows.push({ id: 3, legal_doc_ref: gone });
-  holds.rowCount = 3;
-  assert.deepEqual(missingLegalDocRefs({ d1: { archive: [holds] }, r2: { objects: [doc] } }), [
-    { table: 'diag_legal_holds', ref: gone },
-  ]);
+  holds.rows.push(
+    { id: 3, legal_doc_ref: gone, legal_doc_sha256: null },        // absent from archive
+    { id: 4, legal_doc_ref: '', legal_doc_sha256: null },          // empty ref = tampering shape
+    { id: 5, legal_doc_ref: doc.key, legal_doc_sha256: 'f'.repeat(64) }, // sha disagrees with key
+  );
+  holds.rowCount = 5;
+  const problems = invalidLegalDocRefs({ d1: { archive: [holds] }, r2: { objects: [doc] } });
+  assert.equal(problems.length, 3);
+  assert.match(problems[0].problem, /absent/);
+  assert.match(problems[1].problem, /not a canonical/);
+  assert.match(problems[2].problem, /disagrees/);
+});
+
+test('non-version-1 archives are rejected before any output', () => {
+  const dir = outDir();
+  assert.throws(() => convertD1({ version: 999, d1: { archive: baselineArchive() } }, dir), /version/);
+  assert.throws(() => materializeR2({ d1: {}, r2: { objects: [] } }, dir), /version/);
+});
+
+test('content-addressed but non-PDF bytes are rejected (ingestion parity)', () => {
+  const dir = outDir();
+  const notPdf = r2Fixture(Buffer.from('MZ definitely-not-a-pdf'));
+  assert.throws(
+    () => materializeR2({ version: 1, r2: { objects: [notPdf] } }, dir),
+    /PDF magic/,
+  );
+});
+
+test('FK preflight uses collision-free tuple encoding', () => {
+  const dir = outDir();
+  const tables = baselineArchive();
+  // Codex #1484 r3's example: with naive concatenation these two
+  // tuples collide; the orphan must still be detected.
+  tables.find((t) => t.name === 'user_thresholds').rows = [
+    { wallet: 'a\u001f1', chain_id: 2 },
+  ];
+  tables.find((t) => t.name === 'user_thresholds').rowCount = 1;
+  tables.find((t) => t.name === 'notify_state').rows = [
+    { wallet: 'a', chain_id: '1\u001f2' },
+  ];
+  tables.find((t) => t.name === 'notify_state').rowCount = 1;
+  assert.throws(() => convertD1({ version: 1, d1: { archive: tables } }, dir), /inconsistent/);
 });
