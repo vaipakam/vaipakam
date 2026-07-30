@@ -290,10 +290,34 @@ test('legal-hold reference PAIR invariants: missing, malformed, and sha-mismatch
   const docHash = doc.key.slice('legal-holds/'.length, -'.pdf'.length);
   const holds = tableFixture('diag_legal_holds', ['id', 'legal_doc_ref', 'legal_doc_sha256'], [
     { id: 1, legal_doc_ref: doc.key, legal_doc_sha256: docHash },
-    { id: 2, legal_doc_ref: null, legal_doc_sha256: null },
   ]);
-  const ok = { d1: { archive: [holds] }, r2: { objects: [doc] } };
+  // null/null is legitimate ONLY for non-`place` audit actions.
+  const audit = tableFixture(
+    'diag_legal_hold_audit',
+    ['id', 'action', 'legal_doc_ref', 'legal_doc_sha256'],
+    [{ id: 1, action: 'lift', legal_doc_ref: null, legal_doc_sha256: null }],
+  );
+  const ok = { d1: { archive: [holds, audit] }, r2: { objects: [doc] } };
   assert.deepEqual(invalidLegalDocRefs(ok), []);
+
+  // …but a current HOLD with neither field, or a `place` audit row
+  // with neither, recreates a hold with no authorizing evidence.
+  const bareHold = tableFixture('diag_legal_holds', ['id', 'legal_doc_ref', 'legal_doc_sha256'], [
+    { id: 9, legal_doc_ref: null, legal_doc_sha256: null },
+  ]);
+  assert.match(
+    invalidLegalDocRefs({ d1: { archive: [bareHold] }, r2: { objects: [] } })[0].problem,
+    /no authorizing document/,
+  );
+  const barePlace = tableFixture(
+    'diag_legal_hold_audit',
+    ['id', 'action', 'legal_doc_ref', 'legal_doc_sha256'],
+    [{ id: 9, action: 'place', legal_doc_ref: null, legal_doc_sha256: null }],
+  );
+  assert.match(
+    invalidLegalDocRefs({ d1: { archive: [barePlace] }, r2: { objects: [] } })[0].problem,
+    /'place' with no authorizing document/,
+  );
 
   const gone = `legal-holds/${'b'.repeat(64)}.pdf`;
   holds.rows.push(

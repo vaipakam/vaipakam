@@ -473,10 +473,28 @@ export function invalidLegalDocRefs(archive) {
     for (const row of table.rows ?? []) {
       const ref = row.legal_doc_ref;
       if (ref === null || ref === undefined) {
-        // Doc-less rows are legitimate — but a HASH without a ref is
-        // not a shape the writer produces (Codex #1484 r4).
+        // A HASH without a ref is never a writer-produced shape
+        // (Codex #1484 r4). And null/null is table-SPECIFIC
+        // (Codex #1484 r6): placing a hold REQUIRES the document
+        // (`diagErasure.ts` rejects `place` without one), so a
+        // current-hold row — or a `place` audit row — with neither
+        // field recreates an erasure-blocking hold with no
+        // authorizing evidence. Only non-`place` audit actions
+        // (`lift`, `set-disclosure`) are legitimately doc-less.
         if (row.legal_doc_sha256 !== null && row.legal_doc_sha256 !== undefined) {
           invalid.push({ table: table.name, ref, problem: 'recorded sha present but ref is null' });
+        } else if (table.name === 'diag_legal_holds') {
+          invalid.push({
+            table: table.name,
+            ref,
+            problem: 'current hold with no authorizing document (place requires one)',
+          });
+        } else if (table.name === 'diag_legal_hold_audit' && row.action === 'place') {
+          invalid.push({
+            table: table.name,
+            ref,
+            problem: "audit row for a 'place' with no authorizing document",
+          });
         }
         continue;
       }
