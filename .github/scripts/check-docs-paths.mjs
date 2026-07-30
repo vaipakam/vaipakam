@@ -1,35 +1,40 @@
 #!/usr/bin/env node
 /**
- * Docs check: cited repo paths and app routes exist.
+ * Docs check: cited repo paths exist.
  *
- * WHY THIS EXISTS. Two classes of stale reference kept surfacing in review,
- * and both waste an operator's time at exactly the wrong moment:
+ * WHY THIS EXISTS. The Stage 3 refactor moved the dApp to `apps/defi`, but
+ * 147 references to the removed `frontend/` directory survived across 39
+ * documents (#1462). An operator following one looks for a file that is not
+ * there, at exactly the moment they can least afford to.
  *
- *   - The Stage 3 refactor moved the dApp to `apps/defi`, but 147 references
- *     to the removed `frontend/` directory survived across 39 documents
- *     (#1462). An operator following one looks for a file that is not there.
- *   - The dApp's routes were flattened, so `/app/alerts` became `/alerts`.
- *     Three documents still pointed at the old form, including the incident
- *     runbook's verification step for a notification-channel migration.
- *     (An earlier version of this comment said that step would land an
- *     operator on a blank page. It would NOT — `:locale` matches any first
- *     segment and LocaleResolver falls back to English, so the old form still
- *     renders. The citation is non-canonical, not dead. The claim was
- *     asserted rather than checked, and it had already been repeated
- *     elsewhere before review disproved it.)
- *
- * Neither class is preventable by discipline: nothing tells the author of a
- * rename which prose mentions the old name. Both are mechanically decidable,
- * so they are decided here.
+ * The class is not preventable by discipline: nothing tells the author of a
+ * rename which prose mentions the old name. It IS mechanically decidable, so
+ * it is decided here.
  *
  * WHAT IT FLAGS. In non-historical `docs/`:
- *   - a backticked or parenthesised path beginning with a known top-level
- *     directory that does not exist on disk;
- *   - a cited `/app/...` route that the dApp's router does not mount.
+ *   - a citation of a directory that was removed or renamed (`REMOVED_DIRS`),
+ *     anywhere in the doc set — set membership, so no judgement is involved;
+ *   - under `docs/ops/` and `docs/FunctionalSpecs/`, a cited path beginning
+ *     with a known top-level directory that is not in the tracked tree.
  *
- * The route list is DERIVED from `apps/defi/src/App.tsx`, never hand-kept —
- * a hand-kept copy is a second thing to drift, which is the defect this
- * check exists to catch.
+ * WHY THERE IS NO `/app/...` ROUTE CHECK. There was one, across four review
+ * rounds, and it is DEFERRED to #1479 rather than shipped. It was not failing
+ * for want of another patch: each round closed a real gap and the next found
+ * another citation form the pattern mishandled — a trailing slash (`/app/`), a
+ * locale prefix (`/es/app/alerts`), a same-origin absolute URL
+ * (`https://defi.vaipakam.com/app/alerts`). Citation forms are an unbounded
+ * set, so a pattern over them is a heuristic; the removed-directory rule is a
+ * set-membership test over a list someone maintains deliberately. Shipping the
+ * second without the first is the whole point — a check that is sometimes
+ * wrong teaches people to ignore the one that never is.
+ *
+ * (The route work still produced two durable results, both kept: the five
+ * stale `/app` citations it found are corrected in this change, and it
+ * disproved a claim I had asserted three times — that `/app/alerts` shows an
+ * operator a blank page. It does not. `App.tsx` nests the page tree under
+ * `<Route path=":locale">` and `LocaleResolver` falls back to English for an
+ * unrecognised parameter while still rendering its outlet, so the old form
+ * resolves. It is the wrong address to publish, not a dead one.)
  *
  * WHAT IT DELIBERATELY DOES NOT FLAG:
  *   - Historical records (release notes, findings, older docs). They
@@ -71,8 +76,25 @@ const isShippedReleaseNote = (f) =>
 const REMOVED_DIRS = [
   ['frontend/', 'the dApp moved to `apps/defi/` in the Stage 3 refactor'],
   ['ops/hf-watcher/', 'split into `apps/{keeper,agent,indexer}` (Stage 3)'],
-  ['ops/lz-watcher/', 'deleted with the LayerZero-era ops surface (#1440)'],
+  // `ops/lz-watcher/` was listed here and is NOT removed (#1467 r5). It is
+  // 16 tracked files, and `docs/ops/AdminKeysAndPause.md` records that its
+  // decommission is DEFERRED. Because this list is consulted before the
+  // tracked-tree lookup, listing it made two live citations read as
+  // nonexistent and would have turned every future one into a regression —
+  // the check asserting a fact about the tree that the tree contradicts,
+  // which is the exact defect it exists to catch. Verify with
+  // `git ls-files <dir>` before adding an entry; if the directory is still
+  // tracked, it does not belong here.
 ];
+
+/**
+ * A citation hits a removed directory if it names it as a prefix OR IS it
+ * exactly (#1467 r5). `startsWith('frontend/')` alone missed a bare
+ * `` `frontend` ``, which is the same stale name and the commonest prose form
+ * of it.
+ */
+const removedDirHit = (p) =>
+  REMOVED_DIRS.find(([d]) => p.startsWith(d) || p === d.replace(/\/$/, ''));
 
 /**
  * Top-level dirs that make a token unambiguously a repo path.
@@ -115,7 +137,7 @@ const STRICT_DIRS = ['docs/ops/', 'docs/FunctionalSpecs/'];
  * Not resolvable, and legitimately so.
  *
  * `?` is NOT here (#1467 r1). Treating a query string as unresolvable meant
- * any query-bearing dead route bypassed the check entirely — a deep link
+ * any citation carrying one bypassed the check entirely, so a deep link
  * concealed the staleness. Query and fragment are now STRIPPED before
  * matching instead.
  */
@@ -154,94 +176,24 @@ const resolves = (p) => {
   return TRACKED.has(clean) || TRACKED_DIRS.has(clean);
 };
 
-/**
- * Routes the dApp actually mounts, derived from the router.
- *
- * Collected as the set of `path="…"` values. A cited `/app/x` is a finding
- * only when neither `app/x` nor `x` is mounted — so the surviving
- * back-compat redirect (`app/loans/:loanId`) is correctly accepted, and a
- * flattened route cited under its old prefix is correctly rejected.
- */
-function mountedRoutes() {
-  const raw = readFileSync('apps/defi/src/App.tsx', 'utf8');
-  // Strip comments FIRST (#1467 r2). The file contains route-shaped text
-  // inside comments — there is already a `<Route path="app">` in one — so
-  // matching the source directly treats documentation and commented-out JSX
-  // as live mounts. The failure is in the unsafe direction: if the surviving
-  // back-compat redirect were ever commented out during a removal, this set
-  // would keep accepting citations of a route React no longer mounts.
-  const src = raw
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-  return new Set(
-    [...src.matchAll(/path="([^"]+)"/g)].map((m) => m[1].replace(/^\//, '')),
-  );
-}
-
-const routes = mountedRoutes();
-
-/**
- * Is a cited `/app/...` path the CANONICAL form?
- *
- * Deliberately NOT "does the router mount it" (#1467 r3). That question
- * cannot be answered usefully here, and asking it produced a false claim:
- * `App.tsx` nests the whole page tree under `<Route path=":locale">`, and
- * `LocaleResolver` falls back to English for an unrecognised parameter while
- * STILL rendering its outlet —
- *
- *     const target = locale ?? (isSupportedLocale(fromParam) ? fromParam : 'en');
- *     return <>{children ?? <Outlet />}</>;
- *
- * So `:locale` swallows any first segment: `/app/alerts` matches
- * `:locale="app"` plus the live `alerts` child and renders normally. With a
- * catch-all segment no two-part path is ever a 404, which makes a
- * mounted/not-mounted test vacuous — and the earlier message ("the router
- * mounts no such route") simply false.
- *
- * What IS true: `/app/…` is the pre-flattening form. `App.tsx` states the
- * canonical shape is `defi.vaipakam.com/<route>`, "never
- * `defi.vaipakam.com/app/...`", and only `app/loans/:loanId` survives, as a
- * deliberate redirect. Citing the old form points a reader at a URL that
- * works by accident of the locale fallback, under a path the app does not
- * treat as its own. Worth correcting — but it is a wrong path to publish,
- * not a dead link.
- */
-const isCanonicalAppPath = (cited) => {
-  const bare = cited.replace(/^\/+/, '');
-  if (routes.has(bare)) return true;
-  // Shape match, so a concrete id (`app/loans/7`) resolves against the
-  // surviving parameterised redirect `app/loans/:loanId`.
-  const segs = bare.split('/');
-  for (const r of routes) {
-    const rs = r.split('/');
-    if (rs.length !== segs.length) continue;
-    // A route whose FIRST segment is a parameter is the `:locale` catch-all,
-    // and it matches EVERY single-segment path (#1467 r4). Letting it shape-
-    // match made `isCanonicalAppPath('/app')` return true, so the bare form
-    // was accepted as canonical — the check silently exempted four of the
-    // very citations it exists to flag, all in WebsiteReadme.md.
-    //
-    // This is the same router behaviour that disproved the blank-page claim
-    // above, which is the point: `:locale` means those URLs still RESOLVE.
-    // Resolving as a language code is not being mounted, and the dashboard's
-    // real address is `/`. Publishing `/app` is the defect either way.
-    if (rs[0].startsWith(':')) continue;
-    if (rs.every((seg, i) => seg.startsWith(':') || seg === segs[i])) return true;
-  }
-  return false;
-};
-
 const findings = [];
 
 for (const file of docs) {
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, i) => {
-    // Backticked tokens and markdown link targets.
+    // Backticked tokens and markdown link targets. The two are kept apart
+    // because they resolve DIFFERENTLY (#1467 r2): a markdown destination is
+    // relative to its own document wherever it does not start with `/`, while
+    // a backticked path is the repo-root citation form this repo writes in
+    // prose. Collapsing them made a genuinely broken link read as fine —
+    // `[x](contracts/src/Foo.sol)` inside `docs/ops/` was accepted because the
+    // repo-root file exists, though the rendered link points at the
+    // nonexistent `docs/ops/contracts/src/Foo.sol`.
     const tokens = [
-      ...[...line.matchAll(/`([^`\s]+)`/g)].map((m) => m[1]),
-      ...[...line.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]),
+      ...[...line.matchAll(/`([^`\s]+)`/g)].map((m) => ({ raw: m[1], link: false })),
+      ...[...line.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => ({ raw: m[1], link: true })),
     ];
-    for (const raw of tokens) {
+    for (const { raw, link } of tokens) {
       // Strip query + fragment first, so a deep link cannot hide a dead
       // route or path behind them (#1467 r1).
       // Strip a trailing `:LINE` or `:START-END` before resolving (#1467 r3).
@@ -255,18 +207,26 @@ for (const file of docs) {
         .replace(/:(\d+)(-\d+)?$/, '');
       if (!tok || UNRESOLVABLE.test(tok)) continue;
 
-      // Resolve a RELATIVE markdown target against the citing doc's own
-      // directory (#1467 r1). Operator docs normally link as
+      // Resolve against the citing doc's own directory whenever that is how
+      // the reference actually resolves: every markdown destination that is
+      // not site-absolute (#1467 r2), and any explicitly relative backticked
+      // path (#1467 r1). Operator docs normally link as
       // `../../contracts/script/Foo.s.sol`, and the root-prefix test ignored
       // every one of those — so stale links, and even references to removed
       // directories, landed unnoticed unless the visible label happened to
       // repeat the path in backticks.
-      const asRepoPath = tok.startsWith('.')
+      const docRelative = tok.startsWith('.') || (link && !tok.startsWith('/'));
+      const asRepoPath = docRelative
         ? posix.normalize(posix.join(dirname(file), tok))
         : tok;
 
       // ── removed / renamed directories: checked EVERYWHERE ───────────
-      const removed = REMOVED_DIRS.find(([d]) => asRepoPath.startsWith(d));
+      //
+      // Tested against the token AS WRITTEN as well as the resolved path,
+      // because a removed name is wrong under either reading — and after
+      // doc-relative resolution a link target such as `frontend/src/x.tsx`
+      // no longer starts with `frontend/`.
+      const removed = removedDirHit(asRepoPath) ?? removedDirHit(tok);
       if (removed) {
         findings.push({
           file,
@@ -290,25 +250,6 @@ for (const file of docs) {
             why: `path does not exist. If it moved, cite the new location; if it was removed, say so`,
           });
         }
-        continue;
-      }
-
-      // ── app routes ──────────────────────────────────────────────────
-      // Only the `/app/...` prefix, because that is the one the flattening
-      // invalidated; checking every `/x` token would sweep in prose.
-      // `/app` ITSELF, not just `/app/...` (#1467 r4). The old pattern
-      // required a slash after `app`, so a bare dashboard link was invisible.
-      if (/^\/app(\/[a-zA-Z][\w:/-]*)?$/.test(tok) && !isCanonicalAppPath(tok)) {
-        findings.push({
-          file,
-          n: i + 1,
-          tok,
-          why:
-            'non-canonical URL form — the routes were flattened, so the canonical path drops ' +
-            'the `/app/` prefix (only `app/loans/:loanId` survives, as a redirect). NOTE this ' +
-            'URL does still RESOLVE: `:locale` matches any first segment and LocaleResolver ' +
-            'falls back to English, so it renders. It is the wrong path to publish, not a dead one',
-        });
       }
     }
   });
@@ -316,7 +257,7 @@ for (const file of docs) {
 
 process.exit(
   report(
-    'docs path/route check',
+    'docs path check',
     findings,
     '.github/docs-check-baselines/paths.json',
     { write: process.argv.includes('--write-baseline') },

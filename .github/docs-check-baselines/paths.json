@@ -66,6 +66,9 @@
     "frontend/src/contracts/config.ts#2",
     "frontend/src/contracts/useDiamond.ts#1"
   ],
+  "docs/DesignsAndPlans/OffChainDataResilience.md": [
+    "ops/hf-watcher#1"
+  ],
   "docs/DesignsAndPlans/OperatorNodeDeploymentDesign.md": [
     "ops/hf-watcher/migrations/#1",
     "ops/hf-watcher/src/chainIndexer.ts#1"
@@ -99,6 +102,12 @@
   ],
   "docs/DesignsAndPlans/Stage3WorkerSplitPlan.md": [
     "../../ops/hf-watcher/src/index.ts#1",
+    "ops/hf-watcher#1",
+    "ops/hf-watcher#2",
+    "ops/hf-watcher#3",
+    "ops/hf-watcher#4",
+    "ops/hf-watcher#5",
+    "ops/hf-watcher#6",
     "ops/hf-watcher/#1",
     "ops/hf-watcher/#2",
     "ops/hf-watcher/src/#1",
@@ -109,33 +118,18 @@
     "ops/hf-watcher/migrations/#1",
     "ops/hf-watcher/src/chainIndexer.ts#1"
   ],
-  "docs/DesignsAndPlans/VPFIDiscountSystem.md": [
-    "/app/buy-vpfi#1"
-  ],
-  "docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md": [
-    "/app/buy-vpfi#1",
-    "/app/buy-vpfi#2"
-  ],
   "docs/DesignsAndPlans/WebhookOrPollingSurvey.md": [
     "frontend/src/lib/quotes/balancerV2.ts#1"
   ],
   "docs/FunctionalSpecs/ProjectDetailsREADME.md": [
+    "../../contracts/test/Create2DeploymentTest.t.sol#1",
+    "../../contracts/test/invariants/StakingBalances.invariant.t.sol#1",
+    "../../contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol#1",
     ".archive/#1",
     ".env#1",
     ".env.local#1",
     ".history/#1",
     ".markers/#1",
-    "/app/data-rights#1",
-    "contracts/test/Create2DeploymentTest.t.sol#1",
-    "contracts/test/PositiveFlowsGapFillers.t.sol#1",
-    "contracts/test/Scenario1_ERC20LendingLifecycle.t.sol#1",
-    "contracts/test/Scenario2_NFTRentalLending.t.sol#1",
-    "contracts/test/Scenario2b_ERC1155RentalLending.t.sol#1",
-    "contracts/test/Scenario4_IlliquidCollateral.t.sol#1",
-    "contracts/test/Scenario7_LenderEarlyWithdrawal.t.sol#1",
-    "contracts/test/Scenario8_BorrowerPreclose.t.sol#1",
-    "contracts/test/invariants/StakingBalances.invariant.t.sol#1",
-    "contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol#1",
     "docs/TokenomicsTechSpec.md#1"
   ],
   "docs/FunctionalSpecs/README.md": [
@@ -143,17 +137,6 @@
   ],
   "docs/FunctionalSpecs/WebsiteReadme.md": [
     ".vaipakam.com#1",
-    "/app/alerts#1",
-    "/app/data-rights#1",
-    "/app/data-rights#2",
-    "/app/offers/:offerId#1",
-    "/app/offers/:offerId#2",
-    "/app/offers/:offerId#3",
-    "/app/offers/:offerId#4",
-    "/app/offers/:offerId#5",
-    "/app/recover#1",
-    "/app/vault#1",
-    "/app/vpfi-vault#1",
     "docs/TermsOfService.md#1",
     "frontend/src/pages/PublicDashboard.tsx#1"
   ],
@@ -173,7 +156,6 @@
     "frontend/#1"
   ],
   "docs/ops/AdminKeysAndPause.md": [
-    "/app/alerts#1",
     "frontend/.env.example#1",
     "ops/hf-watcher#1",
     "ops/hf-watcher/src/keeper.ts#1"
@@ -265,8 +247,7 @@
     "ops/hf-watcher/src/deployments.ts#1",
     "ops/hf-watcher/src/diamondAbi.ts#1",
     "ops/hf-watcher/src/env.ts#1",
-    "ops/hf-watcher/wrangler.jsonc#1",
-    "ops/lz-watcher/wrangler.jsonc#1"
+    "ops/hf-watcher/wrangler.jsonc#1"
   ],
   "docs/ops/FlashLoanLiquidatorRollout.md": [
     ".env#1",
@@ -299,21 +280,18 @@
   "docs/ops/OffChainRestore.md": [
     "./legal-holds/notice-42.pdf#1",
     ".bin#1",
-    ".json#1",
-    "ops/lz-watcher/wrangler.jsonc#1"
+    ".json#1"
   ],
   "docs/TestScopes/AdvancedUserGuideTestMatrix.md": [
     "../../frontend/src/content/userguide/Advanced.en.md#1",
-    "frontend/src/content/userguide/Advanced.en.md#1"
+    "frontend/src/content/userguide/Advanced.en.md#1",
+    "ops/hf-watcher#1"
   ],
   "docs/TestScopes/PositiveFlowCoverage.md": [
     "frontend/indexer#1"
   ],
   "docs/ToDo.md": [
     "../frontend/src/pages/VaultAssets.tsx#1",
-    "/app/alerts#1",
-    "/app/data-rights#1",
-    "/app/vault#1",
     "frontend/src/components/HelpTabs.tsx#1",
     "frontend/src/components/admin/AdminThemeToggle.tsx#1",
     "frontend/src/components/admin/KnobCard.tsx#1",
@@ -345,6 +323,7 @@
     "frontend/src/pages/HelpSearch.tsx#2",
     "frontend/src/pages/PublicDashboard.tsx#1",
     "frontend/src/pages/VaultAssets.tsx#1",
+    "ops/hf-watcher#1",
     "ops/hf-watcher/README.md#1",
     "ops/hf-watcher/README.md#2",
     "ops/hf-watcher/scripts/#1"

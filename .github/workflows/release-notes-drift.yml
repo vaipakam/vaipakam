@@ -9,32 +9,37 @@
 # gap is visible in the Actions tab. It never fails the run — these are
 # disciplines, not merge gates.
 #
-# It also runs two MECHANICAL docs checks, added after three review rounds
-# found the same secret-in-a-command-line defect in three different runbook
-# steps, and a route citation that was wrong in three documents at once.
-# Neither class is preventable by discipline — nothing tells the author of a
-# rename which prose mentions the old name — so both are re-checked here on
-# every push and PR:
+# It also runs one MECHANICAL docs check, added because the same stale-path
+# defect kept surfacing in a different document each review round — 147
+# references to the removed `frontend/` directory across 39 documents (#1462).
+# The class is not preventable by discipline (nothing tells the author of a
+# rename which prose mentions the old name), so it is re-checked here on every
+# push and PR:
 #
-#   - check-docs-paths.mjs — cited repo paths and `/app/...` routes resolve.
+#   - check-docs-paths.mjs — cited repo paths resolve, and no document cites a
+#     directory that was removed or renamed.
 #
-# A companion secrets-in-argv check was built alongside this and DEFERRED
-# (#1472). It found 28 real instances where review had found 3, so the class
-# is worth closing — but answering "does this value reach a process's argv"
-# correctly needs real shell parsing, and successive review rounds kept
-# finding cases the approximation got wrong, including flagging the pattern
-# the docs recommend. A check that is wrong is worse than no check, so it
-# ships when it is right rather than now.
+# TWO companion checks were built alongside it and DEFERRED rather than
+# shipped, both for the same reason — a check that is sometimes wrong teaches
+# people to ignore the one that never is:
 #
-# Both RATCHET against a committed baseline: they fail only when a file
-# GAINS findings, so the existing backlog (#1462) is frozen rather than
-# blocking, and a check that is red on day one cannot become one that gets
-# muted. See .github/scripts/docs-check-ratchet.mjs for why per-file and
-# directional.
+#   - secrets reaching a command's argv (#1472): deciding it correctly needs
+#     real shell parsing, and each review round found another case the
+#     approximation got wrong, including flagging the pattern the docs
+#     recommend.
+#   - non-canonical `/app/...` URL citations (#1479): four rounds, each closing
+#     a real gap and the next finding another citation form the pattern
+#     mishandled. Citation forms are an unbounded set; what shipped is a
+#     set-membership test, which is decidable.
+#
+# It RATCHETS against a committed baseline: it fails only when a file GAINS
+# findings, so the existing backlog (#1462) is frozen rather than blocking, and
+# a check that is red on day one cannot become one that gets muted. See
+# .github/scripts/docs-check-ratchet.mjs for why per-file and directional.
 #
 # (Filename kept as release-notes-drift.yml for stable references; the
-# check now covers functional specs and the mechanical checks too.)
-name: Docs-drift check (release notes + functional specs + mechanical)
+# check now covers functional specs and the mechanical check too.)
+name: Docs-drift check (release notes + functional specs + stale paths)
 
 on:
   push:
@@ -134,7 +139,7 @@ jobs:
       # action also avoids the allowlist hazard — a `uses:` whose exact SHA
       # is not allowlisted fails the WHOLE workflow at startup, not just the
       # step, and this repo pins a different setup-node SHA elsewhere.
-      - name: Mechanical docs checks (stale paths/routes)
+      - name: Mechanical docs checks (stale paths)
         env:
           # The revision the ratchet polices its baseline against. `before` on
           # a push; the PR's own base branch otherwise — never a hardcoded
@@ -157,9 +162,17 @@ jobs:
                 echo "### ⚠️ $check"
                 echo ""
                 echo "A \`docs/\` file gained findings against the committed"
-                echo "baseline. Either fix it, or — if the reference is"
+                echo "baseline. Fix the citation, or — if the reference is"
                 echo "deliberately historical — move it under a skipped"
-                echo "directory or lower the baseline with a stated reason."
+                echo "directory."
+                echo ""
+                echo "Do **not** raise the baseline to silence it. A raised"
+                echo "baseline records that something is permitted without"
+                echo "recording why, which makes a real exception"
+                echo "indistinguishable from a regression — and the growth"
+                echo "guard rejects it anyway. A genuine exception belongs in"
+                echo "an allowlist entry with a stated reason (the shape"
+                echo "\`check-event-coverage.mjs\` uses); see #1468."
               } >> "$GITHUB_STEP_SUMMARY"
             fi
             echo "::endgroup::"

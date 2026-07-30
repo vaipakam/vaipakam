@@ -2442,26 +2442,26 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 
 **End-to-end scenario suites** — full create / accept / resolve lifecycles:
 
-- **ERC-20 lending lifecycle** — [contracts/test/Scenario1_ERC20LendingLifecycle.t.sol](contracts/test/Scenario1_ERC20LendingLifecycle.t.sol)
+- **ERC-20 lending lifecycle** — [contracts/test/scenarios/Scenario1_ERC20LendingLifecycle.t.sol](../../contracts/test/scenarios/Scenario1_ERC20LendingLifecycle.t.sol)
   - `test_Scenario1a_CreateOffer_Accept_Repay_Claims` — happy-path repay+claim.
   - `test_Scenario1b_CreateOffer_Accept_Default_LenderClaims` — default → lender claim.
   - `test_Scenario1c_ThirdPartyRepays_BorrowerClaimsCollateral` — non-borrower repayment, borrower reclaims collateral.
-- **NFT rental (ERC-721)** — [contracts/test/Scenario2_NFTRentalLending.t.sol](contracts/test/Scenario2_NFTRentalLending.t.sol)
+- **NFT rental (ERC-721)** — [contracts/test/scenarios/Scenario2_NFTRentalLending.t.sol](../../contracts/test/scenarios/Scenario2_NFTRentalLending.t.sol)
   - `test_Scenario2a_ERC721Rental_FullLifecycle` / `..._Default`.
-- **NFT rental (ERC-1155)** — [contracts/test/Scenario2b_ERC1155RentalLending.t.sol](contracts/test/Scenario2b_ERC1155RentalLending.t.sol)
+- **NFT rental (ERC-1155)** — [contracts/test/scenarios/Scenario2b_ERC1155RentalLending.t.sol](../../contracts/test/scenarios/Scenario2b_ERC1155RentalLending.t.sol)
   - `test_Scenario2b_ERC1155Rental_FullLifecycle` / `..._Default`.
-- **Illiquid collateral** — [contracts/test/Scenario4_IlliquidCollateral.t.sol](contracts/test/Scenario4_IlliquidCollateral.t.sol)
+- **Illiquid collateral** — [contracts/test/scenarios/Scenario4_IlliquidCollateral.t.sol](../../contracts/test/scenarios/Scenario4_IlliquidCollateral.t.sol)
   - `test_Scenario4a_IlliquidCollateral_Default_FullTransferToLender`.
-- **Lender early-withdrawal** — [contracts/test/Scenario7_LenderEarlyWithdrawal.t.sol](contracts/test/Scenario7_LenderEarlyWithdrawal.t.sol)
+- **Lender early-withdrawal** — [contracts/test/scenarios/Scenario7_LenderEarlyWithdrawal.t.sol](../../contracts/test/scenarios/Scenario7_LenderEarlyWithdrawal.t.sol)
   - `test_Scenario7a_SellLoanViaBuyOffer` / `test_Scenario7b_CreateSaleOffer_NewLenderAccepts`.
-- **Borrower preclose** — [contracts/test/Scenario8_BorrowerPreclose.t.sol](contracts/test/Scenario8_BorrowerPreclose.t.sol)
+- **Borrower preclose** — [contracts/test/scenarios/Scenario8_BorrowerPreclose.t.sol](../../contracts/test/scenarios/Scenario8_BorrowerPreclose.t.sol)
   - `test_Scenario8a_TransferObligationViaOffer` / `test_Scenario8b_OffsetWithNewOffer_ThenAccept`.
-- **Fallback-claim race** — [contracts/test/scenarios/ScenarioFallbackClaimRace.t.sol](contracts/test/scenarios/ScenarioFallbackClaimRace.t.sol)
+- **Fallback-claim race** — [contracts/test/scenarios/ScenarioFallbackClaimRace.t.sol](../../contracts/test/scenarios/ScenarioFallbackClaimRace.t.sol)
   - `test_ScenarioA_BorrowerRepaysBeforeLenderClaim` / `...B_AddsCollateralBeforeDefault` / `...C_PartialThenFullRepay`.
 
 **Gap-filler positive tests** — spec-mandated flows that weren't covered by the scenarios:
 
-- [contracts/test/PositiveFlowsGapFillers.t.sol](contracts/test/PositiveFlowsGapFillers.t.sol)
+- [contracts/test/scenarios/PositiveFlowsGapFillers.t.sol](../../contracts/test/scenarios/PositiveFlowsGapFillers.t.sol)
   - `test_Positive_CountryPairAllow_FullLifecycle` — explicit allow-path lifecycle (Flow 15).
   - `test_Positive_LoanInitiationFee_ExactDeduction` — asserts exact 0.1% fee to treasury (Flow 29).
   - `test_Positive_PartialRepay_TwoStep_CompletesWithNoDust` — partial-then-full repay with remaining-balance assertion (Flow 9).
@@ -2469,7 +2469,7 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 
 **Phase-1 compliance integration** — the load-bearing KYC gate:
 
-- [contracts/test/KYCTierEnforcementIntegration.t.sol](contracts/test/KYCTierEnforcementIntegration.t.sol) — full Tier 0 / 1 / 2 matrix across OfferFacet.acceptOffer:
+- [contracts/test/KYCTierEnforcementIntegration.t.sol](../../contracts/test/KYCTierEnforcementIntegration.t.sol) — full Tier 0 / 1 / 2 matrix across OfferFacet.acceptOffer:
   - `test_Tier0_AllowedBelowTier0Threshold` (< $1k).
   - `test_Tier0_BlockedAboveTier0Threshold` (reverts `KYCRequired` above $1k).
   - `test_Tier1_AllowedInMiddleBand` (between $1k and $10k).
@@ -2479,78 +2479,78 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 
 **Per-facet positive tests** — happy-path coverage of individual entrypoints (file per facet):
 
-- [contracts/test/OfferFacetTest.t.sol](contracts/test/OfferFacetTest.t.sol) — createOffer / acceptOffer / cancelOffer positives.
-- [contracts/test/LoanFacetTest.t.sol](contracts/test/LoanFacetTest.t.sol) — initiateLoan, getLoanDetails, and combined Risk Disclosures / Terms consent state.
-- [contracts/test/RepayFacetTest.t.sol](contracts/test/RepayFacetTest.t.sol) — repayLoan, repayPartial, autoDeductDaily.
-- [contracts/test/AddCollateralFacetTest.t.sol](contracts/test/AddCollateralFacetTest.t.sol) — addCollateral HF improvement.
-- [contracts/test/ClaimFacetTest.t.sol](contracts/test/ClaimFacetTest.t.sol) — claimAsLender, claimAsBorrower.
-- [contracts/test/DefaultedFacetTest.t.sol](contracts/test/DefaultedFacetTest.t.sol) — triggerDefault / triggerLiquidation, both liquid + illiquid paths.
-- [contracts/test/PrecloseFacetTest.t.sol](contracts/test/PrecloseFacetTest.t.sol) — direct preclose, transfer-offer, offset-offer.
-- [contracts/test/RefinanceFacetTest.t.sol](contracts/test/RefinanceFacetTest.t.sol) — refinanceLoan atomic settlement.
-- [contracts/test/EarlyWithdrawalFacetTest.t.sol](contracts/test/EarlyWithdrawalFacetTest.t.sol) — sell-loan, buy-offer, wait-to-maturity.
-- [contracts/test/PartialWithdrawalFacetTest.t.sol](contracts/test/PartialWithdrawalFacetTest.t.sol) — partial collateral withdrawal when HF allows.
-- [contracts/test/ProfileFacetTest.t.sol](contracts/test/ProfileFacetTest.t.sol) — KYC tier updates, keeper opt-in/whitelist, country setting.
-- [contracts/test/ConfigFacetTest.t.sol](contracts/test/ConfigFacetTest.t.sol) — all runtime-tunable setters + getters.
-- [contracts/test/OracleFacetTest.t.sol](contracts/test/OracleFacetTest.t.sol) / [OracleAdminFacetTest.t.sol](contracts/test/OracleAdminFacetTest.t.sol) — price reads, sequencer uptime, staleness.
-- [contracts/test/RiskFacetTest.t.sol](contracts/test/RiskFacetTest.t.sol) — LTV / HF calculation, liquid HF-based liquidation.
-- [contracts/test/MetricsDashboardFacetTest.t.sol](contracts/test/MetricsDashboardFacetTest.t.sol) and related metrics suites — per-user indexed dashboard reads, active-offer asset-pair pagination, and struct-returning per-user offer rows should stay covered without walking global active sets.
+- [contracts/test/OfferFacetTest.t.sol](../../contracts/test/OfferFacetTest.t.sol) — createOffer / acceptOffer / cancelOffer positives.
+- [contracts/test/LoanFacetTest.t.sol](../../contracts/test/LoanFacetTest.t.sol) — initiateLoan, getLoanDetails, and combined Risk Disclosures / Terms consent state.
+- [contracts/test/RepayFacetTest.t.sol](../../contracts/test/RepayFacetTest.t.sol) — repayLoan, repayPartial, autoDeductDaily.
+- [contracts/test/AddCollateralFacetTest.t.sol](../../contracts/test/AddCollateralFacetTest.t.sol) — addCollateral HF improvement.
+- [contracts/test/ClaimFacetTest.t.sol](../../contracts/test/ClaimFacetTest.t.sol) — claimAsLender, claimAsBorrower.
+- [contracts/test/DefaultedFacetTest.t.sol](../../contracts/test/DefaultedFacetTest.t.sol) — triggerDefault / triggerLiquidation, both liquid + illiquid paths.
+- [contracts/test/PrecloseFacetTest.t.sol](../../contracts/test/PrecloseFacetTest.t.sol) — direct preclose, transfer-offer, offset-offer.
+- [contracts/test/RefinanceFacetTest.t.sol](../../contracts/test/RefinanceFacetTest.t.sol) — refinanceLoan atomic settlement.
+- [contracts/test/EarlyWithdrawalFacetTest.t.sol](../../contracts/test/EarlyWithdrawalFacetTest.t.sol) — sell-loan, buy-offer, wait-to-maturity.
+- [contracts/test/PartialWithdrawalFacetTest.t.sol](../../contracts/test/PartialWithdrawalFacetTest.t.sol) — partial collateral withdrawal when HF allows.
+- [contracts/test/ProfileFacetTest.t.sol](../../contracts/test/ProfileFacetTest.t.sol) — KYC tier updates, keeper opt-in/whitelist, country setting.
+- [contracts/test/ConfigFacetTest.t.sol](../../contracts/test/ConfigFacetTest.t.sol) — all runtime-tunable setters + getters.
+- [contracts/test/OracleFacetTest.t.sol](../../contracts/test/OracleFacetTest.t.sol) / [OracleAdminFacetTest.t.sol](../../contracts/test/OracleAdminFacetTest.t.sol) — price reads, sequencer uptime, staleness.
+- [contracts/test/RiskFacetTest.t.sol](../../contracts/test/RiskFacetTest.t.sol) — LTV / HF calculation, liquid HF-based liquidation.
+- [contracts/test/MetricsDashboardFacetTest.t.sol](../../contracts/test/MetricsDashboardFacetTest.t.sol) and related metrics suites — per-user indexed dashboard reads, active-offer asset-pair pagination, and struct-returning per-user offer rows should stay covered without walking global active sets.
 - MetricsFacet tests should cover current-holder position views for secondary-market recipients: transfer lender, borrower, and offer position NFTs; assert `getUserPositionLoans` / `getUserPositionOffers` follow the current NFT owner; and assert the sum of resolved loan / offer positions matches the holder's Vaipakam position-NFT balance where appropriate.
-- [contracts/test/AdminFacetTest.t.sol](contracts/test/AdminFacetTest.t.sol) — treasury / 0x proxy / pause toggles.
-- [contracts/test/DiamondBornPausedTest.t.sol](contracts/test/DiamondBornPausedTest.t.sol) — fresh Diamonds start paused through constructor and remain paused until the explicit unpause step after facet cuts.
-- [contracts/test/AccessControlTransferAdminTest.t.sol](contracts/test/AccessControlTransferAdminTest.t.sol) — atomic admin / role / ERC-173 ownership transfer and lockout of the former admin.
-- [contracts/test/TreasuryFacetTest.t.sol](contracts/test/TreasuryFacetTest.t.sol) — claimTreasuryFees.
-- [contracts/test/TreasuryMintVPFITest.t.sol](contracts/test/TreasuryMintVPFITest.t.sol) — VPFI mint for treasury-funded flows.
-- [contracts/test/VaultFactoryFacetTest.t.sol](contracts/test/VaultFactoryFacetTest.t.sol) — per-user vault proxy creation, mandatory upgrade gating, versioned upgrade event.
-- [contracts/test/VaultRecoveryTest.t.sol](contracts/test/VaultRecoveryTest.t.sol) — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
-- [contracts/test/VaipakamNFTFacetTest.t.sol](contracts/test/VaipakamNFTFacetTest.t.sol) — position NFT mint / update / burn lifecycle.
-- [contracts/test/MetricsFacetTest.t.sol](contracts/test/MetricsFacetTest.t.sol) — read-only analytics getters.
-- [contracts/test/AccessControlFacetTest.t.sol](contracts/test/AccessControlFacetTest.t.sol) — role grants / revocations / emergency revoke.
-- [contracts/test/AdminFacetTest.t.sol](contracts/test/AdminFacetTest.t.sol) / [PerAssetPauseTest.t.sol](contracts/test/PerAssetPauseTest.t.sol) — per-asset pause ON → blocks, OFF → unblocks.
+- [contracts/test/AdminFacetTest.t.sol](../../contracts/test/AdminFacetTest.t.sol) — treasury / 0x proxy / pause toggles.
+- [contracts/test/DiamondBornPausedTest.t.sol](../../contracts/test/DiamondBornPausedTest.t.sol) — fresh Diamonds start paused through constructor and remain paused until the explicit unpause step after facet cuts.
+- [contracts/test/AccessControlTransferAdminTest.t.sol](../../contracts/test/AccessControlTransferAdminTest.t.sol) — atomic admin / role / ERC-173 ownership transfer and lockout of the former admin.
+- [contracts/test/TreasuryFacetTest.t.sol](../../contracts/test/TreasuryFacetTest.t.sol) — claimTreasuryFees.
+- [contracts/test/TreasuryMintVPFITest.t.sol](../../contracts/test/TreasuryMintVPFITest.t.sol) — VPFI mint for treasury-funded flows.
+- [contracts/test/VaultFactoryFacetTest.t.sol](../../contracts/test/VaultFactoryFacetTest.t.sol) — per-user vault proxy creation, mandatory upgrade gating, versioned upgrade event.
+- [contracts/test/VaultRecoveryTest.t.sol](../../contracts/test/VaultRecoveryTest.t.sol) — protocol-tracked ERC-20 balances, unsolicited dust clamp, EIP-712 stuck-token recovery, disown event, and sanctions-source outcomes.
+- [contracts/test/VaipakamNFTFacetTest.t.sol](../../contracts/test/VaipakamNFTFacetTest.t.sol) — position NFT mint / update / burn lifecycle.
+- [contracts/test/MetricsFacetTest.t.sol](../../contracts/test/MetricsFacetTest.t.sol) — read-only analytics getters.
+- [contracts/test/AccessControlFacetTest.t.sol](../../contracts/test/AccessControlFacetTest.t.sol) — role grants / revocations / emergency revoke.
+- [contracts/test/AdminFacetTest.t.sol](../../contracts/test/AdminFacetTest.t.sol) / [PerAssetPauseTest.t.sol](../../contracts/test/PerAssetPauseTest.t.sol) — per-asset pause ON → blocks, OFF → unblocks.
 - pause tests should cover the asymmetric role split: `PAUSER_ROLE` can pause but cannot unpause, `UNPAUSER_ROLE` can unpause but cannot act as the fast pauser unless separately granted, and per-asset unpause follows the same separation as global unpause.
-- [contracts/test/PauseGatingTest.t.sol](contracts/test/PauseGatingTest.t.sol) — whenNotPaused modifier coverage across 15+ facet entrypoints.
-- [contracts/test/VPFIDiscountFacetTest.t.sol](contracts/test/VPFIDiscountFacetTest.t.sol) / [VPFIDiscountBoundariesTest.t.sol](contracts/test/VPFIDiscountBoundariesTest.t.sol) — tier table, vault deposit / withdraw, fee discount application.
+- [contracts/test/PauseGatingTest.t.sol](../../contracts/test/PauseGatingTest.t.sol) — whenNotPaused modifier coverage across 15+ facet entrypoints.
+- [contracts/test/VPFIDiscountFacetTest.t.sol](../../contracts/test/VPFIDiscountFacetTest.t.sol) / [VPFIDiscountBoundariesTest.t.sol](../../contracts/test/VPFIDiscountBoundariesTest.t.sol) — tier table, vault deposit / withdraw, fee discount application.
 - VPFI token tests should cover canonical + cross-chain mirror mechanics, including rate limits, allowed lanes, and source-chain identity checks.
-- [contracts/test/InteractionRewardsCoverageTest.t.sol](contracts/test/InteractionRewardsCoverageTest.t.sol) / [InteractionRewardCapTest.t.sol](contracts/test/InteractionRewardCapTest.t.sol) — interaction rewards emission schedule and pool-cap truncation.
-- [contracts/test/Permit2IntegrationTest.t.sol](contracts/test/Permit2IntegrationTest.t.sol) / [contracts/test/fork/Permit2RealForkTest.t.sol](contracts/test/fork/Permit2RealForkTest.t.sol) — Permit2 integration against the local mock and real canonical Permit2 on a fork, including expired deadline, wrong amount, nonce reuse, and spender mismatch cases.
+- [contracts/test/InteractionRewardsCoverageTest.t.sol](../../contracts/test/InteractionRewardsCoverageTest.t.sol) / [InteractionRewardCapTest.t.sol](../../contracts/test/InteractionRewardCapTest.t.sol) — interaction rewards emission schedule and pool-cap truncation.
+- [contracts/test/Permit2IntegrationTest.t.sol](../../contracts/test/Permit2IntegrationTest.t.sol) / [contracts/test/fork/Permit2RealForkTest.t.sol](../../contracts/test/fork/Permit2RealForkTest.t.sol) — Permit2 integration against the local mock and real canonical Permit2 on a fork, including expired deadline, wrong amount, nonce reuse, and spender mismatch cases.
 - Cross-chain reward plumbing tests should cover canonical broadcast + mirror aggregate reporting through the approved messenger and EVM chain-id model.
 - swap-adapter tests should cover immutable allowance target approval, rejection of unallowlisted swap destinations, owner-gated allowlist edits, and protection against removing the last allowed destination.
-- [contracts/test/GracePeriodTiersTest.t.sol](contracts/test/GracePeriodTiersTest.t.sol) — default grace-period tier transitions.
-- [contracts/test/GraceBucketsTest.t.sol](contracts/test/GraceBucketsTest.t.sol) — admin-configurable six-slot grace schedule, bounds, defaults, event emission, and rollback to compile-time defaults.
-- [contracts/test/PeriodicInterestCadenceTest.t.sol](contracts/test/PeriodicInterestCadenceTest.t.sol) / [contracts/test/PeriodicInterestSettleTest.t.sol](contracts/test/PeriodicInterestSettleTest.t.sol) — cadence eligibility, numeraire threshold validation, periodic settlement, interest-first partial repayments, auto-liquidation, and refinance settle-first protection.
-- [contracts/test/VolatilityLTVTest.t.sol](contracts/test/VolatilityLTVTest.t.sol) — collapse-trigger (LTV > 110%) fallback path.
-- [contracts/test/FallbackCureTest.t.sol](contracts/test/FallbackCureTest.t.sol) — borrower cures before fallback settlement.
-- [contracts/test/StalenessHybridTest.t.sol](contracts/test/StalenessHybridTest.t.sol) — Chainlink hybrid staleness (peg tolerance).
-- [contracts/test/SequencerUptimeCheckTest.t.sol](contracts/test/SequencerUptimeCheckTest.t.sol) — L2 sequencer circuit breaker.
-- [contracts/test/EnumerationTest.t.sol](contracts/test/EnumerationTest.t.sol) — paginated offer / loan enumeration.
-- [contracts/test/WorkflowComplianceAndRejection.t.sol](contracts/test/WorkflowComplianceAndRejection.t.sol) — full-stack sanctions / KYC rejection paths (5 tests `vm.skip`-marked for Phase 1, awaiting Phase-2 re-activation).
-- [contracts/test/Create2DeploymentTest.t.sol](contracts/test/Create2DeploymentTest.t.sol) / [DeployerZeroRolesTest.t.sol](contracts/test/DeployerZeroRolesTest.t.sol) — deterministic address + post-handover role invariant.
+- [contracts/test/GracePeriodTiersTest.t.sol](../../contracts/test/GracePeriodTiersTest.t.sol) — default grace-period tier transitions.
+- [contracts/test/GraceBucketsTest.t.sol](../../contracts/test/GraceBucketsTest.t.sol) — admin-configurable six-slot grace schedule, bounds, defaults, event emission, and rollback to compile-time defaults.
+- [contracts/test/PeriodicInterestCadenceTest.t.sol](../../contracts/test/PeriodicInterestCadenceTest.t.sol) / [contracts/test/PeriodicInterestSettleTest.t.sol](../../contracts/test/PeriodicInterestSettleTest.t.sol) — cadence eligibility, numeraire threshold validation, periodic settlement, interest-first partial repayments, auto-liquidation, and refinance settle-first protection.
+- [contracts/test/VolatilityLTVTest.t.sol](../../contracts/test/VolatilityLTVTest.t.sol) — collapse-trigger (LTV > 110%) fallback path.
+- [contracts/test/FallbackCureTest.t.sol](../../contracts/test/FallbackCureTest.t.sol) — borrower cures before fallback settlement.
+- [contracts/test/StalenessHybridTest.t.sol](../../contracts/test/StalenessHybridTest.t.sol) — Chainlink hybrid staleness (peg tolerance).
+- [contracts/test/SequencerUptimeCheckTest.t.sol](../../contracts/test/SequencerUptimeCheckTest.t.sol) — L2 sequencer circuit breaker.
+- [contracts/test/EnumerationTest.t.sol](../../contracts/test/EnumerationTest.t.sol) — paginated offer / loan enumeration.
+- [contracts/test/WorkflowComplianceAndRejection.t.sol](../../contracts/test/WorkflowComplianceAndRejection.t.sol) — full-stack sanctions / KYC rejection paths (5 tests `vm.skip`-marked for Phase 1, awaiting Phase-2 re-activation).
+- [contracts/test/Create2DeploymentTest.t.sol](../../contracts/test/Create2DeploymentTest.t.sol) / [DeployerZeroRolesTest.t.sol](../../contracts/test/DeployerZeroRolesTest.t.sol) — deterministic address + post-handover role invariant.
 
 **Property / invariant suites** — stateful fuzzing, 100 runs × 50k calls each:
 
-- [contracts/test/invariants/ConfigBounds.invariant.t.sol](contracts/test/invariants/ConfigBounds.invariant.t.sol) — ConfigFacet setters never breach MAX_FEE / SLIPPAGE / INCENTIVE / DISCOUNT caps.
-- [contracts/test/invariants/InterestMonotonicity.invariant.t.sol](contracts/test/invariants/InterestMonotonicity.invariant.t.sol) — amount-due non-decreasing as time advances.
-- [contracts/test/invariants/PerAssetPause.invariant.t.sol](contracts/test/invariants/PerAssetPause.invariant.t.sol) — paused-asset blocks new create/accept across all flows.
-- [contracts/test/invariants/OfferLoanLinkage.invariant.t.sol](contracts/test/invariants/OfferLoanLinkage.invariant.t.sol) — every loan points to an accepted offer.
-- [contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol](contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol) — rewardPerTokenStored never decreases; per-user earned grows until claim.
-- [contracts/test/invariants/DefaultTiming.invariant.t.sol](contracts/test/invariants/DefaultTiming.invariant.t.sol) — defaults only trigger after grace-period window.
-- [contracts/test/invariants/FundsConservation.invariant.t.sol](contracts/test/invariants/FundsConservation.invariant.t.sol) / [VaultSolvency.invariant.t.sol](contracts/test/invariants/VaultSolvency.invariant.t.sol) — no phantom funds, vault balances conserved.
-- [contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol](contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol) — loan status only moves forward.
-- [contracts/test/invariants/ClaimExclusivity.invariant.t.sol](contracts/test/invariants/ClaimExclusivity.invariant.t.sol) — each party claims at most once per loan.
-- [contracts/test/invariants/CollateralMonotonicity.invariant.t.sol](contracts/test/invariants/CollateralMonotonicity.invariant.t.sol) — collateral balance only grows during loan life (addCollateral-only).
-- [contracts/test/invariants/FallbackSettlement.invariant.t.sol](contracts/test/invariants/FallbackSettlement.invariant.t.sol) — fallback settlement consistent with HF/LTV collapse flags.
-- [contracts/test/invariants/InteractionRewards.invariant.t.sol](contracts/test/invariants/InteractionRewards.invariant.t.sol) — reward emission stays within schedule + per-user cap.
-- [contracts/test/invariants/StakingBalances.invariant.t.sol](contracts/test/invariants/StakingBalances.invariant.t.sol) — sum(userStaked) == totalStaked, pool-cap respected.
-- [contracts/test/invariants/VPFISupplyCap.invariant.t.sol](contracts/test/invariants/VPFISupplyCap.invariant.t.sol) — total VPFI supply never exceeds hard cap.
-- [contracts/test/invariants/MetricsCountersParity.invariant.t.sol](contracts/test/invariants/MetricsCountersParity.invariant.t.sol) — MetricsFacet counters match raw storage.
-- [contracts/test/invariants/NFTCountParity.invariant.t.sol](contracts/test/invariants/NFTCountParity.invariant.t.sol) / [NFTOwnerAuthority.invariant.t.sol](contracts/test/invariants/NFTOwnerAuthority.invariant.t.sol) — position-NFT count + authority correctness.
-- [contracts/test/invariants/OfferAcceptanceIntegrity.invariant.t.sol](contracts/test/invariants/OfferAcceptanceIntegrity.invariant.t.sol) — accepted offers become loans; canceled offers never accept.
-- [contracts/test/invariants/VaultUniqueness.invariant.t.sol](contracts/test/invariants/VaultUniqueness.invariant.t.sol) — one vault per user, no dupes.
-- [contracts/test/invariants/SelfDealingPrevention.invariant.t.sol](contracts/test/invariants/SelfDealingPrevention.invariant.t.sol) — no lender == borrower loans.
+- [contracts/test/invariants/ConfigBounds.invariant.t.sol](../../contracts/test/invariants/ConfigBounds.invariant.t.sol) — ConfigFacet setters never breach MAX_FEE / SLIPPAGE / INCENTIVE / DISCOUNT caps.
+- [contracts/test/invariants/InterestMonotonicity.invariant.t.sol](../../contracts/test/invariants/InterestMonotonicity.invariant.t.sol) — amount-due non-decreasing as time advances.
+- [contracts/test/invariants/PerAssetPause.invariant.t.sol](../../contracts/test/invariants/PerAssetPause.invariant.t.sol) — paused-asset blocks new create/accept across all flows.
+- [contracts/test/invariants/OfferLoanLinkage.invariant.t.sol](../../contracts/test/invariants/OfferLoanLinkage.invariant.t.sol) — every loan points to an accepted offer.
+- [contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol](../../contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol) — rewardPerTokenStored never decreases; per-user earned grows until claim.
+- [contracts/test/invariants/DefaultTiming.invariant.t.sol](../../contracts/test/invariants/DefaultTiming.invariant.t.sol) — defaults only trigger after grace-period window.
+- [contracts/test/invariants/FundsConservation.invariant.t.sol](../../contracts/test/invariants/FundsConservation.invariant.t.sol) / [VaultSolvency.invariant.t.sol](../../contracts/test/invariants/VaultSolvency.invariant.t.sol) — no phantom funds, vault balances conserved.
+- [contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol](../../contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol) — loan status only moves forward.
+- [contracts/test/invariants/ClaimExclusivity.invariant.t.sol](../../contracts/test/invariants/ClaimExclusivity.invariant.t.sol) — each party claims at most once per loan.
+- [contracts/test/invariants/CollateralMonotonicity.invariant.t.sol](../../contracts/test/invariants/CollateralMonotonicity.invariant.t.sol) — collateral balance only grows during loan life (addCollateral-only).
+- [contracts/test/invariants/FallbackSettlement.invariant.t.sol](../../contracts/test/invariants/FallbackSettlement.invariant.t.sol) — fallback settlement consistent with HF/LTV collapse flags.
+- [contracts/test/invariants/InteractionRewards.invariant.t.sol](../../contracts/test/invariants/InteractionRewards.invariant.t.sol) — reward emission stays within schedule + per-user cap.
+- [contracts/test/invariants/StakingBalances.invariant.t.sol](../../contracts/test/invariants/StakingBalances.invariant.t.sol) — sum(userStaked) == totalStaked, pool-cap respected.
+- [contracts/test/invariants/VPFISupplyCap.invariant.t.sol](../../contracts/test/invariants/VPFISupplyCap.invariant.t.sol) — total VPFI supply never exceeds hard cap.
+- [contracts/test/invariants/MetricsCountersParity.invariant.t.sol](../../contracts/test/invariants/MetricsCountersParity.invariant.t.sol) — MetricsFacet counters match raw storage.
+- [contracts/test/invariants/NFTCountParity.invariant.t.sol](../../contracts/test/invariants/NFTCountParity.invariant.t.sol) / [NFTOwnerAuthority.invariant.t.sol](../../contracts/test/invariants/NFTOwnerAuthority.invariant.t.sol) — position-NFT count + authority correctness.
+- [contracts/test/invariants/OfferAcceptanceIntegrity.invariant.t.sol](../../contracts/test/invariants/OfferAcceptanceIntegrity.invariant.t.sol) — accepted offers become loans; canceled offers never accept.
+- [contracts/test/invariants/VaultUniqueness.invariant.t.sol](../../contracts/test/invariants/VaultUniqueness.invariant.t.sol) — one vault per user, no dupes.
+- [contracts/test/invariants/SelfDealingPrevention.invariant.t.sol](../../contracts/test/invariants/SelfDealingPrevention.invariant.t.sol) — no lender == borrower loans.
 
 Mainnet-cutover checklist: every `contracts/test/Scenario*.t.sol` + every
 `contracts/test/invariants/*.invariant.t.sol` suite must be green on the
 target network's fork before the `-mainnet-rc` tag is cut. See
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](../../CHANGELOG.md).
 
 ## 14. Initial Deployment and Configuration (Phase 1)
 
