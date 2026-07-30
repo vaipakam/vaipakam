@@ -25,7 +25,7 @@ that, today, lives **only on Cloudflare**:
 | Surface | Store | Owner | Re-derivable from chain? |
 | --- | --- | --- | --- |
 | `vaipakam-archive` D1 — `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
-| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `telegram_links`, `support_tickets` | Cloudflare D1 | apps/agent + apps/indexer (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification dedupe state). |
+| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets` | Cloudflare D1 | apps/agent + apps/indexer + apps/keeper (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification/pre-grace dedupe state). |
 | `vaipakam-lz-alerts-db` D1 — `lz_alert_state`, `scan_cursor`, `oft_balance_history` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. **RETIRED 2026-07-28 (#1440).** The Worker was deleted post-T-068 and the nightly backup no longer exports this database — archives written from that date omit the `d1.lzAlerts` section. The dispatch history is deliberately NOT preserved: it is who-was-notified-when for a transport that no longer exists, and the database itself is scheduled for operator deletion. Nothing in Stage A depends on it. |
 | `vaipakam-legal-vault` R2 bucket — uploaded legal-hold documents | Cloudflare R2 | apps/agent (uploads) | **No** — third-party documents uploaded by operators, not derivable from any external source. |
 
@@ -74,7 +74,8 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
 
 1. Exports the **born off-chain** D1 tables — `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
-   `notify_state`, `telegram_links`, `support_tickets` from `vaipakam-archive`.
+   `notify_state`, `pre_grace_notify_state`, `telegram_links`,
+   `support_tickets` from `vaipakam-archive`.
    (Pre-#1440 this step also exported `vaipakam-lz-alerts-db`; see the
    surface table in §1 for why it no longer does.)
 2. Exports the **re-derivable** D1 tables (`offers`, `loans`,

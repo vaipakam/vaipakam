@@ -1074,12 +1074,11 @@ For each table:
      as a side effect — including a child restored and verified
      moments earlier, if the tables were processed in the wrong
      order (#1450 r30). So: `user_thresholds` first, then
-     `notify_state` from the same archive. `pre_grace_notify_state`
-     **cannot be re-imported at all — the backup does not archive
-     it** (#1480); its loss is currently accepted (it is notification
-     dedup state; the consequence is possible duplicate pre-grace
-     notifications, not data damage), and that acceptance is #1480's
-     decision to keep or reverse;
+     `notify_state` and `pre_grace_notify_state` from the same
+     archive. (`pre_grace_notify_state` is archived since #1480 —
+     archives written before that fix do not carry it; restoring
+     from one loses those rows, and the observable consequence is
+     duplicate pre-grace notifications, not data damage);
    - values quoted safely — single-quote doubling for strings, bare
      numerics, `NULL` for null, and a hard failure on any value type
      the script does not recognise;
@@ -1094,7 +1093,8 @@ For each table:
 
    **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
-   `notify_state`, `telegram_links`, `support_tickets`.
+   `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
+   archives), `telegram_links`, `support_tickets`.
 
    ```bash
    wrangler d1 execute vaipakam-archive --file=restore/<table>.sql --remote
