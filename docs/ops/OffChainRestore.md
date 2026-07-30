@@ -20,10 +20,21 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   lost, the archives cannot be decrypted; the indexer-tables half of
   the restore can still run via the re-bootstrap path (step 4) but
   the legal-hold register + R2 legal-vault are unrecoverable.
-- **The Backblaze B2 read credentials** — these are a SEPARATE pair
-  of keys from the write-only key the Worker uses. The read keys
-  live in the operator's offline secret store too. NEVER put read
-  keys in any Cloudflare Worker — that re-introduces the SPOF.
+- **The Backblaze B2 restore credentials** — a SEPARATE pair from the
+  keys the archive Worker holds, kept in the operator's offline secret
+  store. These are the ones that must never go into a Worker: they are
+  the broad credentials the restore path uses, and putting them in
+  Cloudflare re-introduces the single point of failure.
+
+  This is NOT a prohibition on the scoped `B2_READ_*` pair the archive
+  Worker binds. That key can read only encrypted ciphertext from the
+  archive bucket, which is what the weekly healthcheck verifies against,
+  and the Worker's `assertRequiredEnv()` aborts EVERY scheduled run —
+  nightly backups included — if it is unset. So it is required in the
+  Worker by design. Read the rule as "the restore keys stay offline",
+  not "no B2 read key may exist in a Worker" — the two were previously
+  conflated, which made the prerequisite and the secret list below
+  mutually exclusive.
 - **Offline copies of every Worker secret.** The B2 archive backs up D1
   rows and R2 objects ONLY. Nothing in it restores the
   `vaipakam-credentials` Secrets Store or the per-Worker secrets — the
@@ -123,7 +134,15 @@ then deploy.
 
       ```bash
       STORE=<the new store id>
-      printf '%s' "<value>" | wrangler secrets-store secret create "$STORE" \
+      # No --value and no pipe: wrangler PROMPTS for the value, so it never
+      # enters the command line and cannot be recovered from shell history.
+      # Wrangler's own help calls --value "Only for testing. Not secure as
+      # this will leave secret value in plain-text in terminal history".
+      # This loop reconstructs the entire credential set — keeper key, bot
+      # token, Push key, RPC keys with embedded API keys — so a history file
+      # left behind here re-creates the compromise the restore is recovering
+      # from.
+      wrangler secrets-store secret create "$STORE" \
         --name RPC_BASE --scopes workers --remote
       ```
 
@@ -218,12 +237,23 @@ then deploy.
    `indexer`. Cloudflare validates at deploy time that every `namespace_id`
    in a `ratelimit` binding is registered to the account, so on a
    replacement account both deploys stop at binding validation — the D1,
-   R2 and Secrets Store work above does not cover this. `apps/agent`
-   binds `1001`, `1002`, `1004`, `1005` (and `555` where the Fusion
-   endpoint is enabled); `apps/indexer` binds `2001` and `2002`. The ids
-   are arbitrary per Worker, so either register those numbers on the new
+   R2 and Secrets Store work above does not cover this.
+
+   **Derive the list from the configs rather than trusting one written
+   here** — bindings get added, and a hand-copied list goes stale silently
+   while presenting as complete:
+
+   ```bash
+   grep -h '"namespace_id"' apps/agent/wrangler.jsonc \
+     apps/indexer/wrangler.jsonc | grep -o '"[0-9]\+"' | tr -d '"' | sort -u
+   ```
+
+   As of this writing that is TEN ids for `apps/agent` — `555`, `1001`,
+   `1002`, `1004`, `1005`, `1006`, `1007`, `1008`, `1009`, `1010`, all
+   unconditional — and `2001`, `2002` for `apps/indexer`. The ids are
+   arbitrary per Worker, so either register those numbers on the new
    account or renumber the bindings to match its scheme — but do one of
-   the two first.
+   the two before deploying either Worker.
 
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    rate-limit namespaces + updated configs all exist first.

@@ -1911,9 +1911,12 @@ describing this; keep them in sync if you change the schema.
 > securities excision removed.
 >
 > Following the steps below would **create `vaipakam-lz-alerts-db`** — a
-> database the operator is in the middle of deleting — and consume one of
-> the five free-plan cron slots. That slot now belongs to
-> `ops/mesh-watcher` (see its own README for its setup).
+> database the operator is in the middle of deleting — and, more to the
+> point, would DEPLOY the retired Worker, which is what consumes a cron
+> slot. (Creating a D1 database consumes none.) That freed slot is
+> currently **spare**: `ops/mesh-watcher` is its intended occupant but is
+> code-complete and undeployed, so the account sits at 4 of 5 with one
+> available (see that Worker's README for its setup).
 >
 > **The source tree is GONE** — `ops/lz-watcher/` was removed in #1440.
 > Review established that no config edit can make a source tree

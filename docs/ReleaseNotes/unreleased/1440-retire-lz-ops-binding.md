@@ -23,8 +23,13 @@ obvious. So this change ships and runs one clean nightly first; deleting
 the database is a separate operator step afterwards, and irreversible.
 
 Also corrected while here: several comments still described the retired
-monitor as holding one of the account's scheduled-job slots. That slot was
-freed when it was deleted and is now used by the recycling mesh watcher.
+monitor as holding one of the account's scheduled-job slots. It was freed
+when the monitor was deleted and is currently **unused** — the recycling
+mesh watcher is its intended occupant but has not been deployed yet, so
+anyone planning capacity from those comments would have believed the
+account was full when it has a slot free. The comments that attributed the
+slot cost to creating a database rather than to deploying a scheduled
+service were corrected in the same pass.
 
 Two further hazards surfaced in review and are closed here. The
 disaster-restore runbook still told an operator to recreate the retired
