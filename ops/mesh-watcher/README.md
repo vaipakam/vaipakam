@@ -117,6 +117,19 @@ against where the tokens went. A relocated-custody credit that also
 advanced the absorption cumulative raises the left side twice against a
 right side that moved once.
 
+**The allowance is a GROSS figure, and can overstate (#1461).** Once a
+released message later executes, its tokens have reached the destination —
+but `onRemitAckReceived` handles an ack for an already-released reservation
+by emitting `RemitAckAfterRelease` and returning, and nothing decrements the
+stranded cumulative anywhere in production code. So the canonical chain keeps
+counting delivered tokens as its own in-transit backing, and this allowance
+can mask a real shortfall up to that amount. Nothing fund-moving reads it —
+the remit gate and `_recycleFundable` both use the raw bucket — so this is a
+detection-quality defect rather than a spendable one, but do not read a
+passing coverage check as proof of backing after a late ack. #1461 carries
+the fix (a separate recovered cumulative, so composition keeps the gross
+term).
+
 **What it does not catch, stated plainly (#1452).** An arrival routed
 through the ordinary recycled credit instead of the custody-relocation
 one raises `creditedRaw` and `bucket` TOGETHER. Both composition bounds

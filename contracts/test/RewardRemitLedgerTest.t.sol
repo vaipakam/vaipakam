@@ -1769,6 +1769,44 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.seedReleasedRemitStranded(seedTo);
     }
 
+    /// #1448 r12 — a DEMOTED chain must still be able to seed its own
+    /// history. A Diamond that released remittances while canonical, was
+    /// switched to mirror, and is refreshed afterwards holds exactly the
+    /// status-3 reservations this ceremony reconstructs. Gating on the
+    /// CURRENT role would leave it with an unseeded composition discrepancy
+    /// permanently — unless an operator re-promoted a mirror purely to run a
+    /// migration, which is a far worse instruction than not gating on a flag
+    /// that can move underneath the ceremony.
+    ///
+    /// Recorded history is the real gate, and it is self-enforcing: only the
+    /// canonical chain ever creates reservations, so a chain that was never
+    /// canonical has an empty range and reverts `SeedNothingToScan`.
+    function test_Seed_RunsOnADemotedFormerCanonicalChain() public {
+        uint256 sentA = _preUpgradeReleasedState();
+        assertGt(sentA, 0, "fixture: released real backing while canonical");
+
+        // The role moves AFTER the history exists.
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
+
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+
+        (, uint256 stranded, , , , , , ) = _composition();
+        assertEq(
+            stranded,
+            sentA,
+            "the historical amount is recoverable after demotion - it is "
+            "history, and history does not change role"
+        );
+    }
+
+    /// And the gate that replaces the role check actually bites: a Diamond
+    /// with no reservation history cannot seed at all, whatever its role.
+    function test_Seed_RefusesWithNoReservationHistory() public {
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
+        vm.expectRevert(RewardRemittanceFacet.SeedNothingToScan.selector);
+        remit.seedReleasedRemitStranded(1);
+    }
+
     /// The ceremony's own state must be readable. Without it an operator can
     /// only infer "has this already run?" from the published figure — which
     /// is exactly the value-based reasoning that is wrong here, since a

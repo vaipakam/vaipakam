@@ -256,6 +256,49 @@ if [ "$BROADCAST" -eq 0 ]; then
   [ "$SKIP_VAULT" -eq 1 ] && rerun="$rerun --skip-vault"
   [ "$RUN_EXPORT" -eq 1 ] && rerun="$rerun --export"
   [ "$CHAINS" != "base-sepolia arb-sepolia" ] && rerun="$rerun --chains \"$CHAINS\""
+# #1448 r12 — printed on BOTH exit paths, so the gate-only mode cannot
+# hand an operator the manual refresh commands without the migration
+# that follows them.
+print_seed_ceremony() {
+cat <<'EOF'
+
+POST-REFRESH — recycled accounting (canonical chain only):
+
+  Run ONCE if the reservation history holds ANY released (status-3)
+  reservation — walk getRemitReservation(i) over 1..getRemitReservationNonce().
+  That single condition is the whole rule. Do NOT additionally require the
+  published stranded cumulative to be zero: a release landing after the
+  refresh makes it non-zero while a historical amount is still unrecovered
+  behind it, which is exactly the case this recovers.
+
+  To check whether it already ran, read getReleasedRemitStrandedSeedState()
+  — its `applied` flag, never the published figure.
+
+    NONCE=$(cast call $DIAMOND "getRemitReservationNonce()(uint256)" ...)
+    cast send $DIAMOND "seedReleasedRemitStranded(uint256)" $NONCE ...
+
+  It scans 1..upTo itself — there is no id list to get wrong — and publishes
+  nothing until the cursor reaches the target it pinned from the nonce on the
+  first call. On a Diamond with a long reservation history, split it:
+  `seedReleasedRemitStranded(500)`, `(1000)`, ... up to the nonce; a single
+  transaction could otherwise exceed the block gas limit, and the ceremony is
+  one-shot. It reverts if a remittance is released mid-ceremony — restart with
+  resetReleasedRemitStrandedSeed() and re-run; a restart is an expected
+  outcome on a busy chain, not an incident — or if the result does not
+  reconcile both relations. Verify:
+
+    cast call $DIAMOND "getRecycleCompositionPosition()(uint256,uint256,bool,bool)"
+
+  The watcher's two CRITICALs must clear on the next tick, and
+  getReleasedRemitStrandedSeedState() must report `applied`. Do not verify by
+  asserting the stranded cumulative is non-zero — that check is itself
+  defeated in the mixed case above, where it was already non-zero before the
+  ceremony ran. On a chain with no released reservation at all this step is a
+  no-op and can be skipped.
+
+EOF
+}
+
   cat <<EOF
 
 The pre-broadcast gate is green. Nothing was sent (gate-only default).
@@ -279,6 +322,8 @@ EOF
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo
   done
+  echo
+  print_seed_ceremony
   exit 0
 fi
 
@@ -332,42 +377,6 @@ fi
 # and it reverts if the derived total does not reconcile both relations. That
 # refusal is the point — it must not be able to quiet a real discrepancy — so
 # it stays a deliberate operator action with the readback below.
-cat <<'EOF'
-
-POST-REFRESH — recycled accounting (canonical chain only):
-
-  Run ONCE if the reservation history holds ANY released (status-3)
-  reservation — walk getRemitReservation(i) over 1..getRemitReservationNonce().
-  That single condition is the whole rule. Do NOT additionally require the
-  published stranded cumulative to be zero: a release landing after the
-  refresh makes it non-zero while a historical amount is still unrecovered
-  behind it, which is exactly the case this recovers.
-
-  To check whether it already ran, read getReleasedRemitStrandedSeedState()
-  — its `applied` flag, never the published figure.
-
-    NONCE=$(cast call $DIAMOND "getRemitReservationNonce()(uint256)" ...)
-    cast send $DIAMOND "seedReleasedRemitStranded(uint256)" $NONCE ...
-
-  It scans 1..upTo itself — there is no id list to get wrong — and publishes
-  nothing until the cursor reaches the target it pinned from the nonce on the
-  first call. On a Diamond with a long reservation history, split it:
-  `seedReleasedRemitStranded(500)`, `(1000)`, ... up to the nonce; a single
-  transaction could otherwise exceed the block gas limit, and the ceremony is
-  one-shot. It reverts if a remittance is released mid-ceremony — restart with
-  resetReleasedRemitStrandedSeed() and re-run; a restart is an expected
-  outcome on a busy chain, not an incident — or if the result does not
-  reconcile both relations. Verify:
-
-    cast call $DIAMOND "getRecycleCompositionPosition()(uint256,uint256,bool,bool)"
-
-  The watcher's two CRITICALs must clear on the next tick, and
-  getReleasedRemitStrandedSeedState() must report `applied`. Do not verify by
-  asserting the stranded cumulative is non-zero — that check is itself
-  defeated in the mixed case above, where it was already non-zero before the
-  ceremony ran. On a chain with no released reservation at all this step is a
-  no-op and can be skipped.
-
-EOF
+print_seed_ceremony
 
 banner "DONE"

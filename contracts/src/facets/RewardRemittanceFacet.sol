@@ -1354,8 +1354,10 @@ contract RewardRemittanceFacet is
     function resetReleasedRemitStrandedSeed()
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
-        onlyCanonical
     {
+        // Same reasoning as the seed itself (#1448 r12): a role flip must not
+        // be able to strand an in-flight ceremony with no way to restart it.
+        // `SeedNotStarted` below is the real precondition.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.recycleStrandedSeedApplied) {
             revert ReleasedRemitStrandedAlreadySeeded(
@@ -1456,8 +1458,24 @@ contract RewardRemittanceFacet is
     function seedReleasedRemitStranded(uint256 upTo)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
-        onlyCanonical
     {
+        // #1448 r12 — deliberately NOT `onlyCanonical`. The role is a mutable
+        // admin setting, and the exact state this ceremony reconstructs is
+        // HISTORY: a Diamond that released remittances while canonical, was
+        // demoted, and is refreshed afterwards still holds those status-3
+        // reservations and still needs them counted. Gating on the current
+        // role would leave it with an unseeded composition discrepancy
+        // forever unless an operator re-promoted it just to run a migration,
+        // which is a far worse instruction than dropping the modifier. A
+        // role change part-way through a chunked ceremony would likewise
+        // block both completion and reset.
+        //
+        // Recorded history is the real gate and it is self-enforcing: only
+        // the canonical chain ever creates reservations, so on a chain that
+        // was never canonical `remitReservationNonce == 0` and the first
+        // call reverts `SeedNothingToScan`. Admin authority plus a non-empty
+        // reservation history is exactly the precondition, with no reliance
+        // on a flag that can move underneath it.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 current = s.recycleReleasedRemitStrandedCumulative;
         if (s.recycleStrandedSeedApplied) {

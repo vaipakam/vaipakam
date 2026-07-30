@@ -625,12 +625,31 @@ export function checkHardInvariants(
     // being compared against, which is the property that matters here.
     // `role-consistency` still reports the disagreement itself, and does so
     // from `freshLocals`, so nothing is hidden by this.
+    // TWO role sources, and they are only comparable when contemporaneous.
     const roleIsFresh = obs.freshLocals.has(local.chainId);
+    const topologySays = local.chainId === obs.canonicalChainId;
+    const chainSays = local.composition?.isCanonicalRewardChain; // undefined = unread
+    // FRESH: both must agree — r2's rule, and r11 lost the conjunct while
+    // refactoring, so a chain whose own flag says mirror could still take
+    // the allowance from its chain id alone. That is the split-brain state
+    // `role-consistency` reports, and suppressing the shortfall finding
+    // during it discards the independent evidence that reservations are
+    // under-backed.
+    // STALE: the chain's own same-block claim alone — see above.
     const isCanonicalHere = roleIsFresh
-      ? local.chainId === obs.canonicalChainId
-      : (local.composition?.isCanonicalRewardChain ?? false);
+      ? topologySays && chainSays === true
+      : chainSays === true;
     if (!local.composition) {
-      if (isCanonicalHere) continue; // reported via the coverage gap below
+      // No own-claim to read. With a FRESH snapshot the topology view is
+      // still usable and this falls back to the pre-#1444 rule; with a
+      // STALE one there is NO role source at all, and paging would be a
+      // guess — a canonical-at-that-block chain with a legitimate released
+      // shortfall would be called corruption for the sole crime of also
+      // missing the new selector. Both the staleness and the unreadable
+      // view are already reported as coverage gaps, so continuing here
+      // leaves a visible hole rather than a silent one (#1448 r12).
+      if (!roleIsFresh) continue;
+      if (topologySays) continue; // canonical: reported via the coverage gap
       const backingRaw = local.bucket;
       if (backingRaw + bucketToleranceWei >= local.outstandingRecycled) continue;
       out.push(makeFinding({
@@ -645,10 +664,7 @@ export function checkHardInvariants(
           `  bucket        = ${fmt(local.bucket)}\n` +
           `  outstanding   = ${fmt(local.outstandingRecycled)}\n` +
           `  shortfall     = ${fmt(local.outstandingRecycled - local.bucket)}\n\n` +
-          `The released-remit allowance is admitted only for the canonical chain, and this chain is not it — so the strict relation applies regardless of what the unread counter holds.` +
-          (obs.freshLocals.has(local.chainId)
-            ? ''
-            : `\n\nNOTE: this chain's snapshot is STALE, and its composition view could not be read, so the role was resolved from neither source. Confirm the role before treating this as corruption.`),
+          `The released-remit allowance is admitted only for the canonical chain, and this chain is not it — so the strict relation applies regardless of what the unread counter holds. This is a FRESH read against the current topology; a stale snapshot with no composition view is reported as a coverage gap instead of paged here.`,
       }));
       continue;
     }
