@@ -24,6 +24,68 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+
+/**
+ * The baseline as it exists on the BASE revision, not in this working tree.
+ *
+ * Without this the ratchet is self-defeating (#1467 r2, verified in review):
+ * `--write-baseline` records whatever is currently found, and CI compares the
+ * PR against the PR's OWN baseline — so adding an unsafe command and
+ * committing a regenerated baseline in the same change reports no regression.
+ * That is precisely the "silent baseline raise" the README forbids, and it
+ * would have made the eventual gate bypassable by the one move it warns
+ * against.
+ *
+ * @returns the base-revision baseline, or null when there is no base to
+ *          compare against (a fresh clone, or the very first commit) — in
+ *          which case the caller degrades to warning rather than pretending
+ *          it verified something.
+ */
+function baseRevisionBaseline(path) {
+  // The MERGE BASE with main, not HEAD^ — and the distinction matters. HEAD^
+  // is this branch's own previous commit, so comparing against it would let a
+  // two-commit PR raise the baseline in the first commit and pass in the
+  // second, and it would flag a brand-new baseline as "grown" against a
+  // format that never existed upstream. Both were live bugs in the first cut
+  // of this function.
+  let mergeBase;
+  try {
+    mergeBase = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return { kind: 'no-base' };
+  }
+
+  let raw;
+  try {
+    raw = execFileSync('git', ['show', `${mergeBase}:${path}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    // The baseline does not exist upstream: this change INTRODUCES it. Every
+    // entry is new by definition, so a growth check is meaningless — say so
+    // rather than passing silently, because the initial baseline is a set of
+    // permanent exemptions that nothing here has vetted.
+    return { kind: 'introduced', mergeBase };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { kind: 'unreadable', mergeBase };
+  }
+  // A format change upstream (counts vs fingerprints) is not comparable, and
+  // guessing would produce nonsense findings.
+  const comparable = Object.values(parsed).every((v) => Array.isArray(v));
+  if (!comparable) return { kind: 'incomparable', mergeBase };
+
+  return { kind: 'ok', ref: mergeBase.slice(0, 8), baseline: parsed };
+}
 
 /**
  * Per-file FINGERPRINTS, not counts (#1467 r1).
@@ -114,6 +176,62 @@ export function report(name, findings, baselinePath, { write } = {}) {
 
   const { regressions, improvements, total } = compare(counts, baseline);
 
+  // ── the baseline itself must not have GROWN (#1467 r2) ────────────────
+  //
+  // Checked before anything else, because a raised baseline makes every
+  // check below vacuous: the findings it would have caught are now
+  // "known".
+  const base = baseRevisionBaseline(baselinePath);
+  if (base.kind === 'introduced') {
+    console.warn(
+      `${name}: this change INTRODUCES the baseline (${Object.values(baseline).reduce((a, b) => a + b.length, 0)} entries). ` +
+        'Each entry is a permanent exemption that no automated check has vetted — ' +
+        'they need a human read.',
+    );
+  } else if (base.kind !== 'ok') {
+    console.warn(
+      `${name}: cannot compare the baseline against its base revision (${base.kind}) — ` +
+        'baseline growth is NOT verified in this run.',
+    );
+  } else {
+    const added = [];
+    for (const [file, fps] of Object.entries(baseline)) {
+      const was = new Set(base.baseline[file] ?? []);
+      for (const fp of fps) if (!was.has(fp)) added.push(`${file}: ${fp}`);
+    }
+    if (added.length) {
+      console.error(
+        `${name}: the BASELINE gained ${added.length} entr(y|ies) versus ${base.ref}:`,
+      );
+      for (const a of added) console.error(`    ${a}`);
+      console.error(
+        '\nA baseline entry is a permanent exemption. Adding one silences a ' +
+          'finding instead of fixing it, and makes every check below vacuous. ' +
+          'Fix the finding, or — if the exemption is genuinely correct — say so ' +
+          'explicitly in the PR so a human agrees to it.',
+      );
+      return 1;
+    }
+  }
+
+  // ── obsolete entries must be cleaned up (#1467 r2) ────────────────────
+  //
+  // Reporting an improvement and returning success banks headroom: the
+  // stale entry stays, and a later change can reintroduce that exact
+  // fingerprint and match it. Failing here forces the regeneration that
+  // makes the improvement permanent.
+  const obsolete = improvements.flatMap((i) => i.gone.map((g) => `${i.file}: ${g}`));
+  if (obsolete.length) {
+    console.error(`${name}: ${obsolete.length} baseline entr(y|ies) no longer occur:`);
+    for (const o of obsolete) console.error(`    ${o}`);
+    console.error(
+      '\nThese were FIXED — thank you — but the baseline still lists them, so ' +
+        'the same finding could be reintroduced and match. Run with ' +
+        '`--write-baseline` and commit, which makes the fix permanent.',
+    );
+    return 1;
+  }
+
   const addedByFile = new Map(regressions.map((r) => [r.file, new Set(r.added)]));
   const printSeen = {};
   for (const f of findings) {
@@ -125,14 +243,6 @@ export function report(name, findings, baselinePath, { write } = {}) {
       if (f.line) console.error(`    ${f.line.trim()}`);
       console.error(`    -> ${f.why}\n`);
     }
-  }
-
-  if (improvements.length) {
-    console.log(`${name}: ${improvements.length} file(s) improved — lower the baseline:`);
-    for (const i of improvements) {
-      console.log(`    ${i.file}: ${i.gone.length} fixed (${i.gone.slice(0, 3).join(', ')}${i.gone.length > 3 ? ', …' : ''})`);
-    }
-    console.log('    (a baseline above reality silently re-permits what was just fixed)\n');
   }
 
   if (regressions.length) {

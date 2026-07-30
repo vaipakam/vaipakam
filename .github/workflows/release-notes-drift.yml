@@ -16,10 +16,15 @@
 # rename which prose mentions the old name — so both are re-checked here on
 # every push and PR:
 #
-#   - check-docs-secret-argv.mjs  — no credential in an external command's
-#     argv (readable from `ps` for the process's lifetime).
-#   - check-docs-paths.mjs        — cited repo paths and `/app/...` routes
-#     resolve.
+#   - check-docs-paths.mjs — cited repo paths and `/app/...` routes resolve.
+#
+# A companion secrets-in-argv check was built alongside this and DEFERRED
+# (#1472). It found 28 real instances where review had found 3, so the class
+# is worth closing — but answering "does this value reach a process's argv"
+# correctly needs real shell parsing, and successive review rounds kept
+# finding cases the approximation got wrong, including flagging the pattern
+# the docs recommend. A check that is wrong is worse than no check, so it
+# ships when it is right rather than now.
 #
 # Both RATCHET against a committed baseline: they fail only when a file
 # GAINS findings, so the existing backlog (#1462) is frozen rather than
@@ -135,7 +140,7 @@ jobs:
         run: |
           set -uo pipefail
           fail=0
-          for check in check-docs-secret-argv check-docs-paths; do
+          for check in check-docs-paths; do
             echo "::group::$check"
             if node ".github/scripts/$check.mjs"; then
               echo "$check: OK"

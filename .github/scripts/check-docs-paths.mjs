@@ -73,16 +73,33 @@ const REMOVED_DIRS = [
 /**
  * Top-level dirs that make a token unambiguously a repo path.
  *
- * The existence half is applied ONLY under STRICT_DIRS below. Run
- * repo-wide it produced 296 findings — design docs legitimately cite
- * planned files, and `docs/ToDo.md` cites historical ones — and a check
- * that reports 296 things gets muted, which is worse than no check. The
- * REMOVED_DIRS half is what runs everywhere.
+ * DERIVED from the tracked tree, not hand-listed (#1467 r2). The hand-written
+ * list silently omitted `audits/` and `cdpwalkthrough/`, so a stale citation
+ * under either never reached the existence check — the check quietly did not
+ * cover part of the repo it claimed to. A hand-kept list of what exists is
+ * the same defect class this check was written to catch, so keeping one here
+ * was self-defeating.
+ *
+ * `tracked` is a hoisted function declaration, so calling it above its
+ * textual position is fine.
+ *
+ * The existence half is applied ONLY under STRICT_DIRS below. Run repo-wide
+ * it produced far more findings than anyone would read — design docs
+ * legitimately cite planned files, and `docs/ToDo.md` cites historical ones —
+ * and a check nobody reads is worse than no check. The REMOVED_DIRS half runs
+ * everywhere.
  */
-const ROOTS = [
-  'contracts/', 'apps/', 'packages/', 'ops/', 'docs/', '.github/',
-  'keeper-bot/', 'frontend/',
-];
+const ROOTS = (() => {
+  const dirs = new Set();
+  for (const f of tracked(['.'])) {
+    const slash = f.indexOf('/');
+    if (slash > 0) dirs.add(`${f.slice(0, slash)}/`);
+  }
+  // Removed directories cannot be derived from a tree they are absent from,
+  // and are precisely what must still be recognised as path-shaped.
+  for (const [d] of REMOVED_DIRS) dirs.add(d);
+  return [...dirs];
+})();
 
 /**
  * Where a stale path costs an operator or misstates intended behaviour, so
@@ -142,7 +159,16 @@ const resolves = (p) => {
  * flattened route cited under its old prefix is correctly rejected.
  */
 function mountedRoutes() {
-  const src = readFileSync('apps/defi/src/App.tsx', 'utf8');
+  const raw = readFileSync('apps/defi/src/App.tsx', 'utf8');
+  // Strip comments FIRST (#1467 r2). The file contains route-shaped text
+  // inside comments — there is already a `<Route path="app">` in one — so
+  // matching the source directly treats documentation and commented-out JSX
+  // as live mounts. The failure is in the unsafe direction: if the surviving
+  // back-compat redirect were ever commented out during a removal, this set
+  // would keep accepting citations of a route React no longer mounts.
+  const src = raw
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
   return new Set(
     [...src.matchAll(/path="([^"]+)"/g)].map((m) => m[1].replace(/^\//, '')),
   );

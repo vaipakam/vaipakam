@@ -1,7 +1,14 @@
 # Mechanical docs checks
 
-Two checks that close defect classes review kept re-finding in prose, plus
-the ratchet and the shell parser they share.
+One check that closes a defect class review kept re-finding in prose, plus
+the ratchet it uses.
+
+A companion **secrets-in-argv** check was built alongside it and **deferred to
+#1472**. It found 28 real instances where review had found 3, so the class is
+worth closing — but answering "does this value reach a process's argv"
+correctly needs real shell parsing, and successive review rounds kept finding
+cases the approximation got wrong, including flagging the pattern the docs
+recommend. A wrong check is worse than none, so it ships when it is right.
 
 They exist because of a specific observation: when the same defect shows up
 in a new document each review round, that is a class, and a class cannot be
@@ -12,41 +19,21 @@ on every change.
 
 | Script | Class it closes | Why it recurred |
 | --- | --- | --- |
-| `check-docs-secret-argv.mjs` | A credential reaching an external command's `argv`, where any other user reads it from `ps` / `/proc/<pid>/cmdline` | Found in three separate runbook steps across three review rounds on #1450. In each case the prose around it was careful about secrets; the command was not. Running it over the whole set found **28** in 7 files. |
 | `check-docs-paths.mjs` | A cited repo path or `/app/...` route that does not exist | 147 references to the removed `frontend/` directory across 39 documents (#1462), and `/app/alerts` wrong in three documents at once — including an incident-runbook verification step that would have landed an operator on a blank page. |
 
 ## Running them
 
 ```bash
-node .github/scripts/check-docs-secret-argv.mjs
 node .github/scripts/check-docs-paths.mjs
 ```
 
 Both are wired into `.github/workflows/release-notes-drift.yml`, on pushes
 to `main` and on PRs that touch `docs/`.
 
-## Answering "does this value reach a process's argv"
-
-`shell-parse.mjs` exists because that question is about shell **structure**,
-and the first cut of the secret check tried to answer it with line-level
-regex. It was wrong three ways at once (#1467 r1) — it missed backslash
-continuations, exempted every assignment (so
-`X=$(cast wallet address $KEY)` passed), and, worst, **flagged the pattern
-these docs recommend**: in `printf 'fmt' "$TOKEN" | curl -K -` the token is
-expanded by a builtin and `curl` receives only stdin, yet it was reported as
-reaching curl's arguments. A check that condemns the safe pattern teaches
-people to ignore it.
-
-So the check now works on **argv units** — a pipeline stage or a command
-substitution, paired with the command it actually invokes — and attributes a
-token to the process that would really receive it. Fixing the structure
-turned 10 findings into 28: eighteen real instances the line scanner could
-not see.
-
 ## The ratchet, and why the bar is not zero
 
-Both checks are red on their first run — 28 and 266 findings — because they
-describe a real backlog that is already tracked. So they compare against a
+The check is red on its first run — 266 findings — because it
+describes a real backlog that is already tracked. So it compares against a
 committed per-file baseline of finding **identities** and fail when a file
 gains one that is not in the baseline.
 
@@ -88,12 +75,6 @@ reality silently re-permits what someone just fixed.
 Stated because a green run is not a proof, and treating it as one is the
 failure mode these are meant to prevent:
 
-- **`check-docs-secret-argv`** cannot see a secret passed through a variable
-  it cannot tell is a secret (`$X`, `$1`), an external command absent from
-  its list, or anything outside `docs/`. It deliberately does not flag shell
-  **builtins** — `printf 'fmt' "$TOKEN" | curl -K -` is the *recommended*
-  pattern precisely because `printf` is a builtin, so no separate process
-  exists and nothing enters any `argv`.
 - **`check-docs-paths`** closes *staleness*, not *accuracy*: a path that
   exists but is the wrong one reads as fine. The does-it-exist rule runs only
   under `docs/ops/` and `docs/FunctionalSpecs/`, because repo-wide it
@@ -103,9 +84,6 @@ failure mode these are meant to prevent:
   against the citing document, and query strings and fragments are stripped
   before matching — both were blind spots that let stale references through
   (#1467 r1).
-- **`shell-parse.mjs` is not a shell parser.** It does not handle quoting
-  subtleties, `eval`, arrays, process substitution or here-strings. It
-  answers one question well enough to be trusted and no more.
 
 **They are currently non-blocking**, matching this workflow's existing
 philosophy. That is a real limitation, not an oversight: a warning does not
@@ -134,3 +112,26 @@ happened, and everything downstream of that fact is then derived.
 The route list is **derived** from `apps/defi/src/App.tsx` and must stay
 that way. A hand-kept copy would be a second thing to drift, which is the
 defect this check exists to catch.
+
+## Two guards on the ratchet itself
+
+Both added after review showed the ratchet was bypassable by the exact move
+this README forbids.
+
+**The baseline may not GROW.** `--write-baseline` records whatever is
+currently found, so without this a contributor could add a finding and commit
+a regenerated baseline in the same change — the ordinary check would then see
+no regression. Verified in review, and it would have made the eventual gate
+(#1468) bypassable. The baseline is now compared against its state at the
+**merge base with `main`**, and any added entry fails.
+
+*Inherent limitation, stated because a green run should not be read as more
+than it is:* this guard cannot protect the commit that **introduces** the
+baseline, because there is no earlier version to compare against. It says so
+at runtime rather than passing quietly. The 266 initial entries are taken on
+human review; everything after them is guarded.
+
+**Obsolete entries must be cleaned up.** A fix that leaves its baseline entry
+behind banks headroom — the same fingerprint can be reintroduced later and
+match. Fixing a finding now fails the check until the baseline is regenerated,
+which is what makes the fix permanent.
