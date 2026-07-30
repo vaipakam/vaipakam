@@ -306,7 +306,20 @@ export async function runTick(
         variant: `${gap.reason}/${gap.source}`,
         // NOT the detail — a stale-head detail carries an age that rises
         // every tick and would defeat the quiet window (#1443 r8).
-        identity: [gap.reason, gap.source],
+        //
+        // The observed chain IS in the identity, for `chain-mismatch` only
+        // (#1464 r4). Re-pointing a mirror from one wrong network to a
+        // different wrong one changes the diagnosis an operator must act
+        // on, while `[reason, source]` alone is unchanged — so the second
+        // alert was suppressed for the full repeat window and the operator
+        // kept working from the first chain id. Scoped to this reason
+        // rather than added generally: it is a stable discriminator here
+        // (a fixed observation about a configuration), not a rising value
+        // like a stale-head age, so it cannot defeat the window.
+        identity:
+          gap.reason === 'chain-mismatch' && gap.observedChainId !== undefined
+            ? [gap.reason, gap.source, String(gap.observedChainId)]
+            : [gap.reason, gap.source],
         severity: 'advisory',
         chainId: gap.chainId,
         title: 'Chain not covered this tick',

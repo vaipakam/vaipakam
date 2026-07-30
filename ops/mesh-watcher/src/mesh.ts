@@ -290,13 +290,22 @@ export async function observeMesh(
     verifyChainIdentity(canonical, 'base-books'),
   ]);
 
-  // Identity FIRST, and deliberately before the head failure: a
-  // wrong-network canonical explains any read anomaly, so it is the
-  // actionable diagnosis. Reporting the head error first would send the
-  // operator to the provider for a fault that is not there.
+  // A real MISMATCH is preferred over the head failure: a wrong-network
+  // canonical explains any read anomaly, so it is the actionable
+  // diagnosis, and reporting the head error first sends the operator to a
+  // provider for a fault that is not there.
+  //
+  // Gated on `chain-mismatch` specifically (#1464 r4).
+  // `verifyChainIdentity` also returns a truthy gap when `eth_chainId`
+  // itself fails — a `no-rpc`, carrying no diagnosis at all. Preferring
+  // THAT would discard a genuinely more actionable head failure: an HTTP
+  // 401 on `getBlock` says "the credential is wrong", and the operator
+  // would instead be told `eth_chainId` was unreachable, re-labelled
+  // `config`. Two unreachability reports, and we would keep the emptier
+  // one.
   const canonicalIdentity =
     identityResult.status === 'fulfilled' ? identityResult.value : null;
-  if (canonicalIdentity) {
+  if (canonicalIdentity?.reason === 'chain-mismatch') {
     // PRE-CLASSIFIED, not a bare Error (#1464 r1). `runTick` passes what
     // it catches through `classify`, which substring-matches the message —
     // and this detail contains "WRONG NETWORK", so the `network` marker
@@ -311,16 +320,28 @@ export async function observeMesh(
     });
   }
   if (headResult.status === 'rejected') {
-    // Identity was fine (or itself unreadable) and the head read failed:
-    // the ordinary unreachable-canonical case. Classified rather than
-    // forwarded, since viem puts the provider URL — and its API key — in
-    // the message.
+    // No mismatch, and the head read failed: the ordinary
+    // unreachable-canonical case, and the report we PREFER over an
+    // `eth_chainId` reachability gap because it can carry a status code.
+    // Classified rather than forwarded, since viem puts the provider URL —
+    // and its API key — in the message.
     throw new PreclassifiedFailure(
       classify(
         headResult.reason,
         `canonical head read on chain ${config.canonicalChainId}`,
       ),
     );
+  }
+  if (canonicalIdentity) {
+    // Head read fine, but `eth_chainId` failed — so identity is UNKNOWN
+    // rather than wrong. Still fatal: every Base-side figure below would
+    // be read from an endpoint we cannot vouch for, and the canonical path
+    // has no coverage-gap channel. Reported last, since it is the least
+    // informative of the three outcomes.
+    throw new PreclassifiedFailure({
+      kind: 'config',
+      summary: makeBaseRedactor(env)(canonicalIdentity.detail),
+    });
   }
   const canonicalHead = headResult.value;
   const canonicalBlock = canonicalHead.number;
@@ -437,7 +458,12 @@ export async function observeMesh(
 
       const identity =
         identityResult.status === 'fulfilled' ? identityResult.value : null;
-      if (identity) {
+      // Same `chain-mismatch` gating as the canonical path (#1464 r4): an
+      // `eth_chainId` reachability gap must not pre-empt the ledger read's
+      // own failure, which can carry a status code and is the better
+      // diagnosis. The mirror had this bug too — the fix belongs on both
+      // paths or the preference is inconsistent between them.
+      if (identity?.reason === 'chain-mismatch') {
         // Treated exactly like the freshness gate below: gap, and excluded
         // from `allLocals` as well as `freshLocals`. A wrong-network ledger
         // is not merely unusable for cross-chain comparison — it would be
@@ -458,6 +484,15 @@ export async function observeMesh(
             classify(localResult.reason, `own-ledger read on chain ${id}`),
           ),
         });
+        return;
+      }
+      if (identity) {
+        // Ledger read fine, `eth_chainId` failed: identity UNKNOWN, not
+        // wrong. Recorded as a gap and the chain excluded, because a
+        // snapshot from an endpoint whose identity we cannot vouch for must
+        // not be compared against Base — that is the same reasoning as the
+        // mismatch case, and the weaker evidence does not weaken it.
+        gaps.push(identity);
         return;
       }
       try {

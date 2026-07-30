@@ -124,6 +124,38 @@ describe('verifyChainIdentity (#1445)', () => {
     expect(own!.source).toBe('own-ledger');
   });
 
+  it('carries the OBSERVED chain id structurally, not only in the detail', async () => {
+    // The alert dedup identity is [reason, source] and deliberately
+    // excludes the detail. Without a structural field, a mirror re-pointed
+    // from one wrong network to ANOTHER changes the detail and keeps the
+    // fingerprint — so the second, different diagnosis is suppressed for
+    // the whole repeat window (#1464 r4).
+    const a = await verifyChainIdentity(
+      targetReporting(84532, { reports: 421614 }),
+      'own-ledger',
+    );
+    const b = await verifyChainIdentity(
+      targetReporting(84532, { reports: 11155111 }),
+      'own-ledger',
+    );
+    expect(a!.observedChainId).toBe(421614);
+    expect(b!.observedChainId).toBe(11155111);
+    // The two states an operator would act on differently must be
+    // distinguishable by something the fingerprint can see.
+    expect(a!.observedChainId).not.toBe(b!.observedChainId);
+  });
+
+  it('leaves observedChainId unset on a reachability gap', async () => {
+    // Only a mismatch has an observed chain. Setting it here would put a
+    // meaningless value into the dedup key for `no-rpc` gaps.
+    const gap = await verifyChainIdentity(
+      targetReporting(84532, { throws: new Error('fetch failed') }),
+      'own-ledger',
+    );
+    expect(gap!.reason).toBe('no-rpc');
+    expect(gap!.observedChainId).toBeUndefined();
+  });
+
   it('never throws, whatever the endpoint does', async () => {
     // One misconfigured mirror must not abort the tick — that would let
     // a single bad secret blind the watcher to every other chain.

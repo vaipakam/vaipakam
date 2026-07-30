@@ -68,6 +68,21 @@ export interface CoverageGap {
    */
   source: 'config' | 'base-books' | 'own-ledger' | 'own-ledger-composition';
   detail: string;
+  /**
+   * The chain the endpoint actually reported, on `chain-mismatch` gaps only
+   * (#1464 r4).
+   *
+   * Carried STRUCTURALLY rather than left inside `detail`, because the
+   * alert dedup identity is `[reason, source]` and deliberately excludes
+   * the detail (a stale-head detail carries a rising age that would defeat
+   * the quiet window). Without this field, a mirror re-pointed from one
+   * wrong network to ANOTHER produces a changed detail and an UNCHANGED
+   * fingerprint — so the second, different diagnosis is suppressed for the
+   * whole repeat window and the operator keeps acting on the first chain
+   * id. The identity has to distinguish states an operator would act on
+   * differently, and this is one.
+   */
+  observedChainId?: number;
 }
 
 /**
@@ -177,6 +192,7 @@ export async function verifyChainIdentity(
     chainId: target.chainId,
     reason: 'chain-mismatch',
     source,
+    observedChainId: observed,
     detail:
       `RPC_${target.chainId} points at the WRONG NETWORK — the endpoint reports chain ${observed}, ` +
       `but it is configured as chain ${target.chainId} (${target.slug}). Every read through it would ` +
