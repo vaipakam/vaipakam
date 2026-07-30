@@ -219,12 +219,34 @@ export function tableToSql(table) {
     `DELETE FROM "${name}";`,
   ];
   const colList = columns.map((c) => `"${c}"`).join(', ');
+  // Duplicate primary keys cannot come out of a SELECT — only a
+  // tampered archive carries them — and emitting them anyway produces
+  // a batch that fails its UNIQUE constraint MID-file at D1, leaving
+  // the table partially restored after its DELETE already committed
+  // (Codex #1484 r12). The archived PRAGMA table_info `pk` ordinals
+  // name the key columns; reject duplicates before emitting anything.
+  const pkCols = table.schema
+    .filter((c) => typeof c.pk === 'number' && c.pk > 0)
+    .sort((a, b) => a.pk - b.pk)
+    .map((c) => c.name);
+  const seenPks = new Set();
   for (const [i, row] of rows.entries()) {
     const keys = Object.keys(row);
     // Strict shape check: a row keyed differently from the schema is
     // drift INSIDE one archive, which the export cannot produce.
     if (keys.length !== columns.length || keys.some((k) => !columns.includes(k))) {
       fail(`table ${name} row ${i}: row keys [${keys}] do not match schema columns [${columns}]`);
+    }
+    if (pkCols.length > 0) {
+      const pkKey = JSON.stringify(pkCols.map((c) => row[c]));
+      if (seenPks.has(pkKey)) {
+        fail(
+          `table ${name} row ${i}: duplicate primary key (${pkCols.join(', ')}) = ${pkKey} — ` +
+            `a SELECT cannot produce duplicate keys, so the archive was tampered with; ` +
+            `importing would fail the UNIQUE constraint mid-batch and leave a partial restore`,
+        );
+      }
+      seenPks.add(pkKey);
     }
     const values = columns.map((c) => sqlLiteral(row[c], `table ${name} row ${i} column ${c}`));
     lines.push(`INSERT INTO "${name}" (${colList}) VALUES (${values.join(', ')});`);
@@ -367,11 +389,17 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // relative path resolves to a DIFFERENT, nonexistent file once the
     // operator copies the command at the repo root (Codex #1484 r7).
     const dir = path.resolve(outDir, subdir);
-    mkdirSync(dir, { recursive: true });
+    // Owner-only staging: the archive was encrypted precisely to keep
+    // this material unreadable at rest, so its DECRYPTED form must not
+    // inherit a permissive umask (0644 under the common 022) where any
+    // local account could read diagnostics, Telegram IDs and legal-hold
+    // data (Codex #1484 r12). mode is masked by umask, but 0700/0600
+    // carry no group/other bits for a umask to leave behind.
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const table of applyOrder(tables)) {
       const sql = tableToSql(table);
       const file = path.join(dir, `${table.name}.sql`);
-      writeFileSync(file, sql);
+      writeFileSync(file, sql, { mode: 0o600 });
       entries.push({
         name: table.name,
         file,
@@ -465,8 +493,10 @@ export function materializeR2(archive, outDir) {
           `itself suspect (diagLegalDoc.ts)`,
       );
     }
-    mkdirSync(path.dirname(local), { recursive: true });
-    writeFileSync(local, bytes);
+    // Owner-only, same as the D1 staging: these are the decrypted
+    // legal documents themselves (Codex #1484 r12).
+    mkdirSync(path.dirname(local), { recursive: true, mode: 0o700 });
+    writeFileSync(local, bytes, { mode: 0o600 });
     written.push({ key: obj.key, local, size: bytes.length });
   }
   return written;

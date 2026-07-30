@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -32,10 +32,10 @@ import {
 
 const HEX64 = 'a'.repeat(64);
 
-function tableFixture(name, columns, rows) {
+function tableFixture(name, columns, rows, pks = {}) {
   return {
     name,
-    schema: columns.map((c, i) => ({ cid: i, name: c, type: 'TEXT', notnull: 0, pk: 0 })),
+    schema: columns.map((c, i) => ({ cid: i, name: c, type: 'TEXT', notnull: 0, pk: pks[c] ?? 0 })),
     rowCount: rows.length,
     rows,
   };
@@ -364,6 +364,46 @@ test('hold reason replays from the latest placement audit (r9)', () => {
     auditWith([place(1, 100, null)]),
   );
   assert.match(reconcileLegalHolds(nullDetail)[0].problem, /impossible/);
+});
+
+test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {
+  // Single-column key.
+  const dup = tableFixture(
+    'telegram_links', ['wallet'],
+    [{ wallet: '0xa' }, { wallet: '0xa' }],
+    { wallet: 1 },
+  );
+  assert.throws(() => tableToSql(dup), /duplicate primary key/);
+
+  // Composite key: same wallet on different chains is legitimate…
+  const okComposite = tableFixture(
+    'user_thresholds', ['wallet', 'chain_id'],
+    [{ wallet: '0xa', chain_id: 1 }, { wallet: '0xa', chain_id: 8453 }],
+    { wallet: 1, chain_id: 2 },
+  );
+  assert.match(tableToSql(okComposite), /VALUES/);
+
+  // …the same (wallet, chain_id) tuple twice is not.
+  const dupComposite = tableFixture(
+    'user_thresholds', ['wallet', 'chain_id'],
+    [{ wallet: '0xa', chain_id: 8453 }, { wallet: '0xa', chain_id: 8453 }],
+    { wallet: 1, chain_id: 2 },
+  );
+  assert.throws(() => tableToSql(dupComposite), /duplicate primary key/);
+});
+
+test('decrypted restore material is staged owner-only (r12)', () => {
+  const dir = outDir();
+  const mode = (p) => statSync(p).mode & 0o777;
+  const entries = convertD1({ version: 1, d1: { archive: baselineArchive() } }, dir);
+  assert.equal(mode(entries[0].file), 0o600);
+  assert.equal(mode(path.dirname(entries[0].file)), 0o700);
+  const written = materializeR2(
+    { version: 1, d1: {}, r2: { objects: [r2Fixture(Buffer.from('%PDF-1.4 fixture'))] } },
+    dir,
+  );
+  assert.equal(mode(written[0].local), 0o600);
+  assert.equal(mode(path.dirname(written[0].local)), 0o700);
 });
 
 test('legal rows must match the writer column shapes exactly (r11)', () => {
