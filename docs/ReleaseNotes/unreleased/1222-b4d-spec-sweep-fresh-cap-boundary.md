@@ -91,7 +91,8 @@ exercises this ledger cannot reach even two percent of the ceiling, so the
 check was green because the boundary was unapproachable rather than because it
 was enforced.
 
-Four deterministic tests now place the ledger at the boundary directly:
+Five deterministic tests now place the ledger at the boundary. Three of them
+place a single term there directly:
 
 - with a known amount of headroom left, the day's fresh funding must clamp to
   exactly that headroom instead of to its own schedule;
@@ -121,14 +122,17 @@ paid-out figure is non-zero for the rest of the programme's life, so the
 surviving version would have over-committed on every day after the first
 payout.
 
-Each was confirmed against the change that would break it: sizing the
-reservation from the unclamped schedule fails all three of the
-single-term cases, dropping the already-sent term fails the sent-value case
-and only that one, and taking the larger of two reservations instead of
-summing them fails the two-term case and only that one, and ignoring what
-has already been paid out fails the three-term case and only that one. Each
-combination passes every fixture below it, which is what makes both of them
-necessary rather than decorative. Review also caught that
+Each was confirmed against the change that would break it, and the failure
+sets are stated exactly because a wrong one would suggest a fixture is
+redundant when it is not: sizing the reservation from the unclamped schedule
+fails all three single-term cases; dropping the already-sent term fails the
+sent-value case **and both combination cases**, since every fixture carrying
+that term loses it; taking the larger of two reservations instead of summing
+them fails **both** combination cases — the two-term one by the smaller of
+its two amounts and the three-term one by its own smallest; and ignoring what
+has already been paid out fails the three-term case alone. What makes each
+combination necessary is not that it fails uniquely, but that it passes every
+fixture below it while the platform is still wrong. Review also caught that
 checking the day's *published* figure was not enough — the platform could
 publish the clamped number and still reserve against the unclamped one, on
 either the fresh or the recycled side — so the tests read the reservations
