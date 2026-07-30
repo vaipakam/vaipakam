@@ -10,7 +10,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
+import {
+  chmodSync, closeSync, existsSync, fstatSync, mkdtempSync,
+  openSync, readFileSync, statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -447,11 +450,19 @@ test('decrypted restore material is staged owner-only (r12)', () => {
   assert.equal(mode(path.dirname(written[0].local)), 0o700);
 
   // A REUSED staging tree must be tightened too: creation-time mode
-  // options only apply to new inodes (r13).
+  // options only apply to new inodes (r13) — and reused FILES must be
+  // recreated, not written through, since chmod cannot revoke a
+  // descriptor another account already holds on the old inode (r14).
   chmodSync(entries[0].file, 0o644);
   chmodSync(path.dirname(entries[0].file), 0o755);
   chmodSync(written[0].local, 0o644);
   chmodSync(path.dirname(written[0].local), 0o755);
+  // Model the attack: another account pre-opened the loose files.
+  // Holding the fds pins the old inodes, so a genuine recreation MUST
+  // land on different inodes — and the held descriptors never see the
+  // new plaintext.
+  const staleSqlFd = openSync(entries[0].file, 'r');
+  const stalePdfFd = openSync(written[0].local, 'r');
   convertD1({ version: 1, d1: { archive: baselineArchive() } }, dir);
   materializeR2(
     { version: 1, d1: {}, r2: { objects: [r2Fixture(Buffer.from('%PDF-1.4 fixture'))] } },
@@ -461,6 +472,10 @@ test('decrypted restore material is staged owner-only (r12)', () => {
   assert.equal(mode(path.dirname(entries[0].file)), 0o700);
   assert.equal(mode(written[0].local), 0o600);
   assert.equal(mode(path.dirname(written[0].local)), 0o700);
+  assert.notEqual(statSync(entries[0].file).ino, fstatSync(staleSqlFd).ino);
+  assert.notEqual(statSync(written[0].local).ino, fstatSync(stalePdfFd).ino);
+  closeSync(staleSqlFd);
+  closeSync(stalePdfFd);
 });
 
 test('an archived schema that omits a live column is rejected (r13)', () => {

@@ -38,7 +38,7 @@
  *     [--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]
  */
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -461,8 +461,12 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     for (const table of applyOrder(tables)) {
       const sql = tableToSql(table);
       const file = path.join(dir, `${table.name}.sql`);
-      writeFileSync(file, sql, { mode: 0o600 });
-      chmodSync(file, 0o600);
+      // Fresh inode, never write-through: a reused predictable file
+      // could already be held open by another local account, and
+      // chmod cannot revoke an open descriptor. rm + 'wx' also kills
+      // a planted symlink instead of following it (Codex #1484 r14).
+      rmSync(file, { force: true });
+      writeFileSync(file, sql, { mode: 0o600, flag: 'wx' });
       entries.push({
         name: table.name,
         file,
@@ -558,12 +562,15 @@ export function materializeR2(archive, outDir) {
     }
     // Owner-only, same as the D1 staging: these are the decrypted
     // legal documents themselves (Codex #1484 r12). chmod as well as
-    // mode — a reused staging tree keeps its old loose modes (r13).
+    // mode — a reused staging tree keeps its old loose modes (r13) —
+    // and always a FRESH inode: chmod cannot revoke a descriptor
+    // another account already holds on a reused predictable path, and
+    // rm + 'wx' refuses to follow a planted symlink (r14).
     mkdirSync(path.dirname(local), { recursive: true, mode: 0o700 });
     chmodSync(root, 0o700);
     chmodSync(path.dirname(local), 0o700);
-    writeFileSync(local, bytes, { mode: 0o600 });
-    chmodSync(local, 0o600);
+    rmSync(local, { force: true });
+    writeFileSync(local, bytes, { mode: 0o600, flag: 'wx' });
     written.push({ key: obj.key, local, size: bytes.length });
   }
   return written;
