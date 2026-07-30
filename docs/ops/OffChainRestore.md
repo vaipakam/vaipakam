@@ -381,7 +381,26 @@ then deploy.
    includes both public surfaces — `apps/defi` and `apps/www` are
    **Workers Static Assets** deployments, NOT Pages projects, so nothing
    in their configs attaches a domain and deploying them leaves the sites
-   reachable only on their `*.workers.dev` URLs. Bind, after deploying:
+   reachable only on their `*.workers.dev` URLs.
+
+   **Bind these in §7 step 4, NOT here.** The list below is the inventory of
+   what must eventually be bound; it is not a step to perform at this point
+   in the restore. Binding the public hostnames right after these early
+   deploys puts the production origins in front of a migrated-but-EMPTY
+   database for the hours §§4–7 take to restore and verify it — and the
+   agent's HTTP write endpoints stay live even with its cron disabled, so
+   users can create thresholds, links, diagnostics and tickets while those
+   same tables are being imported, producing conflicts and a mixed state
+   nothing has checked.
+
+   Reaching the Workers before then is still necessary — the §7 smoke test
+   has to hit them — so use their `*.workers.dev` origins for every
+   pre-cutover build and check, and switch `apps/defi/.env.production` to
+   the real hostnames as part of the §7 cutover. Leaving the zone inactive
+   without staging those temporary origins is the failure in the other
+   direction: the smoke test then has nothing to reach.
+
+   The inventory, for §7 step 4:
 
    - `agent.vaipakam.com` → `vaipakam-agent`
    - `defi.vaipakam.com` → `vaipakam-defi`
@@ -538,9 +557,14 @@ then deploy.
 
    THEN provision origins — this is a real pause, not a formality:
 
-   - create `apps/agent`'s custom domain (its Wrangler config declares no
-     route, so nothing binds it automatically);
-   - note the new `indexer` and `agent` subdomains;
+   - do **NOT** create `apps/agent`'s custom domain here. The step-8 warning
+     moves that binding to §7 step 4, and this instruction contradicted it —
+     following the runbook in order still published the agent's HTTP write
+     endpoints before §§4–6 restore the database, letting users insert
+     thresholds, Telegram links, diagnostics and tickets into the very
+     tables being imported and row-counted. Use its `*.workers.dev` origin
+     for the pre-cutover build and bind the real hostname in §7;
+   - note the new `indexer` subdomain, and the agent's `workers.dev` origin;
    - set `VITE_INDEXER_ORIGIN` / `VITE_AGENT_ORIGIN` in
      `apps/defi/.env.production`.
 
@@ -1059,6 +1083,34 @@ caught at the cheapest stage.
    Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way, and
    only if they were on before.
 
+   **Then restore the keeper's schedule — nothing else in this document
+   does.** §1 step 9 replaced it with `"crons": []`, §7a step 1 restores
+   only the *agent's* (deliberately: the keeper's schedule signs, so it is
+   armed last), and the indexer's is restored in §6. `wrangler secret put`
+   writes a secret; it does not register trigger events. Without this the
+   restore finishes with every flag correct and every keeper tick stopped —
+   liquidation, matching, remittance, commitment reporting and the daily
+   snapshot all silently dead, with the settings readback showing green.
+
+   ```bash
+   ( cd apps/keeper
+     # put "triggers": { "crons": ["* * * * *"] } back in wrangler.jsonc
+     wrangler deploy --keep-vars
+     wrangler deployments list | head )
+   ```
+
+   Confirm the schedule is registered before believing a tick will come:
+
+   ```bash
+   curl -sS -X GET -K - <<'HDR' \
+     "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/vaipakam-keeper/schedules" | jq '.result'
+   header = "Authorization: Bearer $CF_API_TOKEN"
+   HDR
+   ```
+
+   An empty `schedules` array here means the deploy did not carry the
+   trigger, and no amount of waiting will produce a tick.
+
    `REWARD_REMIT_ENABLED` has two further prerequisites, and on a
    NON-compromise restore **both are normally already satisfied** — so
    VERIFY them rather than assuming they need rebuilding:
@@ -1121,9 +1173,31 @@ caught at the cheapest stage.
    ```
 
    Note the settings endpoint lists a `secret_text` binding by NAME with no
-   value — which is enough for the question that matters here ("is it set?")
-   and is why the readback is a presence check for `KEEPER_ENABLED` rather
-   than a value check. Only genuine `plain_text` vars show their values.
+   value. Only genuine `plain_text` vars show their values.
+
+   **So this readback proves the binding exists and nothing about what it
+   says, which is not enough.** `wrangler secret put` accepts whatever is
+   typed at the prompt: `ture`, `True`, a trailing space, a pasted newline.
+   Every one of those creates a perfectly healthy-looking `secret_text`
+   binding that `isKeeperEnabled()` evaluates as **false**. The guards then
+   return silently — that is the documented behaviour two paragraphs down —
+   so neither this check nor a quiet log tail can tell a typo from a
+   deliberate "off", and the restore completes with signing duties dark.
+
+   A presence check cannot close this; only the running Worker can say how
+   it resolved the value. After the keeper's schedule is restored above,
+   confirm from the pass itself:
+
+   ```bash
+   ( cd apps/keeper && wrangler tail --format pretty ) &
+   # Wait for one tick. An ARMED keeper logs its pass start.
+   # A keeper reading the flag as false logs the skip line instead.
+   ```
+
+   If the tail shows the skip line, the flag is present and wrong — re-enter
+   it with `wrangler secret put KEEPER_ENABLED` and watch another tick. Do
+   not conclude the restore is complete until a tick has been observed doing
+   work, for each flag you intended to arm.
 
    Confirm each flag you intended is present and, where the value is
    visible, reads what you meant.

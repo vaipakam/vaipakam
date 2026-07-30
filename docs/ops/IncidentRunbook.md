@@ -715,39 +715,48 @@ subscriber stay put, and this whole section collapses to a two-line secret
 swap. Until then, plan for migration. If a rotation is foreseeable rather
 than an emergency, landing #1456 first is strictly better.
 
-### Never redeploy the keeper bare
+### How the keeper's arming flags are actually held
 
-**Any `wrangler deploy` of `apps/keeper` without `--keep-vars` silently
-disarms it.** Both rotations above redeploy the keeper, which is how this
-became an incident-runbook rule rather than a deploy footnote: a rotation
-performed correctly, under pressure, would leave the keeper dark.
+**An earlier version of this section had this backwards, and its advice
+would have created the very hazard it warned about.** It is corrected here
+rather than quietly deleted, because the reasoning is the useful part.
 
-`wrangler deploy --help` on the pinned version states it outright —
-*"When not used (or set to false), Wrangler will delete all vars before
-setting those found in the Wrangler configuration."* Each deploy rebuilds
-the variable set from the committed config, and
-`apps/keeper/wrangler.jsonc` commits only `TG_BOT_USERNAME`.
-`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED` and `REWARD_COMMIT_ENABLED` are
-operator-managed and **not** in the file, so a bare deploy deletes all
-three. Autonomous liquidation, matching, liquidity-confidence submits,
-auto-lifecycle, remittance and commitment reporting all stop.
+The claim was: a bare `wrangler deploy` of `apps/keeper` deletes
+`KEEPER_ENABLED` and silently disarms the keeper, so always pass
+`--keep-vars` — and better still, commit the flags into `wrangler.jsonc`'s
+`vars`.
 
-There is no error and no warning. `isKeeperEnabled()` simply returns
-false, which is indistinguishable from "deliberately off" — so the keeper
-can stay dark indefinitely after a successful-looking incident response.
+The `--help` text quoted in support of it is real and says what it was said
+to say: *"When not used (or set to false), Wrangler will delete all vars
+before setting those found in the Wrangler configuration."* The error was
+in the premise, not the citation. **That sentence governs plain `vars`, and
+`KEEPER_ENABLED` is not one.** Verified against the live deployment
+(2026-07-30): on `vaipakam-keeper` it is a **`secret_text`** binding,
+`KEEPER_PRIVATE_KEY` is a `secrets_store_secret`, and `TG_BOT_USERNAME` is
+the only genuine `plain_text` var. Secrets are not rebuilt from the
+committed config and a bare deploy does not touch them.
 
-Two ways to be safe, and the second is better:
+So: a bare keeper deploy does **not** disarm the keeper, `--keep-vars` is
+not what protects it, and the recommendation to move the flags into `vars`
+would have converted a binding that is currently safe into one that a later
+bare deploy really would delete. It was the one change that could have made
+the documented failure possible.
 
-- pass `--keep-vars` on every keeper deploy, as the steps above now do; or
-- commit the intended values into `wrangler.jsonc`'s `vars`, after which
-  a bare deploy restores them from config and the flag needs no ceremony.
+What the source of the confusion is, and it is worth knowing:
+`apps/keeper/wrangler.jsonc` describes all three flags as
+"operator-managed vars (non-secret config — plain `vars`)". The deployment
+does not match that comment. **The comment is wrong, not the deployment** —
+correcting it is #1465, which is now a comment fix rather than a config
+change.
 
-The second removes the hazard instead of routing around it, and it makes
-the live arming state visible in review rather than only in the
-dashboard. It is a deploy-config change rather than a runbook edit, so it
-is tracked separately as **#1465** — which also covers the other keeper
-deploy sites this rule reaches (the routine `cf-keeper` phase in the
-Deployment Runbook, and `FlashLoanLiquidatorRollout.md`).
+`--keep-vars` is left on the rotation steps above. It is harmless, it is
+correct for `TG_BOT_USERNAME`, and a deploy flag that preserves state is
+not worth removing under incident pressure — but do not treat it as the
+thing keeping the keeper armed.
+
+The readback below still matters, for a different reason than originally
+given: not because a deploy may have deleted a flag, but because a rotation
+may have set one wrong.
 
 After **any** keeper redeploy, confirm the flags survived by reading the
 deployed variables back — see `OffChainRestore.md` §7a step 4 for the
