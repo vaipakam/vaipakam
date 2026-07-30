@@ -99,6 +99,33 @@ const KNOWN_LZ_TABLES = new Set(['lz_alert_state', 'scan_cursor', 'oft_balance_h
 // parent destroys live child rows, so an archive that carries the
 // parent but not a child cannot be applied without silent child loss.
 const CASCADE_CHILDREN = ['notify_state', 'pre_grace_notify_state'];
+// The FK columns those children share with the parent.
+const CASCADE_FK_COLUMNS = ['wallet', 'chain_id'];
+
+// Every era of the backup emits these unconditionally, even at zero
+// rows (`backup.ts` ARCHIVE_TABLES_REQUIRED minus the era-gated
+// additions). A d1.archive that lacks any of them is truncated or
+// hostile — `[]` is exactly as wrong as a missing field, and the r1
+// required-section guard alone accepted it (Codex #1484 r2).
+const BASELINE_TABLES = [
+  'diag_errors',
+  'diag_legal_holds',
+  'diag_legal_hold_audit',
+  'user_thresholds',
+  'notify_state',
+  'telegram_links',
+];
+// Era-gated: absent from archives older than their rollout — warn.
+// (pre_grace_notify_state's era gap is warned about by the cascade
+// check below, with the cascade-specific consequence spelled out.)
+const ERA_GATED_TABLES = {
+  support_tickets: 'migration 0028 (#1040)',
+};
+
+// The archived legal-hold tables whose rows carry `legal_doc_ref`
+// (the R2 bucket key — `diagErasure.ts`: "the bucket key becomes the
+// hold's legal_doc_ref").
+const LEGAL_REF_TABLES = ['diag_legal_holds', 'diag_legal_hold_audit'];
 
 // ── Errors ────────────────────────────────────────────────────────────
 
@@ -211,13 +238,39 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
   for (const { tables, database, subdir, allowed } of sections) {
     if (tables === undefined) continue;
     if (!Array.isArray(tables)) fail(`archive d1 section for ${database} is not an array`);
-    const names = new Set(tables.map((t) => t?.name));
+    const nameList = tables.map((t) => t?.name);
+    const names = new Set(nameList);
     for (const t of names) {
       if (!allowed.has(t)) {
         fail(
           `archive names table ${JSON.stringify(t)} which the backup never exports to this ` +
             `section — wrong or hostile archive; refusing to emit a destructive batch for it`,
         );
+      }
+    }
+    // The backup emits every table exactly once. Duplicates would
+    // silently collapse (last-writer-wins on the output file while the
+    // printed commands advertise stale row counts) — reject instead
+    // (Codex #1484 r2).
+    if (names.size !== nameList.length) {
+      const dupes = nameList.filter((n, i) => nameList.indexOf(n) !== i);
+      fail(`archive repeats table entr${dupes.length > 1 ? 'ies' : 'y'} ${[...new Set(dupes)].join(', ')} — the backup emits each table exactly once; refusing`);
+    }
+    // Baseline completeness for the main section: every era of the
+    // backup carries these even at zero rows, so `[]` or a partial
+    // set is a truncated/hostile archive, not a small one.
+    if (database === 'vaipakam-archive') {
+      const missingBaseline = BASELINE_TABLES.filter((t) => !names.has(t));
+      if (missingBaseline.length > 0) {
+        fail(
+          `archive is missing baseline table(s) ${missingBaseline.join(', ')} — the backup ` +
+            `emits these unconditionally in every era, so this archive is truncated or hostile`,
+        );
+      }
+      for (const [t, since] of Object.entries(ERA_GATED_TABLES)) {
+        if (!names.has(t)) {
+          console.warn(`⚠ archive lacks ${t} (added ${since}) — an archive from before that is expected; anything newer is suspicious.`);
+        }
       }
     }
     // Cascade completeness: the parent's replace-DELETE destroys live
@@ -240,6 +293,33 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
               `cascade-erases live ${child} rows with nothing to re-import — dependency-` +
               `incomplete archive, refusing`,
           );
+        }
+      }
+      // Name presence is not dependency CONSISTENCY: the backup
+      // exports tables in separate queries, so a parent+child pair
+      // inserted between those queries can leave a child key with no
+      // parent row in the same archive. Importing that batch commits
+      // the parent (cascade-erasing live children) and then fails the
+      // child's FK constraint — a partially-restored database. Check
+      // the archived relation itself before emitting anything
+      // (Codex #1484 r2).
+      const parent = tables.find((t) => t.name === 'user_thresholds');
+      const parentKeys = new Set(
+        parent.rows.map((r) => CASCADE_FK_COLUMNS.map((c) => String(r[c])).join('\u001f')),
+      );
+      for (const child of CASCADE_CHILDREN) {
+        const childTable = tables.find((t) => t.name === child);
+        if (!childTable) continue;
+        for (const [i, row] of childTable.rows.entries()) {
+          const key = CASCADE_FK_COLUMNS.map((c) => String(row[c])).join('\u001f');
+          if (!parentKeys.has(key)) {
+            fail(
+              `${child} row ${i} references (${CASCADE_FK_COLUMNS.map((c) => `${c}=${row[c]}`).join(', ')}) ` +
+                `which is absent from the archived user_thresholds — the archive's own FK ` +
+                `relation is inconsistent (snapshot race or tampering); importing it would ` +
+                `commit the parent and then fail the child mid-restore, refusing`,
+            );
+          }
         }
       }
     }
@@ -324,11 +404,42 @@ export function materializeR2(archive, outDir) {
   return written;
 }
 
+/** Every non-null `legal_doc_ref` in the archived legal-hold tables
+ *  must resolve to an archived R2 object. The backup exports D1 and R2
+ *  independently, so an object deleted before the nightly leaves an
+ *  internally consistent archive whose holds reference a document
+ *  that no longer exists ANYWHERE — a restore that reports success
+ *  over that is the unrecoverable-legal-document failure this whole
+ *  pipeline exists to prevent (Codex #1484 r2). Returns the missing
+ *  refs (with their table) for the caller to fail on. */
+export function missingLegalDocRefs(archive) {
+  const r2Keys = new Set((archive?.r2?.objects ?? []).map((o) => o.key));
+  const missing = [];
+  for (const table of archive?.d1?.archive ?? []) {
+    if (!LEGAL_REF_TABLES.includes(table?.name)) continue;
+    for (const row of table.rows ?? []) {
+      const ref = row.legal_doc_ref;
+      if (ref !== null && ref !== undefined && ref !== '' && !r2Keys.has(ref)) {
+        missing.push({ table: table.name, ref });
+      }
+    }
+  }
+  return missing;
+}
+
 /** Upload each materialized object. argv ARRAY, never a shell string —
- *  no shell parsing means no escape rules to get wrong (§5 pitfall 2). */
+ *  no shell parsing means no escape rules to get wrong (§5 pitfall 2).
+ *  `--content-type application/pdf` restores the httpMetadata the
+ *  originals were stored with (`diagLegalDoc.ts`) — wrangler only
+ *  forwards an explicitly supplied value, and the key shape already
+ *  guarantees every vault object is a PDF (Codex #1484 r2). */
 export function uploadR2(written, { remote = true, spawn = spawnSync } = {}) {
   for (const { key, local } of written) {
-    const args = ['r2', 'object', 'put', `${R2_BUCKET}/${key}`, '--file', local];
+    const args = [
+      'r2', 'object', 'put', `${R2_BUCKET}/${key}`,
+      '--file', local,
+      '--content-type', 'application/pdf',
+    ];
     if (remote) args.push('--remote');
     const r = spawn('wrangler', args, { stdio: 'inherit' });
     if (r.status !== 0) {
@@ -376,12 +487,28 @@ export function main(argv) {
   const d1 = convertD1(archive, outDir, { lzDatabase });
   const r2 = materializeR2(archive, outDir);
 
+  // Cross-halves check: legal holds must not reference documents the
+  // archive does not carry.
+  const missingDocs = missingLegalDocRefs(archive);
+  if (missingDocs.length > 0) {
+    for (const { table, ref } of missingDocs) {
+      console.error(`✗ ${table} references ${ref} — NOT in the archive's R2 objects`);
+    }
+    fail(
+      `${missingDocs.length} legal-hold row(s) reference document(s) this archive does not ` +
+        `carry — restoring would produce holds whose authorizing documents are permanently ` +
+        `missing. Pick a different archive, or escalate: this may be evidence of pre-backup ` +
+        `deletion in the vault`,
+    );
+  }
+
   console.log(`\nD1: ${d1.length} table batch(es) written. Apply IN THIS ORDER`);
   console.log('(parents before children — OffChainRestore.md §4), then verify');
   console.log('each post-import COUNT(*) EQUALS the row count printed here:\n');
+  const locality = remote ? '--remote' : '--local';
   for (const [i, e] of d1.entries()) {
     console.log(
-      `  ${i + 1}. wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} --remote   # ${e.rowCount} rows`,
+      `  ${i + 1}. wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} ${locality}   # ${e.rowCount} rows`,
     );
   }
   const r2Bytes = r2.reduce((n, o) => n + o.size, 0);

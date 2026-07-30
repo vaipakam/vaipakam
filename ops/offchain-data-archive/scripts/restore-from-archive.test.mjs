@@ -20,6 +20,7 @@ import {
   applyOrder,
   convertD1,
   materializeR2,
+  missingLegalDocRefs,
   shQuote,
   sqlLiteral,
   tableToSql,
@@ -53,6 +54,20 @@ function r2Fixture(bytes, key) {
 
 function outDir() {
   return mkdtempSync(path.join(tmpdir(), 'restore-test-'));
+}
+
+/** A minimal but BASELINE-COMPLETE d1.archive — every table the backup
+ *  emits unconditionally, with FK-consistent rows. Tests override /
+ *  extend from here; a smaller archive is (correctly) rejected. */
+function baselineArchive() {
+  return [
+    tableFixture('diag_errors', ['id'], []),
+    tableFixture('diag_legal_holds', ['id', 'legal_doc_ref'], []),
+    tableFixture('diag_legal_hold_audit', ['id', 'legal_doc_ref'], []),
+    tableFixture('user_thresholds', ['wallet', 'chain_id'], [{ wallet: '0xa', chain_id: 8453 }]),
+    tableFixture('notify_state', ['wallet', 'chain_id'], [{ wallet: '0xa', chain_id: 8453 }]),
+    tableFixture('telegram_links', ['wallet'], []),
+  ];
 }
 
 // ── sqlLiteral ────────────────────────────────────────────────────────
@@ -115,25 +130,43 @@ test('convertD1 writes files in apply order and routes lzAlerts separately', () 
   const entries = convertD1(
     {
       d1: {
-        archive: [
-          tableFixture('notify_state', ['a'], [{ a: 1 }]),
-          tableFixture('user_thresholds', ['a'], [{ a: 2 }]),
-        ],
+        archive: baselineArchive(),
         lzAlerts: [tableFixture('lz_alert_state', ['a'], [{ a: 3 }])],
       },
     },
     dir,
+    { lzDatabase: 'my-recreated-lz-db' },
   );
-  assert.deepEqual(
-    entries.map((e) => [e.name, e.database]),
-    [
-      ['user_thresholds', 'vaipakam-archive'],
-      ['notify_state', 'vaipakam-archive'],
-      ['lz_alert_state', 'vaipakam-lz-alerts-db'],
-    ],
-  );
+  assert.equal(entries[0].name, 'user_thresholds'); // parent first
+  const notifyIdx = entries.findIndex((e) => e.name === 'notify_state');
+  assert.ok(notifyIdx > 0);
+  const lz = entries.at(-1);
+  assert.deepEqual([lz.name, lz.database], ['lz_alert_state', 'my-recreated-lz-db']);
   const sql = readFileSync(entries[0].file, 'utf8');
   assert.match(sql, /^DELETE FROM "user_thresholds";$/m);
+});
+
+test('an empty or baseline-incomplete d1.archive is truncated, not small', () => {
+  const dir = outDir();
+  assert.throws(() => convertD1({ d1: { archive: [] } }, dir), /baseline/);
+  const missingNotify = baselineArchive().filter((t) => t.name !== 'notify_state');
+  assert.throws(() => convertD1({ d1: { archive: missingNotify } }, dir), /baseline/);
+});
+
+test('duplicate table entries are rejected, not last-writer-wins', () => {
+  const dir = outDir();
+  const dup = [...baselineArchive(), tableFixture('telegram_links', ['wallet'], [{ wallet: '0xb' }])];
+  assert.throws(() => convertD1({ d1: { archive: dup } }, dir), /exactly once/);
+});
+
+test('a child row whose FK key is absent from the archived parent is fatal', () => {
+  const dir = outDir();
+  const tables = baselineArchive();
+  tables
+    .find((t) => t.name === 'notify_state')
+    .rows.push({ wallet: '0xORPHAN', chain_id: 1 });
+  tables.find((t) => t.name === 'notify_state').rowCount = 2;
+  assert.throws(() => convertD1({ d1: { archive: tables } }, dir), /inconsistent/);
 });
 
 // ── R2 key validation ─────────────────────────────────────────────────
@@ -215,14 +248,14 @@ test('shQuote yields one shell argument for hostile paths', () => {
 
 // ── upload ────────────────────────────────────────────────────────────
 
-test('uploads via argv array and treats a non-zero exit as fatal', () => {
+test('uploads via argv array, restoring content-type; non-zero exit is fatal', () => {
   const calls = [];
   const okSpawn = (cmd, args) => (calls.push([cmd, args]), { status: 0 });
   uploadR2([{ key: `legal-holds/${HEX64}.pdf`, local: '/tmp/x' }], { spawn: okSpawn });
   assert.deepEqual(calls[0][0], 'wrangler');
   assert.deepEqual(calls[0][1], [
     'r2', 'object', 'put', `vaipakam-legal-vault/legal-holds/${HEX64}.pdf`,
-    '--file', '/tmp/x', '--remote',
+    '--file', '/tmp/x', '--content-type', 'application/pdf', '--remote',
   ]);
 
   const badSpawn = () => ({ status: 1 });
@@ -230,4 +263,21 @@ test('uploads via argv array and treats a non-zero exit as fatal', () => {
     () => uploadR2([{ key: `legal-holds/${HEX64}.pdf`, local: '/tmp/x' }], { spawn: badSpawn }),
     RestoreError,
   );
+});
+
+test('legal-hold rows referencing documents the archive lacks are caught', () => {
+  const doc = r2Fixture(Buffer.from('%PDF doc'));
+  const holds = tableFixture('diag_legal_holds', ['id', 'legal_doc_ref'], [
+    { id: 1, legal_doc_ref: doc.key },
+    { id: 2, legal_doc_ref: null },
+  ]);
+  const ok = { d1: { archive: [holds] }, r2: { objects: [doc] } };
+  assert.deepEqual(missingLegalDocRefs(ok), []);
+
+  const gone = `legal-holds/${'b'.repeat(64)}.pdf`;
+  holds.rows.push({ id: 3, legal_doc_ref: gone });
+  holds.rowCount = 3;
+  assert.deepEqual(missingLegalDocRefs({ d1: { archive: [holds] }, r2: { objects: [doc] } }), [
+    { table: 'diag_legal_holds', ref: gone },
+  ]);
 });
