@@ -476,6 +476,24 @@ export function invalidLegalDocRefs(archive) {
     if (!LEGAL_REF_TABLES.includes(table?.name)) continue;
     for (const row of table.rows ?? []) {
       const ref = row.legal_doc_ref;
+      // Action-domain FIRST, independent of document presence: a
+      // corrupted/hostile audit row with an unknown action and a
+      // perfectly valid document pair is still an impossible record —
+      // the production parser admits exactly three strings
+      // (Codex #1484 r8, extending r7's documentless-only check).
+      if (
+        table.name === 'diag_legal_hold_audit' &&
+        row.action !== 'place' &&
+        row.action !== 'lift' &&
+        row.action !== 'set-disclosure'
+      ) {
+        invalid.push({
+          table: table.name,
+          ref,
+          problem: `audit action ${JSON.stringify(row.action)} outside the production domain ('place'/'lift'/'set-disclosure')`,
+        });
+        continue;
+      }
       if (ref === null || ref === undefined) {
         // A HASH without a ref is never a writer-produced shape
         // (Codex #1484 r4). And null/null is table-SPECIFIC
@@ -497,18 +515,13 @@ export function invalidLegalDocRefs(archive) {
             ref,
             problem: 'current hold with no authorizing document (place requires one)',
           });
-        } else if (
-          table.name === 'diag_legal_hold_audit' &&
-          row.action !== 'lift' &&
-          row.action !== 'set-disclosure'
-        ) {
+        } else if (table.name === 'diag_legal_hold_audit' && row.action === 'place') {
+          // Domain already enforced above, so doc-less here means
+          // exactly one invalid shape: a placement without evidence.
           invalid.push({
             table: table.name,
             ref,
-            problem:
-              row.action === 'place'
-                ? "audit row for a 'place' with no authorizing document"
-                : `doc-less audit row with action ${JSON.stringify(row.action)} outside the 'lift'/'set-disclosure' domain`,
+            problem: "audit row for a 'place' with no authorizing document",
           });
         }
         continue;
@@ -556,21 +569,47 @@ export function invalidLegalDocRefs(archive) {
  *  r7). Membership semantics from `diagErasure.ts`: `place` upserts
  *  the hold row, `lift` DELETEs it, `set-disclosure` leaves
  *  membership alone. Latest action per wallet = max (at, id) — the
- *  audit table is append-only autoincrement. Returns
- *  {walletHash, problem} entries for the caller to fail on. */
+ *  audit table is append-only autoincrement.
+ *
+ *  Disclosure is reconciled too (Codex #1484 r8): a `set-disclosure`
+ *  landing between the two table exports can restore a hold whose
+ *  disclosure flag/note the latest audit already revoked — exposing a
+ *  gagged hold's retained-by-law note, the exact outcome the flag
+ *  exists to prevent. Replay from the audit: a fresh `place` starts at
+ *  disclosure_allowed=0 / note NULL, a re-place upsert leaves
+ *  disclosure untouched, and a `lift` DELETEs the row — so the
+ *  expected state for a held wallet is the latest `set-disclosure`
+ *  AFTER the last `lift` (writer detail format
+ *  `disclosure_allowed=<0|1>; note=<note ?? ''>`), or the 0/'' fresh
+ *  default when there is none. Returns {walletHash, problem} entries
+ *  for the caller to fail on. */
 export function reconcileLegalHolds(archive) {
   const tables = archive?.d1?.archive ?? [];
   const holds = tables.find((t) => t?.name === 'diag_legal_holds');
   const audit = tables.find((t) => t?.name === 'diag_legal_hold_audit');
   if (!holds || !audit) return []; // baseline check already fails these
   const holdByWallet = new Map(holds.rows.map((r) => [r.wallet_hash, r]));
+  const after = (a, b) => a.at > b.at || (a.at === b.at && a.id > b.id);
   const latest = new Map(); // wallet_hash -> latest place/lift audit row
+  const lastLift = new Map(); // wallet_hash -> latest lift audit row
   for (const row of audit.rows) {
     if (row.action !== 'place' && row.action !== 'lift') continue;
     const prev = latest.get(row.wallet_hash);
-    if (!prev || row.at > prev.at || (row.at === prev.at && row.id > prev.id)) {
-      latest.set(row.wallet_hash, row);
+    if (!prev || after(row, prev)) latest.set(row.wallet_hash, row);
+    if (row.action === 'lift') {
+      const pl = lastLift.get(row.wallet_hash);
+      if (!pl || after(row, pl)) lastLift.set(row.wallet_hash, row);
     }
+  }
+  // Latest surviving set-disclosure per wallet: rows at or before the
+  // last lift died with the row that lift deleted.
+  const lastDisclosure = new Map();
+  for (const row of audit.rows) {
+    if (row.action !== 'set-disclosure') continue;
+    const lift = lastLift.get(row.wallet_hash);
+    if (lift && !after(row, lift)) continue;
+    const prev = lastDisclosure.get(row.wallet_hash);
+    if (!prev || after(row, prev)) lastDisclosure.set(row.wallet_hash, row);
   }
   const problems = [];
   for (const [wallet, last] of latest) {
@@ -585,11 +624,34 @@ export function reconcileLegalHolds(archive) {
         walletHash: wallet,
         problem: "latest audit is 'lift' but a current hold row exists — restoring resurrects a lifted hold (snapshot race or tampering)",
       });
-    } else if (last.action === 'place' && hold && hold.legal_doc_ref !== last.legal_doc_ref) {
-      problems.push({
-        walletHash: wallet,
-        problem: "current hold's document differs from its latest 'place' audit — the pair is not from one consistent moment",
-      });
+    } else if (last.action === 'place' && hold) {
+      if (hold.legal_doc_ref !== last.legal_doc_ref) {
+        problems.push({
+          walletHash: wallet,
+          problem: "current hold's document differs from its latest 'place' audit — the pair is not from one consistent moment",
+        });
+      }
+      const disc = lastDisclosure.get(wallet);
+      let expectedAllowed = 0;
+      let expectedNote = '';
+      if (disc) {
+        const m = /^disclosure_allowed=([01]); note=(.*)$/s.exec(String(disc.detail ?? ''));
+        if (!m) {
+          problems.push({
+            walletHash: wallet,
+            problem: `latest 'set-disclosure' audit detail ${JSON.stringify(disc.detail)} does not match the writer's structured format — cannot verify the hold's disclosure state`,
+          });
+          continue;
+        }
+        expectedAllowed = Number(m[1]);
+        expectedNote = m[2];
+      }
+      if ((hold.disclosure_allowed ?? 0) !== expectedAllowed || (hold.disclosure_note ?? '') !== expectedNote) {
+        problems.push({
+          walletHash: wallet,
+          problem: "current hold's disclosure flag/note disagrees with the audit replay — restoring could surface (or gag) a retained-by-law note the latest 'set-disclosure' decided otherwise (snapshot race or tampering)",
+        });
+      }
     }
   }
   for (const wallet of holdByWallet.keys()) {

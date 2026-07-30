@@ -193,6 +193,89 @@ test('hold↔audit reconciliation catches snapshot races in both directions', ()
   assert.match(reconcileLegalHolds(orphanHold)[0].problem, /no place\/lift audit/);
 });
 
+test('disclosure state replays from the audit, not from the hold row alone', () => {
+  const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const holdsWith = (rows) =>
+    tableFixture(
+      'diag_legal_holds',
+      ['wallet_hash', 'legal_doc_ref', 'disclosure_allowed', 'disclosure_note'],
+      rows,
+    );
+  const auditWith = (rows) =>
+    tableFixture(
+      'diag_legal_hold_audit',
+      ['id', 'at', 'action', 'wallet_hash', 'legal_doc_ref', 'detail'],
+      rows,
+    );
+  const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
+  const place = (id, at, ref = doc) =>
+    ({ id, at, action: 'place', wallet_hash: 'w1', legal_doc_ref: ref, detail: 'x' });
+  const lift = (id, at) =>
+    ({ id, at, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null, detail: 'x' });
+  const setDisc = (id, at, detail) =>
+    ({ id, at, action: 'set-disclosure', wallet_hash: 'w1', legal_doc_ref: null, detail });
+
+  // Consistent: the hold reflects the latest set-disclosure.
+  const consistent = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 1, disclosure_note: 'Retained under subpoena' }]),
+    auditWith([place(1, 100), setDisc(2, 200, 'disclosure_allowed=1; note=Retained under subpoena')]),
+  );
+  assert.deepEqual(reconcileLegalHolds(consistent), []);
+
+  // Revoke landed between the two exports: holds still says 1 but the
+  // latest audit turned disclosure off — restoring would surface a
+  // gagged hold's note.
+  const revokedRace = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 1, disclosure_note: 'Retained under subpoena' }]),
+    auditWith([
+      place(1, 100),
+      setDisc(2, 200, 'disclosure_allowed=1; note=Retained under subpoena'),
+      setDisc(3, 300, 'disclosure_allowed=0; note='),
+    ]),
+  );
+  assert.match(reconcileLegalHolds(revokedRace)[0].problem, /disclosure/);
+
+  // Same flag, drifted note — still not one consistent moment.
+  const noteDrift = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 1, disclosure_note: 'old wording' }]),
+    auditWith([place(1, 100), setDisc(2, 200, 'disclosure_allowed=1; note=new wording')]),
+  );
+  assert.match(reconcileLegalHolds(noteDrift)[0].problem, /disclosure/);
+
+  // A set-disclosure BEFORE the last lift died with the deleted row:
+  // the re-placed hold's fresh 0/NULL default is the expected state.
+  const rePlaced = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 0, disclosure_note: null }]),
+    auditWith([
+      place(1, 100),
+      setDisc(2, 150, 'disclosure_allowed=1; note=short-lived'),
+      lift(3, 200),
+      place(4, 300),
+    ]),
+  );
+  assert.deepEqual(reconcileLegalHolds(rePlaced), []);
+
+  // …and a hold claiming disclosure with NO surviving set-disclosure
+  // audit is flagged, whatever pre-lift history exists.
+  const armedFromNowhere = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 1, disclosure_note: 'short-lived' }]),
+    auditWith([
+      place(1, 100),
+      setDisc(2, 150, 'disclosure_allowed=1; note=short-lived'),
+      lift(3, 200),
+      place(4, 300),
+    ]),
+  );
+  assert.match(reconcileLegalHolds(armedFromNowhere)[0].problem, /disclosure/);
+
+  // Off-format detail can't be verified — fail, don't guess.
+  const mangledDetail = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 0, disclosure_note: null }]),
+    auditWith([place(1, 100), setDisc(2, 200, 'oops not the writer format')]),
+  );
+  assert.match(reconcileLegalHolds(mangledDetail)[0].problem, /structured format/);
+});
+
 test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {
   const dir = outDir();
   const entries = convertD1(
@@ -379,6 +462,19 @@ test('legal-hold reference PAIR invariants: missing, malformed, and sha-mismatch
       String(action),
     );
   }
+
+  // Domain enforcement is document-INDEPENDENT (r8): an unknown
+  // action carrying a perfectly valid document pair is still an
+  // impossible record — the production parser admits three strings.
+  const relabelledWithDoc = tableFixture(
+    'diag_legal_hold_audit',
+    ['id', 'action', 'legal_doc_ref', 'legal_doc_sha256'],
+    [{ id: 9, action: 'unhold', legal_doc_ref: doc.key, legal_doc_sha256: docHash }],
+  );
+  assert.match(
+    invalidLegalDocRefs({ d1: { archive: [relabelledWithDoc] }, r2: { objects: [doc] } })[0].problem,
+    /domain/,
+  );
 
   const gone = `legal-holds/${'b'.repeat(64)}.pdf`;
   holds.rows.push(
