@@ -1240,8 +1240,12 @@ contract RewardRemitLedgerTest is SetupTest {
         (, recycledSent) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
-        // Rewind the counter to reproduce the pre-upgrade shape.
+        // Rewind BOTH appended slots to reproduce the pre-upgrade shape
+        // (#1448 r14). Rewinding only the value would build a state that
+        // cannot occur — a zero stranded total beside a release count that
+        // somehow survived the upgrade — and would hide the count backfill.
         mutator.setReleasedRemitStrandedRaw(0);
+        mutator.setRemitReleasedCountRaw(0);
     }
 
     /// @dev Without the seed, BOTH relations are violated by exactly the
@@ -1826,6 +1830,66 @@ contract RewardRemitLedgerTest is SetupTest {
         assertTrue(appliedAfter, "one-shot is visibly spent");
         assertGt(accum, 0, "and what it recovered is readable");
         assertEq(counted, 1, "one release behind it");
+    }
+
+    /// #1448 r14 — the published pair must not contradict itself. Both
+    /// counters behind it are APPENDED slots, so on a Diamond upgraded in
+    /// place both start at zero with historical releases already behind them.
+    /// The scan recovers the history into `counted`; without the matching
+    /// backfill the tuple would advertise a "lifetime" release count SMALLER
+    /// than the "found so far" subset it is meant to contain — and an
+    /// operator reconciling it against the release history, exactly as the
+    /// runbook instructs, would find it short by every pre-upgrade release.
+    ///
+    /// Asserts the STORED counter (via the getter's own field), not a figure
+    /// derived for display: it is what a later consumer reads.
+    function test_Seed_BackfillsTheLifetimeReleaseCount() public {
+        _preUpgradeReleasedState();
+
+        // Precondition: the shape this exists for. One release is real and
+        // recorded in the reservation, but the lifetime counter cannot see it.
+        (, , , , , uint256 countBefore) =
+            remit.getReleasedRemitStrandedSeedState();
+        assertEq(countBefore, 0, "precondition: appended slot reads zero");
+        assertEq(
+            uint256(remit.getRemitReservation(1).status),
+            3,
+            "precondition: yet the release itself is real and Released"
+        );
+
+        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+
+        (bool applied, , , , uint256 counted, uint256 lifetime) =
+            remit.getReleasedRemitStrandedSeedState();
+        assertTrue(applied, "ceremony completed");
+        assertEq(counted, 1, "the scan found the historical release");
+        assertEq(
+            lifetime,
+            counted,
+            "and the lifetime count was backfilled to match - not left at 0, "
+            "which would make the published tuple self-contradictory"
+        );
+    }
+
+    /// The backfill must not be able to DISCARD releases either — the
+    /// direction the assert covers. A count above what the scan found can
+    /// only mean the two disagree about the history, which must revert rather
+    /// than quietly overwrite. Unreachable through the public surface (the
+    /// race guard blocks completion after any mid-ceremony release), so it is
+    /// reached here by forcing the counter above the scan's own tally.
+    function test_Seed_RefusesToShrinkTheLifetimeReleaseCount() public {
+        _preUpgradeReleasedState();
+        mutator.setRemitReleasedCountRaw(5);
+
+        uint256 seedTo = remit.getRemitReservationNonce();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.SeedWouldShrinkReleasedCount.selector,
+                1,
+                5
+            )
+        );
+        remit.seedReleasedRemitStranded(seedTo);
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

@@ -252,10 +252,16 @@ banner "GATE PASSED"
 # #1448 r12 — printed on BOTH exit paths, so the gate-only mode cannot
 # hand an operator the manual refresh commands without the migration
 # that follows them.
+#
+# #1448 r14 — takes the chain it applies to, because the ceremony is PER
+# DIAMOND: each chain has its own reservation history, so "run it once" is
+# once per chain, not once per invocation.
 print_seed_ceremony() {
-cat <<'EOF'
+cat <<EOF
 
-POST-REFRESH — recycled accounting (any chain with release history):
+POST-REFRESH — recycled accounting${1:+ for $1} (any chain with release history):
+EOF
+cat <<'EOF'
 
   Run ONCE if the reservation history holds ANY released (status-3)
   reservation — walk getRemitReservation(i) over 1..getRemitReservationNonce().
@@ -337,6 +343,17 @@ for slug in $CHAINS; do
     --rpc-url "$rpc" --broadcast --slow \
     || fail "$slug: RefreshAllFacetsInPlace broadcast failed"
 
+  # #1448 r14 — printed HERE, not once at the end. The cut has already
+  # landed: this chain's live Diamond now carries the new selector over a
+  # zero-valued migration slot, so the seed instructions are owed from this
+  # moment on. A later `fail` — the vault upgrade below, or the optional
+  # export in [6] — exits under `set -e` before any end-of-run printing, and
+  # the operator would be left with a refreshed Diamond, two CRITICALs
+  # inbound from the watcher, and no instructions. Owing it per successful
+  # refresh is the only placement that cannot be skipped by a downstream
+  # failure.
+  print_seed_ceremony "$slug"
+
   if [ "$SKIP_VAULT" -eq 0 ]; then
     banner "[5] $slug — UpgradeVaultImplementation (UUPS template)"
     "${NICE[@]}" forge script script/UpgradeVaultImplementation.s.sol --sig "run()" \
@@ -377,7 +394,18 @@ fi
 # The seed is NOT run automatically: it is ADMIN + onlyCanonical, one-shot,
 # and it reverts if the derived total does not reconcile both relations. That
 # refusal is the point — it must not be able to quiet a real discrepancy — so
-# it stays a deliberate operator action with the readback below.
-print_seed_ceremony
+# it stays a deliberate operator action.
+#
+# The instructions themselves were printed above, once per chain, immediately
+# after that chain's cut landed (#1448 r14) — deliberately NOT reprinted here,
+# because reaching this line is not a precondition for owing them.
+cat <<EOF
+
+[7] Post-refresh accounting: the recycled seed ceremony was printed above for
+    each refreshed chain [$CHAINS]. It is owed per chain that has any released
+    (status-3) reservation, and it is one-shot — check with
+    getReleasedRemitStrandedSeedState()'s \`applied\` flag, never the published
+    figure.
+EOF
 
 banner "DONE"

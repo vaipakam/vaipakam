@@ -5897,6 +5897,13 @@ library LibVaipakam {
         //   the completion event under-reports how many releases it found.
         //   Counting every release makes the guard complete on that axis:
         //   nothing can flip a status without moving this.
+        //
+        //   #1448 r14 — being an APPENDED slot, on a Diamond upgraded in place
+        //   this starts at zero and so counts post-upgrade releases only. The
+        //   seed ceremony BACKFILLS it from its full scan at completion, which
+        //   is what makes "lifetime" true rather than aspirational; before
+        //   that it is partial, and the published `applied` flag is how a
+        //   consumer tells the two apart.
         uint256 remitReleasedCount;
         // `recycleStrandedSeedBaselineCount` — the above, pinned when the
         //   ceremony starts, so the guard compares like for like.

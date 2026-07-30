@@ -2367,8 +2367,22 @@ released reservations behind it** — the latter is the count of releases
 actually found, not the reservation nonce, so it can be reconciled
 against the release history independently.
 
-**It cannot be used to quiet a real discrepancy.** On completion the
-figure must reconcile both composition relations in both directions; if
-it does not, the whole ceremony reverts and publishes nothing. It also
-refuses to run twice — once a figure is published, `reset` refuses too,
-so there is no lever that edits an already-published number.
+**It cannot be used to quiet a discrepancy the relations can see.** On
+completion the figure must reconcile both composition relations in both
+directions; if it does not, the whole ceremony reverts and publishes
+nothing. It also refuses to run twice — once a figure is published,
+`reset` refuses too, so there is no lever that edits an already-published
+number.
+
+There is one discrepancy the relations cannot see, so do not read a
+successful seed as proof that the bucket is backed. The allowance the
+scan derives is **gross**: a remittance that was released and then
+executed late — the message arriving after the release, which
+`onRemitAckReceived` leaves in the Released state — has already delivered
+its tokens, yet the scan still counts them as stranded backing. Both
+post-conditions can then pass over a bucket that is genuinely short by
+that amount. Tracked as [#1461](https://github.com/vaipakam/vaipakam/issues/1461);
+`ops/mesh-watcher`'s README records the same limitation on the allowance
+it reads. A seed proves the published figure is *consistent with the
+recorded reservation history*, which is what it is for — not that custody
+is present.

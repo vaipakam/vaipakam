@@ -743,6 +743,16 @@ contract TestMutatorFacet {
             amount;
     }
 
+    /// @notice #1448 r14 test-only — force the lifetime release COUNT. The
+    ///         other half of the pre-upgrade shape: `remitReleasedCount` is
+    ///         an appended slot too, so a Diamond upgraded in place starts it
+    ///         at zero with historical releases already behind it. Rewinding
+    ///         only the value would reproduce a state that cannot occur —
+    ///         a zero total alongside a count that somehow survived.
+    function setRemitReleasedCountRaw(uint256 count) external {
+        LibVaipakam.storageSlot().remitReleasedCount = count;
+    }
+
     /// @notice #1222 M3 B2-d5 test-only — drive the REAL consume path
     ///         (bucket → `paidOutRecycled`), which is what a mirror's claims
     ///         do. Deliberately the genuine {LibVpfiRecycle.consume} rather
