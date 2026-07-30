@@ -125,8 +125,13 @@ verbatim by every later design; the code state has made the need concrete:
    mirror's local `recycleBucket` — but sizing, commitment reserve, and
    consume paths are all `onlyCanonical`. Mirror-absorbed VPFI is parked,
    invisible to `Ā`, funding nothing.
-   ~~*(items 1-3 as written)*~~ **SUPERSEDED by B2-d5 alongside item 4
-   (#1457 r19).** `LibVpfiRecycle.recordChainRecycled` maintains the `Ā`
+   ~~*(items 1-3 as written)*~~ **SUPERSEDED by B1 and B2-a — NOT by B2-d5
+   (#1457 r21).** Verified in git: `recordChainRecycled` and the mirror-report
+   ledger attribution landed in **B1** (`09492a4`, #1413); folding
+   `dayMirrorRecycledCredit` into `Ā` and using mirror availability for two-pass
+   funding landed in **B2-a** (`a82426d`, #1414). B2-d5 (`64964e9`, #1432) added
+   the relocated-custody credit class and resolves item 4 only — r19 attributed
+   all four to it because item 4's strike-through was the nearest label to hand. `LibVpfiRecycle.recordChainRecycled` maintains the `Ā`
    attribution headroom and is reached from BOTH report directions, so
    mirror-absorbed VPFI is no longer invisible to `Ā`: the mirror-report
    ingress is `RewardAggregatorFacet._ingestChainReport`
