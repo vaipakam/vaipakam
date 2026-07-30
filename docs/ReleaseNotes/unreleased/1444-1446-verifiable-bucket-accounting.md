@@ -97,6 +97,34 @@ restarted from the current state. It still refuses to run twice, so
 no lever edits a figure once published. The operator procedure is in
 the Deployment Runbook.
 
+Alongside the amount, the ceremony publishes how many releases were behind
+it, so an operator can reconcile the figure against the release history
+independently instead of taking it on trust. Two counters sit behind that
+tally and both are new, which means a deployment upgraded in place starts
+both at zero with real releases already in its past. The scan now repairs
+both, not just the amount: without that, the platform would advertise a
+"lifetime" release count smaller than the subset the scan had just found,
+and an operator following the reconciliation instructions would find it
+short by every release that predated the upgrade. It also refuses to go the
+other way — a count above what the scan found means the two disagree about
+the history, which stops the ceremony rather than being quietly overwritten.
+
+One limitation of that reconciliation is now stated in the runbook rather
+than left for an operator to discover: the allowance the scan derives is
+*gross*. A remittance released and then delivered late has already handed
+over its tokens, yet the scan still counts them as backing held back, so a
+successful ceremony can complete over a bucket that is genuinely short by
+that amount. A seed proves the published figure agrees with the recorded
+reservation history — which is what it is for — not that the tokens are
+present. Tracked as #1461.
+
+The redeploy helper also prints those instructions per chain the moment
+that chain's upgrade lands, rather than once at the very end of the run. The
+instructions are owed from the moment the upgrade takes effect, and a later
+step failing — the vault upgrade, or the optional artifact re-export — used
+to end the run before anything was printed, leaving an operator with an
+upgraded deployment, two alerts inbound, and no procedure.
+
 One incidental finding worth recording: the new reproduce-the-figure check
 immediately failed against the watcher's own healthy-mesh test fixture,
 because that fixture described a chain reporting less lifetime absorption

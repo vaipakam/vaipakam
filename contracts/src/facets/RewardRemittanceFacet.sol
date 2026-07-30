@@ -1311,8 +1311,14 @@ contract RewardRemittanceFacet is
      * @return accum          Stranded backing accumulated so far (published
      *                        only at completion).
      * @return counted        Released reservations found so far.
-     * @return releasedCount  Lifetime count of releases, the figure the race
-     *                        guard pins against.
+     * @return releasedCount  Lifetime count of releases, and the figure the
+     *                        race guard pins against. On a Diamond upgraded in
+     *                        place the slot is newly appended, so until the
+     *                        ceremony completes this counts POST-UPGRADE
+     *                        releases only; completion backfills it from the
+     *                        full scan (#1448 r14). Read together with
+     *                        `applied`: a true lifetime figure once that is
+     *                        set, a partial one before it.
      */
     function getReleasedRemitStrandedSeedState()
         external
@@ -1381,6 +1387,11 @@ contract RewardRemittanceFacet is
     /// @notice The derived total is below what the counter already holds,
     ///         which would silently discard recorded state.
     error SeedWouldShrinkStrandedTotal(uint256 derived, uint256 current);
+    /// @notice The scanned release count is below the live lifetime count,
+    ///         which would silently discard recorded releases. Unreachable by
+    ///         construction (see the backfill at completion) — asserted
+    ///         because the alternative is assuming it (#1448 r14).
+    error SeedWouldShrinkReleasedCount(uint256 scanned, uint256 current);
     /// @notice `upTo` does not advance the cursor, or runs past the pinned
     ///         target. Ranges must move forward and stay within `1..target`.
     error SeedRangeInvalid(uint256 upTo, uint256 cursor, uint256 target);
@@ -1547,6 +1558,26 @@ contract RewardRemittanceFacet is
             revert SeedWouldShrinkStrandedTotal(accum, current);
         }
         s.recycleReleasedRemitStrandedCumulative = accum;
+
+        // #1448 r14 — the lifetime release COUNT is backfilled here, for the
+        // same reason and by the same argument as the stranded total above.
+        // `remitReleasedCount` is an APPENDED slot: on a Diamond upgraded in
+        // place it starts at zero and therefore counts only post-upgrade
+        // releases, while `counted` covers the whole reservation history. Left
+        // alone, the published pair would be self-contradictory — a "lifetime"
+        // figure SMALLER than the "found so far" subset it is meant to contain,
+        // and unreconcilable against the release history it claims to describe.
+        //
+        // ASSIGN, not add, and it cannot shrink: the scan covered every id in
+        // `1..target`, and no release can have landed after the ceremony began
+        // (the count arm of the race guard would have blocked completion), so
+        // every release this counter already holds is a status-3 reservation
+        // inside the scanned range and is therefore already in `counted`.
+        if (counted < s.remitReleasedCount) {
+            revert SeedWouldShrinkReleasedCount(counted, s.remitReleasedCount);
+        }
+        s.remitReleasedCount = counted;
+
         s.recycleStrandedSeedApplied = true;
 
         // POST-CONDITION, not a comment. If the seed does not actually

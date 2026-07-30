@@ -2167,6 +2167,22 @@
   },
   {
     "type": "error",
+    "name": "SeedWouldShrinkReleasedCount",
+    "inputs": [
+      {
+        "name": "scanned",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SeedWouldShrinkStrandedTotal",
     "inputs": [
       {

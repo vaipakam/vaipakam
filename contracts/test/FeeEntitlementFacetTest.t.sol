@@ -11,6 +11,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -273,6 +274,308 @@ contract FeeEntitlementFacetTest is SetupTest {
         LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
         assertEq(uint8(fe.borrowerMode), uint8(LibVaipakam.FeeEntitlementMode.Full));
         assertEq(uint8(fe.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.Full));
+    }
+
+    // ─── #1369 — matched fills honour the LENDER offer's Full auth ─────────
+
+    /// @dev Post a borrower offer that the canonical lender offer can match:
+    ///      same asset pair, duration and rate, sized so the fill is exactly
+    ///      `PRINCIPAL` and the tariff prices the same `C*` as every direct-
+    ///      accept test in this file.
+    function _createBorrowerErc20Offer() internal returns (uint256) {
+        ERC20Mock(mockCollateralERC20).mint(borrower, PRINCIPAL * 2);
+        vm.prank(borrower);
+        return OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: PRINCIPAL * 2,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: PRINCIPAL * 2,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+    }
+
+    /// A matched fill accepts the BORROWER offer, so before #1369 the lender's
+    /// Full authorization — which lives on their own, separate lender offer —
+    /// was never read: the lender side fell through to the acceptor transient,
+    /// which a match deliberately leaves inactive, and a lender who signed Full
+    /// was resolved as non-Full. Neither charged nor downgraded, silently.
+    ///
+    /// Both sides Full here, so the assertion is the same double absorption a
+    /// direct accept produces. That equivalence is the point: the tariff a
+    /// party pays must not depend on which venue filled their offer.
+    function testMatch_LenderOfferFullIsHonored() public {
+        _config().setFeeEntitlementEnabled(true);
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        uint256 c = _cStar();
+
+        // Each party authorizes Full on the offer THEY created — the only
+        // artifact either of them signed.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            lenderOfferId, true, c, /*allowDowngrade=*/ false
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            borrowerOfferId, true, c, /*allowDowngrade=*/ false
+        );
+
+        address bVault = _vault(borrower);
+        address lVault = _vault(lender);
+        uint256 bBefore = vpfiToken.balanceOf(bVault);
+        uint256 lBefore = vpfiToken.balanceOf(lVault);
+        uint256 bucketBefore = _config().getRecycleBucket();
+
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+
+        assertEq(bBefore - vpfiToken.balanceOf(bVault), c, "borrower C*");
+        assertEq(
+            lBefore - vpfiToken.balanceOf(lVault),
+            c,
+            "the LENDER's own offer authorized Full - a matched fill must "
+            "charge it, not silently resolve the lender as non-Full"
+        );
+        assertEq(
+            _config().getRecycleBucket() - bucketBefore,
+            c * 2,
+            "double absorption on a matched fill, same as a direct accept"
+        );
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(
+            uint8(fe.lenderMode),
+            uint8(LibVaipakam.FeeEntitlementMode.Full),
+            "lender stamped Full"
+        );
+        assertEq(
+            uint8(fe.borrowerMode),
+            uint8(LibVaipakam.FeeEntitlementMode.Full),
+            "borrower stamped Full"
+        );
+    }
+
+    /// The substitution must not leak: a lender who did NOT authorize Full on
+    /// their offer stays non-Full through a match. Without this, "read the
+    /// lender offer" could be satisfied by reading the wrong offer, or by
+    /// defaulting to Full, and the test above would not notice.
+    function testMatch_LenderWithoutFullStaysUncharged() public {
+        _config().setFeeEntitlementEnabled(true);
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        uint256 c = _cStar();
+
+        // Only the BORROWER opts in. The lender's offer stays silent.
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            borrowerOfferId, true, c, /*allowDowngrade=*/ false
+        );
+
+        address lVault = _vault(lender);
+        uint256 lBefore = vpfiToken.balanceOf(lVault);
+        uint256 bucketBefore = _config().getRecycleBucket();
+
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+
+        assertEq(
+            vpfiToken.balanceOf(lVault),
+            lBefore,
+            "a lender who authorized nothing must never be charged"
+        );
+        assertEq(
+            _config().getRecycleBucket() - bucketBefore,
+            c,
+            "single absorption - borrower only"
+        );
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(
+            fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full,
+            "lender not stamped Full"
+        );
+    }
+
+    /// The kill switch must be fail-closed on EVERY venue. A lender who
+    /// armed Full with no downgrade permission has said "charge me or do not
+    /// open this loan"; with the feature off the tariff cannot complete, so
+    /// the fill must revert. Silently continuing as non-Full is named
+    /// Forbidden by the design (rev-14 kill-switch rule).
+    ///
+    /// This is the half #1369 originally missed: it taught the CHARGE path
+    /// where lender auth lives but left the ROUTING predicate reading only
+    /// the accepted (borrower) offer, so with the switch off the tariff was
+    /// never entered at all and the loan opened — while the identical
+    /// authorization taken by a direct accept reverted. The guarantee was
+    /// venue-dependent in exactly the configuration that ships today.
+    function testMatch_LenderStrictFullRevertsWhileFeatureIsOff() public {
+        // Deliberately NOT enabling fee entitlement — that is the point.
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+
+        // The lender arms Full and refuses a downgrade. Only the lender.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            lenderOfferId, true, 1_000 ether, /*allowDowngrade=*/ false
+        );
+
+        vm.expectRevert(LibFeeEntitlement.FeeEntitlementDisabled.selector);
+        OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+    }
+
+    /// The same lender, having permitted a downgrade, must instead open the
+    /// loan un-tariffed rather than revert — so the fix above cannot be
+    /// satisfied by simply failing every matched fill while the switch is off.
+    function testMatch_LenderFullWithDowngradeOpensWhileFeatureIsOff() public {
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            lenderOfferId, true, 1_000 ether, /*allowDowngrade=*/ true
+        );
+
+        address lVault = _vault(lender);
+        uint256 lBefore = vpfiToken.balanceOf(lVault);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+
+        assertEq(
+            vpfiToken.balanceOf(lVault),
+            lBefore,
+            "downgraded: the loan opens and nothing is charged"
+        );
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(
+            fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full,
+            "not stamped Full - the tariff could not complete"
+        );
+    }
+
+    /// The carried lender-offer id must never outlive its match. If it did, a
+    /// LATER direct accept would resolve the lender side from a stale offer —
+    /// charging a lender the tariff of a loan they had nothing to do with.
+    ///
+    /// Two independent guards prevent it (the read is gated on
+    /// `matchOverride.active`, which has exactly one clearing site, AND the id
+    /// itself is cleared beside it), so no SINGLE mutation makes this fail —
+    /// removing either guard alone leaves the other holding. Verified
+    /// non-vacuous by removing BOTH: the lender is then charged here and the
+    /// test fails. It is the end-to-end property that matters, and it is
+    /// pinned rather than left resting on the two comments that assert it.
+    function testMatch_CarriedLenderAuthDoesNotLeakIntoALaterAccept() public {
+        _config().setFeeEntitlementEnabled(true);
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+
+        uint256 c = _cStar();
+
+        // A match in which the lender DID authorize Full — so the id carried
+        // across the hop points at an offer with a live Full authorization.
+        uint256 lenderOfferId = _createLenderErc20Offer();
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            lenderOfferId, true, c, /*allowDowngrade=*/ false
+        );
+        OfferMatchFacet(address(diamond)).matchOffers(
+            lenderOfferId, borrowerOfferId
+        );
+
+        // Now an ordinary direct accept of a BORROWER offer — the shape that
+        // would read the stale id, since the substitution only ever replaces
+        // the acceptor-transient read (`!isLenderOffer`). Accepting a lender
+        // offer here would prove nothing: that guard alone would block it.
+        //
+        // The lender is the acceptor and opts into nothing, so the correct
+        // outcome is no charge on either side.
+        uint256 plainBorrowerOfferId = _createBorrowerErc20Offer();
+        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
+        address lVault = _vault(lender);
+        uint256 lBefore = vpfiToken.balanceOf(lVault);
+        uint256 bucketBefore = _config().getRecycleBucket();
+
+        _signAndAcceptOffer(lender, lenderPk, plainBorrowerOfferId);
+
+        assertEq(
+            vpfiToken.balanceOf(lVault),
+            lBefore,
+            "the earlier match's lender authorization must not carry into a "
+            "later BORROWER-offer accept - this lender authorized nothing here"
+        );
+        assertEq(
+            _config().getRecycleBucket(),
+            bucketBefore,
+            "no absorption at all on an accept where neither party is Full"
+        );
     }
 
     // ─── enabled: maxCStar bound + downgrade ───────────────────────────────────

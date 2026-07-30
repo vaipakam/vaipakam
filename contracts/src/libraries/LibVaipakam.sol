@@ -5705,6 +5705,28 @@ library LibVaipakam {
         //   deliberately excluded from the reported cumulative ("phantom
         //   availability").
         mapping(uint32 => uint256) chainReleasedRecycledCommit;
+        // `matchLenderAuthOfferId` — #1369. On a MATCHED fill the accepted
+        //   offer is the BORROWER offer, so the lender's Full-tariff
+        //   authorization (which lives on their own, separate lender offer)
+        //   is not reachable from the accepted offer at all. This carries the
+        //   lender offer's id across the `matchOffers` →
+        //   `acceptOfferInternal` → `chargeFullTariff` hop so the lender side
+        //   resolves from the artifact that party actually signed.
+        //
+        //   NOT a field on `MatchOverride`: that struct is stored INLINE in
+        //   this Storage struct, so appending to it would shift every
+        //   subsequent slot. Appending here is layout-safe.
+        //
+        //   Being a separate field, it could in principle desync from
+        //   `matchOverride.active` and let a later direct accept in the same
+        //   transaction read a stale lender offer's authorization — charging
+        //   a lender who never signed for that loan. That is prevented
+        //   STRUCTURALLY rather than by discipline: every read is gated on
+        //   `matchOverride.active`, which has exactly one clearing site (the
+        //   `delete s.matchOverride` at the end of the match). A stale id on
+        //   its own can therefore do nothing. It is cleared alongside the
+        //   override regardless, but correctness does not depend on that.
+        uint256 matchLenderAuthOfferId;
         // ─── #1444 / #1446 — released-remit stranded cumulative ────────────
         // APPEND-ONLY TAIL. CANONICAL-WRITE-ONLY — which is NOT the same as
         // "zero on every mirror" (Codex #1448 r1). Only
@@ -5875,6 +5897,13 @@ library LibVaipakam {
         //   the completion event under-reports how many releases it found.
         //   Counting every release makes the guard complete on that axis:
         //   nothing can flip a status without moving this.
+        //
+        //   #1448 r14 — being an APPENDED slot, on a Diamond upgraded in place
+        //   this starts at zero and so counts post-upgrade releases only. The
+        //   seed ceremony BACKFILLS it from its full scan at completion, which
+        //   is what makes "lifetime" true rather than aspirational; before
+        //   that it is partial, and the published `applied` flag is how a
+        //   consumer tells the two apart.
         uint256 remitReleasedCount;
         // `recycleStrandedSeedBaselineCount` — the above, pinned when the
         //   ceremony starts, so the guard compares like for like.

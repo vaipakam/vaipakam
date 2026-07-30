@@ -94,6 +94,9 @@ contract HelperTest {
         // #1448 r3 — reproduce the pre-upgrade state for the seed ceremony.
         selectors[144] =
             TestMutatorFacet.setReleasedRemitStrandedRaw.selector;
+        // #1448 r14 — the other appended slot of that same shape.
+        selectors[146] =
+            TestMutatorFacet.setRemitReleasedCountRaw.selector;
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
         selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
         // #1222 M3 B3 — real forfeit/expiry release path for the
