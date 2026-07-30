@@ -70,8 +70,20 @@ failure mode these are meant to prevent:
 
 **They are currently non-blocking**, matching this workflow's existing
 philosophy. That is a real limitation, not an oversight: a warning does not
-stop a new instance merging. Removing the `exit 0` at the end of the
-workflow step turns them into a gate.
+stop a new instance merging, so the class is observed rather than closed.
+
+Becoming a gate is the intended end state, tracked with its trigger
+conditions on **#1468** — delete the `exit 0` at the end of the *Mechanical
+docs checks* step; the scripts already exit non-zero on a regression.
+
+Two rules for that flip, both there for a reason:
+
+- **Keep the ratchet.** Gating on a zero *total* would demand rewriting
+  historical records, which falsifies them.
+- **A legitimate exception gets an allowlist entry with a stated reason**,
+  the shape `apps/indexer/scripts/check-event-coverage.mjs` uses for
+  `DELIBERATELY_NOT_HANDLED` — not a silent baseline raise. A raised
+  baseline records that something is permitted without recording why.
 
 ## Maintaining them
 

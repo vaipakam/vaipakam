@@ -107,11 +107,19 @@ jobs:
 
       # ── Mechanical docs checks (ratcheted) ────────────────────────────
       #
-      # NON-BLOCKING, matching this workflow's existing philosophy: the
-      # step reports and never fails the run. That is a deliberate
-      # limitation rather than an oversight — a warning does not stop a new
-      # instance merging. Flipping the `|| true` off makes this a real gate
-      # once the team is happy with the signal.
+      # NON-BLOCKING, matching this workflow's existing philosophy: the step
+      # reports and never fails the run. That is a deliberate limitation
+      # rather than an oversight — a warning does not stop a new instance
+      # merging, so the class is observed rather than closed.
+      #
+      # TO MAKE IT A GATE: delete the `exit 0` at the END of this step. The
+      # scripts already exit non-zero on a regression; only the step
+      # swallows it. Owner-approved as the intended end state — the trigger
+      # conditions and the one legitimate-exception rule are on **#1468**.
+      #
+      # Keep it a RATCHET when gating. Gating on a zero TOTAL would demand
+      # rewriting historical records (closed `docs/ToDo.md` entries, past
+      # design docs), which falsifies them — see #1462.
       # No `setup-node`: `ubuntu-latest` ships a current Node, and these
       # scripts use only ESM + `node:fs`/`node:child_process`. Avoiding the
       # action also avoids the allowlist hazard — a `uses:` whose exact SHA
@@ -140,5 +148,6 @@ jobs:
             echo "::endgroup::"
           done
           [ "$fail" = 0 ] && echo "Mechanical docs checks OK." >> "$GITHUB_STEP_SUMMARY"
-          # Non-blocking by design — see the comment above this step.
+          # Non-blocking by design — see the comment at the top of this
+          # step, and #1468 for when and how to remove this line.
           exit 0
