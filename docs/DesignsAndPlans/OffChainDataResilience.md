@@ -371,15 +371,29 @@ operator to flip DNS / feature flag on primary failure.
 **The DNS/flag flip applies only to the HTTP-fronted Workers.**
 `ops/mesh-watcher` has no HTTP surface, no route, and no enable
 flag — it is a 15-minute cron over its own account-local D1
-(`vaipakam-mesh-alerts-db`) with per-Worker secrets
-(`TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID`). Its standby therefore
-activates by **deployment**, not by a flip: apply its migrations to
-the standby account's D1, set its per-Worker secrets, and
-`wrangler deploy` — the cron registers at deploy and the watcher is
-live on the next tick. Without those three steps a "standby" for it
-is a paused copy with no database and no credentials, and
-recycling-ledger alerting silently stays down through a primary
-failure (#1450 r32). The protocol
+(`vaipakam-mesh-alerts-db`). Its standby therefore activates by
+**deployment**, not by a flip, and the activation gate is the full
+binding set its committed config deliberately leaves blank
+(#1450 r32/r33):
+
+1. **D1**: create the standby account's `vaipakam-mesh-alerts-db`,
+   paste the returned id into the standby config's empty
+   `database_id`, and apply `ops/mesh-watcher/migrations/`.
+2. **Vars**: set `TG_OPS_CHAT_ID` (a plain var in the committed
+   config, not a secret — and empty there).
+3. **Secrets**: `TG_OPS_BOT_TOKEN`, plus one `RPC_<chainId>` per
+   chain in `getExpectedSourceChainIds()` (`src/env.ts` keys RPC
+   endpoints by chain id). A missing RPC surfaces as a reported
+   COVERAGE GAP rather than a crash — so a partially-provisioned
+   standby runs and *looks* alive while watching fewer chains than
+   the primary did; provision the full set.
+4. `wrangler deploy` — the cron registers at deploy and the watcher
+   is live on the next tick.
+
+Without all four, a "standby" for it is a paused copy with no
+database, no destination, or partial chain coverage, and
+recycling-ledger alerting silently stays down (or thins out)
+through a primary failure. The protocol
 survives keeper / agent downtime by design in the meantime (liquidations
 are permissionless — anyone with the `vaipakam-keeper-bot` reference repo
 can race for the bonus).

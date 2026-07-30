@@ -1186,6 +1186,7 @@ wrangler d1 execute vaipakam-archive --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
+DELETE FROM hf_band_state; \
 DELETE FROM swap_to_repay_intents; \
 DELETE FROM loans; \
 DELETE FROM offers; \
@@ -1202,16 +1203,32 @@ fabricated rows and leaves every attacker-added offer or loan
 standing after the runbook declares the index healthy (#1450 r30).
 Empty tables are what make "re-derive from chain" an
 integrity-restoring operation rather than a merge with the
-attacker's writes. (`loan_participants` and `notifications` are in
-the list because they are replay-derived too — append-only
-`INSERT OR IGNORE` projections whose rows regenerate from their
-producers; the notification center's read-state is client-side by
-design, so clearing loses nothing user-owned. #1450 r31.
-`swap_to_repay_intents` likewise: its only writers are the
-`SwapToRepayIntent*` handlers in `chainIndexer.ts` — verified
-repo-wide, no HTTP or keeper/agent writes — so a fabricated pending
-intent would otherwise survive replay as a visible user action.
-#1450 r32.)
+attacker's writes. (`loan_participants` is replay-derived —
+append-only `INSERT OR IGNORE` chain history. `swap_to_repay_intents`
+likewise: its only writers are the `SwapToRepayIntent*` handlers in
+`chainIndexer.ts` — verified repo-wide, no HTTP or keeper/agent
+writes — so a fabricated pending intent would otherwise survive
+replay as a visible user action. #1450 r31/r32.)
+
+**`notifications` is cleared with its producer state, and the loss
+boundary is stated honestly** (#1450 r33). The table has THREE
+producer classes, and "the replay regenerates it" is true of only
+one: chain-event rows come back from the block-zero replay; the
+keeper's HF-band rows come back only as *current-state* rows, and
+only because `hf_band_state` is cleared in the same command — with
+the state emptied, every loan reads as previously-healthy and the
+keeper's first tick re-derives one fresh notification per
+currently-degraded loan (day-bucketed dedup bounds this; it is
+re-derivation, not a bug). Historical band crossings and
+already-past calendar reminders do NOT regenerate — no chain event
+encodes them. That loss is accepted under the inbox's
+indexed-hints-only discipline (rows deep-link and re-verify; the
+chain stays authoritative — see `0038_notifications.sql`), because
+the alternative in a tampering recovery is preserving rows the
+attacker may have written. Clearing `notifications` while LEAVING
+`hf_band_state` would be the worst combination: the state says
+"already notified" about rows that no longer exist, and current
+degradations go silent.
 
 **This list is the archive's re-derivable set plus the two tables
 above, and it is NOT proven complete** — the schema has grown past
@@ -1618,11 +1635,16 @@ two procedures share the offline-key handling discipline.
    re-uploads land in exactly this window, so without the exclusion
    every rotation "finds" its own writes and an operator trying to
    old-key-decrypt them gets GCM authentication failures on new-key
-   ciphertext (#1450 r32). Anything REMAINING after the exclusion
-   (a manual trigger, a pause that did not take) is presumed old-key
-   ciphertext and must go through step 3 now — confirm by decrypting
-   it with the old key, and treat an object neither key decrypts as
-   an incident, not a rotation artifact. Only then retire the OLD key —
+   ciphertext (#1450 r32). For anything REMAINING after the exclusion
+   (a manual trigger, a pause that did not take), **key
+   classification applies to `archives*` objects ONLY — manifests are
+   plaintext JSON and fail decryption under every key by
+   construction** (#1450 r33). A late Worker write leaves a PAIR in
+   the residue: old-key-decrypt the archive half to confirm it, then
+   send it through step 3, which regenerates its manifest as part of
+   the same pass; the residual manifest needs reading, not
+   decrypting. Only an `archives*` object that NEITHER key decrypts
+   is an incident rather than a rotation artifact. Only then retire the OLD key —
    destroy the offline copies. Keep ONE
    archived offline copy in case of a B2 lifecycle anomaly that
    surfaces an old-cipher version mid-cycle.
