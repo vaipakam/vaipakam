@@ -495,9 +495,11 @@ contract MeshLedgerInvariant is Test {
     // bound is green for the wrong reason — but the figure is now the one
     // the handler actually produces.
     //
-    // These two tests place the ledger AT the boundary and assert the cap
-    // actually bites. They are deliberately deterministic — a fuzzer cannot
-    // usefully search a region it cannot reach.
+    // The four tests below place the ledger AT the boundary and assert the
+    // cap actually bites: one per reservation term (outstanding commitment,
+    // exact-cap/recycled, already-remitted value), plus one with TWO terms
+    // non-zero at once. They are deliberately deterministic — a fuzzer
+    // cannot usefully search a region it cannot reach.
 
     /// The cap must reserve against OUTSTANDING fresh commitments, not only
     /// against what has already been paid out. That is the whole content of
@@ -670,6 +672,62 @@ contract MeshLedgerInvariant is Test {
             "and the clamped floor is fully reserved here too"
         );
         _assertFreshCapNotBreached("after a remit-clamped finalize");
+    }
+
+    /// Every fixture above leaves exactly ONE reservation term non-zero, and
+    /// that is a real gap rather than a stylistic one: a regression computing
+    /// `paidOut + max(remitted, outstanding)` instead of SUMMING the terms
+    /// produces the correct headroom in each of them and passes every
+    /// assertion. Only a state carrying two terms at once separates the two
+    /// formulas — and it is a reachable state, not a contrived one: a mirror
+    /// funded earlier while one of Base's own days is still open.
+    ///
+    /// Split so neither term alone reaches the boundary. With `max`, the
+    /// headroom reads as `cap − larger` and the day's floor clamps to that,
+    /// over-allocating by the smaller term; with the sum it clamps to
+    /// `cap − (remitted + outstanding)`. The assertion below is the
+    /// difference between the two.
+    function test_Boundary_RemittedAndOutstandingReserveAdditively() public {
+        // Two unequal terms, so a `max` regression is off by the smaller one
+        // rather than coincidentally right.
+        uint256 remitted = 900 ether;
+        uint256 outstanding = 334 ether;
+        uint256 headroom = 1_234 ether; // cap − (remitted + outstanding)
+
+        TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom - outstanding
+        );
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            outstanding, 0
+        );
+
+        assertGt(
+            _scheduleForDay(1),
+            headroom,
+            "fixture must place the schedule ABOVE the summed headroom"
+        );
+
+        uint256 freshBefore = _outstandingFresh();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "the floor must clamp to the headroom left by BOTH terms summed - "
+            "clamping to cap-minus-the-larger over-allocates by the smaller, "
+            "and that is exactly what a max() regression does"
+        );
+        // The RESERVATION, not just the stamp — publishing a clamped figure
+        // while reserving an unclamped one is the omission r1 caught.
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "and the summed-clamped floor is what actually gets reserved"
+        );
+        _assertFreshCapNotBreached("after a two-term clamped finalize");
     }
 
     /// @dev The §7 #2 fresh half, read from live state. `remaining` is the

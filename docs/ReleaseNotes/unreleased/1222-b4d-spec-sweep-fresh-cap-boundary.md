@@ -91,7 +91,7 @@ exercises this ledger cannot reach even two percent of the ceiling, so the
 check was green because the boundary was unapproachable rather than because it
 was enforced.
 
-Three deterministic tests now place the ledger at the boundary directly:
+Four deterministic tests now place the ledger at the boundary directly:
 
 - with a known amount of headroom left, the day's fresh funding must clamp to
   exactly that headroom instead of to its own schedule;
@@ -102,9 +102,23 @@ Three deterministic tests now place the ledger at the boundary directly:
   since reaching it for real needs a chain to have been sent almost the whole
   allocation.
 
+A fourth places two of those terms at the boundary **together**, because
+each of the first three leaves only one of them non-zero — and a version of
+the platform that took the larger of two reservations instead of adding them
+produces exactly the right headroom in all three, passing every check. Only
+a state carrying both at once separates the two, and it is an ordinary state
+rather than a contrived one: value sent to another chain earlier, while one
+of the main chain's own days is still open. Without it the platform could
+have over-committed by the smaller of the two amounts on every such day,
+invisibly.
+
 Each was confirmed against the change that would break it: sizing the
-reservation from the unclamped schedule fails all three, while dropping the
-already-sent term fails the third and only the third. Review also caught that
+reservation from the unclamped schedule fails all three of the
+single-term cases, dropping the already-sent term fails the sent-value case
+and only that one, and taking the larger of two reservations instead of
+summing them fails the two-term case and only that one — passing the other
+three, which is what makes the fourth case necessary rather than
+decorative. Review also caught that
 checking the day's *published* figure was not enough — the platform could
 publish the clamped number and still reserve against the unclamped one, on
 either the fresh or the recycled side — so the tests read the reservations
