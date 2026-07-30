@@ -1918,8 +1918,10 @@ contract HelperTest {
         return selectors;
     }
 
-    /// @dev #1306 follow-up — the 14 read-only view/getter selectors split off
+    /// @dev #1306 follow-up — the read-only view/getter selectors split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet}.
+    ///      Count deliberately omitted; see the matching note in
+    ///      `DeployDiamond.s.sol:_getInteractionRewardsLensSelectors`.
     function getInteractionRewardsLensFacetSelectors()
         public
         pure

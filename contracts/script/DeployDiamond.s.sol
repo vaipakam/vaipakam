@@ -2125,11 +2125,14 @@ contract DeployDiamond is Script {
     ///      comments (this file's cut block below, and
     ///      `RefreshAllFacetsInPlace.s.sol`'s re-point note). A first attempt
     ///      at this fix updated the number and asserted it was "stated once,
-    ///      here", which was itself false and would have sent the next
-    ///      person to three disagreeing figures. Nothing mechanical checks a
-    ///      prose count against an array length, so the durable fix is to
-    ///      stop writing the number: `s.length` is the answer and it cannot
-    ///      go stale.
+    ///      here" — false. A second attempt removed it from three sites and
+    ///      said that was all of them — also false; `HelperTest.sol`'s
+    ///      matching helper carried a fourth. The number has now been wrong
+    ///      or under-swept three times in one PR, which is the actual
+    ///      lesson: nothing mechanical checks a prose count against an array
+    ///      length, so the durable fix is to stop writing it. `s.length` is
+    ///      the answer and it cannot go stale. If you find a count for this
+    ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](19);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;

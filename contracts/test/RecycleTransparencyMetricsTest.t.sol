@@ -9,6 +9,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 
@@ -25,12 +26,18 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
  *              reserved — asserted against `outstandingCommitFresh`'s real
  *              movement, never against a re-derivation of the same formula.
  *           2. `absorbed[D]` carries BOTH the local and mirror terms. The
- *              mirror term had no getter at all, so a dashboard built on the
- *              pre-existing read would have published Base-only absorption
- *              labelled as global.
+ *              mirror term had no AGGREGATE getter — it was reconstructible
+ *              only per-chain, one call each, against a chain list that can
+ *              go stale — so a dashboard built on the obvious read would have
+ *              published Base-only absorption labelled as global.
  *           3. Absorption stays readable on an unfinalized day, while the
  *              pool figures correctly read as absent rather than zero.
- *           4. The backing snapshot survives the state it exists to detect.
+ *           4. The backing snapshot survives the state it exists to detect,
+ *              and carries every term its own formula needs — including the
+ *              keeper earmark, whose omission would overstate platform
+ *              reserve the moment the register is switched on.
+ *           5. The global series REFUSES on any non-canonical chain, rather
+ *              than answering with figures a mirror cannot compute.
  */
 contract RecycleTransparencyMetricsTest is SetupTest {
     VPFIToken internal vpfi;
@@ -315,7 +322,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         );
         _lens().getRecycleDayMetrics(5);
 
-        (uint256 bal, , , , ) = _lens().getRecycleBackingSnapshot();
+        (uint256 bal, , , , , ) = _lens().getRecycleBackingSnapshot();
         assertEq(
             bal,
             DIAMOND_SEED,
@@ -366,6 +373,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             uint256 bucket,
             uint256 unearmarked,
             ,
+            ,
 
         ) = _lens().getRecycleBackingSnapshot();
         assertEq(bal, DIAMOND_SEED, "diamond holds the seed");
@@ -373,7 +381,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         assertEq(unearmarked, DIAMOND_SEED, "all of it is unearmarked");
 
         _mut().setRecycleBucketRaw(40_000_000 ether);
-        (bal, bucket, unearmarked, , ) = _lens().getRecycleBackingSnapshot();
+        (bal, bucket, unearmarked, , , ) = _lens().getRecycleBackingSnapshot();
         assertEq(bucket, 40_000_000 ether, "bucket label applied");
         assertEq(
             unearmarked,
@@ -405,6 +413,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             uint256 bal,
             uint256 bucket,
             uint256 unearmarked,
+            ,
             ,
 
         ) = _lens().getRecycleBackingSnapshot();
@@ -456,6 +465,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             uint256 bucket,
             ,
             uint256 outstandingRecycled,
+            ,
 
         ) = _lens().getRecycleBackingSnapshot();
 
@@ -488,12 +498,12 @@ contract RecycleTransparencyMetricsTest is SetupTest {
     function testBackingSnapshotReportsTheLiveConsumedRecycledFigure() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
 
-        (, , , , uint256 before_) = _lens().getRecycleBackingSnapshot();
+        (, , , , uint256 before_, ) = _lens().getRecycleBackingSnapshot();
         assertEq(before_, 0, "nothing consumed yet");
 
         _mut().consumeRecycleRaw(250_000 ether);
 
-        (, , , , uint256 after_) = _lens().getRecycleBackingSnapshot();
+        (, , , , uint256 after_, ) = _lens().getRecycleBackingSnapshot();
         assertEq(after_, 250_000 ether, "consume advances the live figure");
 
         (, , , uint256 statePaidOut) = _agg().getGovernorCommitState();
@@ -501,6 +511,51 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             after_,
             statePaidOut,
             "and it is the governor's own slot, not a parallel count"
+        );
+    }
+
+    /**
+     * @dev The keeper earmark is carved from INSIDE the bucket, so
+     *      `recycleBucket` does not move when it is taken — which makes a
+     *      two-term `bucket − outstandingRecycled` derivation count the whole
+     *      earmark as platform reserve. The governor's own `_recycleFundable`
+     *      nets it alongside the outstanding commitments, so the published
+     *      surface must expose it or every consumer overstates by exactly
+     *      that amount (Codex #1487 r2 P2).
+     *
+     *      The register is dark by default, which is precisely why this needs
+     *      a test: the overstatement would appear for the first time on the
+     *      day someone enables the knob, long after this code was reviewed.
+     *      Driven off zero and then made non-zero, so it cannot pass by the
+     *      term being structurally absent.
+     */
+    function testBackingSnapshotExposesTheKeeperEarmark() public {
+        (, , , , , uint256 keeperBefore) =
+            _lens().getRecycleBackingSnapshot();
+        assertEq(keeperBefore, 0, "register is dark by default");
+
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        for (uint256 d = 1; d <= 5; ++d) {
+            _mut().setRecycledCreditedByDayRaw(d, 50_000 ether);
+        }
+        ConfigFacet(address(diamond)).setRecycleRegisterKeeperBps(2_000); // 20%
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalize(5);
+
+        (
+            ,
+            uint256 bucket,
+            ,
+            ,
+            ,
+            uint256 keeperAfter
+        ) = _lens().getRecycleBackingSnapshot();
+
+        assertGt(keeperAfter, 0, "the register earmarked a keeper share");
+        assertEq(
+            bucket,
+            1_000_000 ether,
+            "carved from INSIDE the bucket: the bucket itself is unmoved"
         );
     }
 }

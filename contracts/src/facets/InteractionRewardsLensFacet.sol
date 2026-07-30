@@ -419,9 +419,10 @@ contract InteractionRewardsLensFacet {
      *         be cheaper — a claim spanning days D-30…D would be scored
      *         against day D's floor alone.
      *
-     *         FOUR bounds, stated here so a consumer cannot mistake the
+     *         FIVE bounds, stated here so a consumer cannot mistake the
      *         figure for something stronger than it is. (This header read
-     *         "Three" for one revision after the fourth item landed — the
+     *         "Three" for one revision after the fourth landed, and "FOUR"
+     *         after the fifth — the
      *         same prose-count-versus-list drift this very PR corrects in
      *         `DeployDiamond.s.sol`. Nothing mechanical checks either one;
      *         if a fifth is added, this word is part of the edit.)
@@ -442,10 +443,28 @@ contract InteractionRewardsLensFacet {
      *            function's own natspec records it). The drawdown is real and
      *            this recomputation cannot see it.
      *
-     *         So it is NOT a pure upper bound — 3 and 4 push in opposite
-     *         directions. An earlier revision of this comment claimed an
-     *         upper bound outright (Codex #1487 r1 P2), which held only until
-     *         the zeroed-chain manual path is used.
+     *         5. BELOW the POOL's view of the day on a released-then-re-sent
+     *            remittance. `releaseRemitReservation` restores the day's
+     *            fresh commitment but deliberately leaves
+     *            `rewardBudgetRemittedGlobal` charged, and the re-send
+     *            charges it again — two real fresh outflows against the 69M
+     *            cap for one finalize-time commitment. This recomputation
+     *            reports the commitment, so the published series and the
+     *            allocation counter legitimately disagree by the re-sent
+     *            amount (Codex #1487 r2 P2).
+     *
+     *            Both readings are defensible and they answer different
+     *            questions: the first outflow is stranded in transport and
+     *            reaches no user, so the day's EMISSION is the commitment,
+     *            while the day's POOL CONSUMPTION is the larger figure.
+     *            Anyone reconciling this series against
+     *            `rewardBudgetRemittedGlobal` must expect the gap rather
+     *            than treat it as corruption.
+     *
+     *         So it is NOT a pure upper bound — 3 pushes one way and 4/5 the
+     *         other. An earlier revision of this comment claimed an upper
+     *         bound outright (Codex #1487 r1 P2), which held only until the
+     *         zeroed-chain manual path is used.
      *
      *         Which regime a given day is in is NOT readable from this call —
      *         compare `dayId` against `armedFromDay` from
@@ -490,7 +509,7 @@ contract InteractionRewardsLensFacet {
      *         `scheduleFloor` this gives `dailyPool` and hence
      *         `selfFundingRatio[D]`.
      * @return freshDrawdown  `netEmission[D]` — the schedule floor actually
-     *         drawn fresh, subject to the four bounds above.
+     *         drawn fresh, subject to the five bounds above.
      * @return absorbedLocal  This chain's own day-`dayId` recycle credits.
      * @return absorbedMirror Day-`dayId` credits accepted from mirror
      *         chains' reports. `absorbedLocal + absorbedMirror` is the
@@ -569,7 +588,23 @@ contract InteractionRewardsLensFacet {
      *         it, whether the tokens behind the published reserve actually
      *         exist.
      * @dev    `platformRetained` (governor design §9) is
-     *         `bucket − outstandingRecycled`, floored at zero. It is returned
+     *         `bucket − outstandingRecycled − keeperBudget`, floored at zero.
+     *
+     *         The keeper term is NOT decorative. Once
+     *         `recycleRegisterKeeperBps` is non-zero, `_applyRecycleRegister`
+     *         earmarks part of each day's realized margin into
+     *         `recycleKeeperBudget` — carved from INSIDE the bucket, so
+     *         `recycleBucket` does not move — and the governor's own
+     *         `_recycleFundable` nets it right alongside
+     *         `outstandingCommitRecycled`. A consumer following a two-term
+     *         formula therefore counts the entire keeper earmark as platform
+     *         reserve, overstating it by exactly that amount for as long as
+     *         the register is active. It is returned here rather than left to
+     *         a second call against
+     *         {ConfigFacet.getRecycleRegisterState} precisely because a
+     *         second call is the kind of thing a dashboard omits and nobody
+     *         notices — the register is dark today, so the error would appear
+     *         only when it is switched on. It is returned
      *         as its two RAW terms rather than pre-computed, following the
      *         #1448 posture: the contracts publish the counters, consumers
      *         derive, and an independent re-derivation is what catches a
@@ -651,12 +686,14 @@ contract InteractionRewardsLensFacet {
             uint256 bucket,
             uint256 unearmarked,
             uint256 outstandingRecycled,
-            uint256 paidOutRecycled
+            uint256 paidOutRecycled,
+            uint256 keeperBudget
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (vpfiBalance, bucket, unearmarked) = LibVpfiRecycle.backingPosition(s);
         outstandingRecycled = s.outstandingCommitRecycled;
         paidOutRecycled = s.paidOutRecycled;
+        keeperBudget = s.recycleKeeperBudget;
     }
 }
