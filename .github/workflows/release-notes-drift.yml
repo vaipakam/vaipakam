@@ -9,37 +9,25 @@
 # gap is visible in the Actions tab. It never fails the run — these are
 # disciplines, not merge gates.
 #
-# It also runs one MECHANICAL docs check, added because the same stale-path
-# defect kept surfacing in a different document each review round — 147
-# references to the removed `frontend/` directory across 39 documents (#1462).
-# The class is not preventable by discipline (nothing tells the author of a
-# rename which prose mentions the old name), so it is re-checked here on every
-# push and PR:
+# It also runs a BLOCKING docs path gate: no operator runbook may cite a
+# directory that no longer exists. 147 references to the removed `frontend/`
+# survived the Stage 3 refactor across 39 documents (#1462), and nothing tells
+# the author of a rename which prose mentions the old name — so the class is
+# re-checked mechanically rather than by remembering.
 #
-#   - check-docs-paths.mjs — cited repo paths resolve, and no document cites a
-#     directory that was removed or renamed.
+# It gates at ZERO with no baseline. The operator-facing citations were fixed
+# in the same change that added it, so a failure is always a NEW one. Scope is
+# `docs/ops/`; widening it to the design docs is #1462's completion criterion.
 #
-# TWO companion checks were built alongside it and DEFERRED rather than
-# shipped, both for the same reason — a check that is sometimes wrong teaches
-# people to ignore the one that never is:
-#
-#   - secrets reaching a command's argv (#1472): deciding it correctly needs
-#     real shell parsing, and each review round found another case the
-#     approximation got wrong, including flagging the pattern the docs
-#     recommend.
-#   - non-canonical `/app/...` URL citations (#1479): four rounds, each closing
-#     a real gap and the next finding another citation form the pattern
-#     mishandled. Citation forms are an unbounded set; what shipped is a
-#     set-membership test, which is decidable.
-#
-# It RATCHETS against a committed baseline: it fails only when a file GAINS
-# findings, so the existing backlog (#1462) is frozen rather than blocking, and
-# a check that is red on day one cannot become one that gets muted. See
-# .github/scripts/docs-check-ratchet.mjs for why per-file and directional.
+# Three related rules were built alongside it and DEFERRED, all for one
+# reason — each needs a precise markdown extractor, which means a real parser:
+# does-it-exist against the tracked tree (#1486), non-canonical `/app/…` URL
+# citations (#1479), and secrets reaching a command's argv (#1472). See the
+# admission criterion at the top of .github/scripts/check-docs-paths.mjs.
 #
 # (Filename kept as release-notes-drift.yml for stable references; the
 # check now covers functional specs and the mechanical check too.)
-name: Docs-drift check (release notes + functional specs + stale paths)
+name: Docs-drift check (release notes + functional specs + path gate)
 
 on:
   push:
@@ -119,65 +107,27 @@ jobs:
             echo "Docs-drift check OK." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # ── Mechanical docs checks (ratcheted) ────────────────────────────
+      # ── Docs path gate ────────────────────────────────────────────────
       #
-      # NON-BLOCKING, matching this workflow's existing philosophy: the step
-      # reports and never fails the run. That is a deliberate limitation
-      # rather than an oversight — a warning does not stop a new instance
-      # merging, so the class is observed rather than closed.
+      # BLOCKING, unlike the release-note/functional-spec warnings above.
+      # It can be, because it gates at ZERO: the operator runbooks it covers
+      # were cleaned in the same change that added it, so a failure always
+      # means a NEW stale citation rather than an old one.
       #
-      # TO MAKE IT A GATE: delete the `exit 0` at the END of this step. The
-      # scripts already exit non-zero on a regression; only the step
-      # swallows it. Owner-approved as the intended end state — the trigger
-      # conditions and the one legitimate-exception rule are on **#1468**.
+      # There is no baseline and no ratchet. Earlier revisions had both,
+      # solely because the check was red on arrival; the platform is pre-live,
+      # so the ~45 operator-facing citations were fixed instead of frozen.
       #
-      # Keep it a RATCHET when gating. Gating on a zero TOTAL would demand
-      # rewriting historical records (closed `docs/ToDo.md` entries, past
-      # design docs), which falsifies them — see #1462.
-      # No `setup-node`: `ubuntu-latest` ships a current Node, and these
-      # scripts use only ESM + `node:fs`/`node:child_process`. Avoiding the
-      # action also avoids the allowlist hazard — a `uses:` whose exact SHA
-      # is not allowlisted fails the WHOLE workflow at startup, not just the
-      # step, and this repo pins a different setup-node SHA elsewhere.
-      - name: Mechanical docs checks (stale paths)
-        env:
-          # The revision the ratchet polices its baseline against. `before` on
-          # a push; the PR's own base branch otherwise — never a hardcoded
-          # `main`, which on a push to main compares the baseline with itself.
-          DOCS_CHECK_BASE_REF: >-
-            ${{ github.event_name == 'push'
-                && github.event.before
-                || format('origin/{0}', github.base_ref) }}
+      # Scope is `docs/ops/` — where a stale path costs a person real time and
+      # where the cleanup has actually happened. Widening it to the design
+      # docs is #1462's completion criterion, not a knob to turn here.
+      #
+      # No `setup-node`: `ubuntu-latest` ships a current Node and the scripts
+      # use only ESM + `node:fs`/`node:child_process`. Avoiding the action also
+      # avoids the allowlist hazard — a `uses:` whose exact SHA is not
+      # allowlisted fails the WHOLE workflow at startup, not just the step.
+      - name: Docs path gate (removed-directory citations)
         run: |
-          set -uo pipefail
-          fail=0
-          for check in check-docs-paths; do
-            echo "::group::$check"
-            if node ".github/scripts/$check.mjs"; then
-              echo "$check: OK"
-            else
-              fail=1
-              echo "::warning title=$check::A docs file GAINED findings — see the job log. Fix it, or if the finding is deliberate, explain it in the PR."
-              {
-                echo "### ⚠️ $check"
-                echo ""
-                echo "A \`docs/\` file gained findings against the committed"
-                echo "baseline. Fix the citation, or — if the reference is"
-                echo "deliberately historical — move it under a skipped"
-                echo "directory."
-                echo ""
-                echo "Do **not** raise the baseline to silence it. A raised"
-                echo "baseline records that something is permitted without"
-                echo "recording why, which makes a real exception"
-                echo "indistinguishable from a regression — and the growth"
-                echo "guard rejects it anyway. A genuine exception belongs in"
-                echo "an allowlist entry with a stated reason (the shape"
-                echo "\`check-event-coverage.mjs\` uses); see #1468."
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-            echo "::endgroup::"
-          done
-          [ "$fail" = 0 ] && echo "Mechanical docs checks OK." >> "$GITHUB_STEP_SUMMARY"
-          # Non-blocking by design — see the comment at the top of this
-          # step, and #1468 for when and how to remove this line.
-          exit 0
+          set -euo pipefail
+          node .github/scripts/check-docs-paths.mjs
+          echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"

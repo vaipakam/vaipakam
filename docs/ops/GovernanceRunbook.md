@@ -442,16 +442,16 @@ pair on `LegalFacet`. The retail launch ships with
 `currentTosVersion == 0`, which short-circuits `isAccepted(...)` to
 `true` for every wallet — the gate is dormant. Whenever the canonical
 ToS text changes (`docs/Terms/TermsOfService.md` is the source of
-truth; `frontend/src/pages/TermsPage.tsx` mirrors it), governance must
+truth; `apps/www/src/pages/TermsPage.tsx` mirrors it), governance must
 also bump the on-chain pair so users re-sign before the frontend
 re-opens.
 
 1. Edit the canonical text in `docs/Terms/TermsOfService.md` and the
-   mirrored copy in `frontend/src/pages/TermsPage.tsx`. Verify the two
+   mirrored copy in `apps/www/src/pages/TermsPage.tsx`. Verify the two
    bodies are byte-identical (modulo HTML wrapping in the React file).
 2. Compute the canonical content hash. The exact algorithm is whatever
    the frontend's signing flow uses (see
-   `frontend/src/hooks/useTosAcceptance.ts`); typically a
+   `apps/defi/src/hooks/useTosAcceptance.ts`); typically a
    `keccak256` over the normalised text.
 3. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,

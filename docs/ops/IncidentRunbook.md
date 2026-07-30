@@ -527,7 +527,7 @@ identity), so rotation is time-sensitive.
 1. From `@BotFather`: `/revoke` → confirms token revocation. Old
    token stops working within seconds.
 2. `/token` to issue a fresh token.
-3. `cd ops/hf-watcher && npx wrangler secret put TG_BOT_TOKEN`
+3. `cd apps/keeper && npx wrangler secret put TG_BOT_TOKEN`
    → paste the new token.
 4. Re-register the webhook:
    ```bash
@@ -548,7 +548,7 @@ No subscriber action required — the bot's @-handle stays
    stake to the new owner. Wait for confirmation.
 3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`:
    ```bash
-   cd ops/hf-watcher && npx wrangler secret put PUSH_CHANNEL_PK
+   cd apps/keeper && npx wrangler secret put PUSH_CHANNEL_PK
    ```
 4. `npm run deploy` to invalidate the cached PushAPI client (the
    worker module-scope cache rebuilds on next cron tick).
@@ -585,7 +585,7 @@ No subscriber action required — the bot's @-handle stays
 ## 5. LayerZero security alerts (lz-watcher)
 
 The `ops/lz-watcher` Cloudflare Worker (separate from
-`ops/hf-watcher` — see DeploymentRunbook.md §9 for setup) fires
+`apps/keeper` — see DeploymentRunbook.md §9 for setup) fires
 three alert kinds into the internal ops Telegram channel. Each
 has its own SOP. All three are **detection-only** — there is no
 automated response wired up. The watcher pages humans; humans

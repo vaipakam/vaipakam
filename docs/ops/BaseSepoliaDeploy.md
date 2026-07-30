@@ -536,7 +536,7 @@ re-runs cleanly but the diff is empty.
 ## 14. Sync the frontend ABI bundle
 
 The frontend imports per-facet ABIs from
-`frontend/src/contracts/abis/` (full Diamond surface, currently
+`packages/contracts/src/abis/` (full Diamond surface, currently
 27 facets). Any contract change that adds, removes, or reshapes a
 selector or struct must be mirrored here, otherwise the frontend's
 encoded calldata diverges from the deployed contract — and Base
@@ -560,7 +560,7 @@ deploy can be correlated post-hoc.
 
 If you added a brand-new facet to the frontend, append it to the
 `FACETS=(...)` array in `contracts/script/exportFrontendAbis.sh`
-AND wire it into `frontend/src/contracts/abis/index.ts` — the
+AND wire it into `packages/contracts/src/abis/index.ts` — the
 script does not touch the re-export barrel.
 
 ---
@@ -576,26 +576,26 @@ those in sync with the canonical artifacts is one command:
 
 ```bash
 bash contracts/script/exportFrontendDeployments.sh
-cd frontend && node_modules/.bin/tsc -b --noEmit
-cd ../ops/hf-watcher && npx tsc -p . --noEmit
-git diff frontend/src/contracts/deployments.json ops/hf-watcher/src/deployments.json
+cd apps/defi && node_modules/.bin/tsc -b --noEmit && cd ../..
+pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit
+git diff packages/contracts/src/deployments.json
 git commit -am 'Sync deployments with contracts@<commit>'
 ```
 
-The script merges every per-chain `addresses.json` into both
-`frontend/src/contracts/deployments.json` and
-`ops/hf-watcher/src/deployments.json` (auto-detecting the watcher
-target via the sibling layout), plus a `_deployments_source.json`
-provenance stamp at each target. Idempotent: re-running with no
-upstream changes leaves both outputs byte-identical.
+The script merges every per-chain `addresses.json` into the single
+`packages/contracts/src/deployments.json`, plus a
+`_deployments_source.json` provenance stamp. Every consumer — the React
+surfaces and all three Cloudflare Workers — reads that one file, so
+there is no second target to keep in step. Idempotent: re-running with
+no upstream changes leaves the output byte-identical.
 
 This replaces the previous fan-out of
 `VITE_<CHAIN>_DIAMOND_ADDRESS` /
-`VITE_<CHAIN>_*_FACET_ADDRESS` env vars in `frontend/.env.local`
+`VITE_<CHAIN>_*_FACET_ADDRESS` env vars in `apps/defi/.env.local`
 and the empty `DIAMOND_ADDR_*` placeholders in
-`ops/hf-watcher/wrangler.jsonc:vars` — both surfaces are now
+`apps/keeper/wrangler.jsonc:vars` — both surfaces are now
 read from the consolidated JSON. After running the script:
 - `cd frontend && npm run deploy` — vite inlines the new
   addresses into the JS bundle.
-- `cd ops/hf-watcher && wrangler deploy` — the watcher picks up
+- `cd apps/keeper && wrangler deploy` — the watcher picks up
   the new Diamond addresses on its next cron tick.

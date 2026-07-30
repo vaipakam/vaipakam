@@ -69,7 +69,7 @@ liquidation bonus once HF crosses 1.0 or grace expires. **No Diamond
 role is granted to keeper-bot operators**, and none should be: a
 keeper that needed an admin role would be a structural hazard. The
 operator's own hf-watcher Cloudflare Worker
-(`ops/hf-watcher/src/keeper.ts`) follows the same model — it submits
+(`apps/keeper/src/autoLifecycle.ts`) follows the same model — it submits
 liquidations from a hot key that holds zero on-chain authority.
 
 This means the role-rotation procedure below does **not** need to
@@ -178,14 +178,14 @@ Two Cloudflare Workers hold long-lived secrets that are **not**
 Diamond roles. Losing or rotating them affects only the
 off-chain notification rails, never on-chain protocol authority.
 
-### `ops/hf-watcher` (public-facing — user HF alerts + autonomous keeper)
+### `apps/keeper` (public-facing — user HF alerts + autonomous keeper)
 
 | Key | Purpose | Storage | Compromise blast radius |
 |---|---|---|---|
 | `TG_BOT_TOKEN` | Authenticates the worker as `@VaipakamBot` for Telegram message sends + webhook receives. | `wrangler secret put TG_BOT_TOKEN` (encrypted at rest in Cloudflare Workers). | Attacker can spam our subscriber base with arbitrary Telegram messages branded as the bot. Rotate via @BotFather → `/revoke` → re-issue → re-set the secret. |
 | `PUSH_CHANNEL_PK` | Channel signer privkey for the Vaipakam Push channel `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (<https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>). Used by `@pushprotocol/restapi` to sign outbound notifications. | `wrangler secret put PUSH_CHANNEL_PK` (encrypted at rest). | Attacker can push arbitrary notifications to every Vaipakam Push subscriber. The channel-owner wallet should hold ONLY the 50 PUSH staking deposit + ~$50 of native gas — never operator funds, never connected to a treasury workflow. Rotate by transferring channel ownership at app.push.org to a fresh EOA, updating the secret, redeploying the worker (procedure in `IncidentRunbook.md` §4). |
 | `KEEPER_PRIVATE_KEY` | Hot-key signer for the autonomous-keeper liquidation path inside hf-watcher. Submits `triggerLiquidation` from this EOA when on-chain HF crosses 1.0. Holds **zero** Diamond roles. | `wrangler secret put KEEPER_PRIVATE_KEY` (encrypted at rest). | Attacker who steals the key can submit liquidations with our identity but earns the bonus into the same key — no fund-extraction path against the protocol. They can also drain the keeper EOA's gas balance; bound that balance with a per-chain top-up policy (≤ $200 each). Rotate by writing a fresh privkey, redeploying the worker, then sweeping the old key's residual gas. |
-| `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `frontend/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
+| `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `apps/defi/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
 | `RPC_*` (one per chain) | Dedicated RPC URLs — Alchemy / QuickNode / Infura. | `wrangler secret put RPC_BASE` etc. | Quota theft (attacker exhausts our RPC budget). Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
 
 ### `ops/lz-watcher` (internal-only — LEGACY LayerZero security alerts; deferred for decommission post-T-068)
