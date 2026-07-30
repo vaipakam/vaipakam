@@ -688,6 +688,25 @@ then deploy.
 > import or **§5** legal-vault object. It skips only the
 > account-rebuild steps of §1, not the selection and decryption that
 > every restore path needs.
+>
+> Two preconditions are NOT skippable just because the account
+> survives (#1450 r30):
+>
+> - **Quiesce every writer of the affected tables first**, exactly as
+>   §1 step 9 does for a rebuild: empty the cron lists of the Workers
+>   that write them and close the indexer's second writer (the
+>   DO/webhook ingest — see §6's both-writers note) where an indexer
+>   table is involved. The per-Worker READMEs carry the write/read
+>   split. A live writer during the §4 delete → import → count
+>   sequence can re-insert rows between replacement and verification,
+>   delete restored rows in a retention pass, or leave a mixed
+>   snapshot the instant a count passes. Restore and verify with the
+>   writers stopped; re-arm afterwards with the same staged order §6
+>   and §7a use for the rebuild path.
+> - **Restoring the indexer's derived tables goes through §6's
+>   clear-before-replay, not through §4.** Only born-off-chain tables
+>   are imported from the archive; the derived set is re-derived into
+>   cleared tables, for the reason §6 states.
 
 ---
 
@@ -756,15 +775,36 @@ then deploy.
 >      about a day, whatever any document here claims.
 >
 >    So list **file VERSIONS**, not files, and do it early — inside whatever
->    the overwrite is the whole window:
+>    the overwrite is the whole window. List BOTH prefixes: an attacker who
+>    overwrote the archive but not its manifest (or vice versa) is visible
+>    only on the side you looked at:
 >
 >    ```bash
 >    b2 ls vaipakam-offchain-data-archive --recursive --long --versions manifests/
+>    b2 ls vaipakam-offchain-data-archive --recursive --long --versions archives/
 >    ```
 >
 >    More than one version at a key is strong evidence of tampering. One
 >    version is **not** evidence of safety: the original may already have
 >    aged out.
+>
+>    **Record the FILE IDs of the versions you select, and download by ID.**
+>    The `--versions` listing prints a file id per version; the
+>    key-addressed download in step 2.3 (`b2 file download "b2://…"`)
+>    always fetches the CURRENT version of a key — under an in-place
+>    overwrite, that is the forgery you just identified, however carefully
+>    you chose. When the pre-compromise object survives only as a hidden
+>    older version, fetch **both the manifest and the archive** by their
+>    captured ids instead:
+>
+>    ```bash
+>    b2 file download "b2id://<manifest-file-id>" ./restore/manifest.json
+>    b2 file download "b2id://<archive-file-id>"  ./restore/archive.bin
+>    ```
+>
+>    Then continue with the same SHA / byte-length / row-count checks —
+>    remembering what this box already established: those checks prove
+>    integrity, not provenance.
 >
 >    Making a forged overwrite *impossible* rather than
 >    detectable-within-a-day needs Object Lock on the bucket, which is a
@@ -783,8 +823,12 @@ then deploy.
 >    than a month ago, **the daily series cannot supply a clean archive at
 >    all** and the monthly ones are the only candidates.
 > 6. **Cross-check what you can from outside B2.** The re-derivable tables
->    are rebuilt from chain in §6, so poisoning those is self-correcting —
->    the exposure is the born-off-chain set. Compare the manifest's row
+>    are rebuilt from chain in §6, so poisoning those is corrected by the
+>    replay — **but only because §6 clears those tables before resetting
+>    the cursor**. The replay upserts by key and never deletes fabricated
+>    rows on its own, so "re-derive from chain" is only self-correcting
+>    over empty tables (#1450 r30). The exposure that no replay can fix is
+>    the born-off-chain set. Compare the manifest's row
 >    counts against any out-of-band record you hold (monitoring history, the
 >    ops Telegram backup notifications) before restoring them.
 > 7. **Do not re-encrypt the history forward until after selection.**
@@ -831,6 +875,10 @@ b2 ls vaipakam-offchain-data-archive --recursive --long manifests/ \
 #     key from the `ls` output above (last column of the line) and
 #     plug it into MANIFEST_KEY. The archive key is the same path
 #     with `manifests/` → `archives/` and `.json` → `.bin`.
+#     COMPROMISE PATH: these key-addressed downloads fetch the
+#     CURRENT version of each key. If you selected a hidden older
+#     version in the warning box above, download by FILE ID
+#     (`b2id://…`) as shown there instead of running these two.
 MANIFEST_KEY=manifests/2026-05-24/abcdef0123456789abcdef0123456789.json
 ARCHIVE_KEY="${MANIFEST_KEY/manifests\//archives/}"
 ARCHIVE_KEY="${ARCHIVE_KEY/.json/.bin}"
@@ -982,6 +1030,20 @@ For each table:
      alone even where they succeed (#1450 r29). `INSERT OR REPLACE`
      is not a substitute: it resolves the collisions and still
      leaves the attacker-added rows in place;
+   - **import parents before children, and re-import every cascading
+     child whenever a parent is replaced.** `notify_state` and
+     `pre_grace_notify_state` both declare `ON DELETE CASCADE`
+     foreign keys onto `user_thresholds`, so the `DELETE FROM
+     user_thresholds` that replacement requires erases both children
+     as a side effect — including a child restored and verified
+     moments earlier, if the tables were processed in the wrong
+     order (#1450 r30). So: `user_thresholds` first, then
+     `notify_state` from the same archive. `pre_grace_notify_state`
+     **cannot be re-imported at all — the backup does not archive
+     it** (#1480); its loss is currently accepted (it is notification
+     dedup state; the consequence is possible duplicate pre-grace
+     notifications, not data damage), and that acceptance is #1480's
+     decision to keep or reverse;
    - values quoted safely — single-quote doubling for strings, bare
      numerics, `NULL` for null, and a hard failure on any value type
      the script does not recognise;
@@ -1070,10 +1132,26 @@ from the archive. Why:
   restore path.
 
 ```bash
-# Reset the indexer cursor so it starts from genesis.
-wrangler d1 execute vaipakam-archive \
-  --command="DELETE FROM indexer_cursor" --remote
+# Clear EVERY re-derived table, then the cursor, so the replay
+# starts from genesis into empty tables.
+wrangler d1 execute vaipakam-archive --remote --command="\
+DELETE FROM activity_events; \
+DELETE FROM loans; \
+DELETE FROM offers; \
+DELETE FROM oracle_snapshot_state; \
+DELETE FROM liquidity_confidence; \
+DELETE FROM indexer_cursor"
 ```
+
+Clearing the tables is not optional, and resetting only the cursor
+is NOT equivalent: the replay handlers upsert by key and **never
+delete a row for which no chain event exists**. Against a tampered
+database, a cursor-only reset replays real history over the top of
+fabricated rows and leaves every attacker-added offer or loan
+standing after the runbook declares the index healthy (#1450 r30).
+Empty tables are what make "re-derive from chain" an
+integrity-restoring operation rather than a merge with the
+attacker's writes.
 
 **Only now re-arm the indexer's ingest — BOTH of its writers.** The cursor
 reset above is exactly the precondition §1 step 9 held them back for.
