@@ -32,6 +32,17 @@ must be closed before the recycled programme is switched on; the
 specification now records the rule as intended-but-unenforced rather than
 implying it holds today.
 
+Two further promises elsewhere in the same specification rested on that rule
+without saying so, and both are now qualified in the same terms. One said a
+recycled claim never fails while a recycled budget stands — true of the
+recycled term itself, but a recycled claim can still fail *later* if a
+scheduled payout has already spent the custody behind that budget without
+reducing it. The other said the reward bucket is always covered by real
+custody, which is what backs the bounded keeper-incentive share carved from
+inside it; that share is unbacked by exactly the same shortfall. Neither
+statement was wrong about intent, and both would have read to someone
+relying on them as a property that already holds.
+
 So a network where each chain roughly recycles what it pays out still
 receives its scheduled portion centrally, while its recycled portion settles
 locally and moves nothing across chains. The canonical chain is the top-up of
