@@ -273,10 +273,29 @@ export async function observeMesh(
   // canonical does not degrade the tick, it invalidates it. Treating it
   // as a gap would let the mirror-side checks run and report against
   // books from an unrelated network.
-  const [canonicalHead, canonicalIdentity] = await Promise.all([
+  // `allSettled`, not `all` (#1464 r2). With `all`, a wrong-network
+  // canonical endpoint that answers `eth_chainId` but whose concurrent
+  // `getBlock` rejects loses the FULFILLED mismatch verdict entirely, and
+  // the operator gets only the generic head-read failure — both chain ids
+  // and the `RPC_<id>` instruction gone. That is the same loss the mirror
+  // path was just fixed for, surviving on the canonical path: the fix has
+  // to be applied to both or the distinction only half exists.
+  //
+  // A partial failure like that is the LIKELY shape, not an exotic one: an
+  // endpoint pointed at the wrong network is often also a different
+  // provider, tier or auth setup, so one call succeeding while another
+  // fails is unremarkable.
+  const [headResult, identityResult] = await Promise.allSettled([
     canonical.client.getBlock(),
     verifyChainIdentity(canonical, 'base-books'),
   ]);
+
+  // Identity FIRST, and deliberately before the head failure: a
+  // wrong-network canonical explains any read anomaly, so it is the
+  // actionable diagnosis. Reporting the head error first would send the
+  // operator to the provider for a fault that is not there.
+  const canonicalIdentity =
+    identityResult.status === 'fulfilled' ? identityResult.value : null;
   if (canonicalIdentity) {
     // PRE-CLASSIFIED, not a bare Error (#1464 r1). `runTick` passes what
     // it catches through `classify`, which substring-matches the message —
@@ -291,6 +310,19 @@ export async function observeMesh(
       summary: makeBaseRedactor(env)(canonicalIdentity.detail),
     });
   }
+  if (headResult.status === 'rejected') {
+    // Identity was fine (or itself unreadable) and the head read failed:
+    // the ordinary unreachable-canonical case. Classified rather than
+    // forwarded, since viem puts the provider URL — and its API key — in
+    // the message.
+    throw new PreclassifiedFailure(
+      classify(
+        headResult.reason,
+        `canonical head read on chain ${config.canonicalChainId}`,
+      ),
+    );
+  }
+  const canonicalHead = headResult.value;
   const canonicalBlock = canonicalHead.number;
   const wallClockSeconds = Math.floor(Date.now() / 1000);
   const canonicalAge = wallClockSeconds - Number(canonicalHead.timestamp);

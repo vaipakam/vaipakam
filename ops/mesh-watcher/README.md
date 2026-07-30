@@ -451,14 +451,17 @@ contracts merge.
 
 ---
 
-### Known limitation
+### Known limitations
 
-**Endpoint identity is unverified.** Each chain's read target is resolved
-from an `RPC_<chainId>` secret plus the committed deployment address, and
-nothing checks that the endpoint actually *is* that chain. A mis-set
-secret pointing at a network where the same address carries compatible
-code would produce a clean report about the wrong chain — confident
-silence, the worst failure mode a watcher has. Tracked as **#1445**.
+**Endpoint identity — RESOLVED (#1445).** Every tick now calls
+`eth_chainId` per target and compares it against the id the
+`RPC_<chainId>` secret is named for, so a mis-set secret can no longer be
+adopted silently. See *Each endpoint is checked to BE the chain it is
+configured as* under Design notes for the handling, which differs by role.
+
+**The `mesh.ts` wiring around it is reviewed, not tested** — see the
+coverage boundary in that same section. That is the Worker's remaining
+untested seam.
 
 *(Resolved since the initial version: the custody-exclusion gap that was
 tracked as **#1446** is now covered by `bucket-composition` +
