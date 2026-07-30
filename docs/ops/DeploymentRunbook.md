@@ -2279,9 +2279,18 @@ when it ships.
 
 ## #1448 Released-remit stranded seed — one-time, upgrade-only ceremony
 
-Applies **only** when upgrading a canonical reward Diamond that was
-already remitting before the recycle-composition counters existed. A
-fresh deployment never needs this, and a mirror chain cannot run it.
+Applies when upgrading any Diamond that was already remitting before the
+recycle-composition counters existed. A fresh deployment never needs it.
+
+**Not scoped to the CURRENT canonical chain** — the ceremony is ADMIN-only
+and gated on recorded release history, deliberately, because the state it
+reconstructs is history and history does not change role. A Diamond that
+released remittances while canonical and was later demoted still holds
+those reservations and still needs them counted; calling it "a mirror that
+cannot run this" would make an operator skip the seed and leave its
+composition discrepancy unresolved. A chain that never was canonical has
+no reservations and simply reverts `SeedNothingToScan`, so the history gate
+is self-enforcing rather than something to check by hand.
 
 **Why it exists.** A remittance released before the counters shipped
 already restored its commitment and reversed its payout figure, but
