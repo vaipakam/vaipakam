@@ -655,7 +655,17 @@ export function reconcileLegalHolds(archive) {
           problem: "current hold's document differs from its latest 'place' audit — the pair is not from one consistent moment",
         });
       }
-      if ((hold.hold_reason ?? '') !== String(lastPlace.detail ?? '')) {
+      // The production parser REJECTS a placement without a non-empty
+      // string reason (`diagErasure.ts`), so an empty/NULL placement
+      // detail is an impossible record — do not normalize it into a
+      // comparable '' that a matching gutted hold_reason would pass
+      // (Codex #1484 r10).
+      if (typeof lastPlace.detail !== 'string' || lastPlace.detail === '') {
+        problems.push({
+          walletHash: wallet,
+          problem: "latest 'place' audit carries an empty or non-string reason — the production parser requires a non-empty holdReason, so this record is impossible (tampering)",
+        });
+      } else if (hold.hold_reason !== lastPlace.detail) {
         problems.push({
           walletHash: wallet,
           problem: "current hold's reason differs from its latest 'place' audit — restoring would leave the legal register citing a stale order or case (snapshot race or tampering)",

@@ -151,55 +151,64 @@ test('convertD1 writes files in apply order and routes lzAlerts separately', () 
 
 test('hold↔audit reconciliation catches snapshot races in both directions', () => {
   const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const reason = 'Court order 42/2026';
   const holdsWith = (rows) =>
-    tableFixture('diag_legal_holds', ['wallet_hash', 'legal_doc_ref'], rows);
+    tableFixture('diag_legal_holds', ['wallet_hash', 'legal_doc_ref', 'hold_reason'], rows);
   const auditWith = (rows) =>
-    tableFixture('diag_legal_hold_audit', ['id', 'at', 'action', 'wallet_hash', 'legal_doc_ref'], rows);
+    tableFixture(
+      'diag_legal_hold_audit',
+      ['id', 'at', 'action', 'wallet_hash', 'legal_doc_ref', 'detail'],
+      rows,
+    );
   const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
 
   // Consistent pair: place then still held, matching document.
   const okPair = arch(
-    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc }]),
-    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc }]),
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: reason }]),
+    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc, detail: reason }]),
   );
   assert.deepEqual(reconcileLegalHolds(okPair), []);
 
   // place audit, no hold row → a required erasure block would vanish.
   const placeNoHold = arch(
     holdsWith([]),
-    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc }]),
+    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc, detail: reason }]),
   );
   assert.match(reconcileLegalHolds(placeNoHold)[0].problem, /omits/);
 
   // hold present but the LATEST audit is lift → resurrected hold.
   const liftedButHeld = arch(
-    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc }]),
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: reason }]),
     auditWith([
-      { id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc },
-      { id: 2, at: 200, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null },
+      { id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc, detail: reason },
+      { id: 2, at: 200, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null, detail: '' },
     ]),
   );
   assert.match(reconcileLegalHolds(liftedButHeld)[0].problem, /resurrects/);
 
   // hold document differs from its latest place audit.
   const docDrift = arch(
-    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: `legal-holds/${'d'.repeat(64)}.pdf` }]),
-    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc }]),
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: `legal-holds/${'d'.repeat(64)}.pdf`, hold_reason: reason }]),
+    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc, detail: reason }]),
   );
   assert.match(reconcileLegalHolds(docDrift)[0].problem, /differs/);
 
   // hold with no audit history at all — the writer always appends one.
-  const orphanHold = arch(holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc }]), auditWith([]));
+  const orphanHold = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: reason }]),
+    auditWith([]),
+  );
   assert.match(reconcileLegalHolds(orphanHold)[0].problem, /no place\/lift audit/);
 });
 
 test('disclosure state replays from the audit, not from the hold row alone', () => {
   const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const reason = 'Court order 42/2026';
   const holdsWith = (rows) =>
     tableFixture(
       'diag_legal_holds',
-      ['wallet_hash', 'legal_doc_ref', 'disclosure_allowed', 'disclosure_note'],
-      rows,
+      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note'],
+      rows.map((r) => ({ hold_reason: reason, ...r })),
     );
   const auditWith = (rows) =>
     tableFixture(
@@ -209,10 +218,10 @@ test('disclosure state replays from the audit, not from the hold row alone', () 
     );
   const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
   // A place audit's detail IS the raw holdReason (the writer binds
-  // the same value into hold_reason) — '' matches a fixture hold with
-  // no hold_reason column.
+  // the same value into hold_reason) — non-empty, since the parser
+  // rejects a placement without one.
   const place = (id, at, ref = doc) =>
-    ({ id, at, action: 'place', wallet_hash: 'w1', legal_doc_ref: ref, detail: '' });
+    ({ id, at, action: 'place', wallet_hash: 'w1', legal_doc_ref: ref, detail: reason });
   const lift = (id, at) =>
     ({ id, at, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null, detail: '' });
   const setDisc = (id, at, detail) =>
@@ -330,6 +339,22 @@ test('hold reason replays from the latest placement audit (r9)', () => {
     auditWith([place(1, 100, 'Court order 42/2026'), place(2, 200, 'Court order 77/2026')]),
   );
   assert.match(reconcileLegalHolds(staleReason)[0].problem, /reason/);
+
+  // '' on BOTH sides is NOT a consistent pair: the production parser
+  // rejects a placement without a non-empty reason, so a gutted
+  // reason+detail is an impossible record, never a match (r10).
+  const guttedPair = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: '' }]),
+    auditWith([place(1, 100, '')]),
+  );
+  assert.match(reconcileLegalHolds(guttedPair)[0].problem, /impossible/);
+
+  // …and a NULL detail must not be normalized into a comparable ''.
+  const nullDetail = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: '' }]),
+    auditWith([place(1, 100, null)]),
+  );
+  assert.match(reconcileLegalHolds(nullDetail)[0].problem, /impossible/);
 });
 
 test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {
