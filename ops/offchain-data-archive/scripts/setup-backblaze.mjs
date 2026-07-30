@@ -435,9 +435,16 @@ async function main() {
     console.log();
   } else {
     console.log('# Write-only key already exists; reusing. ' +
-                'If you have lost the application-key string, rotate via:');
-    console.log(`#   - revoke "${writeKeyName}" in B2 dashboard`);
-    console.log('#   - re-run this script');
+                'If you have lost the application-key string, rotate KEY-ONLY:');
+    console.log(`#   - create a replacement key with the same capabilities`);
+    console.log(`#     (${writeCaps.join(' + ')}, bucket-scoped) via the B2`);
+    console.log('#     console App Keys page or the B2 CLI, update the wrangler');
+    console.log(`#     secrets, then revoke "${writeKeyName}"`);
+    console.log('#   - do NOT re-run this script to rotate: it rewrites the');
+    console.log('#     bucket lifecycle rules to the values coded in this tree');
+    console.log('#     BEFORE it touches keys, silently reverting any live');
+    console.log('#     tuning (hidden-version retention in particular — see');
+    console.log('#     docs/ops/OffChainRestore.md §2).');
     console.log();
   }
   if (newReadKey) {
@@ -449,7 +456,9 @@ async function main() {
     console.log(`  Paste:  ${newReadKey.applicationKey}`);
     console.log();
   } else {
-    console.log('# Read-only key already exists; reusing. Same rotation note as above.');
+    console.log('# Read-only key already exists; reusing. Same KEY-ONLY rotation');
+    console.log(`# note as above (capabilities: ${readCaps.join(' + ')}) — never`);
+    console.log('# by re-running this script.');
     console.log();
   }
   console.log(`# B2 endpoint + bucket — set as secrets too (region varies per account):`);

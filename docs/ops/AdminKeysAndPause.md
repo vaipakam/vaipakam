@@ -174,9 +174,20 @@ Verify against `ChainByChainChecks.md` after every change.
 
 ## Off-chain operator keys (alert watchers)
 
-Two Cloudflare Workers hold long-lived secrets that are **not**
-Diamond roles. Losing or rotating them affects only the
-off-chain notification rails, never on-chain protocol authority.
+Two Cloudflare Workers hold long-lived secrets. For most of them,
+losing or rotating the value affects only the off-chain notification
+rails — **with one carve-out: `KEEPER_PRIVATE_KEY` is an on-chain
+signer, not just an off-chain credential.** Its EOA can hold
+`KEEPER_ROLE` (every chain) and is separately the configured
+`rewardRemittanceKeeper` on Base, so a compromise of that row is
+**not** closed by rotating the stored value: the stolen EOA keeps
+its on-chain authority until both are explicitly revoked —
+`revokeRole(KEEPER_ROLE, …)` per chain AND
+`setRewardRemittanceKeeper(…)` on Base. The row below carries the
+full sequence; an earlier revision of this lead-in classified the
+whole section as "never on-chain protocol authority", which is
+exactly the assumption that would leave the attacker authorized
+(#1450 r29).
 
 ### `apps/keeper` + `apps/agent` (public-facing — user HF alerts + autonomous keeper)
 

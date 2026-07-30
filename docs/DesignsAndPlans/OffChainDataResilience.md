@@ -105,9 +105,12 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
   transcription leak of one key) to ONE of (corrupt future archives /
   read past ciphertext). It does **not** bound a Cloudflare-side
   compromise: both keys are bound to the same archive Worker, so a
-  Workers Edit compromise yields both at once (see the withdrawn-
-  claims note in §3.3a). The offline AES key blocks the plaintext
-  on the read side in either case.
+  Workers Edit compromise yields both at once — and the raw
+  `BACKUP_ENCRYPTION_KEY` beside them (see the withdrawn-claims
+  note in §3.3a and #1463), so that compromise also decrypts. The
+  offline AES key blocks plaintext recovery only for **B2-side or
+  isolated read-key leaks**, where the attacker holds ciphertext
+  but not the Worker's environment.
 
 ### 3.3a Two-key B2 access model
 

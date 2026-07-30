@@ -972,12 +972,25 @@ For each table:
    against these requirements:
 
    - one output file per table, named `restore/<table>.sql`;
+   - **each file begins with `DELETE FROM <table>;`** so the import
+     REPLACES the table instead of merging into it. On a fresh
+     account (tables just created by §1 step 7's migrations) the
+     delete is a no-op; on a **selective restore into a live
+     database** it is load-bearing twice over — archived rows
+     collide with surviving primary keys and abort a plain-INSERT
+     import, and rows an attacker INSERTED are untouched by inserts
+     alone even where they succeed (#1450 r29). `INSERT OR REPLACE`
+     is not a substitute: it resolves the collisions and still
+     leaves the attacker-added rows in place;
    - values quoted safely — single-quote doubling for strings, bare
      numerics, `NULL` for null, and a hard failure on any value type
      the script does not recognise;
    - identifiers (table and column names) treated as untrusted input
      too: after a compromise, `archive.json` is attacker-influenced;
-   - per-table row counts printed, for step 4's verification.
+   - per-table row counts printed, for step 4's verification — and
+     because the import is replace-not-merge, the post-import `SELECT
+     COUNT(*)` must EQUAL the manifest count, with no allowance for
+     pre-existing rows.
 
 3. Apply via wrangler — targeting the matching D1 binding:
 
