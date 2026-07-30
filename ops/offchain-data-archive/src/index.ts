@@ -251,7 +251,29 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
-        `  sha256: ${out.archiveSha256.slice(0, 16)}…`,
+        // FULL digest, not truncated (#1469). This message is the archive's
+        // only PROVENANCE anchor, and provenance — not integrity — is the
+        // actual gap in the restore path.
+        //
+        // A manifest's own `archive.sha256` proves the archive is intact and
+        // was encrypted under our key. It cannot say WHO wrote it: an
+        // attacker holding the Worker's B2 write key and the AES key (the
+        // same Workers-Edit compromise yields both) can upload a forged
+        // archive with a self-consistent manifest, and every check in the
+        // restore path passes. Integrity is not provenance.
+        //
+        // This channel closes that, because it is append-only with respect
+        // to the credentials involved: an attacker can post NEW messages,
+        // but cannot rewrite the message sent on the night in question. So
+        // an operator can bind a candidate archive to what was recorded at
+        // the time — which is the one comparison the B2 side cannot forge.
+        //
+        // That binding needs the WHOLE digest. Truncated to 16 hex chars it
+        // pinned only 64 bits, and the attacker chooses the plaintext (they
+        // pick which rows to plant), so they can grind freely against a
+        // 64-bit target. 256 bits makes it infeasible instead of merely
+        // expensive. The extra 48 characters cost nothing here.
+        `  sha256: ${out.archiveSha256}`,
         `  rows: ${out.rowsBackedUp}, R2 objects: ${out.r2ObjectsBackedUp}`,
         `  open support tickets: ${await openSupportTicketCount(env)}`,
         `  took ${(out.durationMs / 1000).toFixed(1)} s`,
