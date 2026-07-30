@@ -291,20 +291,25 @@ manual follow-up required when the prerequisites are in place:
    `phase_cf_frontend`) — runs `npm run build` then
    `npx wrangler deploy` from `apps/defi/`. Skip with
    `--skip-frontend` if the build is intentionally lagging.
-3. **Watcher Cloudflare deploy** (step `[8a]` / cf-watcher `[a]`) —
-   `npx wrangler deploy` from `apps/keeper/`. Pushes the new
-   bundle (which now embeds the new diamond addresses) so the cron
-   reads from the right contract on the next tick.
-4. **D1 migrations** (step `[8b]` / cf-watcher `[b]`) — applies any
-   pending schema migrations to the remote `vaipakam-alerts-db`.
-   Idempotent — wrangler skips already-applied entries.
-5. **RPC-secret presence check** (step `[8c]` / cf-watcher `[c]`) —
-   verifies the per-chain `RPC_<CHAIN>` secret exists on the Worker.
-   **Hard-fails the deploy if missing** — see prerequisite above.
-6. **Indexer-cursor seed** (step `[8d]` / cf-watcher `[d]` —
-   `--fresh` only) — INSERTs/UPDATEs the cursor for the deployed
-   chain at current safe head so the first cron tick starts indexing
-   AT head instead of backfilling an empty pre-deploy block range.
+3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
+   `pnpm exec wrangler deploy` from `apps/keeper/`, plus the
+   RPC-secret presence check (**hard-fails if a per-chain
+   `RPC_<CHAIN>` secret is missing** — see prerequisite above).
+4. **Indexer Cloudflare deploy** (phase `cf-indexer`) —
+   `pnpm exec wrangler deploy` from `apps/indexer/`, then
+   `pnpm exec wrangler d1 migrations apply vaipakam-archive --remote`.
+   Only this phase runs migrations: the indexer owns the shared
+   `vaipakam-archive` schema, and the keeper/agent bind the same D1
+   without ever migrating it. On `--fresh`, also seeds the indexer
+   cursor at the current safe head so the first cron tick starts AT
+   head instead of backfilling an empty pre-deploy range.
+5. **Agent Cloudflare deploy** (phase `cf-agent`) —
+   `pnpm exec wrangler deploy` from `apps/agent/` (notifications,
+   Telegram webhook, frames). The retired single-watcher `cf-watcher`
+   phase is explicitly rejected by `deploy-mainnet.sh`; all three
+   phases above must run for a Stage 3 deploy — stopping after
+   `cf-keeper` leaves indexing, migrations and the public agent
+   endpoints on the previous deployment.
 
 ### Post-deploy verification (do this before announcing)
 
@@ -759,7 +764,7 @@ forge script -vv --rpc-url $NEW_CHAIN_RPC_URL \
                                                        # are called in writeChainHeader.
 
 # Frontend side — should compile and the new chainId should appear in the picker
-cd frontend && npm run typecheck && npm run dev
+cd apps/defi && npm run typecheck && npm run dev
 ```
 
 After those pass, the per-chain runbook (e.g.
@@ -958,33 +963,39 @@ it is emitted by:
 bash contracts/script/exportFrontendDeployments.sh
 ```
 
-The script auto-detects both consumers via the sibling layout
-(`vaipakam/apps/defi` and `vaipakam/apps/keeper`), merges every
-`deployments/<chain>/addresses.json`, and writes the merged JSON
-+ a `_deployments_source.json` provenance stamp into each
-target's `src/contracts/` (frontend) / `src/` (watcher). Pass
-`WATCHER_DIR=` (empty) to skip the watcher target. Idempotent:
-re-running with no upstream changes leaves both outputs
-byte-identical.
+The script merges every `deployments/<chain>/addresses.json` and
+writes the merged JSON + a `_deployments_source.json` provenance
+stamp into the single `packages/contracts/src/` target
+(auto-detected; override with `CONTRACTS_PKG_DIR=/abs/path` for a
+non-standard layout — the only knob the script has). Every consumer
+— the React surfaces and all three Workers — imports that one file
+through `@vaipakam/contracts/deployments`, so there is no second
+target. Idempotent: re-running with no upstream changes leaves the
+output byte-identical.
 
 Run it after every contract redeploy *before*:
-- `cd frontend && npm run deploy` (so new addresses inline into
+- `cd apps/defi && npm run deploy` (so new addresses inline into
   the JS bundle), AND
-- `cd apps/keeper && wrangler deploy` (so the watcher reads
-  the new addresses on its next cron tick).
+- the Worker deploys (`pnpm --filter @vaipakam/{keeper,indexer,agent}
+  run deploy`), so each reads the new addresses on its next cron
+  tick.
 
 **T-041 — chain-indexer D1 migrations.** Whenever a new migration
 file lands under `apps/indexer/migrations/` (e.g. `0006_*.sql`),
 apply it to the live D1 database before redeploying the Worker:
 
 ```bash
-cd apps/keeper
-npm run db:migrate     # idempotent — wrangler tracks the high-water mark
-npm run deploy
+cd apps/indexer
+pnpm exec wrangler d1 migrations apply vaipakam-archive --remote
+pnpm run deploy
 ```
 
-The migration step is independent of contract redeploys; you only
-need it when the watcher's schema changes. Skipping it leaves the
+`apps/indexer` owns the shared `vaipakam-archive` schema — `apps/keeper`
+and `apps/agent` deliberately have no migrations directory of their own
+(see the D1 schema-discipline section of `CLAUDE.md`). The apply is
+idempotent; D1 tracks the applied high-water mark. The migration step is
+independent of contract redeploys; you only need it when the indexer's
+schema changes. Skipping it leaves the
 Worker referencing columns that don't exist and cron ticks fail
 with cryptic "no such column" errors in the logs. See
 [`apps/keeper/README.md`](../../apps/keeper/README.md)

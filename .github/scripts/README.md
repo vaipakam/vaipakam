@@ -35,17 +35,25 @@ does not converge.
 
 The correctness burden therefore sits with the rule:
 
-> **A rule may ship here only if over-extraction cannot make it fire.**
+> **A rule may ship here only if its finding is a real defect of the document
+> text even when the fragment it fired on is malformed.**
+
+(Round 12 falsified a stronger earlier wording — "over-extraction cannot make
+the rule fire". It can: a malformed non-link such as `[x](frontend/ghost"x")`
+extracts a fragment starting with the dead name, and the gate fires. But the
+text it fired on genuinely names the removed directory, which is the defect
+itself — the finding stays truthful. Immunity holds only for exact equality;
+truthfulness under over-extraction is the property that survives.)
 
 Rules come in two shapes, and they react to a loose extractor in opposite ways:
 
 | Shape | Question | With a loose extractor |
 | --- | --- | --- |
-| **closed-world positive** | is this fragment one of these two known-dead names? | a junk fragment isn't equal to `frontend/` — defects cause **misses** only |
-| **open-world negative** | is this fragment absent from the tracked tree? | every junk fragment is absent — defects become **false alarms** |
+| **closed-world positive** | does this fragment contain one of these two known-dead names? | a hit means the text really names the dead directory — defects cause **misses**, never a finding about nothing |
+| **open-world negative** | is this fragment absent from the tracked tree? | every junk fragment is absent — defects become **false alarms about nothing** |
 
 The shipped rule is the first shape. The review record bears the distinction out
-exactly: all six extraction defects found on #1467 became false positives *only*
+exactly: all six extraction defects found on #1467 became false alarms *only*
 through an open-world rule, and five of seven adjudication defects landed on one
 too — including 44 frozen false findings from a single dot-directory bug.
 
@@ -73,7 +81,7 @@ it existed for one reason: the check was red on arrival, and the backlog was
 assumed unclearable.
 
 **The platform is pre-live, which makes that assumption false where it counts.**
-The operator-facing slice was 45 citations across 6 runbooks with knowable
+The operator-facing slice was 72 citations across 6 runbooks with knowable
 targets, so it was *fixed* rather than frozen. With the gated scope clean, the
 baseline, the ratchet, and the follow-up card to flip it into a gate are all
 unnecessary. A failure now always means a **new** stale citation.

@@ -69,7 +69,7 @@ liquidation bonus once HF crosses 1.0 or grace expires. **No Diamond
 role is granted to keeper-bot operators**, and none should be: a
 keeper that needed an admin role would be a structural hazard. The
 operator's own hf-watcher Cloudflare Worker
-(`apps/keeper/src/autoLifecycle.ts`) follows the same model — it submits
+(`apps/keeper/src/liquidator.ts`) follows the same model — it submits
 liquidations from a hot key that holds zero on-chain authority.
 
 This means the role-rotation procedure below does **not** need to

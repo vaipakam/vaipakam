@@ -11,7 +11,7 @@ forty-seven mentions of the old name survived across thirty-nine documents. An
 operator following one looks for something that is not there, usually at the
 moment they can least afford to.
 
-Sixty-nine of those references — every one in the operator runbooks — are
+Seventy-two of those references — every one in the operator runbooks — are
 corrected here rather than merely recorded. Where the old location simply moved,
 each citation now names the new one. Where the thing itself was deleted, the
 surrounding instructions were rewritten to say so: the deploy documentation had
@@ -26,7 +26,7 @@ every existing problem and reported only when a document got worse, because the
 backlog was assumed too large and too historical to clear.
 
 That assumption turns out to be false where it matters. The platform is not yet
-live, and the operator-facing part of the backlog was forty-five references
+live, and the operator-facing part of the backlog was seventy-two references
 across six documents with knowable answers — so it was fixed. With those
 documents clean, the recorded list, the machinery that policed it, and the
 follow-up task to eventually turn the warning into a gate all became
@@ -58,11 +58,23 @@ and eleven rounds of review demonstrated that approximating it converges on
 nothing. Every one of those rounds' false alarms arrived through a question of
 that shape.
 
-The rule that shipped asks the opposite kind of question — "is this one of these
-two known-dead names" — which a stray fragment simply is not. It cannot raise a
-false alarm no matter how imprecise the reader is; the worst it can do is miss
-something. That trade is deliberate: a check that cries wolf is one people learn
+The rule that shipped asks the opposite kind of question — "does this text
+contain one of these two known-dead names". Review then sharpened the claim
+behind it: a garbled fragment *can* trip the rule, but only when the garbled
+text genuinely contains the dead name — in which case the document really does
+mention something that no longer exists, and the alarm is true. What the rule
+cannot do is raise an alarm about nothing; the worst an imprecise reader causes
+is a miss. That trade is deliberate: a check that cries wolf is one people learn
 to ignore, and then it protects nothing at all.
+
+The same round of review found that commands were being read too coarsely —
+an instruction like "change into the old directory and deploy" slipped past
+because the whole command was treated as one name — and that three of my own
+corrections had replaced a stale instruction with a wrong one, including a
+database-migration command that does not exist and a credential rotation that
+would have left a revoked token live. All are fixed, each verified against the
+scripts and configuration they describe rather than against what sounded
+plausible.
 
 That distinction is now written down as the standing rule for adding a check
 here, so the next person does not have to rediscover it over eleven rounds.

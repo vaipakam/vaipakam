@@ -12,22 +12,25 @@
  *
  * ── THE CONTRACT: THIS EXTRACTOR IS DELIBERATELY LOOSE ────────────────────
  *
- * It over-matches. It will hand you fragments that are not citations at all:
- * malformed links, text inside parentheses, a destination CommonMark would
+ * It over-matches. It will hand you fragments that are not well-formed
+ * citations: malformed links, shell words, a destination CommonMark would
  * reject. It does not implement CommonMark and does not try to.
  *
- * **Every consumer must be correct in the presence of over-extraction.**
+ * **Every consumer must remain truthful under over-extraction**: a consumer's
+ * finding must be a real defect of the DOCUMENT TEXT even when the fragment it
+ * fired on is not a well-formed citation. A fragment of `docs/ops/` text that
+ * contains `frontend/` is stale text whether or not it parses as a link — so a
+ * rule keyed on literally containing a removed name stays truthful on junk
+ * fragments, while a rule keyed on "absent from the tree" does not (every junk
+ * fragment is absent). Review round 12 sharpened this from an earlier, wronger
+ * claim that over-extraction could not make the shipped rule fire at all; it
+ * can, and when it does, what it found is still real (#1467 r12).
  *
- * That is not an apology, it is the design. Eleven rounds of review on #1467
- * established the reason, and the finding history sorts almost perfectly:
- *
- *   - Six findings were extraction defects — angle-bracket destinations with
- *     spaces, titled destinations, reference definitions, destinations on the
- *     following line, an unbounded title separator, a zero-width one.
- *   - EVERY ONE of them produced a false POSITIVE only by way of a consumer
- *     that reported anything it could not resolve. Against a consumer that
- *     asks "is this fragment one of these two known-dead names", each was
- *     harmless.
+ * Eleven rounds of review established the underlying asymmetry: all six
+ * extraction defects found on this branch (angle-bracket destinations with
+ * spaces, titled destinations, reference definitions, destinations on the
+ * following line, an unbounded title separator, a zero-width one) became false
+ * alarms ONLY by way of a consumer that reported anything it could not resolve.
  *
  * Chasing a precise extractor by patching patterns does not converge: markdown
  * embedded in arbitrary prose is an unbounded space, and each round closed one
@@ -106,11 +109,38 @@ export function scopedDocs(prefixes) {
  * mattered; here they simply widen what is offered to the consumer.
  */
 const FORMS = [
-  { name: 'code-span', re: /`([^`\n]+)`/g },
+  { name: 'code-span', re: /`([^`\n]+)`/g, words: true },
   { name: 'angle-destination', re: /\]\(\s*<([^>\n]+)>/g },
   { name: 'inline-destination', re: /\]\(\s*([^)\s<>]+)/g },
   { name: 'reference-definition', re: /^[ ]{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/gm },
 ];
+
+/**
+ * A code span or fenced block holding a COMMAND is cited path material too
+ * (#1467 r12): `cd frontend && npm run deploy` names the removed directory,
+ * and extracting the span only as one whole fragment let it slide past a
+ * prefix test — two real stale instructions sat in the tree while the gate
+ * said zero. Command text is therefore ALSO split into shell words. Splitting
+ * is on whitespace and shell metacharacters; path characters (`/`, `.`, `-`,
+ * `_`) stay inside a word.
+ *
+ * Only PATH-SHAPED words are emitted: a word containing `/`, or the argument
+ * of `cd`. Emitting every word made the English word "frontend" in commit
+ * messages and comments ("Sync frontend ABIs…", "confirm the frontend still
+ * typechecks") read as a path citation — the bare-name rule is right for a
+ * whole code span (`` `frontend` `` is a deliberate citation) and wrong for a
+ * word inside prose-ish command text. The miss this buys (`rm -rf frontend`
+ * with no slash and no `cd`) is the stated trade: misses over false alarms.
+ */
+const SHELL_SPLIT = /[\s&|;()<>"'`,]+/;
+function* pathWords(text) {
+  let prev = '';
+  for (const w of text.split(SHELL_SPLIT)) {
+    if (!w) continue;
+    if (w.includes('/') || prev === 'cd') yield w;
+    prev = w;
+  }
+}
 
 /** Strip HTML comments, preserving newlines so line numbers stay true. */
 const uncomment = (text) =>
@@ -140,17 +170,39 @@ export function citations(file) {
   };
 
   const out = [];
-  for (const { re } of FORMS) {
+  const seen = new Set();
+  const push = (raw, i) => {
+    // `path:line` is this repo's ordinary citation form, so the suffix is not
+    // part of the name (#1467 r3); query and fragment likewise cannot hide a
+    // stale path behind them (#1467 r1).
+    const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
+    if (!tok) return;
+    const key = `${tok}\u0000${i}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ tok, n: i + 1, line: lines[i] ?? '' });
+  };
+
+  for (const { re, words } of FORMS) {
     for (const m of body.matchAll(re)) {
       const raw = m[1].trim();
-      // `path:line` is this repo's ordinary citation form, so the suffix is not
-      // part of the name (#1467 r3); query and fragment likewise cannot hide a
-      // stale path behind them (#1467 r1).
-      const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
-      if (!tok) continue;
       const i = lineAt(m.index + Math.max(0, m[0].indexOf(m[1])));
-      out.push({ tok, n: i + 1, line: lines[i] ?? '' });
+      push(raw, i);
+      if (words) for (const w of pathWords(raw)) push(w, i);
     }
   }
+
+  // Fenced code blocks, line by line — a stale path in a fence is shown to the
+  // operator exactly like one in a code span (#1467 r12).
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const fenceMark = /^\s*(```|~~~)/.test(lines[i]);
+    if (fenceMark) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) for (const w of pathWords(lines[i])) push(w, i);
+  }
+
   return out;
 }

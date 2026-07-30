@@ -548,9 +548,9 @@ nothing like an ABI mismatch from the user's side.
 ```bash
 forge build   # if you haven't built since the last edit
 bash contracts/script/exportFrontendAbis.sh
-cd frontend
+cd apps/defi
 node_modules/.bin/tsc -b --noEmit   # confirm the frontend still typechecks
-git diff src/contracts/abis/    # review the change
+git diff ../../packages/contracts/src/abis/    # review the change
 git commit -am 'Sync frontend ABIs with contracts@<commit>'
 ```
 
@@ -595,7 +595,7 @@ This replaces the previous fan-out of
 and the empty `DIAMOND_ADDR_*` placeholders in
 `apps/keeper/wrangler.jsonc:vars` — both surfaces are now
 read from the consolidated JSON. After running the script:
-- `cd frontend && npm run deploy` — vite inlines the new
+- `cd apps/defi && npm run deploy` — vite inlines the new
   addresses into the JS bundle.
 - `cd apps/keeper && wrangler deploy` — the watcher picks up
   the new Diamond addresses on its next cron tick.

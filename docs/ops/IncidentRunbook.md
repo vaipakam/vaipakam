@@ -527,8 +527,16 @@ identity), so rotation is time-sensitive.
 1. From `@BotFather`: `/revoke` → confirms token revocation. Old
    token stops working within seconds.
 2. `/token` to issue a fresh token.
-3. `cd apps/keeper && npx wrangler secret put TG_BOT_TOKEN`
-   → paste the new token.
+3. Update the **account-level Secrets Store** — NOT a per-Worker
+   `wrangler secret put`. Both Stage 3 consumers (`apps/keeper` and
+   `apps/agent`, which owns `/tg/webhook`) bind `TG_BOT_TOKEN` from the
+   shared store (`store_id 1e66429d0fa24aa38a27bc05b7bcf63e` in each
+   `wrangler.jsonc`), so a per-Worker secret would leave the revoked
+   token live in every other binding:
+   ```bash
+   npx wrangler secrets-store secret update 1e66429d0fa24aa38a27bc05b7bcf63e \
+       --name TG_BOT_TOKEN --value "<NEW_TG_BOT_TOKEN>"
+   ```
 4. Re-register the webhook:
    ```bash
    curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
@@ -546,12 +554,16 @@ No subscriber action required — the bot's @-handle stays
 2. **Transfer channel ownership** to a fresh EOA you control. Push
    surfaces this as a transfer tx that hands the channel + remaining
    stake to the new owner. Wait for confirmation.
-3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`:
+3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK` in the
+   shared Secrets Store (same reasoning as the Telegram rotation above —
+   per-Worker `secret put` would not reach the store-bound Workers):
    ```bash
-   cd apps/keeper && npx wrangler secret put PUSH_CHANNEL_PK
+   npx wrangler secrets-store secret update 1e66429d0fa24aa38a27bc05b7bcf63e \
+       --name PUSH_CHANNEL_PK --value "<NEW_PUSH_CHANNEL_PK>"
    ```
-4. `npm run deploy` to invalidate the cached PushAPI client (the
-   worker module-scope cache rebuilds on next cron tick).
+4. Redeploy every Worker that binds it (`pnpm --filter @vaipakam/keeper
+   run deploy`, then the agent) to invalidate the cached PushAPI client
+   (the module-scope cache rebuilds on next cron tick).
 5. The channel **address** stays the same iff the channel itself is
    transferred (Push lets you change the signer, not the channel id).
    No frontend redeploy needed — `VITE_PUSH_CHANNEL_ADDRESS` is

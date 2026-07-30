@@ -15,24 +15,33 @@
  * This file adjudicates; `docs-citations.mjs` extracts, and its extractor is
  * deliberately loose — it will offer fragments that are not citations at all.
  *
- *     A rule may ship here ONLY IF over-extraction cannot make it fire.
+ *     A rule may ship here ONLY IF its finding is a real defect of the
+ *     DOCUMENT TEXT even when the fragment it fired on is malformed.
  *
- * That one criterion is the architecture, and eleven rounds of review on #1467
- * is what it cost to find. Rules come in two shapes:
+ * That criterion is the architecture, and twelve rounds of review on #1467 is
+ * what it cost to state correctly. (Round 12 falsified an earlier, stronger
+ * wording — "over-extraction cannot make the rule fire". It can: a malformed
+ * non-link like `[x](frontend/ghost"title")` extracts a fragment that starts
+ * with the dead name, and the gate fires. But what it fired on is operator-doc
+ * text that NAMES the removed directory, which is the defect itself — the
+ * finding stays truthful. Immunity to over-extraction holds only for exact
+ * equality; truthfulness under over-extraction is the property that survives,
+ * and it is the one that matters.) Rules come in two shapes:
  *
- *   - CLOSED-WORLD POSITIVE — "is this fragment one of these two known-dead
- *     names?" A junk fragment is not equal to `frontend/`, so a loose extractor
- *     cannot produce a false finding. Extractor defects can only cause MISSES.
+ *   - CLOSED-WORLD POSITIVE — "does this fragment contain one of these two
+ *     known-dead names?" Whatever junk surrounds it, a hit means the text
+ *     really does name the dead directory. Extractor defects can only cause
+ *     MISSES or oddly-delimited findings, never a finding about nothing.
  *
  *   - OPEN-WORLD NEGATIVE — "is this fragment absent from the tree?" Every junk
- *     fragment is absent, so it fires on all of them. Such a rule AMPLIFIES
- *     every extractor defect into a false alarm, and can be no more correct
- *     than its extractor.
+ *     fragment is absent, so it fires on all of them, and each such finding is
+ *     about NOTHING. Such a rule amplifies every extractor defect into a false
+ *     alarm, and can be no more correct than its extractor.
  *
  * `REMOVED_DIRS` below is the first shape, and the review record bears the
  * distinction out exactly: all six extraction findings on this branch became
- * false positives ONLY through an open-world rule, and five of seven
- * adjudication findings landed on one too.
+ * false alarms ONLY through an open-world rule, and five of seven adjudication
+ * findings landed on one too.
  *
  * Three open-world rules were built on this branch and deferred, each needing a
  * precise extractor — which means a real parser, not more patches to a loose
@@ -54,7 +63,7 @@
  * assumed unclearable.
  *
  * The platform is PRE-LIVE, which makes that assumption false where it counts.
- * The operator-facing slice was 69 citations across 6 runbooks with knowable
+ * The operator-facing slice was 72 citations across 6 runbooks with knowable
  * targets, so it was FIXED rather than frozen. With the gated scope clean, the
  * baseline, the ratchet and its follow-up card are all unnecessary: this gates
  * at zero from its first run.
@@ -70,6 +79,7 @@
  * span or a link. It closes one class completely rather than many partly.
  */
 
+import { dirname, posix } from 'node:path';
 import { citations, scopedDocs, trackedFiles } from './docs-citations.mjs';
 
 /** Documents the gate covers. See "SCOPE IS `docs/ops/`" above. */
@@ -105,13 +115,18 @@ const TRACKED = new Set(trackedFiles());
  *
  * The tracked tree is consulted in exactly one direction: to ACQUIT. A
  * fragment that resolves to a tracked file is correct whatever it is called, so
- * a live `docs/ops/frontend/guide.md` is never reported (#1467 r6). Using the
- * tree to ACCUSE would be the open-world rule the admission criterion excludes,
- * and is what #1486 carries.
+ * a live `docs/ops/frontend/guide.md` is never reported (#1467 r6). Resolution
+ * is tried in every way the fragment could legitimately be read — as written,
+ * with relative prefixes stripped, and RELATIVE TO THE CITING DOCUMENT, since
+ * that is how a markdown destination actually renders (#1467 r12: a tracked
+ * `docs/ops/frontend/guide.md` linked as `frontend/guide.md` was reported
+ * because only the raw token was probed). Using the tree to ACCUSE would be the
+ * open-world rule the admission criterion excludes, and is what #1486 carries.
  */
-const removedDirHit = (tok) => {
+const removedDirHit = (tok, file) => {
   const bare = tok.replace(/^(\.\.?\/)+/, '');
-  if (TRACKED.has(tok) || TRACKED.has(bare)) return undefined;
+  const rel = posix.normalize(posix.join(dirname(file), tok));
+  if (TRACKED.has(tok) || TRACKED.has(bare) || TRACKED.has(rel)) return undefined;
   return REMOVED_DIRS.find(
     ([d]) =>
       tok.startsWith(d) ||
@@ -124,7 +139,7 @@ const removedDirHit = (tok) => {
 const findings = [];
 for (const file of scopedDocs(GATED)) {
   for (const { tok, n, line } of citations(file)) {
-    const removed = removedDirHit(tok);
+    const removed = removedDirHit(tok, file);
     if (removed) findings.push({ file, n, tok, line, why: removed[1] });
   }
 }
