@@ -131,6 +131,7 @@ export async function runTick(
     const findings: Finding[] = checkHardInvariants(
       obs,
       config.bucketCoverageToleranceWei,
+      config.compositionSlackToleranceWei,
     );
 
     // ── Windowed advisories ──────────────────────────────────────────

@@ -581,6 +581,27 @@ sits at the single canonical point (Base finalization):
    finalize, `Σ outstandingCommit_recycled ≤ bucketBalance` and
    `Σ outstandingCommit_fresh + paidOutFresh ≤ 69M` — a day can never size
    against availability another unclaimed day already committed.
+
+   **Amended (#1444).** The recycled half is stated in its universal form
+   `Σ outstandingCommit_recycled ≤ bucketBalance + releasedRemitStranded`.
+   This design predates M3 B2-d2's remit-release valve, which restores a
+   day's commitments while deliberately NOT re-crediting the bucket — the
+   sent tokens are locked in the transport's custody, genuinely outside
+   Diamond custody — so the bare form is false on the canonical chain after
+   a release. `releasedRemitStranded` is the recorded Σ of what those releases
+   stranded, i.e. backing that exists and is in transit. On every mirror it
+   is zero ONLY for a Diamond that has ALWAYS been a mirror — the role is a
+   MUTABLE admin setting, so a demoted
+   Diamond keeps whatever it accrued. An external checker must admit the
+   term only while the chain still holds the role, and must require its
+   own configured canonical chain and the chain's own `isCanonicalRewardChain`
+   flag to AGREE — a disagreement is itself a reportable fault.
+
+   The `fundable = bucket − outstanding` FUNDING GATE is deliberately NOT
+   amended to match: a day whose backing was stranded stays unfundable
+   until the recovery ceremony. Fault detection and funding eligibility are
+   different questions and keep different answers.
+
 3. Bucket separation, commitment-aware (Codex r7 — recycled commitments
    must not be counted twice): `diamondVpfiBalance ≥ userLifCustody +
    unclaimedRewardBudget_fresh + recycleBucket`, where recycled reward
@@ -608,6 +629,41 @@ sits at the single canonical point (Base finalization):
    `scheduleFloor` is capturable by whoever has eligible activity regardless
    of recycling; that is a pre-existing property of the reward program that
    this design neither creates nor changes.
+
+8. **Bucket composition (#1446)** — checked in BOTH directions:
+
+   - forward, EXACT: `recycleCreditedCumulative +
+     recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
+     releasedRemitStranded`
+   - reverse, with its OWN slack: `recycleBucket + paidOutRecycled +
+     releasedRemitStranded ≤ (the same left side) + slack`
+
+   The reverse direction is load-bearing, not symmetry for its own sake: a
+   custody arrival that credits `recycleBucket` while failing to advance
+   `recycleCustodyRelocatedCumulative` makes the FORWARD bound looser, and
+   the derivation check agrees with the chain because it reads the same
+   missing slot — so the forward bound alone is defeated by the exact
+   regression this invariant exists to catch. The slack is a separate
+   constant because `consume`'s bucket floor widens this direction only.
+
+   EXCEPTION: while a chain has never run any recycled credit
+   (`recycleAccountingSeeded == false` — a Diamond refreshed over live
+   pre-#1222 state), its historical bucket legitimately has no counter
+   behind it and the relation is UNVERIFIABLE. That state is REPORTED, not
+   assumed away, and it is distinguished by the seeded flag rather than by
+   `recycleCreditedCumulative == 0`, which a fresh chain also satisfies, and `creditedCumulative` is reproducible from those
+   same slots as `max(raw, bucket + paidOut − relocated)`.
+
+   Both exist because invariant 6's per-chain `consumed ≤ reported`
+   compares the reported cumulative against the canonical chain's accepted
+   COPY of it, and both are produced by the same helper — a regression in
+   that helper inflates them together and the comparison stays green. These
+   two compare the published figures against where the tokens actually
+   went, which is independent of the accounting under test. The first
+   catches a counter advancing without a matching bucket credit (notably a
+   custody relocation also advancing absorption); the second catches the
+   relocation exclusion being dropped from the derived floor. Neither
+   subsumes the other.
 
 ## 8. Phasing (re-cut)
 

@@ -58,6 +58,15 @@ export interface Env {
    *  1e15 (0.001 VPFI): ~12 orders of magnitude above per-day dust and
    *  far below any real shortfall. */
   BUCKET_COVERAGE_TOLERANCE_WEI?: string;
+  /**
+   * Slack allowed on the REVERSE composition bound only (#1448 r3).
+   *
+   * Deliberately NOT the coverage knob. Raising the coverage tolerance for
+   * a chain with noisy dust would otherwise silently widen a
+   * custody-exclusion blind spot the operator has no reason to connect to
+   * it — which is why they are separate settings rather than one.
+   */
+  COMPOSITION_SLACK_TOLERANCE_WEI?: string;
   /** Var. Seconds before an already-notified alert of the same identity
    *  is sent again. Default 21600 (6h). */
   ALERT_REPEAT_SECONDS?: string;
@@ -84,6 +93,8 @@ export interface Config {
   stuckWindowTicks: number;
   reportLagWindowTicks: number;
   bucketCoverageToleranceWei: bigint;
+  /** Slack on the REVERSE composition bound only — never the coverage knob. */
+  compositionSlackToleranceWei: bigint;
   alertRepeatSeconds: number;
   staleLocalSeconds: number;
   telegram: { token: string; chatId: string } | null;
@@ -177,6 +188,11 @@ export function readConfig(env: Env): Config {
       env.BUCKET_COVERAGE_TOLERANCE_WEI,
       1_000_000_000_000_000n, // 1e15 wei = 0.001 VPFI
       'BUCKET_COVERAGE_TOLERANCE_WEI',
+    ),
+    compositionSlackToleranceWei: bigintVar(
+      env.COMPOSITION_SLACK_TOLERANCE_WEI,
+      1_000_000_000_000_000n, // 1e15 wei = 0.001 VPFI
+      'COMPOSITION_SLACK_TOLERANCE_WEI',
     ),
     alertRepeatSeconds: readAlertRepeatSeconds(env),
     staleLocalSeconds: intVar(env.STALE_LOCAL_SECONDS, 300, 'STALE_LOCAL_SECONDS'),

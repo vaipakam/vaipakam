@@ -249,6 +249,55 @@ fi
 banner "GATE PASSED"
 
 # ── Gate-only default: print the broadcast commands and stop ──────────────────
+# #1448 r12 — printed on BOTH exit paths, so the gate-only mode cannot
+# hand an operator the manual refresh commands without the migration
+# that follows them.
+#
+# #1448 r14 — takes the chain it applies to, because the ceremony is PER
+# DIAMOND: each chain has its own reservation history, so "run it once" is
+# once per chain, not once per invocation.
+print_seed_ceremony() {
+cat <<EOF
+
+POST-REFRESH — recycled accounting${1:+ for $1} (any chain with release history):
+EOF
+cat <<'EOF'
+
+  Run ONCE if the reservation history holds ANY released (status-3)
+  reservation — walk getRemitReservation(i) over 1..getRemitReservationNonce().
+  That single condition is the whole rule. Do NOT additionally require the
+  published stranded cumulative to be zero: a release landing after the
+  refresh makes it non-zero while a historical amount is still unrecovered
+  behind it, which is exactly the case this recovers.
+
+  To check whether it already ran, read getReleasedRemitStrandedSeedState()
+  — its `applied` flag, never the published figure.
+
+    NONCE=$(cast call $DIAMOND "getRemitReservationNonce()(uint256)" ...)
+    cast send $DIAMOND "seedReleasedRemitStranded(uint256)" $NONCE ...
+
+  It scans 1..upTo itself — there is no id list to get wrong — and publishes
+  nothing until the cursor reaches the target it pinned from the nonce on the
+  first call. On a Diamond with a long reservation history, split it:
+  `seedReleasedRemitStranded(500)`, `(1000)`, ... up to the nonce; a single
+  transaction could otherwise exceed the block gas limit, and the ceremony is
+  one-shot. It reverts if a remittance is released mid-ceremony — restart with
+  resetReleasedRemitStrandedSeed() and re-run; a restart is an expected
+  outcome on a busy chain, not an incident — or if the result does not
+  reconcile both relations. Verify:
+
+    cast call $DIAMOND "getRecycleCompositionPosition()(uint256,uint256,bool,bool)"
+
+  The watcher's two CRITICALs must clear on the next tick, and
+  getReleasedRemitStrandedSeedState() must report `applied`. Do not verify by
+  asserting the stranded cumulative is non-zero — that check is itself
+  defeated in the mixed case above, where it was already non-zero before the
+  ceremony ran. On a chain with no released reservation at all this step is a
+  no-op and can be skipped.
+
+EOF
+}
+
 if [ "$BROADCAST" -eq 0 ]; then
   # Echo back the SAME scoping the rehearsal used (Codex #1182) so the copy-paste
   # rerun broadcasts exactly what was just gated — not the full default set.
@@ -256,6 +305,7 @@ if [ "$BROADCAST" -eq 0 ]; then
   [ "$SKIP_VAULT" -eq 1 ] && rerun="$rerun --skip-vault"
   [ "$RUN_EXPORT" -eq 1 ] && rerun="$rerun --export"
   [ "$CHAINS" != "base-sepolia arb-sepolia" ] && rerun="$rerun --chains \"$CHAINS\""
+
   cat <<EOF
 
 The pre-broadcast gate is green. Nothing was sent (gate-only default).
@@ -279,6 +329,8 @@ EOF
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo
   done
+  echo
+  print_seed_ceremony
   exit 0
 fi
 
@@ -290,6 +342,17 @@ for slug in $CHAINS; do
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \
     || fail "$slug: RefreshAllFacetsInPlace broadcast failed"
+
+  # #1448 r14 — printed HERE, not once at the end. The cut has already
+  # landed: this chain's live Diamond now carries the new selector over a
+  # zero-valued migration slot, so the seed instructions are owed from this
+  # moment on. A later `fail` — the vault upgrade below, or the optional
+  # export in [6] — exits under `set -e` before any end-of-run printing, and
+  # the operator would be left with a refreshed Diamond, two CRITICALs
+  # inbound from the watcher, and no instructions. Owing it per successful
+  # refresh is the only placement that cannot be skipped by a downstream
+  # failure.
+  print_seed_ceremony "$slug"
 
   if [ "$SKIP_VAULT" -eq 0 ]; then
     banner "[5] $slug — UpgradeVaultImplementation (UUPS template)"
@@ -318,5 +381,31 @@ Broadcast complete. Next (artifact sync):
   # review git diff under packages/contracts/src/, then commit + PR.
 EOF
 fi
+
+# ── [7] Post-refresh accounting ceremonies (operator, evidence-gated) ─────────
+#
+# #1448 — a facet refresh over a Diamond that RELEASED a remittance before
+# `recycleReleasedRemitStrandedCumulative` existed leaves that slot at zero
+# while the released state is real. Both externally-checkable recycled
+# relations (bucket coverage and bucket composition) then read as violated by
+# exactly the historical amount, so `ops/mesh-watcher` pages CRITICAL twice
+# from its first tick — on state the supported release path produced.
+#
+# The seed is NOT run automatically: it is ADMIN-gated, one-shot,
+# and it reverts if the derived total does not reconcile both relations. That
+# refusal is the point — it must not be able to quiet a real discrepancy — so
+# it stays a deliberate operator action.
+#
+# The instructions themselves were printed above, once per chain, immediately
+# after that chain's cut landed (#1448 r14) — deliberately NOT reprinted here,
+# because reaching this line is not a precondition for owing them.
+cat <<EOF
+
+[7] Post-refresh accounting: the recycled seed ceremony was printed above for
+    each refreshed chain [$CHAINS]. It is owed per chain that has any released
+    (status-3) reservation, and it is one-shot — check with
+    getReleasedRemitStrandedSeedState()'s \`applied\` flag, never the published
+    figure.
+EOF
 
 banner "DONE"

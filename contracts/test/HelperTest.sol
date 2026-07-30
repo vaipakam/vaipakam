@@ -87,7 +87,16 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](144);
+        selectors = new bytes4[](147);
+        // #1448 r6 — pre-seed-fold relocated-custody shape.
+        selectors[145] =
+            TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
+        // #1448 r3 — reproduce the pre-upgrade state for the seed ceremony.
+        selectors[144] =
+            TestMutatorFacet.setReleasedRemitStrandedRaw.selector;
+        // #1448 r14 — the other appended slot of that same shape.
+        selectors[146] =
+            TestMutatorFacet.setRemitReleasedCountRaw.selector;
         // #1222 M3 B2-d5 — real consume path for the custody-exclusion tests.
         selectors[141] = TestMutatorFacet.consumeRecycleRaw.selector;
         // #1222 M3 B3 — real forfeit/expiry release path for the
@@ -1929,7 +1938,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
         // ConfigFacet (which hit the EIP-170 ceiling).
         selectors[26] =
@@ -1939,6 +1948,10 @@ contract HelperTest {
         // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
         selectors[22] =
             RewardAggregatorFacet.getRecycleCustodyPosition.selector;
+        // #1444 / #1446 — raw stored slots so an external checker can
+        // re-derive the published cumulative instead of trusting it.
+        selectors[28] =
+            RewardAggregatorFacet.getRecycleCompositionPosition.selector;
         // #1222 M3 B3 — the eight-word report ingress (a THIRD overload, so
         // pinned by signature) + the commitment-retirement reads.
         selectors[23] = bytes4(
@@ -1996,7 +2009,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](29);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2019,6 +2032,16 @@ contract HelperTest {
         selectors[18] = RewardRemittanceFacet.getRemitReservation.selector;
         selectors[19] = RewardRemittanceFacet.getRemitIdByMessageId.selector;
         selectors[20] = RewardRemittanceFacet.getRemitReservationNonce.selector;
+        // #1448 r3 — one-time stranded-cumulative seed.
+        selectors[26] =
+            RewardRemittanceFacet.seedReleasedRemitStranded.selector;
+        // #1448 r8 — restart lever after a detected seed race.
+        selectors[27] =
+            RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
+        // #1448 r10 — the ceremony's own state, so "has it already run?" has
+        // an answer that is not the published figure.
+        selectors[28] =
+            RewardRemittanceFacet.getReleasedRemitStrandedSeedState.selector;
         selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
         selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;

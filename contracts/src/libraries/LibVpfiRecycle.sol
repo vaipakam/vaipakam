@@ -139,6 +139,10 @@ library LibVpfiRecycle {
         s.recycleBucket = needed;
         s.recycledCreditedByDay[dayId] += amount;
         s.recycleCreditedCumulative = cumulativeBefore + amount;
+        // #1448 r4 — see the storage docs: `recycleCreditedCumulative == 0`
+        // cannot by itself distinguish an un-seeded upgraded Diamond from a
+        // fresh chain that has absorbed nothing yet.
+        s.recycleAccountingSeeded = true;
         emit VpfiRecycled(uint8(source), refId, amount, dayId);
     }
 
@@ -216,8 +220,30 @@ library LibVpfiRecycle {
         if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active) dayId = 0;
+        // #1448 r3 — SEED the stored cumulative from the derived floor
+        // before relocating, on an in-place-upgraded Diamond whose slot is
+        // still unwritten. Same snapshot {restoreReleasedRemit} performs and
+        // for a related reason: while the slot is 0, no counter accounts for
+        // the historical bucket, so an external checker cannot verify the
+        // bucket's composition at all. Seeding at the first relocation makes
+        // that verifiable from then on, instead of leaving a permanent
+        // unverifiable window on exactly the class this exclusion protects.
+        //
+        // Read BEFORE the bucket write below, or this relocation would be
+        // folded into the seed as if it were absorption.
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
         s.recycleBucket = needed;
         s.recycleCustodyRelocatedCumulative += amount;
+        // #1448 r4 — set on the RELOCATION path too, so a fresh chain whose
+        // first recycled event is an arrival is no longer indistinguishable
+        // from an un-seeded upgrade. Deliberately set even when the seed
+        // snapshot above wrote nothing (a genuinely empty chain): what this
+        // records is "recycled accounting has run here", not "the cumulative
+        // is non-zero".
+        s.recycleAccountingSeeded = true;
         emit VpfiCustodyRelocated(
             uint8(RecycleSource.RemittedCustodyRelocation), refId, amount, dayId
         );
@@ -386,6 +412,28 @@ library LibVpfiRecycle {
      *         the bucket shrinks `fundable` (bucket − outstanding) — the
      *         conservative direction while the re-opened days await
      *         re-funding.
+     *
+     *         #1444 / #1446 — the STRANDED amount is recorded, because this
+     *         is the only primitive that shifts a recycled ledger figure with
+     *         no matching token movement, and two external invariants could
+     *         not be checked strictly without knowing how much it shifted.
+     *         See the storage docs on
+     *         `recycleReleasedRemitStrandedCumulative`.
+     *
+     *         What is recorded is the `paidOutRecycled` REVERSAL — the share
+     *         that physically left the bucket — never the pre-clamp
+     *         `recycledFull`. The residual (`recycledFull - recycledSent`)
+     *         was retired by {releaseCommitment} without moving tokens, so it
+     *         is still sitting in `recycleBucket`; counting it as separate
+     *         backing would count it twice (Codex #1448 r1 P1).
+     *
+     *         It is NOT decremented, and a future canonical physical-recovery
+     *         ceremony must NOT simply start decrementing it — recovery via
+     *         {creditCustodyRelocated} raises the bucket and the relocated
+     *         cumulative together, which already keeps the composition
+     *         relation true; decrementing here as well would page on every
+     *         healthy recovery. See the storage docs for the split that a
+     *         recovery path needs instead.
      */
     function restoreReleasedRemit(
         uint256 recycledFull,
@@ -406,7 +454,13 @@ library LibVpfiRecycle {
             if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
         }
         uint256 paid = s.paidOutRecycled;
-        s.paidOutRecycled = paid > recycledSent ? paid - recycledSent : 0;
+        // Record the ACTUAL decrement, not the request: the reversal floors
+        // at zero, and counting `recycledSent` on an exhausted counter would
+        // overstate the correction term (same rule `consume` applies to
+        // `retired`).
+        uint256 reversed = paid > recycledSent ? recycledSent : paid;
+        s.paidOutRecycled = paid - reversed;
+        s.recycleReleasedRemitStrandedCumulative += reversed;
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

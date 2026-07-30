@@ -104,7 +104,44 @@ async function readBaseBooks(
 }
 
 /** A chain's own ledger — read against that chain's own Diamond. */
-async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
+interface LocalRead {
+  ledger: RawLocalLedger;
+  /**
+   * Gaps produced by the OPTIONAL views — empty when everything read.
+   *
+   * Returned rather than swallowed (#1448 r3): an optional read that fails
+   * silently lets the tick certify the mesh healthy while several CRITICAL
+   * checks did not run at all, which is the one outcome a watcher must never
+   * produce. Making it part of the return type means a future optional read
+   * cannot be added without deciding what its absence costs.
+   */
+  gaps: CoverageGap[];
+}
+
+/**
+ * Build the gap for an unreadable composition view.
+ *
+ * Exported so it can be tested directly: `readLocalLedger` does I/O, so the
+ * catch branch is otherwise unreachable from a unit test — which is exactly
+ * how the missing gap survived review (#1448 r3).
+ */
+export function compositionUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getRecycleCompositionPosition');
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'own-ledger-composition',
+    detail:
+      `getRecycleCompositionPosition() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `Most likely a chain missed during a facet refresh. For this chain THIS TICK: bucket composition, the reported-cumulative derivation and the canonical-role cross-check did NOT run, and bucket coverage fell back to the pre-#1444 rule (strict on a mirror; not evaluated on the canonical chain, where a released remittance legitimately produces a shortfall and the figure that would explain it is the one missing).`,
+  };
+}
+
+async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
+  const viewGaps: CoverageGap[] = [];
   // One block for this chain's whole tuple, for the same reason as the
   // Base-side reads: bucket coverage compares a balance against a
   // reservation that a single claim moves together.
@@ -134,7 +171,49 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
     ),
   ]);
 
+  // #1444 / #1446 — the raw slots, read SEPARATELY from the three above and
+  // at the same pinned block.
+  //
+  // Separate because this is a NEWER facet selector (#1448 r2): a chain
+  // missed during a facet refresh answers the other three and reverts this
+  // one. Inside the `Promise.all` that single revert rejected the whole local
+  // read, so `observeMesh` discarded the custody, retirement and governor
+  // evidence it had successfully fetched — turning several working CRITICAL
+  // checks into one non-paging coverage gap. Its absence must cost only the
+  // checks that need it.
+  //
+  // Same pinned block is still load-bearing: both new checks compare a raw
+  // counter against the derived figures, so a mixed-block tuple would show a
+  // mid-transaction state as a violation.
+  let composition:
+    | {
+        creditedRaw: bigint;
+        releasedRemitStranded: bigint;
+        accountingSeeded: boolean;
+        isCanonicalRewardChain: boolean;
+      }
+    | undefined;
+  try {
+    const c = await readView<readonly [bigint, bigint, boolean, boolean]>(
+      target.client,
+      target.diamond,
+      'getRecycleCompositionPosition',
+      [],
+      blockNumber,
+    );
+    composition = {
+      creditedRaw: c[0],
+      releasedRemitStranded: c[1],
+      accountingSeeded: c[2],
+      isCanonicalRewardChain: c[3],
+    };
+  } catch (err) {
+    composition = undefined;
+    viewGaps.push(compositionUnavailableGap(target.chainId, err));
+  }
+
   return {
+    ledger: {
     // The freshness brand is applied by `observeMesh` after validation —
     // this raw read is not yet known to be comparable against Base.
     chainId: target.chainId,
@@ -147,7 +226,10 @@ async function readLocalLedger(target: ChainTarget): Promise<RawLocalLedger> {
     outstandingFresh: governor[1],
     outstandingRecycled: governor[2],
     paidOutRecycled: governor[3],
+    composition,
     observedAt: block.timestamp,
+    },
+    gaps: viewGaps,
   };
 }
 
@@ -271,7 +353,11 @@ export async function observeMesh(
         return;
       }
       try {
-        const ledger = await readLocalLedger(target);
+        const { ledger, gaps: viewGaps } = await readLocalLedger(target);
+        // BEFORE the stale-head early return below, or a chain that is BOTH
+        // stale and missing the composition view would lose this gap
+        // entirely (#1448 r3).
+        gaps.push(...viewGaps);
         // FRESHNESS GATE. A mirror RPC serving a stale head makes Base
         // legitimately ahead of what we just read, and
         // `base-ahead-of-chain` would report that as ledger corruption —

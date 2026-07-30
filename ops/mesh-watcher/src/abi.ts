@@ -92,6 +92,22 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     inputs: [],
     outputs: ['retiredCumulative:uint256', 'releasedCumulative:uint256'],
   },
+  // #1444 / #1446 — the RAW stored slots. Every other read above exposes a
+  // figure the contract DERIVES, which is fine for reporting and useless for
+  // verification: a regression in the derivation inflates the published value
+  // and Base's accepted copy of it together, so no comparison between them
+  // can see it. These three let this Worker re-derive the published figures
+  // and disagree with the chain.
+  {
+    name: 'getRecycleCompositionPosition',
+    inputs: [],
+    outputs: [
+      'creditedRaw:uint256',
+      'releasedRemitStranded:uint256',
+      'accountingSeeded:bool',
+      'isCanonicalRewardChain:bool',
+    ],
+  },
 ] as const;
 
 /** Names of the views asserted above — handy for tests and diagnostics. */

@@ -2276,3 +2276,113 @@ solver window) is tracked under Backlog card #389. No operator env
 config needed until that card lands — the operator-side change there
 will be one new aggregator API key, documented as part of that card
 when it ships.
+
+## #1448 Released-remit stranded seed — one-time, upgrade-only ceremony
+
+Applies when upgrading any Diamond that was already remitting before the
+recycle-composition counters existed. A fresh deployment never needs it.
+
+**Not scoped to the CURRENT canonical chain** — the ceremony is ADMIN-only
+and gated on recorded release history, deliberately, because the state it
+reconstructs is history and history does not change role. A Diamond that
+released remittances while canonical and was later demoted still holds
+those reservations and still needs them counted; calling it "a mirror that
+cannot run this" would make an operator skip the seed and leave its
+composition discrepancy unresolved. A chain that never was canonical has
+no reservations and simply reverts `SeedNothingToScan`, so the history gate
+is self-enforcing rather than something to check by hand.
+
+**Why it exists.** A remittance released before the counters shipped
+already restored its commitment and reversed its payout figure, but
+nothing recorded how much it stranded. Both composition relations would
+therefore read as broken from the first check after the upgrade — on
+state the supported path produced. The ceremony recovers that one figure
+from the platform's own reservation records.
+
+**Deciding whether you need it.** Do NOT decide from
+`accountingSeeded` — it does not answer this question. That flag reads
+true whenever ordinary recycled accounting has ever run on the chain,
+which says nothing about whether a remittance was released before the
+stranded counter existed. A Diamond can easily have both: active
+recycling (so `accountingSeeded == true`) and historical releases with
+nothing recorded against them.
+
+Nor from `releasedRemitStranded` being non-zero, which is the same
+mistake in different clothes: that counter reads non-zero as soon as ANY
+release lands after the upgrade — including one that arrives while you
+are still working through the refresh. A historical amount can sit
+unrecovered behind a perfectly non-zero counter, and that is precisely
+the state the ceremony exists for. The contract itself rejected
+value-keyed gating for this reason (its one-shot is an explicit applied
+flag, not a "counter is non-zero" test); do not reintroduce it here.
+
+**The rule is one condition:** run the ceremony if the reservation
+history contains at least one `Released` entry. Walk
+`getRemitReservation(i)` for `i` in `1..getRemitReservationNonce()`.
+
+Running it when the counter already happens to be complete is safe, not
+merely tolerable: the scan covers every id in the range and **assigns**
+the total rather than adding to it, so a redundant run recomputes the
+same figure rather than doubling it. What it does spend is the one-shot,
+so run it once, deliberately, rather than speculatively.
+
+To check whether it has already run, read
+`getReleasedRemitStrandedSeedState()`. Its `applied` flag is the only
+sound answer to "has this happened" — `target` non-zero means a ceremony
+is part-way through and `cursor` says how far. If no reservation exists
+at all, the call reverts `SeedNothingToScan`: nothing to recover.
+
+The mesh watcher's "composition unverifiable" advisory is a weaker
+signal than this and should not be used on its own: it clears at the
+first credit whether or not a pre-upgrade release was ever recorded.
+
+**It does not require the canonical role.** Deliberately: the state it
+reconstructs is HISTORY, so a Diamond that released remittances while
+canonical and was later demoted still needs them counted. Gating on the
+current role would leave such a chain permanently unseeded unless an
+operator re-promoted a mirror purely to run a migration. The real gate is
+recorded history and it is self-enforcing — only the canonical chain ever
+creates reservations, so a chain that never was canonical reverts
+`SeedNothingToScan`.
+
+**Running it.** `seedReleasedRemitStranded(upTo)` is ADMIN-only and
+**chunked**: the first call pins the range end at the current
+reservation nonce, and each subsequent call must advance strictly toward
+it. Pick a chunk size the chain's block gas limit comfortably accepts —
+a Diamond with a large reservation history cannot be scanned in one
+transaction, which is the whole reason the call takes a bound. Nothing
+is published until the final chunk reaches the pinned end, so a partial
+scan can never leave a half-counted figure visible.
+
+**If a release lands while the ceremony is in flight**, the next chunk
+reverts rather than mixing a pre- and post-release view of the same
+range. That is a stop, not a failure: call
+`resetReleasedRemitStrandedSeed()` (ADMIN-only) to discard the partial
+scan, then start again from the current state. Quiet periods make this
+less likely but nothing enforces one, so expect a restart on a busy
+canonical chain rather than treating it as an incident.
+
+**The completion event reports the amount recovered and the number of
+released reservations behind it** — the latter is the count of releases
+actually found, not the reservation nonce, so it can be reconciled
+against the release history independently.
+
+**It cannot be used to quiet a discrepancy the relations can see.** On
+completion the figure must reconcile both composition relations in both
+directions; if it does not, the whole ceremony reverts and publishes
+nothing. It also refuses to run twice — once a figure is published,
+`reset` refuses too, so there is no lever that edits an already-published
+number.
+
+There is one discrepancy the relations cannot see, so do not read a
+successful seed as proof that the bucket is backed. The allowance the
+scan derives is **gross**: a remittance that was released and then
+executed late — the message arriving after the release, which
+`onRemitAckReceived` leaves in the Released state — has already delivered
+its tokens, yet the scan still counts them as stranded backing. Both
+post-conditions can then pass over a bucket that is genuinely short by
+that amount. Tracked as [#1461](https://github.com/vaipakam/vaipakam/issues/1461);
+`ops/mesh-watcher`'s README records the same limitation on the allowance
+it reads. A seed proves the published figure is *consistent with the
+recorded reservation history*, which is what it is for — not that custody
+is present.

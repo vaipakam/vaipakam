@@ -37,7 +37,14 @@ export interface ChainTarget {
 /** Why a chain in the expected set could not be read this tick. */
 export interface CoverageGap {
   chainId: number;
-  reason: 'no-deployment' | 'no-rpc' | 'stale-head';
+  /**
+   * `view-unavailable` (#1448 r3) means the chain ANSWERED but one
+   * selector did not exist — a chain missed during a facet refresh. It is
+   * deliberately distinct from `no-rpc`: the chain is reachable and most
+   * checks still ran, so collapsing the two would both misdescribe the
+   * failure and collide on the dedup key.
+   */
+  reason: 'no-deployment' | 'no-rpc' | 'stale-head' | 'view-unavailable';
   /**
    * Which read produced the gap.
    *
@@ -46,7 +53,7 @@ export interface CoverageGap {
    * collided on one dedup key, sending one detail twice and discarding
    * the other (Codex #1443 r7).
    */
-  source: 'config' | 'base-books' | 'own-ledger';
+  source: 'config' | 'base-books' | 'own-ledger' | 'own-ledger-composition';
   detail: string;
 }
 

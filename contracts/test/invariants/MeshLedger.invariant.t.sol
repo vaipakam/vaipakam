@@ -317,13 +317,69 @@ contract MeshLedgerInvariant is Test {
 
     /// §7 #2 — a day can never size against availability another unclaimed
     /// day already committed.
+    ///
+    /// #1444 — stated in its UNIVERSAL form (`+ stranded`), because
+    /// the governor design predates B2-d2's remit-release valve and the bare
+    /// `outstanding <= bucket` is genuinely false after a release: the
+    /// commitment is restored while the bucket deliberately is not, since
+    /// those tokens sit locked in the transport's custody. The correction
+    /// term is asserted ZERO here rather than merely added, so this suite
+    /// still proves the STRICT bound — the universal form documents the
+    /// relation without quietly weakening what is actually checked. The
+    /// released case is covered directly in `RewardRemitLedgerTest`
+    /// (`test_Coverage_ReleasedTermRestoresTheHardRelation`), which this
+    /// handler cannot reach: it drives Base-side ingest, not the operator
+    /// release valve.
     function invariant_GlobalRecycledCommitWithinBucket() public view {
         (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
         (, uint256 bucket, ) = _agg().getRecycleCustodyPosition();
+        (, uint256 stranded, , ) = _agg().getRecycleCompositionPosition();
+        assertEq(
+            stranded,
+            0,
+            "this handler never releases a remit: strict bound is under test"
+        );
         assertLe(
             outstandingRecycled,
-            bucket,
-            "SS7#2: outstanding recycled commitments <= bucket"
+            bucket + stranded,
+            "SS7#2: outstanding recycled commitments <= bucket + stranded remit"
+        );
+    }
+
+    /// #1446 — the BUCKET COMPOSITION bound. It catches ONE class of
+    /// regression in the B2-d5 custody exclusion, and it is worth being
+    /// exact about which, because an overclaimed check is worse than a
+    /// known gap: it stops anyone looking.
+    ///
+    /// Every recycled credit lands in the bucket exactly once, so the two
+    /// lifetime cumulatives can never exceed where the tokens actually went.
+    /// A regression that advanced `recycleCreditedCumulative` on a custody
+    /// relocation raises the left side twice against a right side that moved
+    /// once, and fails here. No comparison of the REPORTED cumulative can
+    /// see that, on this chain or against Base's accepted copy, because both
+    /// derive from the same helper and would inflate together.
+    ///
+    /// What it does NOT catch (#1452, filed): a relocation arrival routed
+    /// through ordinary `credit` rather than `creditCustodyRelocated`. That
+    /// path raises `creditedRaw` and `bucket` TOGETHER, so both sides move
+    /// by the same amount and every bound here stays satisfied — while the
+    /// receiving chain reports Base's own already-remitted top-up as its own
+    /// absorption, which is precisely what the exclusion exists to prevent.
+    /// Catching it needs a record INDEPENDENT of these counters (what Base
+    /// says it remitted), which is what #1452 adds.
+    ///
+    /// Inequality rather than equality: `consume` floors the bucket at zero
+    /// for bounded cap-trim dust, which can only widen the right side.
+    function invariant_BucketCompositionWithinDestinations() public view {
+        (uint256 raw, uint256 stranded, , ) =
+            _agg().getRecycleCompositionPosition();
+        (uint256 relocated, uint256 bucket, ) =
+            _agg().getRecycleCustodyPosition();
+        (, , , uint256 paidOut) = _agg().getGovernorCommitState();
+        assertLe(
+            raw + relocated,
+            bucket + paidOut + stranded,
+            "#1446: creditedRaw + relocated <= bucket + paidOut + stranded"
         );
     }
 

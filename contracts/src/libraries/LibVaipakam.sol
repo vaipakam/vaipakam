@@ -5727,6 +5727,187 @@ library LibVaipakam {
         //   its own can therefore do nothing. It is cleared alongside the
         //   override regardless, but correctness does not depend on that.
         uint256 matchLenderAuthOfferId;
+        // ─── #1444 / #1446 — released-remit stranded cumulative ────────────
+        // APPEND-ONLY TAIL. CANONICAL-WRITE-ONLY — which is NOT the same as
+        // "zero on every mirror" (Codex #1448 r1). Only
+        // {RewardRemittanceFacet.releaseRemitReservation} advances it and
+        // that is `onlyCanonical`, so a Diamond that has only ever been a
+        // mirror holds 0 — but the role is a MUTABLE admin setting, so a
+        // Diamond demoted after accruing this keeps whatever it accrued.
+        // A consumer must scope the allowance to the LIVE role and never
+        // assume the stored value is zero.
+        //
+        // Why it exists: {LibVpfiRecycle.restoreReleasedRemit} is the one
+        // primitive that moves a recycled ledger figure WITHOUT a matching
+        // token movement, which left two external checks unable to be strict
+        // (`ops/mesh-watcher`, #1443). Recording what it moved makes both
+        // exact from view calls alone — no log scanning.
+        //
+        // `recycleReleasedRemitStrandedCumulative` — Σ of the ACTUAL
+        //   `paidOutRecycled` decrements applied by a release. That is the
+        //   VPFI that physically left the bucket and did not come back: it
+        //   sits in the transport's custody.
+        //
+        //   Deliberately the SENT share, never the pre-clamp `recycledFull`
+        //   (Codex #1448 r1 P1). A liability-clamped remit sends only part of
+        //   its recycled commitment; `consume` debits that part while
+        //   `releaseCommitment` retires the residual WITHOUT moving tokens —
+        //   so the residual is still sitting in `recycleBucket`. Counting
+        //   `recycledFull` as backing would count that residual twice and
+        //   introduce `recycledFull - recycledSent` of nonexistent slack in
+        //   the coverage check below, which a later real shortfall could hide
+        //   inside. It also records the actual decrement rather than the
+        //   request, because the reversal floors at zero — the same
+        //   discipline `consume`/`releaseCommitment` apply to `retired`.
+        //
+        //   It completes TWO relations:
+        //
+        //   1. BUCKET COVERAGE — `recycleBucket + <this> >=
+        //      outstandingCommitRecycled`. A release restores the commitment
+        //      while deliberately not re-crediting the bucket, so plain
+        //      `bucket >= outstanding` has a legitimate failure path on the
+        //      canonical chain and could only ship as an advisory there.
+        //      Adding the stranded total restores the relation EXACTLY:
+        //      the release lowered the bucket by exactly this amount.
+        //
+        //   2. BUCKET COMPOSITION — checked in BOTH directions:
+        //        recycleCreditedCumulative + recycleCustodyRelocatedCumulative
+        //          <= recycleBucket + paidOutRecycled + <this>          (exact)
+        //      and the reverse, with its own slack:
+        //        recycleBucket + paidOutRecycled + <this>
+        //          <= recycleCreditedCumulative
+        //             + recycleCustodyRelocatedCumulative + slack
+        //
+        //      The REVERSE direction is the one that catches an arrival
+        //      raising `recycleBucket` WITHOUT advancing
+        //      `recycleCustodyRelocatedCumulative` — that makes the forward
+        //      form LOOSER, and the derived-cumulative check agrees with the
+        //      chain because it reads the same missing slot. A write-site
+        //      audit against the forward form alone would therefore call that
+        //      regression compliant. Slack only on the reverse, because
+        //      `consume`'s bucket floor widens that side only.
+        //      which holds at every write site (`credit` and
+        //      `creditCustodyRelocated` add to exactly one term on each side;
+        //      `consume` moves bucket → paidOut; `releaseCommitment` touches
+        //      neither; this primitive moves paidOut → here). An inequality
+        //      rather than an equality ONLY because `consume` floors the
+        //      bucket for bounded cap-trim dust, which can only widen the
+        //      right side. It is what catches a regression in the B2-d5
+        //      custody EXCLUSION itself (#1446): if `creditCustodyRelocated`
+        //      ever also advanced `recycleCreditedCumulative`, the left side
+        //      would jump by twice the credit against a right side that moved
+        //      once. Comparing the reported cumulative against Base cannot see
+        //      that — both derive from the same helper and inflate together.
+        //
+        //   NEVER DECREMENTED, and the two relations disagree about whether a
+        //   future canonical physical-recovery ceremony should change that —
+        //   so adding one is a design step, not a mechanical edit:
+        //     - COMPOSITION requires it stay. Recovery via
+        //       {creditCustodyRelocated} raises `recycleBucket` AND
+        //       `recycleCustodyRelocatedCumulative` by the same amount, so
+        //       both sides move together and the relation still holds.
+        //       Decrementing here would lower the right side alone and page
+        //       on every healthy recovery (Codex #1448 r1).
+        //     - COVERAGE wants a LIVE figure. Once tokens are back in the
+        //       bucket they are counted there, so continuing to add them here
+        //       leaves permanent slack.
+        //   Nothing re-credits released backing on the canonical chain today
+        //   ({creditCustodyRelocated} runs only on the mirror-side arrival
+        //   path), so live == cumulative and one counter is exact. A recovery
+        //   ceremony must SPLIT them: keep this one for composition, and add
+        //   a separate recovered total for coverage to net against.
+        uint256 recycleReleasedRemitStrandedCumulative;
+        // `recycleAccountingSeeded` — #1448 r4. Set true by the FIRST recycled
+        // credit of any class on this chain (ordinary absorption or relocated
+        // custody), and never cleared.
+        //
+        // It exists because `recycleCreditedCumulative == 0` is ambiguous, and
+        // an external checker was reading it as "un-seeded" (Codex #1448 r4).
+        // Two states share that zero:
+        //   1. a Diamond refreshed over live pre-#1222 state, whose historical
+        //      bucket genuinely has no counter behind it — composition is
+        //      UNVERIFIABLE there, and must not page; and
+        //   2. a FRESH chain that has simply absorbed nothing yet — where a
+        //      first custody arrival crediting the bucket WITHOUT advancing
+        //      `recycleCustodyRelocatedCumulative` is exactly the regression
+        //      the exclusion exists to catch, and MUST page.
+        // Treating (2) as (1) downgraded that regression to a non-paging
+        // advisory and let the chain report a Base-funded top-up as its own
+        // absorption while the watcher still reported healthy.
+        //
+        // This flag distinguishes them: only (1) has it false.
+        bool recycleAccountingSeeded;
+        // `recycleStrandedSeedApplied` — #1448 r5. Records that the one-time
+        // `seedReleasedRemitStranded` ceremony has RUN, tracked separately
+        // from whether the counter is non-zero.
+        //
+        // Guarding on the value instead was a trap: a NEW release after the
+        // upgrade but before the ceremony makes the counter non-zero, which
+        // would have rejected the seed permanently and stranded the historical
+        // amount forever, with no recovery entry point. The redeploy script
+        // only PRINTS the ceremony after all refresh work, so that ordering is
+        // reachable by an operator doing nothing wrong.
+        bool recycleStrandedSeedApplied;
+        // ─── #1448 r7 — the seed ceremony is RESUMABLE ─────────────────────
+        // A single-transaction scan of `1..remitReservationNonce` can exceed
+        // the block gas limit on a Diamond with a long reservation history —
+        // and because the ceremony is one-shot, such an instance could then
+        // NEVER seed, leaving the watcher permanently reporting valid
+        // pre-upgrade state as CRITICAL. Liveness, not just cost.
+        //
+        // Splitting it into ranges is in tension with r4, which rejected a
+        // caller-supplied id LIST precisely because completeness could not be
+        // proved. These three fields resolve that: the caller chooses how far
+        // to go per call, but the ceremony only COMPLETES when the cursor has
+        // reached a target captured from the nonce at the start, so coverage
+        // of `1..target` is still structural.
+        //
+        // `recycleStrandedSeedTarget` — the nonce snapshotted on the first
+        //   call. 0 means "not started". Pinned so reservations created later
+        //   cannot move the finish line.
+        uint256 recycleStrandedSeedTarget;
+        // `recycleStrandedSeedCursor` — highest id scanned so far.
+        uint256 recycleStrandedSeedCursor;
+        // `recycleStrandedSeedAccum` — running Σ. Deliberately NOT written
+        //   into `recycleReleasedRemitStrandedCumulative` until completion:
+        //   a partial total would make bucket coverage MORE permissive
+        //   mid-ceremony, which is exactly the direction that hides a real
+        //   shortfall.
+        uint256 recycleStrandedSeedAccum;
+        // `recycleStrandedSeedBaseline` — the live counter at ceremony start.
+        //   Re-checked on every call: a release landing mid-ceremony records
+        //   organically AND may fall in an already-scanned range, so the two
+        //   sources would disagree. Cheaper and safer to detect it and make
+        //   the operator restart than to try to reconcile it.
+        uint256 recycleStrandedSeedBaseline;
+        // `recycleStrandedSeedCounted` — how many RELEASED reservations the
+        //   scan has found. Distinct from the target, which is the reservation
+        //   NONCE and therefore includes pending and acked entries; emitting
+        //   the latter as the released count would inflate what operational
+        //   and audit consumers read (#1448 r8).
+        uint256 recycleStrandedSeedCounted;
+        // `remitReleasedCount` — #1448 r10. A monotonic count of remittance
+        //   RELEASES, incremented on every release regardless of how much
+        //   recycled backing it stranded. The seed ceremony's race guard used
+        //   to pin only the stranded VALUE, which is blind to a release whose
+        //   recycled share is zero (a fresh-only remit, or one whose share
+        //   clamped to zero): the status flips to Released, the value counter
+        //   does not move, and the guard sees nothing. A release like that,
+        //   landing in an ALREADY-SCANNED range, is missed by the scan too, so
+        //   the completion event under-reports how many releases it found.
+        //   Counting every release makes the guard complete on that axis:
+        //   nothing can flip a status without moving this.
+        //
+        //   #1448 r14 — being an APPENDED slot, on a Diamond upgraded in place
+        //   this starts at zero and so counts post-upgrade releases only. The
+        //   seed ceremony BACKFILLS it from its full scan at completion, which
+        //   is what makes "lifetime" true rather than aspirational; before
+        //   that it is partial, and the published `applied` flag is how a
+        //   consumer tells the two apart.
+        uint256 remitReleasedCount;
+        // `recycleStrandedSeedBaselineCount` — the above, pinned when the
+        //   ceremony starts, so the guard compares like for like.
+        uint256 recycleStrandedSeedBaselineCount;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

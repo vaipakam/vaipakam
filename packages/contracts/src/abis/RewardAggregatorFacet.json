@@ -448,6 +448,34 @@
   },
   {
     "type": "function",
+    "name": "getRecycleCompositionPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "creditedRaw",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "releasedRemitStranded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accountingSeeded",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "isCanonicalRewardChain",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRecycleCustodyPosition",
     "inputs": [],
     "outputs": [
