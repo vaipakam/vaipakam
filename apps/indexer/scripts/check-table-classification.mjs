@@ -26,6 +26,19 @@
  * Worker's own list (`ops/offchain-data-archive/src/backup.ts`), so
  * the classification and the backup cannot drift apart silently.
  *
+ * SCOPE CONTRACT — a tripwire against honest drift, not a hostile-code
+ * analyzer. The extraction models the conventions this repo actually
+ * uses (SQL in string literals, the runbook's fence shapes, the
+ * backup's spread-consumption loop) faithfully enough that an ordinary
+ * edit which changes restore semantics goes RED, and a shape this
+ * script cannot see goes red too (loud helper throws), never silently
+ * green-while-wrong where the shape is recognisably absent. It does
+ * NOT claim to detect adversarially obfuscated writes — dynamic SQL
+ * assembly, computed table names, eval — because code like that in a
+ * PR is a failure of code review, not of this tripwire. Extend the
+ * extraction when the repo's legitimate conventions grow; do not
+ * extend it to chase obfuscation.
+ *
  * Run: `node apps/indexer/scripts/check-table-classification.mjs`
  * (wired into `pnpm --filter @vaipakam/indexer typecheck`).
  */
@@ -154,20 +167,73 @@ const WRITE_RES = [
   /UPDATE\s+["`\[]?(?!set\b)([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/gi,
 ];
 
-/** Contents of every '…' / "…" / `…` literal in a TS source, with
- *  comments removed first so a commented-out statement (or prose
- *  mentioning SQL) cannot register as a writer. Naive lexer — good
- *  enough for extraction whose failure mode is a visible CI error. */
-export function stringLiteralContents(source) {
-  const noComments = source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1'); // keep https:// URLs intact
-  const out = [];
-  const re = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g;
-  for (let m; (m = re.exec(noComments)); ) {
-    out.push(m[1] ?? m[2] ?? m[3] ?? '');
+/** One-pass TS lexer: walks the source tracking string / comment
+ *  state, returning { code, strings }. Regex-order stripping is
+ *  structurally wrong here — a `//` comment containing `/*` (e.g.
+ *  "migrations/*.sql") opens a phantom block that swallows real
+ *  declarations, and a commented-out spread must not read as code
+ *  (both Codex #1485 r5). `code` is the source with comments blanked
+ *  and string BODIES blanked (delimiters kept); `strings` carries
+ *  every literal body with quote/backslash escapes decoded — `\"t\"`
+ *  is the identifier `"t"` to SQLite. Template `${…}` interiors are
+ *  treated as part of the literal, which is fine for extraction whose
+ *  failure mode is a visible CI error. */
+export function lexTs(source) {
+  let code = '';
+  let codeWithStrings = '';
+  const strings = [];
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < n && source[i] !== '\n') i++;
+      code += ' ';
+      codeWithStrings += ' ';
+    } else if (c === '/' && next === '*') {
+      i += 2;
+      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      i += 2;
+      code += ' ';
+      codeWithStrings += ' ';
+    } else if (c === "'" || c === '"' || c === '`') {
+      const quote = c;
+      i++;
+      let body = '';
+      while (i < n && source[i] !== quote) {
+        if (source[i] === '\\' && i + 1 < n) {
+          const esc = source[i + 1];
+          body += `"'\``.includes(esc) || esc === '\\' ? esc : '\\' + esc;
+          i += 2;
+        } else {
+          body += source[i++];
+        }
+      }
+      i++; // closing quote
+      strings.push(body);
+      code += quote + quote;
+      codeWithStrings += quote + body + quote;
+    } else {
+      code += c;
+      codeWithStrings += c;
+      i++;
+    }
   }
-  return out;
+  return { code, codeWithStrings, strings };
+}
+
+/** Comment-free view of a TS source (string bodies blanked too — the
+ *  consumption tripwires watch CODE, and a spread inside a string or
+ *  comment is not consumption). */
+export function stripJsComments(source) {
+  return lexTs(source).code;
+}
+
+/** Every string/template literal body in a TS source, comments
+ *  excluded, escapes decoded. */
+export function stringLiteralContents(source) {
+  return lexTs(source).strings;
 }
 
 function tsFilesUnder(dir) {
@@ -225,10 +291,19 @@ const dead = Object.keys(CLASSIFICATION).filter((t) => !writers.has(t)).sort();
 // Parse the ACTUAL array literals runNightlyBackup consumes — a table
 // name quoted in a comment or error message must not satisfy this
 // check (Codex #1485 r1 reproduced exactly that with a quoted TODO).
-const backupSrc = readFileSync(
-  join(REPO_ROOT, 'ops', 'offchain-data-archive', 'src', 'backup.ts'),
-  'utf8',
+// Comment-stripped ONCE, for every backup.ts check below: a
+// commented-out array or spread must satisfy neither the declaration
+// parse (check 3) nor the consumption tripwires (check 6) —
+// probe-verified that raw-text matching accepted all three loop
+// spreads commented out (Codex #1485 r5).
+const backupLex = lexTs(
+  readFileSync(join(REPO_ROOT, 'ops', 'offchain-data-archive', 'src', 'backup.ts'), 'utf8'),
 );
+// Strings KEPT for the array parse (the table names ARE string
+// literals); strings BLANKED for the consumption tripwires (a spread
+// quoted inside a string is prose, not consumption).
+const backupSrc = backupLex.codeWithStrings;
+const backupCode = backupLex.code;
 const archivedSet = archivedTablesFrom(backupSrc);
 const unarchived = Object.entries(CLASSIFICATION)
   .filter(([t, c]) => c.class === 'born-off-chain' && !archivedSet.has(t))
@@ -294,7 +369,7 @@ const consumption = [
   /\.\.\.\s*ARCHIVE_TABLES_OPTIONAL\s*,/,
 ];
 const unconsumed = consumption
-  .filter((re) => !re.test(backupSrc))
+  .filter((re) => !re.test(backupCode))
   .map((re) => re.source);
 
 let failed = false;
@@ -395,22 +470,33 @@ export function archivedTablesFrom(backupSrc) {
 export function clearedTablesFrom(runbookSrc) {
   const cleared = new Set();
   for (const fence of runbookSrc.matchAll(/```bash\n([\s\S]*?)```/g)) {
-    let body = fence[1];
-    if (!body.includes('wrangler d1 execute vaipakam-archive') || !body.includes('DELETE FROM')) {
+    const raw = fence[1];
+    if (!raw.includes('wrangler d1 execute vaipakam-archive') || !raw.includes('DELETE FROM')) {
       continue;
     }
-    // Model bash BEFORE SQL (Codex #1485 r4): the fence's command uses
-    // `\`-newline continuations, which bash removes — so a `-- note \`
-    // line comments out EVERYTHING that follows in the joined command,
-    // not just its own physical line. Join continuations first, then
-    // strip `/* … */` blocks and ` -- ` comments to end-of-(joined-)
-    // line. The space after `--` is what leaves wrangler's `--command`
-    // / `--remote` flags intact (Codex #1485 r3).
-    body = body
-      .replace(/\\\n/g, ' ')
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/(^|\s)--\s.*$/gm, '$1');
-    for (const m of body.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
+    // Model bash BEFORE SQL (Codex #1485 r4): join `\`-newline
+    // continuations exactly as bash does, THEN isolate the SQL — the
+    // `--command="…"` value — and apply SQLite comment semantics to
+    // that string ALONE. Earlier revisions comment-stripped the whole
+    // fence and needed a space-after-`--` heuristic to spare wrangler's
+    // flags, which missed the spaceless `--DELETE …` form SQLite
+    // happily treats as a comment (Codex #1485 r5). Scoping to the
+    // command value removes the heuristic: inside SQL, `--` to
+    // end-of-input is a comment, full stop.
+    const joined = raw.replace(/\\\n/g, ' ');
+    const cmd = joined.match(/--command="([^"]*)"/);
+    if (!cmd) continue;
+    // The §6 replay-clear only counts against the DEPLOYED database.
+    // Without `--remote`, wrangler targets a local D1 and the replay
+    // would run over an uncleared production dataset (Codex #1485 r5).
+    if (!/\s--remote\b/.test(joined)) {
+      throw new Error(
+        'the §6 clear-before-replay command is missing --remote — it would clear a LOCAL D1 ' +
+          'and leave the deployed database unpurged',
+      );
+    }
+    const sql = cmd[1].replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--.*$/s, '');
+    for (const m of sql.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
       cleared.add(m[1].toLowerCase());
     }
   }
