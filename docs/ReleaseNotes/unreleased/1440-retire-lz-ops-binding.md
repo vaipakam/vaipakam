@@ -157,6 +157,38 @@ rather than left for the incident that would find them:
   recovery. The step now branches on *why* the restore is happening, and
   the compromise branch is a rotation rather than a restore, naming each
   credential and what rotating it costs.
+- The canonical key inventory said the keeper's signing address holds no
+  on-chain authority at all, and told a responder to replace the secret and
+  sweep the old address's remaining balance. Both parts were wrong: the
+  address can hold a role granted on every chain, and separately be the
+  named party for reward remittance — a distinct authority the role does not
+  cover. Following that row would have left a stolen key able to make
+  risk-affecting configuration writes and move reward budget after an
+  apparently completed rotation. The row now describes a revocation, on
+  every chain and for both authorities, with the balance sweep demoted to
+  housekeeping.
+- The step that re-arms the remittance duty verified the wrong permission.
+  It checked the role on each secondary chain, which is correct for two
+  other duties and says nothing about remittance — that authorises against
+  its own separately configured address. An operator could confirm
+  everything the step asked and still enable a duty whose every attempt
+  fails silently. It now reads back both.
+- The recovery reused the internal operations bot token verbatim after a
+  compromise. That token was as readable as any other, and it authorises
+  posts to the operators' own channel — so retaining it lets an intruder
+  spoof backup outcomes, health verdicts and ticket alerts *throughout* the
+  recovery. Those are the signals the operator is acting on while working,
+  which makes it worse than the user-facing equivalent, and it was missed
+  because it is held differently from the credentials the section is
+  otherwise organised around.
+- The recovery also published both public sites and the API host
+  immediately after the first deploys, hours before the database is
+  restored and checked. Visitors would have found a working-looking site
+  with no history on it — and, because disabling scheduled work does not
+  disable request handling, could have created new records while the
+  archived ones were still being imported, mixing fresh rows into a restore
+  whose row counts were about to be verified. Those hostnames are now bound
+  in the existing later step that already exists for the purpose.
 - The compromise branch above told an operator to replace the signing key
   and sweep the old one's remaining gas. Sweeping gas is housekeeping, not
   revocation: the old address keeps every permission it held, and anyone

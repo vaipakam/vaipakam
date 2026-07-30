@@ -188,6 +188,18 @@ then deploy.
    >   key lets an attacker forge chain events into the indexer.
    > - **`DIAG_WALLET_HMAC_KEY`** — rotate; retained, it de-anonymises the
    >   diagnostics stream.
+   > - **`TG_OPS_BOT_TOKEN`** — easy to miss, and it was: it is a per-Worker
+   >   secret rather than a store binding, so it is absent from the binding
+   >   lists this section is otherwise driven by. It was equally readable to
+   >   the attacker, and it authorises posts to the **operator** channel —
+   >   so a retained token lets them spoof backup outcomes, healthcheck
+   >   verdicts and support-ticket alerts throughout the recovery and after
+   >   it. That is worse than the user-facing bot: those are the signals
+   >   **you** are acting on while you work. @BotFather `/revoke`, re-issue,
+   >   and upload the replacement to **every** consumer —
+   >   `ops/offchain-data-archive` AND `apps/agent` (steps 6d and 6e below,
+   >   which otherwise re-upload the saved token verbatim). `TG_OPS_CHAT_ID`
+   >   is not a credential and needs no rotation.
    > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys **FIRST**,
    >   before anything else in this branch, so no further attacker uploads
    >   can land while you are restoring. Then treat the archive history as
@@ -341,6 +353,28 @@ then deploy.
    `apps/indexer/wrangler.jsonc` declares `indexer.vaipakam.com` as a
    deploy-time custom-domain route, so its deploy FAILS outright until the
    zone is present — this is not a post-deploy tidy-up.
+
+   > **Bind the PUBLIC hostnames LAST, not here.** The indexer's route is
+   > forced by its own config, so that one is unavoidable at this point —
+   > but every hostname below is bound **by hand**, which makes the timing a
+   > choice, and binding them now publishes a migrated-but-EMPTY database
+   > hours before §§4–7 restore and verify it. Two concrete consequences:
+   >
+   > - users reach a working-looking site showing no offers, no loans and no
+   >   history, and draw conclusions from it;
+   > - `apps/agent`'s HTTP **write** endpoints are live even though its cron
+   >   is disabled — step 9's cron note stops *scheduled* work, not fetch
+   >   handlers — so users can create thresholds, Telegram links,
+   >   diagnostics and support tickets **while §4 is importing those very
+   >   tables**, mixing new rows into a restore whose row counts you are
+   >   about to verify.
+   >
+   > Deploy the Workers here so bindings validate, and bind
+   > `agent.vaipakam.com`, `defi.vaipakam.com`, the apex and `www` in **§7
+   > step 4**, which exists for exactly this ("update DNS / frontend env
+   > vars to point at the new Worker subdomains") and sits after the smoke
+   > test. Having to activate the zone early for the indexer's sake is not a
+   > reason to bind the rest early too.
 
    Every OTHER Worker is the opposite shape: it declares no route, so its
    hostname must be bound by hand in the dashboard after deploy. That
@@ -1023,8 +1057,34 @@ caught at the cheapest stage.
    ```
 
    Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way, and
-   only if they were on before — see the on-chain and migration
-   preconditions below.
+   only if they were on before.
+
+   `REWARD_REMIT_ENABLED` has two further prerequisites, and on a
+   NON-compromise restore **both are normally already satisfied** — so
+   VERIFY them rather than assuming they need rebuilding:
+
+   - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
+     `apps/indexer/migrations/`, so §1 step 7 applied it with every other
+     migration. Confirm:
+     `wrangler d1 migrations list vaipakam-archive --remote`.
+   - **The on-chain authority.** Two of them, and they are not the same —
+     this is the part that is easy to get wrong. `remitRewardBudget`
+     authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**
+     Base's configured `rewardRemittanceKeeper`, and **never consults
+     `KEEPER_ROLE`**. So confirming `KEEPER_ROLE` on every mirror — correct
+     for the commitment and tier-update duties — says *nothing* about
+     whether remittance will work. Enable the flag on that evidence and
+     every Base send fails while the pass logs as skipped. Read back
+     **`getRewardRemittanceKeeper()` on Base** as well, and confirm it is
+     the EOA you expect. Both authorities live on chain and survive losing
+     the Cloudflare account entirely.
+
+   Reauthorisation is only needed where the keeper key was actually
+   **rotated** — the compromise branch in §1 step 6, not a lockout. An
+   earlier revision claimed neither prerequisite survived a restore, which
+   would have left remittance switched off indefinitely while it was ready;
+   a later revision then deleted this block wholesale while correcting a
+   different error in the same step.
 
    > **Do NOT use `--var` for these, and do not "helpfully" move them into
    > the committed `vars` block as part of a restore.** Either creates a
