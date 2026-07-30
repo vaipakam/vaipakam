@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "INTENDED lifecycle rules for the B2 archive bucket. See",
+    "scripts/apply-bucket-lifecycle.mjs for why this is committed and how to",
+    "apply or verify it. Changing a number here is a reviewable change;",
+    "changing it in the Backblaze console is not, which is the whole point."
+  ],
+  "bucket": "vaipakam-offchain-data-archive",
+  "rules": [
+    {
+      "fileNamePrefix": "archives/",
+      "daysFromUploadingToHiding": 30,
+      "daysFromHidingToDeleting": 30,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    },
+    {
+      "fileNamePrefix": "manifests/",
+      "daysFromUploadingToHiding": 30,
+      "daysFromHidingToDeleting": 30,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    },
+    {
+      "fileNamePrefix": "archives-monthly/",
+      "daysFromUploadingToHiding": 365,
+      "daysFromHidingToDeleting": 30,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    },
+    {
+      "fileNamePrefix": "manifests-monthly/",
+      "daysFromUploadingToHiding": 365,
+      "daysFromHidingToDeleting": 30,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    }
+  ]
+}

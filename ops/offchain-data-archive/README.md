@@ -7,6 +7,50 @@ operator-offline key. Stage A of the off-chain data resilience plan —
 issue [#30 (T-077)](https://github.com/vaipakam/vaipakam/issues/30).
 Design notes: [`docs/DesignsAndPlans/OffChainDataResilience.md`](../../docs/DesignsAndPlans/OffChainDataResilience.md).
 
+## Bucket lifecycle — declared, not console-only
+
+The B2 bucket's retention behaviour is declared in
+[`bucket-lifecycle.json`](./bucket-lifecycle.json) and applied by
+[`scripts/apply-bucket-lifecycle.mjs`](./scripts/apply-bucket-lifecycle.mjs).
+
+It is committed because it was previously **live state that existed nowhere in
+the repo**: unreviewable, undetectable when it drifted, and only discoverable
+by querying the API. That is how `daysFromHidingToDeleting: 1` went unnoticed
+— the setting that meant a superseded archive was deleted a day later, so a
+forged overwrite left nothing to fall back on (#1469).
+
+```bash
+npm run bucket:lifecycle:print   # what B2 currently has
+npm run bucket:lifecycle:check   # does live match the declaration?
+npm run bucket:lifecycle:apply   # make live match the declaration
+```
+
+**Capabilities, and why they differ deliberately.** `print` and `check` need
+only `listBuckets`, so the ordinary bucket-scoped **read-only** key works —
+drift has to be observable without holding anything dangerous. `apply` needs
+`writeBucketLifecycleRules`, which **neither pipeline key has**, on purpose:
+the write key exists to push objects, not to reconfigure the bucket. Use a
+temporary key scoped to this bucket with `listBuckets` +
+`readBucketLifecycleRules` + `writeBucketLifecycleRules`, then delete it.
+
+Do **not** use the master key for this. It also carries `deleteBuckets`,
+`deleteFiles`, `deleteKeys` and `bypassGovernance` — none of which this task
+needs, and all of which turn a mistyped lifecycle edit into a potential data
+loss. `apply` reads the result back rather than trusting the write, so a
+successful run is evidence, not an assumption.
+
+**What the numbers mean.** `daysFromHidingToDeleting` governs a version that
+is no longer current — either hidden by the age rule, or **superseded by a
+newer upload at the same key**. The second case is the one that matters: the
+Worker's B2 key has `writeFiles` but **not** `deleteFiles`, so an attacker who
+compromises the Worker can only overwrite an archive, never delete one. The
+genuine version survives until *our own* rule removes it. At 1 day that was
+effectively immediately; the declaration sets 30.
+
+Note the same setting also extends how long ordinary hidden versions live, so
+the daily series retains ~60 days rather than ~31. Deliberate, and at ~445 KiB
+per nightly it is a fraction of a cent per month.
+
 ## What gets backed up
 
 | Source | Coverage |
