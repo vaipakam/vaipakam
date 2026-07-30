@@ -233,15 +233,17 @@ mainnet without preflight discipline:
   pad is itself the problem (`intrinsic gas too high` rejects at
   submit time on certain RPCs, fixed in v1 → v2 of today's run);
   otherwise leave the multiplier at its 130 % default.
-- **Silent watcher chain-skip on missing per-chain RPC secret.**
-  `getChainConfigs(env)` (`apps/keeper/src/env.ts:151`) drops any
-  chain whose `RPC_<CHAIN>` Cloudflare secret is unset — the
-  watcher's round-robin cron then never visits that chain, D1 stays
-  empty for its `chain_id`, and the OfferBook / loan tables show
-  zero rows for it. The `[8c]` / cf-watcher `[c]` RPC-secret check
-  is now hard-fail (was warn-only pre-2026-05-06): the deploy stops
-  with a clear setup command if the expected `RPC_<CHAIN>` secret is
-  missing on the watcher Worker. **Prerequisite — set ALL per-chain
+- **Silent chain-skip on missing per-chain RPC secret.**
+  `getChainConfigs(env)` in the INDEXER (`apps/indexer/src/env.ts:309`
+  — the one `chainIndexer.ts` consults to decide which chains populate
+  the offer/loan tables) drops any chain whose `RPC_<CHAIN>` binding
+  is unset — the indexing cron then never visits that chain, D1 stays
+  empty for its `chain_id`, and the OfferBook / loan tables show zero
+  rows for it. The keeper has its own copy (`apps/keeper/src/env.ts:296`)
+  gating liquidation/notification passes — repairing that one does NOT
+  un-skip indexing. The deploy scripts' RPC-secret check is hard-fail
+  (was warn-only pre-2026-05-06): the deploy stops with a clear setup
+  command if the expected `RPC_<CHAIN>` value is missing. **Prerequisite — set ALL per-chain
   RPC secrets before the first deploy targeting that chain** (see
   next section).
 
@@ -249,8 +251,9 @@ mainnet without preflight discipline:
 
 Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
 and live ONLY as Cloudflare Worker secrets — never in the repo. Set
-once per chain, BEFORE the first `deploy-chain.sh <slug>` (or
-`deploy-mainnet.sh --phase cf-watcher`) targeting that chain. The
+once per chain, BEFORE the first `deploy-chain.sh <slug>` (or the
+`deploy-mainnet.sh` Worker phases `cf-keeper` / `cf-indexer` /
+`cf-agent`) targeting that chain. The
 deploy script's hard-fail check refuses to proceed without them:
 
 All three Stage 3 Workers bind their `RPC_*` values from the shared
@@ -294,7 +297,9 @@ correctly provisioned.)
 
 ### Auto post-deploy steps performed by the script
 
-`deploy-chain.sh` and `deploy-mainnet.sh phase_cf_watcher` already
+`deploy-chain.sh` and the `deploy-mainnet.sh` Worker phases
+(`cf-keeper` / `cf-indexer` / `cf-agent` — the retired `cf-watcher`
+phase is rejected by the script) already
 perform these AUTOMATICALLY after the contract deploy lands — no
 manual follow-up required when the prerequisites are in place:
 
@@ -1019,8 +1024,9 @@ idempotent; D1 tracks the applied high-water mark. The migration step is
 independent of contract redeploys; you only need it when the indexer's
 schema changes. Skipping it leaves the
 Worker referencing columns that don't exist and cron ticks fail
-with cryptic "no such column" errors in the logs. See
-[`apps/keeper/README.md`](../../apps/keeper/README.md)
+with cryptic "no such column" errors in the logs. See the
+"D1 — owns the canonical schema" section of
+[`apps/indexer/README.md`](../../apps/indexer/README.md)
 "Redeploy / migration upgrade path" for the full sequence and
 T-041-specific notes on the bootstrap-time backfill behavior.
 
@@ -1041,9 +1047,6 @@ Cache and chain disagree until you clear the cache.
 > --remote --command "..."`), scoped to the affected `chain_id` and
 > preserving `user_locales` (wallet-scoped, not chain-scoped).
 > Preview every `DELETE` with the matching `SELECT COUNT(*)` first.
-"Purge / reset" for the full table list and `FORCE=1` / `LOCAL=1`
-env-knob behaviour.
-
 **When NOT to purge:** routine Worker code-only redeploys (no
 diamond / contract changes) should NOT trigger a purge — the
 cache is still correct against the existing on-chain state.
@@ -1897,8 +1900,8 @@ When a user files a GitHub issue using the prefill, the body
 contains `**Report ID:** \`<UUID>\``. Look it up:
 
 ```bash
-cd apps/keeper
-cd apps/indexer && npx wrangler d1 execute vaipakam-archive --remote \
+cd apps/indexer
+npx wrangler d1 execute vaipakam-archive --remote \
   --command "SELECT * FROM diag_errors WHERE id = '<UUID>'"
 ```
 

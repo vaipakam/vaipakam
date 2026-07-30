@@ -459,17 +459,23 @@ re-opens.
    over the exact committed bytes of `docs/Terms/TermsOfService.md` —
    and note it in the proposal so the hash can be independently
    re-derived from the text it covers.
-3. Governance Safe schedules
+3. **Deploy the updated terms FIRST**: ship `TermsPage.tsx` (and the
+   canonical `docs/Terms/TermsOfService.md`) and verify the rendered
+   text is the text the new hash covers. Order matters because
+   nothing on-chain or in the frontend compares text to hash — the
+   frontend only echoes `currentTosHash` — so activating the hash
+   before the text is live opens a window where users record
+   acceptance of terms the public site does not yet show, and no
+   gate exists that would catch it.
+4. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
    newHash), delay=48h)`. `newVersion` MUST strictly exceed
    `currentTosVersion` — the setter rejects replays and downgrades.
-4. Wait 48h. Execute. The Diamond emits `CurrentTosUpdated(prev,
-   newVersion, newHash)`.
-5. Frontend deploy: ship the updated `TermsPage.tsx` so the rendered
-   text matches the now-pinned hash. Stale frontend pages will
-   continue to render — the on-chain hash gate catches signature
-   mismatches at signing time but does not stop a stale page from
-   loading.
+   (The 48h delay also gives step 3's deploy time to be verified
+   live before the hash flips.)
+5. Wait 48h. Execute. The Diamond emits `CurrentTosUpdated(prev,
+   newVersion, newHash)`. From this moment new acceptances bind to
+   the new hash, whose text has been publicly rendered since step 3.
 6. Existing on-chain positions are NOT affected — the gate is a
    frontend-level UX, not a protocol-level deny. Users keep their
    loans / claims / repays without re-signing; only NEW state-creating

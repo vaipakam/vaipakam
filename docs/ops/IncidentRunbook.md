@@ -548,8 +548,12 @@ identity), so rotation is time-sensitive.
    curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
         --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
    ```
-5. `npm run deploy` to flush any in-memory clients tied to the old
-   token.
+5. Redeploy BOTH binding Workers to flush any in-memory clients tied
+   to the old token — same shape as the Push rotation below:
+   ```bash
+   pnpm --filter @vaipakam/keeper run deploy
+   pnpm --filter @vaipakam/agent run deploy
+   ```
 
 No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.

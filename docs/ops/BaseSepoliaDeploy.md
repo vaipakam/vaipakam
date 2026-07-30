@@ -578,6 +578,8 @@ those in sync with the canonical artifacts is one command:
 bash contracts/script/exportFrontendDeployments.sh
 cd apps/defi && node_modules/.bin/tsc -b --noEmit && cd ../..
 pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit
+pnpm --filter @vaipakam/indexer exec tsc -p . --noEmit
+pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 git diff packages/contracts/src/deployments.json
 git commit -am 'Sync deployments with contracts@<commit>'
 ```
