@@ -136,20 +136,22 @@ const IGNORED = new Set(['d1_migrations']);
 // from prose like "update the schedules". A prose false-positive
 // fails CLOSED (an unclassified-table error someone will question),
 // never open.
-// `["\[]?` before each identifier: SQLite accepts quoted identifiers
-// (`INSERT INTO "t"` / backtick / bracket forms), and an unquoted-only
-// pattern let ordinary identifier quoting bypass classification
-// (Codex #1485 r3). Backtick can't appear inside a template literal's
-// extracted content unescaped, so " and [ are the live cases.
+// A quote-class before each identifier: SQLite accepts quoted
+// identifiers (`INSERT INTO "t"`, backtick, bracket forms), and an
+// unquoted-only pattern let ordinary identifier quoting bypass
+// classification (Codex #1485 r3). Backtick IS a live case — it
+// appears unescaped inside single/double-quoted TS strings, which
+// stringLiteralContents extracts too (r3 briefly claimed otherwise;
+// r4 corrected it).
 const WRITE_RES = [
-  /INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+["\[]?([a-z][a-z0-9_]*)/gi,
+  /INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+["`\[]?([a-z][a-z0-9_]*)/gi,
   // Bare `REPLACE INTO` is SQLite's alias for INSERT OR REPLACE and
   // writes exactly the same way (Codex #1485 r2).
-  /(?<![A-Za-z_])REPLACE\s+INTO\s+["\[]?([a-z][a-z0-9_]*)/gi,
-  /DELETE\s+FROM\s+["\[]?([a-z][a-z0-9_]*)/gi,
+  /(?<![A-Za-z_])REPLACE\s+INTO\s+["`\[]?([a-z][a-z0-9_]*)/gi,
+  /DELETE\s+FROM\s+["`\[]?([a-z][a-z0-9_]*)/gi,
   // `(?!set\b)` keeps upsert syntax (`ON CONFLICT … DO UPDATE SET`)
   // from registering a table named "set".
-  /UPDATE\s+["\[]?(?!set\b)([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/gi,
+  /UPDATE\s+["`\[]?(?!set\b)([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/gi,
 ];
 
 /** Contents of every '…' / "…" / `…` literal in a TS source, with
@@ -255,7 +257,8 @@ const clearedUnclassified = [...clearedSet].filter((t) => !replaySet.has(t)).sor
 // class: an archived table missing from §4's list is one the operator
 // never imports during recovery, so the archived user state silently
 // stays absent from the restored D1 (Codex #1485 r3).
-const importSet = importTablesFrom(runbookSrc);
+const importList = importTablesFrom(runbookSrc);
+const importSet = new Set(importList);
 const bornSet = new Set(
   Object.entries(CLASSIFICATION)
     .filter(([, c]) => c.class === 'born-off-chain')
@@ -263,6 +266,36 @@ const bornSet = new Set(
 );
 const notImported = [...bornSet].filter((t) => !importSet.has(t)).sort();
 const importedUnclassified = [...importSet].filter((t) => !bornSet.has(t)).sort();
+// §4's ORDER is load-bearing, not just its membership: every generated
+// batch leads with a DELETE, and deleting user_thresholds cascades to
+// its children — a list that names all eight tables but places a child
+// before the parent has the operator restore the child and then
+// silently erase it (Codex #1485 r4).
+const misordered = [];
+const parentIdx = importList.indexOf('user_thresholds');
+for (const child of ['notify_state', 'pre_grace_notify_state']) {
+  const childIdx = importList.indexOf(child);
+  if (parentIdx >= 0 && childIdx >= 0 && childIdx < parentIdx) {
+    misordered.push(`${child} listed before user_thresholds`);
+  }
+}
+
+// ── Check 6: the backup arrays are actually CONSUMED ──────────────────
+// Parsing the array literals (check 3) proves declaration, not use: a
+// refactor that drops `...ARCHIVE_TABLES_REQUIRED` from the export
+// loop while leaving the declaration keeps every check green while the
+// nightly stops exporting the required set (Codex #1485 r4). These are
+// deliberate tripwires on the consumption shape — if backup.ts's loop
+// is legitimately restructured, this check fails LOUD and gets updated
+// consciously, which is the correct failure mode for a drift guard.
+const consumption = [
+  /\.\.\.\s*ARCHIVE_TABLES_REQUIRED\s*,/,
+  /\.\.\.\s*ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED\s*\.map/,
+  /\.\.\.\s*ARCHIVE_TABLES_OPTIONAL\s*,/,
+];
+const unconsumed = consumption
+  .filter((re) => !re.test(backupSrc))
+  .map((re) => re.source);
 
 let failed = false;
 if (malformed.length > 0) {
@@ -305,6 +338,19 @@ if (importedUnclassified.length > 0) {
   failed = true;
   console.error("✗ In §4's import list but not classified born-off-chain:");
   for (const t of importedUnclassified) console.error(`    ${t}`);
+}
+if (misordered.length > 0) {
+  failed = true;
+  console.error("✗ §4's import list is out of FK order (parent must precede its");
+  console.error('  cascade children, or the child is restored and then erased):');
+  for (const m of misordered) console.error(`    ${m}`);
+}
+if (unconsumed.length > 0) {
+  failed = true;
+  console.error('✗ backup.ts declares its table arrays but the export loop no longer');
+  console.error('  consumes them in the shape this guard watches — if the loop was');
+  console.error('  restructured legitimately, update check 6 consciously:');
+  for (const u of unconsumed) console.error(`    missing consumption pattern: ${u}`);
 }
 if (dead.length > 0) {
   // Warn-only: a dropped table leaves a harmless entry; flag for cleanup.
@@ -353,12 +399,17 @@ export function clearedTablesFrom(runbookSrc) {
     if (!body.includes('wrangler d1 execute vaipakam-archive') || !body.includes('DELETE FROM')) {
       continue;
     }
-    // Strip SQL comments first: a DELETE inside `/* … */` (or on a
-    // `-- ` comment line) executes nothing, and counting it kept the
-    // equality check green while a table silently stopped being
-    // cleared (Codex #1485 r3). `-- ` requires the trailing space so
-    // wrangler's `--command` / `--remote` flags are untouched.
-    body = body.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*--\s.*$/gm, '');
+    // Model bash BEFORE SQL (Codex #1485 r4): the fence's command uses
+    // `\`-newline continuations, which bash removes — so a `-- note \`
+    // line comments out EVERYTHING that follows in the joined command,
+    // not just its own physical line. Join continuations first, then
+    // strip `/* … */` blocks and ` -- ` comments to end-of-(joined-)
+    // line. The space after `--` is what leaves wrangler's `--command`
+    // / `--remote` flags intact (Codex #1485 r3).
+    body = body
+      .replace(/\\\n/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|\s)--\s.*$/gm, '$1');
     for (const m of body.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
       cleared.add(m[1].toLowerCase());
     }
@@ -371,7 +422,10 @@ export function clearedTablesFrom(runbookSrc) {
 
 /** Table names in the runbook §4 born-off-chain import list — the
  *  backticked names after the "**`vaipakam-archive` tables**
- *  (born-off-chain):" marker, up to the end of that sentence. */
+ *  (born-off-chain):" marker, up to the end of that sentence.
+ *  Returns them IN LIST ORDER: §4's order is load-bearing (parent
+ *  before cascade children), so callers check sequence, not just
+ *  membership. */
 export function importTablesFrom(runbookSrc) {
   const m = runbookSrc.match(
     /\*\*`vaipakam-archive` tables\*\* \(born-off-chain\):([\s\S]*?)\.\n/,
@@ -379,8 +433,10 @@ export function importTablesFrom(runbookSrc) {
   if (!m) {
     throw new Error('could not locate the §4 born-off-chain import list in OffChainRestore.md');
   }
-  const tables = new Set();
-  for (const t of m[1].matchAll(/`([a-z][a-z0-9_]*)`/g)) tables.add(t[1]);
+  const tables = [];
+  for (const t of m[1].matchAll(/`([a-z][a-z0-9_]*)`/g)) {
+    if (!tables.includes(t[1])) tables.push(t[1]);
+  }
   return tables;
 }
 
