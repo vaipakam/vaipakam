@@ -127,7 +127,8 @@ half for an unarmed day.
 - **Budget layer — the spec's subject.** `RewardAggregatorFacet._finalizeAndWrite`
   stamps every finalized day, and its UNARMED branch sets
   `recycledBudget = schedule == 0 ? 0 : min(fundable, coupled)` — a NON-zero
-  recycled portion drawn from the canonical chain's own bucket, written into
+  recycled portion MEASURED AGAINST the canonical chain's own bucket (not drawn
+  from it — see the follow-up below), written into
   `dayPoolStamp[dayId].recycledBudget`. That is Phase A′ exactly as specified.
 - **Claim / reservation layer — the cited functions.** While
   `governorCommitArmedFromDay == 0`, the stamp is deliberately a RECORD ONLY and
@@ -151,6 +152,22 @@ arming or fee-entitlement gate, as "the first live non-forfeit absorption
 class" — while claims are fresh-only. A fresh-only claim reaching recycle-bucket
 backing is **#1460**, a P1 and a hard arming prerequisite. This entry is closed;
 that one is not.
+
+**Follow-up (2026-07-30, #1457 r16) — a second, narrower error in the same
+sentence, and this one was real.** After the layer confusion was refuted, review
+pointed at the surviving words "and remitted from there". Verified across four
+paths: `_finalizeAndWrite`'s unarmed branch only WRITES the stamp;
+`RewardRemittanceFacet._planDay`'s unarmed branch carries `p.recycled == 0`;
+`chainRewardBudgetSideSplitForDay`'s unarmed else-branch never assigns the
+recycled locals; and both `LibVpfiRecycle.consume` call sites are unreachable
+with a non-zero argument on an unarmed day. The operator `remitManualBudget`
+path is fresh-only by construction and gated on a flag only armed days set.
+
+So on an unarmed day the code supports exactly ONE of three things —
+**recording** a budget — and neither reserves against the bucket nor remits
+value. The spec now says "sized against", states the two negatives explicitly,
+and the release note records both errors. Collapsing record / reserve / remit
+into one word is what made the original sentence read as a contradiction.
 
 **Method note.** The reviewer's suggested remedy was to change the spec, and the
 first instinct on this side was to treat it as a spec-versus-code coin flip. It

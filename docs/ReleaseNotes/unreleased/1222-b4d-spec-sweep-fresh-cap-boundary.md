@@ -21,16 +21,24 @@ platform has wrong, and one apparent contradiction that turned out to be
 neither.
 
 The apparent one is worth recording because it was nearly resolved the wrong
-way. Review reported that the specification's claim — an inactive day already
-has a recycled portion, funded centrally — is contradicted by the platform,
-which appeared to give such a day none at all. Both observations were accurate
-and they were about **different stages of the same day**. When a day is closed,
-its record does carry a recycled portion drawn from the central pool, exactly
-as specified. What an inactive day does not do is *pay* that portion out to
-claimants: until the programme is switched on, the day's record is only a
-record, and claims are paid from the scheduled portion. Paying earlier would
-mean setting value aside with nothing yet able to spend it, which would shrink
-the very headroom the cap protects.
+way, twice. Review reported that the specification's claim — an inactive day
+already has a recycled portion, funded centrally — is contradicted by the
+platform, which appeared to give such a day none at all. Both observations were
+accurate, and they were about **different stages of the same day**: when a day
+is closed, its record does carry a recycled portion, measured against the
+central pool. What an inactive day does not do is *pay* that portion out.
+Until the programme is switched on the record is only a record, and claims are
+paid from the scheduled portion — paying earlier would mean setting value aside
+with nothing yet able to spend it, shrinking the very headroom the cap protects.
+
+Resolving that then exposed a second, narrower error in the same sentence, and
+this one was real: the specification said the portion was "remitted from" the
+central pool. It is not. Nothing on an inactive day moves value — the pool is
+what the figure is *measured against*, not a source it is drawn from, and no
+transfer, reservation or payout occurs. Three different things had been
+collapsed into one word, which is what made the whole sentence read as a
+contradiction in the first place. It now states all three, including what does
+not happen.
 
 So nothing needed changing on either side. What did need changing was the
 specification sentence, which never said which stage it described — and that
