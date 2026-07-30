@@ -16,10 +16,18 @@ distinction matters. A day's budget has two portions:
   itself absorbed and not yet spent, and only the shortfall draws on the
   canonical chain.
 
-Writing that down turned up two things the specification had wrong and one
-the platform has wrong. An inactive day was described as having no recycled
-portion at all, when in fact it has one funded centrally — what activation
-changes is *who* funds it, not whether it exists. And the rule that recycled
+Writing that down turned up one thing the specification had wrong, one the
+platform has wrong, and one that is **still undecided** and is recorded as
+such rather than settled here.
+
+The undecided one: the specification says an inactive day already has a
+recycled portion funded centrally, and that activation changes only *who*
+funds it. The code disagrees — it gives an inactive day no recycled portion
+at all. One of the two is wrong and it is not yet clear which: if central
+funding of inactive days is intended, the platform has a gap; if recycling is
+meant to begin only at activation, the specification sentence needs rewriting
+along with what rests on it. It is logged as an open divergence for a decision
+rather than resolved by editing whichever side was easier to change. And the rule that recycled
 value must never stand in for the scheduled portion turns out to be intent
 rather than enforcement: a payout reduces the recycled ledger by its recycled
 part and then pays the whole amount out of one pooled balance, so a chain
