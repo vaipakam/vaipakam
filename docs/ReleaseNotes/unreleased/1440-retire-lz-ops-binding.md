@@ -148,6 +148,19 @@ rather than left for the incident that would find them:
   versions. It would have shown a healthy deployment while the
   every-minute schedule was still live, which is precisely the mistake
   the check exists to catch. Replaced with a schedule-aware query.
+- Both credential rotations end by redeploying the keeper, and a plain
+  redeploy of that service deletes the switches that decide whether its
+  autonomous duties run at all — because those switches are operator-set
+  and not recorded in the repository, so each deploy rebuilds the set
+  from what *is* recorded. A rotation carried out correctly, under
+  incident pressure, would therefore have left liquidation, matching,
+  remittance and reporting silently off, indistinguishable from having
+  been turned off on purpose. Both steps now preserve them, and the rule
+  is written once in a place the steps point at rather than repeated. The
+  underlying fix — recording the values so no deploy can drop them, which
+  also makes the live state reviewable — is a configuration change and is
+  filed separately; it reaches the routine deploy path too, not only
+  these two rotations.
 - The document justified keeping a scoped backup-read credential inside a
   service on the grounds that it can only reach encrypted data, with the
   decryption key held offline. That is true if the storage provider is

@@ -602,8 +602,14 @@ runs after revocation.
    dead host without complaint, so getting this wrong fails SILENTLY: the
    bot simply stops receiving updates.
 5. Redeploy the live consumers to flush in-memory clients tied to the
-   old token: `pnpm --filter @vaipakam/agent deploy` and
-   `pnpm --filter @vaipakam/keeper deploy`.
+   old token:
+
+   ```bash
+   pnpm --filter @vaipakam/agent exec wrangler deploy
+   # --keep-vars is REQUIRED on the keeper — see "Never redeploy the
+   # keeper bare" below. A plain deploy here silently disarms it.
+   pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
+   ```
 
 No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.
@@ -650,8 +656,13 @@ is `wrangler tail`, so verify there rather than assuming success.
      --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
 3. Redeploy **both** consumers to drop their cached PushAPI clients:
-   `pnpm --filter @vaipakam/agent deploy` and
-   `pnpm --filter @vaipakam/keeper deploy`.
+
+   ```bash
+   pnpm --filter @vaipakam/agent exec wrangler deploy
+   # --keep-vars: same reason as the Telegram rotation — see "Never
+   # redeploy the keeper bare" below.
+   pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
+   ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
    the new EOA and redeploy `apps/defi`. Leaving it on the old address sends
    every user who opens the Alerts page to subscribe to a channel the
@@ -703,6 +714,44 @@ and pointing `PUSH_CHANNEL_PK` at it — the channel id, the stake and every
 subscriber stay put, and this whole section collapses to a two-line secret
 swap. Until then, plan for migration. If a rotation is foreseeable rather
 than an emergency, landing #1456 first is strictly better.
+
+### Never redeploy the keeper bare
+
+**Any `wrangler deploy` of `apps/keeper` without `--keep-vars` silently
+disarms it.** Both rotations above redeploy the keeper, which is how this
+became an incident-runbook rule rather than a deploy footnote: a rotation
+performed correctly, under pressure, would leave the keeper dark.
+
+`wrangler deploy --help` on the pinned version states it outright —
+*"When not used (or set to false), Wrangler will delete all vars before
+setting those found in the Wrangler configuration."* Each deploy rebuilds
+the variable set from the committed config, and
+`apps/keeper/wrangler.jsonc` commits only `TG_BOT_USERNAME`.
+`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED` and `REWARD_COMMIT_ENABLED` are
+operator-managed and **not** in the file, so a bare deploy deletes all
+three. Autonomous liquidation, matching, liquidity-confidence submits,
+auto-lifecycle, remittance and commitment reporting all stop.
+
+There is no error and no warning. `isKeeperEnabled()` simply returns
+false, which is indistinguishable from "deliberately off" — so the keeper
+can stay dark indefinitely after a successful-looking incident response.
+
+Two ways to be safe, and the second is better:
+
+- pass `--keep-vars` on every keeper deploy, as the steps above now do; or
+- commit the intended values into `wrangler.jsonc`'s `vars`, after which
+  a bare deploy restores them from config and the flag needs no ceremony.
+
+The second removes the hazard instead of routing around it, and it makes
+the live arming state visible in review rather than only in the
+dashboard. It is a deploy-config change rather than a runbook edit, so it
+is tracked separately as **#1465** — which also covers the other keeper
+deploy sites this rule reaches (the routine `cf-keeper` phase in the
+Deployment Runbook, and `FlashLoanLiquidatorRollout.md`).
+
+After **any** keeper redeploy, confirm the flags survived by reading the
+deployed variables back — see `OffChainRestore.md` §7a step 4 for the
+command and for the case-sensitivity trap between the two guards.
 
 
 ### Communicate
