@@ -508,8 +508,16 @@ verified against source).** All seven §9 figures are derivable from state
 the protocol already persists; nothing new is stored and no new event is
 emitted. Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
 from `getDayPoolStamp`, `selfFundingRatio[D]` and `runwayExtensionDays`
-derived from that series, `platformRetained` from `getRecycleBucket` +
-`getGovernorCommitState`. Two were not:
+derived from that series. `platformRetained` was reachable from
+`getRecycleBucket` + `getGovernorCommitState` ONLY while the keeper register
+is dark: once `recycleRegisterKeeperBps` is non-zero, `_applyRecycleRegister`
+earmarks part of each day's margin into `recycleKeeperBudget` from INSIDE the
+bucket (so `recycleBucket` does not move) and `_recycleFundable` nets it
+beside the outstanding commitments. The two-term derivation therefore
+overstates retained reserve for as long as the register runs, which is why
+`getRecycleBackingSnapshot` returns the keeper term as a sixth raw value —
+`platformRetained = bucket − outstandingRecycled − keeperBudget`, floored at
+zero (Codex #1487 r2/r3). Two figures were missing outright:
 
 - **`absorbed[D]` was HALF-exposed, which is worse than unexposed.** The
   global figure is `recycledCreditedByDay[D] + dayMirrorRecycledCredit[D]`
@@ -532,7 +540,7 @@ derived from that series, `platformRetained` from `getRecycleBucket` +
   read against `scheduleFloor[D]`, and claim-day attribution would score a
   claim spanning D-30…D against day D's floor alone.
 
-  FOUR bounds ship ON the surface rather than being left to be found:
+  FIVE bounds ship ON the surface rather than being left to be found:
   EXACT for the armed-day global reservation; an APPROXIMATION pre-arming
   (unarmed claim pricing reads the UNCAPPED `halfPoolForDay` while the stamp
   records `min(schedule, freshAvailable)`); ABOVE actual near the 69M cap
@@ -540,10 +548,21 @@ derived from that series, `platformRetained` from `getRecycleBucket` +
   on a zeroed-chain day, where `remitManualBudget` later sends an
   operator-sized fresh-only amount that retires no finalize-time commitment
   (none existed), so the recomputation cannot see that drawdown at all.
-  **It is therefore NOT a pure upper bound** — the last two push in opposite
-  directions. The first three-bound version of this row and of the natspec
-  claimed an upper bound outright; Codex #1487 r1 caught that the
-  zeroed-chain manual path breaks it. Forfeits are
+  And **BELOW** the POOL's view on a released-then-re-sent remittance:
+  `releaseRemitReservation` restores the day's fresh commitment but leaves
+  `rewardBudgetRemittedGlobal` charged, and the re-send charges it again, so
+  two real fresh outflows sit against one finalize-time commitment. Both
+  readings are defensible and answer different questions — the stranded first
+  outflow reaches no user, so the day's EMISSION is the commitment while its
+  POOL CONSUMPTION is larger — and anyone reconciling the published series
+  against the allocation counter must expect that gap rather than read it as
+  corruption.
+
+  **It is therefore NOT a pure upper bound** — bound 3 pushes one way and
+  bounds 4/5 the other. The first three-bound version of this row and of the
+  natspec claimed an upper bound outright; Codex #1487 r1 caught that the
+  zeroed-chain manual path breaks it, and r2 added the re-remittance case.
+  Forfeits are
   deliberately NOT netted — a forfeited fresh share was emitted and then
   absorbed, so it belongs in `freshDrawdown[D]` and reappears in
   `absorbed[D]`; the two are complementary legs of one movement.

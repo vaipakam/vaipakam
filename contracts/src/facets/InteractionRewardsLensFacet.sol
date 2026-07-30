@@ -386,7 +386,7 @@ contract InteractionRewardsLensFacet {
      *         series (governor design §9).
      * @dev    Adds the two figures the pre-existing reads could not supply.
      *
-     *         **`absorbedMirror`** had no getter at all, and its absence was
+     *         **`absorbedMirror`** had no AGGREGATE getter, and its absence was
      *         the failure that would have shipped a WRONG number rather than
      *         a missing one. Global absorption is the SUM of the local and
      *         mirror terms — {RewardAggregatorFacet._stampGovernorDayPool}
@@ -511,12 +511,24 @@ contract InteractionRewardsLensFacet {
      * @return freshDrawdown  `netEmission[D]` — the schedule floor actually
      *         drawn fresh, subject to the five bounds above.
      * @return absorbedLocal  This chain's own day-`dayId` recycle credits.
+     *
+     *         **Day 0 is a catch-all, not a normal day.**
+     *         {LibVpfiRecycle.credit} maps every credit taken while the
+     *         emission schedule is inactive to day 0, and genuine day-0
+     *         credits land in the same slot — so `getRecycleDayMetrics(0)`
+     *         reports pre-launch absorption and the first schedule day added
+     *         together, with no way to separate them, and mirror reports
+     *         propagate the same conflation (Codex #1487 r3 P2). Separating
+     *         them would need a new storage slot, which this slice
+     *         deliberately does not add; a consumer plotting a day series
+     *         should either exclude day 0 or label it as the pre-launch
+     *         bucket rather than as the programme's first day.
      * @return absorbedMirror Day-`dayId` credits accepted from mirror
      *         chains' reports. `absorbedLocal + absorbedMirror` is the
      *         global `absorbed[D]`.
      *
      *         A LOWER bound once the day is finalized, and it is stated here
-     *         because the sibling `freshDrawdown` carries four stated bounds
+     *         because the sibling `freshDrawdown` carries five stated bounds
      *         and this one carried none. The ingress rejects reports for a
      *         finalized day, so a mirror whose report arrives late
      *         contributes nothing to this figure — ever. The absorption was
@@ -568,7 +580,24 @@ contract InteractionRewardsLensFacet {
         LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
         absorbedLocal = s.recycledCreditedByDay[dayId];
         absorbedMirror = s.dayMirrorRecycledCredit[dayId];
-        if (!p.stamped) return (false, 0, 0, 0, absorbedLocal, absorbedMirror);
+        // Per-DAY provenance, not just the chain's CURRENT role (Codex #1487
+        // r3 P2). `setIsCanonicalRewardChain` is a mutable admin setter that
+        // flips either way and neither clears nor tags historical state, so a
+        // Diamond promoted from mirror to canonical passes the role check
+        // above while still holding broadcast-written `dayPoolStamp` entries
+        // from its mirror era — days for which it never wrote the canonical
+        // `dailyGlobal*` denominators. Trusting `p.stamped` there would
+        // resurrect exactly the false-global reading the role gate exists to
+        // prevent.
+        //
+        // `dailyGlobalFinalized[dayId]` is the right marker because it has a
+        // single writer, `_finalizeAndWrite`, in the same block as the
+        // denominators and the stamp itself — so it is true only for days
+        // THIS Diamond finalized as the canonical chain, and it cannot be
+        // false for a day whose denominators exist.
+        if (!s.dailyGlobalFinalized[dayId] || !p.stamped) {
+            return (false, 0, 0, 0, absorbedLocal, absorbedMirror);
+        }
         stamped = true;
         scheduleFloor = p.scheduleFloor;
         recycledBudget = p.recycledBudget;

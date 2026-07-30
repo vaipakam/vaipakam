@@ -219,8 +219,15 @@ library LibVpfiRecycle {
      *         `unearmarked` is exactly the quantity #1460's third condition
      *         turns on — the defect needs a non-zero bucket AND a
      *         scheduled-only claim AND this figure below the scheduled
-     *         payout. The first two are observable today and the third was
-     *         observable nowhere, which is why a deployment could satisfy
+     *         payout. The first two are observable in one call each; the
+     *         third was reachable only by chaining three — resolve the token
+     *         via {VPFITokenFacet.getVPFIToken}, call its `balanceOf` on the
+     *         Diamond, subtract {ConfigFacet.getRecycleBucket} — all at the
+     *         same block, or the answer is meaningless. An earlier revision
+     *         called it "observable nowhere", which was the same reachability
+     *         overstatement already corrected for the mirror term (Codex
+     *         #1487 r3). What this adds is ATOMICITY and one call instead of
+     *         three, which is why a deployment could satisfy
      *         all three and look healthy. Publishing it does NOT close the
      *         defect; it makes the difference between "corrupted" and
      *         "merely eligible" readable instead of assumed.

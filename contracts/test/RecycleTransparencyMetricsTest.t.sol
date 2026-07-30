@@ -330,6 +330,67 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         );
     }
 
+    /**
+     * @dev The role check alone is not enough, because the role is MUTABLE.
+     *      `setIsCanonicalRewardChain` flips either way and neither clears
+     *      nor tags historical state, so a Diamond promoted from mirror to
+     *      canonical passes a current-role gate while still holding
+     *      broadcast-written `dayPoolStamp` entries from its mirror era —
+     *      days whose canonical `dailyGlobal*` denominators it never wrote.
+     *      Under the LEGACY broadcast that is the dangerous shape all over
+     *      again: a real stamp, a real floor, and a drawdown of zero.
+     *
+     *      Driven through the real broadcast path rather than a raw stamp
+     *      mutator, so what is proven is the scenario and not a synthesised
+     *      end state: receive as a mirror, then promote, then read.
+     *
+     *      The fix keys on `dailyGlobalFinalized[dayId]`, whose single writer
+     *      is `_finalizeAndWrite` — per-DAY provenance instead of a
+     *      point-in-time role (Codex #1487 r3 P2).
+     */
+    function testPromotedMirrorDoesNotServeItsMirrorEraDays() public {
+        uint256 day = 7;
+
+        // Mirror era: a legacy broadcast stamps the day pool locally, but no
+        // canonical finalize ever runs here, so the denominators stay unset.
+        _rep().setIsCanonicalRewardChain(false);
+        messenger.deliverBroadcastWithComposition(
+            day,
+            30e18, // global lender
+            15e18, // global borrower
+            type(uint256).max,
+            10_000 ether, // scheduleFloor half
+            0, // recycled half
+            0 // unarmed
+        );
+
+        // The stamp really did land — otherwise the assertion below would
+        // pass for the wrong reason.
+        (bool rawStamped, uint256 rawFloor, , , ) =
+            _agg().getDayPoolStamp(day);
+        assertTrue(rawStamped, "mirror-era broadcast wrote a real stamp");
+        assertGt(rawFloor, 0, "with a real floor behind it");
+
+        // Promotion. A current-role gate is satisfied from here on.
+        _rep().setIsCanonicalRewardChain(true);
+
+        (
+            bool stamped,
+            uint256 floor_,
+            ,
+            uint256 drawdown,
+            ,
+
+        ) = _lens().getRecycleDayMetrics(day);
+
+        assertFalse(
+            stamped,
+            "a mirror-era day must not be served as canonical"
+        );
+        assertEq(floor_, 0, "and must not leak the broadcast floor");
+        assertEq(drawdown, 0, "nor a zero drawdown beside a real floor");
+    }
+
     // ─── the unfinalized day ─────────────────────────────────────────────────
 
     /**
