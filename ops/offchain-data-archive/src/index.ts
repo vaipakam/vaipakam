@@ -265,12 +265,13 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
         // accidental match is ~2^-64. Saying it "cannot be compared" was
         // overstating in the opposite direction from the original error.
         //
-        // What the prefix cannot do is survive an adversary CHOOSING the
-        // input: matching a fixed 64-bit prefix deliberately is a truncated
-        // second-preimage search at ~2^64, which is expensive but is a
-        // bounded target, whereas 256 bits is not a target at all. Since the
-        // other 48 characters are free, there is no reason to leave a bound
-        // on the table.
+        // What changes with the full value is the cost to an adversary
+        // CHOOSING the input. Matching a fixed 64-bit prefix deliberately is
+        // a truncated second-preimage search at ~2^64; matching all 256 bits
+        // is ~2^256. Both are bounded targets — the full digest RAISES the
+        // bound, it does not remove one, and saying otherwise was this
+        // comment's third wording and its second overstatement. Since the
+        // other 48 characters are free, raising it costs nothing.
         //
         // THIS IS NOT A PROVENANCE ANCHOR, and an earlier version of this
         // comment claimed it was. The claim was wrong three times over, and

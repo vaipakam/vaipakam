@@ -7,9 +7,13 @@ nothing.
 
 A short prefix is not useless — anyone can fingerprint a candidate archive
 and compare the first 16 characters, and two unrelated files sharing them by
-chance is vanishingly unlikely. What a short prefix cannot do is stand up to
-someone deliberately trying to match it. Recording all of it removes a
-bound rather than fixing a broken comparison.
+chance is vanishingly unlikely. What changes with the full value is how hard
+it is for someone *deliberately* trying to produce a different archive with
+the same fingerprint: against 16 characters that is expensive, and against
+the full value it is beyond reach. Recording all of it **raises** that bar
+rather than removing a bar or repairing a broken comparison — the earlier two
+drafts of this paragraph each overstated it in one direction, so this one
+states the change and leaves the verdict out.
 
 **A correction, recorded because the mistake is an easy one to repeat.**
 This change was originally justified as closing a real gap: that the
