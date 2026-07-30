@@ -495,11 +495,15 @@ contract MeshLedgerInvariant is Test {
     // bound is green for the wrong reason — but the figure is now the one
     // the handler actually produces.
     //
-    // The four tests below place the ledger AT the boundary and assert the
+    // The five tests below place the ledger AT the boundary and assert the
     // cap actually bites: one per reservation term (outstanding commitment,
-    // exact-cap/recycled, already-remitted value), plus one with TWO terms
-    // non-zero at once. They are deliberately deterministic — a fuzzer
-    // cannot usefully search a region it cannot reach.
+    // exact-cap/recycled, already-remitted value), then TWO combination
+    // fixtures. The combinations are not redundant — every single-term
+    // fixture is satisfied by a formula that takes the LARGEST reservation
+    // instead of summing them, so isolating a term proves that term is
+    // READ but not that the terms ADD. Each combination kills a distinct
+    // such formula; see their own comments. Deliberately deterministic —
+    // a fuzzer cannot usefully search a region it cannot reach.
 
     /// The cap must reserve against OUTSTANDING fresh commitments, not only
     /// against what has already been paid out. That is the whole content of
@@ -728,6 +732,64 @@ contract MeshLedgerInvariant is Test {
             "and the summed-clamped floor is what actually gets reserved"
         );
         _assertFreshCapNotBreached("after a two-term clamped finalize");
+    }
+
+    /// The two-term fixture above still leaves `interactionPoolPaidOut` at
+    /// zero, so it proves only that the two COMMITMENT-side terms add. A
+    /// formula that took `max(paidOut, remitted + outstanding)` — or that
+    /// dropped `paidOut` from the reserved sum outright — produces the right
+    /// headroom in all four fixtures above and passes every assertion. The
+    /// campaign cannot reach the boundary to catch it either.
+    ///
+    /// This is the ordinary steady state, not an edge: once any claim has
+    /// been paid, `paidOut` is non-zero for the rest of the programme's
+    /// life. So the surviving formula would have over-allocated on every
+    /// day after the first payout.
+    ///
+    /// All three terms non-zero and mutually unequal, split so no subset
+    /// reaches the boundary: only the full sum yields `headroom`.
+    function test_Boundary_AllThreeFreshTermsReserveAdditively() public {
+        uint256 paidOut = 700 ether;
+        uint256 remitted = 500 ether;
+        uint256 outstanding = 34 ether;
+        uint256 headroom = 1_234 ether; // cap − (paidOut + remitted + outstanding)
+
+        TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(paidOut);
+        TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP
+                - headroom
+                - paidOut
+                - outstanding
+        );
+        TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
+            outstanding, 0
+        );
+
+        assertGt(
+            _scheduleForDay(1),
+            headroom,
+            "fixture must place the schedule ABOVE the summed headroom"
+        );
+
+        uint256 freshBefore = _outstandingFresh();
+        _finalizeDayOne();
+
+        (bool stamped, uint256 scheduleFloor, , , ) =
+            _agg().getDayPoolStamp(1);
+        assertTrue(stamped, "day 1 finalized");
+        assertEq(
+            scheduleFloor,
+            headroom,
+            "the floor must clamp to the headroom left by ALL THREE terms "
+            "summed - dropping paidOut, or taking the larger of it and the "
+            "commitment side, over-allocates and passes every other fixture"
+        );
+        assertEq(
+            _outstandingFresh() - freshBefore,
+            headroom,
+            "and the summed-clamped floor is what actually gets reserved"
+        );
+        _assertFreshCapNotBreached("after a three-term clamped finalize");
     }
 
     /// @dev The §7 #2 fresh half, read from live state. `remaining` is the

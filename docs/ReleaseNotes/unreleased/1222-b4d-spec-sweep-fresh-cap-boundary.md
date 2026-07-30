@@ -102,7 +102,7 @@ Four deterministic tests now place the ledger at the boundary directly:
   since reaching it for real needs a chain to have been sent almost the whole
   allocation.
 
-A fourth places two of those terms at the boundary **together**, because
+Two further tests place those terms at the boundary **together**, because
 each of the first three leaves only one of them non-zero — and a version of
 the platform that took the larger of two reservations instead of adding them
 produces exactly the right headroom in all three, passing every check. Only
@@ -112,13 +112,23 @@ of the main chain's own days is still open. Without it the platform could
 have over-committed by the smaller of the two amounts on every such day,
 invisibly.
 
+The fifth adds the third term — value already paid out to claimants — for
+the same reason one level up: with only the two commitment-side terms
+present, a version that ignored what had already been paid, or that took
+the larger of the two sides, still produced the right answer everywhere.
+That one is not an edge case at all: once any claim has been paid, the
+paid-out figure is non-zero for the rest of the programme's life, so the
+surviving version would have over-committed on every day after the first
+payout.
+
 Each was confirmed against the change that would break it: sizing the
 reservation from the unclamped schedule fails all three of the
 single-term cases, dropping the already-sent term fails the sent-value case
 and only that one, and taking the larger of two reservations instead of
-summing them fails the two-term case and only that one — passing the other
-three, which is what makes the fourth case necessary rather than
-decorative. Review also caught that
+summing them fails the two-term case and only that one, and ignoring what
+has already been paid out fails the three-term case and only that one. Each
+combination passes every fixture below it, which is what makes both of them
+necessary rather than decorative. Review also caught that
 checking the day's *published* figure was not enough — the platform could
 publish the clamped number and still reserve against the unclamped one, on
 either the fresh or the recycled side — so the tests read the reservations
