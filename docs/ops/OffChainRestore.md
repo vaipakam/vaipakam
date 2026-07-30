@@ -132,19 +132,37 @@ then deploy.
       `ONEINCH_API_KEY`, `OPENSEA_API_KEY` and the
       `ALCHEMY_WEBHOOK_SIGNING_KEY_*` set:
 
+      Each `secret create` makes exactly ONE secret and takes a singular
+      `--name`, so derive the full set from the configs and iterate — a
+      hand-written subset leaves the rest absent and every Worker deploy
+      then fails binding validation:
+
       ```bash
       STORE=<the new store id>
-      # No --value and no pipe: wrangler PROMPTS for the value, so it never
-      # enters the command line and cannot be recovered from shell history.
-      # Wrangler's own help calls --value "Only for testing. Not secure as
-      # this will leave secret value in plain-text in terminal history".
-      # This loop reconstructs the entire credential set — keeper key, bot
-      # token, Push key, RPC keys with embedded API keys — so a history file
-      # left behind here re-creates the compromise the restore is recovering
-      # from.
-      wrangler secrets-store secret create "$STORE" \
-        --name RPC_BASE --scopes workers --remote
+
+      # Every distinct store-bound secret name across all three Workers.
+      NAMES=$(grep -ho '"secret_name": *"[A-Z_0-9]*"' \
+                apps/keeper/wrangler.jsonc \
+                apps/agent/wrangler.jsonc \
+                apps/indexer/wrangler.jsonc \
+              | grep -o '[A-Z_0-9]\{3,\}' | sort -u)
+      echo "$NAMES"   # eyeball it before running the loop
+
+      for NAME in $NAMES; do
+        echo "--- $NAME"
+        # No --value and no pipe: wrangler PROMPTS, so the value never enters
+        # the command line and cannot be recovered from shell history.
+        # Wrangler's own help calls --value "Only for testing. Not secure as
+        # this will leave secret value in plain-text in terminal history".
+        wrangler secrets-store secret create "$STORE" \
+          --name "$NAME" --scopes workers --remote
+      done
       ```
+
+      This reconstructs the entire credential set — keeper key, bot token,
+      Push key, RPC URLs with embedded API keys — so a history file left
+      behind here re-creates the compromise the restore is recovering from.
+      That is why the prompt matters and not just the loop.
 
       `--scopes workers` is REQUIRED. Use this positional-store-id form —
       it is the one verified against the live API
