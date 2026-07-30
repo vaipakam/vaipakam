@@ -75,6 +75,23 @@ so at 7 days an overwrite landing just after one Monday becomes deletable as
 the next Monday's alert fires — the alert races the deletion. 9 puts detection
 strictly inside the window and leaves two days to act.
 
+**What the weekly check does and does not detect — the recovery window's value
+depends on this.** `healthcheck.ts` verifies the newest archive against its
+manifest: hash, size, decryptability. That catches corruption and a *blind*
+overwrite. It does **not** catch an authenticated forgery, and in the scenario
+this section is about it cannot: a compromised Worker yields both B2 credential
+pairs **and** `BACKUP_ENCRYPTION_KEY` from the same environment, so the
+attacker can enumerate the genuine nonce with `listFiles` and write a
+self-consistent encrypted archive+manifest pair at that exact key. Every check
+the healthcheck makes passes.
+
+So the recovery window is not "time after an alert" for a competent attacker —
+it is time for a human or an out-of-band signal to notice. That is a real but
+much weaker property than an earlier revision of this file implied, and it is
+the same integrity-is-not-provenance gap tracked as #1473, which is what
+actually closes it. The floors below are the floor of usefulness, not a
+sufficiency argument.
+
 The monthly floor is higher for a worse reason, stated plainly rather than
 buried: `healthcheck.ts` examines only `manifests/<recent dates>/`, so it never
 looks at the monthly prefixes and **a monthly overwrite is detected by nothing

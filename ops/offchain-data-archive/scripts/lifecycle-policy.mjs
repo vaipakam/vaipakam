@@ -31,6 +31,16 @@
  * deletion by the whole lifetime PLUS that gap. The gap is minutes; a full day
  * of headroom makes the arithmetic hold without depending on it.
  *
+ * WHAT THE DETECTOR ACTUALLY DETECTS. `healthcheck.ts` checks the newest
+ * archive against its manifest — hash, size, decryptability. That catches
+ * corruption and a BLIND overwrite. It does NOT catch an authenticated
+ * forgery: a compromised Worker yields both B2 credential pairs and
+ * `BACKUP_ENCRYPTION_KEY` from one environment, so an attacker can enumerate
+ * the genuine nonce and write a self-consistent encrypted pair at that key,
+ * and every check passes. The floors below are therefore a floor of
+ * USEFULNESS — time for a human or an out-of-band signal to notice — not a
+ * sufficiency argument. #1473 is what closes the forgery case.
+ *
  * WHY THE RECOVERY TERM HAS A FLOOR. `daysFromHidingToDeleting` is the window
  * in which a SUPERSEDED version can still be recovered — which is the only
  * defence against a forged overwrite, since the Worker's B2 key holds
