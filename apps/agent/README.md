@@ -22,7 +22,7 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 
 ```bash
 pnpm --filter @vaipakam/agent dev       # local wrangler dev
-pnpm --filter @vaipakam/agent deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
+pnpm --filter @vaipakam/agent run deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
 ```
 
 ## How to test
