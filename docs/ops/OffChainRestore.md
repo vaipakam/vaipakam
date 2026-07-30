@@ -696,7 +696,15 @@ then deploy.
 >   §1 step 9 does for a rebuild: empty the cron lists of the Workers
 >   that write them and close the indexer's second writer (the
 >   DO/webhook ingest — see §6's both-writers note) where an indexer
->   table is involved. The per-Worker READMEs carry the write/read
+>   table is involved. **Crons are not the only writers — the agent's
+>   HTTP fetch handler mutates these same tables** (thresholds,
+>   Telegram links, support tickets, diagnostics, erasure, legal
+>   holds — `apps/agent/src/index.ts`), and it stays reachable
+>   through the custom domain and its `workers.dev` origin no matter
+>   what the schedules say. Detach the agent's custom domain and
+>   disable its `workers.dev` route (Worker → Settings → Domains &
+>   Routes) for the duration, the same way the rebuild path withholds
+>   that domain until §7. The per-Worker READMEs carry the write/read
 >   split. A live writer during the §4 delete → import → count
 >   sequence can re-insert rows between replacement and verification,
 >   delete restored rows in a retention pass, or leave a mixed
@@ -775,13 +783,18 @@ then deploy.
 >      about a day, whatever any document here claims.
 >
 >    So list **file VERSIONS**, not files, and do it early — inside whatever
->    the overwrite is the whole window. List BOTH prefixes: an attacker who
->    overwrote the archive but not its manifest (or vice versa) is visible
->    only on the side you looked at:
+>    the overwrite is the whole window. List **every tier you might select
+>    from, on both sides**: an attacker who overwrote the archive but not
+>    its manifest (or vice versa) is visible only on the side you looked
+>    at — and step 5 below establishes that when the window is old, the
+>    monthly/yearly tiers are the only candidates, so an overwrite there
+>    matters exactly as much as one in the dailies:
 >
 >    ```bash
->    b2 ls vaipakam-offchain-data-archive --recursive --long --versions manifests/
->    b2 ls vaipakam-offchain-data-archive --recursive --long --versions archives/
+>    for p in manifests/ archives/ manifests-monthly/ archives-monthly/ \
+>             manifests-yearly/ archives-yearly/; do
+>      b2 ls vaipakam-offchain-data-archive --recursive --long --versions "$p"
+>    done
 >    ```
 >
 >    More than one version at a key is strong evidence of tampering. One
@@ -1078,12 +1091,24 @@ For each table:
 
 ## 5. Restore the R2 legal-vault
 
-For each object in the decrypted `r2.objects[]`, four things must
-happen locally **before** any upload — decode `base64Body`, create
-the parent directories (`mkdir -p` semantics: legal-vault keys
-contain `/` separators, e.g. `legal-holds/2026-05/notice-42.pdf`),
-write the bytes to `restore/r2/<key>`, and verify the per-object
-SHA-256 against the archive's recorded value. Only then upload.
+For each object in the decrypted `r2.objects[]`, five things must
+happen locally **before** any upload — **validate the key**, decode
+`base64Body`, create the parent directories (`mkdir -p` semantics:
+legal-vault keys contain `/` separators), write the bytes to
+`restore/r2/<key>`, and verify the per-object SHA-256 against the
+archive's recorded value. Only then upload.
+
+**Key validation comes first because `obj.key` is untrusted input**
+— after a compromise the archive is attacker-influenced, and a key
+like `../../.ssh/authorized_keys` walks the write right out of the
+staging tree; the argv-array upload safeguard below prevents shell
+injection, not filesystem traversal (#1450 r31). Reject any key
+that is absolute, contains a `..` segment, or whose resolved path
+does not remain beneath `restore/r2/`. The vault's canonical key
+shape is `legal-holds/<64-hex-sha256>.pdf` (generated at
+`apps/agent/src/diagLegalDoc.ts`), so a shape check is cheap —
+treat anything that deviates as a reason to stop and look, not to
+skip silently.
 
 **This document deliberately contains no materialize-and-upload
 script.** Earlier revisions carried both an illustrative fragment
@@ -1098,9 +1123,9 @@ below.
 Two pitfalls to avoid:
 
 1. **Don't iterate via `find . -type f`** — that emits paths like
-   `./legal-holds/notice-42.pdf` whose leading `./` would become
+   `./legal-holds/<sha256>.pdf` whose leading `./` would become
    part of the R2 object key. The restored D1's `legal_doc_ref`
-   rows reference the ORIGINAL keys (`legal-holds/notice-42.pdf`),
+   rows reference the ORIGINAL keys (`legal-holds/<sha256>.pdf`),
    so a `./`-prefixed key would silently break every legal-document
    lookup. Iterate by archived `obj.key` instead.
 2. **Don't interpolate `obj.key` into shell strings** — a key that
@@ -1132,10 +1157,12 @@ from the archive. Why:
   restore path.
 
 ```bash
-# Clear EVERY re-derived table, then the cursor, so the replay
+# Clear EVERY replay-derived table, then the cursor, so the replay
 # starts from genesis into empty tables.
 wrangler d1 execute vaipakam-archive --remote --command="\
 DELETE FROM activity_events; \
+DELETE FROM loan_participants; \
+DELETE FROM notifications; \
 DELETE FROM loans; \
 DELETE FROM offers; \
 DELETE FROM oracle_snapshot_state; \
@@ -1151,7 +1178,25 @@ fabricated rows and leaves every attacker-added offer or loan
 standing after the runbook declares the index healthy (#1450 r30).
 Empty tables are what make "re-derive from chain" an
 integrity-restoring operation rather than a merge with the
-attacker's writes.
+attacker's writes. (`loan_participants` and `notifications` are in
+the list because they are replay-derived too — append-only
+`INSERT OR IGNORE` projections whose rows regenerate from their
+producers; the notification center's read-state is client-side by
+design, so clearing loses nothing user-owned. #1450 r31.)
+
+**This list is the archive's re-derivable set plus the two tables
+above, and it is NOT proven complete** — the schema has grown past
+the lists `backup.ts` carries, and the full born-off-chain vs
+replay-derived classification of every indexer table is **#1481**.
+Until that audit lands, two rules bound the risk:
+
+- clear ONLY tables you have confirmed are written by the replay
+  path (`chainIndexer.ts` and the modules it invokes). If a table's
+  provenance is unclear, resolve it before touching it;
+- NEVER clear a table that HTTP routes populate — `signed_offers`
+  (user-submitted, chain-updated, and currently not archived at
+  all — see #1481) is the standing example: clearing it destroys
+  user data no replay can regenerate.
 
 **Only now re-arm the indexer's ingest — BOTH of its writers.** The cursor
 reset above is exactly the precondition §1 step 9 held them back for.
@@ -1492,6 +1537,16 @@ two procedures share the offline-key handling discipline.
    openssl rand -hex 32 > /tmp/new-backup-key
    ```
 
+   Then **pause the archive Worker's schedule before enumerating** —
+   disable the cron from the CF dashboard (Worker → Settings →
+   Triggers) and note the time. If the rotation spans 03:17 UTC with
+   the cron live, the Worker uploads a fresh OLD-key archive *after*
+   your enumeration; steps 4–6 then switch the key, validate only
+   new-key output, and destroy the old key — leaving that late
+   archive (and its monthly/yearly siblings on a boundary date)
+   permanently undecryptable (#1450 r31). Re-enable the cron after
+   step 4; step 5's green nightly needs it back on.
+
 2. Enumerate and download **every retained ciphertext across all
    three tiers** — `archives/` (daily), `archives-monthly/`, and
    `archives-yearly/` — to a local workstation. The backup writer
@@ -1517,7 +1572,13 @@ two procedures share the offline-key handling discipline.
    `vaipakam-offchain-data-archive` to flip the Worker to the new key.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
-6. Retire the OLD key — destroy the offline copies. Keep ONE
+6. **Sweep for stragglers before retiring anything**: list every
+   object uploaded between the step-1 pause time and the step-4 key
+   switch (the `--long` listing carries upload timestamps). With the
+   cron paused the set should be empty; anything present (a manual
+   trigger, a pause that did not take) is old-key ciphertext that
+   must go through step 3 now. Only then retire the OLD key —
+   destroy the offline copies. Keep ONE
    archived offline copy in case of a B2 lifecycle anomaly that
    surfaces an old-cipher version mid-cycle.
 
