@@ -282,19 +282,18 @@ rather than left for the incident that would find them:
   is filed separately. The same check answered a question that had been left
   open: the service is armed, and the two reward switches are absent, which
   is correct while that programme is pre-activation.
-- Both credential rotations end by redeploying the keeper, and a plain
-  redeploy of that service deletes the switches that decide whether its
-  autonomous duties run at all — because those switches are operator-set
-  and not recorded in the repository, so each deploy rebuilds the set
-  from what *is* recorded. A rotation carried out correctly, under
-  incident pressure, would therefore have left liquidation, matching,
-  remittance and reporting silently off, indistinguishable from having
-  been turned off on purpose. Both steps now preserve them, and the rule
-  is written once in a place the steps point at rather than repeated. The
-  underlying fix — recording the values so no deploy can drop them, which
-  also makes the live state reviewable — is a configuration change and is
-  filed separately; it reaches the routine deploy path too, not only
-  these two rotations.
+- Both credential rotations end by redeploying the keeper, and this note
+  previously warned that a plain redeploy of that service deletes the
+  switches deciding whether its autonomous duties run at all. **That
+  warning was wrong and is withdrawn.** Checked against the live
+  deployment: the main switch is held as a per-Worker secret, and secrets
+  are not rebuilt from committed configuration, so an ordinary redeploy
+  does not touch them. The advice that accompanied the warning — move the
+  switches into committed configuration — would have been the one change
+  that made the described failure possible, so it is withdrawn too. What
+  is true and does matter: a secret's value cannot be read back
+  afterwards, so the offline record of what it was set to is the only one
+  that will ever exist.
 - The document justified keeping a scoped backup-read credential inside a
   service on the grounds that it can only reach encrypted data, with the
   decryption key held offline. That is true if the storage provider is

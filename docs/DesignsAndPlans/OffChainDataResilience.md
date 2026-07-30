@@ -329,15 +329,36 @@ today; the standby applies from its first deploy. `ops/lz-watcher` and
 `ops/hf-watcher` were removed — #1440 and the Stage 3 split
 respectively.) Same Worker code deployed to a second CF account
 (different billing + 2FA) **paused**, with a 1-page runbook for the
-operator to flip DNS / feature flag on primary failure. Pre-mainnet a
-5-minute manual recovery is fine; the protocol survives keeper / agent
-downtime by design (liquidations are permissionless — anyone with the
-`vaipakam-keeper-bot` reference repo can race for the bonus).
+operator to flip DNS / feature flag on primary failure. The protocol
+survives keeper / agent downtime by design in the meantime (liquidations
+are permissionless — anyone with the `vaipakam-keeper-bot` reference repo
+can race for the bonus).
+
+**The 5-minute figure applies to a Worker-level failure, NOT to losing the
+account** — an earlier revision of this section said 5 minutes without that
+distinction, and the distinction is the whole difficulty. `apps/keeper` and
+`apps/agent` are NOT stateless with respect to the account: both hard-bind
+the account-specific `vaipakam-archive` D1 (`database_id`) and the
+account-specific Secrets Store (`store_id`) in their `wrangler.jsonc`. A
+paused copy in a second account therefore either fails binding validation
+or points at that account's EMPTY database and replacement credential
+store. Flipping DNS or a feature flag makes it *reachable*, not *correct* —
+it would run against no history and no signing key.
+
+So on account loss the standby cutover is gated on the same shared-state
+restore as everything else: §§4-7 of `OffChainRestore.md` must recreate the
+D1 and repopulate it, and the Secrets Store must be rebuilt from the
+offline copies, before flipping anything. The realistic figure there is
+hours, matching the restore, and the standby saves only the deploy step.
+Where the 5 minutes does hold is the case the standby was designed for: the
+account is intact and a Worker or a region is not.
 
 **`ops/offchain-data-archive` is deliberately NOT part of this
 mechanism**, and it was listed here in error. Cold standby works for the
-Workers above because each is stateless with respect to the lost account:
-flipping DNS or a feature flag makes the paused copy useful immediately.
+Workers above because each has a DNS record or feature flag to flip at all
+— but note the paragraph above: on ACCOUNT loss none of them is stateless
+either, and the flip only becomes meaningful once the shared state is
+restored.
 The archive Worker is the opposite on both counts. Its `DB_ARCHIVE` and
 `R2_LEGAL_VAULT` bindings can only address resources **in the account it
 is deployed to**, so a paused copy in the second account is bound to that

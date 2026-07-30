@@ -79,39 +79,38 @@ function getSignerAndChannel(channelPk: string): {
  * real Push channel configured.
  */
 /**
- * Suppress ONLY the pinned SDK's request-payload log line.
+ * Drop the pinned SDK's request-payload log line — installed ONCE, at module
+ * load, and never swapped.
  *
  * `@pushprotocol/restapi@0.0.1` logs its entire `apiPayload` immediately
- * before the POST — `src/lib/payloads/sendNotifications.js:81`,
- * `console.log('\n\nAPI call :-->> ', requestURL, '\n\n', apiPayload, ...)`.
- * That payload carries `recipients` in CAIP form, i.e. the subscriber's wallet
- * address, next to the notification title and body. So every successful send
- * wrote a wallet-to-event trail into the Worker log, and omitting the
- * subscriber from OUR log line did nothing about it (#1450 r24). The comment
- * that used to sit near the success log claimed the exposure was closed; it
- * was not.
+ * before the POST (`src/lib/payloads/sendNotifications.js:81`). That payload
+ * carries `recipients` in CAIP form — the subscriber's wallet — so every
+ * successful send wrote a wallet-to-event trail into the Worker log, and
+ * omitting the subscriber from OUR log line did nothing about it (#1450 r24).
  *
- * FILTERED, not silenced. Replacing `console.log` wholesale for the duration
- * of the call would also drop anything logged concurrently — `console` is an
- * isolate-wide global and this call is awaited — so this matches the SDK's
- * literal marker on the FIRST argument, where the SDK puts it, and passes
- * everything else through.
+ * WHY MODULE-LEVEL AND NOT AROUND EACH CALL (#1450 r25). The first version
+ * saved `console.log`, installed a filter, and restored in `finally`. That is
+ * unsound here because sends OVERLAP: the keeper launches `runWatcher` and
+ * `runPreGraceWatcher` in separate `ctx.waitUntil` calls. Each invocation
+ * captures whichever wrapper is currently installed rather than the real
+ * logger, so completions out of LIFO order restore a stale wrapper, chains
+ * accumulate, and an early completion can strip another in-flight send's
+ * filter — which is a recipient leak, i.e. exactly the failure the filter
+ * exists to prevent.
+ *
+ * There is nothing to restore, because there is no case where we want this
+ * line: it is the SDK's debug output and it is never wanted in a Worker log.
+ * Installing once is both simpler and reentrancy-proof. It matches the marker
+ * on the FIRST argument, where the SDK puts it, so nothing else is affected.
  *
  * If the pin ever moves, re-check that marker: a changed prefix means this
  * silently stops filtering, and that failure is invisible by construction.
  */
-async function withSdkPayloadLogSuppressed<T>(fn: () => Promise<T>): Promise<T> {
-  const real = console.log;
-  console.log = (...args: unknown[]) => {
-    if (typeof args[0] === 'string' && args[0].includes('API call :-->> ')) return;
-    real(...args);
-  };
-  try {
-    return await fn();
-  } finally {
-    console.log = real;
-  }
-}
+const realConsoleLog = console.log;
+console.log = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && args[0].includes('API call :-->> ')) return;
+  realConsoleLog(...args);
+};
 
 export async function sendPush(
   channelPk: string | undefined,
@@ -125,8 +124,7 @@ export async function sendPush(
   }
   try {
     const { signer, channelCaip } = getSignerAndChannel(channelPk);
-    await withSdkPayloadLogSuppressed(() =>
-      PushAPI.payloads.sendNotification({
+    await PushAPI.payloads.sendNotification({
       signer,
       // type=3 → targeted notification to a single recipient.
       // type=1 is broadcast-to-all-subscribers; type=4 is a subset
@@ -151,8 +149,7 @@ export async function sendPush(
       recipients: `${CAIP_PREFIX}:${payload.subscriber}`,
       channel: channelCaip,
       env: 'prod',
-      }),
-    );
+    });
     // #1450 — a POSITIVE signal, deliberately. Only the unset-key and
     // failure branches logged before, so a channel Push does not recognise
     // produced two quiet tails and looked exactly like "no eligible events

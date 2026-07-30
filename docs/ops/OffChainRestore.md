@@ -68,11 +68,19 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   before-you-start item (#1450 r24):
 
   ```bash
-  # The account id is printed by whoami, and is also the `/accounts/<id>/`
-  # segment of any dashboard URL.
+  # `wrangler whoami` needs Wrangler to be AUTHENTICATED first, which on a
+  # clean workstation it is not (#1450 r25) — it would print "not logged in"
+  # and there would be no id to copy. Either log in interactively, or set the
+  # token FIRST and let whoami use it:
+  wrangler login          # OR: export CLOUDFLARE_API_TOKEN=<token>
+  # The id is also the `/accounts/<id>/` segment of any dashboard URL, which
+  # is the faster route if you are already in the dashboard creating things.
   wrangler whoami
   export CF_ACCOUNT_ID=<the account id from above>
-  # A token with Workers Scripts:Read (plus Edit for the deploy steps).
+  # Token scopes: Workers Scripts:Read (plus Edit for the deploy steps) AND
+  # Account Settings:Read — the last one is what the validation below calls,
+  # and a token without it fails that check while being perfectly usable for
+  # everything else, which reads as a wrong account id.
   read -rs CF_API_TOKEN && export CF_API_TOKEN   # not via argv, not in history
 
   # Prove the PAIR, not just the token. `/user/tokens/verify` says the token is
