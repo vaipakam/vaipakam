@@ -125,11 +125,19 @@ verbatim by every later design; the code state has made the need concrete:
    mirror's local `recycleBucket` — but sizing, commitment reserve, and
    consume paths are all `onlyCanonical`. Mirror-absorbed VPFI is parked,
    invisible to `Ā`, funding nothing.
-2. **Base over-remits while mirror buckets sit full** — #776 remittances
+   ~~*(items 1-3 as written)*~~ **SUPERSEDED by B2-d5 alongside item 4
+   (#1457 r19).** `LibVpfiRecycle.recordChainRecycled` maintains the `Ā`
+   attribution headroom and is called from the mirror-report ingress
+   (`RewardReporterFacet`) as well as from Base (`RewardAggregatorFacet`), so
+   mirror-absorbed VPFI is no longer invisible to `Ā`. Only item 4 was struck
+   when B2-d5 landed; items 1-3 assert the same pre-mesh state and should have
+   been struck with it. What remains gated on #1434 is the CONSUMPTION side, as
+   item 4 already says.
+2. ~~**Base over-remits while mirror buckets sit full** — #776 remittances
    don't know a mirror holds protocol-owned recycled VPFI locally;
-   exactly the round-trip waste Option B exists to remove.
-3. **Global `Ā` under-counts**: the coupled term sizes from Base-local
-   credits only.
+   exactly the round-trip waste Option B exists to remove.~~ See above.
+3. ~~**Global `Ā` under-counts**: the coupled term sizes from Base-local
+   credits only.~~ See above.
 4. ~~**A live, filed drift exists (#1331)**: mirror remitted-recycled
    shares hit a no-op `releaseCommitment` instead of crediting the local
    bucket — benign only *because* B′ is missing.~~ **RESOLVED by B2-d5**
@@ -497,17 +505,29 @@ review slot the excision doc recommends); slash path →
 
 GovernanceRunbook gains a recycling section, executed in order:
 
-0. ⛔ **#1460 is ALREADY REACHABLE on an unarmed deployment — it is not an
-   arming gate, and calling it one was wrong (#1457 r17).** Both conditions
-   are satisfiable today: `LibNotificationFee` credits `recycleBucket` with no
-   arming or fee-entitlement gate (its own comment calls it "the first live
-   non-forfeit absorption class"), and a scheduled-only claim is the ONLY kind
-   of claim an unarmed deployment serves. So the corruption is live wherever
-   notification fees have been absorbed. What arming adds is not reachability
-   but VISIBILITY: recycled claims begin, and one of them fails over a
-   shortfall the scheduled claim caused earlier. Fix it on its own schedule,
-   not at the activation ceremony — a reader who takes this as an arming
-   prerequisite defers a live P1.
+0. ⛔ **#1460 is BOTH already reachable on an unarmed deployment AND a hard
+   arming gate. Those are not alternatives, and r17 wrongly replaced the
+   second with the first (#1457 r19).** THREE conditions, all satisfiable
+   before arming:
+   - `recycleBucket` is non-zero — `LibNotificationFee` credits it with no
+     arming and no fee-entitlement gate (its own comment: "the first live
+     non-forfeit absorption class");
+   - the claim is scheduled-only — the only kind an unarmed deployment serves,
+     since `_dayPoolHalves` returns a zero recycled half while unarmed;
+   - **and the scheduled side is short**: unearmarked balance
+     (`balanceOf − recycleBucket`) is less than the scheduled payout. This
+     third term is necessary and r17 omitted it — with ample unearmarked
+     funding the claim pays and `balanceOf >= recycleBucket` still holds, so
+     the books stay covered. A non-zero bucket plus a scheduled-only claim is
+     NOT sufficient on its own.
+   So it is live on any deployment that has absorbed notification fees AND is
+   thin on unearmarked scheduled funding — a condition nothing currently
+   measures, which is its own reason not to wait. What arming adds is not
+   reachability but VISIBILITY: recycled claims begin, and one fails over a
+   shortfall an earlier scheduled claim caused. It remains a hard arming gate
+   (`BACKING --> ARM`, §4) because arming over an existing corruption converts
+   quiet book damage into user-visible claim failures — but do not read that
+   gate as permission to wait for the ceremony.
    The mechanism: `RewardClaimFacet` debits `recycleBucket` by a claim's
    **recycled** component only, then transfers the **aggregate** out of the
    same fungible balance without checking that the non-recycled part fits
@@ -553,7 +573,12 @@ GovernanceRunbook gains a recycling section, executed in order:
    exactly the reading this graph is meant to prevent. `BACKING --> ARM`
    is an unconditional hard edge, and since this plan treats the graph as
    a scheduling source, that is the form that stops a planner arming with
-   every graphed predecessor satisfied. `RL3KNOB` and `FEE` continue to
+   every graphed predecessor satisfied. **That edge stands, and it does not
+   conflict with step 0's "not an arming gate" framing once both are stated
+   precisely (#1457 r19):** #1460 is a hard PREREQUISITE for arming *and*
+   already reachable without it. The edge governs sequencing; reachability
+   governs urgency. The error r17 introduced was treating them as mutually
+   exclusive — dropping the gate in order to assert the urgency. `RL3KNOB` and `FEE` continue to
    hang off the weaker `GATE`, which #1434 does not affect. Arming with active mirror
    claims and no mesh produces exactly the §2 failure set (mirror
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class

@@ -22,7 +22,7 @@ neither.
 
 The apparent one is worth recording because it was nearly resolved the wrong
 way, twice. Review reported that the specification's claim — an inactive day
-already has a recycled portion, funded centrally — is contradicted by the
+already has a recycled portion measured against the central pool — is contradicted by the
 platform, which appeared to give such a day none at all. Both observations were
 accurate, and they were about **different stages of the same day**: when a day
 is closed, its record does carry a recycled portion, measured against the
