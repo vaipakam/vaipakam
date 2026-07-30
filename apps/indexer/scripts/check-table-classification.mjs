@@ -136,15 +136,20 @@ const IGNORED = new Set(['d1_migrations']);
 // from prose like "update the schedules". A prose false-positive
 // fails CLOSED (an unclassified-table error someone will question),
 // never open.
+// `["\[]?` before each identifier: SQLite accepts quoted identifiers
+// (`INSERT INTO "t"` / backtick / bracket forms), and an unquoted-only
+// pattern let ordinary identifier quoting bypass classification
+// (Codex #1485 r3). Backtick can't appear inside a template literal's
+// extracted content unescaped, so " and [ are the live cases.
 const WRITE_RES = [
-  /INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+([a-z][a-z0-9_]*)/gi,
+  /INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+["\[]?([a-z][a-z0-9_]*)/gi,
   // Bare `REPLACE INTO` is SQLite's alias for INSERT OR REPLACE and
   // writes exactly the same way (Codex #1485 r2).
-  /(?<![A-Za-z_])REPLACE\s+INTO\s+([a-z][a-z0-9_]*)/gi,
-  /DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi,
+  /(?<![A-Za-z_])REPLACE\s+INTO\s+["\[]?([a-z][a-z0-9_]*)/gi,
+  /DELETE\s+FROM\s+["\[]?([a-z][a-z0-9_]*)/gi,
   // `(?!set\b)` keeps upsert syntax (`ON CONFLICT … DO UPDATE SET`)
   // from registering a table named "set".
-  /UPDATE\s+(?!set\b)([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/gi,
+  /UPDATE\s+["\[]?(?!set\b)([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/gi,
 ];
 
 /** Contents of every '…' / "…" / `…` literal in a TS source, with
@@ -245,6 +250,20 @@ const replaySet = new Set(
 const notCleared = [...replaySet].filter((t) => !clearedSet.has(t)).sort();
 const clearedUnclassified = [...clearedSet].filter((t) => !replaySet.has(t)).sort();
 
+// ── Check 5: born-off-chain == the runbook's §4 import list ───────────
+// Same promise-vs-implementation binding as check 4, for the other
+// class: an archived table missing from §4's list is one the operator
+// never imports during recovery, so the archived user state silently
+// stays absent from the restored D1 (Codex #1485 r3).
+const importSet = importTablesFrom(runbookSrc);
+const bornSet = new Set(
+  Object.entries(CLASSIFICATION)
+    .filter(([, c]) => c.class === 'born-off-chain')
+    .map(([t]) => t),
+);
+const notImported = [...bornSet].filter((t) => !importSet.has(t)).sort();
+const importedUnclassified = [...importSet].filter((t) => !bornSet.has(t)).sort();
+
 let failed = false;
 if (malformed.length > 0) {
   failed = true;
@@ -275,6 +294,17 @@ if (clearedUnclassified.length > 0) {
   failed = true;
   console.error("✗ In §6's clear command but not classified replay-derived:");
   for (const t of clearedUnclassified) console.error(`    ${t}`);
+}
+if (notImported.length > 0) {
+  failed = true;
+  console.error("✗ Classified born-off-chain but missing from OffChainRestore.md §4's");
+  console.error('  import list (an operator following §4 would never restore it):');
+  for (const t of notImported) console.error(`    ${t}`);
+}
+if (importedUnclassified.length > 0) {
+  failed = true;
+  console.error("✗ In §4's import list but not classified born-off-chain:");
+  for (const t of importedUnclassified) console.error(`    ${t}`);
 }
 if (dead.length > 0) {
   // Warn-only: a dropped table leaves a harmless entry; flag for cleanup.
@@ -319,10 +349,16 @@ export function archivedTablesFrom(backupSrc) {
 export function clearedTablesFrom(runbookSrc) {
   const cleared = new Set();
   for (const fence of runbookSrc.matchAll(/```bash\n([\s\S]*?)```/g)) {
-    const body = fence[1];
+    let body = fence[1];
     if (!body.includes('wrangler d1 execute vaipakam-archive') || !body.includes('DELETE FROM')) {
       continue;
     }
+    // Strip SQL comments first: a DELETE inside `/* … */` (or on a
+    // `-- ` comment line) executes nothing, and counting it kept the
+    // equality check green while a table silently stopped being
+    // cleared (Codex #1485 r3). `-- ` requires the trailing space so
+    // wrangler's `--command` / `--remote` flags are untouched.
+    body = body.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*--\s.*$/gm, '');
     for (const m of body.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
       cleared.add(m[1].toLowerCase());
     }
@@ -331,6 +367,21 @@ export function clearedTablesFrom(runbookSrc) {
     throw new Error('could not locate the §6 clear-before-replay command in OffChainRestore.md');
   }
   return cleared;
+}
+
+/** Table names in the runbook §4 born-off-chain import list — the
+ *  backticked names after the "**`vaipakam-archive` tables**
+ *  (born-off-chain):" marker, up to the end of that sentence. */
+export function importTablesFrom(runbookSrc) {
+  const m = runbookSrc.match(
+    /\*\*`vaipakam-archive` tables\*\* \(born-off-chain\):([\s\S]*?)\.\n/,
+  );
+  if (!m) {
+    throw new Error('could not locate the §4 born-off-chain import list in OffChainRestore.md');
+  }
+  const tables = new Set();
+  for (const t of m[1].matchAll(/`([a-z][a-z0-9_]*)`/g)) tables.add(t[1]);
+  return tables;
 }
 
 // Run only when invoked directly — importing this module for its
