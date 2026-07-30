@@ -1,0 +1,67 @@
+{
+  "$comment": [
+    "INTENDED lifecycle rules for the B2 archive bucket. Changing a number here is",
+    "a reviewable change; changing it in the Backblaze console is not, which is the",
+    "whole point of committing it.",
+    "",
+    "WHY THESE NUMBERS ARE NOT EXPLAINED HERE. The ceilings, the floors, and the",
+    "reasoning that fixes each value live in scripts/lifecycle-policy.mjs \u2014 the one",
+    "module BOTH writers (apply-bucket-lifecycle.mjs and setup-backblaze.mjs) must",
+    "pass through, and the only copy a mechanical check can reach. An earlier",
+    "revision of this comment asserted that reasoning was not duplicated here while",
+    "carrying a full copy of it, and three review rounds each corrected one copy of",
+    "the same sentence before the duplication itself was treated as the defect",
+    "(#1471 r6/r7/r8). One of those edits also truncated a sentence mid-clause,",
+    "which is what a second copy costs.",
+    "",
+    "WHAT YOU DO NEED TO KNOW READING THIS FILE:",
+    "  - Worst-case object lifetime is the SUM of both terms per prefix, because a",
+    "    version is deleted `daysFromHidingToDeleting` after it is hidden, and it is",
+    "    hidden either by the age rule OR by being superseded at the same key.",
+    "    Reasoning about the first term alone is the mistake that once put the live",
+    "    bucket at a 60-day daily worst case.",
+    "  - The recovery window is an UPPER BOUND, not a guarantee per incident.",
+    "    `daysFromHidingToDeleting` counts from when a version became non-current,",
+    "    and the age rule hiding it counts \u2014 so a version hidden by age on day 20 is",
+    "    deleted on day 29 regardless, and an overwrite on day 28 leaves about one",
+    "    day, not nine. It decays to zero as a version nears its deletion date, and",
+    "    within a promise-capped lifetime that decay cannot be designed away. See",
+    "    lifecycle-policy.mjs for why it is still worth having (the newest archive,",
+    "    which is what a restore reaches for, is current and gets the full window).",
+    "  - Both sums are capped by PUBLISHED PRIVACY PROMISES (PrivacyPolicy.md and",
+    "    the rendered privacy page), not by preference. They are facts about the",
+    "    product. lifecycle-policy.mjs refuses a declaration that breaches either.",
+    "  - The yearly prefixes deliberately get NO rule; that absence is what gives",
+    "    them indefinite retention.",
+    "",
+    "Verify against live with `npm run bucket:lifecycle:print`; check for drift with",
+    "`npm run bucket:lifecycle:check`."
+  ],
+  "bucket": "vaipakam-offchain-data-archive",
+  "rules": [
+    {
+      "fileNamePrefix": "archives/",
+      "daysFromUploadingToHiding": 20,
+      "daysFromHidingToDeleting": 9,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    },
+    {
+      "fileNamePrefix": "manifests/",
+      "daysFromUploadingToHiding": 20,
+      "daysFromHidingToDeleting": 9,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    },
+    {
+      "fileNamePrefix": "archives-monthly/",
+      "daysFromUploadingToHiding": 334,
+      "daysFromHidingToDeleting": 31,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    },
+    {
+      "fileNamePrefix": "manifests-monthly/",
+      "daysFromUploadingToHiding": 334,
+      "daysFromHidingToDeleting": 31,
+      "daysFromStartingToCancelingUnfinishedLargeFiles": null
+    }
+  ]
+}

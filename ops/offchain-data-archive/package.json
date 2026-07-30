@@ -8,7 +8,10 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "node --test scripts/*.test.mjs",
-    "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit"
+    "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit",
+    "bucket:lifecycle:check": "node scripts/apply-bucket-lifecycle.mjs --check",
+    "bucket:lifecycle:print": "node scripts/apply-bucket-lifecycle.mjs --print-live",
+    "bucket:lifecycle:apply": "node scripts/apply-bucket-lifecycle.mjs --apply"
   },
   "dependencies": {},
   "devDependencies": {
