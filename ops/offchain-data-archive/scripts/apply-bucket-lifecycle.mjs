@@ -10,12 +10,17 @@
  * only exists in a provider console is configuration nobody can be
  * accountable for.
  *
- * There is a second, sharper consequence. `docs/ops/OffChainRestore.md` §1
- * creates the replacement bucket and never sets any lifecycle rules, so a
- * recovered account silently inherits B2's default (keep every version
- * forever) — DIFFERENT retention behaviour from production, discovered during
- * a real incident, in the direction of unbounded cost. Codifying the rules is
- * what makes the restore reproduce production rather than approximate it.
+ * (An earlier draft of this comment claimed `OffChainRestore.md` §1 recreates
+ * the bucket without lifecycle rules, making this a restore gap. That is
+ * FALSE — B2 is the SURVIVING side of a Cloudflare-loss restore and is
+ * correctly not recreated. The claim was corrected in the commit message and
+ * left standing here, which is its own small instance of the two-copies
+ * problem this file exists to fix.)
+ *
+ * The real second consequence is narrower and concerns SETUP, not restore:
+ * `setup-backblaze.mjs` used to hardcode its own copy of these rules, so
+ * rerunning the documented setup flow would silently revert a change applied
+ * here. It now reads this declaration.
  *
  * WHAT THE NUMBERS MEAN, since `daysFromHidingToDeleting` is easy to
  * misread. It governs a version that is no longer current — either hidden by
@@ -90,8 +95,15 @@ function normalise(rules) {
 const fmt = (rules) =>
   normalise(rules)
     .map(
+      // EVERY normalised field (#1471 r1). Omitting the
+      // unfinished-large-file field meant a drift confined to it printed two
+      // identical-looking blocks, leaving the operator unable to see what
+      // `--apply` would change. A diff that does not show the difference is
+      // worse than no diff.
       (r) =>
-        `    ${r.fileNamePrefix.padEnd(22)} hide@${r.daysFromUploadingToHiding}d  delete@+${r.daysFromHidingToDeleting}d`,
+        `    ${r.fileNamePrefix.padEnd(22)} hide@${r.daysFromUploadingToHiding}d  ` +
+        `delete@+${r.daysFromHidingToDeleting}d  ` +
+        `cancelUnfinished@${r.daysFromStartingToCancelingUnfinishedLargeFiles ?? 'none'}`,
     )
     .join('\n');
 
@@ -132,7 +144,27 @@ async function main() {
     process.exit(1);
   }
 
-  const live = normalise(bucket.lifecycleRules ?? []);
+  // An ABSENT `lifecycleRules` is not the same as "no rules" (#1471 r1).
+  // B2 omits the field when the key lacks `readBucketLifecycleRules`, and
+  // treating that as an empty set would report permanent false drift on a
+  // correctly configured bucket — then, under `--apply`, present a diff whose
+  // "from" side is fiction.
+  //
+  // NOTE the review premise was narrower than stated: the pipeline read-only
+  // key (`listBuckets, listFiles, readFiles`) DOES surface the field — checked
+  // against the live bucket, which is how the drift in this PR was observed at
+  // all. But "it happens to work with today's key" is not a reason to infer
+  // from silence, so absence is now an explicit failure rather than a guess.
+  if (bucket.lifecycleRules == null) {
+    console.error(
+      `${declared.bucket}: B2 returned no \`lifecycleRules\` field. That means the ` +
+        'key cannot read them, NOT that none are set — this key needs ' +
+        '`readBucketLifecycleRules` (or at least `listBuckets` on a key permitted ' +
+        'to see them). Refusing to report drift against an unknown live state.',
+    );
+    process.exit(2);
+  }
+  const live = normalise(bucket.lifecycleRules);
   const want = normalise(declared.rules);
 
   if (mode === 'print') {

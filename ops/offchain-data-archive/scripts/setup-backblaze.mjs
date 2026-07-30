@@ -173,36 +173,32 @@ async function createBucket(apiUrl, authToken, accountId, bucketName) {
 }
 
 async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
-  // Tiered retention — see docs/DesignsAndPlans/OffChainDataResilience.md §3.4.
-  //   archives/         — daily snapshots, 30-day retention.
-  //   archives-monthly/ — 1st-of-month snapshots, 365-day retention.
-  //   archives-yearly/  — Jan-1 snapshots, no rule (indefinite).
-  // Manifests follow the matching prefix so a healthcheck can read
-  // them at the same path that produced the archive.
-  const rules = [
-    {
-      fileNamePrefix: 'archives/',
-      daysFromUploadingToHiding: 30,
-      daysFromHidingToDeleting: 1,
-    },
-    {
-      fileNamePrefix: 'manifests/',
-      daysFromUploadingToHiding: 30,
-      daysFromHidingToDeleting: 1,
-    },
-    {
-      fileNamePrefix: 'archives-monthly/',
-      daysFromUploadingToHiding: 365,
-      daysFromHidingToDeleting: 1,
-    },
-    {
-      fileNamePrefix: 'manifests-monthly/',
-      daysFromUploadingToHiding: 365,
-      daysFromHidingToDeleting: 1,
-    },
-    // archives-yearly/ and manifests-yearly/ intentionally omitted —
-    // no rule = indefinite retention.
-  ];
+  // Rules come from `bucket-lifecycle.json` — the ONE declaration — and are
+  // NOT restated here (#1471 r1).
+  //
+  // They used to be hardcoded in this function, with
+  // `daysFromHidingToDeleting: 1` for all four prefixes. That is the value
+  // #1469 raised to 30 on the live bucket, because at 1 a superseded archive
+  // is deleted about a day after being replaced — and since the pipeline's B2
+  // key can write but NOT delete, that lifecycle rule was the only thing
+  // destroying a genuine archive after a forged overwrite.
+  //
+  // So a rerun of this setup script — still the documented flow in
+  // README.md — would have silently reverted that mitigation on production.
+  // Two copies of one configuration is exactly the defect the declaration was
+  // added to remove; leaving this one behind would have made the declaration
+  // decorative.
+  //
+  // Tiered retention rationale — docs/DesignsAndPlans/OffChainDataResilience.md
+  // §3.4. `archives-yearly/` and `manifests-yearly/` are intentionally absent
+  // from the declaration: no rule means indefinite retention.
+  const declPath = new URL('../bucket-lifecycle.json', import.meta.url);
+  const decl = JSON.parse(readFileSync(declPath, 'utf8'));
+  const rules = decl.rules.map((r) => ({
+    fileNamePrefix: r.fileNamePrefix,
+    daysFromUploadingToHiding: r.daysFromUploadingToHiding,
+    daysFromHidingToDeleting: r.daysFromHidingToDeleting,
+  }));
   const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_update_bucket', {
     accountId,
     bucketId,
