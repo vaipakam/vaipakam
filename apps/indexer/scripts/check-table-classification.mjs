@@ -31,7 +31,8 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import process from 'node:process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -126,15 +127,38 @@ const CLASSIFICATION = {
 const IGNORED = new Set(['d1_migrations']);
 
 // ── Extract written tables from Worker sources ────────────────────────
-// Case-SENSITIVE SQL keywords (source SQL is uppercase; prose in
-// comments is not), and `UPDATE <t>` only counts when a `SET` follows —
-// that is what separates `UPDATE loans ... SET` from the phrase
-// "UPDATE the schedules" in a comment.
+// SQL lives in STRING/TEMPLATE LITERALS, so extraction runs over
+// string contents only — comments and identifier-position code never
+// count as writers. Keywords match case-INSENSITIVELY (nothing
+// enforces uppercase SQL, and `insert into t …` is exactly as much a
+// write as `INSERT INTO t …` — Codex #1485 r1), and `UPDATE <t>` only
+// counts when a `SET` follows, which separates `update loans … set`
+// from prose like "update the schedules". A prose false-positive
+// fails CLOSED (an unclassified-table error someone will question),
+// never open.
 const WRITE_RES = [
-  /INSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+([a-z][a-z0-9_]*)/g,
-  /DELETE\s+FROM\s+([a-z][a-z0-9_]*)/g,
-  /UPDATE\s+([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/g,
+  /INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+([a-z][a-z0-9_]*)/gi,
+  /DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi,
+  // `(?!set\b)` keeps upsert syntax (`ON CONFLICT … DO UPDATE SET`)
+  // from registering a table named "set".
+  /UPDATE\s+(?!set\b)([a-z][a-z0-9_]*)[\s\S]{0,240}?\bSET\b/gi,
 ];
+
+/** Contents of every '…' / "…" / `…` literal in a TS source, with
+ *  comments removed first so a commented-out statement (or prose
+ *  mentioning SQL) cannot register as a writer. Naive lexer — good
+ *  enough for extraction whose failure mode is a visible CI error. */
+export function stringLiteralContents(source) {
+  const noComments = source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1'); // keep https:// URLs intact
+  const out = [];
+  const re = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g;
+  for (let m; (m = re.exec(noComments)); ) {
+    out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  }
+  return out;
+}
 
 function tsFilesUnder(dir) {
   const out = [];
@@ -146,15 +170,16 @@ function tsFilesUnder(dir) {
   return out;
 }
 
+function runChecks() {
 const writers = new Map(); // table -> Set<relative file>
 for (const app of ['indexer', 'keeper', 'agent']) {
   const srcDir = join(REPO_ROOT, 'apps', app, 'src');
   for (const file of tsFilesUnder(srcDir)) {
-    const text = readFileSync(file, 'utf8');
+    const literals = stringLiteralContents(readFileSync(file, 'utf8')).join('\n');
     for (const re of WRITE_RES) {
       re.lastIndex = 0;
-      for (let m; (m = re.exec(text)); ) {
-        const table = m[1];
+      for (let m; (m = re.exec(literals)); ) {
+        const table = m[1].toLowerCase();
         if (IGNORED.has(table)) continue;
         if (!writers.has(table)) writers.set(table, new Set());
         writers.get(table).add(relative(REPO_ROOT, file));
@@ -163,6 +188,18 @@ for (const app of ['indexer', 'keeper', 'agent']) {
   }
 }
 
+// ── Check 0: the classification itself is well-formed ─────────────────
+// A typo'd class ('born-of-chain') must not count as classified — it
+// would pass the presence check while silently escaping the archive
+// cross-check (Codex #1485 r1).
+const VALID_CLASSES = new Set(['born-off-chain', 'replay-derived', 'decision-needed']);
+const malformed = Object.entries(CLASSIFICATION)
+  .filter(
+    ([, c]) =>
+      !VALID_CLASSES.has(c.class) || typeof c.reason !== 'string' || c.reason.trim() === '',
+  )
+  .map(([t, c]) => `${t} (class: ${JSON.stringify(c.class)})`);
+
 // ── Check 1: every written table is classified ────────────────────────
 const unclassified = [...writers.keys()].filter((t) => !(t in CLASSIFICATION)).sort();
 
@@ -170,15 +207,25 @@ const unclassified = [...writers.keys()].filter((t) => !(t in CLASSIFICATION)).s
 const dead = Object.keys(CLASSIFICATION).filter((t) => !writers.has(t)).sort();
 
 // ── Check 3: born-off-chain ⊆ backup.ts's archived set ────────────────
+// Parse the ACTUAL array literals runNightlyBackup consumes — a table
+// name quoted in a comment or error message must not satisfy this
+// check (Codex #1485 r1 reproduced exactly that with a quoted TODO).
 const backupSrc = readFileSync(
   join(REPO_ROOT, 'ops', 'offchain-data-archive', 'src', 'backup.ts'),
   'utf8',
 );
+const archivedSet = archivedTablesFrom(backupSrc);
 const unarchived = Object.entries(CLASSIFICATION)
-  .filter(([t, c]) => c.class === 'born-off-chain' && !backupSrc.includes(`'${t}'`))
+  .filter(([t, c]) => c.class === 'born-off-chain' && !archivedSet.has(t))
   .map(([t]) => t);
 
 let failed = false;
+if (malformed.length > 0) {
+  failed = true;
+  console.error('✗ Malformed classification entries (class must be one of');
+  console.error(`  ${[...VALID_CLASSES].join(' | ')}, with a non-empty reason):`);
+  for (const t of malformed) console.error(`    ${t}`);
+}
 if (unclassified.length > 0) {
   failed = true;
   console.error('✗ Written tables with NO classification entry (add one to');
@@ -205,3 +252,31 @@ if (!failed) {
   );
 }
 process.exit(failed ? 1 : 0);
+}
+
+// ── The `archivedTablesFrom` helper (exported for probes/tests) ───────
+export function archivedTablesFrom(backupSrc) {
+  const grab = (name) => {
+    const m = backupSrc.match(new RegExp(`const ${name}[^=]*=\\s*\\[([\\s\\S]*?)\\];`));
+    if (!m) throw new Error(`could not locate \`const ${name} = [...]\` in backup.ts`);
+    // Strip comments INSIDE the array block, then take quoted strings.
+    return m[1].replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  };
+  const archived = new Set();
+  for (const s of grab('ARCHIVE_TABLES_REQUIRED').matchAll(/'([a-z0-9_]+)'/g)) {
+    archived.add(s[1]);
+  }
+  // Rollout-aware entries are `{ table: 'name', migrationPrefix: '…' }`.
+  for (const s of grab('ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED').matchAll(
+    /table:\s*'([a-z0-9_]+)'/g,
+  )) {
+    archived.add(s[1]);
+  }
+  return archived;
+}
+
+// Run only when invoked directly — importing this module for its
+// helpers must not execute the checks (or exit the importer).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runChecks();
+}

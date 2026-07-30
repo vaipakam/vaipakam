@@ -238,8 +238,13 @@ jobs:
           # the lockfile + root package.json that govern hoisting, AND
           # `pnpm-workspace.yaml` — that file declares the workspace
           # member list, so a change there can add / drop a workspace
-          # that the typecheck steps target.
-          WORKSPACES_RE='^(apps/|packages/|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          # that the typecheck steps target. Also the archive Worker's
+          # src/: the indexer's check-table-classification guard (#1481)
+          # cross-checks its classification against backup.ts's archive
+          # lists, so a backup-side-only edit must still run the
+          # workspaces job or exactly the drift the guard exists to
+          # reject would merge with the job path-skipped (Codex #1485 r1).
+          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-archive/src/|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
