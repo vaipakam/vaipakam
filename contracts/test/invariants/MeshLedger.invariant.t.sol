@@ -515,6 +515,53 @@ contract MeshLedgerInvariant is Test {
     /// regression that dropped `outstandingCommitFresh` from the reserved sum
     /// fails here and nowhere else — every bound in this suite would stay
     /// green while the platform drew down past 69M across two open days.
+    // ─────────────────────────────────────────────────────────────────────
+    // §7 #2 FRESH-CAP BOUNDARY — MUTATION EVIDENCE
+    //
+    // Kept HERE, beside the fixtures, and deliberately NOT restated in the
+    // release note or the completion plan (#1457 r11). Three rounds running,
+    // a per-mutation "and only this one" claim in prose went stale the moment
+    // a fixture was added, because nothing ties the prose to the fixture set.
+    // A table next to the tests is edited by whoever edits the tests.
+    //
+    // Read it as: this mutation is caught by these fixtures. NOT as "only".
+    // Exclusivity is the thing that keeps going wrong, and it is also the
+    // wrong property to care about — what makes a fixture worth keeping is
+    // that it fails while every fixture below it passes, which is a statement
+    // about ORDER, not uniqueness.
+    //
+    // The mutation site is `RewardAggregatorFacet._…` where the three terms
+    // are summed and the schedule is floored — NOT `RewardRemittanceFacet`'s
+    // own headroom helper. Worth naming, because mutating the latter changes
+    // none of these tests, and reading that as "the fixtures are weak" would
+    // be exactly backwards: it is not the code they cover.
+    //
+    // Every row below was RUN, not reasoned about. The first row is the reason
+    // that matters: I had it as "the three single-term fixtures" and it is
+    // actually all five.
+    //
+    //   mutation                                   | fixtures that FAIL
+    //   -------------------------------------------|--------------------------
+    //   size from unclamped schedule (skip floor)   | all 5
+    //   drop `outstandingCommitFresh`               | 4 — all but remitted-only
+    //   drop `rewardBudgetRemittedGlobal`           | 3 — remitted-only + both
+    //                                               |     combination fixtures
+    //   `max(remitted, outstanding)` for the sum    | 2 — both combinations
+    //   drop `interactionPoolPaidOut`               | 1 — three-term only
+    //   publish clamped figure, reserve unclamped   | every fixture's
+    //                                               | reservation assertion
+    //                                               | (its stamp stays green)
+    //
+    // Read down the right column: 5, 4, 3, 2, 1. That descending order IS the
+    // argument for keeping all five fixtures — each mutation is caught by a
+    // strictly smaller set than the one above it, so the last fixture in the
+    // chain is the only thing standing between us and the narrowest mutation.
+    // No fixture is redundant, and none of them is uniquely load-bearing.
+    //
+    // The last row is why each fixture asserts the RESERVATION and not only
+    // the day's published stamp: a mutation that stamps the clamped number
+    // while reserving the unclamped one leaves every stamp assertion green.
+    // ─────────────────────────────────────────────────────────────────────
     function test_Boundary_FreshScheduleClampsToRemainingCapHeadroom()
         public
     {
@@ -694,12 +741,20 @@ contract MeshLedgerInvariant is Test {
     function test_Boundary_RemittedAndOutstandingReserveAdditively() public {
         // Two unequal terms, so a `max` regression is off by the smaller one
         // rather than coincidentally right.
-        uint256 remitted = 900 ether;
         uint256 outstanding = 334 ether;
-        uint256 headroom = 1_234 ether; // cap − (remitted + outstanding)
+        uint256 headroom = 1_234 ether;
+        // DERIVED, not declared (#1457 r11). This used to read
+        // `remitted = 900 ether` while the seed below computed something
+        // else entirely, so the named figure was decorative: editing it
+        // changed nothing, and the comment claiming the headroom came from
+        // the named split was false. What the fixture needs is the SUM at
+        // the boundary, so the remitted term is whatever leaves exactly
+        // `headroom` once `outstanding` is also counted.
+        uint256 remitted =
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom - outstanding;
 
         TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
-            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom - outstanding
+            remitted
         );
         TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
             outstanding, 0
@@ -750,16 +805,18 @@ contract MeshLedgerInvariant is Test {
     /// reaches the boundary: only the full sum yields `headroom`.
     function test_Boundary_AllThreeFreshTermsReserveAdditively() public {
         uint256 paidOut = 700 ether;
-        uint256 remitted = 500 ether;
         uint256 outstanding = 34 ether;
-        uint256 headroom = 1_234 ether; // cap − (paidOut + remitted + outstanding)
+        uint256 headroom = 1_234 ether;
+        // DERIVED — see the note in the two-term fixture above. The declared
+        // `500 ether` was never seeded.
+        uint256 remitted = LibVaipakam.VPFI_INTERACTION_POOL_CAP
+            - headroom
+            - paidOut
+            - outstanding;
 
         TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(paidOut);
         TestMutatorFacet(address(diamond)).setRewardBudgetRemittedGlobalRaw(
-            LibVaipakam.VPFI_INTERACTION_POOL_CAP
-                - headroom
-                - paidOut
-                - outstanding
+            remitted
         );
         TestMutatorFacet(address(diamond)).setOutstandingCommitRaw(
             outstanding, 0

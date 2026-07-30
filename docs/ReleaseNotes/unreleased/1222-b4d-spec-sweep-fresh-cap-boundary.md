@@ -122,17 +122,18 @@ paid-out figure is non-zero for the rest of the programme's life, so the
 surviving version would have over-committed on every day after the first
 payout.
 
-Each was confirmed against the change that would break it, and the failure
-sets are stated exactly because a wrong one would suggest a fixture is
-redundant when it is not: sizing the reservation from the unclamped schedule
-fails all three single-term cases; dropping the already-sent term fails the
-sent-value case **and both combination cases**, since every fixture carrying
-that term loses it; taking the larger of two reservations instead of summing
-them fails **both** combination cases — the two-term one by the smaller of
-its two amounts and the three-term one by its own smallest; and ignoring what
-has already been paid out fails the three-term case alone. What makes each
-combination necessary is not that it fails uniquely, but that it passes every
-fixture below it while the platform is still wrong. Review also caught that
+Each was confirmed against the change that would break it. The per-mutation
+detail now lives in one place — a table beside the tests themselves — rather
+than being restated here.
+
+That is a deliberate change, and the reason is worth recording: three
+successive reviews caught this description claiming a mutation was caught by
+one fixture "and only that one", each time because a fixture had since been
+added and nothing ties prose to the fixture set. Exclusivity is also the
+wrong property to have been claiming. What makes a fixture worth keeping is
+that it fails while every fixture below it passes — a statement about the
+order they form, not about uniqueness — and that ordering is exactly what the
+combination cases exist to establish. Review also caught that
 checking the day's *published* figure was not enough — the platform could
 publish the clamped number and still reserve against the unclamped one, on
 either the fresh or the recycled side — so the tests read the reservations
