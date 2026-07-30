@@ -16,6 +16,22 @@ distinction matters. A day's budget has two portions:
   itself absorbed and not yet spent, and only the shortfall draws on the
   canonical chain.
 
+Writing that down turned up two things the specification had wrong and one
+the platform has wrong. An inactive day was described as having no recycled
+portion at all, when in fact it has one funded centrally — what activation
+changes is *who* funds it, not whether it exists. And the rule that recycled
+value must never stand in for the scheduled portion turns out to be intent
+rather than enforcement: a payout reduces the recycled ledger by its recycled
+part and then pays the whole amount out of one pooled balance, so a chain
+holding recycled value whose scheduled portion has not arrived can pay a
+scheduled-only claim out of the tokens backing the recycled pool. Nothing is
+paid to the wrong person, but the books stop being true — the recycled pool
+claims more than it holds, and a later recycled claim fails instead of the
+scheduled one having failed for want of funding. That is filed as #1460 and
+must be closed before the recycled programme is switched on; the
+specification now records the rule as intended-but-unenforced rather than
+implying it holds today.
+
 So a network where each chain roughly recycles what it pays out still
 receives its scheduled portion centrally, while its recycled portion settles
 locally and moves nothing across chains. The canonical chain is the top-up of
