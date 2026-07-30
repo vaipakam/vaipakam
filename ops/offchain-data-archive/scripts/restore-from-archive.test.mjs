@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   chmodSync, closeSync, existsSync, fstatSync, mkdtempSync,
-  openSync, readFileSync, statSync,
+  openSync, readFileSync, statSync, symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -413,9 +413,8 @@ test('hold reason replays from the latest placement audit (r9)', () => {
 test('duplicate archived primary keys are rejected before any batch is emitted (r12)', () => {
   // Single-column key.
   const dup = tableFixture(
-    'telegram_links', ['wallet'],
-    [{ wallet: '0xa' }, { wallet: '0xa' }],
-    { wallet: 1 },
+    'telegram_links', ['code'],
+    [{ code: '111111' }, { code: '111111' }],
   );
   assert.throws(() => tableToSql(dup), /duplicate primary key/);
 
@@ -423,17 +422,55 @@ test('duplicate archived primary keys are rejected before any batch is emitted (
   const okComposite = tableFixture(
     'user_thresholds', ['wallet', 'chain_id'],
     [{ wallet: '0xa', chain_id: 1 }, { wallet: '0xa', chain_id: 8453 }],
-    { wallet: 1, chain_id: 2 },
   );
   assert.match(tableToSql(okComposite), /VALUES/);
 
-  // …the same (wallet, chain_id) tuple twice is not.
+  // …the same (wallet, chain_id) tuple twice is not — and the key
+  // comes from the TRUSTED per-table map, so clearing the archive's
+  // own pk ordinals (no pks passed here at all) cannot empty the
+  // check (r15).
   const dupComposite = tableFixture(
     'user_thresholds', ['wallet', 'chain_id'],
     [{ wallet: '0xa', chain_id: 8453 }, { wallet: '0xa', chain_id: 8453 }],
-    { wallet: 1, chain_id: 2 },
   );
   assert.throws(() => tableToSql(dupComposite), /duplicate primary key/);
+
+  // A known table whose schema lacks its trusted key column cannot be
+  // verified at all — fatal, not skipped.
+  const noKey = tableFixture('telegram_links', ['wallet'], [{ wallet: '0xa' }]);
+  assert.throws(() => tableToSql(noKey), /lacks primary-key/);
+
+  // Unknown tables (re-derivable tier) still use the archived
+  // ordinals when present.
+  const lzDup = tableFixture(
+    'lz_alert_state', ['k'],
+    [{ k: 1 }, { k: 1 }],
+    { k: 1 },
+  );
+  assert.throws(() => tableToSql(lzDup), /duplicate primary key/);
+});
+
+test('planted symlink staging directories are refused (r15)', () => {
+  const dir = outDir();
+  const elsewhere = outDir();
+  // restore/d1 pre-planted as a symlink to another directory: the
+  // batches would land outside the staging tree while every printed
+  // path claims otherwise.
+  symlinkSync(elsewhere, path.join(dir, 'd1'));
+  assert.throws(
+    () => convertD1({ version: 1, d1: { archive: baselineArchive() } }, dir),
+    /symlink/,
+  );
+  const dir2 = outDir();
+  symlinkSync(elsewhere, path.join(dir2, 'r2'));
+  assert.throws(
+    () =>
+      materializeR2(
+        { version: 1, d1: {}, r2: { objects: [r2Fixture(Buffer.from('%PDF-1.4 x'))] } },
+        dir2,
+      ),
+    /symlink/,
+  );
 });
 
 test('decrypted restore material is staged owner-only (r12)', () => {

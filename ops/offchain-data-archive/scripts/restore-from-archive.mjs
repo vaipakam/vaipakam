@@ -38,7 +38,7 @@
  *     [--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]
  */
 
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -168,6 +168,24 @@ const REQUIRED_TABLE_COLUMNS = {
   ],
 };
 
+// TRUSTED primary keys for the born-off-chain tables, from the same
+// migrations REQUIRED_TABLE_COLUMNS is sourced from. The duplicate-key
+// preflight must not derive the key from the archive's own `pk`
+// ordinals alone — an attacker who duplicates a real key can also
+// clear those ordinals, emptying the check (Codex #1484 r15). Tables
+// not listed here (re-derivable, legacy-lz) fall back to the archived
+// ordinals: their batches are skip-by-default / retired-db restores.
+const TRUSTED_PRIMARY_KEYS = {
+  user_thresholds: ['wallet', 'chain_id'],
+  notify_state: ['wallet', 'chain_id', 'loan_id'],
+  pre_grace_notify_state: ['wallet', 'chain_id', 'loan_id'],
+  telegram_links: ['code'],
+  diag_errors: ['id'],
+  support_tickets: ['ticket_id'],
+  diag_legal_holds: ['wallet_hash'],
+  diag_legal_hold_audit: ['id'],
+};
+
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
 // (the R2 bucket key — `diagErasure.ts`: "the bucket key becomes the
 // hold's legal_doc_ref").
@@ -198,6 +216,25 @@ export class RestoreError extends Error {}
 
 function fail(message) {
   throw new RestoreError(message);
+}
+
+/** Create (or reuse) one staging-directory level, refusing symlinks.
+ *  A pre-planted `restore/d1` (or `restore/r2`) symlink would defeat
+ *  the lexical containment checks: recursive mkdir accepts an existing
+ *  symlink-to-directory, chmod FOLLOWS it, and every subsequent write
+ *  lands in the link's target while reporting the staging path (Codex
+ *  #1484 r15). lstat (never stat) each level we own, from the outdir
+ *  itself down — file-level symlinks are already killed by the
+ *  rm + 'wx' write (r14). */
+function secureStagingDir(p) {
+  mkdirSync(p, { recursive: true, mode: 0o700 });
+  if (lstatSync(p).isSymbolicLink()) {
+    fail(
+      `staging directory ${p} is a symlink — a pre-planted link would redirect the ` +
+        `decrypted restore material outside the staging tree; remove it and rerun`,
+    );
+  }
+  chmodSync(p, 0o700);
 }
 
 // ── D1 half ───────────────────────────────────────────────────────────
@@ -263,9 +300,17 @@ export function tableToSql(table) {
   // tampered archive carries them — and emitting them anyway produces
   // a batch that fails its UNIQUE constraint MID-file at D1, leaving
   // the table partially restored after its DELETE already committed
-  // (Codex #1484 r12). The archived PRAGMA table_info `pk` ordinals
-  // name the key columns; reject duplicates before emitting anything.
-  const pkCols = table.schema
+  // (Codex #1484 r12). For known tables the key columns come from the
+  // TRUSTED per-table map, never the archive's own `pk` ordinals — an
+  // attacker who duplicates a key can also clear the ordinals and
+  // empty the check (r15). Unknown tables fall back to the ordinals.
+  const trustedPk = TRUSTED_PRIMARY_KEYS[name];
+  if (trustedPk && trustedPk.some((c) => !columns.includes(c))) {
+    fail(
+      `table ${name}: archived schema lacks primary-key column(s) ${trustedPk.filter((c) => !columns.includes(c)).join(', ')} — cannot verify key uniqueness`,
+    );
+  }
+  const pkCols = trustedPk ?? table.schema
     .filter((c) => typeof c.pk === 'number' && c.pk > 0)
     .sort((a, b) => a.pk - b.pk)
     .map((c) => c.name);
@@ -452,12 +497,12 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // inherit a permissive umask (0644 under the common 022) where any
     // local account could read diagnostics, Telegram IDs and legal-hold
     // data (Codex #1484 r12). mode is masked by umask, but 0700/0600
-    // carry no group/other bits for a umask to leave behind.
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    // mode above only applies to NEWLY created inodes — a reused
-    // outdir keeps whatever loose modes it had, so tighten explicitly
-    // (Codex #1484 r13, following up r12).
-    chmodSync(dir, 0o700);
+    // carry no group/other bits for a umask to leave behind. Reused
+    // trees are re-tightened (r13) and each level we own is refused if
+    // it is a planted symlink (r15) — secureStagingDir does all three,
+    // level by level from the outdir down.
+    secureStagingDir(path.resolve(outDir));
+    secureStagingDir(dir);
     for (const table of applyOrder(tables)) {
       const sql = tableToSql(table);
       const file = path.join(dir, `${table.name}.sql`);
@@ -561,14 +606,14 @@ export function materializeR2(archive, outDir) {
       );
     }
     // Owner-only, same as the D1 staging: these are the decrypted
-    // legal documents themselves (Codex #1484 r12). chmod as well as
-    // mode — a reused staging tree keeps its old loose modes (r13) —
-    // and always a FRESH inode: chmod cannot revoke a descriptor
-    // another account already holds on a reused predictable path, and
-    // rm + 'wx' refuses to follow a planted symlink (r14).
-    mkdirSync(path.dirname(local), { recursive: true, mode: 0o700 });
-    chmodSync(root, 0o700);
-    chmodSync(path.dirname(local), 0o700);
+    // legal documents themselves (Codex #1484 r12). Reused trees are
+    // re-tightened (r13), planted symlink DIRECTORIES are refused at
+    // every level we own (r15), and the file itself is always a FRESH
+    // inode — chmod cannot revoke a descriptor another account already
+    // holds, and rm + 'wx' refuses to follow a planted symlink (r14).
+    secureStagingDir(path.resolve(outDir));
+    secureStagingDir(root);
+    secureStagingDir(path.dirname(local));
     rmSync(local, { force: true });
     writeFileSync(local, bytes, { mode: 0o600, flag: 'wx' });
     written.push({ key: obj.key, local, size: bytes.length });
