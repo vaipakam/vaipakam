@@ -7,13 +7,15 @@ nothing.
 
 A short prefix is not useless — anyone can fingerprint a candidate archive
 and compare the first 16 characters, and two unrelated files sharing them by
-chance is vanishingly unlikely. What changes with the full value is how hard
-it is for someone *deliberately* trying to produce a different archive with
-the same fingerprint: against 16 characters that is expensive, and against
-the full value it is beyond reach. Recording all of it **raises** that bar
-rather than removing a bar or repairing a broken comparison — the earlier two
-drafts of this paragraph each overstated it in one direction, so this one
-states the change and leaves the verdict out.
+chance is vanishingly unlikely. What changes with the full value is the work
+required of someone *deliberately* trying to produce a different archive with
+the same fingerprint: on the order of 2^64 attempts against 16 characters,
+and 2^256 against the whole thing. Recording all of it raises that number.
+
+Three earlier drafts of this paragraph each reached for a verdict — "cannot be
+compared", "removes a bound", "beyond reach" — and each was wrong in one
+direction or the other. The numbers are the content; the verdict was never
+needed.
 
 **A correction, recorded because the mistake is an easy one to repeat.**
 This change was originally justified as closing a real gap: that the
