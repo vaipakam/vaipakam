@@ -387,7 +387,7 @@ contract MeshLedgerInvariant is Test {
     /// §7 #2's OTHER half — `outstandingCommitFresh + paidOutFresh <= 69M`.
     /// Codex #1437 r1 P1: the first version of this suite asserted only the
     /// recycled bound while claiming to encode §7 #2, so a regression that
-    /// over-reserved FRESH issuance would have stayed green. The pre-existing
+    /// over-reserved FRESH drawdown would have stayed green. The pre-existing
     /// interaction-rewards invariant checks paid-out alone, not paid plus
     /// outstanding, so nothing else covered this.
     function invariant_FreshCommitWithinLifetimeCap() public view {
@@ -501,14 +501,14 @@ contract MeshLedgerInvariant is Test {
 
     /// The cap must reserve against OUTSTANDING fresh commitments, not only
     /// against what has already been paid out. That is the whole content of
-    /// §7 #2's fresh half: a day already committed to fresh issuance has
+    /// §7 #2's fresh half: a day already committed to fresh drawdown has
     /// spent that headroom even though no tokens have moved, so the next
     /// day's schedule must size against what remains.
     ///
     /// Driven through the commitment term alone, with nothing paid out, so a
     /// regression that dropped `outstandingCommitFresh` from the reserved sum
     /// fails here and nowhere else — every bound in this suite would stay
-    /// green while the platform issued past 69M across two open days.
+    /// green while the platform drew down past 69M across two open days.
     function test_Boundary_FreshScheduleClampsToRemainingCapHeadroom()
         public
     {
@@ -638,7 +638,7 @@ contract MeshLedgerInvariant is Test {
     /// allocation. With the other two terms carrying the fixture, dropping
     /// this one from the reserved sum is invisible — Base would keep stamping
     /// full fresh schedules for its own claimants against an allocation it has
-    /// already shipped elsewhere, issuing the same value twice
+    /// already shipped elsewhere, drawing the same value down twice
     /// (Codex #1457 r1 P1).
     function test_Boundary_RemittedValueAlsoReservesAgainstTheCap() public {
         uint256 headroom = 1_234 ether;
