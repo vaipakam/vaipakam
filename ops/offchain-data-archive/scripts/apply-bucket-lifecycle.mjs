@@ -25,15 +25,21 @@
  * WHAT THE NUMBERS MEAN, since `daysFromHidingToDeleting` is easy to
  * misread. It governs a version that is no longer current — either hidden by
  * the `daysFromUploadingToHiding` rule, or SUPERSEDED by a newer upload at
- * the same key. It was 1. That is the value that matters for the threat model
- * in #1469: the archive Worker's B2 key has `writeFiles` but NOT
- * `deleteFiles` (verified), so an attacker who compromises the Worker can
- * only OVERWRITE an archive, never delete one. The genuine version therefore
- * survives — until our own lifecycle rule removes it a day later. Raising it
- * to 30 means the real archive is recoverable for a month after a forged
- * overwrite, and it is the cheap reversible half of #1469.
+ * the same key. It was 1, and that is the value that matters for the threat
+ * model in #1469: the archive Worker's WRITE key has `writeFiles` but NOT
+ * `deleteFiles` (verified), so a compromised Worker can only OVERWRITE an
+ * archive, never delete one. The genuine version therefore survives as a
+ * hidden older version — until our own lifecycle rule removes it. At 1 day
+ * that was effectively immediately, which is what made a detectable forgery an
+ * unrecoverable one.
  *
- * Note the same setting also extends how long ordinary hidden versions live,
+ * (Two corrections to earlier revisions of this header, kept because both were
+ * wrong in ways worth not repeating: it said raising the value "to 30" made
+ * the archive "recoverable for a month" — the privacy-promise ceiling later
+ * ruled 30 out, so no figure belongs in this file at all. And the sentence
+ * "Note the same setting also extends how long ordinary hidden versions live,"
+ * was left dangling mid-clause by the edit that removed its continuation.)
+ *
  * Retention numbers and the promises that bound them live in
  * `lifecycle-policy.mjs` — deliberately NOT restated here, because the
  * previous copy of that explanation went stale in three places at once.
@@ -137,6 +143,32 @@ async function main() {
   });
   const api = auth.apiInfo.storageApi;
   const token = auth.authorizationToken;
+
+  // REFUSE THE MASTER KEY (#1471 r9). The README spends a page justifying which
+  // key each mode needs, and nothing enforced it — the sibling setup script
+  // asserts the key IS the master, and this one accepted whatever was in the
+  // environment. Since `.env` holds the master under the SAME two variable
+  // names, one careless `set -a; . .env` ran bucket reconfiguration with
+  // `deleteFiles`, `deleteBuckets` and `bypassGovernance` in hand. A document
+  // cannot prevent that; this can.
+  //
+  // `writeKeys` is the master-only capability the setup script keys off, and an
+  // account-wide key (no `bucketId`) is the other half of that signature.
+  const caps = api.capabilities || [];
+  if (caps.includes('writeKeys') || caps.includes('deleteBuckets')) {
+    console.error(
+      'Refusing to run: the supplied key looks like the MASTER key ' +
+        `(capabilities include ${caps.includes('writeKeys') ? 'writeKeys' : 'deleteBuckets'}).\n` +
+        'This task needs listBuckets for --print-live/--check, plus writeBuckets ' +
+        'for --apply, and nothing else. The master key also carries deleteFiles, ' +
+        'deleteBuckets, deleteKeys and bypassGovernance, which turn a mistyped ' +
+        'lifecycle edit into potential data loss.\n' +
+        'Do not source the repo `.env` for this — that is the master key\'s home. ' +
+        'Export the read-only key for print/check, or a temporary ' +
+        'listBuckets+writeBuckets key for apply.',
+    );
+    process.exit(2);
+  }
 
   // A bucket-restricted key MUST scope b2_list_buckets, or B2 returns a bare
   // `unauthorized` that reads like a bad credential rather than a bad call.
@@ -243,9 +275,24 @@ async function main() {
   const after = await b2(`${api.apiUrl}/b2api/v3/b2_list_buckets?${qs}`, {
     headers: { Authorization: token },
   });
-  const now = normalise(
-    after.buckets.find((b) => b.bucketName === declared.bucket).lifecycleRules ?? [],
-  );
+  // NO `?? []` here (#1471 r9). The guard ~80 lines above hard-exits on an
+  // absent `lifecycleRules` precisely because absent means "cannot read them",
+  // not "none are set" — and coercing to an empty set on the READBACK path
+  // would let a write that silently applied nothing report a mismatch against
+  // `[]` instead of saying the readback could not be performed. Same field,
+  // same ambiguity, opposite handling, in one file.
+  const afterBucket = after.buckets.find((b) => b.bucketName === declared.bucket);
+  if (!afterBucket || afterBucket.lifecycleRules == null) {
+    console.error(
+      `applied, but the READBACK could not be performed: B2 returned ` +
+        `${afterBucket ? 'no `lifecycleRules` field' : 'no such bucket'} for ` +
+        `${declared.bucket}. The write reported success and is UNVERIFIED — ` +
+        `re-run with --check using a key that can read the rules before ` +
+        `treating this as applied.`,
+    );
+    process.exit(1);
+  }
+  const now = normalise(afterBucket.lifecycleRules);
   if (JSON.stringify(now) !== JSON.stringify(want)) {
     console.error('applied, but the READBACK does not match the declaration:');
     console.error(fmt(now));

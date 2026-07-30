@@ -42,14 +42,23 @@
  * sufficiency argument. #1473 is what closes the forgery case.
  *
  * WHY THE RECOVERY TERM HAS A FLOOR. `daysFromHidingToDeleting` is the window
- * in which a SUPERSEDED version can still be recovered — which is the only
- * defence against a forged overwrite, since the Worker's B2 key holds
- * `writeFiles` but not `deleteFiles` (an attacker can shadow an archive, never
- * delete one). The detector is the WEEKLY healthcheck, Monday 09:00 UTC. At
- * exactly 7 days a forgery landing just after one Monday becomes eligible for
- * deletion as the next Monday's alert fires — the alert and the deletion race,
- * which is no window at all. The floor is 8 so detection is strictly inside it,
- * and the declaration should sit above that to leave an operator time to act.
+ * in which a SUPERSEDED version can still be recovered — the only defence
+ * against a forged overwrite, since the Worker's write key holds `writeFiles`
+ * but not `deleteFiles` (an attacker can shadow an archive, never delete one).
+ *
+ * The floor is derived from the CADENCE of the only routine inspection these
+ * objects get — the healthcheck, which runs on Mondays off the daily cron — and
+ * NOT from any alert. Per the note above, no alert fires for an authenticated
+ * forgery. So the floor says: the window must outlive one full inspection
+ * cycle, which is 7 days plus a day of slack. Under it, a window can open and
+ * close entirely between two inspections.
+ *
+ * Read that as the weakest defensible bound, not as response time. An earlier
+ * revision of this comment derived the floor from "the next Monday's alert
+ * fires — the alert and the deletion race", which was the framing the note
+ * above retires; it survived three rounds of corrections in three other files
+ * before being caught here (#1471 r6/r7/r8/r9). The declaration should sit
+ * above the floor so a human has room to act on an out-of-band signal.
  */
 
 /** Prefixes whose retention is bounded by the 30-day ticket promise. */

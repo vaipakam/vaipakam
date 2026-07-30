@@ -24,11 +24,23 @@ forged overwrite left nothing to fall back on (#1469).
 # none of these scripts, so copying the block without it fails with a
 # missing-script error rather than anything that hints at the cause (#1471 r4).
 cd ops/offchain-data-archive
-# CREDENTIALS MUST BE IN THE ENVIRONMENT. Unlike setup-backblaze.mjs, this
-# script does not load the repo `.env` — the npm scripts invoke plain `node`,
-# and it reads BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY from `process.env` only.
-# Without this the commands exit before contacting B2 at all.
-set -a; . ../../.env; set +a          # or export the two vars by hand
+# CREDENTIALS MUST BE IN THE ENVIRONMENT — this script reads
+# BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY from `process.env` only and, unlike
+# setup-backblaze.mjs, does not load any file. Export the key the MODE needs:
+#
+#   print / check  ->  the bucket-scoped READ-ONLY key (listBuckets)
+#   apply          ->  a temporary key with listBuckets + writeBuckets
+#
+export BACKBLAZE_KEY_ID=...  BACKBLAZE_APP_KEY=...   # see the modes above
+#
+# Do NOT source the repo `.env` here, which an earlier revision of this block
+# told you to do (#1471 r9). That file is the MASTER key's home — the same two
+# variable names, a different and far more dangerous key — so sourcing it either
+# supplies nothing (step 7 below has you revoke it after setup) or silently runs
+# these commands as the master key, against the capability split this section
+# spends a page justifying. One variable pair carries three different keys with
+# opposite requirements; nothing at runtime can tell them apart, so the choice
+# has to be made here, deliberately, per mode.
 npm run bucket:lifecycle:print   # what B2 currently has
 npm run bucket:lifecycle:check   # does live match the declaration?
 npm run bucket:lifecycle:apply   # make live match the declaration
@@ -58,57 +70,52 @@ needs, and all of which turn a mistyped lifecycle edit into a potential data
 loss. `apply` reads the result back rather than trusting the write, so a
 successful run is evidence, not an assumption.
 
-**What the numbers mean.** `daysFromHidingToDeleting` governs a version that
-is no longer current — either hidden by the age rule, or **superseded by a
-newer upload at the same key**. The second case is the one that matters: the
-Worker's B2 key has `writeFiles` but **not** `deleteFiles`, so an attacker who
-compromises the Worker can only overwrite an archive, never delete one. The
-genuine version survives until *our own* rule removes it. At 1 day that was
-effectively immediately; the declaration sets **9** on the daily prefixes and **31** on the monthly ones.
+**What the settings mean, and where the numbers live.** The values themselves
+and the reasoning that fixes them are in `scripts/lifecycle-policy.mjs` — the
+one module both writers import — and are deliberately NOT repeated here.
+An earlier revision of this section restated them and then closed by claiming
+they were not restated anywhere else; three review rounds each corrected one
+copy of the same sentence (#1471 r6/r7/r8) before the duplication itself was
+treated as the defect. Run `npm run bucket:lifecycle:print` for live values.
 
-Why 9 and not 30, which an earlier revision of this file said: the daily
-prefixes' worst-case object lifetime is capped by a **published promise** —
-`PrivacyPolicy.md` states a support ticket's backup copies persist at most 30
-days beyond deletion, and tickets live only in this tier. Worst case is the
-SUM of both lifecycle terms, so the whole daily budget is 29 days (30 minus a
-day of headroom, because the B2 clock starts at upload and a ticket can be
-pruned from D1 between export and upload). The split is 20 to hide + 9 to
-delete.
+What is worth saying here is the threat model the settings serve, which is not
+duplicated anywhere:
 
-9 rather than 8: the forged-overwrite detector is the **weekly** healthcheck,
-so at 7 days an overwrite landing just after one Monday becomes deletable as
-the next Monday's alert fires — the alert races the deletion. 9 puts detection
-strictly inside the window and leaves two days to act.
+`daysFromHidingToDeleting` governs a version that is no longer current — either
+hidden by the age rule, or **superseded by a newer upload at the same key**.
+The second case is the one that matters. The Worker's write key has
+`writeFiles` but **not** `deleteFiles`, so a compromised Worker can overwrite
+an archive and never delete one: the genuine copy survives as a hidden older
+version until *our own* rule removes it. That window is the entire fallback,
+and at its original value of 1 day it was effectively no window at all — which
+is what #1469 exists to fix.
 
-**What the weekly check does and does not detect — the recovery window's value
-depends on this.** `healthcheck.ts` verifies the newest archive against its
-manifest: hash, size, decryptability. That catches corruption and a *blind*
-overwrite. It does **not** catch an authenticated forgery, and in the scenario
-this section is about it cannot: a compromised Worker yields both B2 credential
-pairs **and** `BACKUP_ENCRYPTION_KEY` from the same environment, so the
-attacker can enumerate the genuine nonce with `listFiles` and write a
-self-consistent encrypted archive+manifest pair at that exact key. Every check
+**What the weekly check does and does not detect — the window's value depends
+on this.** `healthcheck.ts` verifies the newest archive against its manifest:
+hash, size, decryptability. That catches corruption and a *blind* overwrite. It
+does **not** catch an authenticated forgery, and in this scenario it cannot: the
+Worker binds BOTH B2 credential pairs plus `BACKUP_ENCRYPTION_KEY`, so an
+attacker enumerates the genuine nonce with the read key's `listFiles` and writes
+a self-consistent encrypted archive+manifest pair at that exact key. Every check
 the healthcheck makes passes.
 
-So the recovery window is not "time after an alert" for a competent attacker —
-it is time for a human or an out-of-band signal to notice. That is a real but
-much weaker property than an earlier revision of this file implied, and it is
-the same integrity-is-not-provenance gap tracked as #1473, which is what
-actually closes it. The floors below are the floor of usefulness, not a
-sufficiency argument.
+So the window is not "time after an alert" against a competent attacker — it is
+time for a human or an out-of-band signal to notice. Real, but much weaker than
+an earlier revision of this file implied, and it is the integrity-is-not-
+provenance gap tracked as **#1473**, which is what would actually close it. The
+floors in `lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency
+argument, and its comments say so.
 
 The monthly floor is higher for a worse reason, stated plainly rather than
 buried: `healthcheck.ts` examines only `manifests/<recent dates>/`, so it never
 looks at the monthly prefixes and **a monthly overwrite is detected by nothing
-today**. A short window there could not be justified by "the detector will
-catch it", so it instead has to outlast the monthly write cadence. Extending
-the healthcheck to cover the monthly tier is #1476, and until it lands the
-monthly guarantee is genuinely weaker than the daily one.
+today**. A short window there could not be justified by detection at all, so it
+instead has to outlast the monthly write cadence. Extending the healthcheck to
+cover that tier is **#1476**; until it lands the monthly guarantee is genuinely
+weaker than the daily one.
 
-Raising the ceiling at all means excluding support tickets from this tier,
-which means tickets have no backup — a product decision, tracked as #1474.
-The ceilings are enforced in `scripts/lifecycle-policy.mjs`, which both
-writers must pass through; the numbers are not restated anywhere else.
+Raising the daily ceiling at all means excluding support tickets from that tier,
+which means tickets have no backup — a product decision, tracked as **#1474**.
 
 ## What gets backed up
 

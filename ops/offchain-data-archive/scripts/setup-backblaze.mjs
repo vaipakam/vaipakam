@@ -9,11 +9,14 @@
  *   1. Authorize with B2 native API and discover the account.
  *   2. Create the backup bucket (`vaipakam-offchain-data-archive` by
  *      default; private). Skipped if it already exists.
- *   3. Set lifecycle rules on three prefixes:
- *        archives/         30-day retention (nightly snapshots).
- *        archives-monthly/ 365-day retention (1st-of-month snapshots).
- *        archives-yearly/  indefinite (Jan-1 snapshots for the
- *                          legal-hold audit-trail durability story).
+ *   3. Apply the lifecycle rules from `../bucket-lifecycle.json` — this
+ *      script no longer carries its own copy, and no longer describes the
+ *      values (an earlier revision of this header still listed "three
+ *      prefixes / archives/ 30-day", which was wrong on both count and
+ *      figures; #1471 r9). The declaration currently covers FOUR prefixes:
+ *      `archives/` + `manifests/` and their `-monthly/` counterparts. The
+ *      `-yearly/` prefixes deliberately get NO rule — that absence is what
+ *      gives them indefinite retention for the legal-hold durability story.
  *   4. Create TWO scoped Application Keys (one write-only for
  *      nightly backup, one read-only for weekly healthcheck), both
  *      bucket-scoped. Capabilities are deliberately tight — see the
@@ -178,8 +181,10 @@ async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
   // NOT restated here (#1471 r1).
   //
   // They used to be hardcoded in this function, with
-  // `daysFromHidingToDeleting: 1` for all four prefixes. That is the value
-  // #1469 raised to 30 on the live bucket, because at 1 a superseded archive
+  // `daysFromHidingToDeleting: 1` for all four prefixes. #1469 raised it
+  // (to what, read from the declaration — an earlier revision of this comment
+  // said "to 30", which the privacy-promise ceiling later ruled out), because
+  // at 1 a superseded archive
   // is deleted about a day after being replaced — and since the pipeline's B2
   // key can write but NOT delete, that lifecycle rule was the only thing
   // destroying a genuine archive after a forged overwrite.
