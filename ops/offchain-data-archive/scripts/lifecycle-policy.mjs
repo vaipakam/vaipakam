@@ -160,6 +160,27 @@ export function assertPolicyCeilings(decl, fail) {
     }
   }
 
+  // NO DUPLICATE PREFIXES (#1471 r14). `new Map()` keeps the LAST entry for a
+  // repeated key, so two rules for `archives/` collapse to one for the ceiling
+  // and floor checks while BOTH are forwarded to B2 — making validation
+  // order-dependent. Review exercised exactly that: an over-limit rule followed
+  // by the valid one passed, and reversing them failed. A validator whose
+  // verdict depends on array order is not a validator.
+  const seen = new Set();
+  for (const r of decl.rules) {
+    const p = String(r.fileNamePrefix ?? '');
+    if (seen.has(p)) {
+      fail(
+        `bucket-lifecycle.json declares MORE THAN ONE rule for "${p}". B2 receives ` +
+          `every rule in the array, but the ceiling and floor checks index by ` +
+          `prefix and would only see one of them — so whichever came last would ` +
+          `decide whether the other is allowed. Declare exactly one rule per ` +
+          `prefix.`,
+      );
+    }
+    seen.add(p);
+  }
+
   const byPrefix = new Map(decl.rules.map((r) => [r.fileNamePrefix, r]));
 
   // THE YEARLY PREFIXES MUST CARRY NO RULE (#1471 r10). Their indefinite
