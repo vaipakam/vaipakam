@@ -2117,9 +2117,12 @@ contract DeployDiamond is Script {
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet} for
-    ///      EIP-170 headroom. These 14 selectors route to the lens facet.
+    ///      EIP-170 headroom. These 19 selectors route to the lens facet.
+    ///      (The count read "14" while the array held 17 — a stale figure
+    ///      two prior additions each left behind. Nothing verifies a prose
+    ///      count against an array length, so it is stated once, here.)
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](19);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2139,6 +2142,9 @@ contract DeployDiamond is Script {
         s[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
         // #1222 M3 B2-d1 — the commitment keeper's entry-sequence walk.
         s[16] = InteractionRewardsLensFacet.getRewardEntriesRange.selector;
+        // #1218 M5 — the recycling transparency series.
+        s[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
+        s[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for

@@ -1035,6 +1035,19 @@ Loop-closure transparency metric (RL-2, `VpfiRecyclingLoopClosureDesign.md` §6 
 - the absorption term's designated feed is the recycle-bucket credit event above; the term reads zero until the governor's later stages consume the bucket, and the metric's definition already carries it so no re-baselining happens when absorption goes live
 - every vault VPFI outflow must be observable from a single on-chain signal at the tracked-balance decrement point, so the retention ledger cannot be silently bypassed by any debit path
 
+Recycling transparency series (#1218, `VpfiRecyclingBalanceGovernorDesign.md` §9 — ratified 2026-07-15):
+
+- the platform publishes a **per-day** account of where each day's reward pool came from and how much of it was actually drawn, so an outside reader can judge whether the reward programme is funding itself without the platform making any claim about price or value
+- the day account carries the **budgeted fresh floor**, the **absorption-coupled recycled budget**, the **fresh amount actually drawn**, and the **absorption credited to that day**. From the first two, the share of the day's pool that was self-funded follows directly
+- **net emission is the fresh amount actually drawn** — not fresh issuance minus recycled value. That older formula described a design in which recycled tokens displaced fresh issuance one-for-one; the platform does not work that way. The day's pool is the fresh floor **plus** the recycled budget, so the two terms add rather than cancel and their difference measures nothing
+- the drawn figure is attributed to the day the reward was **earned**, never the day a user happened to claim it. It is published beside that same day's budgeted floor, and the pairing is only meaningful when both describe the same day — a claim covering a month of earned days must not be scored against the single day it was made on
+- the drawn figure is a **commitment**, so it must be presented as an upper bound rather than as settled payout: near the lifetime issuance cap the amount finally transferred can be lower. Value that was drawn and then forfeited stays counted as drawn and reappears as absorption; the two figures describe opposite legs of the same movement and must not be netted against each other
+- absorption is reported as a **global** figure covering every reward chain, with the canonical chain's own contribution and the mirror chains' contributions distinguishable. Publishing only the canonical chain's absorption while labelling it global is a defect, not an approximation — it understates exactly the cross-chain activity the programme exists to capture
+- the **retained platform reserve** is published net of commitments already made to users but not yet claimed. Raw bucket growth overstates the reserve, because value owed to a user is not value the platform retained
+- the reserve is published **alongside the token balance actually held**, so a reader can tell whether the tokens behind the reported reserve exist. Every other figure on this surface is derived from internal counters, and counters cannot notice that the tokens behind them have left — which is the live gap recorded as #1460. That figure makes the difference between a healthy deployment and a corrupted one readable; it does not by itself prevent the corruption
+- a day that has not yet been finalized has **no pool**, and must be reported as such rather than as a pool of zero. Absorption, by contrast, is reported live from the moment it happens, including for the day in progress
+- the whole series must be reconstructible by any independent reader from published on-chain state, without privileged access and without trusting a platform-run indexer
+
 Founder and contributor compensation:
 
 - contributor salary streams should be explicit budgeted treasury expenses, funded deliberately for a budget period and withdrawable only up to the funded amount

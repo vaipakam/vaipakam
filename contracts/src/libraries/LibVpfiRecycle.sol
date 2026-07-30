@@ -184,6 +184,50 @@ library LibVpfiRecycle {
     }
 
     /**
+     * @notice #1218 M5 — the bucket's live BACKING position: how much VPFI
+     *         the Diamond actually holds against what the ledger has
+     *         labelled as recycled.
+     * @dev    Lives here rather than in the reading facet because this
+     *         library owns the separation invariant it measures. {credit}
+     *         and {creditCustodyRelocated} both assert `bal >= bucket +
+     *         amount` before raising the bucket, so the property is enforced
+     *         on every INFLOW. What no path asserts is the same property
+     *         after an OUTFLOW: a fresh-only interaction-reward claim
+     *         transfers VPFI out without re-checking that the remainder
+     *         still backs `recycleBucket` (#1460).
+     *
+     *         `unearmarked` is exactly the quantity #1460's third condition
+     *         turns on — the defect needs a non-zero bucket AND a
+     *         scheduled-only claim AND this figure below the scheduled
+     *         payout. The first two are observable today and the third was
+     *         observable nowhere, which is why a deployment could satisfy
+     *         all three and look healthy. Publishing it does NOT close the
+     *         defect; it makes the difference between "corrupted" and
+     *         "merely eligible" readable instead of assumed.
+     *
+     *         Saturating rather than reverting on `bal < bucket`: that state
+     *         IS the breach, and a view that reverts precisely when the
+     *         thing it exists to detect has happened is worse than useless —
+     *         it would blind every monitor at the one moment they must read.
+     * @param  s Diamond storage.
+     * @return vpfiBalance The Diamond's live VPFI balance (all labels).
+     * @return bucket      VPFI wei labelled as recycled reward runway.
+     * @return unearmarked `vpfiBalance − bucket`, floored at zero — the
+     *         balance available to fresh/scheduled payout without eating
+     *         recycle backing. Zero means fully consumed OR in breach; read
+     *         it with `vpfiBalance` and `bucket` to tell those apart.
+     */
+    function backingPosition(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256 vpfiBalance, uint256 bucket, uint256 unearmarked)
+    {
+        vpfiBalance = IERC20(s.vpfiToken).balanceOf(address(this));
+        bucket = s.recycleBucket;
+        unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
+    }
+
+    /**
      * @notice #1222 M3 B2-d5 — credit the RECYCLED share of an arriving
      *         Base-funded remit into this mirror's bucket as RELOCATED
      *         CUSTODY: real backing for the claim path, but not new

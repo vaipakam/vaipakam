@@ -499,6 +499,63 @@ RL-6's copy gate (supply/flow transparency only). Meaningful once
 #1346/#1347 give absorption a live feed; global figures sum per-chain
 day-bucketed credits after M3.
 
+**Both gates are MET** — #1346 and #1347 are closed, so absorption has a
+live feed, and M3 B4 is done, so the global figures can sum per-chain
+credits. M5 is unblocked.
+
+**The contract slice is TWO VIEWS, not a storage change (scouted 2026-07-30,
+verified against source).** All seven §9 figures are derivable from state
+the protocol already persists; nothing new is stored and no new event is
+emitted. Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
+from `getDayPoolStamp`, `selfFundingRatio[D]` and `runwayExtensionDays`
+derived from that series, `platformRetained` from `getRecycleBucket` +
+`getGovernorCommitState`. Two were not:
+
+- **`absorbed[D]` was HALF-exposed, which is worse than unexposed.** The
+  global figure is `recycledCreditedByDay[D] + dayMirrorRecycledCredit[D]`
+  — `_stampGovernorDayPool` sums both when it sizes Ā — but only the local
+  term had a getter. A dashboard built on it would have published Base-only
+  absorption labelled as global, understating exactly the cross-chain
+  activity the programme exists to capture, and it would have looked
+  plausible. Both terms now publish separately.
+- **`freshDrawdown[D]` needs no storage.** It is NOT reconstructible from
+  the CLAIM side (`interactionPoolPaidOut` has no day dimension; the claim
+  event spans a day RANGE with one fresh-plus-recycled total; a whole-claim
+  cap truncation rescales the fresh shares after the per-day walk). The
+  first scouting pass read only that side and wrongly concluded a per-day
+  accumulator was required. It IS reconstructible from the FINALIZE side:
+  `committableForDay` is a pure view over per-day aggregates finalization
+  already persists, so day D's fresh commitment is recomputable by anyone
+  at any later time — and the published call is the one finalization makes
+  to size its own reservation. Earned-day attribution is forced by the
+  metric's own definition, not chosen: `freshDrawdown[D]` is only meaningful
+  read against `scheduleFloor[D]`, and claim-day attribution would score a
+  claim spanning D-30…D against day D's floor alone.
+
+  Three bounds ship ON the surface rather than being left to be found:
+  EXACT for the armed-day global reservation; an APPROXIMATION pre-arming
+  (unarmed claim pricing reads the UNCAPPED `halfPoolForDay` while the stamp
+  records `min(schedule, freshAvailable)`); an UPPER BOUND near the 69M cap
+  where claim truncation pays less than was committed. Forfeits are
+  deliberately NOT netted — a forfeited fresh share was emitted and then
+  absorbed, so it belongs in `freshDrawdown[D]` and reappears in
+  `absorbed[D]`; the two are complementary legs of one movement.
+
+**One addition beyond §9, decided rather than asked (delegated call,
+recorded here).** M5 also publishes the unearmarked backing figure
+(`balanceOf − recycleBucket`). Every other figure on this surface is
+computed from stored COUNTERS, and counters cannot notice the tokens behind
+them have left — which is exactly **#1460**. Its third condition (the
+scheduled side short) is the one that decides whether a deployment
+satisfying the other two is corrupted or merely eligible, and nothing
+measured it. Publishing `platformRetained` without it would have let M5
+absorb #1460's corruption invisibly; a dashboard is the worst place to be
+silently wrong. **This MEASURES #1460 and does not close it** — the defect
+stays a hard arming prerequisite (§M7 step 0) on its own slice, which is
+also where proof that a real claim can REACH the bad state belongs (M5's
+test drives the bucket above the balance directly, so it establishes the
+view stays readable in the breached state, not reachability).
+
 ### M6 — Absorption channels 3–4 (RL-5's four-channel posture)
 
 **E-2 spend-gated perks (#1204)** — the two spend-gated perks charge

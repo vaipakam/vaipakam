@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 
 /**
  * @title InteractionRewardsLensFacet
@@ -361,5 +362,190 @@ contract InteractionRewardsLensFacet {
         returns (uint64 firstClaimableAt, uint64 expiresAt)
     {
         return LibInteractionRewards.rewardEntryExpiry(entryId);
+    }
+
+    // ─── #1218 M5 — recycling transparency series ────────────────────────────
+    //
+    // The seven figures the governor design §9 ratified for the public
+    // dashboard are all derivable from state the protocol ALREADY persists —
+    // this slice adds no storage and no new event. Five were reachable
+    // before it (`scheduleFloor`/`recycledBudget` via `getDayPoolStamp`,
+    // `selfFundingRatio` and `runwayExtensionDays` derived from that series,
+    // `platformRetained` from `getRecycleBucket` + `getGovernorCommitState`).
+    // The two below close what was missing.
+
+    /**
+     * @notice #1218 M5 — day `dayId`'s pool composition and what was actually
+     *         drawn against it, for the transparency dashboard's per-day
+     *         series (governor design §9).
+     * @dev    Adds the two figures the pre-existing reads could not supply.
+     *
+     *         **`absorbedMirror`** had no getter at all, and its absence was
+     *         the failure that would have shipped a WRONG number rather than
+     *         a missing one. Global absorption is the SUM of the local and
+     *         mirror terms — {RewardAggregatorFacet._stampGovernorDayPool}
+     *         sums both when it sizes `Ā`. A dashboard built on the one
+     *         exposed getter (`getRecycledCreditedByDay`) would have
+     *         published Base-only absorption while labelling it global, and
+     *         it would have looked entirely plausible. Both terms are
+     *         returned separately rather than pre-summed: the split is
+     *         itself informative, and a caller that wants the total performs
+     *         an addition it cannot get wrong.
+     *
+     *         **`freshDrawdown`** is `netEmission[D]` under the governor.
+     *         It is NOT reconstructible from the claim side — the fresh
+     *         counter (`interactionPoolPaidOut`) has no day dimension, the
+     *         claim event spans a day RANGE with one fresh-plus-recycled
+     *         total, and a whole-claim cap truncation rescales the fresh
+     *         shares after the per-day walk. It IS reconstructible from the
+     *         finalize side, which is what this does: {committableForDay} is
+     *         a pure view over per-day aggregates finalization already
+     *         persists, so day D's fresh commitment is recomputable by
+     *         anyone, at any later time, from the same inputs — and this
+     *         call is the exact one finalization makes to size its own
+     *         reservation.
+     *
+     *         Read against `scheduleFloor` it is "budgeted ceiling versus
+     *         what real activity actually earned a claim on"; the remainder
+     *         is never minted. That pairing is only meaningful with both
+     *         terms on the SAME day index, which is also why attributing
+     *         drawdown to the CLAIM day would be wrong even though it would
+     *         be cheaper — a claim spanning days D-30…D would be scored
+     *         against day D's floor alone.
+     *
+     *         Three bounds, stated here so a consumer cannot mistake the
+     *         figure for something stronger than it is:
+     *
+     *         1. EXACT for the armed-day global reservation — same call,
+     *            same inputs.
+     *         2. An APPROXIMATION before arming: unarmed claim pricing reads
+     *            {halfPoolForDay} directly (the UNCAPPED half), while the
+     *            stamp records `min(schedule, freshAvailable)`. The two
+     *            coincide except near pool exhaustion.
+     *         3. An UPPER BOUND near the 69M cap, where claim-level
+     *            truncation pays out less than was committed.
+     *
+     *         Which regime a given day is in is NOT readable from this call —
+     *         compare `dayId` against `armedFromDay` from
+     *         {RewardAggregatorFacet.getGovernorCommitState}, one global read
+     *         a dashboard makes once for the whole series.
+     *
+     *         The recomputation is stable over time only because every input
+     *         is day-scoped and written ONCE at finalization: the day's cap
+     *         threshold (set by {snapshotDayCapThreshold}, or broadcast to
+     *         mirrors from Base's snapshot), the finalized global denominators,
+     *         and the stamp's `scheduleFloor`. That is a real dependency, not
+     *         an incidental one — making any of them mutable after finalize
+     *         would let this published figure drift away from the reservation
+     *         it claims to report, silently and retroactively.
+     *
+     *         Forfeits are deliberately not netted out. A forfeited entry's
+     *         fresh share WAS emitted and then absorbed, so it belongs in
+     *         `freshDrawdown` and reappears in the absorbed terms — the two
+     *         are complementary, and subtracting here would double-count in
+     *         the opposite direction.
+     * @param  dayId Interaction-reward schedule day index.
+     * @return stamped        True once the day finalized. While false the
+     *         three POOL figures are zero and must not be read as real
+     *         zeros — an unfinalized day has no pool, not an empty one. The
+     *         two ABSORBED figures stay live either way: credits land on the
+     *         day they occur, well before that day finalizes, so gating them
+     *         on the stamp would hide real absorption on the current day.
+     * @return scheduleFloor  Fresh (pre-fund) half of the day's pool.
+     * @return recycledBudget Absorption-coupled recycled half. With
+     *         `scheduleFloor` this gives `dailyPool` and hence
+     *         `selfFundingRatio[D]`.
+     * @return freshDrawdown  `netEmission[D]` — the schedule floor actually
+     *         drawn fresh, subject to the three bounds above.
+     * @return absorbedLocal  This chain's own day-`dayId` recycle credits.
+     * @return absorbedMirror Day-`dayId` credits accepted from mirror
+     *         chains' reports. `absorbedLocal + absorbedMirror` is the
+     *         global `absorbed[D]`.
+     */
+    function getRecycleDayMetrics(uint256 dayId)
+        external
+        view
+        returns (
+            bool stamped,
+            uint256 scheduleFloor,
+            uint256 recycledBudget,
+            uint256 freshDrawdown,
+            uint256 absorbedLocal,
+            uint256 absorbedMirror
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
+        absorbedLocal = s.recycledCreditedByDay[dayId];
+        absorbedMirror = s.dayMirrorRecycledCredit[dayId];
+        if (!p.stamped) return (false, 0, 0, 0, absorbedLocal, absorbedMirror);
+        stamped = true;
+        scheduleFloor = p.scheduleFloor;
+        recycledBudget = p.recycledBudget;
+        // `scheduleFloor / 2` — the per-side half, matching the finalize
+        // call EXACTLY (integer division included). A divergence here would
+        // publish a figure the protocol never reserved.
+        (freshDrawdown, ) = LibInteractionRewards.committableForDay(
+            s,
+            dayId,
+            scheduleFloor / 2,
+            0
+        );
+    }
+
+    /**
+     * @notice #1218 M5 — the recycle bucket's cumulative position and, with
+     *         it, whether the tokens behind the published reserve actually
+     *         exist.
+     * @dev    `platformRetained` (governor design §9) is
+     *         `bucket − outstandingRecycled`, floored at zero. It is returned
+     *         as its two RAW terms rather than pre-computed, following the
+     *         #1448 posture: the contracts publish the counters, consumers
+     *         derive, and an independent re-derivation is what catches a
+     *         relabelled figure. The netting is not optional — raw bucket
+     *         growth overstates the reserve by counting committed-but-
+     *         unclaimed user liabilities as retained margin.
+     *
+     *         `vpfiBalance` / `unearmarked` are NOT in §9. They are here
+     *         because every other figure on this surface is computed from
+     *         stored COUNTERS, and counters cannot notice that the tokens
+     *         behind them have left. #1460 is exactly that: a fresh-only
+     *         claim can spend VPFI backing the recycle bucket, after which
+     *         `platformRetained` keeps reporting reserve that is no longer
+     *         there. Publishing a dashboard figure that is silently wrong is
+     *         a worse outcome than publishing one alongside the balance that
+     *         can falsify it.
+     *
+     *         This MEASURES #1460, it does not fix it — the defect remains a
+     *         hard prerequisite for arming (completion plan §M7 step 0).
+     *         `unearmarked < scheduled payout` is its third condition, the
+     *         one that decides whether a deployment satisfying the other two
+     *         is actually corrupted or merely eligible.
+     * @return vpfiBalance         Diamond's live VPFI balance, all labels.
+     * @return bucket              VPFI wei labelled as recycled runway.
+     * @return unearmarked         `vpfiBalance − bucket`, floored at zero.
+     *         A zero here is ambiguous by construction — fully consumed and
+     *         in breach look identical. Compare `vpfiBalance` against
+     *         `bucket` to separate them.
+     * @return outstandingRecycled Σ armed recycled commitments not yet
+     *         consumed — the subtrahend of `platformRetained`.
+     * @return paidOutRecycled     Cumulative recycled payouts, the bucket's
+     *         lifetime outflow.
+     */
+    function getRecycleBackingSnapshot()
+        external
+        view
+        returns (
+            uint256 vpfiBalance,
+            uint256 bucket,
+            uint256 unearmarked,
+            uint256 outstandingRecycled,
+            uint256 paidOutRecycled
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (vpfiBalance, bucket, unearmarked) = LibVpfiRecycle.backingPosition(s);
+        outstandingRecycled = s.outstandingCommitRecycled;
+        paidOutRecycled = s.paidOutRecycled;
     }
 }

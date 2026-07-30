@@ -1925,7 +1925,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](19);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -1945,6 +1945,9 @@ contract HelperTest {
         selectors[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
         // #1222 M3 B2-d1 — the commitment keeper's entry-sequence walk.
         selectors[16] = InteractionRewardsLensFacet.getRewardEntriesRange.selector;
+        // #1218 M5 — the recycling transparency series.
+        selectors[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
+        selectors[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         return selectors;
     }
 
