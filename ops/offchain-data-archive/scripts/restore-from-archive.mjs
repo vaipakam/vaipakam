@@ -38,7 +38,7 @@
  *     [--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -126,6 +126,46 @@ const BASELINE_TABLES = [
 // check below, with the cascade-specific consequence spelled out.)
 const ERA_GATED_TABLES = {
   support_tickets: 'migration 0028 (#1040)',
+};
+
+// Live column sets for the born-off-chain tables (Codex #1484 r13):
+// an archive whose schema OMITS a nullable/defaulted column — together
+// with its rows — converts to perfectly valid SQL that completes and
+// silently NULLs that column for every row after the replace-DELETE
+// (e.g. dropping user_thresholds.tg_chat_id disables every Telegram
+// alert). The archived schema must therefore CONTAIN at least these
+// columns (a superset is fine: a newer-era archive with added columns
+// either matches a migrated live schema or fails loudly at import).
+// Source of truth: apps/indexer/migrations (CREATE TABLE + ALTERs).
+// Scope: born-off-chain only — the re-derivable tables' default
+// treatment is §6 clear-and-replay, and the legacy-lz section
+// restores a retired ops db.
+const REQUIRED_TABLE_COLUMNS = {
+  user_thresholds: [
+    'wallet', 'chain_id', 'warn_hf', 'alert_hf', 'critical_hf',
+    'tg_chat_id', 'push_channel', 'created_at', 'updated_at',
+    'locale', 'notify_maturity_approaching', 'last_test_alert_at',
+  ],
+  notify_state: ['wallet', 'chain_id', 'loan_id', 'last_band', 'last_hf_milli', 'last_sent_ts'],
+  pre_grace_notify_state: ['wallet', 'chain_id', 'loan_id', 'last_sent_ts'],
+  telegram_links: ['code', 'wallet', 'chain_id', 'expires_at'],
+  diag_errors: [
+    'id', 'recorded_at', 'client_at', 'fingerprint', 'area', 'flow', 'step',
+    'error_type', 'error_name', 'error_selector', 'error_message',
+    'redacted_wallet', 'chain_id', 'loan_id', 'offer_id',
+    'app_locale', 'app_theme', 'viewport', 'app_version', 'wallet_hash',
+  ],
+  support_tickets: [
+    'ticket_id', 'created_at', 'message', 'email', 'diagnostics', 'page', 'chain_id', 'status',
+  ],
+  diag_legal_holds: [
+    'wallet_hash', 'hold_reason', 'disclosure_allowed', 'disclosure_note',
+    'legal_doc_ref', 'legal_doc_sha256', 'created_at', 'updated_at',
+  ],
+  diag_legal_hold_audit: [
+    'id', 'at', 'action', 'wallet_hash', 'admin_wallet',
+    'detail', 'legal_doc_ref', 'legal_doc_sha256',
+  ],
 };
 
 // The archived legal-hold tables whose rows carry `legal_doc_ref`
@@ -333,6 +373,24 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
           console.warn(`⚠ archive lacks ${t} (added ${since}) — an archive from before that is expected; anything newer is suspicious.`);
         }
       }
+      // Schema completeness per table: rows are validated against the
+      // archive's OWN schema, so a schema that omits a live column
+      // (with its rows shortened to match) converts cleanly and
+      // silently NULLs that column for every restored row (Codex
+      // #1484 r13).
+      for (const table of tables) {
+        const required = REQUIRED_TABLE_COLUMNS[table.name];
+        if (!required) continue; // re-derivable: §6 clear-and-replay is the default
+        const archivedCols = new Set((table.schema ?? []).map((c) => c?.name));
+        const missing = required.filter((c) => !archivedCols.has(c));
+        if (missing.length > 0) {
+          fail(
+            `table ${table.name}: archived schema omits live column(s) ${missing.join(', ')} — ` +
+              `a replace-import would silently NULL them for every row (truncated or hostile ` +
+              `archive; or a migration changed the live schema — update REQUIRED_TABLE_COLUMNS)`,
+          );
+        }
+      }
     }
     // Cascade completeness: the parent's replace-DELETE destroys live
     // child rows, so a parent without its archived children cannot be
@@ -396,10 +454,15 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // data (Codex #1484 r12). mode is masked by umask, but 0700/0600
     // carry no group/other bits for a umask to leave behind.
     mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // mode above only applies to NEWLY created inodes — a reused
+    // outdir keeps whatever loose modes it had, so tighten explicitly
+    // (Codex #1484 r13, following up r12).
+    chmodSync(dir, 0o700);
     for (const table of applyOrder(tables)) {
       const sql = tableToSql(table);
       const file = path.join(dir, `${table.name}.sql`);
       writeFileSync(file, sql, { mode: 0o600 });
+      chmodSync(file, 0o600);
       entries.push({
         name: table.name,
         file,
@@ -494,9 +557,13 @@ export function materializeR2(archive, outDir) {
       );
     }
     // Owner-only, same as the D1 staging: these are the decrypted
-    // legal documents themselves (Codex #1484 r12).
+    // legal documents themselves (Codex #1484 r12). chmod as well as
+    // mode — a reused staging tree keeps its old loose modes (r13).
     mkdirSync(path.dirname(local), { recursive: true, mode: 0o700 });
+    chmodSync(root, 0o700);
+    chmodSync(path.dirname(local), 0o700);
     writeFileSync(local, bytes, { mode: 0o600 });
+    chmodSync(local, 0o600);
     written.push({ key: obj.key, local, size: bytes.length });
   }
   return written;

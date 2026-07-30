@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -58,17 +58,58 @@ function outDir() {
   return mkdtempSync(path.join(tmpdir(), 'restore-test-'));
 }
 
+/** The live column sets (apps/indexer/migrations) — convertD1 rejects
+ *  an archived schema that omits any of these (r13), so the baseline
+ *  fixture must mirror reality. */
+const LIVE_COLUMNS = {
+  user_thresholds: [
+    'wallet', 'chain_id', 'warn_hf', 'alert_hf', 'critical_hf',
+    'tg_chat_id', 'push_channel', 'created_at', 'updated_at',
+    'locale', 'notify_maturity_approaching', 'last_test_alert_at',
+  ],
+  notify_state: ['wallet', 'chain_id', 'loan_id', 'last_band', 'last_hf_milli', 'last_sent_ts'],
+  telegram_links: ['code', 'wallet', 'chain_id', 'expires_at'],
+  diag_errors: [
+    'id', 'recorded_at', 'client_at', 'fingerprint', 'area', 'flow', 'step',
+    'error_type', 'error_name', 'error_selector', 'error_message',
+    'redacted_wallet', 'chain_id', 'loan_id', 'offer_id',
+    'app_locale', 'app_theme', 'viewport', 'app_version', 'wallet_hash',
+  ],
+  diag_legal_holds: [
+    'wallet_hash', 'hold_reason', 'disclosure_allowed', 'disclosure_note',
+    'legal_doc_ref', 'legal_doc_sha256', 'created_at', 'updated_at',
+  ],
+  diag_legal_hold_audit: [
+    'id', 'at', 'action', 'wallet_hash', 'admin_wallet',
+    'detail', 'legal_doc_ref', 'legal_doc_sha256',
+  ],
+};
+
+/** A full-schema user_thresholds row; FK tests override the key. */
+function utRow(overrides = {}) {
+  return {
+    wallet: '0xa', chain_id: 8453, warn_hf: 1.5, alert_hf: 1.2, critical_hf: 1.05,
+    tg_chat_id: null, push_channel: null, created_at: 1, updated_at: 1,
+    locale: 'en', notify_maturity_approaching: 1, last_test_alert_at: 0,
+    ...overrides,
+  };
+}
+
 /** A minimal but BASELINE-COMPLETE d1.archive — every table the backup
- *  emits unconditionally, with FK-consistent rows. Tests override /
- *  extend from here; a smaller archive is (correctly) rejected. */
+ *  emits unconditionally, with live-complete schemas and FK-consistent
+ *  rows. Tests override / extend from here; a smaller archive is
+ *  (correctly) rejected. */
 function baselineArchive() {
   return [
-    tableFixture('diag_errors', ['id'], []),
-    tableFixture('diag_legal_holds', ['id', 'legal_doc_ref'], []),
-    tableFixture('diag_legal_hold_audit', ['id', 'legal_doc_ref'], []),
-    tableFixture('user_thresholds', ['wallet', 'chain_id'], [{ wallet: '0xa', chain_id: 8453 }]),
-    tableFixture('notify_state', ['wallet', 'chain_id'], [{ wallet: '0xa', chain_id: 8453 }]),
-    tableFixture('telegram_links', ['wallet'], []),
+    tableFixture('diag_errors', LIVE_COLUMNS.diag_errors, []),
+    tableFixture('diag_legal_holds', LIVE_COLUMNS.diag_legal_holds, []),
+    tableFixture('diag_legal_hold_audit', LIVE_COLUMNS.diag_legal_hold_audit, []),
+    tableFixture('user_thresholds', LIVE_COLUMNS.user_thresholds, [utRow()]),
+    tableFixture(
+      'notify_state', LIVE_COLUMNS.notify_state,
+      [{ wallet: '0xa', chain_id: 8453, loan_id: 1, last_band: 'healthy', last_hf_milli: 0, last_sent_ts: 0 }],
+    ),
+    tableFixture('telegram_links', LIVE_COLUMNS.telegram_links, []),
   ];
 }
 
@@ -404,6 +445,46 @@ test('decrypted restore material is staged owner-only (r12)', () => {
   );
   assert.equal(mode(written[0].local), 0o600);
   assert.equal(mode(path.dirname(written[0].local)), 0o700);
+
+  // A REUSED staging tree must be tightened too: creation-time mode
+  // options only apply to new inodes (r13).
+  chmodSync(entries[0].file, 0o644);
+  chmodSync(path.dirname(entries[0].file), 0o755);
+  chmodSync(written[0].local, 0o644);
+  chmodSync(path.dirname(written[0].local), 0o755);
+  convertD1({ version: 1, d1: { archive: baselineArchive() } }, dir);
+  materializeR2(
+    { version: 1, d1: {}, r2: { objects: [r2Fixture(Buffer.from('%PDF-1.4 fixture'))] } },
+    dir,
+  );
+  assert.equal(mode(entries[0].file), 0o600);
+  assert.equal(mode(path.dirname(entries[0].file)), 0o700);
+  assert.equal(mode(written[0].local), 0o600);
+  assert.equal(mode(path.dirname(written[0].local)), 0o700);
+});
+
+test('an archived schema that omits a live column is rejected (r13)', () => {
+  const dir = outDir();
+  const tables = baselineArchive();
+  const ut = tables.find((t) => t.name === 'user_thresholds');
+  // Drop tg_chat_id from schema AND rows — internally consistent, and
+  // without the check it converts to valid SQL that silently NULLs
+  // every chat id (no more Telegram alerts).
+  ut.schema = ut.schema.filter((c) => c.name !== 'tg_chat_id');
+  ut.rows = ut.rows.map(({ tg_chat_id: _drop, ...rest }) => rest);
+  assert.throws(
+    () => convertD1({ version: 1, d1: { archive: tables } }, dir),
+    /omits live column\(s\) tg_chat_id/,
+  );
+
+  // Extra archived columns are allowed — a newer-era archive must not
+  // be rejected by an older converter (import fails loudly if the
+  // live schema truly lacks them).
+  const extra = baselineArchive();
+  const ut2 = extra.find((t) => t.name === 'user_thresholds');
+  ut2.schema = [...ut2.schema, { cid: ut2.schema.length, name: 'future_column', type: 'TEXT', notnull: 0, pk: 0 }];
+  ut2.rows = ut2.rows.map((r) => ({ ...r, future_column: null }));
+  assert.ok(convertD1({ version: 1, d1: { archive: extra } }, dir).length > 0);
 });
 
 test('legal rows must match the writer column shapes exactly (r11)', () => {
