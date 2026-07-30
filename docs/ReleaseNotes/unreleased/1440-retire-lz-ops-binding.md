@@ -148,6 +148,43 @@ rather than left for the incident that would find them:
   versions. It would have shown a healthy deployment while the
   every-minute schedule was still live, which is precisely the mistake
   the check exists to catch. Replaced with a schedule-aware query.
+- The restore told an operator to copy every saved credential straight
+  into the replacement account — correct after a lockout or a billing
+  dispute, and exactly wrong after a compromise, which the same document
+  now explains: anyone able to edit the services can read every one of
+  those values. Following it would have handed the rebuilt platform back
+  to whoever caused the incident, with the cutover reading as a clean
+  recovery. The step now branches on *why* the restore is happening, and
+  the compromise branch is a rotation rather than a restore, naming each
+  credential and what rotating it costs.
+- Switching off the scheduled work was not enough to hold the event reader
+  still: it has a second writer. A committed flag routes incoming webhook
+  deliveries through a durable object that runs the same indexing, so the
+  moment the replacement address answered, pre-existing webhooks would
+  resume writing and advancing the cursor — the very race the schedule
+  change was meant to prevent, arriving through a different door. Both
+  writers are now closed together and re-opened together, after the cursor
+  reset.
+- One restore step was described as safe to run early because the
+  background service only reads and sends messages at that point. One of
+  its passes signs transactions on the strength of the key alone, without
+  consulting the master switch — so the step could broadcast from a
+  freshly re-uploaded key before anything had checked it, and within a
+  ten-minute window each day it would. That service's schedule and its
+  switches now move together at the last step, and the missing guard in
+  the code is filed separately.
+- The restore also claimed two prerequisites for the remittance duty had
+  to be rebuilt. Neither does: the database change is committed and
+  applied by an earlier step, and the on-chain permission lives on chain
+  and survives losing the account entirely. Left as written it would have
+  kept remittance switched off indefinitely while it was ready to run. The
+  step now says to verify both, and reserves rebuilding them for the case
+  where the signing key was actually replaced.
+- Three documents pointed at an application address that does not exist —
+  the page was moved when the routes were flattened, and the only
+  surviving compatibility path is an unrelated one. An operator verifying
+  a notification-channel migration would have landed on a blank page and
+  been unable to confirm the thing they were checking.
 - Both credential rotations end by redeploying the keeper, and a plain
   redeploy of that service deletes the switches that decide whether its
   autonomous duties run at all — because those switches are operator-set

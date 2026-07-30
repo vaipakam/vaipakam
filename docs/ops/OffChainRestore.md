@@ -134,6 +134,50 @@ then deploy.
    keeper,agent}` fail outright on a fresh account until the store exists
    and is populated.
 
+   > ⚠️ **BRANCH ON WHY YOU ARE HERE, before you copy anything forward.**
+   > The steps below re-upload the saved values verbatim, which is correct
+   > for a **lockout, billing dispute or deploy mistake** — nobody else has
+   > seen them.
+   >
+   > It is wrong for a **compromise**, and this runbook establishes why a
+   > few lines above: Workers Edit lets an attacker deploy code that reads
+   > every binding. If that is the incident, the attacker already holds the
+   > keeper signer, the Push channel key, the Telegram bot token, the RPC
+   > URLs with their embedded API keys, the Alchemy webhook signing keys,
+   > the diagnostics HMAC key, and — per the same analysis — the B2 read
+   > credentials **and** the archive AES key. Copying them into the
+   > replacement account hands the new deployment straight back to them,
+   > and the cutover reads as a successful recovery.
+   >
+   > For a compromise, the credential step is a **rotation**, not a
+   > restore. Before deploying:
+   >
+   > - **`KEEPER_PRIVATE_KEY`** — generate a fresh EOA, fund it, and grant
+   >   it `KEEPER_ROLE` on every mirror Diamond. Sweep the old key's
+   >   residual gas. Note this makes the on-chain reauthorisation genuinely
+   >   necessary, which it is not on a non-compromise restore (see §7a).
+   > - **`TG_BOT_TOKEN`** — @BotFather `/revoke`, re-issue, re-register the
+   >   webhook (IncidentRunbook §4).
+   > - **`PUSH_CHANNEL_PK`** — a channel **migration**, not a signer swap;
+   >   there is no ownership transfer. Budget the 50-PUSH stake and expect
+   >   to ask subscribers to re-subscribe (IncidentRunbook §4).
+   > - **`RPC_*`, `ZEROEX_API_KEY`, `ONEINCH_API_KEY`, `OPENSEA_API_KEY`**
+   >   — re-issue upstream, then upload the new values. The old ones remain
+   >   billable to us until revoked.
+   > - **`ALCHEMY_WEBHOOK_SIGNING_KEY_*`** — rotate at Alchemy; a retained
+   >   key lets an attacker forge chain events into the indexer.
+   > - **`DIAG_WALLET_HMAC_KEY`** — rotate; retained, it de-anonymises the
+   >   diagnostics stream.
+   > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys, and treat
+   >   every existing archive as readable by the attacker. Re-encrypting the
+   >   history under a new key is §8; do it, but do not let it block the
+   >   restore.
+   >
+   > Rotate **before** the deploy where you can, so no window exists in
+   > which the new account runs on known-compromised values. Where a
+   > rotation needs the platform live (the Push migration), deploy with the
+   > old value, rotate immediately after, and record the window.
+
    a. Create a replacement account-level Secrets Store and capture its id:
 
       ```bash
@@ -373,6 +417,22 @@ then deploy.
    > healthy latest deployment while an every-minute schedule is still
    > live — it cannot see the exact mistake this readback exists to catch.
    > Nothing in §§2–6 needs a cron to run.
+   >
+   > **The indexer needs one MORE thing switched off — the cron is not its
+   > only writer.** `apps/indexer/wrangler.jsonc` commits
+   > `CHAIN_INGEST_VIA_DO: "true"` and a custom domain, and
+   > `POST /hooks/chain-event` forwards every authenticated Alchemy
+   > delivery into `ChainIngestDO`, whose alarm runs the D1 indexer. So the
+   > moment the replacement route answers, pre-existing webhooks resume
+   > writing rows and advancing cursors — the exact race an empty cron list
+   > was meant to prevent, arriving through a different door.
+   >
+   > Close that door too, by either: setting `CHAIN_INGEST_VIA_DO` to
+   > `"false"` for this deploy (the flag exists precisely as a two-step
+   > rollout switch), **or** leaving the custom domain unattached until §6.
+   > Pausing the webhooks at Alchemy works as well and is the belt to that
+   > braces. Whichever you choose, re-enable it in the same step that
+   > restores the indexer's schedule, after the cursor reset.
    >
    > These are restored later, deliberately split in two: the indexer's at
    > the end of §6 (once its cursor is reset), and the keeper's and agent's
@@ -730,12 +790,16 @@ wrangler d1 execute vaipakam-archive \
   --command="DELETE FROM indexer_cursor" --remote
 ```
 
-**Only now re-arm the indexer's schedule** — the cursor reset above is
-exactly the precondition §1 step 9 held it back for. Restore
-`"triggers": { "crons": ["* * * * *"] }` in `apps/indexer/wrangler.jsonc`
-and redeploy that Worker alone. Re-arming it before the reset would have
-had it write from whatever cursor it found and then be reset out from
-under itself mid-write.
+**Only now re-arm the indexer's ingest — BOTH of its writers.** The cursor
+reset above is exactly the precondition §1 step 9 held them back for.
+Restore `"triggers": { "crons": ["* * * * *"] }` in
+`apps/indexer/wrangler.jsonc`, restore whichever webhook path you closed in
+step 9 (`CHAIN_INGEST_VIA_DO` back to `"true"`, and/or attach the custom
+domain, and/or unpause the Alchemy webhooks), then redeploy that Worker
+alone. Re-arming either one before the reset would have had it write from
+whatever cursor it found and then be reset out from under itself
+mid-write — and restoring only the cron while leaving the webhook path open
+would have let the DO keep writing throughout §§4–6 regardless.
 
 The keeper's and agent's schedules stay off through this section; they are
 §7a, after the smoke test.
@@ -788,28 +852,45 @@ caught at the cheapest stage.
 
 1. **Restore both schedules and redeploy.** Put
    `"triggers": { "crons": ["* * * * *"] }` back in
-   `apps/keeper/wrangler.jsonc` and `apps/agent/wrangler.jsonc` and deploy
-   each. The keeper's alert passes (`runWatcher`, `runPreGraceWatcher`,
-   `runDailyOracleSnapshot`) and the agent's notification and retention
-   passes start here — reading tables §§4–6 have now restored and §7 has
-   smoke-tested. Expect the first tick within a minute.
+   `apps/agent/wrangler.jsonc` and deploy the **agent** — its notification
+   and retention passes read and message only. Expect the first tick within
+   a minute.
 
-2. **Watch one full tick on each before going further.**
+   > **The keeper's schedule is NOT read-only, so it is not restored here.**
+   > `runDailyOracleSnapshot` checks only that `KEEPER_PRIVATE_KEY` is
+   > present and then calls `writeContract` — it does **not** consult
+   > `KEEPER_ENABLED`. Restoring the keeper cron therefore arms a
+   > transaction-signing pass immediately, from a key this restore has just
+   > re-uploaded, before anything has verified the signing configuration.
+   > If the schedule is restored during 00:00–00:09 UTC with no
+   > current-day `oracle_snapshot_state` row, it broadcasts on the first
+   > tick. Treating the keeper tick as "reads and alerts only" was wrong —
+   > that is true of its *other* passes, not of this one. Its schedule goes
+   > back in step 3, together with the signing configuration it implies.
+   > Gating that pass behind `isKeeperEnabled` like every other signing
+   > pass is a code fix, tracked as #1466.
+
+2. **Watch one full agent tick before going further.**
 
    ```bash
-   wrangler tail vaipakam-keeper   # in one shell
-   wrangler tail vaipakam-agent    # in another
+   wrangler tail vaipakam-agent
    ```
 
    A first tick that throws on a missing table or an empty binding means
-   something in §§4–6 did not land; fix that before arming any signing
-   path. Note the keeper's alert passes will send real user notifications
-   from this moment — if the restore is long enough that thresholds have
-   gone stale, expect a burst.
+   something in §§4–6 did not land; fix that before arming anything that
+   signs. The agent's notification passes send real user messages from
+   this moment — if the restore is long enough that state has gone stale,
+   expect a burst.
 
-3. **Only then set the keeper's operational flags**, from the offline
-   record captured in §1 step 6f. These arm signing from a real key, so
-   they are deliberately last and deliberately separate from the deploy.
+3. **Only then restore the keeper — schedule and flags together**, from
+   the offline record captured in §1 step 6f. Both arm signing from a real
+   key (the schedule via `runDailyOracleSnapshot`, the flags via everything
+   else), so they belong at the same, last step rather than being split
+   across a "safe" and an "arming" half that does not exist.
+
+   Before deploying: confirm the keeper EOA is the address you expect and
+   is funded on every chain it submits from. After deploying, watch one
+   keeper tick.
 
    **Set them by editing `apps/keeper/wrangler.jsonc`'s `vars` block — all
    of the ones that were on, together — and deploying once:**
@@ -828,9 +909,23 @@ caught at the cheapest stage.
    ( cd apps/keeper && wrangler deploy )
    ```
 
-   `REWARD_REMIT_ENABLED` additionally requires the keeper EOA to be
-   authorized on-chain and D1 migration 0044 applied, neither of which a
-   restore re-establishes — leave it off until both are true.
+   `REWARD_REMIT_ENABLED` has two additional prerequisites, and on a
+   non-compromise restore **both are normally already satisfied** — so
+   VERIFY them rather than assuming they need rebuilding:
+
+   - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
+     `apps/indexer/migrations/`, so §1 step 7 applied it along with every
+     other migration. Confirm with
+     `wrangler d1 migrations list vaipakam-archive --remote`.
+   - **The keeper EOA's on-chain `KEEPER_ROLE`** lives on the Diamonds, not
+     in Cloudflare. Losing the account does not revoke it. Confirm by
+     reading the role back on each mirror.
+
+   Reauthorisation is only needed where the keeper key was actually
+   **rotated** — which is the compromise branch in §1 step 6, not a
+   lockout. An earlier revision said neither prerequisite survived a
+   restore, which would have left remittance and acknowledgement switched
+   off indefinitely while both were in fact ready.
 
    > **Do NOT arm these with `--var`, one flag per deploy.** It fails two
    > separate ways, and the second is silent and immediate.

@@ -1793,7 +1793,7 @@ npx wrangler tail        # tail logs in another terminal
 
 # From a test wallet:
 #   1. Subscribe to the Push channel at the URL in 8b.2
-#   2. /app/alerts → Save thresholds, Link Telegram, Enable Push rail
+#   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
 #   3. Lower one threshold below the connected wallet's HF
 #   4. Wait for the next 5-min cron tick
 # Expect: log lines for `tg send` + Push API success on band crossings.

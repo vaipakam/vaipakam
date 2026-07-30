@@ -682,7 +682,7 @@ is `wrangler tail`, so verify there rather than assuming success.
    ```
 
    `deploy` builds as part of its own pipeline, so a separate `build` is
-   redundant. Confirm afterwards that `/app/alerts` renders the subscribe
+   redundant. Confirm afterwards that `/alerts` renders the subscribe
    link — the page treats an unset value as "no channel" and hides the link
    entirely, which looks like a deliberate design rather than a broken
    deploy.
