@@ -33,9 +33,12 @@ with nothing yet able to spend it, shrinking the very headroom the cap protects.
 
 Resolving that then exposed a second, narrower error in the same sentence, and
 this one was real: the specification said the portion was "remitted from" the
-central pool. It is not. Nothing on an inactive day moves value — the pool is
-what the figure is *measured against*, not a source it is drawn from, and no
-transfer, reservation or payout occurs. Three different things had been
+central pool. It is not. No RECYCLED value moves on an inactive day — the pool
+is what that figure is *measured against*, not a source it is drawn from, and
+no recycled transfer, reservation or payout occurs. (Scheduled value does move,
+of course; the paragraph above says claims are paid from the scheduled portion.
+An earlier draft of this sentence said "nothing moves", which contradicted its
+own predecessor two sentences earlier.) Three different things had been
 collapsed into one word, which is what made the whole sentence read as a
 contradiction in the first place. It now states all three, including what does
 not happen.
