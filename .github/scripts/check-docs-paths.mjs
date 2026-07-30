@@ -39,16 +39,21 @@
  * reference outside a backtick or link. It closes staleness, not accuracy.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { dirname, posix } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { report } from './docs-check-ratchet.mjs';
 
+// `docs/ReleaseNotes/unreleased/` is deliberately NOT skipped — those
+// fragments are current, PR-authored docs, not shipped history (#1467 r1).
 const SKIP_DIRS = [
-  'docs/ReleaseNotes/',
   'docs/FindingsAndFixes/',
   'docs/OlderDocs/',
   'docs/internal/RoughNotes.md',
 ];
+const isShippedReleaseNote = (f) =>
+  f.startsWith('docs/ReleaseNotes/') &&
+  !f.startsWith('docs/ReleaseNotes/unreleased/');
 
 /**
  * Directories that were REMOVED or renamed. A citation of one of these is
@@ -85,8 +90,15 @@ const ROOTS = [
  */
 const STRICT_DIRS = ['docs/ops/', 'docs/FunctionalSpecs/'];
 
-/** Not resolvable, and legitimately so. */
-const UNRESOLVABLE = /[*?{}<>$|]|\.\.\.|\bNNNN\b|^https?:/;
+/**
+ * Not resolvable, and legitimately so.
+ *
+ * `?` is NOT here (#1467 r1). Treating a query string as unresolvable meant
+ * any query-bearing dead route bypassed the check entirely — a deep link
+ * concealed the staleness. Query and fragment are now STRIPPED before
+ * matching instead.
+ */
+const UNRESOLVABLE = /[*{}<>$|]|\.\.\.|\bNNNN\b|^https?:|^mailto:/;
 
 function tracked(glob) {
   return execFileSync('git', ['ls-files', ...glob], { encoding: 'utf8' })
@@ -94,9 +106,32 @@ function tracked(glob) {
     .filter(Boolean);
 }
 
-const docs = tracked(['docs/**/*.md', 'docs/*.md']).filter(
-  (f) => !SKIP_DIRS.some((d) => f.startsWith(d)),
-);
+const docs = tracked(['docs/**/*.md', 'docs/*.md'])
+  .filter((f) => !SKIP_DIRS.some((d) => f.startsWith(d)))
+  .filter((f) => !isShippedReleaseNote(f));
+
+/**
+ * Existence is decided from the TRACKED tree, not the working tree (#1467 r1).
+ *
+ * `existsSync` made the result depend on whichever untracked files happen to
+ * sit in the checkout: `contracts/.env` exists on a developer's machine and
+ * not in CI, so a baseline generated locally was 6 findings short of what CI
+ * would compute — and the check would have warned from its first run, which
+ * is exactly the red-on-arrival failure the ratchet exists to avoid. A repo
+ * path cited in the docs should resolve for everyone, so the tracked tree is
+ * the right authority; operator-created files (`contracts/.env`) legitimately
+ * do not resolve and must not be cited as if they were repo content.
+ */
+const TRACKED = new Set(tracked(['.']));
+const TRACKED_DIRS = new Set();
+for (const f of TRACKED) {
+  const parts = f.split('/');
+  for (let i = 1; i < parts.length; i++) TRACKED_DIRS.add(parts.slice(0, i).join('/'));
+}
+const resolves = (p) => {
+  const clean = p.replace(/\/+$/, '');
+  return TRACKED.has(clean) || TRACKED_DIRS.has(clean);
+};
 
 /**
  * Routes the dApp actually mounts, derived from the router.
@@ -144,11 +179,23 @@ for (const file of docs) {
       ...[...line.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]),
     ];
     for (const raw of tokens) {
-      const tok = raw.replace(/[.,;:)]+$/, '');
-      if (UNRESOLVABLE.test(tok)) continue;
+      // Strip query + fragment first, so a deep link cannot hide a dead
+      // route or path behind them (#1467 r1).
+      const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0];
+      if (!tok || UNRESOLVABLE.test(tok)) continue;
+
+      // Resolve a RELATIVE markdown target against the citing doc's own
+      // directory (#1467 r1). Operator docs normally link as
+      // `../../contracts/script/Foo.s.sol`, and the root-prefix test ignored
+      // every one of those — so stale links, and even references to removed
+      // directories, landed unnoticed unless the visible label happened to
+      // repeat the path in backticks.
+      const asRepoPath = tok.startsWith('.')
+        ? posix.normalize(posix.join(dirname(file), tok))
+        : tok;
 
       // ── removed / renamed directories: checked EVERYWHERE ───────────
-      const removed = REMOVED_DIRS.find(([d]) => tok.startsWith(d));
+      const removed = REMOVED_DIRS.find(([d]) => asRepoPath.startsWith(d));
       if (removed) {
         findings.push({
           file,
@@ -162,10 +209,9 @@ for (const file of docs) {
       // ── does-it-exist: only in the live operator / spec docs ────────
       if (
         STRICT_DIRS.some((d) => file.startsWith(d)) &&
-        ROOTS.some((r) => tok.startsWith(r))
+        ROOTS.some((r) => asRepoPath.startsWith(r))
       ) {
-        const path = tok.split('#')[0];
-        if (!existsSync(path)) {
+        if (!resolves(asRepoPath)) {
           findings.push({
             file,
             n: i + 1,

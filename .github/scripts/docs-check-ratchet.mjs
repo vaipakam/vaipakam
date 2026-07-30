@@ -25,10 +25,36 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-/** Per-file counts, so one file's fix cannot mask another's regression. */
+/**
+ * Per-file FINGERPRINTS, not counts (#1467 r1).
+ *
+ * A count-only baseline permits a new defect whenever another finding in the
+ * same file is fixed in the same change: swap one stale route for a different
+ * stale route and `n === was`, so nothing is reported. It also banks reusable
+ * headroom after any improvement whose baseline is not immediately lowered —
+ * a later new finding can restore the old count and pass.
+ *
+ * The invariant is "no NEW instance lands", so identity is what has to be
+ * compared. The fingerprint is the finding's `tok` (its stable subject: the
+ * cited path, the `cmd:VARS` pair, `--value`) and deliberately NOT its line
+ * number, so unrelated edits above it do not read as regressions.
+ */
 export function tally(findings) {
   const t = {};
-  for (const f of findings) t[f.file] = (t[f.file] ?? 0) + 1;
+  const seen = {};
+  for (const f of findings) {
+    const subject = f.tok ?? f.why;
+    // ORDINAL-suffixed, so repeat occurrences of one subject stay countable.
+    // De-duplicating by subject alone looked tidier and quietly weakened the
+    // bar: with `cast:PRIVATE_KEY` already twice in a file, a third would add
+    // no new fingerprint and pass. The ordinal restores occurrence
+    // sensitivity while staying immune to line-number churn from edits
+    // above.
+    const key = `${f.file}\u0000${subject}`;
+    seen[key] = (seen[key] ?? 0) + 1;
+    (t[f.file] ??= []).push(`${subject}#${seen[key]}`);
+  }
+  for (const k of Object.keys(t)) t[k] = t[k].sort();
   return t;
 }
 
@@ -50,15 +76,17 @@ export function writeBaseline(path, counts) {
 export function compare(counts, baseline) {
   const regressions = [];
   const improvements = [];
-  for (const [file, n] of Object.entries(counts)) {
-    const was = baseline[file] ?? 0;
-    if (n > was) regressions.push({ file, was, now: n });
+  for (const [file, fps] of Object.entries(counts)) {
+    const was = new Set(baseline[file] ?? []);
+    const added = fps.filter((fp) => !was.has(fp));
+    if (added.length) regressions.push({ file, added });
   }
   for (const [file, was] of Object.entries(baseline)) {
-    const now = counts[file] ?? 0;
-    if (now < was) improvements.push({ file, was, now });
+    const now = new Set(counts[file] ?? []);
+    const gone = was.filter((fp) => !now.has(fp));
+    if (gone.length) improvements.push({ file, gone });
   }
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const total = Object.values(counts).reduce((a, b) => a + b.length, 0);
   return { regressions, improvements, total };
 }
 
@@ -73,7 +101,7 @@ export function report(name, findings, baselinePath, { write } = {}) {
 
   if (write) {
     writeBaseline(baselinePath, counts);
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const total = Object.values(counts).reduce((a, b) => a + b.length, 0);
     console.log(`${name}: baseline written — ${total} finding(s) across ${Object.keys(counts).length} file(s).`);
     return 0;
   }
@@ -86,8 +114,13 @@ export function report(name, findings, baselinePath, { write } = {}) {
 
   const { regressions, improvements, total } = compare(counts, baseline);
 
+  const addedByFile = new Map(regressions.map((r) => [r.file, new Set(r.added)]));
+  const printSeen = {};
   for (const f of findings) {
-    if (regressions.some((r) => r.file === f.file)) {
+    const subject = f.tok ?? f.why;
+    const key = `${f.file}\u0000${subject}`;
+    printSeen[key] = (printSeen[key] ?? 0) + 1;
+    if (addedByFile.get(f.file)?.has(`${subject}#${printSeen[key]}`)) {
       console.error(`${f.file}:${f.n}  ${f.tok ?? ''}`);
       if (f.line) console.error(`    ${f.line.trim()}`);
       console.error(`    -> ${f.why}\n`);
@@ -96,14 +129,22 @@ export function report(name, findings, baselinePath, { write } = {}) {
 
   if (improvements.length) {
     console.log(`${name}: ${improvements.length} file(s) improved — lower the baseline:`);
-    for (const i of improvements) console.log(`    ${i.file}: ${i.was} -> ${i.now}`);
+    for (const i of improvements) {
+      console.log(`    ${i.file}: ${i.gone.length} fixed (${i.gone.slice(0, 3).join(', ')}${i.gone.length > 3 ? ', …' : ''})`);
+    }
     console.log('    (a baseline above reality silently re-permits what was just fixed)\n');
   }
 
   if (regressions.length) {
-    console.error(`${name}: ${regressions.length} file(s) GAINED findings:`);
-    for (const r of regressions) console.error(`    ${r.file}: ${r.was} -> ${r.now}`);
+    console.error(`${name}: ${regressions.length} file(s) gained NEW findings:`);
+    for (const r of regressions) {
+      console.error(`    ${r.file}: ${r.added.join(', ')}`);
+    }
     console.error(`\nTotal ${total}; the frozen backlog is tracked separately.`);
+    console.error(
+      'Identity-based, so swapping one known finding for a different new one ' +
+        'is still a regression — a count-only bar permitted exactly that.',
+    );
     return 1;
   }
 

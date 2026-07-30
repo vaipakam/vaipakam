@@ -37,8 +37,14 @@ on:
   pull_request:
     paths:
       - 'docs/**'
-      - '.github/scripts/check-docs-*.mjs'
+      # Every INPUT that decides these checks' verdicts, not just the
+      # checkers themselves (#1467 r1). `App.tsx` is where the mounted-route
+      # list is derived from, and the ratchet + shell parser implement the
+      # verdicts — a PR removing a route or breaking either module would
+      # otherwise get its first signal from the non-blocking post-merge job.
+      - '.github/scripts/**'
       - '.github/docs-check-baselines/**'
+      - 'apps/defi/src/App.tsx'
 
 permissions:
   contents: read

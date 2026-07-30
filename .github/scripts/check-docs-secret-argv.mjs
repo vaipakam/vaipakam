@@ -43,13 +43,22 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { report } from './docs-check-ratchet.mjs';
+import { argvUnits, logicalLines } from './shell-parse.mjs';
 
-/** Historical records — describe what was true when written; never edited. */
+/**
+ * Historical records — describe what was true when written; never edited.
+ *
+ * `docs/ReleaseNotes/unreleased/` is NOT here (#1467 r1). Those fragments are
+ * current, PR-authored documentation; skipping them meant an unsafe command
+ * could be introduced in the very file whose change triggers this workflow,
+ * and stay skipped after publication too.
+ */
 const SKIP_DIRS = [
-  'docs/ReleaseNotes/',
   'docs/FindingsAndFixes/',
   'docs/OlderDocs/',
 ];
+const isShippedReleaseNote = (f) =>
+  f.startsWith('docs/ReleaseNotes/') && !f.startsWith('docs/ReleaseNotes/unreleased/');
 
 /**
  * External commands whose arguments become argv. Builtins are absent on
@@ -83,7 +92,8 @@ function trackedDocs() {
   return out
     .split('\n')
     .filter(Boolean)
-    .filter((f) => !SKIP_DIRS.some((d) => f.startsWith(d)));
+    .filter((f) => !SKIP_DIRS.some((d) => f.startsWith(d)))
+    .filter((f) => !isShippedReleaseNote(f));
 }
 
 /** Lines inside ```bash / ```sh / ```shell / ```console fences. */
@@ -106,45 +116,48 @@ function shellLines(text) {
 
 function findings(file) {
   const hits = [];
-  for (const { n, line } of shellLines(readFileSync(file, 'utf8'))) {
-    const code = line.replace(/^\s*>?\s*/, '');
-    if (code.trimStart().startsWith('#')) continue;
-
-    // Assignment or prompted read — the value stays in the shell.
-    if (/^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*=/.test(code)) continue;
-    if (/\bread\s+-[a-z]*s/.test(code)) continue;
-
-    const cmds = EXTERNAL.filter((c) =>
-      new RegExp(`(^|[|;&(]|\\s)${c}\\s`).test(code),
-    );
-    if (cmds.length === 0) continue;
+  for (const { n, text } of logicalLines(shellLines(readFileSync(file, 'utf8')))) {
+    if (text.trimStart().startsWith('#')) continue;
 
     // `--value <x>` on a secret-setting command is unsafe by construction:
     // wrangler's own help says it "will leave secret value in plain-text in
     // terminal history".
-    if (/\bsecret\b/.test(code) && /--value(\s|=)/.test(code)) {
-      hits.push({ n, line: code, why: '`--value` puts the secret in argv and in shell history; omit it so wrangler prompts' });
+    if (/\bsecret\b/.test(text) && /--value(\s|=)/.test(text)) {
+      hits.push({
+        n,
+        line: text,
+        tok: '--value',
+        why: '`--value` puts the secret in argv and in shell history; omit it so the tool prompts',
+      });
       continue;
     }
 
-    const vars = [...code.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)]
-      .map((m) => m[1])
-      .filter(looksSecret);
-    const placeholders = [...code.matchAll(/<([A-Za-z_][A-Za-z0-9_]*)>/g)]
-      .map((m) => m[1])
-      .filter(looksSecret);
+    // Per ARGV UNIT, not per line (#1467 r1). A unit is a pipeline stage or
+    // a command substitution paired with the command it invokes, so a token
+    // is attributed to the process that would actually receive it — which is
+    // what makes `printf … | curl -K -` read as safe and
+    // `X=$(cast … $KEY)` read as unsafe.
+    for (const { cmd, text: region } of argvUnits(text)) {
+      if (!EXTERNAL.includes(cmd)) continue;
 
-    const named = [...new Set([...vars, ...placeholders])];
-    if (named.length === 0) continue;
+      const named = [
+        ...new Set([
+          ...[...region.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)].map((m) => m[1]),
+          ...[...region.matchAll(/<([A-Za-z_][A-Za-z0-9_]*)>/g)].map((m) => m[1]),
+        ]),
+      ].filter(looksSecret);
+      if (named.length === 0) continue;
 
-    hits.push({
-      n,
-      line: code,
-      why:
-        `${named.map((v) => `\`${v}\``).join(', ')} reaches \`${cmds[0]}\`'s argv — ` +
-        `readable from \`ps\` / \`/proc/<pid>/cmdline\`. Prompt with \`read -rs\` and pass ` +
-        `options on stdin (\`curl -K -\`), or use the tool's own prompt`,
-    });
+      hits.push({
+        n,
+        line: text,
+        tok: `${cmd}:${named.join(',')}`,
+        why:
+          `${named.map((v) => `\`${v}\``).join(', ')} reaches \`${cmd}\`'s argv — ` +
+          `readable from \`ps\` / \`/proc/<pid>/cmdline\`. Prompt with \`read -rs\` and pass ` +
+          `options on stdin (\`curl -K -\`), or use the tool's own prompt`,
+      });
+    }
   }
   return hits;
 }

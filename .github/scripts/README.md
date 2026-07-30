@@ -1,7 +1,7 @@
 # Mechanical docs checks
 
 Two checks that close defect classes review kept re-finding in prose, plus
-the ratchet they share.
+the ratchet and the shell parser they share.
 
 They exist because of a specific observation: when the same defect shows up
 in a new document each review round, that is a class, and a class cannot be
@@ -12,7 +12,7 @@ on every change.
 
 | Script | Class it closes | Why it recurred |
 | --- | --- | --- |
-| `check-docs-secret-argv.mjs` | A credential reaching an external command's `argv`, where any other user reads it from `ps` / `/proc/<pid>/cmdline` | Found in three separate runbook steps across three review rounds on #1450. In each case the prose around it was careful about secrets; the command was not. |
+| `check-docs-secret-argv.mjs` | A credential reaching an external command's `argv`, where any other user reads it from `ps` / `/proc/<pid>/cmdline` | Found in three separate runbook steps across three review rounds on #1450. In each case the prose around it was careful about secrets; the command was not. Running it over the whole set found **28** in 7 files. |
 | `check-docs-paths.mjs` | A cited repo path or `/app/...` route that does not exist | 147 references to the removed `frontend/` directory across 39 documents (#1462), and `/app/alerts` wrong in three documents at once — including an incident-runbook verification step that would have landed an operator on a blank page. |
 
 ## Running them
@@ -25,11 +25,44 @@ node .github/scripts/check-docs-paths.mjs
 Both are wired into `.github/workflows/release-notes-drift.yml`, on pushes
 to `main` and on PRs that touch `docs/`.
 
+## Answering "does this value reach a process's argv"
+
+`shell-parse.mjs` exists because that question is about shell **structure**,
+and the first cut of the secret check tried to answer it with line-level
+regex. It was wrong three ways at once (#1467 r1) — it missed backslash
+continuations, exempted every assignment (so
+`X=$(cast wallet address $KEY)` passed), and, worst, **flagged the pattern
+these docs recommend**: in `printf 'fmt' "$TOKEN" | curl -K -` the token is
+expanded by a builtin and `curl` receives only stdin, yet it was reported as
+reaching curl's arguments. A check that condemns the safe pattern teaches
+people to ignore it.
+
+So the check now works on **argv units** — a pipeline stage or a command
+substitution, paired with the command it actually invokes — and attributes a
+token to the process that would really receive it. Fixing the structure
+turned 10 findings into 28: eighteen real instances the line scanner could
+not see.
+
 ## The ratchet, and why the bar is not zero
 
-Both checks are red on their first run — 10 and 203 findings — because they
+Both checks are red on their first run — 28 and 266 findings — because they
 describe a real backlog that is already tracked. So they compare against a
-committed per-file baseline and fail only when a file **gains** findings.
+committed per-file baseline of finding **identities** and fail when a file
+gains one that is not in the baseline.
+
+Identities, not counts (#1467 r1): a count-only bar permits swapping one
+stale route for a *different* stale route, since the total is unchanged, and
+banks reusable headroom after any unlowered improvement. Each fingerprint is
+the finding's subject plus an occurrence ordinal — the ordinal so a third
+instance of an already-known subject still registers, and no line number so
+edits above a finding do not read as regressions.
+
+**Existence is decided from the tracked tree, not the working tree.** Using
+`existsSync` made the verdict depend on whichever untracked files happened to
+be present: `contracts/.env` exists on a developer's machine and not in CI,
+so a locally generated baseline was short of what CI would compute and the
+check would have warned from its first run — the exact red-on-arrival failure
+the ratchet exists to prevent.
 
 Two reasons the bar is a ratchet rather than zero:
 
@@ -62,11 +95,17 @@ failure mode these are meant to prevent:
   pattern precisely because `printf` is a builtin, so no separate process
   exists and nothing enters any `argv`.
 - **`check-docs-paths`** closes *staleness*, not *accuracy*: a path that
-  exists but is the wrong one reads as fine. The does-it-exist rule runs
-  only under `docs/ops/` and `docs/FunctionalSpecs/`, because repo-wide it
-  produced 296 findings — design docs legitimately cite planned files. The
-  removed-directory rule runs everywhere and is the zero-false-positive
-  core.
+  exists but is the wrong one reads as fine. The does-it-exist rule runs only
+  under `docs/ops/` and `docs/FunctionalSpecs/`, because repo-wide it
+  produced far more findings than anyone would read — design docs
+  legitimately cite planned files. The removed-directory rule runs everywhere
+  and is the zero-false-positive core. Relative link targets are resolved
+  against the citing document, and query strings and fragments are stripped
+  before matching — both were blind spots that let stale references through
+  (#1467 r1).
+- **`shell-parse.mjs` is not a shell parser.** It does not handle quoting
+  subtleties, `eval`, arrays, process substitution or here-strings. It
+  answers one question well enough to be trusted and no more.
 
 **They are currently non-blocking**, matching this workflow's existing
 philosophy. That is a real limitation, not an oversight: a warning does not
