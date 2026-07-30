@@ -134,10 +134,11 @@ That is a deliberate change, and the reason is worth recording: three
 successive reviews caught this description claiming a mutation was caught by
 one fixture "and only that one", each time because a fixture had since been
 added and nothing ties prose to the fixture set. Exclusivity is also the
-wrong property to have been claiming. What makes a fixture worth keeping is
-that it fails while every fixture below it passes — a statement about the
-order they form, not about uniqueness — and that ordering is exactly what the
-combination cases exist to establish. Review also caught that
+wrong property to have been claiming — and so was the ordering criterion that
+briefly replaced it, since the measured sets are not nested and so "fails while
+the others pass" establishes nothing either. What makes a fixture worth keeping
+is that it pins a distinct behaviour at the boundary and documents it, whether
+or not another fixture happens to catch the same regression. Review also caught that
 checking the day's *published* figure was not enough — the platform could
 publish the clamped number and still reserve against the unclamped one, on
 either the fresh or the recycled side — so the tests read the reservations

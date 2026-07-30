@@ -527,10 +527,13 @@ contract MeshLedgerInvariant is Test {
     // A table next to the tests is edited by whoever edits the tests.
     //
     // Read it as: this mutation is caught by these fixtures. NOT as "only".
-    // Exclusivity is the thing that keeps going wrong, and it is also the
-    // wrong property to care about — what makes a fixture worth keeping is
-    // that it fails while every fixture below it passes, which is a statement
-    // about ORDER, not uniqueness.
+    //
+    // Exclusivity was the wrong property, and so was the ORDER criterion that
+    // briefly replaced it: the measured sets are NOT nested, so "fails while
+    // every fixture below it passes" establishes nothing either — see the note
+    // under the table. What earns a fixture its place is that it pins a
+    // distinct BEHAVIOUR at the boundary and documents that behaviour, whether
+    // or not another fixture happens to catch the same mutation.
     //
     // The mutation site is `RewardAggregatorFacet._…` where the three terms
     // are summed and the schedule is floored — NOT `RewardRemittanceFacet`'s
@@ -704,7 +707,10 @@ contract MeshLedgerInvariant is Test {
     }
 
     /// The third term in the fresh reservation is value already REMITTED to
-    /// mirrors, and it is the one no other test can place at the boundary:
+    /// mirrors, and this is the only fixture that places it at the boundary
+    /// ALONE — the two combination fixtures carry it alongside other terms
+    /// (#1457 r13; the earlier "no other test can place it at the boundary"
+    /// overstated that):
     /// reaching it for real needs a mirror to have been sent almost the whole
     /// allocation. With the other two terms carrying the fixture, dropping
     /// this one from the reserved sum is invisible — Base would keep stamping

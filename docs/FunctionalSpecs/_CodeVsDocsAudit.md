@@ -108,3 +108,38 @@ copying what the code does.
 
 *Maintained by the project owner; review-surfaced findings appended by
 reviewers (human or AI) with a one-line description.*
+
+## D-#1457-01 — Unarmed-day recycled portion: spec says it exists, code says it is zero
+
+**Status:** OPEN — needs an intent decision. Do NOT resolve by editing either side.
+
+**Spec** (`TokenomicsTechSpec.md` §4a, the "pre-mesh funding shape" bullet):
+> An unarmed day is NOT fresh-only: it already carries a recycled portion, sized
+> from the canonical chain's own bucket and remitted from there (Phase A′).
+
+**Code** says the recycled portion is zero on an unarmed day:
+
+- `LibInteractionRewards.chainRewardBudgetSideSplitForDay` — the unarmed
+  else-branch sets `lenderFreshHalf`/`borrowerFreshHalf` from `halfPoolForDay`
+  and leaves both recycled halves at 0.
+- `LibInteractionRewards._dayPoolHalves` — the unarmed fallback returns
+  `(halfPoolForDay(d), 0, false)`; the middle term is the recycled half.
+- `RewardRemittanceFacet._planDay` consequently receives zero recycled value
+  for such a day.
+
+**Why this is not a docs fix.** The spec sentence is deliberate and load-bearing
+— it exists to stop readers assuming arming *introduces* the recycled portion,
+and it says what arming actually changes (canonical-only funding → per-chain
+self-funding with a canonical top-up). If the intent is that Phase A′ funds a
+recycled portion on unarmed days, the CODE is wrong and this is a bug in the
+unarmed path. If the intent is that recycling begins only at arming, the SPEC
+is wrong and this bullet needs rewriting — along with whatever else rests on it.
+
+**Why this is not a code fix either, yet.** Changing the unarmed split changes
+what a pre-cutover day funds, which is the live posture. That is a behaviour
+decision, not a cleanup.
+
+**Surfaced by:** Codex on #1457, with the three citations above. Verified against
+the code before recording. The reviewer's suggested remedy was to change the
+spec; per this project's rule, code-observed behaviour enters the spec only via
+an explicit human intent decision, so it is recorded here instead.
