@@ -54,7 +54,7 @@
  * assumed unclearable.
  *
  * The platform is PRE-LIVE, which makes that assumption false where it counts.
- * The operator-facing slice was 45 citations across 6 runbooks with knowable
+ * The operator-facing slice was 69 citations across 6 runbooks with knowable
  * targets, so it was FIXED rather than frozen. With the gated scope clean, the
  * baseline, the ratchet and its follow-up card are all unnecessary: this gates
  * at zero from its first run.

@@ -26,7 +26,7 @@
  *     following line, an unbounded title separator, a zero-width one.
  *   - EVERY ONE of them produced a false POSITIVE only by way of a consumer
  *     that reported anything it could not resolve. Against a consumer that
- *     asks "is this fragment one of these three known-dead names", each was
+ *     asks "is this fragment one of these two known-dead names", each was
  *     harmless.
  *
  * Chasing a precise extractor by patching patterns does not converge: markdown
@@ -36,9 +36,9 @@
  * to the consumer — where it can actually be discharged.
  *
  * If a future rule genuinely needs precision (see `check-docs-paths.mjs` for
- * the admission criterion, and #1479 / #1472 for the two rules that fail it),
- * the right move is to implement a parser BEHIND this interface, not to keep
- * tightening the patterns in front of it.
+ * the admission criterion, and #1486 / #1479 / #1472 for the three rules that
+ * fail it), the right move is to implement a parser BEHIND this interface, not
+ * to keep tightening the patterns in front of it.
  */
 
 import { readFileSync } from 'node:fs';
