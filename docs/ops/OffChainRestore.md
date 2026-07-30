@@ -186,8 +186,26 @@ then deploy.
    >   billable to us until revoked.
    > - **`ALCHEMY_WEBHOOK_SIGNING_KEY_*`** — rotate at Alchemy; a retained
    >   key lets an attacker forge chain events into the indexer.
-   > - **`DIAG_WALLET_HMAC_KEY`** — rotate; retained, it de-anonymises the
-   >   diagnostics stream.
+   > - **`DIAG_WALLET_HMAC_KEY`** — **do NOT rotate this one blind; it is not
+   >   a like-for-like swap.** `wallet_hash` is
+   >   `HMAC(lowercased_full_wallet, DIAG_WALLET_HMAC_KEY)` and the full
+   >   address is deliberately never stored, so the key is the ONLY way a row
+   >   maps back to a wallet. Rotate it and every restored diagnostics and
+   >   legal-hold row becomes permanently unreachable by wallet — erasure
+   >   requests, their status endpoint, and every legal-hold action recompute
+   >   the hash under the current key and will simply not find rows that
+   >   exist. Re-keying is impossible: it needs the plaintext addresses,
+   >   which is exactly what we chose not to keep.
+   >
+   >   Note also what rotation does NOT buy. The key pseudonymises; it does
+   >   not authenticate. An attacker who read it can already de-anonymise the
+   >   rows they saw, and a new key does not undo that. So the real choice is
+   >   between two coherent options — keep the key and retain
+   >   wallet-addressability of prior rows, or **purge the pre-rotation
+   >   diagnostics rows and then rotate**, which resolves the exposure and
+   >   the orphaning together. Purging is usually right: the rows are
+   >   diagnostics, and any that are under legal hold must be resolved
+   >   first — check that before purging, not after.
    > - **`TG_OPS_BOT_TOKEN`** — easy to miss, and it was: it is a per-Worker
    >   secret rather than a store binding, so it is absent from the binding
    >   lists this section is otherwise driven by. It was equally readable to
@@ -313,13 +331,22 @@ then deploy.
       authoritative list of its STORE bindings, NOT of its secrets. Check
       each Worker's README for plain `wrangler secret put` values too.
 
-   f. The keeper's **operational flags** are not secrets, are not in the
-      archive, and are not committed — so a restore that follows only the
-      steps above completes with the signing key present and every
-      autonomous path dark, indefinitely and silently. They are plain
-      `vars`, described in `apps/keeper/wrangler.jsonc` as
-      operator-managed, and `apps/keeper/wrangler.jsonc`'s committed `vars`
-      block carries only `TG_BOT_USERNAME`:
+   f. The keeper's **operational flags** are not in the archive and are not
+      committed — so a restore that follows only the steps above completes
+      with the signing key present and every autonomous path dark,
+      indefinitely and silently.
+      `apps/keeper/wrangler.jsonc` describes them as "operator-managed vars
+      (non-secret config — plain `vars`)" and its committed `vars` block
+      carries only `TG_BOT_USERNAME`. **That description is wrong and this
+      matters for capture, not just for tidiness.** Verified against the live
+      deployment (2026-07-30): `KEEPER_ENABLED` is a per-Worker
+      **`secret_text`** binding, and §7a step 3 restores it with
+      `wrangler secret put` accordingly. Correcting the config comment is
+      #1465.
+      The consequence here: a `secret_text` value **cannot be read back**,
+      from the API or the dashboard. So capturing these offline is not
+      optional convenience — it is the only record that will exist, and an
+      operator who assumes they can be re-read later will find they cannot:
 
       | Flag | While unset | Arms |
       |---|---|---|
@@ -1102,7 +1129,13 @@ caught at the cheapest stage.
    Confirm the schedule is registered before believing a tick will come:
 
    ```bash
-   curl -sS -X GET -K - <<'HDR' \
+   # UNQUOTED heredoc delimiter — `<<'HDR'` would suppress expansion and send
+   # curl the literal string `$CF_API_TOKEN` as the bearer token (#1450 r21).
+   # `-K -` keeps the token out of the process's argv either way; that is the
+   # point of the form, and quoting it defeats the request instead.
+   # `--fail-with-body` so a 401/404 is a non-zero exit rather than a
+   # success-looking empty `.result`.
+   curl -sS --fail-with-body -X GET -K - <<HDR \
      "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/vaipakam-keeper/schedules" | jq '.result'
    header = "Authorization: Bearer $CF_API_TOKEN"
    HDR
@@ -1190,14 +1223,30 @@ caught at the cheapest stage.
 
    ```bash
    ( cd apps/keeper && wrangler tail --format pretty ) &
-   # Wait for one tick. An ARMED keeper logs its pass start.
-   # A keeper reading the flag as false logs the skip line instead.
+   # Wait for one tick.
    ```
 
-   If the tail shows the skip line, the flag is present and wrong — re-enter
-   it with `wrangler secret put KEEPER_ENABLED` and watch another tick. Do
-   not conclude the restore is complete until a tick has been observed doing
-   work, for each flag you intended to arm.
+   **This works for `KEEPER_ENABLED` and NOT for the two reward flags** — a
+   distinction worth stating, because an earlier version of this step claimed
+   it covered all three:
+
+   - `KEEPER_ENABLED`: `runAutoLifecycle` logs
+     `autoLifecycle skipped: keeper disabled` on the false branch, so a tick
+     distinguishes armed from mis-typed. If you see that line, the flag is
+     present and wrong — re-enter it with
+     `wrangler secret put KEEPER_ENABLED` and watch another tick.
+   - `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED`: **not observable this
+     way.** `runRewardBudgetRemit`, `runRemitAck` and `runCommitmentReport`
+     each `return` at their flag guard with no log at all, so an armed pass
+     with nothing to do and a pass reading its flag as false produce
+     byte-identical output — silence. Nothing outside the Worker can tell
+     them apart. Closing that is #1475 (a pass-start line per pass); until it
+     lands, treat these two as **write-only**: re-enter the value rather than
+     verifying it, and take the first successful remittance or commitment
+     report as the confirmation.
+
+   Do not conclude the restore is complete until a tick has been observed
+   doing work for every flag where that is possible.
 
    Confirm each flag you intended is present and, where the value is
    visible, reads what you meant.
