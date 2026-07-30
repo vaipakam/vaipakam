@@ -35,7 +35,7 @@
  *
  * Usage:
  *   node scripts/restore-from-archive.mjs <decrypted-archive.json> \
- *     [--outdir restore] [--upload] [--remote]
+ *     [--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -65,6 +65,40 @@ const R2_BUCKET = 'vaipakam-legal-vault';
 // SQL identifiers come out of the archive too, so they are untrusted
 // input like everything else in it.
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
+// Per-section table ALLOWLISTS. Identifier syntax alone is not
+// validation: `d1_migrations` is a perfectly-shaped identifier, and a
+// hostile archive naming it would otherwise get a printed
+// `DELETE FROM "d1_migrations"` command against the production
+// database (Codex #1484 r1). The backup only ever exports these fixed
+// sets (`backup.ts` ARCHIVE_TABLES_* + the legacy lz-watcher trio), so
+// anything else in an archive is wrong or hostile — either way, stop.
+// Keep in sync with backup.ts; the #1481 classification guard watches
+// the backup side of that sync.
+const KNOWN_ARCHIVE_TABLES = new Set([
+  // born-off-chain
+  'diag_errors',
+  'diag_legal_holds',
+  'diag_legal_hold_audit',
+  'user_thresholds',
+  'notify_state',
+  'pre_grace_notify_state', // archived since #1480; absent from older archives
+  'telegram_links',
+  'support_tickets',
+  // re-derivable (archived as restore-performance optimisation)
+  'offers',
+  'loans',
+  'activity_events',
+  'oracle_snapshot_state',
+  'indexer_cursor',
+  'liquidity_confidence',
+]);
+const KNOWN_LZ_TABLES = new Set(['lz_alert_state', 'scan_cursor', 'oft_balance_history']);
+
+// FK children of user_thresholds (ON DELETE CASCADE). Replacing the
+// parent destroys live child rows, so an archive that carries the
+// parent but not a child cannot be applied without silent child loss.
+const CASCADE_CHILDREN = ['notify_state', 'pre_grace_notify_state'];
 
 // ── Errors ────────────────────────────────────────────────────────────
 
@@ -148,17 +182,67 @@ export function tableToSql(table) {
 
 /** Write every archived table's SQL file; returns apply-ordered
  *  entries {name, file, rowCount, database}. */
-export function convertD1(archive, outDir) {
+export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db' } = {}) {
+  // A version-1 archive ALWAYS carries d1.archive — backup.ts emits it
+  // unconditionally. Treating its absence like the genuinely optional
+  // legacy lzAlerts section would let a truncated or hostile archive
+  // report a successful EMPTY restore (Codex #1484 r1).
+  if (!Array.isArray(archive?.d1?.archive)) {
+    fail('archive is missing the required d1.archive section — truncated or not a backup archive');
+  }
   const entries = [];
   const sections = [
-    { tables: archive?.d1?.archive, database: 'vaipakam-archive', subdir: 'd1' },
+    {
+      tables: archive.d1.archive,
+      database: 'vaipakam-archive',
+      subdir: 'd1',
+      allowed: KNOWN_ARCHIVE_TABLES,
+    },
     // Pre-#1440 archives still carry the lz-watcher section; its
-    // target database is separate (see OffChainRestore.md §4).
-    { tables: archive?.d1?.lzAlerts, database: 'vaipakam-lz-alerts-db', subdir: 'd1-lz-alerts' },
+    // target database is separate — and operator-named, since the
+    // runbook permits recreating it under any name (§4).
+    {
+      tables: archive?.d1?.lzAlerts,
+      database: lzDatabase,
+      subdir: 'd1-lz-alerts',
+      allowed: KNOWN_LZ_TABLES,
+    },
   ];
-  for (const { tables, database, subdir } of sections) {
+  for (const { tables, database, subdir, allowed } of sections) {
     if (tables === undefined) continue;
     if (!Array.isArray(tables)) fail(`archive d1 section for ${database} is not an array`);
+    const names = new Set(tables.map((t) => t?.name));
+    for (const t of names) {
+      if (!allowed.has(t)) {
+        fail(
+          `archive names table ${JSON.stringify(t)} which the backup never exports to this ` +
+            `section — wrong or hostile archive; refusing to emit a destructive batch for it`,
+        );
+      }
+    }
+    // Cascade completeness: the parent's replace-DELETE destroys live
+    // child rows, so a parent without its archived children cannot be
+    // applied safely (Codex #1484 r1). pre_grace_notify_state is
+    // warn-not-fail: archives written before #1480 legitimately lack
+    // it, and the runbook records that loss as accepted.
+    if (names.has('user_thresholds')) {
+      for (const child of CASCADE_CHILDREN) {
+        if (names.has(child)) continue;
+        if (child === 'pre_grace_notify_state') {
+          console.warn(
+            `⚠ archive carries user_thresholds but not ${child} (pre-#1480 archive?): ` +
+              `the parent's replace-DELETE will cascade-erase live ${child} rows with ` +
+              `nothing to re-import — accepted loss per OffChainRestore.md §4, but know it.`,
+          );
+        } else {
+          fail(
+            `archive carries user_thresholds but not ${child}: applying the parent batch ` +
+              `cascade-erases live ${child} rows with nothing to re-import — dependency-` +
+              `incomplete archive, refusing`,
+          );
+        }
+      }
+    }
     const dir = path.join(outDir, subdir);
     mkdirSync(dir, { recursive: true });
     for (const table of applyOrder(tables)) {
@@ -194,9 +278,15 @@ export function validateR2Key(key) {
 
 /** Decode, write under <outDir>/r2/<key>, verify SHA-256. */
 export function materializeR2(archive, outDir) {
+  // Like d1.archive, backup.ts always emits r2.objects (possibly
+  // empty for a vault with no documents — but the FIELD is present).
+  // A missing field means a truncated/wrong archive, and reporting it
+  // as "zero objects restored, success" would hide missing legal
+  // documents (Codex #1484 r1).
   const objects = archive?.r2?.objects;
-  if (objects === undefined) return [];
-  if (!Array.isArray(objects)) fail('archive r2.objects is not an array');
+  if (!Array.isArray(objects)) {
+    fail('archive is missing the required r2.objects section — truncated or not a backup archive');
+  }
   const root = path.resolve(outDir, 'r2');
   const written = [];
   for (const obj of objects) {
@@ -211,6 +301,21 @@ export function materializeR2(archive, outDir) {
     const digest = createHash('sha256').update(bytes).digest('hex');
     if (digest !== obj.sha256) {
       fail(`r2 key ${obj.key}: SHA-256 mismatch (archive says ${obj.sha256}, decoded ${digest})`);
+    }
+    // The vault is CONTENT-ADDRESSED: the key's 64-hex component IS
+    // the document's SHA-256 (`diagLegalDoc.ts`). `obj.sha256` only
+    // proves the archive is internally consistent — the backup
+    // computed it over whatever bytes were in the bucket, so an
+    // attacker who replaced the object pre-backup gets a matching
+    // digest for free. The key hash is the independent anchor the
+    // D1 `legal_doc_ref` provenance relies on (Codex #1484 r1).
+    const keyHash = obj.key.slice('legal-holds/'.length, -'.pdf'.length);
+    if (digest !== keyHash) {
+      fail(
+        `r2 key ${obj.key}: decoded bytes hash to ${digest}, but the vault is ` +
+          `content-addressed and the key says ${keyHash} — the archived bytes are NOT ` +
+          `the document this key was minted for; treat as tampering, not as a glitch`,
+      );
     }
     mkdirSync(path.dirname(local), { recursive: true });
     writeFileSync(local, bytes);
@@ -234,36 +339,50 @@ export function uploadR2(written, { remote = true, spawn = spawnSync } = {}) {
 
 // ── CLI ───────────────────────────────────────────────────────────────
 
+/** POSIX single-quote for display in printed commands — the emitted
+ *  text must be ONE shell argument even when --outdir carried spaces
+ *  or metacharacters (the upload path avoids this class structurally
+ *  with an argv array; printed commands can only quote). */
+export function shQuote(s) {
+  return `'${String(s).replaceAll("'", `'\\''`)}'`;
+}
+
 export function main(argv) {
   const args = argv.slice(2);
   const positional = [];
   let outDir = 'restore';
   let upload = false;
   let remote = true;
+  let lzDatabase = 'vaipakam-lz-alerts-db';
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--outdir') outDir = args[++i] ?? fail('--outdir needs a value');
     else if (a === '--upload') upload = true;
     else if (a === '--local') remote = false;
+    else if (a === '--remote') remote = true; // explicit form of the default
+    else if (a === '--lz-db') lzDatabase = args[++i] ?? fail('--lz-db needs a value');
     else if (a.startsWith('--')) fail(`unknown flag ${a}`);
     else positional.push(a);
   }
   if (positional.length !== 1) {
     console.error(
-      'Usage: node scripts/restore-from-archive.mjs <decrypted-archive.json> [--outdir restore] [--upload] [--local]',
+      'Usage: node scripts/restore-from-archive.mjs <decrypted-archive.json> ' +
+        '[--outdir restore] [--upload] [--remote|--local] [--lz-db <name>]',
     );
     return 2;
   }
 
   const archive = JSON.parse(readFileSync(positional[0], 'utf8'));
-  const d1 = convertD1(archive, outDir);
+  const d1 = convertD1(archive, outDir, { lzDatabase });
   const r2 = materializeR2(archive, outDir);
 
   console.log(`\nD1: ${d1.length} table batch(es) written. Apply IN THIS ORDER`);
   console.log('(parents before children — OffChainRestore.md §4), then verify');
   console.log('each post-import COUNT(*) EQUALS the row count printed here:\n');
   for (const [i, e] of d1.entries()) {
-    console.log(`  ${i + 1}. wrangler d1 execute ${e.database} --file=${e.file} --remote   # ${e.rowCount} rows`);
+    console.log(
+      `  ${i + 1}. wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} --remote   # ${e.rowCount} rows`,
+    );
   }
   const r2Bytes = r2.reduce((n, o) => n + o.size, 0);
   console.log(`\nR2: ${r2.length} object(s), ${r2Bytes} bytes, SHA-verified under ${path.join(outDir, 'r2')}/`);

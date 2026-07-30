@@ -1058,7 +1058,10 @@ For each table:
 
    It writes one batch per table under `restore/d1/` (and
    `restore/d1-lz-alerts/` for a pre-#1440 archive's `lzAlerts`
-   section), prints the `wrangler d1 execute` commands **in FK apply
+   section — pass `--lz-db <name>` if you created that legacy
+   database above under a custom name, so the printed commands
+   target the database you actually made), prints the
+   `wrangler d1 execute` commands **in FK apply
    order**, and covers §5's R2 materialization in the same run. Its
    test suite (`scripts/restore-from-archive.test.mjs`, run in CI)
    pins the hostile-input rejections. This document deliberately
