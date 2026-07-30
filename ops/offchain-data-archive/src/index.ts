@@ -244,19 +244,72 @@ async function openSupportTicketCount(env: Env): Promise<string> {
 async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
   try {
     const out = await runNightlyBackup(env, cfg);
-    await tg(
+    // A failed ops notification must not pass silently (#1470 r1). `tg()`
+    // returns false for unset credentials, a non-2xx, or a network error,
+    // and discarding that left a nightly run reporting success with no
+    // record of it anywhere an operator looks. The upload already happened,
+    // so this must not fail the run — but it CAN make the gap visible in
+    // the Worker log, which is the only channel left when the alert channel
+    // is the thing that broke.
+    const notified = await tg(
       env,
       [
         '✅ Nightly off-chain backup succeeded',
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
-        `  sha256: ${out.archiveSha256.slice(0, 16)}…`,
+        // FULL digest, not truncated (#1469). The reason is mundane, and
+        // narrower than an earlier version of this comment claimed: a
+        // 16-character prefix IS comparable — an operator can hash a
+        // candidate archive and check its first 16 hex characters, and an
+        // accidental match is ~2^-64. Saying it "cannot be compared" was
+        // overstating in the opposite direction from the original error.
+        //
+        // What changes with the full value is the cost to an adversary
+        // CHOOSING the input. Matching a fixed 64-bit prefix deliberately is
+        // a truncated second-preimage search at ~2^64; matching all 256 bits
+        // is ~2^256. Both are bounded targets — the full digest RAISES the
+        // bound, it does not remove one, and saying otherwise was this
+        // comment's third wording and its second overstatement. Since the
+        // other 48 characters are free, raising it costs nothing.
+        //
+        // THIS IS NOT A PROVENANCE ANCHOR, and an earlier version of this
+        // comment claimed it was. The claim was wrong three times over, and
+        // is recorded here because the mistake is easy to repeat:
+        //
+        //   1. The SAME credential writes both sides. A Workers-Edit
+        //      compromise yields the B2 write key AND `TG_OPS_BOT_TOKEN`
+        //      from this one environment, so whoever can forge the archive
+        //      can also write the record that would attest to it. A record
+        //      cannot vouch for its own author.
+        //   2. The channel is not append-only. Telegram's `editMessageText`
+        //      lets a bot edit its own messages and `deleteMessage` lets it
+        //      remove them, so "cannot rewrite the message sent that night"
+        //      was simply false.
+        //   3. Nothing reads it. `OffChainRestore.md` verifies the
+        //      manifest's self-reported SHA, byte length and row counts and
+        //      never compares them to any operator record, so even a
+        //      trustworthy anchor would not be consulted.
+        //
+        // The underlying gap is real — a manifest proves integrity, never
+        // authorship, so a forged archive with a self-consistent manifest
+        // passes every check the restore makes. Closing it needs a store
+        // this Worker cannot write to, and a restore step that consults it.
+        // Tracked as #1473; this line is not that.
+        `  sha256: ${out.archiveSha256}`,
         `  rows: ${out.rowsBackedUp}, R2 objects: ${out.r2ObjectsBackedUp}`,
         `  open support tickets: ${await openSupportTicketCount(env)}`,
         `  took ${(out.durationMs / 1000).toFixed(1)} s`,
       ].join('\n'),
     );
+    if (!notified) {
+      console.warn(
+        `[cloud-backup] nightly SUCCEEDED but the ops notification did not send. ` +
+          `archive=${out.archiveKey} sha256=${out.archiveSha256} ` +
+          `rows=${out.rowsBackedUp} r2Objects=${out.r2ObjectsBackedUp}. ` +
+          `The backup exists in B2; only the record of it is missing.`,
+      );
+    }
   } catch (err) {
     const msg = (err as Error).message;
     await tg(env, `🚨 Nightly backup FAILED: ${msg}`);
