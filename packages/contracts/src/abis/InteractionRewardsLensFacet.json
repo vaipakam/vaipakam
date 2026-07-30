@@ -554,6 +554,16 @@
   },
   {
     "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycleDayMetricsCanonicalChainOnly",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardEntrySetMismatch",
     "inputs": [
       {
