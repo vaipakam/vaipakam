@@ -194,11 +194,40 @@ async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
   // from the declaration: no rule means indefinite retention.
   const declPath = new URL('../bucket-lifecycle.json', import.meta.url);
   const decl = JSON.parse(readFileSync(declPath, 'utf8'));
-  const rules = decl.rules.map((r) => ({
-    fileNamePrefix: r.fileNamePrefix,
-    daysFromUploadingToHiding: r.daysFromUploadingToHiding,
-    daysFromHidingToDeleting: r.daysFromHidingToDeleting,
-  }));
+  // EVERY declared field, not the three this script happened to care about
+  // (#1471 r3). Rebuilding each rule from a hand-picked subset means
+  // `b2_update_bucket` CLEARS any field left out — so the moment the
+  // declaration sets `daysFromStartingToCancelingUnfinishedLargeFiles` to a
+  // real value, a documented setup rerun would silently drop it while
+  // `--check` still treats it as part of the configuration. That is the same
+  // defect as r2's hardcoded `daysFromHidingToDeleting: 1`, one field over:
+  // setup writing a rule the declaration did not describe.
+  //
+  // Copying the declared rule wholesale is what makes the declaration
+  // authoritative. A new field added to `bucket-lifecycle.json` reaches B2
+  // without touching this file, which is the property that was missing.
+  //
+  // The spread is guarded rather than trusted: an unrecognised key would be
+  // forwarded straight to B2, and this class of defect has now been found
+  // twice in this file (r2 hardcoded one field, r3 dropped another), so it
+  // fails here where it is cheap instead of at `b2_update_bucket`.
+  const B2_RULE_FIELDS = new Set([
+    'fileNamePrefix',
+    'daysFromUploadingToHiding',
+    'daysFromHidingToDeleting',
+    'daysFromStartingToCancelingUnfinishedLargeFiles',
+  ]);
+  for (const r of decl.rules) {
+    const unknown = Object.keys(r).filter((k) => !B2_RULE_FIELDS.has(k));
+    if (unknown.length) {
+      fail(
+        `bucket-lifecycle.json rule "${r.fileNamePrefix}" declares field(s) B2 does ` +
+          `not accept: ${unknown.join(', ')}. Add them to B2_RULE_FIELDS here only ` +
+          `if b2_update_bucket genuinely accepts them.`,
+      );
+    }
+  }
+  const rules = decl.rules.map((r) => ({ ...r }));
   const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_update_bucket', {
     accountId,
     bucketId,

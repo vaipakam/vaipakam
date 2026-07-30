@@ -28,10 +28,20 @@ npm run bucket:lifecycle:apply   # make live match the declaration
 **Capabilities, and why they differ deliberately.** `print` and `check` need
 only `listBuckets`, so the ordinary bucket-scoped **read-only** key works —
 drift has to be observable without holding anything dangerous. `apply` needs
-`writeBucketLifecycleRules`, which **neither pipeline key has**, on purpose:
+`writeBuckets`, which **neither pipeline key has**, on purpose:
 the write key exists to push objects, not to reconfigure the bucket. Use a
-temporary key scoped to this bucket with `listBuckets` +
-`readBucketLifecycleRules` + `writeBucketLifecycleRules`, then delete it.
+temporary key scoped to this bucket with `listBuckets` + `writeBuckets`,
+then delete it.
+
+> **`readBucketLifecycleRules` / `writeBucketLifecycleRules` are not B2
+> capabilities.** An earlier revision of this section asked for them, so the
+> documented least-privilege procedure could not be followed — B2 rejects the
+> key creation. `b2_update_bucket` authorises against `writeBuckets`, and the
+> rules are READ back through `b2_list_buckets` under plain `listBuckets`.
+> Confirmed against the live read-only key, whose full capability set is
+> `listBuckets listFiles readFiles` and which reads the lifecycle rules
+> without difficulty — which is also why `--check` and `--print-live` need
+> nothing beyond it.
 
 Do **not** use the master key for this. It also carries `deleteBuckets`,
 `deleteFiles`, `deleteKeys` and `bypassGovernance` — none of which this task
