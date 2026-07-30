@@ -2327,6 +2327,15 @@ The mesh watcher's "composition unverifiable" advisory is a weaker
 signal than this and should not be used on its own: it clears at the
 first credit whether or not a pre-upgrade release was ever recorded.
 
+**It does not require the canonical role.** Deliberately: the state it
+reconstructs is HISTORY, so a Diamond that released remittances while
+canonical and was later demoted still needs them counted. Gating on the
+current role would leave such a chain permanently unseeded unless an
+operator re-promoted a mirror purely to run a migration. The real gate is
+recorded history and it is self-enforcing — only the canonical chain ever
+creates reservations, so a chain that never was canonical reverts
+`SeedNothingToScan`.
+
 **Running it.** `seedReleasedRemitStranded(upTo)` is ADMIN-only and
 **chunked**: the first call pins the range end at the current
 reservation nonce, and each subsequent call must advance strictly toward

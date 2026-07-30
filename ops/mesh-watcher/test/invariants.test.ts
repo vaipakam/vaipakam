@@ -336,6 +336,58 @@ describe('bucket-coverage — role resolution across a stale snapshot (#1448 r11
     expect(found[0].severity).toBe('critical');
   });
 
+  it('FRESH: pages when the chain\'s own flag says mirror, whatever its id', () => {
+    // The r2 two-source rule. r11 lost this conjunct while refactoring, so
+    // the configured canonical chain could take the allowance from its id
+    // alone even while its own flag said mirror. That split-brain state is
+    // exactly when the independent evidence "reservations are under-backed"
+    // matters most, and `role-consistency` reporting the mismatch does not
+    // preserve it.
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 100_000_000_000_000_000_000n,
+        outstandingRecycled: 150_000_000_000_000_000_000n,
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        isCanonicalRewardChain: false, // the chain disagrees with the config
+      }),
+    );
+    const obs = observation();
+    const split: MeshObservation = {
+      ...obs,
+      canonicalChainId: CANONICAL, // config says this IS canonical
+      freshLocals: new Map([[CANONICAL, l]]),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(split, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found.length).toBe(1);
+    expect(found[0].severity).toBe('critical');
+  });
+
+  it('STALE with no composition read: reports a gap, does NOT page', () => {
+    // Neither role source is available — no same-block claim, and the
+    // topology view is from a different point in time. Paging would call a
+    // canonical chain's legitimate released shortfall corruption for the
+    // sole crime of also missing the new selector.
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 100_000_000_000_000_000_000n,
+        outstandingRecycled: 150_000_000_000_000_000_000n,
+        composition: null, // selector unavailable on this chain
+      }),
+    );
+    const obs = observation();
+    const stale: MeshObservation = {
+      ...obs,
+      canonicalChainId: MIRROR,
+      freshLocals: new Map(),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(stale, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found).toEqual([]);
+  });
+
   it('still pages a STALE chain whose own claim is mirror', () => {
     // The stale fallback reads the chain's OWN same-block claim, so it must
     // not become a blanket amnesty: a chain that says it is a mirror is held
