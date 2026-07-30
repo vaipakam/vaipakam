@@ -68,9 +68,11 @@ designed to be open so that any third party can race for the
 liquidation bonus once HF crosses 1.0 or grace expires. **No Diamond
 role is granted to keeper-bot operators**, and none should be: a
 keeper that needed an admin role would be a structural hazard. The
-operator's own hf-watcher Cloudflare Worker
-(`ops/hf-watcher/src/keeper.ts`) follows the same model — it submits
-liquidations from a hot key that holds zero on-chain authority.
+operator's own keeper Cloudflare Worker
+(`apps/keeper/src/liquidator.ts`) follows the same model — it submits
+liquidations from a hot key that holds no admin or upgrade authority
+(the narrow roles that key CAN hold are itemised in the key table
+below).
 
 This means the role-rotation procedure below does **not** need to
 touch keeper-bot keys at all. Operators of `vaipakam-keeper-bot` rotate
@@ -192,7 +194,7 @@ exactly the assumption that would leave the attacker authorized
 ### `apps/keeper` + `apps/agent` (public-facing — user HF alerts + autonomous keeper)
 
 > These secrets moved when the Stage 3 split replaced the single
-> `ops/hf-watcher` Worker with `apps/{keeper,agent,indexer}`. The
+> pre-split `hf-watcher` Worker with `apps/{keeper,agent,indexer}`. The
 > user-facing alert and keeper duties are split across `apps/keeper` and
 > `apps/agent`, and the shared credentials now live in the **account-level
 > Secrets Store** rather than per-Worker — so one write covers both

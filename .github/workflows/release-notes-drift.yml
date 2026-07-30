@@ -9,13 +9,38 @@
 # gap is visible in the Actions tab. It never fails the run — these are
 # disciplines, not merge gates.
 #
+# It also runs a BLOCKING docs path gate: no operator runbook may cite a
+# directory that no longer exists. 147 references to the removed `frontend/`
+# survived the Stage 3 refactor across 39 documents (#1462), and nothing tells
+# the author of a rename which prose mentions the old name — so the class is
+# re-checked mechanically rather than by remembering.
+#
+# It gates at ZERO with no baseline. The operator-facing citations were fixed
+# in the same change that added it, so a failure is always a NEW one. Scope is
+# `docs/ops/`; widening it to the design docs is #1462's completion criterion.
+#
+# Three related rules were built alongside it and DEFERRED, all for one
+# reason — each needs a precise markdown extractor, which means a real parser:
+# does-it-exist against the tracked tree (#1486), non-canonical `/app/…` URL
+# citations (#1479), and secrets reaching a command's argv (#1472). See the
+# admission criterion at the top of .github/scripts/check-docs-paths.mjs.
+#
 # (Filename kept as release-notes-drift.yml for stable references; the
-# check now covers functional specs too.)
-name: Docs-drift check (release notes + functional specs)
+# check now covers functional specs and the mechanical check too.)
+name: Docs-drift check (release notes + functional specs + path gate)
 
 on:
   push:
     branches: [main]
+  # NO `paths:` filter (#1467 r3). Any tracked file under any repository root
+  # can be the TARGET of a citation, so deleting or renaming one makes a
+  # document stale without touching that document — and a filter listing
+  # inputs can never enumerate that. An earlier filter listed `docs/**` plus
+  # the checker's own files and still missed the commonest case: a PR that
+  # removes `contracts/script/Foo.s.sol` while every citation of it sits
+  # untouched. The check takes seconds; running it always is cheaper than a
+  # filter that is wrong in the direction of silence.
+  pull_request:
 
 permissions:
   contents: read
@@ -29,6 +54,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check for release-note + functional-spec updates
+        if: github.event_name == 'push'
         env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
@@ -80,3 +106,28 @@ jobs:
           if [ "$ok" = 1 ]; then
             echo "Docs-drift check OK." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # ── Docs path gate ────────────────────────────────────────────────
+      #
+      # BLOCKING, unlike the release-note/functional-spec warnings above.
+      # It can be, because it gates at ZERO: the operator runbooks it covers
+      # were cleaned in the same change that added it, so a failure always
+      # means a NEW stale citation rather than an old one.
+      #
+      # There is no baseline and no ratchet. Earlier revisions had both,
+      # solely because the check was red on arrival; the platform is pre-live,
+      # so the ~45 operator-facing citations were fixed instead of frozen.
+      #
+      # Scope is `docs/ops/` — where a stale path costs a person real time and
+      # where the cleanup has actually happened. Widening it to the design
+      # docs is #1462's completion criterion, not a knob to turn here.
+      #
+      # No `setup-node`: `ubuntu-latest` ships a current Node and the scripts
+      # use only ESM + `node:fs`/`node:child_process`. Avoiding the action also
+      # avoids the allowlist hazard — a `uses:` whose exact SHA is not
+      # allowlisted fails the WHOLE workflow at startup, not just the step.
+      - name: Docs path gate (removed-directory citations)
+        run: |
+          set -euo pipefail
+          node .github/scripts/check-docs-paths.mjs
+          echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"

@@ -233,22 +233,23 @@ mainnet without preflight discipline:
   pad is itself the problem (`intrinsic gas too high` rejects at
   submit time on certain RPCs, fixed in v1 → v2 of today's run);
   otherwise leave the multiplier at its 130 % default.
-- **Silent watcher chain-skip on missing per-chain RPC secret.**
-  `getChainConfigs(env)` (historically `ops/hf-watcher/src/env.ts:151`;
-  the same logic now lives in the `apps/*` Workers) drops any
-  chain whose `RPC_<CHAIN>` Cloudflare secret is unset — the
-  watcher's round-robin cron then never visits that chain, D1 stays
-  empty for its `chain_id`, and the OfferBook / loan tables show
-  zero rows for it. The `[8c]` / cf-watcher `[c]` RPC-secret check
-  is now hard-fail (was warn-only pre-2026-05-06): the deploy stops
-  with a clear setup command if the expected `RPC_<CHAIN>` secret is
-  missing on the watcher Worker. **Prerequisite — set ALL per-chain
+- **Silent chain-skip on missing per-chain RPC secret.**
+  `getChainConfigs(env)` in the INDEXER (`apps/indexer/src/env.ts:309`
+  — the one `chainIndexer.ts` consults to decide which chains populate
+  the offer/loan tables) drops any chain whose `RPC_<CHAIN>` binding
+  is unset — the indexing cron then never visits that chain, D1 stays
+  empty for its `chain_id`, and the OfferBook / loan tables show zero
+  rows for it. The keeper has its own copy (`apps/keeper/src/env.ts:296`)
+  gating liquidation/notification passes — repairing that one does NOT
+  un-skip indexing. The deploy scripts' RPC-secret check is hard-fail
+  (was warn-only pre-2026-05-06): the deploy stops with a clear setup
+  command if the expected `RPC_<CHAIN>` value is missing. **Prerequisite — set ALL per-chain
   RPC secrets before the first deploy targeting that chain** (see
   next section).
 
 ### Prerequisites: one-time watcher RPC-secret setup
 
-> **STALE — `ops/hf-watcher` no longer exists.** It was removed by the
+> **STALE — the pre-split `hf-watcher` Worker no longer exists.** It was removed by the
 > Stage 3 split; its role is now `apps/{keeper,indexer,agent}`, and their
 > per-chain `RPC_*` values live in the **account-level Secrets Store**, not
 > in per-Worker `wrangler secret put`. The database is `vaipakam-archive`,
@@ -264,62 +265,87 @@ mainnet without preflight discipline:
 
 Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
 and live ONLY as Cloudflare Worker secrets — never in the repo. Set
-once per chain, BEFORE the first `deploy-chain.sh <slug>` (or
-`deploy-mainnet.sh --phase cf-watcher`) targeting that chain. The
+once per chain, BEFORE the first `deploy-chain.sh <slug>` (or the
+`deploy-mainnet.sh` Worker phases `cf-keeper` / `cf-indexer` /
+`cf-agent`) targeting that chain. The
 deploy script's hard-fail check refuses to proceed without them:
 
+All three Stage 3 Workers bind their `RPC_*` values from the shared
+account-level Secrets Store (`store_id 1e66429d0fa24aa38a27bc05b7bcf63e`
+in each `wrangler.jsonc`) — a per-Worker `wrangler secret put` would
+provision only that one Worker and leave the indexer/agent bindings
+unset. Create each entry once in the store (`create` for a new name,
+`update --secret-id` for an existing one; `--remote` targets the
+deployed store, and wrangler prompts for the value so it never lands in
+shell history):
+
 ```bash
-cd ops/hf-watcher
+# Existing entries and their IDs (default page size is 10 and the store
+# holds 20+ names, so raise it or the entry you need may not be shown):
+npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e \
+    --remote --per-page 100
 
-# Testnet trio
-echo -n "$BASE_SEPOLIA_RPC_URL" | npx wrangler secret put RPC_BASE_SEPOLIA
-echo -n "$ARB_SEPOLIA_RPC_URL"  | npx wrangler secret put RPC_ARB_SEPOLIA
-echo -n "$OP_SEPOLIA_RPC_URL"   | npx wrangler secret put RPC_OP_SEPOLIA
-
-# Mainnet (when those phases land)
-echo -n "$RPC_ETH"    | npx wrangler secret put RPC_ETH
-echo -n "$RPC_BASE"   | npx wrangler secret put RPC_BASE
-echo -n "$RPC_ARB"    | npx wrangler secret put RPC_ARB
-echo -n "$RPC_OP"     | npx wrangler secret put RPC_OP
-echo -n "$RPC_ZKEVM"  | npx wrangler secret put RPC_ZKEVM
-echo -n "$RPC_BNB"    | npx wrangler secret put RPC_BNB
+# New entry (e.g. first deploy of a chain). --scopes is REQUIRED by the
+# create subcommand; "workers" grants the Workers runtime access:
+npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+    --name RPC_BASE_SEPOLIA --scopes workers --remote
 ```
 
-Verify with `npx wrangler secret list` from inside `ops/hf-watcher` —
-each chain you plan to index must show its `RPC_<CHAIN>` entry.
-Cloudflare auto-redeploys the Worker on every `secret put` so the
-new value takes effect on the next cron tick.
+The full name set the deploy scripts expect, per chain slug (see the
+`EXPECTED_RPC_SECRET` maps in `deploy-{chain,testnet,mainnet}.sh`):
+testnets `RPC_BASE_SEPOLIA` / `RPC_ARB_SEPOLIA` / `RPC_OP_SEPOLIA` /
+`RPC_SEPOLIA` / `RPC_BNB_TESTNET` / `RPC_POLYGON_AMOY`; mainnets
+`RPC_ETH` / `RPC_BASE` / `RPC_ARB` / `RPC_OP` / `RPC_BNB` /
+`RPC_POLYGON`. The per-Worker chain sets differ — the keeper's
+`wrangler.jsonc` deliberately omits `RPC_POLYGON` / `RPC_POLYGON_AMOY`
+(agent-only) and `RPC_ZKEVM` (out of scope) — so check the target
+Worker's `secrets_store_secrets` block when in doubt.
+
+Verify against the STORE, not a Worker: re-run the `secret list`
+command above and confirm the name is present. (A per-Worker
+`npx wrangler secret list` cannot see store-bound values — and note
+that `verify_rpc_secret_on_worker()` in the deploy scripts still
+checks per-Worker secrets, a latent mismatch tracked as **#1492**;
+until it lands, that preflight can hard-fail even when the store is
+correctly provisioned.)
 
 ### Auto post-deploy steps performed by the script
 
-`deploy-chain.sh` and `deploy-mainnet.sh phase_cf_watcher` already
+`deploy-chain.sh` and the `deploy-mainnet.sh` Worker phases
+(`cf-keeper` / `cf-indexer` / `cf-agent` — the retired `cf-watcher`
+phase is rejected by the script) already
 perform these AUTOMATICALLY after the contract deploy lands — no
 manual follow-up required when the prerequisites are in place:
 
 1. **ABI + deployments sync** (step `[6]` / `phase_abi_sync`) — re-
-   exports per-facet ABIs to `frontend/src/contracts/abis/`,
-   `ops/hf-watcher/src/abis/`, and (if sibling repo present)
-   `vaipakam-keeper-bot/src/abis/`. Regenerates the consolidated
-   `deployments.json` for both consumer surfaces with the new
+   exports per-facet ABIs to `packages/contracts/src/abis/` and (if
+   the sibling repo is present) `vaipakam-keeper-bot/src/abis/`.
+   Regenerates the consolidated `deployments.json` that every consumer
+   — the React surfaces and all three Workers — reads, with the new
    diamond + facet addresses.
 2. **Frontend build + Cloudflare deploy** (step `[7]` /
    `phase_cf_frontend`) — runs `npm run build` then
-   `npx wrangler deploy` from `frontend/`. Skip with
+   `npx wrangler deploy` from `apps/defi/`. Skip with
    `--skip-frontend` if the build is intentionally lagging.
-3. **Watcher Cloudflare deploy** (step `[8a]` / cf-watcher `[a]`) —
-   `npx wrangler deploy` from `ops/hf-watcher/`. Pushes the new
-   bundle (which now embeds the new diamond addresses) so the cron
-   reads from the right contract on the next tick.
-4. **D1 migrations** (step `[8b]` / cf-watcher `[b]`) — applies any
-   pending schema migrations to the remote `vaipakam-alerts-db`.
-   Idempotent — wrangler skips already-applied entries.
-5. **RPC-secret presence check** (step `[8c]` / cf-watcher `[c]`) —
-   verifies the per-chain `RPC_<CHAIN>` secret exists on the Worker.
-   **Hard-fails the deploy if missing** — see prerequisite above.
-6. **Indexer-cursor seed** (step `[8d]` / cf-watcher `[d]` —
-   `--fresh` only) — INSERTs/UPDATEs the cursor for the deployed
-   chain at current safe head so the first cron tick starts indexing
-   AT head instead of backfilling an empty pre-deploy block range.
+3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
+   `pnpm exec wrangler deploy` from `apps/keeper/`, plus the
+   RPC-secret presence check (**hard-fails if a per-chain
+   `RPC_<CHAIN>` secret is missing** — see prerequisite above).
+4. **Indexer Cloudflare deploy** (phase `cf-indexer`) —
+   `pnpm exec wrangler deploy` from `apps/indexer/`, then
+   `pnpm exec wrangler d1 migrations apply vaipakam-archive --remote`.
+   Only this phase runs migrations: the indexer owns the shared
+   `vaipakam-archive` schema, and the keeper/agent bind the same D1
+   without ever migrating it. On `--fresh`, also seeds the indexer
+   cursor at the current safe head so the first cron tick starts AT
+   head instead of backfilling an empty pre-deploy range.
+5. **Agent Cloudflare deploy** (phase `cf-agent`) —
+   `pnpm exec wrangler deploy` from `apps/agent/` (notifications,
+   Telegram webhook, frames). The retired single-watcher `cf-watcher`
+   phase is explicitly rejected by `deploy-mainnet.sh`; all three
+   phases above must run for a Stage 3 deploy — stopping after
+   `cf-keeper` leaves indexing, migrations and the public agent
+   endpoints on the previous deployment.
 
 ### Post-deploy verification (do this before announcing)
 
@@ -327,9 +353,12 @@ Within ~5 minutes of `deploy-chain.sh <slug>` returning success,
 confirm the watcher is actually indexing the new chain:
 
 ```bash
-# 1. Confirm the cursor is advancing (not just seeded)
-cd ops/hf-watcher
-npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
+# 1. Confirm the cursor is advancing (not just seeded).
+#    The Stage 3 database is vaipakam-archive, owned by apps/indexer —
+#    vaipakam-alerts-db is the retired pre-split database, and querying
+#    it would inspect data the new indexer never writes.
+cd apps/indexer
+npx wrangler d1 execute vaipakam-archive --remote --json --command \
   "SELECT chain_id, last_block, datetime(updated_at,'unixepoch') as updated
      FROM indexer_cursor WHERE kind='diamond' ORDER BY chain_id;" \
   | jq '.[0].results'
@@ -337,7 +366,7 @@ npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
 
 # 2. Confirm offers / loans rows materialise for the new chain
 #    once smoke-test events have landed on chain.
-npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
+npx wrangler d1 execute vaipakam-archive --remote --json --command \
   "SELECT chain_id, COUNT(*) FROM offers GROUP BY chain_id;
    SELECT chain_id, COUNT(*) FROM loans  GROUP BY chain_id;" \
   | jq '.[0].results, .[1].results'
@@ -358,7 +387,7 @@ Mismatches mean the watcher pass is silently throwing for that
 chain. Tail the live Worker logs to inspect:
 
 ```bash
-cd ops/hf-watcher && npx wrangler tail --format=pretty
+cd apps/indexer && npx wrangler tail --format=pretty
 ```
 
 ### T-087 — Cross-chain VPFI discount post-deploy activation
@@ -747,7 +776,7 @@ four code edits**:
    LayerZero V2 endpoint id row (e.g. `if (cid == 97) return 40102;`).
    Every Deploy*OApp* / RewardOApp script stamps this into
    `addresses.json#lzEid` automatically.
-4. **`frontend/src/contracts/config.ts`** — add the per-chain record,
+4. **`apps/defi/src/contracts/config.ts`** — add the per-chain record,
    literally spelling out the `VITE_<PREFIX>_*` keys it consumes
    (`rpcUrl`, `diamondAddress`, `deployBlock`,
    `metricsFacetAddress`; the historical `vpfiBuyAdapter` /
@@ -774,7 +803,7 @@ forge script -vv --rpc-url $NEW_CHAIN_RPC_URL \
                                                        # are called in writeChainHeader.
 
 # Frontend side — should compile and the new chainId should appear in the picker
-cd frontend && npm run typecheck && npm run dev
+cd apps/defi && node_modules/.bin/tsc -b --noEmit && npm run dev
 ```
 
 After those pass, the per-chain runbook (e.g.
@@ -957,51 +986,61 @@ to populate yet.)
 Both the frontend and the hf-watcher Worker consume these via a
 single consolidated `deployments.json` keyed by `chainId`:
 
-- `frontend/src/contracts/deployments.json` — read by
-  [`frontend/src/contracts/deployments.ts`](../../frontend/src/contracts/deployments.ts)
+- `packages/contracts/src/deployments.json` — read by
+  [`packages/contracts/src/deployments.ts`](../../packages/contracts/src/deployments.ts)
   (`getDeployment(chainId)`) and folded into the
-  `CHAIN_REGISTRY` by `frontend/src/contracts/config.ts`.
-- `ops/hf-watcher/src/deployments.json` — read by
-  [`ops/hf-watcher/src/deployments.ts`](../../ops/hf-watcher/src/deployments.ts)
-  and consumed by `getChainConfigs(env)` in `env.ts`.
+  `CHAIN_REGISTRY` by `apps/defi/src/contracts/config.ts`.
+  The Cloudflare Workers read this same file through
+  `@vaipakam/contracts/deployments`; `getChainConfigs(env)` in each
+  Worker's `env.ts` consumes it. There is no second copy — the
+  pre-Stage-3 duplicate under the old watcher directory is gone.
 
-Both files are byte-identical merges of every per-chain
-`addresses.json`. Don't hand-edit either; both are emitted by:
+It is a merge of every per-chain `addresses.json`. Don't hand-edit it;
+it is emitted by:
 
 ```bash
 bash contracts/script/exportFrontendDeployments.sh
 ```
 
-The script auto-detects both consumers via the sibling layout
-(`vaipakam/frontend` and `vaipakam/ops/hf-watcher`), merges every
-`deployments/<chain>/addresses.json`, and writes the merged JSON
-+ a `_deployments_source.json` provenance stamp into each
-target's `src/contracts/` (frontend) / `src/` (watcher). Pass
-`WATCHER_DIR=` (empty) to skip the watcher target. Idempotent:
-re-running with no upstream changes leaves both outputs
-byte-identical.
+The script merges every `deployments/<chain>/addresses.json` and
+writes the merged JSON + a `_deployments_source.json` provenance
+stamp into the single `packages/contracts/src/` target
+(auto-detected; override with `CONTRACTS_PKG_DIR=/abs/path` for a
+non-standard layout — the only knob the script has). Every consumer
+— the React surfaces and all three Workers — imports that one file
+through `@vaipakam/contracts/deployments`, so there is no second
+target. Idempotent: re-running with no upstream changes leaves the
+output byte-identical.
 
 Run it after every contract redeploy *before*:
-- `cd frontend && npm run deploy` (so new addresses inline into
+- `cd apps/defi && npm run deploy` (so new addresses inline into
   the JS bundle), AND
-- `cd ops/hf-watcher && wrangler deploy` (so the watcher reads
-  the new addresses on its next cron tick).
+- the Worker deploys — `--filter` once per package, since brace
+  expansion would hand pnpm `@vaipakam/indexer` as a script name:
+  `pnpm --filter @vaipakam/keeper --filter @vaipakam/indexer
+  --filter @vaipakam/agent run deploy` — so each reads the new
+  addresses on its next cron tick.
 
 **T-041 — chain-indexer D1 migrations.** Whenever a new migration
-file lands under `ops/hf-watcher/migrations/` (e.g. `0006_*.sql`),
+file lands under `apps/indexer/migrations/` (e.g. `0006_*.sql`),
 apply it to the live D1 database before redeploying the Worker:
 
 ```bash
-cd ops/hf-watcher
-npm run db:migrate     # idempotent — wrangler tracks the high-water mark
-npm run deploy
+cd apps/indexer
+pnpm exec wrangler d1 migrations apply vaipakam-archive --remote
+pnpm run deploy
 ```
 
-The migration step is independent of contract redeploys; you only
-need it when the watcher's schema changes. Skipping it leaves the
+`apps/indexer` owns the shared `vaipakam-archive` schema — `apps/keeper`
+and `apps/agent` deliberately have no migrations directory of their own
+(see the D1 schema-discipline section of `CLAUDE.md`). The apply is
+idempotent; D1 tracks the applied high-water mark. The migration step is
+independent of contract redeploys; you only need it when the indexer's
+schema changes. Skipping it leaves the
 Worker referencing columns that don't exist and cron ticks fail
-with cryptic "no such column" errors in the logs. See
-[`ops/hf-watcher/README.md`](../../ops/hf-watcher/README.md)
+with cryptic "no such column" errors in the logs. See the
+"D1 — owns the canonical schema" section of
+[`apps/indexer/README.md`](../../apps/indexer/README.md)
 "Redeploy / migration upgrade path" for the full sequence and
 T-041-specific notes on the bootstrap-time backfill behavior.
 
@@ -1011,34 +1050,17 @@ from testnet to mainnet, the Worker's cached offer / loan /
 activity rows reference the OLD diamond's offer IDs / loan IDs.
 Cache and chain disagree until you clear the cache.
 
-Per-chain redeploy (testnet diamond bumped on chain X):
-
-```bash
-cd ops/hf-watcher
-npm run db:purge-chain -- <chainId>     # interactive y/N preview
-# … then redeploy contracts on that chain, then:
-npm run deploy
-```
-
-Pre-mainnet full nuke (after extensive testnet iteration —
-optional but recommended for a clean slate):
-
-```bash
-cd ops/hf-watcher
-npm run db:purge-all                    # double-confirmation prompt
-# … then deploy mainnet contracts, run db:migrate if needed,
-#     finally redeploy the Worker:
-npm run deploy
-```
-
-Both scripts preserve `user_locales` (wallet-scoped language
-preference, not chain-scoped). They DELETE rows; they do NOT
-DROP TABLE — schema survives intact, no need to re-run
-migrations after a purge. See
-[`ops/hf-watcher/README.md`](../../ops/hf-watcher/README.md)
-"Purge / reset" for the full table list and `FORCE=1` / `LOCAL=1`
-env-knob behaviour.
-
+> **The `db:purge-chain` / `db:purge-all` scripts were retired with
+> the pre-split watcher and have no Stage 3 replacement yet.** No
+> package in `apps/` carries them, so the historical commands are not
+> reproduced here — an instruction that fails on contact is worse
+> than a stated gap. Until the tracked replacement lands (**#1491**),
+> a redeploy purge is a manual, previewed `DELETE` against the shared
+> `vaipakam-archive` database, run from its owning Worker
+> (`cd apps/indexer && npx wrangler d1 execute vaipakam-archive
+> --remote --command "..."`), scoped to the affected `chain_id` and
+> preserving `user_locales` (wallet-scoped, not chain-scoped).
+> Preview every `DELETE` with the matching `SELECT COUNT(*)` first.
 **When NOT to purge:** routine Worker code-only redeploys (no
 diamond / contract changes) should NOT trigger a purge — the
 cache is still correct against the existing on-chain state.
@@ -1055,11 +1077,11 @@ What stays operator-side after this consolidation:
   `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
   `PUSH_CHANNEL_PK`, aggregator API keys, keeper private key.
 
-Caveat for CI: `frontend/.env.local` is gitignored. The
+Caveat for CI: `apps/defi/.env.local` is gitignored. The
 addresses themselves are NOT in `.env.local` anymore, so a CI
 build that doesn't have the operator's local file will still get
 correct Diamond / facet addresses from the committed
-`frontend/src/contracts/deployments.json`. The CI environment
+`packages/contracts/src/deployments.json`. The CI environment
 only needs the operator-side values listed above (RPC URLs,
 WalletConnect ID, etc.) — set those in the Cloudflare Workers
 Builds → Build environment variables panel one-time, then every
@@ -1109,7 +1131,7 @@ If any check fails → **do not broadcast**.
    forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --broadcast --verify
    ```
-4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend + watcher consumer side is one command — `bash contracts/script/exportFrontendDeployments.sh` merges every chain artifact into `frontend/src/contracts/deployments.json` AND `ops/hf-watcher/src/deployments.json`, plus provenance stamps for both. The frontend's `getDeployment(chainId)` and the watcher's `getChainConfigs(env)` both read from the merged JSON. Idempotent.
+4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend + watcher consumer side is one command — `bash contracts/script/exportFrontendDeployments.sh` merges every chain artifact into the single `packages/contracts/src/deployments.json`, plus its provenance stamp. The frontend's `getDeployment(chainId)` and each Worker's `getChainConfigs(env)` both read from that merged JSON. Idempotent.
 
 **Post-step verification:**
 - `diamondLoupe.facetAddresses()` returns 30 non-zero facets (DiamondCutFacet + 29 cut in).
@@ -1521,9 +1543,16 @@ See `AdminKeysAndPause.md` for the full role map and the Timelock + Multisig top
 
 Any contract change in this deploy that touches a public selector or
 struct shape needs the dependent ABI bundles regenerated, otherwise
-they encode calldata against stale shapes. **Three** consumers,
-all sourced via `forge inspect` from the compiled bytecode (single
-source of truth — no hand-typed ABI tuples anywhere):
+they encode calldata against stale shapes. **Two** consumers, both
+sourced via `forge inspect` from the compiled bytecode (single
+source of truth — no hand-typed ABI tuples anywhere).
+
+The Cloudflare Workers used to be a third. They are not any more: since
+the Stage 3 split, `apps/{keeper,indexer,agent}` import ABIs directly
+from the shared `@vaipakam/contracts/abis` bundle the frontend reads, so
+there is no Worker-specific export step and no separate Worker ABI
+directory to keep in sync. `contracts/script/exportWatcherAbis.sh` was
+deleted with it.
 
 ```bash
 forge build   # if not already built since the last edit
@@ -1531,25 +1560,17 @@ forge build   # if not already built since the last edit
 # (a) Frontend — full Diamond surface (~27 facets). Run on every
 #     facet-touching deploy.
 bash contracts/script/exportFrontendAbis.sh
-cd frontend && node_modules/.bin/tsc -b --noEmit && cd ..
-git diff frontend/src/contracts/abis/
+cd apps/defi && node_modules/.bin/tsc -b --noEmit && cd ../..
+git diff packages/contracts/src/abis/
 git commit -am 'Sync frontend ABIs with contracts@<hash>'
 
-# (b) hf-watcher Cloudflare Worker — narrow surface
-#     (OfferCancelFacet, LoanFacet) for `getOfferDetails` /
-#     `getLoanDetails` decoding. Was previously a hand-typed `as
-#     const` tuple in `ops/hf-watcher/src/diamondAbi.ts` — drifted
-#     when `LibVaipakam.Offer` gained `periodicInterestCadence`,
-#     produced the OfferBook display bug captured in
-#     ReleaseNotes-2026-05-05.md "Watcher offer-decode drift".
-#     Auto-export landed alongside the fix; run on every facet
-#     edit that touches OfferCancelFacet / LoanFacet structs.
-bash contracts/script/exportWatcherAbis.sh
-cd ops/hf-watcher && npx tsc -p . --noEmit && cd ../..
-git diff ops/hf-watcher/src/abis/
-git commit -am 'Sync watcher ABIs with contracts@<hash>'
+# The Workers read the SAME bundle — no separate export. Confirm they
+# still typecheck against the new shapes:
+pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit
+pnpm --filter @vaipakam/indexer exec tsc -p . --noEmit
+pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 
-# (c) Public keeper-bot — narrow surface (Metrics / Risk / Loan).
+# (b) Public keeper-bot — narrow surface (Metrics / Risk / Loan).
 #     Skip if the deploy didn't touch those selectors.
 KEEPER_BOT_DIR=../../vaipakam-keeper-bot \
   bash contracts/script/exportAbis.sh
@@ -1587,21 +1608,20 @@ there, just point back.
 ships with this same sync wired in as its final step (6/6) so a
 `bash anvil-bootstrap.sh` lands a fresh diamond, etches Multicall3,
 flips Range Orders flags on, seeds offers, AND regenerates
-`frontend/src/contracts/abis/`, `ops/hf-watcher/src/abis/`,
-`frontend/src/contracts/deployments.json`,
-`ops/hf-watcher/src/deployments.json`, and (when the sibling repo is
-present) `vaipakam-keeper-bot/src/abis/` — all in one command. The
+`packages/contracts/src/abis/`,
+`packages/contracts/src/deployments.json`, and (when the sibling repo
+is present) `vaipakam-keeper-bot/src/abis/` — all in one command. The
 keeper-bot export is gated on `../../vaipakam-keeper-bot` existing
 so a contributor without that checkout still gets a clean run. For
 the production deploy path the sync stays manual on purpose so the
 operator can review each diff before committing.
 
 **Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — not
-a deploy artefact; lives in `frontend/.env.local` like the RPC URLs
+a deploy artefact; lives in `apps/defi/.env.local` like the RPC URLs
 and feature flags. Default points at the Trust Wallet CDN
 (`assets-cdn.trustwallet.com`); override to the GitHub raw repo or
 a self-hosted registry per the commented examples in
-`frontend/.env.example`. Any change requires a frontend rebuild +
+`apps/defi/.env.example`. Any change requires a frontend rebuild +
 Cloudflare deploy to take effect — same as flipping any other
 `VITE_*` flag.
 
@@ -1733,7 +1753,7 @@ the deploy-script pre-flight will refuse to proceed otherwise.
 
 ## 8. Off-chain alert watcher (one-time, not per-chain)
 
-The HF alert watcher at `ops/hf-watcher/` runs as a Cloudflare Worker
+The HF alert watcher at `apps/keeper/` runs as a Cloudflare Worker
 and is shared across every supported chain — it polls each Diamond on
 a 5-minute cron and dispatches per-user threshold notifications via
 Telegram + Push Protocol. This section is one-time setup and does
@@ -1745,10 +1765,14 @@ Telegram + Push Protocol. This section is one-time setup and does
    Use the handle `@VaipakamBot` for production. BotFather hands back
    the bot's API token on creation — this is the only time it appears
    in plaintext.
-2. Set worker secrets / vars:
+2. Create the token in the shared Secrets Store — both the keeper and
+   the agent (which owns `/tg/webhook`) bind `TG_BOT_TOKEN` from it, so
+   a per-Worker `wrangler secret put` would leave the agent
+   unprovisioned:
    ```bash
-   cd ops/hf-watcher
-   npx wrangler secret put TG_BOT_TOKEN          # paste BotFather token
+   npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+       --name TG_BOT_TOKEN --scopes workers --remote
+   # wrangler prompts for the value — paste the BotFather token.
    ```
    `TG_BOT_USERNAME` is committed in `wrangler.jsonc` as a public var.
 3. Register the webhook so Telegram pushes inbound DMs into the worker:
@@ -1771,7 +1795,11 @@ Telegram + Push Protocol. This section is one-time setup and does
      the same URL via the `VITE_PUSH_CHANNEL_ADDRESS` env var.
 3. **Channel signer privkey → worker secret.**
    ```bash
-   npx wrangler secret put PUSH_CHANNEL_PK       # paste 0x-prefixed 64-hex
+   # Shared Secrets Store, same reasoning as TG_BOT_TOKEN in §8a
+   # (keeper AND agent bind it; wrangler prompts for the value —
+   # paste the 0x-prefixed 64-hex key):
+   npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+       --name PUSH_CHANNEL_PK --scopes workers --remote
    ```
    The private key is **never** committed and never appears in
    `wrangler.jsonc`. The channel-owner wallet should hold only the
@@ -1788,7 +1816,7 @@ Telegram + Push Protocol. This section is one-time setup and does
 ### 8c. Smoke test the watcher
 
 ```bash
-cd ops/hf-watcher
+cd apps/keeper
 npx wrangler tail        # tail logs in another terminal
 
 # From a test wallet:
@@ -1806,27 +1834,29 @@ take a few minutes; nothing else to do.
 
 ### 8d. Server-side error capture
 
-The hf-watcher Worker also serves `POST /diag/record` — the
-frontend fires-and-forgets one POST per UI failure event so
-support has a server-side audit trail (UUID embedded in any
-GitHub-issue prefill cross-references back to a real session).
-Lives on the same Worker and the same D1 binding as §8a/§8b
-above; no separate deploy.
+`POST /diag/record` is served by the AGENT Worker
+(`apps/agent/src/index.ts`) — the frontend fires-and-forgets one
+POST per UI failure event so support has a server-side audit trail
+(UUID embedded in any GitHub-issue prefill cross-references back to
+a real session). It writes to the shared `vaipakam-archive` D1 that
+all three Stage 3 Workers bind.
 
 **One-time setup (per environment)**:
 
-1. Apply the new migration to the production database:
+1. Apply the migration to the production database. The schema is
+   owned by `apps/indexer` (`migrations/0003_diag_errors.sql`) and
+   the live database is `vaipakam-archive`:
    ```bash
-   cd ops/hf-watcher
-   npx wrangler d1 migrations apply vaipakam-alerts-db --remote
+   cd apps/indexer
+   npx wrangler d1 migrations apply vaipakam-archive --remote
    ```
    This creates the `diag_errors` table + indexes. Idempotent
    (uses `CREATE TABLE IF NOT EXISTS`).
 
-2. Deploy the worker (same command as §8b — pushes the new
-   `/diag/record` route + the per-IP rate-limit binding):
+2. Deploy the AGENT — `/diag/record` is routed by
+   `apps/agent/src/index.ts`, not the keeper:
    ```bash
-   npx wrangler deploy
+   cd ../agent && npx wrangler deploy
    ```
 
 3. Smoke test the endpoint:
@@ -1847,11 +1877,13 @@ above; no separate deploy.
 
    Then verify the row landed:
    ```bash
-   npx wrangler d1 execute vaipakam-alerts-db --remote \
+   cd apps/indexer   # owner of the shared vaipakam-archive database
+   npx wrangler d1 execute vaipakam-archive --remote \
      --command "SELECT id, area, flow, recorded_at FROM diag_errors ORDER BY recorded_at DESC LIMIT 1"
    ```
 
-**Tunable knobs** (all in `ops/hf-watcher/wrangler.jsonc`,
+**Tunable knobs** (all in `apps/agent/wrangler.jsonc` — the agent
+serves `/diag/record`,
 override per-environment via `wrangler vars` or the dashboard):
 
 | Var | Default | What it does |
@@ -1882,8 +1914,8 @@ When a user files a GitHub issue using the prefill, the body
 contains `**Report ID:** \`<UUID>\``. Look it up:
 
 ```bash
-cd ops/hf-watcher
-npx wrangler d1 execute vaipakam-alerts-db --remote \
+cd apps/indexer
+npx wrangler d1 execute vaipakam-archive --remote \
   --command "SELECT * FROM diag_errors WHERE id = '<UUID>'"
 ```
 

@@ -556,7 +556,7 @@ runs after revocation.
    ```
 
    Rotation is in the **account-level Secrets Store**, NOT per Worker.
-   `ops/hf-watcher` was removed by the Stage 3 split; the live consumers
+   The pre-split `hf-watcher` Worker was removed by the Stage 3 split; the live consumers
    are `apps/agent` and `apps/keeper`, and both resolve `TG_BOT_TOKEN`
    from the shared store — so one write covers both, and a per-Worker
    `wrangler secret put` would rotate neither.
@@ -828,8 +828,8 @@ command and for the case-sensitivity trap between the two guards.
 <details>
 <summary>Historical SOPs (retired — reference only)</summary>
 
-The `ops/lz-watcher` Cloudflare Worker (separate from
-`ops/hf-watcher`) fired
+The `ops/lz-watcher` Cloudflare Worker (separate from the
+pre-split `hf-watcher`) fired
 three alert kinds into the internal ops Telegram channel. Each
 has its own SOP. All three are **detection-only** — there is no
 automated response wired up. The watcher pages humans; humans

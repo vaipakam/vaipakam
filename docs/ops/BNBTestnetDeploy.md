@@ -319,11 +319,10 @@ Cross-chain invariants (all three must hold):
 ## 11. Publish
 
 - Commit `deployments/bnb-testnet/addresses.json`.
-- Sync the merged JSON to both consumers in one command:
-  `bash contracts/script/exportFrontendDeployments.sh`. This
-  rewrites `frontend/src/contracts/deployments.json` AND
-  `ops/hf-watcher/src/deployments.json` from the canonical
-  `addresses.json` files. No more `VITE_BNB_TESTNET_DIAMOND_ADDRESS`
+- Sync the merged JSON in one command:
+  `bash contracts/script/exportFrontendDeployments.sh`. This rewrites
+  the single `packages/contracts/src/deployments.json` from the
+  canonical `addresses.json` files; every consumer reads that one file. No more `VITE_BNB_TESTNET_DIAMOND_ADDRESS`
   / `VITE_BNB_TESTNET_*_FACET_ADDRESS` edits in `.env.local` —
   those env vars were removed when the JSON-import pattern landed.
 - Commit the regenerated `deployments.json` files alongside the

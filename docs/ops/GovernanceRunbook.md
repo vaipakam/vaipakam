@@ -442,28 +442,40 @@ pair on `LegalFacet`. The retail launch ships with
 `currentTosVersion == 0`, which short-circuits `isAccepted(...)` to
 `true` for every wallet — the gate is dormant. Whenever the canonical
 ToS text changes (`docs/Terms/TermsOfService.md` is the source of
-truth; `frontend/src/pages/TermsPage.tsx` mirrors it), governance must
+truth; `apps/www/src/pages/TermsPage.tsx` mirrors it), governance must
 also bump the on-chain pair so users re-sign before the frontend
 re-opens.
 
 1. Edit the canonical text in `docs/Terms/TermsOfService.md` and the
-   mirrored copy in `frontend/src/pages/TermsPage.tsx`. Verify the two
+   mirrored copy in `apps/www/src/pages/TermsPage.tsx`. Verify the two
    bodies are byte-identical (modulo HTML wrapping in the React file).
-2. Compute the canonical content hash. The exact algorithm is whatever
-   the frontend's signing flow uses (see
-   `frontend/src/hooks/useTosAcceptance.ts`); typically a
-   `keccak256` over the normalised text.
-3. Governance Safe schedules
+2. Compute the canonical content hash. **No derivation utility exists
+   in the repo yet, and the frontend does not derive it** —
+   `apps/defi/src/hooks/useTosAcceptance.ts` only reads the on-chain
+   `currentTosHash` and echoes it back in `acceptTerms`, so whatever
+   bytes32 governance commits IS the hash of record. Before first
+   activation (the gate ships dormant, `currentTosVersion == 0`),
+   governance must pick and record the derivation — e.g. keccak256
+   over the exact committed bytes of `docs/Terms/TermsOfService.md` —
+   and note it in the proposal so the hash can be independently
+   re-derived from the text it covers.
+3. **Deploy the updated terms FIRST**: ship `TermsPage.tsx` (and the
+   canonical `docs/Terms/TermsOfService.md`) and verify the rendered
+   text is the text the new hash covers. Order matters because
+   nothing on-chain or in the frontend compares text to hash — the
+   frontend only echoes `currentTosHash` — so activating the hash
+   before the text is live opens a window where users record
+   acceptance of terms the public site does not yet show, and no
+   gate exists that would catch it.
+4. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
    newHash), delay=48h)`. `newVersion` MUST strictly exceed
    `currentTosVersion` — the setter rejects replays and downgrades.
-4. Wait 48h. Execute. The Diamond emits `CurrentTosUpdated(prev,
-   newVersion, newHash)`.
-5. Frontend deploy: ship the updated `TermsPage.tsx` so the rendered
-   text matches the now-pinned hash. Stale frontend pages will
-   continue to render — the on-chain hash gate catches signature
-   mismatches at signing time but does not stop a stale page from
-   loading.
+   (The 48h delay also gives step 3's deploy time to be verified
+   live before the hash flips.)
+5. Wait 48h. Execute. The Diamond emits `CurrentTosUpdated(prev,
+   newVersion, newHash)`. From this moment new acceptances bind to
+   the new hash, whose text has been publicly rendered since step 3.
 6. Existing on-chain positions are NOT affected — the gate is a
    frontend-level UX, not a protocol-level deny. Users keep their
    loans / claims / repays without re-signing; only NEW state-creating
