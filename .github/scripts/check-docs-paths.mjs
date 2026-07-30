@@ -141,8 +141,17 @@ const STRICT_DIRS = ['docs/ops/', 'docs/FunctionalSpecs/'];
  * any citation carrying one bypassed the check entirely, so a deep link
  * concealed the staleness. Query and fragment are now STRIPPED before
  * matching instead.
+ *
+ * ANY URI scheme, and protocol-relative `//host/…`, not just `http(s):` and
+ * `mailto:` (#1467 r8). The documentation said URLs were exempt while the code
+ * exempted two schemes, so `tel:` and `//cdn.example.com/x` were reported as
+ * missing repository paths — false findings in the strict documents, which are
+ * the ones whose signal has to be trustworthy. The scheme pattern cannot swallow
+ * a repo path: `/` is not in its character class, so `apps/defi/src/App.tsx:1`
+ * has a slash before its colon and never matches.
  */
-const UNRESOLVABLE = /[*{}<>$|]|\.\.\.|\bNNNN\b|^https?:|^mailto:/;
+const UNRESOLVABLE =
+  /[*{}<>$|]|\.\.\.|\bNNNN\b|^[a-zA-Z][a-zA-Z0-9+.-]*:|^\/\//;
 
 function tracked(glob) {
   return execFileSync('git', ['ls-files', ...glob], { encoding: 'utf8' })
@@ -224,7 +233,17 @@ for (const file of docs) {
         raw: m[1],
         link: true,
       })),
-      ...[...line.matchAll(/^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/g)].map((m) => ({
+      // A reference DEFINITION takes the same two destination forms as an
+      // inline link, so it needs the same two patterns (#1467 r8). Fixing only
+      // the inline sibling last round left this one capturing the
+      // whitespace-free prefix of a spaced destination — and a prefix that
+      // happens to name a real directory reads as resolving, so the broken
+      // destination was not merely missed but actively excused.
+      ...[...line.matchAll(/^\s{0,3}\[[^\]]+\]:\s*<([^>\n]+)>/g)].map((m) => ({
+        raw: m[1].trim(),
+        link: true,
+      })),
+      ...[...line.matchAll(/^\s{0,3}\[[^\]]+\]:\s*([^\s<>]+)/g)].map((m) => ({
         raw: m[1],
         link: true,
       })),

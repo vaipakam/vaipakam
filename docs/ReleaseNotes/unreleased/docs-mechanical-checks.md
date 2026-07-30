@@ -14,8 +14,18 @@ moment they can least afford to.
 The check also found seventy-eight links in the main specification that were
 silently broken: they were written as though the reader were standing at the
 top of the repository, but a link inside a document is followed relative to
-that document, so every one of them led nowhere. Those are corrected here,
-along with fourteen citations of test files that had moved into a subdirectory.
+that document, so every one of them led nowhere. Seventy-five are corrected
+here, along with fourteen citations of test files that had moved into a
+subdirectory.
+
+The remaining three point at test files that exist nowhere in the repository
+under any name, so there is no new location to cite. Repairing them would mean
+guessing whether the test was renamed, removed, or never written — a judgement
+about someone's intent, not a mechanical correction — so they are left recorded
+as known findings rather than quietly deleted from the specification. An earlier
+draft of this note said all seventy-eight were fixed; review caught that, and
+the correction belongs here rather than in a quieter place, since overstating
+what a check delivered is the same fault the check exists to catch.
 
 Turning that same reasoning on the check itself removed forty-four findings it
 should never have reported. It had been treating any reference beginning with a
