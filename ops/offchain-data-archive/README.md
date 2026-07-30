@@ -66,7 +66,20 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    node scripts/setup-backblaze.mjs
    ```
 
-   The script is idempotent — safe to re-run. It will:
+   > ⚠️ **This script is initial provisioning, NOT a key-rotation
+   > path.** Re-running it rewrites the bucket's six lifecycle rules
+   > to the values coded in this tree before it touches either key —
+   > silently reverting any tuning applied to the live bucket since
+   > (the hidden-version retention window in particular; see
+   > `docs/ops/OffChainRestore.md` §2). To rotate the scoped keys,
+   > create/delete them directly via the B2 console's App Keys page
+   > (or the B2 CLI's key create/delete commands — subcommand names
+   > differ across CLI major versions, check `b2 help`), and leave
+   > the lifecycle rules alone (#1450 r28).
+
+   The script is idempotent in the provisioning sense — a re-run
+   converges the bucket to THIS TREE's declared state (which is
+   exactly why it must not be used mid-incident). It will:
    - Create the `vaipakam-offchain-data-archive` bucket (allPrivate) if
      missing, reuse if present.
    - Set six lifecycle rules: `archives/` + `manifests/` 30-day,

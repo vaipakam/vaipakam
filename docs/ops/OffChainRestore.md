@@ -261,7 +261,23 @@ then deploy.
    >   is not a credential and needs no rotation.
    > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys **FIRST**,
    >   before anything else in this branch, so no further attacker uploads
-   >   can land while you are restoring. Then treat the archive history as
+   >   can land while you are restoring. **Rotate KEY-ONLY, via the B2
+   >   console's App Keys page (or the B2 CLI's key create/delete
+   >   commands — check `b2 help`, the subcommand names differ across
+   >   CLI major versions) — do NOT re-run `setup-backblaze.mjs` to
+   >   rotate.** That script is
+   >   bucket-provisioning, not key rotation: it calls
+   >   `setLifecycleRules()` before it touches either key, overwriting
+   >   whatever rules are live on the bucket with this tree's
+   >   provisioning values (`daysFromHidingToDeleting: 1`). During a
+   >   compromise that can silently collapse the hidden-version window
+   >   §2 depends on to about a day — deleting the genuine versions you
+   >   are about to go looking for (#1450 r28). Create the two
+   >   replacement scoped keys with the same capability sets
+   >   (write-only: `listBuckets` + `writeFiles`; read-only:
+   >   `listBuckets` + `listFiles` + `readFiles`), delete the old
+   >   ones, and leave the bucket's lifecycle rules untouched. Then
+   >   treat the archive history as
    >   **attacker-WRITABLE, not merely readable** — see the archive-
    >   selection warning in §2, which changes how you pick an archive. Do
    >   NOT re-encrypt the existing history forward before selecting (§8):
@@ -618,10 +634,20 @@ then deploy.
    Run `npm ci` per ops/ Worker before deploying:
 
    ```bash
-   pnpm --filter @vaipakam/indexer deploy
-   pnpm --filter @vaipakam/keeper deploy
-   pnpm --filter @vaipakam/agent deploy
+   pnpm --filter @vaipakam/indexer run deploy
+   pnpm --filter @vaipakam/keeper run deploy
+   pnpm --filter @vaipakam/agent run deploy
    ```
+
+   `run` is load-bearing: under the pinned pnpm 10.4.1, bare
+   `pnpm --filter <pkg> deploy` resolves to pnpm's **builtin**
+   portable-package command (which demands a target directory and
+   never runs the package's script), so every **pnpm-driven** deploy
+   in this runbook uses the `run deploy` form. (The direct
+   `wrangler deploy` and ops-Worker `npm run deploy` invocations
+   elsewhere in this document are unaffected — the collision is
+   pnpm-specific.) (#1450 r28; the same fix outside this document's
+   file set is #1478.)
 
    THEN provision origins — this is a real pause, not a formality:
 
@@ -641,8 +667,8 @@ then deploy.
    account's hosts and editing the env afterwards changes nothing:
 
    ```bash
-   pnpm --filter @vaipakam/defi deploy
-   pnpm --filter @vaipakam/www deploy
+   pnpm --filter @vaipakam/defi run deploy
+   pnpm --filter @vaipakam/www run deploy
    ```
 
    **The archive Worker is NOT deployed here.** Its step is at the END of
@@ -656,7 +682,12 @@ then deploy.
 > new CF account is appropriate for total loss; for live tampering or
 > a single-table corruption you usually want to **selectively
 > restore** into the existing account rather than rebuild from
-> scratch. Skip to §5 in that case.
+> scratch. A selective restore still starts at **§2** (archive
+> selection — and for tampering the compromise rules there apply in
+> full), then **§3** to decrypt, then the relevant **§4** table
+> import or **§5** legal-vault object. It skips only the
+> account-rebuild steps of §1, not the selection and decryption that
+> every restore path needs.
 
 ---
 
@@ -931,17 +962,22 @@ For each table:
    a column, you'll need a transformation pass. The schema-hash in
    the manifest lets you spot drift without diffing column-by-column.
 
-2. Convert the `rows[]` array to a SQL `INSERT` batch. A small Node
-   script does this cleanly:
+2. Convert each archived table's `rows[]` array into a
+   `restore/<table>.sql` `INSERT` batch. **This document deliberately
+   contains no generator script** — an earlier revision carried an
+   illustrative fragment that presented as runnable and was not
+   (#1450 r28), which is worse than no code: it fails at the moment
+   of use. The committed, tested converter is tracked as **#1477**;
+   until it merges, the transform must be written at restore time,
+   against these requirements:
 
-   ```js
-   const out = [];
-   for (const r of table.rows) {
-     const cols = Object.keys(r);
-     const vals = cols.map((c) => quote(r[c])).join(', ');
-     out.push(`INSERT INTO ${table.name} (${cols.join(', ')}) VALUES (${vals});`);
-   }
-   ```
+   - one output file per table, named `restore/<table>.sql`;
+   - values quoted safely — single-quote doubling for strings, bare
+     numerics, `NULL` for null, and a hard failure on any value type
+     the script does not recognise;
+   - identifiers (table and column names) treated as untrusted input
+     too: after a compromise, `archive.json` is attacker-influenced;
+   - per-table row counts printed, for step 4's verification.
 
 3. Apply via wrangler — targeting the matching D1 binding:
 
@@ -967,18 +1003,24 @@ For each table:
 
 ## 5. Restore the R2 legal-vault
 
-For each object in the decrypted `r2.objects[]`:
+For each object in the decrypted `r2.objects[]`, four things must
+happen locally **before** any upload — decode `base64Body`, create
+the parent directories (`mkdir -p` semantics: legal-vault keys
+contain `/` separators, e.g. `legal-holds/2026-05/notice-42.pdf`),
+write the bytes to `restore/r2/<key>`, and verify the per-object
+SHA-256 against the archive's recorded value. Only then upload.
 
-```js
-const bytes = Buffer.from(obj.base64Body, 'base64');
-// Use mkdir -p semantics — legal-vault object keys can contain
-// `/` separators (e.g. `legal-holds/2026-05/notice-42.pdf`).
-fs.mkdirSync(path.dirname(`restore/r2/${obj.key}`), { recursive: true });
-fs.writeFileSync(`restore/r2/${obj.key}`, bytes);
-// confirm SHA matches
-```
+**This document deliberately contains no materialize-and-upload
+script.** Earlier revisions carried both an illustrative fragment
+(not runnable on its own) and an "executable" heredoc that skipped
+the materialization entirely and handed wrangler paths to files
+that were never written (#1450 r28). The committed, tested tooling is
+tracked as **#1477** (one script covering both this section and the
+§4 SQL conversion); until it merges, the loop must be written at
+restore time, against the requirements above plus the two pitfalls
+below.
 
-Then upload. Two pitfalls to avoid:
+Two pitfalls to avoid:
 
 1. **Don't iterate via `find . -type f`** — that emits paths like
    `./legal-holds/notice-42.pdf` whose leading `./` would become
@@ -990,40 +1032,11 @@ Then upload. Two pitfalls to avoid:
    contains a single quote / dollar sign / backtick would break the
    shell command (or worse, execute attacker-controlled fragments
    when restoring an archive whose write key has leaked). Use
-   `child_process.spawnSync` with an argv ARRAY so wrangler receives
-   each argument verbatim, no shell parsing.
-
-```bash
-# scripts/restore-r2.mjs — preserves the archived key verbatim,
-# no shell parsing of object names.
-node - "$PWD/restore/archive.json" <<'NODE'
-import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-
-const archivePath = process.argv[2];
-if (!archivePath) {
-  console.error('Usage: node restore-r2.mjs <decrypted-archive.json>');
-  process.exit(2);
-}
-const archive = JSON.parse(readFileSync(archivePath, 'utf8'));
-for (const obj of archive.r2.objects) {
-  const local = `restore/r2/${obj.key}`;
-  const target = `vaipakam-legal-vault/${obj.key}`;
-  // spawnSync with argv-array, NOT shell-string. Each arg is passed
-  // verbatim to wrangler — no shell parsing means no escape rules
-  // to get wrong, no injection risk if obj.key contains '$' / '`' /
-  // single-quote / etc.
-  const r = spawnSync(
-    'wrangler',
-    ['r2', 'object', 'put', target, '--file', local, '--remote'],
-    { stdio: 'inherit' },
-  );
-  if (r.status !== 0) {
-    throw new Error(`wrangler r2 object put failed for ${obj.key}`);
-  }
-}
-NODE
-```
+   `child_process.spawnSync` with an argv ARRAY (target
+   `vaipakam-legal-vault/<key>`, `--file restore/r2/<key>`,
+   `--remote`) so wrangler receives each argument verbatim, no shell
+   parsing — and treat a non-zero exit as fatal rather than
+   continuing to the next object.
 
 Per-object SHA-256 in the archive lets you verify each upload landed
 intact (compare against `wrangler r2 object get … --pipe | sha256sum`).
@@ -1388,11 +1401,27 @@ two procedures share the offline-key handling discipline.
    openssl rand -hex 32 > /tmp/new-backup-key
    ```
 
-2. Download the past 30 nightlies from B2 to a local workstation.
+2. Enumerate and download **every retained ciphertext across all
+   three tiers** — `archives/` (daily), `archives-monthly/`, and
+   `archives-yearly/` — to a local workstation. The backup writer
+   populates all three (`backup.ts`), and the yearly tier is
+   retained indefinitely: any object skipped here is **permanently
+   undecryptable** the moment step 6 destroys the old key. An
+   earlier revision said "the past 30 nightlies", which migrated the
+   shortest-lived tier and stranded the two long-term ones (#1450
+   r28).
 3. For each archive: decrypt with the OLD key, re-encrypt with the
    NEW key, re-upload to B2 under the same object key (B2's
    versioning preserves the prior cipher-text version for the
-   lifecycle retention window).
+   lifecycle retention window) — **and regenerate its sibling
+   manifest in the same pass**. AES-GCM re-encryption produces new
+   ciphertext, so the manifest's `archive.sha256` and `byteLength`
+   no longer match; `runHealthcheck()` compares exactly those fields
+   against the downloaded object, and §2's restore verification does
+   the same. A rotated archive under a stale manifest fails both.
+   Upload the re-encrypted object and its updated manifest together,
+   and verify the pair (download → sha256sum → compare) per archive
+   before moving on.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
    `vaipakam-offchain-data-archive` to flip the Worker to the new key.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both

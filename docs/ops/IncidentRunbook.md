@@ -686,8 +686,11 @@ is `wrangler tail`, so verify there rather than assuming success.
    ```bash
    # Add (or update) in apps/defi/.env.production:
    #   VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
-   pnpm --filter @vaipakam/defi deploy
+   pnpm --filter @vaipakam/defi run deploy
    ```
+
+   (`run` is required: bare `pnpm --filter <pkg> deploy` is pnpm's
+   builtin portable-package command, not the package's script — #1478.)
 
    `deploy` builds as part of its own pipeline, so a separate `build` is
    redundant. Confirm afterwards that `/alerts` renders the subscribe

@@ -101,9 +101,13 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
   capability sets. The pipeline uses TWO scoped keys (see §3.3a):
   one write-only key for the nightly uploader, one read-only key
   for the weekly healthcheck. Splitting the keys bounds the blast
-  radius of a CF compromise to ONE of (corrupt future archives /
-  read past ciphertext); the offline AES key blocks the plaintext
-  on the read side.
+  radius of an **isolated single-key leak** (a B2-side or
+  transcription leak of one key) to ONE of (corrupt future archives /
+  read past ciphertext). It does **not** bound a Cloudflare-side
+  compromise: both keys are bound to the same archive Worker, so a
+  Workers Edit compromise yields both at once (see the withdrawn-
+  claims note in §3.3a). The offline AES key blocks the plaintext
+  on the read side in either case.
 
 ### 3.3a Two-key B2 access model
 
@@ -151,14 +155,27 @@ comes out for the one-time setup script (or explicit rotation).
 
 Object keys carry a 32-hex-char (16-byte) cryptographic nonce
 suffix per upload — `archives/YYYY-MM-DD/<nonce>.bin` and
-`manifests/YYYY-MM-DD/<nonce>.json`. Same date written twice (e.g.
-an attacker re-uploading garbage) produces two DIFFERENT object
-keys, so the original archive survives and the healthcheck's
+`manifests/YYYY-MM-DD/<nonce>.json`.
+
+**Scope (#1450 r28): everything this guarantee promises holds only
+for an ISOLATED leak of the write key.** In that case an attacker
+cannot learn an existing nonce, so a same-date re-upload lands at a
+DIFFERENT object key, the original survives, and the healthcheck's
 list-by-prefix + manifest-SHA verification catches the divergence.
-Without the nonce, a single PUT to a predictable key (e.g.
-`archives/2026-05-23.bin`) would silently replace the previous
-night's data — write-only credentials alone don't defend against
-in-place overwrite, only against read/delete.
+In the deployed shape the read key — which carries `listFiles` — is
+bound to the **same Worker** (§3.3a), so a Workers Edit compromise
+defeats the enumeration-resistance this section rests on: the
+attacker lists the genuine nonce, uploads at that exact key, and
+the original survives only as a hidden older version for the
+lifecycle retention window (see the withdrawn-claims note in §3.3a
+and `docs/ops/OffChainRestore.md` §2).
+
+The nonce still earns its place: without it, a single PUT to a
+predictable key (e.g. `archives/2026-05-23.bin`) would silently
+replace the previous night's data with **write-only credentials
+alone** — the nonce forces an attacker to hold enumeration
+capability too, which is what confines in-place overwrite to the
+full-Worker-compromise case above.
 
 ### 3.3 Encryption + key management
 
