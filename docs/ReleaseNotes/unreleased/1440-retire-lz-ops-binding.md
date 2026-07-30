@@ -90,6 +90,45 @@ rather than left for the incident that would find them:
   page size, which is smaller than the number of secrets held — so the
   one being rotated could simply be absent from the output, with nothing
   to indicate the list had been truncated.
+- The restore deployed all three background services at the point where
+  it created their databases — which starts their every-minute scheduled
+  work immediately, hours before the data those schedules read has been
+  restored or checked. The consequences were not symmetric and not all
+  harmless: the event reader would begin recording from wherever it found
+  itself and then be reset out from under itself; the alerting service
+  would start messaging users from half-imported thresholds, because its
+  alert duties are not behind the switch that holds back its
+  transaction-signing duties; and the retention passes would begin
+  deleting expired rows from tables still being imported one at a time,
+  before the row-count check meant to confirm the import could see them.
+  The restore now deploys all three with their schedules switched off and
+  re-arms them in stages, each once its own data is verified — the same
+  discipline the nightly backup writer already had a warning for, applied
+  to the services that read rather than write.
+- The restore rebuilt every credential but nothing restored the
+  operational switches that decide whether the platform's autonomous
+  duties run at all. They are not secrets, are not in the archive, and
+  are not committed to the repository, so a restore could finish with the
+  signing key in place and every autonomous duty silently off —
+  indefinitely, and looking exactly like a deliberate configuration. They
+  are now part of what an operator is told to keep offline, with an
+  explicit re-arming step that runs last, after the smoke test, and a
+  warning that the convenient way to set them applies to one deployment
+  only and is undone by the next.
+- A verification aid added earlier in this change logged the recipient of
+  every successful notification. That branch is routine — it fires for
+  every alert the platform sends — so it would have built a standing
+  record of which wallet was notified when, as a side effect of making a
+  key rotation checkable. The recipient is no longer logged; the channel,
+  which is the field a rotation actually changes, still is. The failure
+  branch keeps the address, where it is the diagnostic and the volume is
+  exceptional.
+- The compromise inventory said every credential it lists is held by both
+  public-facing services. Three entries are not: the keeper's signing key
+  belongs to one service alone, and two of the per-chain endpoints are
+  held by services the section does not even name. A responder reading it
+  would have scoped both the exposure and the post-rotation check to the
+  wrong set. Each entry now names its actual consumers.
 
 Part of #1440. The card stays open for the operator steps: redeploy,
 confirm one clean nightly, then delete the database.

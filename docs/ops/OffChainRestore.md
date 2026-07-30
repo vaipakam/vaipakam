@@ -211,6 +211,34 @@ then deploy.
       authoritative list of its STORE bindings, NOT of its secrets. Check
       each Worker's README for plain `wrangler secret put` values too.
 
+   f. The keeper's **operational flags** are not secrets, are not in the
+      archive, and are not committed — so a restore that follows only the
+      steps above completes with the signing key present and every
+      autonomous path dark, indefinitely and silently. They are plain
+      `vars`, described in `apps/keeper/wrangler.jsonc` as
+      operator-managed, and `apps/keeper/wrangler.jsonc`'s committed `vars`
+      block carries only `TG_BOT_USERNAME`:
+
+      | Flag | While unset | Arms |
+      |---|---|---|
+      | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the two flags below as well |
+      | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
+      | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
+
+      Capture their **values** in the same offline record as the
+      credentials — they are operator state that nothing else preserves.
+      Any optional tuning knobs actually in use (`REWARD_REMIT_LOOKBACK_DAYS`,
+      `REWARD_REMIT_LANE_CAP`, `REWARD_COMMIT_LOOKBACK_DAYS`, the `LIQ_*` /
+      `SPLIT_*` / `PARTIAL_LIQ_*` set) belong in that record too; unlike the
+      three above, those have safe defaults, so an omission degrades tuning
+      rather than turning a duty off.
+
+      **Do NOT set them here.** They arm signing against a database §§4–6
+      have not restored: a matcher or liquidator pass reading half-imported
+      state would submit real transactions from a real key. Re-arming is
+      §7a, after the smoke test, and is deliberately the last thing that
+      happens before the backup writer.
+
 7. Apply migrations:
 
    ```bash
@@ -275,6 +303,38 @@ then deploy.
 
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    rate-limit namespaces + updated configs all exist first.
+
+   > **Deploy them with their SCHEDULES OFF.** All three of
+   > `apps/{indexer,keeper,agent}` declare `"crons": ["* * * * *"]`, so a
+   > plain `wrangler deploy` here arms every-minute scheduled work against a
+   > database that §§4–6 have not restored or verified yet. Concretely: the
+   > indexer starts writing before §6 resets its cursor; the keeper's alert
+   > passes are NOT behind `KEEPER_ENABLED` (only the signing passes are), so
+   > `runWatcher` / `runPreGraceWatcher` begin messaging users off
+   > half-imported `user_thresholds` and `notify_state`; and the agent's
+   > retention passes begin pruning `diag_errors` / `support_tickets` /
+   > expired `telegram_links` while those tables are still being imported one
+   > at a time — deleting restored rows before §4's manifest row-count check
+   > can even see them.
+   >
+   > Same hazard the archive Worker gets its own warning for below, and the
+   > same remedy: do not let a cron run before the data it reads is real.
+   > For each of the three, set the trigger list empty for this deploy —
+   >
+   > ```jsonc
+   > "triggers": { "crons": [] }
+   > ```
+   >
+   > — then deploy. **Confirm it, do not assume it:** an empty list is what
+   > unregisters the schedule, but a mistyped or wrongly-nested key silently
+   > leaves the committed cron in place, so read the schedules back before
+   > moving on (the Worker's *Settings → Trigger Events* pane, or
+   > `wrangler deployments status`). Nothing in §§2–6 needs a cron to run.
+   >
+   > These are restored later, deliberately split in two: the indexer's at
+   > the end of §6 (once its cursor is reset), and the keeper's and agent's
+   > in §7a after the smoke test. Do not simply revert the config now — the
+   > point is that the schedules stay off until each one's data is verified.
 
    > **DO NOT deploy `ops/offchain-data-archive` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
@@ -625,8 +685,20 @@ from the archive. Why:
 # Reset the indexer cursor so it starts from genesis.
 wrangler d1 execute vaipakam-archive \
   --command="DELETE FROM indexer_cursor" --remote
+```
 
-# Trigger the indexer cron to start filling. Watch the catch-up:
+**Only now re-arm the indexer's schedule** — the cursor reset above is
+exactly the precondition §1 step 9 held it back for. Restore
+`"triggers": { "crons": ["* * * * *"] }` in `apps/indexer/wrangler.jsonc`
+and redeploy that Worker alone. Re-arming it before the reset would have
+had it write from whatever cursor it found and then be reset out from
+under itself mid-write.
+
+The keeper's and agent's schedules stay off through this section; they are
+§7a, after the smoke test.
+
+```bash
+# Watch the catch-up:
 wrangler tail vaipakam-indexer
 ```
 
@@ -660,6 +732,66 @@ there.)
    subdomains. Take a final on-chain snapshot of total offers /
    loans counts before the cut-over so any post-restore drift is
    detectable.
+
+---
+
+## 7a. Re-arm the keeper and agent — schedules first, then the flags
+
+Everything up to here has run with `apps/keeper` and `apps/agent` deployed
+but never scheduled (§1 step 9). This is where that ends. The order below is
+the point of the section: it moves from passes that only read, to passes
+that message users, to passes that sign transactions — so a mistake is
+caught at the cheapest stage.
+
+1. **Restore both schedules and redeploy.** Put
+   `"triggers": { "crons": ["* * * * *"] }` back in
+   `apps/keeper/wrangler.jsonc` and `apps/agent/wrangler.jsonc` and deploy
+   each. The keeper's alert passes (`runWatcher`, `runPreGraceWatcher`,
+   `runDailyOracleSnapshot`) and the agent's notification and retention
+   passes start here — reading tables §§4–6 have now restored and §7 has
+   smoke-tested. Expect the first tick within a minute.
+
+2. **Watch one full tick on each before going further.**
+
+   ```bash
+   wrangler tail vaipakam-keeper   # in one shell
+   wrangler tail vaipakam-agent    # in another
+   ```
+
+   A first tick that throws on a missing table or an empty binding means
+   something in §§4–6 did not land; fix that before arming any signing
+   path. Note the keeper's alert passes will send real user notifications
+   from this moment — if the restore is long enough that thresholds have
+   gone stale, expect a burst.
+
+3. **Only then set the keeper's operational flags**, from the offline
+   record captured in §1 step 6f. These arm signing from a real key, so
+   they are deliberately last and deliberately separate from the deploy:
+
+   ```bash
+   ( cd apps/keeper
+     wrangler deploy --var KEEPER_ENABLED:true )
+   ```
+
+   Set `REWARD_REMIT_ENABLED` and `REWARD_COMMIT_ENABLED` the same way, and
+   only if they were on before — `REWARD_REMIT_ENABLED` additionally
+   requires the keeper EOA to be authorized on-chain and D1 migration 0044
+   applied, neither of which a restore re-establishes.
+
+   > **`--var` does not persist, and that is a trap here.** It overrides the
+   > var for THAT deployment only; it does not write the config. The next
+   > `wrangler deploy` from a checkout whose `vars` block still omits the
+   > flag silently disarms every duty again — the same invisible-off state
+   > this step exists to fix, now with a restore behind it that looked
+   > complete. Prefer committing the values into `apps/keeper/wrangler.jsonc`
+   > and deploying normally: it survives the next deploy and leaves a
+   > reviewable record. Use `--var` only for a deliberately temporary arm.
+
+4. **Confirm each armed duty actually runs**, rather than assuming the flag
+   took. `isKeeperEnabled()` reads the string, so a typo reads as false and
+   is indistinguishable from "left off on purpose" — the same failure the
+   flags being uncommitted caused in the first place. One more tail, and
+   check the pass you expect to see logs rather than skips.
 
 ---
 

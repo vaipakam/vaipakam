@@ -123,9 +123,14 @@ export async function sendPush(
     // unsound: an operator could watch nothing happen and conclude the
     // migration worked. The channel is logged because it is the field a
     // rotation changes and the one worth eyeballing.
-    console.log(
-      `[push] sent subscriber=${payload.subscriber} channel=${channelCaip}`,
-    );
+    //
+    // The subscriber is deliberately NOT logged (#1450 r13). This branch is
+    // routine — it fires on every HF-band, pre-grace and periodic-payment
+    // notification — so including the address would build a standing
+    // wallet-to-event-timestamp trail in Cloudflare observability as a side
+    // effect of a verification aid. The failure branch below still carries
+    // it: that one is exceptional, and there the address is the diagnostic.
+    console.log(`[push] sent channel=${channelCaip}`);
   } catch (err) {
     console.error(
       `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,

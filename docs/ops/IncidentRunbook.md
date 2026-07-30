@@ -657,8 +657,12 @@ is `wrangler tail`, so verify there rather than assuming success.
 5. Update the **Vaipakam Push channel reference** block at the top of this
    section, so the next incident does not cross-reference a dead channel.
 6. Verify with `wrangler tail` on both Workers that a send actually
-   SUCCEEDS — look for `[push] sent subscriber=… channel=…` carrying the new
-   channel address. Two quiet tails are NOT confirmation: sends only happen
+   SUCCEEDS — look for `[push] sent channel=…` carrying the new channel
+   address. (The line deliberately does not name the subscriber: it fires on
+   every notification, so carrying the wallet would leave a routine
+   wallet-to-event trail in observability. The channel is the field a
+   rotation changes, and it is all this check needs.) Two quiet tails are NOT
+   confirmation: sends only happen
    when an eligible subscriber event occurs, so silence means "nothing has
    been attempted yet" and "every attempt is failing" equally. Wait for a
    real send, or trigger one, before calling the migration done.
