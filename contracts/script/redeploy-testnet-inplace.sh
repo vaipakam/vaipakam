@@ -249,20 +249,13 @@ fi
 banner "GATE PASSED"
 
 # ── Gate-only default: print the broadcast commands and stop ──────────────────
-if [ "$BROADCAST" -eq 0 ]; then
-  # Echo back the SAME scoping the rehearsal used (Codex #1182) so the copy-paste
-  # rerun broadcasts exactly what was just gated — not the full default set.
-  rerun="bash script/redeploy-testnet-inplace.sh --broadcast --skip-regression --skip-sanity"
-  [ "$SKIP_VAULT" -eq 1 ] && rerun="$rerun --skip-vault"
-  [ "$RUN_EXPORT" -eq 1 ] && rerun="$rerun --export"
-  [ "$CHAINS" != "base-sepolia arb-sepolia" ] && rerun="$rerun --chains \"$CHAINS\""
 # #1448 r12 — printed on BOTH exit paths, so the gate-only mode cannot
 # hand an operator the manual refresh commands without the migration
 # that follows them.
 print_seed_ceremony() {
 cat <<'EOF'
 
-POST-REFRESH — recycled accounting (canonical chain only):
+POST-REFRESH — recycled accounting (any chain with release history):
 
   Run ONCE if the reservation history holds ANY released (status-3)
   reservation — walk getRemitReservation(i) over 1..getRemitReservationNonce().
@@ -298,6 +291,14 @@ POST-REFRESH — recycled accounting (canonical chain only):
 
 EOF
 }
+
+if [ "$BROADCAST" -eq 0 ]; then
+  # Echo back the SAME scoping the rehearsal used (Codex #1182) so the copy-paste
+  # rerun broadcasts exactly what was just gated — not the full default set.
+  rerun="bash script/redeploy-testnet-inplace.sh --broadcast --skip-regression --skip-sanity"
+  [ "$SKIP_VAULT" -eq 1 ] && rerun="$rerun --skip-vault"
+  [ "$RUN_EXPORT" -eq 1 ] && rerun="$rerun --export"
+  [ "$CHAINS" != "base-sepolia arb-sepolia" ] && rerun="$rerun --chains \"$CHAINS\""
 
   cat <<EOF
 
