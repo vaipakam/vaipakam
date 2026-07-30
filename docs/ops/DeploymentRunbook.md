@@ -62,7 +62,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). **Required before routing value (conformance-review L-i, decided 2026-07-11):** at least one swap adapter MUST be registered here. A forced close / liquidation on a deployment with **zero** registered adapters reverts `NoSwapAdaptersConfigured` — it does NOT silently fall through to the in-kind collateral fallback (that per-loan fallback engages only after configured routes are actually attempted and fail; spec `ProjectDetailsREADME §7`). `verify` does not check the adapter set, so confirm it is non-empty before `handover`, or every liquidation on that chain will revert. |
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureOracle + ConfigureRewardReporter + ConfigureVPFIBuy + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. |
 | `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
-| `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + `exportLzWatcherVars.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
+| `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-defi` / `cf-www` | — | Build + `wrangler deploy` apps/defi (the dApp) / apps/www (marketing). |
 | `cf-keeper` / `cf-indexer` / `cf-agent` | — | wrangler deploy of each Worker. The indexer phase also runs D1 migrations against `vaipakam-archive`. Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
 | `verify` | — | Read-only smoke checks: `paused()`, `getTreasury()`, facet count (exact-matches the live `DiamondLoupe.facetAddresses().length` against `addresses.json` `.facetCount` recorded at deploy — fails on any mismatch, not just a low count), master flag state, and the VPFI TokenPool rate-limit **wiring**: the pool's `getRateLimitAdmin()` must be the `VpfiPoolRateGovernor` (which range-bounds every value and refuses to disable a lane's limit) and `getSupportedChains()` must be non-empty — refuses to mark verify-done otherwise. **Known limit of the automated check**: it does NOT read each lane's limiter config, so an interrupted `ccip-wire` run can leave a lane present but with its rate limit disabled (or zeroed) and still pass verify. **Manual operator step (required)**: after verify, for EVERY expected lane read the pool's per-lane limiter state (`cast call $POOL 'getCurrentOutboundRateLimiterState(uint64)((uint128,uint32,bool,uint128,uint128))' <remoteChainSelector>` and the `getCurrentInboundRateLimiterState` equivalent; the returned tuple is `(tokens, lastUpdated, isEnabled, capacity, rate)`) and confirm `isEnabled == true` with the finite capacity/rate values from the design §10 starting numbers (capacity 50,000 VPFI, refill ≈5.8 VPFI/s) before proceeding to handover. (Hardening follow-up: extend the verify phase to read per-lane limiter configs itself. The former BuyAdapter rate-limit-cap check is gone with the adapter, #687-A.) |
@@ -248,6 +248,20 @@ mainnet without preflight discipline:
   next section).
 
 ### Prerequisites: one-time watcher RPC-secret setup
+
+> **STALE — the pre-split `hf-watcher` Worker no longer exists.** It was removed by the
+> Stage 3 split; its role is now `apps/{keeper,indexer,agent}`, and their
+> per-chain `RPC_*` values live in the **account-level Secrets Store**, not
+> in per-Worker `wrangler secret put`. The database is `vaipakam-archive`,
+> not `vaipakam-alerts-db`.
+>
+> A normal contract deployment following the commands below stops on
+> directories that do not exist, or verifies the wrong database. Use the
+> Secrets Store form (see `SecretsStoreMigration.md` §9) against the live
+> Workers instead. Bringing this whole section up to date is tracked
+> separately — it predates #1440 and is not that removal's doing, but it is
+> live imperative text and should not be followed as written (#1450 r4).
+
 
 Per `CLAUDE.md`, RPC URLs carry operator-curated paid-tier API keys
 and live ONLY as Cloudflare Worker secrets — never in the repo. Set
@@ -1807,7 +1821,7 @@ npx wrangler tail        # tail logs in another terminal
 
 # From a test wallet:
 #   1. Subscribe to the Push channel at the URL in 8b.2
-#   2. /app/alerts → Save thresholds, Link Telegram, Enable Push rail
+#   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
 #   3. Lower one threshold below the connected wallet's HF
 #   4. Wait for the next 5-min cron tick
 # Expect: log lines for `tg send` + Push API success on band crossings.
@@ -1919,7 +1933,35 @@ describing this; keep them in sync if you change the schema.
 
 ---
 
-## 9. LayerZero security watcher (one-time, not per-chain)
+## 9. LayerZero security watcher — RETIRED (#1440)
+
+> **This section is historical. Do NOT follow it.**
+>
+> The `vaipakam-lz-watcher` Worker was **deleted on 2026-07-28**. After the
+> T-068 migration to Chainlink CCIP it was polling a decommissioned stack
+> every five minutes, including the `OAPP_VPFI_BUY_*` surface the #687-A
+> securities excision removed.
+>
+> Following the steps below would **create `vaipakam-lz-alerts-db`** — a
+> database the operator is in the middle of deleting — and, more to the
+> point, would DEPLOY the retired Worker, which is what consumes a cron
+> slot. (Creating a D1 database consumes none.) That freed slot is
+> currently **spare**: `ops/mesh-watcher` is its intended occupant but is
+> code-complete and undeployed, so the account sits at 4 of 5 with one
+> available (see that Worker's README for its setup).
+>
+> **The source tree is GONE** — `ops/lz-watcher/` was removed in #1440.
+> Review established that no config edit can make a source tree
+> undeployable (the positional `wrangler deploy src/index.ts --triggers
+> ...` form bypasses `main` entirely, and `wrangler secret put` can create
+> a draft Worker by name), so deleting it was the only way to make the
+> claim true. Recover from git history if ever needed.
+>
+> The cross-chain surface it used to watch is CCIP now; ops alerting for
+> that is separately tracked and does not reuse any of this.
+
+<details>
+<summary>Historical procedure (retained for reference only)</summary>
 
 The `ops/lz-watcher` Cloudflare Worker is **separate from** the
 hf-watcher in §8. It is internal-only — it has no public HTTP
@@ -2091,6 +2133,8 @@ not Vaipakam Diamond selectors.
 
 ---
 
+</details>
+
 ## Appendix: 2026-05-10 testnet rehearsal record (F1 / F2 / F3)
 
 The deploy-script modernization was validated by three end-to-end
@@ -2207,8 +2251,17 @@ Set the value once at the account level:
 ```bash
 # Account-level Secrets Store (store: vaipakam-credentials).
 # Both agent and indexer bindings resolve from this single value.
-wrangler secrets-store secret create OPENSEA_API_KEY \
-  --store-id 1e66429d0fa24aa38a27bc05b7bcf63e
+# Positional store id + --name + --scopes workers. `--scopes` is REQUIRED
+# (SecretsStoreMigration.md §9, verified against the live API 2026-05-17);
+# the earlier `--store-id` flag form here would have failed.
+# No pipe and no --value: wrangler PROMPTS for the value, so it never
+# enters the command line and cannot be recovered from shell history.
+# (An earlier revision piped the key in with printf while the sentence
+# below still claimed wrangler would prompt — the pipe SUPPRESSES the
+# prompt, so the text was both insecure and self-contradictory.)
+wrangler secrets-store secret create \
+  1e66429d0fa24aa38a27bc05b7bcf63e \
+  --name OPENSEA_API_KEY --scopes workers --remote
 ```
 
 (Wrangler prompts for the value; redeploy each Worker afterwards

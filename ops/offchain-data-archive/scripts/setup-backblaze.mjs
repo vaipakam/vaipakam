@@ -9,11 +9,14 @@
  *   1. Authorize with B2 native API and discover the account.
  *   2. Create the backup bucket (`vaipakam-offchain-data-archive` by
  *      default; private). Skipped if it already exists.
- *   3. Set lifecycle rules on three prefixes:
- *        archives/         30-day retention (nightly snapshots).
- *        archives-monthly/ 365-day retention (1st-of-month snapshots).
- *        archives-yearly/  indefinite (Jan-1 snapshots for the
- *                          legal-hold audit-trail durability story).
+ *   3. Apply the lifecycle rules from `../bucket-lifecycle.json` — this
+ *      script no longer carries its own copy, and no longer describes the
+ *      values (an earlier revision of this header still listed "three
+ *      prefixes / archives/ 30-day", which was wrong on both count and
+ *      figures; #1471 r9). The declaration currently covers FOUR prefixes:
+ *      `archives/` + `manifests/` and their `-monthly/` counterparts. The
+ *      `-yearly/` prefixes deliberately get NO rule — that absence is what
+ *      gives them indefinite retention for the legal-hold durability story.
  *   4. Create TWO scoped Application Keys (one write-only for
  *      nightly backup, one read-only for weekly healthcheck), both
  *      bucket-scoped. Capabilities are deliberately tight — see the
@@ -42,6 +45,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { assertPolicyCeilings } from './lifecycle-policy.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -173,36 +177,57 @@ async function createBucket(apiUrl, authToken, accountId, bucketName) {
 }
 
 async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
-  // Tiered retention — see docs/DesignsAndPlans/OffChainDataResilience.md §3.4.
-  //   archives/         — daily snapshots, 30-day retention.
-  //   archives-monthly/ — 1st-of-month snapshots, 365-day retention.
-  //   archives-yearly/  — Jan-1 snapshots, no rule (indefinite).
-  // Manifests follow the matching prefix so a healthcheck can read
-  // them at the same path that produced the archive.
-  const rules = [
-    {
-      fileNamePrefix: 'archives/',
-      daysFromUploadingToHiding: 30,
-      daysFromHidingToDeleting: 1,
-    },
-    {
-      fileNamePrefix: 'manifests/',
-      daysFromUploadingToHiding: 30,
-      daysFromHidingToDeleting: 1,
-    },
-    {
-      fileNamePrefix: 'archives-monthly/',
-      daysFromUploadingToHiding: 365,
-      daysFromHidingToDeleting: 1,
-    },
-    {
-      fileNamePrefix: 'manifests-monthly/',
-      daysFromUploadingToHiding: 365,
-      daysFromHidingToDeleting: 1,
-    },
-    // archives-yearly/ and manifests-yearly/ intentionally omitted —
-    // no rule = indefinite retention.
-  ];
+  // Rules come from `bucket-lifecycle.json` — the ONE declaration — and are
+  // NOT restated here (#1471 r1).
+  //
+  // They used to be hardcoded in this function, with
+  // `daysFromHidingToDeleting: 1` for all four prefixes. #1469 raised it
+  // (to what, read from the declaration — an earlier revision of this comment
+  // said "to 30", which the privacy-promise ceiling later ruled out), because
+  // at 1 a superseded archive
+  // is deleted about a day after being replaced — and since the pipeline's B2
+  // key can write but NOT delete, that lifecycle rule was the only thing
+  // destroying a genuine archive after a forged overwrite.
+  //
+  // So a rerun of this setup script — still the documented flow in
+  // README.md — would have silently reverted that mitigation on production.
+  // Two copies of one configuration is exactly the defect the declaration was
+  // added to remove; leaving this one behind would have made the declaration
+  // decorative.
+  //
+  // Tiered retention rationale — docs/DesignsAndPlans/OffChainDataResilience.md
+  // §3.4. `archives-yearly/` and `manifests-yearly/` are intentionally absent
+  // from the declaration: no rule means indefinite retention.
+  const declPath = new URL('../bucket-lifecycle.json', import.meta.url);
+  const decl = JSON.parse(readFileSync(declPath, 'utf8'));
+  // EVERY declared field, not the three this script happened to care about
+  // (#1471 r3). Rebuilding each rule from a hand-picked subset means
+  // `b2_update_bucket` CLEARS any field left out — so the moment the
+  // declaration sets `daysFromStartingToCancelingUnfinishedLargeFiles` to a
+  // real value, a documented setup rerun would silently drop it while
+  // `--check` still treats it as part of the configuration. That is the same
+  // defect as r2's hardcoded `daysFromHidingToDeleting: 1`, one field over:
+  // setup writing a rule the declaration did not describe.
+  //
+  // Copying the declared rule wholesale is what makes the declaration
+  // authoritative. A new field added to `bucket-lifecycle.json` reaches B2
+  // without touching this file, which is the property that was missing.
+  //
+  // The spread is guarded rather than trusted: an unrecognised key would be
+  // forwarded straight to B2, and this class of defect has been found three
+  // times in this file (r2 hardcoded one field, r3 dropped another, r11 found
+  // the apply path silently discarding a third). The check now lives in
+  // `lifecycle-policy.mjs` and runs for BOTH writers via
+  // `assertPolicyCeilings` below — this file kept a private copy of the field
+  // list until #1471 r11, which is the same duplication the policy module was
+  // created to end, reproduced inside the fix for it.
+  // SAME validator the apply path uses (#1471 r5). This is the other
+  // documented writer, and a ceiling enforced in only one of two writers is
+  // not enforced: rerunning the documented setup flow with a violating
+  // declaration would have put production straight back over the line.
+  assertPolicyCeilings(decl, (msg) => fail(msg));
+
+  const rules = decl.rules.map((r) => ({ ...r }));
   const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_update_bucket', {
     accountId,
     bucketId,
@@ -435,9 +460,16 @@ async function main() {
     console.log();
   } else {
     console.log('# Write-only key already exists; reusing. ' +
-                'If you have lost the application-key string, rotate via:');
-    console.log(`#   - revoke "${writeKeyName}" in B2 dashboard`);
-    console.log('#   - re-run this script');
+                'If you have lost the application-key string, rotate KEY-ONLY:');
+    console.log(`#   - create a replacement key with the same capabilities`);
+    console.log(`#     (${writeCaps.join(' + ')}, bucket-scoped) via the B2`);
+    console.log('#     console App Keys page or the B2 CLI, update the wrangler');
+    console.log(`#     secrets, then revoke "${writeKeyName}"`);
+    console.log('#   - do NOT re-run this script to rotate: it rewrites the');
+    console.log('#     bucket lifecycle rules to the values coded in this tree');
+    console.log('#     BEFORE it touches keys, silently reverting any live');
+    console.log('#     tuning (hidden-version retention in particular — see');
+    console.log('#     docs/ops/OffChainRestore.md §2).');
     console.log();
   }
   if (newReadKey) {
@@ -449,7 +481,9 @@ async function main() {
     console.log(`  Paste:  ${newReadKey.applicationKey}`);
     console.log();
   } else {
-    console.log('# Read-only key already exists; reusing. Same rotation note as above.');
+    console.log('# Read-only key already exists; reusing. Same KEY-ONLY rotation');
+    console.log(`# note as above (capabilities: ${readCaps.join(' + ')}) — never`);
+    console.log('# by re-running this script.');
     console.log();
   }
   console.log(`# B2 endpoint + bucket — set as secrets too (region varies per account):`);

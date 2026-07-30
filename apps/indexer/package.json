@@ -10,7 +10,7 @@
     "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",
     "check-notification-coverage": "node scripts/check-notification-coverage.mjs",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs && node scripts/check-migration-prefixes.mjs",
+    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs && node scripts/check-migration-prefixes.mjs && node scripts/check-table-classification.mjs",
     "test": "vitest run",
     "check-migration-prefixes": "node scripts/check-migration-prefixes.mjs"
   },

@@ -106,7 +106,7 @@ merged PRs' design records are authoritative):**
 | ~~**M3 B2-d5**~~ **— DONE, merged `64964e91` (#1432).** The `Ā`-excluded remitted-recycled custody-credit class (`RecycleSource.RemittedCustodyRelocation`) + the #1331 reclassification. The exclusion covers the REPORTED CUMULATIVE as well as the `Ā` day-bucket (the derived floor `bucket + paidOut` would otherwise re-admit it), and the remit payload carries a leading keccak version sentinel (`RemitWire.REMIT_WIRE_TAG_D5`) so an un-upgraded receiver REJECTS rather than silently truncates | #1222 |
 | **M2 #1369** — deferred Full-auth origination paths: signed-offer maker Full authorization (`OfferCreateFacet`) + matched fills honoring the lender offer's `creatorFull` (`FeeEntitlementFacet`) + the frontend maker surface — without it, those parties cannot enter the Full absorption channel even after enablement | #1369 |
 | ~~**M3 B3**~~ **— DONE, merged `4961e9db` (#1435).** Source-scoped netted remittance completion. d3 had shipped the SEND half (shortfall-only remittance); B3 closed the BOOK half — mirrors now report two commitment-retirement cumulatives (total retired, and the release-only subset) on the day-close, so `chainOutstandingRecycledCommit[c]` finally RETIRES (`== instructed − retired`, exact with broadcasts in flight) and a commitment released un-spent restores that chain's availability instead of being lost forever. Both figures are clamped on ingest against Base's own instruction ledger — a mirror is trusted for timing, never magnitude — which forces `avail ≤ reported` and keeps d5's exclusion intact. Report payload 6→8 words (length is a sound discriminator here: flat `uint256` tuple, no dynamic member, so no version sentinel is needed unlike d5's remit payload). Design record `Vpfi1222B3SourceScopedNettingDesign.md` | #1222 |
-| **M3 B4** — 3-chain mesh e2e + invariants + watcher per-chain bucket checks + TokenomicsTechSpec §4a. **B4-a DONE, merged `393852d9` (#1437)** (per-chain §7 commitment invariants). **B4-b DONE, merged `48ab772e` (#1439)** (three real diamonds over a queueing `MeshBusMessenger`; surfaced the **#1434-before-`D*` second arming gate** now recorded in §M7 and in the §4 graph's `ARMGATE` node). **B4-c DONE, merged `e77fe3de` (#1443).** `ops/mesh-watcher`, a standalone Cloudflare Worker reading every reward chain's recycled ledger. B4-c SHIPPED with eight CRITICAL checks as real alerts (commit identity, the clamp chain, the §7 #6 consumed cap, attribution ceiling, availability formula, Base self-inertness, Base-never-ahead-of-chain, bucket coverage — the last then CRITICAL on mirrors only, since `releaseRemitReservation` makes a canonical shortfall the intended recovery state; #1448 below supersedes that scoping and takes the total to ELEVEN CRITICAL checks — adding `bucket-composition` (both directions), `reported-derivation` and `role-consistency`); stuck-settlement, report-lag and coverage gaps ship **ADVISORY** and are delivered silently. Nine Codex rounds / ~54 findings drove a source-level restructure: error text is classified rather than forwarded, storage returns failures rather than throwing, and the windowed-signal rules, alert identity, health definition and snapshot freshness each live in one enforced place. 146 tests, 65 mutations at B4-c; 180 tests and a further nine mutation checks after the #1448 follow-up. Code-complete and **undeployed** — D1 creation, secrets and the first deploy are documented operator steps in its README. **B4-c follow-ups #1444 + #1446 DONE, merged via #1448** — the contracts now publish the raw stored counters behind the recycled books (`getRecycleCompositionPosition`) plus the released-remit stranded cumulative, which closed both gaps without the event-stream scanning #1446 had assumed it needed. Bucket coverage became a single strict rule on every chain (the canonical advisory exception is gone, not documented — governor §7 #2 amended to its universal form), and two new CRITICAL checks landed: `bucket-composition` (a counter cannot claim more credit than the bucket received — catches a custody relocation also advancing absorption) and `reported-derivation` (the published cumulative is re-derived off-chain and disagreed with). Neither subsumes the other and the tests assert that. **#1445** (endpoint chain-identity) remains the one open watcher limitation. **B4-d REMAINING**: TokenomicsTechSpec §4a sweep + driving §7 #2's fresh half to its boundary | #1222 |
+| **M3 B4** — 3-chain mesh e2e + invariants + watcher per-chain bucket checks + TokenomicsTechSpec §4a. **B4-a DONE, merged `393852d9` (#1437)** (per-chain §7 commitment invariants). **B4-b DONE, merged `48ab772e` (#1439)** (three real diamonds over a queueing `MeshBusMessenger`; surfaced the **#1434-before-`D*` second arming gate** now recorded in §M7 and in the §4 graph's `ARMGATE` node). **B4-c DONE, merged `e77fe3de` (#1443).** `ops/mesh-watcher`, a standalone Cloudflare Worker reading every reward chain's recycled ledger. B4-c SHIPPED with eight CRITICAL checks as real alerts (commit identity, the clamp chain, the §7 #6 consumed cap, attribution ceiling, availability formula, Base self-inertness, Base-never-ahead-of-chain, bucket coverage — the last then CRITICAL on mirrors only, since `releaseRemitReservation` makes a canonical shortfall the intended recovery state; #1448 below supersedes that scoping and takes the total to ELEVEN CRITICAL checks — adding `bucket-composition` (both directions), `reported-derivation` and `role-consistency`); stuck-settlement, report-lag and coverage gaps ship **ADVISORY** and are delivered silently. Nine Codex rounds / ~54 findings drove a source-level restructure: error text is classified rather than forwarded, storage returns failures rather than throwing, and the windowed-signal rules, alert identity, health definition and snapshot freshness each live in one enforced place. 146 tests, 65 mutations at B4-c; 180 tests and a further nine mutation checks after the #1448 follow-up. Code-complete and **undeployed** — D1 creation, secrets and the first deploy are documented operator steps in its README. **B4-c follow-ups #1444 + #1446 DONE, merged via #1448** — the contracts now publish the raw stored counters behind the recycled books (`getRecycleCompositionPosition`) plus the released-remit stranded cumulative, which closed both gaps without the event-stream scanning #1446 had assumed it needed. Bucket coverage became a single strict rule on every chain (the canonical advisory exception is gone, not documented — governor §7 #2 amended to its universal form), and two new CRITICAL checks landed: `bucket-composition` (a counter cannot claim more credit than the bucket received — catches a custody relocation also advancing absorption) and `reported-derivation` (the published cumulative is re-derived off-chain and disagreed with). Neither subsumes the other and the tests assert that. **#1445** (endpoint chain-identity) is CLOSED — every tick verifies `eth_chainId` per target against the id its secret is named for, so a mis-set endpoint can no longer be adopted silently and report a clean tick against the wrong chain. The watcher's remaining untested seam is the `mesh.ts` wiring around that check, recorded as a coverage boundary in its README rather than as a limitation. **B4-d DONE.** TokenomicsTechSpec §4a swept — the funding bullets described the pre-mesh shape (canonical chain funds every slice on demand) long after two-pass self-funding, the commitment-report gate and the zeroed-chain manual path shipped, and §4a's testing requirements now record what a mesh test must establish that a single-deployment test cannot. §7 #2's fresh half driven to its boundary: the invariant is an upper bound the campaign cannot approach (fresh reservations size from the fixed schedule, ~20,164 VPFI on an early day, over **52** finalizable slots — days 0-39 from the general actions plus the 12 even days 40-62 that `instructThenRetire` reserves — so 51 with a non-zero schedule and ~1.03M reachable against 69M: a factor of ~67, **under two orders of magnitude**. Counted twice: the first version of this row said "seven orders", the second "fewer than 40 slots, under ~1M"; both were wrong and the conclusion was unchanged by either), so FIVE deterministic tests place the ledger AT the cap: fresh clamps to exactly the remaining headroom rather than to the day's schedule; at the cap exactly fresh goes to zero while recycled keeps funding (§7 #1's "bounds fresh drawdown only"); value already REMITTED reserves identically — the one term no fixture could otherwise reach, since it needs a mirror sent almost the whole allocation; and TWO combination fixtures, because every single-term fixture is satisfied by a formula that takes the LARGEST reservation instead of summing them (remitted+outstanding together, then all three terms with paid-out non-zero as well). Mutation evidence is recorded as a table in `MeshLedger.invariant.t.sol` beside the fixtures themselves, NOT restated here — three successive reviews caught a stale "and only that fixture" claim in this row and in the release note, each time because a fixture had been added and nothing tied the prose to the fixture set. Exclusivity was the wrong property, and so was the order criterion that briefly replaced it — the measured sets are NOT nested, so "fails while the others pass" establishes nothing either. What earns a fixture its place is pinning a distinct behaviour at the boundary. Both sides also assert the RESERVATION, not just the day's published stamp — publishing the clamped figure while reserving the unclamped one breaks the cap with every stamp assertion green, and the same publish-versus-reserve gap exists on the recycled side (a stamped recycled budget with no reservation behind it lets a later day re-offer the same availability). **Open out of B4, and NOT closed by it: #1460** — a fresh-only claim can spend recycle-bucket backing (mechanism in §M7 step 0). It is a claim-path defect rather than a mesh one, so no B4 slice closes it. **It is BOTH already reachable on an unarmed deployment AND still a hard arming gate** — not alternatives, though r17 wrongly replaced the second with the first before r19/r20 restored both. THREE conditions are needed, not two: `recycleBucket` non-zero (notification-fee absorption, ungated), a scheduled-only claim (the only kind an unarmed deployment serves), **and** the scheduled side short — `balanceOf − recycleBucket < scheduledPayout`. With ample unearmarked funding the first two hold and nothing is corrupted, so they are not sufficient alone; nothing currently measures the third. Arming does not make it reachable, it makes it VISIBLE, because recycled claims then fail over a shortfall an earlier scheduled claim caused — which is also why `BACKING --> ARM` stays an unconditional hard edge (§4). The edge governs SEQUENCING; reachability governs URGENCY. Full statement in §M7 step 0. An operator reading this row as "B4 done" must not conclude either that the arming path is clear or that this one can wait for the ceremony. Also open: #1452 (the one exclusion variant no bound catches), #1461 (the coverage allowance is GROSS — a released-then-late-delivered remittance still counts as stranded backing, so both post-conditions can pass over a genuinely short bucket; detection-only). **#1331's B4 coverage recorded as discharged** except the mirror half, which is unreachable until #1434 — the CONSUMPTION side only (claim / forfeit / expiry pricing → retirement / release); a mirror's bucket is credited today via `onRewardBudgetReceived` | #1222 |
 | **M4 C1/C2** — surplus knob + batched repatriation | #1222 tail |
 | **M5** — dashboard views (`selfFundingRatio`, `platformRetained`, runway, `netEmission = freshDrawdown`) + public surface | #1218 |
 | **M6** — perks (#1204, `SpendGatedPerk` enum entry, legal glance first) + bonds (#1219, schedule the glance) | #1204 / #1219 |
@@ -125,14 +125,38 @@ verbatim by every later design; the code state has made the need concrete:
    mirror's local `recycleBucket` — but sizing, commitment reserve, and
    consume paths are all `onlyCanonical`. Mirror-absorbed VPFI is parked,
    invisible to `Ā`, funding nothing.
-2. **Base over-remits while mirror buckets sit full** — #776 remittances
+   ~~*(items 1-3 as written)*~~ **SUPERSEDED by B1 and B2-a — NOT by B2-d5
+   (#1457 r21).** Verified in git: `recordChainRecycled` and the mirror-report
+   ledger attribution landed in **B1** (`09492a4`, #1413); folding
+   `dayMirrorRecycledCredit` into `Ā` and using mirror availability for two-pass
+   funding landed in **B2-a** (`a82426d`, #1414). B2-d5 (`64964e9`, #1432) added
+   the relocated-custody credit class and resolves item 4 only — r19 attributed
+   all four to it because item 4's strike-through was the nearest label to hand. `LibVpfiRecycle.recordChainRecycled` maintains the `Ā`
+   attribution headroom and is reached from BOTH report directions, so
+   mirror-absorbed VPFI is no longer invisible to `Ā`: the mirror-report
+   ingress is `RewardAggregatorFacet._ingestChainReport`
+   (`RewardAggregatorFacet.sol:362-386`), and Base's own local report goes
+   through `RewardReporterFacet._recordChainReportLocal`
+   (`RewardReporterFacet.sol:324-344`). r19 named these the other way round —
+   the conclusion held but the citation was reversed, and the function names
+   settle the direction (#1457 r20). Only item 4 was struck
+   when B2-d5 landed; items 1-3 assert the same pre-mesh state and should have
+   been struck with it. What remains gated on #1434 is the CONSUMPTION side, as
+   item 4 already says.
+2. ~~**Base over-remits while mirror buckets sit full** — #776 remittances
    don't know a mirror holds protocol-owned recycled VPFI locally;
-   exactly the round-trip waste Option B exists to remove.
-3. **Global `Ā` under-counts**: the coupled term sizes from Base-local
-   credits only.
-4. **A live, filed drift exists (#1331)**: mirror remitted-recycled
+   exactly the round-trip waste Option B exists to remove.~~ See above.
+3. ~~**Global `Ā` under-counts**: the coupled term sizes from Base-local
+   credits only.~~ See above.
+4. ~~**A live, filed drift exists (#1331)**: mirror remitted-recycled
    shares hit a no-op `releaseCommitment` instead of crediting the local
-   bucket — benign only *because* B′ is missing.
+   bucket — benign only *because* B′ is missing.~~ **RESOLVED by B2-d5**
+   (merged `64964e91`, #1432), which moved the recycled credit to remit
+   ARRIVAL: `onRewardBudgetReceived` now calls `creditCustodyRelocated`,
+   so a mirror's local bucket IS credited today. Retained struck-through
+   because later text still reasons from it — what remains gated on
+   #1434 is the CONSUMPTION side (claim / forfeit / expiry pricing, and
+   therefore retirement or release), not the credit.
 5. **RL-3's ratified mirror rules presuppose B′.**
 
 Scope nuance (matches the owner's 2026-07-18 parking directive): B′ is
@@ -491,6 +515,54 @@ review slot the excision doc recommends); slash path →
 
 GovernanceRunbook gains a recycling section, executed in order:
 
+0. ⛔ **#1460 is BOTH already reachable on an unarmed deployment AND a hard
+   arming gate. Those are not alternatives, and r17 wrongly replaced the
+   second with the first (#1457 r19).** THREE conditions, all satisfiable
+   before arming:
+   - `recycleBucket` is non-zero — `LibNotificationFee` credits it with no
+     arming and no fee-entitlement gate (its own comment: "the first live
+     non-forfeit absorption class");
+   - the claim is scheduled-only — the only kind an unarmed deployment serves,
+     since `_dayPoolHalves` returns a zero recycled half while unarmed;
+   - **and the scheduled side is short**: unearmarked balance
+     (`balanceOf − recycleBucket`) is less than the scheduled payout. This
+     third term is necessary and r17 omitted it — with ample unearmarked
+     funding the claim pays and `balanceOf >= recycleBucket` still holds, so
+     the books stay covered. A non-zero bucket plus a scheduled-only claim is
+     NOT sufficient on its own.
+   So it is live on any deployment that has absorbed notification fees AND is
+   thin on unearmarked scheduled funding — a condition nothing currently
+   measures, which is its own reason not to wait. What arming adds is not
+   reachability but VISIBILITY: recycled claims begin, and one fails over a
+   shortfall an earlier scheduled claim caused. It remains a hard arming gate
+   (`BACKING --> ARM`, §4) because arming over an existing corruption converts
+   quiet book damage into user-visible claim failures — but do not read that
+   gate as permission to wait for the ceremony.
+   The mechanism: `RewardClaimFacet` debits `recycleBucket` by a claim's
+   **recycled** component only, then transfers the **aggregate** out of the
+   same fungible balance without checking that the non-recycled part fits
+   in `balanceOf − recycleBucket`. So a scheduled-only claim on a chain
+   holding recycled custody spends the custody backing the recycled pool.
+   Nothing is paid to the wrong party and nothing is lost — the books stop
+   being true: the bucket then claims more than it holds, and a LATER
+   recycled claim fails instead of the scheduled one having failed for want
+   of scheduled funding. The un-earmarked-balance shape already exists at
+   `InteractionRewardsFacet` (the expiry sweep) and is simply absent from
+   the claim path; `RewardAggregatorFacet` currently states the separation
+   as enforced, which it is not; no test asserts it across a **paying**
+   claim; and `ops/mesh-watcher` reads no `balanceOf`, so it cannot see the
+   shortfall either. **Arming does not make the corruption
+   reachable — it is reachable now (see the opening of this step). What
+   arming adds is a party that NOTICES: recycled claims begin, and one of
+   them fails over a shortfall an earlier scheduled claim caused.** This
+   sentence claimed reachability until #1457 r18, ten lines below the
+   correction, which is the same deferral licence in the same step. It sits
+   above the arming step because arming over an existing corruption converts
+   quiet book damage into user-visible claim failures, not because arming is
+   what creates it. Closing it means the separation
+   enforced at claim time AND asserted across a paying claim — not only at
+   the credit chokepoint.
+
 1. **Arm the governor** (`armedFromDay`) once M1b gives absorption a
    live feed — **AND only while reward claims are Base-only / dark on
    mirrors, or M3 (Phase B′) is complete AND #1434 has made mirror
@@ -500,7 +572,25 @@ GovernanceRunbook gains a recycling section, executed in order:
    dark-mirror branch is unchanged and does **not** require #1434 —
    arming with reward claims dark on every mirror was always permitted,
    and `ARMGATE` keeps that disjunct. Only the M3 branch gains the
-   settlement-reachability condition. `RL3KNOB` and `FEE` continue to
+   settlement-reachability condition.
+
+   **#1460 is a SEPARATE graph node (`BACKING`), not a disjunct of
+   `ARMGATE`** — deliberately, because it constrains BOTH branches. A
+   dark-mirror arming is not exempt: Base itself pays scheduled and
+   recycled claims from one fungible balance, so the corruption is
+   reachable there too. Folding it into `ARMGATE` would let the
+   dark-mirror disjunct satisfy the gate while the defect stood, which is
+   exactly the reading this graph is meant to prevent. `BACKING --> ARM`
+   is an unconditional hard edge, and since this plan treats the graph as
+   a scheduling source, that is the form that stops a planner arming with
+   every graphed predecessor satisfied. **That edge stands, and step 0 now agrees with it
+   (#1457 r19/r20):** #1460 is a hard PREREQUISITE for arming *and* already
+   reachable without it. (This paragraph referred to "step 0's 'not an arming
+   gate' framing" until r20 — but r19 had already rewritten step 0 to state
+   both, so the reference described text that no longer existed. The framing
+   it was reconciling was r17's, not step 0's.) The edge governs sequencing; reachability
+   governs urgency. The error r17 introduced was treating them as mutually
+   exclusive — dropping the gate in order to assert the urgency. `RL3KNOB` and `FEE` continue to
    hang off the weaker `GATE`, which #1434 does not affect. Arming with active mirror
    claims and no mesh produces exactly the §2 failure set (mirror
    buckets invisible to global `Ā`, Base over-remitting, the #1331-class
@@ -680,6 +770,7 @@ flowchart LR
   ARMGATE{{"arming gate:<br/>mirrors dark OR<br/>(M3 complete AND #1434)"}} --> ARM
   M3 -.-> ARMGATE
   SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}} -.-> ARMGATE
+  BACKING{{"#1460 bucket/fresh separation<br/>enforced AT CLAIM TIME"}} --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]
@@ -710,7 +801,7 @@ constituent cards below remain the working tickets.
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
 | #1347 | **D1 decided (b)** — body re-based to the formula doc at rev 15 (LIF·year, dual-fee, per-party double absorption, PR-5a/5b scope) |
 | #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
-| #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it |
+| #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it. **B4 coverage DISCHARGED as of B4-d, except the mirror half.** Recording the evidence precisely, because the first version of this row credited it to the wrong tests: B4-a's `availRecycled ≤ reported` ceiling does NOT establish the exclusion (it still holds if relocated custody wrongly increments `reported` — the ceiling rises with it), and `MeshThreeChainE2ETest` never delivers a reward remittance through the receive path, so B4-b does not drive remit-ingress labelling either. The exclusion is exercised by the single-diamond `RewardRemitLedgerTest`, which drives the ingress directly, and made externally observable by #1448's composition relation — with the omission case (an arrival never labelled at all) still open as #1452. B4-a and B4-b remain load-bearing for what they DO prove: the per-chain clamp chain and the three-diamond mesh behaviour respectively. The MIRROR half is **unreachable until #1434** — but state it precisely, because "no mirror-side bucket" is FALSE: B2-d5 moved the recycled credit to remit ARRIVAL, so `onRewardBudgetReceived` already calls `creditCustodyRelocated` and a mirror's bucket is live and credited today (exercised by `RewardRemitLedgerTest`). What #1434 gates is claim / forfeit / expiry PRICING on a mirror, and therefore the retirement or release of locally-committed reservations — the consumption side, not the credit side. Recording it as "no bucket exists" would send the follow-up to build something that already ships |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
 | #1204 / #1219 | Keep; note the RL-5 release-train commitment; schedule the #1219 legal glance |
 | New | Cut the M2 card set (per §M2 table) once D1 is decided; one M7 runbook card |
@@ -734,12 +825,18 @@ constituent cards below remain the working tickets.
    LIF-in-VPFI, yield-fee-in-VPFI, matcher remainders) explicitly
    **market-era deferred** behind the single §14 legal item — deferral
    is a completed state, not an omission.
-2. **Distribution**: governor armed; `dailyPool = scheduleFloor +
-   (1−m)×Ā` live with commitment discipline; D1 + loan-side cap cut over
-   jointly; rewards delivered claim-to-vault by default.
+2. **Distribution**: governor armed — which requires **#1460 closed**, the
+   bucket/fresh separation enforced at CLAIM time and asserted across a
+   PAYING claim rather than only at the credit chokepoint (§M7 step 0);
+   `dailyPool = scheduleFloor + (1−m)×Ā` live with commitment discipline;
+   D1 + loan-side cap cut over jointly; rewards delivered claim-to-vault
+   by default.
 3. **Cross-chain**: recycle-at-source + netted remittance live on every
-   deployed chain (M3); surplus tooling available (M4); watcher
-   invariants green.
+   deployed chain (M3), which requires **#1434** so mirror settlement is
+   reachable; surplus tooling available (M4); watcher **DEPLOYED** and
+   invariants green — `ops/mesh-watcher` is code-complete but undeployed,
+   so "green" is not yet a statement anything can make; #1445 closed so a
+   mis-set endpoint cannot report a clean tick against the wrong chain.
 4. **Observability**: #1218 dashboard live (loop-closure,
    self-funding, net-emission), global across chains.
 5. **Governance/ops**: all M7 ceremonies executed and recorded; deploy

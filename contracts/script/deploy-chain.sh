@@ -1027,24 +1027,19 @@ else
   echo "    (skipping keeper-bot ABI export — sibling repo not at $KEEPER_BOT_DIR_DEFAULT)"
 fi
 
-# ops/{subgraph,tenderly,lz-watcher} exports — best-effort. Each
-# script is a no-op for chains it can't map (lz-watcher's mainnet-
-# only shortKey filter, Tenderly's per-chain network names, The
-# Graph's network slugs), so testnet rehearsals produce mostly-empty
-# but consistent outputs. The lz-watcher emitter writes to a
-# gitignored generated/ sidecar — it produces a `wrangler secret put`
-# shell snippet meant for operator review, never an automatic apply.
+# ops/{subgraph,tenderly} exports — best-effort. Each script is a
+# no-op for chains it can't map (Tenderly's per-chain network names,
+# The Graph's network slugs), so testnet rehearsals produce
+# mostly-empty but consistent outputs.
+#
+# The lz-watcher secrets emitter was REMOVED with that Worker (#1440):
+# it shelled out to `exportLzWatcherVars.sh`, which no longer exists,
+# and wrote a `wrangler secret put` snippet for a retired Worker.
 if [ -d "$REPO_ROOT/ops/subgraph" ]; then
   bash "$SCRIPT_DIR/exportSubgraphAbis.sh" "$CHAIN_SLUG"
 fi
 if [ -d "$REPO_ROOT/ops/tenderly" ]; then
   bash "$SCRIPT_DIR/exportTenderlyAlerts.sh" "$CHAIN_SLUG"
-fi
-if [ -d "$REPO_ROOT/ops/lz-watcher" ]; then
-  mkdir -p "$REPO_ROOT/ops/lz-watcher/generated"
-  bash "$SCRIPT_DIR/exportLzWatcherVars.sh" "$CHAIN_SLUG" \
-    > "$REPO_ROOT/ops/lz-watcher/generated/secrets-$CHAIN_SLUG.sh"
-  echo "    ops/lz-watcher/generated/secrets-$CHAIN_SLUG.sh — review + apply manually."
 fi
 mark_done "abi-sync"
 fi  # close step_done "abi-sync" else branch

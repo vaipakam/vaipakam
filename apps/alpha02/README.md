@@ -107,5 +107,5 @@ Next milestones (in rough order):
 pnpm --filter @vaipakam/alpha02 dev        # local dev
 pnpm --filter @vaipakam/alpha02 typecheck  # tsc -b --noEmit
 pnpm --filter @vaipakam/alpha02 build      # tsc + vite build
-pnpm --filter @vaipakam/alpha02 deploy     # build + wrangler deploy
+pnpm --filter @vaipakam/alpha02 run deploy     # build + wrangler deploy
 ```

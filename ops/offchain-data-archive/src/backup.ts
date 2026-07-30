@@ -9,7 +9,7 @@
  *
  * Per the design doc §3.1, the archive carries the union of:
  *   - "Born-off-chain" D1 tables (MUST-back-up): diag_errors,
- *     diag_legal_holds, diag_legal_hold_audit, lz_alerts, lz_cursor.
+ *     diag_legal_holds, diag_legal_hold_audit.
  *   - "Re-derivable" D1 tables (kept as a performance optimisation —
  *     restore can drop these in favour of a fresh re-index): offers,
  *     loans, activity, oracle_snapshot_state, liquidity_confidence_*,
@@ -53,7 +53,10 @@ interface Manifest {
   };
   d1: {
     archive: { table: string; rowCount: number; schemaHash: string }[];
-    lzAlerts: { table: string; rowCount: number; schemaHash: string }[];
+    // #1440 — the `lzAlerts` section was removed with the lz-watcher D1
+    // binding. Manifests written before that date still carry it; a reader
+    // must treat it as optional rather than required, which is why it is
+    // dropped from the type rather than kept as an always-empty array.
   };
   r2: {
     bucket: string;
@@ -79,6 +82,13 @@ const ARCHIVE_TABLES_REQUIRED = [
   // losing them = user-visible breakage on restore.
   'user_thresholds',
   'notify_state',
+  // Pre-grace warning dedupe (migration 0023, keeper-written). Same
+  // born-off-chain class as notify_state — and it FK-cascades from
+  // user_thresholds (ON DELETE CASCADE), so a replace-style restore
+  // of the parent destroys it; without a backed-up copy it was
+  // unrecoverable and users got duplicate pre-grace warnings after
+  // every restore (#1480, found in #1450 r30).
+  'pre_grace_notify_state',
   'telegram_links',
 ];
 
@@ -110,17 +120,13 @@ const ARCHIVE_TABLES_OPTIONAL = [
   'liquidity_confidence',
 ];
 
-// lz-watcher's separate D1. Real schema (per
-// `ops/lz-watcher/migrations/0001_init.sql`): `lz_alert_state` carries
-// the dispatch history, `scan_cursor` the per-chain block cursor,
-// `oft_balance_history` the mint/burn imbalance time-series. All three
-// are REQUIRED — silently skipping any of them dropped the alert-
-// history dataset entirely in the previous shape.
-const LZ_ALERTS_TABLES_REQUIRED = [
-  'lz_alert_state',
-  'scan_cursor',
-  'oft_balance_history',
-];
+// #1440 — the lz-watcher D1 export was removed. `vaipakam-lz-watcher` was
+// deleted on 2026-07-28 and its database holds only alert-dedup state and
+// block cursors for a transport the T-068 CCIP migration retired, so there
+// is nothing left worth preserving nightly. The `lzAlerts` manifest section
+// is dropped with it; a restore reading an older manifest still finds the
+// historical entries in that manifest, which is the correct behaviour —
+// manifests describe the run that produced them.
 
 // Hard memory ceiling. Cloudflare Workers' isolate cap is 128 MB; we
 // guard at 100 MB to leave headroom for stack + transient buffers
@@ -255,24 +261,13 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
           );
         }
       }
-      // Tables that don't exist on this deploy (e.g. lz_alerts on
-      // a fresh archive DB before lz-watcher ran any migration)
-      // shouldn't kill the run — log + skip. Required tables that
+      // Tables that don't exist on this deploy shouldn't kill the run —
+      // log + skip. Required tables that
       // truly missing are detected by the row-count check after
       // the loop.
       console.warn(`[backup] skipped vaipakam-archive.${t}: ${(err as Error).message}`);
     }
   }
-  const lzAlertsTables: TableExport[] = [];
-  for (const t of LZ_ALERTS_TABLES_REQUIRED) {
-    // lz-watcher tables are ALL required (alert-history dispatch +
-    // mint/burn balance series + the per-chain scan cursor). The
-    // previous shape only warned + skipped on missing tables — that
-    // meant a renamed table silently dropped the dataset from
-    // archives forever. Now any export failure here is a hard abort.
-    lzAlertsTables.push(await exportTable(env.DB_LZ_ALERTS, t));
-  }
-
   // Required-table guards — if a born-off-chain table truly isn't
   // there, that's the backup pipeline silently losing data, not a
   // schema migration that hasn't run yet. Page operator on either DB.
@@ -294,15 +289,6 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
       );
     }
   }
-  const missingLz = LZ_ALERTS_TABLES_REQUIRED.filter(
-    (t) => !lzAlertsTables.some((e) => e.name === t),
-  );
-  if (missingLz.length > 0) {
-    throw new Error(
-      `BACKUP ABORT: required tables missing from vaipakam-lz-alerts-db: ${missingLz.join(', ')}`,
-    );
-  }
-
   // 2. Export the R2 legal-vault.
   const r2Objects = await exportR2Bucket(env.R2_LEGAL_VAULT);
 
@@ -317,7 +303,7 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
     const archiveObj = {
       version: 1,
       createdAt,
-      d1: { archive: tables, lzAlerts: lzAlertsTables },
+      d1: { archive: tables },
       r2: { bucket: 'vaipakam-legal-vault', objects: r2Objects },
     };
     const plaintext = new TextEncoder().encode(JSON.stringify(archiveObj));
@@ -365,13 +351,6 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
       d1: {
         archive: await Promise.all(
           tables.map(async (t) => ({
-            table: t.name,
-            rowCount: t.rowCount,
-            schemaHash: await schemaHash(t.schema),
-          })),
-        ),
-        lzAlerts: await Promise.all(
-          lzAlertsTables.map(async (t) => ({
             table: t.name,
             rowCount: t.rowCount,
             schemaHash: await schemaHash(t.schema),
@@ -503,9 +482,7 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   // key can do that) and dereferences to its sibling archive. The
   // BackupRunOutput surfaces the daily key — monthly / yearly
   // siblings are reflected in the Telegram alert.
-  const rowsBackedUp =
-    archiveTables.reduce((a, t) => a + t.rowCount, 0) +
-    lzAlertsTables.reduce((a, t) => a + t.rowCount, 0);
+  const rowsBackedUp = archiveTables.reduce((a, t) => a + t.rowCount, 0);
   return {
     manifestKey,
     archiveKey,
