@@ -19,7 +19,8 @@
  * a Push API outage logs and returns, so a single Push hiccup never
  * stalls the broader watcher loop or blocks the Telegram rail.
  *
- * SDK note: `@pushprotocol/restapi@^1.7` exposes the legacy
+ * SDK note: `@pushprotocol/restapi` (installed: 0.0.1 — an earlier
+ * revision of this line said `^1.7`, #1450 r26) exposes the legacy
  * modular API (`payloads.sendNotification(...)`), not the v2
  * `PushAPI` class — the docs site documents both, only the v1 form
  * is available on the version range we install. Push channels live

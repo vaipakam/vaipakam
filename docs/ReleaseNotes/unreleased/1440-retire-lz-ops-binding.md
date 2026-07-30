@@ -216,10 +216,13 @@ rather than left for the incident that would find them:
   to be wrong in the unsafe direction. It had said the naming scheme
   guarantees a forged archive cannot displace the genuine one, so two files
   under one date would be evidence of tampering. In fact a forgery can be
-  written at the genuine file's own name, and the storage is configured to
-  delete a superseded copy about a day later — so the original does not
-  persist as something to fall back on, and finding a single copy is not
-  evidence of safety. The step now inspects versions rather than files, says
+  written at the genuine file's own name, and at the time this was found the
+  storage deleted a superseded copy about a day later — so the original did
+  not persist as something to fall back on, and finding a single copy is not
+  evidence of safety. That deletion window has since been widened
+  considerably, which is what makes the older copy a usable fallback at all;
+  the recovery step now reads the current figure from the stored
+  configuration rather than restating it. The step now inspects versions rather than files, says
   so explicitly, and records that the daily series only reaches back about a
   month, so a compromise older than that leaves the monthly copies as the
   only candidates. Making forgery impossible rather than detectable is a
@@ -234,10 +237,8 @@ rather than left for the incident that would find them:
   encrypted it, and nothing downstream re-establishes that. Selection is
   now by *time* rather than recency: rotate the storage keys first,
   establish the earliest possible compromise moment, choose an archive
-  safely before it, and accept the extra data loss. Two files under one
-  date is now called out as evidence of tampering rather than a duplicate
-  to ignore — the immutable naming means the genuine archive survives
-  beside any forgery. And re-encrypting the history under a fresh key,
+  safely before it, and accept the extra data loss. And re-encrypting the
+  history under a fresh key,
   previously recommended, is explicitly deferred until after selection: it
   launders a poisoned set into the new key and destroys the one signal that
   distinguished it.

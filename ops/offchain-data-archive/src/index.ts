@@ -193,12 +193,23 @@ export default {
 
     const bootedEnv = await withEncryptionKey(env);
 
-    // Backup path — runs every day. Write-scoped B2 key
-    // (listBuckets + listFiles + writeFiles). A CF compromise that
-    // exfiltrates these credentials can corrupt FUTURE archives
-    // (only at new unique object keys — the immutable-naming nonce
-    // defeats in-place overwrite of existing ones) but cannot read
-    // past archives or delete them.
+    // Backup path — runs every day. Write-scoped B2 key, whose actual
+    // capabilities are `['listBuckets', 'writeFiles']` (see
+    // scripts/setup-backblaze.mjs) — NOT `listFiles`, which this comment
+    // used to claim (#1450 r26).
+    //
+    // That correction matters more than a capability list usually would,
+    // because omitting `listFiles` from the write key is precisely what
+    // `setup-backblaze.mjs` says the immutable-naming guard rests on: an
+    // attacker who cannot enumerate keys cannot overwrite an existing
+    // archive. But this Worker also binds the READ key
+    // (`B2_READ_ACCESS_KEY_ID`), which does carry `listFiles`. One
+    // compromised environment therefore yields enumeration AND write, so the
+    // forgery lands at the genuine key and the original survives only as a
+    // hidden older version — recoverable for as long as the lifecycle rule
+    // keeps it, which is why that window exists (#1469) and why detection is
+    // version-aware. `deleteFiles` is still absent, so nothing can be
+    // tombstoned; that half of the guarantee holds.
     ctx.waitUntil(handleNightlyBackup(bootedEnv, b2WriteConfig(bootedEnv)));
 
     // Healthcheck path — runs on Mondays only. Read-scoped B2 key

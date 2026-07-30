@@ -114,12 +114,22 @@ which a write-only key cannot do. The corrected spec uses two
 bucket-scoped Application Keys:
 
 - **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` + `listFiles`
-  + `writeFiles`. Used by the nightly cron. A CF compromise that
-  exfiltrates these credentials can corrupt FUTURE archives only —
-  immutable-naming nonce (see §3.3b) prevents overwrite of existing
-  ones, and `deleteFiles` is absent so the attacker can't tombstone
-  the history. The weekly healthcheck will detect the corrupt
-  uploads via SHA-256 mismatch.
+  + `writeFiles`. Used by the nightly cron. `deleteFiles` is absent, so an
+  attacker who exfiltrates these credentials cannot tombstone the history —
+  that part holds and is the load-bearing half.
+
+  **Two claims that used to sit here have been withdrawn (#1450 r26).**
+  (a) "The immutable-naming nonce prevents overwrite of existing ones" — the
+  guard assumes the attacker cannot learn an existing nonce. True of the write
+  key in isolation, but the Worker binds the READ key alongside it and that key
+  carries `listFiles`, so one compromised environment yields enumeration plus
+  write: the forgery lands at the genuine key and the original survives only as
+  a hidden older version. (b) "The weekly healthcheck will detect the corrupt
+  uploads via SHA-256 mismatch" — it detects corruption and blind overwrites,
+  not an authenticated forgery: the same environment also yields
+  `BACKUP_ENCRYPTION_KEY`, so a self-consistent archive+manifest pair passes
+  every check it makes. Closing that is #1473; version-aware recovery is why
+  the retention window exists at all (#1469).
 - **`vaipakam-offchain-data-archive-read-only`** — `listBuckets` + `listFiles`
   + `readFiles`. Used by the weekly healthcheck. A CF compromise
   here yields AES-256-GCM ciphertext only; the offline encryption
@@ -350,8 +360,19 @@ restore as everything else: §§4-7 of `OffChainRestore.md` must recreate the
 D1 and repopulate it, and the Secrets Store must be rebuilt from the
 offline copies, before flipping anything. The realistic figure there is
 hours, matching the restore, and the standby saves only the deploy step.
-Where the 5 minutes does hold is the case the standby was designed for: the
-account is intact and a Worker or a region is not.
+**There is no case left where 5 minutes holds, so the figure is withdrawn
+entirely (#1450 r26).** An earlier revision kept it for "account intact, Worker
+or region lost", but the standby is by definition a copy in a SECOND account,
+and the bindings above pin the FIRST account's resources — so the second-account
+copy is bound to an empty database and an empty credential store whatever the
+reason the primary became unavailable. The cause of the outage never changes
+what the config addresses.
+
+What the standby is actually worth: it removes the deploy step, and it proves
+the code deploys cleanly somewhere else. Recovery time in every failure mode is
+the shared-state restore, measured in hours. If a genuinely fast failover is
+wanted, the prerequisite is per-account state — its own D1 kept in sync and its
+own Secrets Store populated — which is a different design, not a runbook step.
 
 **`ops/offchain-data-archive` is deliberately NOT part of this
 mechanism**, and it was listed here in error. Cold standby works for the

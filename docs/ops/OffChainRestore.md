@@ -708,11 +708,16 @@ then deploy.
 >    - **Object Lock is not enabled** on `vaipakam-offchain-data-archive`
 >      (`isFileLockEnabled: false`, no default retention), so nothing makes
 >      any object immutable;
->    - the lifecycle rules set `daysFromHidingToDeleting: 1`, so a superseded
->      version is **deleted about a day later**. The genuine copy does not
->      persist as an older version you can fall back to — it is gone.
+>    - the genuine copy persists only as a hidden older VERSION, and only for
+>      as long as `daysFromHidingToDeleting` on those prefixes allows. Read
+>      that number from `ops/offchain-data-archive/bucket-lifecycle.json`
+>      rather than from memory — it was `1` when this step was written (the
+>      genuine copy was effectively gone before anyone could look, which is
+>      what #1469 was raised to fix) and is **9** on the daily prefixes now.
+>      Confirm against live with
+>      `npm run bucket:lifecycle:print` before relying on any figure.
 >
->    So list **file VERSIONS**, not files, and do it early — within a day of
+>    So list **file VERSIONS**, not files, and do it early — inside that
 >    the overwrite is the whole window:
 >
 >    ```bash
@@ -728,10 +733,14 @@ then deploy.
 >    configuration decision with cost and irreversibility consequences —
 >    tracked as **#1469**.
 >
-> 5. **Mind the retention floor.** `archives/` and `manifests/` are hidden at
->    30 days and deleted a day later, so the daily series reaches back only
->    ~31 days. Beyond that only the `archives-monthly/` / `manifests-monthly/`
->    prefixes survive (365 + 1 days). If the compromise window opened more
+> 5. **Mind the retention floor.** The daily and monthly reach are set by
+>    `bucket-lifecycle.json` and are the SUM of both terms per prefix, since a
+>    version is deleted that long after it is hidden. As committed today:
+>    `archives/` + `manifests/` reach ~29 days (hidden at 20, deleted 9 later)
+>    and `archives-monthly/` + `manifests-monthly/` ~365 (334 + 31). Those
+>    figures are capped by published privacy promises, so treat them as facts
+>    about the product rather than tunables — and read them from the
+>    declaration, not from here. If the compromise window opened more
 >    than a month ago, **the daily series cannot supply a clean archive at
 >    all** and the monthly ones are the only candidates.
 > 6. **Cross-check what you can from outside B2.** The re-derivable tables
@@ -748,9 +757,15 @@ then deploy.
 > and treat the rest as an incident with its own decision, not a runbook
 > step.
 
-Archive + manifest object keys carry a 32-hex-char nonce per upload
-(the immutable-naming guard against in-place overwrite). The layout
-is:
+Archive + manifest object keys carry a 32-hex-char nonce per upload. This was
+designed as an immutable-naming guard against in-place overwrite, and **it does
+not hold against a Worker compromise** — see the warning above. The guard
+assumed an attacker could not learn an existing nonce, which is true of the
+write key alone (`listBuckets` + `writeFiles`, no `listFiles`), but the Worker
+binds the READ key beside it (`B2_READ_ACCESS_KEY_ID`), and that one carries
+`listFiles`. One environment yields both, so the separation the guard rests on
+is defeated exactly where it was meant to matter. Treat the nonce as an
+operational convenience, never as tamper-evidence. The layout is:
 
 ```
 archives/<YYYY-MM-DD>/<32-hex-nonce>.bin
@@ -1086,7 +1101,9 @@ the point of the section: it moves from passes that only read, to passes
 that message users, to passes that sign transactions — so a mistake is
 caught at the cheapest stage.
 
-1. **Restore both schedules and redeploy.** Put
+1. **Restore the AGENT's schedule and redeploy** — not the keeper's; see the
+   note below, and step 3 for the keeper. (This step said "both schedules"
+   until #1450 r26, contradicting its own body and the note inside it.) Put
    `"triggers": { "crons": ["* * * * *"] }` back in
    `apps/agent/wrangler.jsonc` and deploy the **agent** — its notification
    and retention passes read and message only. Expect the first tick within
