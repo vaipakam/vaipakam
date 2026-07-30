@@ -17,17 +17,25 @@ distinction matters. A day's budget has two portions:
   canonical chain.
 
 Writing that down turned up one thing the specification had wrong, one the
-platform has wrong, and one that is **still undecided** and is recorded as
-such rather than settled here.
+platform has wrong, and one apparent contradiction that turned out to be
+neither.
 
-The undecided one: the specification says an inactive day already has a
-recycled portion funded centrally, and that activation changes only *who*
-funds it. The code disagrees — it gives an inactive day no recycled portion
-at all. One of the two is wrong and it is not yet clear which: if central
-funding of inactive days is intended, the platform has a gap; if recycling is
-meant to begin only at activation, the specification sentence needs rewriting
-along with what rests on it. It is logged as an open divergence for a decision
-rather than resolved by editing whichever side was easier to change. And the rule that recycled
+The apparent one is worth recording because it was nearly resolved the wrong
+way. Review reported that the specification's claim — an inactive day already
+has a recycled portion, funded centrally — is contradicted by the platform,
+which appeared to give such a day none at all. Both observations were accurate
+and they were about **different stages of the same day**. When a day is closed,
+its record does carry a recycled portion drawn from the central pool, exactly
+as specified. What an inactive day does not do is *pay* that portion out to
+claimants: until the programme is switched on, the day's record is only a
+record, and claims are paid from the scheduled portion. Paying earlier would
+mean setting value aside with nothing yet able to spend it, which would shrink
+the very headroom the cap protects.
+
+So nothing needed changing on either side. What did need changing was the
+specification sentence, which never said which stage it described — and that
+omission is what let a stage confusion look like a contradiction. It says so
+now. And the rule that recycled
 value must never stand in for the scheduled portion turns out to be intent
 rather than enforcement: a payout reduces the recycled ledger by its recycled
 part and then pays the whole amount out of one pooled balance, so a chain
