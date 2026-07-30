@@ -113,8 +113,15 @@ but the healthcheck has to perform signed GETs to verify archives,
 which a write-only key cannot do. The corrected spec uses two
 bucket-scoped Application Keys:
 
-- **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` + `listFiles`
-  + `writeFiles`. Used by the nightly cron. `deleteFiles` is absent, so an
+- **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` +
+  `writeFiles`, which is what `setup-backblaze.mjs` actually provisions
+  (`writeCaps = ['listBuckets', 'writeFiles']`). **NOT `listFiles`**, which an
+  earlier revision of this line listed (#1450 r27) — and the omission is
+  load-bearing, not incidental: withholding `listFiles` from this key is
+  precisely what the naming-nonce guard was designed to rest on. Its being
+  defeated anyway is the point of the note below, and mis-stating the
+  inventory made the guard look intact. Used by the nightly cron.
+  `deleteFiles` is absent, so an
   attacker who exfiltrates these credentials cannot tombstone the history —
   that part holds and is the load-bearing half.
 

@@ -709,15 +709,22 @@ then deploy.
 >      (`isFileLockEnabled: false`, no default retention), so nothing makes
 >      any object immutable;
 >    - the genuine copy persists only as a hidden older VERSION, and only for
->      as long as `daysFromHidingToDeleting` on those prefixes allows. Read
->      that number from `ops/offchain-data-archive/bucket-lifecycle.json`
->      rather than from memory — it was `1` when this step was written (the
->      genuine copy was effectively gone before anyone could look, which is
->      what #1469 was raised to fix) and is **9** on the daily prefixes now.
->      Confirm against live with
->      `npm run bucket:lifecycle:print` before relying on any figure.
+>      as long as `daysFromHidingToDeleting` on those prefixes allows.
+>      **Read that number off the LIVE bucket, and trust nothing else** —
+>      `b2_list_buckets` (or the bucket's Lifecycle Settings in the console)
+>      returns the rules in force. Do NOT infer it from this repo: the only
+>      committed source on this branch is `scripts/setup-backblaze.mjs`, whose
+>      provisioning values are **stale** (it still writes `1`), and a previous
+>      revision of this step pointed at a declaration file and an
+>      `npm run bucket:lifecycle:print` helper that exist only on the
+>      unmerged #1469 branch — so the instruction could not be followed at all
+>      (#1450 r27).
+>      For orientation only, live was set to **9** days on the daily prefixes
+>      and 31 on the monthly on 2026-07-30. Treat that as a date-stamped
+>      observation, not as the authority: if the live rules say 1, you have
+>      about a day, whatever any document here claims.
 >
->    So list **file VERSIONS**, not files, and do it early — inside that
+>    So list **file VERSIONS**, not files, and do it early — inside whatever
 >    the overwrite is the whole window:
 >
 >    ```bash
@@ -733,14 +740,15 @@ then deploy.
 >    configuration decision with cost and irreversibility consequences —
 >    tracked as **#1469**.
 >
-> 5. **Mind the retention floor.** The daily and monthly reach are set by
->    `bucket-lifecycle.json` and are the SUM of both terms per prefix, since a
->    version is deleted that long after it is hidden. As committed today:
->    `archives/` + `manifests/` reach ~29 days (hidden at 20, deleted 9 later)
->    and `archives-monthly/` + `manifests-monthly/` ~365 (334 + 31). Those
->    figures are capped by published privacy promises, so treat them as facts
->    about the product rather than tunables — and read them from the
->    declaration, not from here. If the compromise window opened more
+> 5. **Mind the retention floor.** A prefix's reach is the SUM of both terms,
+>    since a version is deleted `daysFromHidingToDeleting` after it is hidden —
+>    reasoning about the first term alone understates it. Read both off the
+>    live bucket (see step 4); the repo cannot tell you on this branch.
+>    Live as of 2026-07-30: `archives/` + `manifests/` reach ~29 days
+>    (hidden at 20, deleted 9 later), `archives-monthly/` +
+>    `manifests-monthly/` ~365 (334 + 31). Both sums are capped by published
+>    privacy promises, so they are facts about the product rather than
+>    tunables. If the compromise window opened more
 >    than a month ago, **the daily series cannot supply a clean archive at
 >    all** and the monthly ones are the only candidates.
 > 6. **Cross-check what you can from outside B2.** The re-derivable tables
