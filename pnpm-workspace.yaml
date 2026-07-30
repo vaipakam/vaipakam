@@ -49,12 +49,14 @@
 #   - ops/subgraph       drift subgraph; runs on The Graph.
 #   - ops/tenderly       alert presets; deploy via the Tenderly CLI.
 #   - ops/offchain-data-archive  nightly D1 backup Worker.
-#   - ops/lz-watcher     the retired LayerZero security monitor. Its
-#                        Cloudflare Worker was DELETED 2026-07-28 (the
-#                        T-068 CCIP migration and the #687-A securities
-#                        excision had between them made every surface it
-#                        polled dead); removing the source tree is
-#                        tracked on #1440.
+#   (ops/lz-watcher, the LayerZero security monitor, is GONE. Its
+#    Cloudflare Worker was deleted 2026-07-28 — the T-068 CCIP migration
+#    and the #687-A securities excision had between them made every
+#    surface it polled dead — and the source tree was removed with it in
+#    #1440, after review established that no wrangler.jsonc edit can make
+#    a source tree undeployable: the positional `wrangler deploy
+#    src/index.ts --triggers ...` form bypasses config entirely. Recover
+#    from git history if it is ever needed.)
 #
 # `vaipakam-keeper-bot` is a separate sibling repo (extracted
 # Phase 9.A) and stays separate — not part of this workspace.

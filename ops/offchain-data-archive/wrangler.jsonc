@@ -21,19 +21,22 @@
   //
   // Why one cron instead of two: Cloudflare Workers free plan caps an
   // account at 5 cron triggers total. apps/{keeper,agent,indexer} take
-  // one each (every-minute) and ops/lz-watcher takes one (every 5min)
-  // — that's 4 of 5. Splitting backup + healthcheck into two crons
-  // here would push the account to 6 and the deploy fails with
-  // CF API error 10072. Folding healthcheck under the same cron keeps
-  // us at 5/5 cleanly. If/when the account upgrades to Workers Paid
+  // one each (every-minute), and this Worker takes the fourth — 4 of 5
+  // in use today. The ops/lz-watcher slot was freed when that Worker was
+  // deleted (#1440) and is currently SPARE: ops/mesh-watcher is the
+  // intended occupant but is code-complete and UNDEPLOYED, so it holds no
+  // slot yet. Deploying it takes the account to 5 of 5. Splitting backup +
+  // healthcheck into two crons here would therefore push past the cap once
+  // mesh-watcher lands, and the deploy fails with CF API error 10072.
+  // Folding healthcheck under the same cron keeps the budget intact. If/when the account upgrades to Workers Paid
   // ($5/mo, removes the cap), this can split back into two crons.
   "triggers": {
     "crons": ["17 3 * * *"],
   },
   // D1 — read-only bindings to the two production databases this
   // Worker backs up. The shared vaipakam-archive holds the indexer
-  // tables + the diag / legal-hold registers; vaipakam-lz-alerts-db
-  // is the lz-watcher's separate alerts DB (kept distinct from
+  // tables + the diag / legal-hold registers. (vaipakam-lz-alerts-db
+  // was the lz-watcher's separate alerts DB, kept distinct from
   // vaipakam-archive for the trust-boundary reasons documented in
   // CLAUDE.md's D1-schema-discipline section).
   //
@@ -49,12 +52,16 @@
       "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
       "remote": false,
     },
-    {
-      "binding": "DB_LZ_ALERTS",
-      "database_name": "vaipakam-lz-alerts-db",
-      "database_id": "edefa776-6832-46a0-84f7-e8e0cf157964",
-      "remote": false,
-    },
+    // #1440 — the DB_LZ_ALERTS binding to `vaipakam-lz-alerts-db` was
+    // removed here. The `vaipakam-lz-watcher` Worker was deleted on
+    // 2026-07-28 (post-T-068 it polled a decommissioned LayerZero stack,
+    // including the VpfiBuyAdapter surface the #687-A excision removed), so
+    // its database holds only alert-dedup state and block cursors for a
+    // dead transport. This binding was its last consumer.
+    //
+    // ORDER MATTERS: this removal ships and runs one clean nightly BEFORE
+    // the D1 itself is deleted — dropping the database first would have
+    // broken the backup, and quietly, at 03:17.
   ],
   // R2 — read-only binding to the legal-vault. The Worker streams
   // every object out and re-uploads to B2; no writes back to R2.
@@ -74,15 +81,22 @@
   //                                  procedure in docs/ops/OffChainRestore.md.
   //   B2_WRITE_ACCESS_KEY_ID       — Application Key id, scoped
   //                                  write-only to the backup bucket
-  //                                  (listBuckets + listFiles +
-  //                                  writeFiles). Used by the nightly
-  //                                  cron only. A CF compromise that
-  //                                  steals this can corrupt FUTURE
-  //                                  archives (only at NEW unique
-  //                                  object keys — immutable naming
-  //                                  defeats overwrite of existing
-  //                                  ones) but cannot read past
-  //                                  archives or delete anything.
+  //                                  (listBuckets + writeFiles — NOT
+  //                                  listFiles; #1450 r27). Used by
+  //                                  the nightly cron only. A CF
+  //                                  compromise that steals THIS key
+  //                                  alone can corrupt FUTURE archives
+  //                                  and cannot delete anything.
+  //                                  It canNOT be assumed to be alone,
+  //                                  though: this Worker also binds the
+  //                                  READ key below, which carries
+  //                                  listFiles — so one compromised
+  //                                  environment can enumerate an
+  //                                  existing nonce and overwrite AT
+  //                                  that key. The immutable-naming
+  //                                  guard rests on withholding
+  //                                  listFiles here, and binding both
+  //                                  keys together defeats it.
   //   B2_WRITE_SECRET_ACCESS_KEY   — matching secret of above.
   //   B2_READ_ACCESS_KEY_ID        — Application Key id, scoped
   //                                  read-only to the backup bucket
@@ -95,7 +109,7 @@
   //   B2_READ_SECRET_ACCESS_KEY    — matching secret of above.
   //   TG_OPS_BOT_TOKEN             — Telegram bot dedicated to
   //                                  internal-ops alerts (this
-  //                                  Worker + ops/lz-watcher).
+  //                                  Worker; ops/lz-watcher retired).
   //                                  DELIBERATELY DISTINCT from
   //                                  `TG_BOT_TOKEN`, which is the
   //                                  user-facing bot used by

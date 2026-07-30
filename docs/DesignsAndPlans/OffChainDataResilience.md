@@ -26,14 +26,14 @@ that, today, lives **only on Cloudflare**:
 | --- | --- | --- | --- |
 | `vaipakam-archive` D1 — `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
 | `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `telegram_links`, `support_tickets` | Cloudflare D1 | apps/agent + apps/indexer (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification dedupe state). |
-| `vaipakam-lz-alerts-db` D1 — `lz_alert_state`, `scan_cursor`, `oft_balance_history` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. Note: lz-watcher itself is now obsolete post-T-068 (LayerZero → CCIP migration) — tracked for delete/refactor as issue #250. |
+| `vaipakam-lz-alerts-db` D1 — `lz_alert_state`, `scan_cursor`, `oft_balance_history` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. **RETIRED 2026-07-28 (#1440).** The Worker was deleted post-T-068 and the nightly backup no longer exports this database — archives written from that date omit the `d1.lzAlerts` section. The dispatch history is deliberately NOT preserved: it is who-was-notified-when for a transport that no longer exists, and the database itself is scheduled for operator deletion. Nothing in Stage A depends on it. |
 | `vaipakam-legal-vault` R2 bucket — uploaded legal-hold documents | Cloudflare R2 | apps/agent (uploads) | **No** — third-party documents uploaded by operators, not derivable from any external source. |
 
 A Cloudflare account loss (compromised credentials, billing dispute,
 lockout) wipes all of the above. The **re-derivable** subset (chain-
 sourced) is recoverable but expensive — a fresh indexer + 6+ months of
 chain history is hours of wall-clock to replay. The **born off-chain**
-subset (legal docs, diagnostic stream, alert dispatch history) is
+subset (legal docs, diagnostic stream) is
 irrecoverable.
 
 A subtler risk: a partial-credential compromise (e.g. CF account access
@@ -59,7 +59,7 @@ footprint have **completely different recovery requirements**:
   every row deterministically. Backup, if any, is a **performance**
   optimization (faster restore) not a **correctness** requirement.
 - **Born off-chain** (diag_errors, legal-holds register + audit trail,
-  R2 legal-vault, lz-alerts dispatch history) MUST be cross-cloud
+  R2 legal-vault) MUST be cross-cloud
   replicated because no external source-of-truth exists.
 
 This bifurcation cuts the cross-replication surface roughly in half.
@@ -74,9 +74,9 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
 
 1. Exports the **born off-chain** D1 tables — `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
-   `notify_state`, `telegram_links`, `support_tickets` from `vaipakam-archive`, plus
-   `lz_alert_state`, `scan_cursor`, `oft_balance_history` from
-   `vaipakam-lz-alerts-db`.
+   `notify_state`, `telegram_links`, `support_tickets` from `vaipakam-archive`.
+   (Pre-#1440 this step also exported `vaipakam-lz-alerts-db`; see the
+   surface table in §1 for why it no longer does.)
 2. Exports the **re-derivable** D1 tables (`offers`, `loans`,
    `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`,
    `indexer_cursor`) — as a *performance* optimisation only;
@@ -101,9 +101,16 @@ Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
   capability sets. The pipeline uses TWO scoped keys (see §3.3a):
   one write-only key for the nightly uploader, one read-only key
   for the weekly healthcheck. Splitting the keys bounds the blast
-  radius of a CF compromise to ONE of (corrupt future archives /
-  read past ciphertext); the offline AES key blocks the plaintext
-  on the read side.
+  radius of an **isolated single-key leak** (a B2-side or
+  transcription leak of one key) to ONE of (corrupt future archives /
+  read past ciphertext). It does **not** bound a Cloudflare-side
+  compromise: both keys are bound to the same archive Worker, so a
+  Workers Edit compromise yields both at once — and the raw
+  `BACKUP_ENCRYPTION_KEY` beside them (see the withdrawn-claims
+  note in §3.3a and #1463), so that compromise also decrypts. The
+  offline AES key blocks plaintext recovery only for **B2-side or
+  isolated read-key leaks**, where the attacker holds ciphertext
+  but not the Worker's environment.
 
 ### 3.3a Two-key B2 access model
 
@@ -113,13 +120,30 @@ but the healthcheck has to perform signed GETs to verify archives,
 which a write-only key cannot do. The corrected spec uses two
 bucket-scoped Application Keys:
 
-- **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` + `listFiles`
-  + `writeFiles`. Used by the nightly cron. A CF compromise that
-  exfiltrates these credentials can corrupt FUTURE archives only —
-  immutable-naming nonce (see §3.3b) prevents overwrite of existing
-  ones, and `deleteFiles` is absent so the attacker can't tombstone
-  the history. The weekly healthcheck will detect the corrupt
-  uploads via SHA-256 mismatch.
+- **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` +
+  `writeFiles`, which is what `setup-backblaze.mjs` actually provisions
+  (`writeCaps = ['listBuckets', 'writeFiles']`). **NOT `listFiles`**, which an
+  earlier revision of this line listed (#1450 r27) — and the omission is
+  load-bearing, not incidental: withholding `listFiles` from this key is
+  precisely what the naming-nonce guard was designed to rest on. Its being
+  defeated anyway is the point of the note below, and mis-stating the
+  inventory made the guard look intact. Used by the nightly cron.
+  `deleteFiles` is absent, so an
+  attacker who exfiltrates these credentials cannot tombstone the history —
+  that part holds and is the load-bearing half.
+
+  **Two claims that used to sit here have been withdrawn (#1450 r26).**
+  (a) "The immutable-naming nonce prevents overwrite of existing ones" — the
+  guard assumes the attacker cannot learn an existing nonce. True of the write
+  key in isolation, but the Worker binds the READ key alongside it and that key
+  carries `listFiles`, so one compromised environment yields enumeration plus
+  write: the forgery lands at the genuine key and the original survives only as
+  a hidden older version. (b) "The weekly healthcheck will detect the corrupt
+  uploads via SHA-256 mismatch" — it detects corruption and blind overwrites,
+  not an authenticated forgery: the same environment also yields
+  `BACKUP_ENCRYPTION_KEY`, so a self-consistent archive+manifest pair passes
+  every check it makes. Closing that is #1473; version-aware recovery is why
+  the retention window exists at all (#1469).
 - **`vaipakam-offchain-data-archive-read-only`** — `listBuckets` + `listFiles`
   + `readFiles`. Used by the weekly healthcheck. A CF compromise
   here yields AES-256-GCM ciphertext only; the offline encryption
@@ -134,14 +158,27 @@ comes out for the one-time setup script (or explicit rotation).
 
 Object keys carry a 32-hex-char (16-byte) cryptographic nonce
 suffix per upload — `archives/YYYY-MM-DD/<nonce>.bin` and
-`manifests/YYYY-MM-DD/<nonce>.json`. Same date written twice (e.g.
-an attacker re-uploading garbage) produces two DIFFERENT object
-keys, so the original archive survives and the healthcheck's
+`manifests/YYYY-MM-DD/<nonce>.json`.
+
+**Scope (#1450 r28): everything this guarantee promises holds only
+for an ISOLATED leak of the write key.** In that case an attacker
+cannot learn an existing nonce, so a same-date re-upload lands at a
+DIFFERENT object key, the original survives, and the healthcheck's
 list-by-prefix + manifest-SHA verification catches the divergence.
-Without the nonce, a single PUT to a predictable key (e.g.
-`archives/2026-05-23.bin`) would silently replace the previous
-night's data — write-only credentials alone don't defend against
-in-place overwrite, only against read/delete.
+In the deployed shape the read key — which carries `listFiles` — is
+bound to the **same Worker** (§3.3a), so a Workers Edit compromise
+defeats the enumeration-resistance this section rests on: the
+attacker lists the genuine nonce, uploads at that exact key, and
+the original survives only as a hidden older version for the
+lifecycle retention window (see the withdrawn-claims note in §3.3a
+and `docs/ops/OffChainRestore.md` §2).
+
+The nonce still earns its place: without it, a single PUT to a
+predictable key (e.g. `archives/2026-05-23.bin`) would silently
+replace the previous night's data with **write-only credentials
+alone** — the nonce forces an attacker to hold enumeration
+capability too, which is what confines in-place overwrite to the
+full-Worker-compromise case above.
 
 ### 3.3 Encryption + key management
 
@@ -212,9 +249,14 @@ read-only for healthcheck). The healthcheck:
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
-Workers free plan caps an account at 5 cron triggers — apps/keeper,
-apps/agent, apps/indexer, ops/lz-watcher already occupy four, so
-this Worker is restricted to one. Folding the healthcheck into the
+Workers free plan caps an account at 5 cron triggers. TODAY four are
+occupied — apps/keeper, apps/agent, apps/indexer and this Worker
+itself — leaving one spare; `ops/mesh-watcher` takes that fifth on
+its FIRST DEPLOY, and it is code-complete but undeployed (§4.5). So
+the cap BINDS from that deploy onward rather than today, and this
+Worker is designed for a single cron on that basis rather than
+because the account is already full. (`ops/lz-watcher` held a slot
+until #1440 removed it.) Folding the healthcheck into the
 daily cron via a `getUTCDay() === 1` guard preserves the weekly
 cadence at the cost of running the alert at 03:17 UTC instead of
 09:00 UTC. Acceptable trade-off — ops alerts aren't real-time
@@ -318,14 +360,95 @@ realistic threat.
 
 ### 4.5 Cold standby for other Workers
 
-For `apps/keeper`, `apps/agent`, `ops/lz-watcher`, `ops/hf-watcher`:
-**cold standby**, not active-active. Same Worker code deployed to a
-second CF account (different billing + 2FA) **paused**, with a 1-page
-runbook for the operator to flip DNS / feature flag on primary
-failure. Pre-mainnet a 5-minute manual recovery is fine; the protocol
-survives keeper / agent downtime by design (liquidations are
-permissionless — anyone with the `vaipakam-keeper-bot` reference repo
+For `apps/keeper`, `apps/agent` and `ops/mesh-watcher`: **cold standby**,
+not active-active. (`ops/mesh-watcher` is code-complete but UNDEPLOYED
+today; the standby applies from its first deploy. `ops/lz-watcher` and
+`ops/hf-watcher` were removed — #1440 and the Stage 3 split
+respectively.) Same Worker code deployed to a second CF account
+(different billing + 2FA) **paused**, with a 1-page runbook for the
+operator to flip DNS / feature flag on primary failure.
+
+**The DNS/flag flip applies only to the HTTP-fronted Workers.**
+`ops/mesh-watcher` has no HTTP surface, no route, and no enable
+flag — it is a 15-minute cron over its own account-local D1
+(`vaipakam-mesh-alerts-db`). Its standby therefore activates by
+**deployment**, not by a flip, and the activation gate is the full
+binding set its committed config deliberately leaves blank
+(#1450 r32/r33):
+
+1. **D1**: create the standby account's `vaipakam-mesh-alerts-db`,
+   paste the returned id into the standby config's empty
+   `database_id`, and apply `ops/mesh-watcher/migrations/`.
+2. **Vars**: set `TG_OPS_CHAT_ID` (a plain var in the committed
+   config, not a secret — and empty there).
+3. **Secrets**: `TG_OPS_BOT_TOKEN`, plus one `RPC_<chainId>` per
+   chain in `getExpectedSourceChainIds()` (`src/env.ts` keys RPC
+   endpoints by chain id). A missing RPC surfaces as a reported
+   COVERAGE GAP rather than a crash — so a partially-provisioned
+   standby runs and *looks* alive while watching fewer chains than
+   the primary did; provision the full set.
+4. `wrangler deploy` — the cron registers at deploy and the watcher
+   is live on the next tick.
+
+Without all four, a "standby" for it is a paused copy with no
+database, no destination, or partial chain coverage, and
+recycling-ledger alerting silently stays down (or thins out)
+through a primary failure. The protocol
+survives keeper / agent downtime by design in the meantime (liquidations
+are permissionless — anyone with the `vaipakam-keeper-bot` reference repo
 can race for the bonus).
+
+**The 5-minute figure applies to a Worker-level failure, NOT to losing the
+account** — an earlier revision of this section said 5 minutes without that
+distinction, and the distinction is the whole difficulty. `apps/keeper` and
+`apps/agent` are NOT stateless with respect to the account: both hard-bind
+the account-specific `vaipakam-archive` D1 (`database_id`) and the
+account-specific Secrets Store (`store_id`) in their `wrangler.jsonc`. A
+paused copy in a second account therefore either fails binding validation
+or points at that account's EMPTY database and replacement credential
+store. Flipping DNS or a feature flag makes it *reachable*, not *correct* —
+it would run against no history and no signing key.
+
+So on account loss the standby cutover is gated on the same shared-state
+restore as everything else: §§4-7 of `OffChainRestore.md` must recreate the
+D1 and repopulate it, and the Secrets Store must be rebuilt from the
+offline copies, before flipping anything. The realistic figure there is
+hours, matching the restore, and the standby saves only the deploy step.
+**There is no case left where 5 minutes holds, so the figure is withdrawn
+entirely (#1450 r26).** An earlier revision kept it for "account intact, Worker
+or region lost", but the standby is by definition a copy in a SECOND account,
+and the bindings above pin the FIRST account's resources — so the second-account
+copy is bound to an empty database and an empty credential store whatever the
+reason the primary became unavailable. The cause of the outage never changes
+what the config addresses.
+
+What the standby is actually worth: it removes the deploy step, and it proves
+the code deploys cleanly somewhere else. Recovery time in every failure mode is
+the shared-state restore, measured in hours. If a genuinely fast failover is
+wanted, the prerequisite is per-account state — its own D1 kept in sync and its
+own Secrets Store populated — which is a different design, not a runbook step.
+
+**`ops/offchain-data-archive` is deliberately NOT part of this
+mechanism**, and it was listed here in error. Cold standby works for the
+Workers above because each has a DNS record or feature flag to flip at all
+— but note the paragraph above: on ACCOUNT loss none of them is stateless
+either, and the flip only becomes meaningful once the shared state is
+restored.
+The archive Worker is the opposite on both counts. Its `DB_ARCHIVE` and
+`R2_LEGAL_VAULT` bindings can only address resources **in the account it
+is deployed to**, so a paused copy in the second account is bound to that
+account's empty D1 and R2 — it cannot read the lost account's data, which
+is the only data that matters in this scenario. And unlike the others it
+has no DNS record and no feature flag: there is nothing to flip.
+
+Its recovery path is the restore, not a standby: the encrypted archives
+live in B2, outside Cloudflare entirely and reachable with the offline
+keys, so the Worker becomes useful only *after* replacement D1 and R2
+resources exist and the archive has been restored into them. That is why
+[`OffChainRestore.md`](../ops/OffChainRestore.md) deploys it **last**,
+after the data is real — deploying it earlier lets its 03:17 cron write a
+valid-looking backup of empty databases and present it as the newest
+recovery candidate.
 
 Active-active for these Workers would require non-trivial coordination
 (nonce locking for keeper, deduplication for agent's Telegram /

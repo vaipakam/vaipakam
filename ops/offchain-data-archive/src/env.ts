@@ -28,7 +28,6 @@
 export interface Env {
   // D1 bindings — read-only (the Worker never writes).
   DB_ARCHIVE: D1Database;
-  DB_LZ_ALERTS: D1Database;
   // R2 binding — read-only (the Worker never writes to legal-vault).
   R2_LEGAL_VAULT: R2Bucket;
   // Vars (set in wrangler.jsonc).
@@ -38,7 +37,7 @@ export interface Env {
   // Secrets (wrangler secret put).
   BACKUP_ENCRYPTION_KEY: string;
   // Write-scoped B2 Application Key (capabilities:
-  // listBuckets + listFiles + writeFiles; bucket-scoped).
+  // listBuckets + writeFiles; bucket-scoped — NOT listFiles, #1450 r27).
   // Used by the nightly backup path. A CF compromise exfiltrating
   // these keys cannot read or delete past archives.
   B2_WRITE_ACCESS_KEY_ID: string;

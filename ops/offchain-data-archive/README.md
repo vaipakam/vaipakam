@@ -13,7 +13,6 @@ Design notes: [`docs/DesignsAndPlans/OffChainDataResilience.md`](../../docs/Desi
 | --- | --- |
 | `vaipakam-archive` D1 (born-off-chain) | `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `telegram_links`, `support_tickets` — irrecoverable without backup. |
 | `vaipakam-archive` D1 (re-derivable) | `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` — kept for restore-performance only; can be skipped on restore in favour of a fresh re-index from block 0. |
-| `vaipakam-lz-alerts-db` D1 | `lz_alert_state`, `scan_cursor`, `oft_balance_history` — alert dispatch history + mint/burn imbalance series + per-chain scan cursor. |
 | `vaipakam-legal-vault` R2 | Every uploaded legal-hold document. |
 
 ## What does NOT get backed up
@@ -39,8 +38,11 @@ avoids exact-minute B2 contention). On every invocation:
 
 Why one cron instead of two: the Cloudflare Workers free plan caps
 an account at 5 cron triggers, and the rest of the org already
-occupies 4 (`apps/{keeper,agent,indexer}` + `ops/lz-watcher`).
-Folding healthcheck into the same cron keeps the account at 5/5.
+occupies 4 (`apps/{keeper,agent,indexer}` + this Worker). One slot is
+SPARE today: `ops/mesh-watcher` is code-complete but UNDEPLOYED and takes
+the fifth on its first deploy, at which point the cap binds. (`ops/lz-watcher`
+held a slot until #1440 removed it.)
+Folding healthcheck into the same cron is what keeps this Worker to ONE slot rather than two — it does not by itself put the account at 5/5, which the lines above say is 4/5 today with one slot spare until `ops/mesh-watcher` deploys.
 Split back into two crons if/when the account upgrades to Workers
 Paid ($5/mo, removes the cap).
 
@@ -64,14 +66,27 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    node scripts/setup-backblaze.mjs
    ```
 
-   The script is idempotent — safe to re-run. It will:
+   > ⚠️ **This script is initial provisioning, NOT a key-rotation
+   > path.** Re-running it rewrites the bucket's six lifecycle rules
+   > to the values coded in this tree before it touches either key —
+   > silently reverting any tuning applied to the live bucket since
+   > (the hidden-version retention window in particular; see
+   > `docs/ops/OffChainRestore.md` §2). To rotate the scoped keys,
+   > create/delete them directly via the B2 console's App Keys page
+   > (or the B2 CLI's key create/delete commands — subcommand names
+   > differ across CLI major versions, check `b2 help`), and leave
+   > the lifecycle rules alone (#1450 r28).
+
+   The script is idempotent in the provisioning sense — a re-run
+   converges the bucket to THIS TREE's declared state (which is
+   exactly why it must not be used mid-incident). It will:
    - Create the `vaipakam-offchain-data-archive` bucket (allPrivate) if
      missing, reuse if present.
    - Set six lifecycle rules: `archives/` + `manifests/` 30-day,
      `archives-monthly/` + `manifests-monthly/` 365-day, plus
      `archives-yearly/` + `manifests-yearly/` indefinite.
    - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
-     listFiles + writeFiles, bucket-scoped) for the nightly cron.
+     writeFiles, bucket-scoped — NOT listFiles) for the nightly cron.
    - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +
      listFiles + readFiles, bucket-scoped) for the weekly
      healthcheck.
@@ -99,7 +114,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    wrangler secret put B2_READ_SECRET_ACCESS_KEY    # from step 2 output
    wrangler secret put B2_ENDPOINT                  # from step 2 output (account-region specific, e.g. "s3.eu-central-003.backblazeb2.com"). Not committed because forks land in different regions.
    wrangler secret put B2_BUCKET                    # from step 2 output (B2 bucket names are globally unique across accounts; forks need their own name).
-   wrangler secret put TG_OPS_BOT_TOKEN             # ops-internal Telegram bot — DISTINCT from the user-facing TG_BOT_TOKEN used by apps/keeper + apps/agent. Same bot shared with ops/lz-watcher.
+   wrangler secret put TG_OPS_BOT_TOKEN             # ops-internal Telegram bot — DISTINCT from the user-facing TG_BOT_TOKEN used by apps/keeper + apps/agent. Same bot shared with ops/mesh-watcher.
    wrangler secret put TG_OPS_CHAT_ID               # channel id where ops alerts land (e.g. -1003903308626). Not strictly secret, but kept out of the public repo for free-of-cost obfuscation.
    ```
 
@@ -138,5 +153,5 @@ for the full procedure. High level:
 
 - **Multi-cloud writes** — Stage C of the resilience plan. Design
   notes in `OffChainDataResilience.md` §4.
-- **Active-active redundancy for keeper / agent / lz-watcher** —
+- **Active-active redundancy for keeper / agent / mesh-watcher** —
   cold standby only; see design doc §4.5.

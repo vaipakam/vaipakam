@@ -301,10 +301,13 @@ experienced. One historical collision (`0011`) is grandfathered in the
 script with its reasoning — **do not renumber an already-applied
 migration**, since that changes its `d1_migrations` key and re-runs it.
 
-The `ops/lz-watcher` Worker uses a **separate** D1 (`vaipakam-lz-alerts-db`,
-schema in `ops/lz-watcher/migrations/`) for trust-boundary reasons —
+`ops/mesh-watcher` uses a **separate** D1 (`vaipakam-mesh-alerts-db`,
+schema in `ops/mesh-watcher/migrations/`) for trust-boundary reasons —
 its internal ops alerts must not co-locate with user-facing data. Don't
-fold those tables into `vaipakam-archive`.
+fold those tables into `vaipakam-archive`. (The retired `ops/lz-watcher`
+followed the same rule with `vaipakam-lz-alerts-db`; both the Worker and
+its source tree were removed in #1440, and the database is an operator
+deletion gated on one clean nightly backup.)
 
 ## Deployments sync (Stage 3 split — single target)
 
@@ -372,11 +375,11 @@ artifacts and stay in their respective env / config:
   downgrade alerts) + `apps/agent` (Telegram link handshake +
   periodic-interest pre-notify). Posts to user-supplied chat IDs
   (`tg_chat_id` per subscription).
-- `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/lz-watcher`
-  (LZ-mesh DVN drift / OFT imbalance / oversized-flow alerts) +
-  `ops/offchain-data-archive` (nightly backup outcomes + weekly
-  healthcheck verdicts). Posts to a single operator chat
-  (`TG_OPS_CHAT_ID`).
+- `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/mesh-watcher`
+  (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-archive`
+  (nightly backup outcomes + weekly healthcheck verdicts). Posts to a
+  single operator chat (`TG_OPS_CHAT_ID`). The retired `ops/lz-watcher`
+  used it too before #1440 removed that Worker and its source.
 
 Splitting bounds the blast radius of a token leak. A user-bot
 compromise can't spoof ops alerts (the operator acts on detection

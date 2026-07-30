@@ -19,7 +19,8 @@
  * a Push API outage logs and returns, so a single Push hiccup never
  * stalls the broader watcher loop or blocks the Telegram rail.
  *
- * SDK note: `@pushprotocol/restapi@^1.7` exposes the legacy
+ * SDK note: `@pushprotocol/restapi` (installed: 0.0.1 — an earlier
+ * revision of this line said `^1.7`, #1450 r26) exposes the legacy
  * modular API (`payloads.sendNotification(...)`), not the v2
  * `PushAPI` class — the docs site documents both, only the v1 form
  * is available on the version range we install. Push channels live
@@ -78,6 +79,40 @@ function getSignerAndChannel(channelPk: string): {
  * and logs — useful to exercise the rest of the cron without a
  * real Push channel configured.
  */
+/**
+ * Drop the pinned SDK's request-payload log line — installed ONCE, at module
+ * load, and never swapped.
+ *
+ * `@pushprotocol/restapi@0.0.1` logs its entire `apiPayload` immediately
+ * before the POST (`src/lib/payloads/sendNotifications.js:81`). That payload
+ * carries `recipients` in CAIP form — the subscriber's wallet — so every
+ * successful send wrote a wallet-to-event trail into the Worker log, and
+ * omitting the subscriber from OUR log line did nothing about it (#1450 r24).
+ *
+ * WHY MODULE-LEVEL AND NOT AROUND EACH CALL (#1450 r25). The first version
+ * saved `console.log`, installed a filter, and restored in `finally`. That is
+ * unsound here because sends OVERLAP: the keeper launches `runWatcher` and
+ * `runPreGraceWatcher` in separate `ctx.waitUntil` calls. Each invocation
+ * captures whichever wrapper is currently installed rather than the real
+ * logger, so completions out of LIFO order restore a stale wrapper, chains
+ * accumulate, and an early completion can strip another in-flight send's
+ * filter — which is a recipient leak, i.e. exactly the failure the filter
+ * exists to prevent.
+ *
+ * There is nothing to restore, because there is no case where we want this
+ * line: it is the SDK's debug output and it is never wanted in a Worker log.
+ * Installing once is both simpler and reentrancy-proof. It matches the marker
+ * on the FIRST argument, where the SDK puts it, so nothing else is affected.
+ *
+ * If the pin ever moves, re-check that marker: a changed prefix means this
+ * silently stops filtering, and that failure is invisible by construction.
+ */
+const realConsoleLog = console.log;
+console.log = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && args[0].includes('API call :-->> ')) return;
+  realConsoleLog(...args);
+};
+
 export async function sendPush(
   channelPk: string | undefined,
   payload: PushPayload,
@@ -116,6 +151,21 @@ export async function sendPush(
       channel: channelCaip,
       env: 'prod',
     });
+    // #1450 — a POSITIVE signal, deliberately. Only the unset-key and
+    // failure branches logged before, so a channel Push does not recognise
+    // produced two quiet tails and looked exactly like "no eligible events
+    // yet". That made the incident runbook's post-rotation verification step
+    // unsound: an operator could watch nothing happen and conclude the
+    // migration worked. The channel is logged because it is the field a
+    // rotation changes and the one worth eyeballing.
+    //
+    // The subscriber is deliberately NOT logged (#1450 r13). This branch is
+    // routine — it fires on every HF-band, pre-grace and periodic-payment
+    // notification — so including the address would build a standing
+    // wallet-to-event-timestamp trail in Cloudflare observability as a side
+    // effect of a verification aid. The failure branch below still carries
+    // it: that one is exceptional, and there the address is the diagnostic.
+    console.log(`[push] sent channel=${channelCaip}`);
   } catch (err) {
     console.error(
       `[push] send failed subscriber=${payload.subscriber} err=${String(err).slice(0, 200)}`,

@@ -517,50 +517,262 @@ identity), so rotation is time-sensitive.
   `/start <code>` posts from new chat IDs).
 
 ### Detect
-- Search wrangler logs for unexpected `[push] send` lines outside the
-  cron schedule.
+- Search wrangler logs for unexpected **`[push] sent`** lines outside the
+  cron schedule — that is the success line, and it is the one that matters
+  here. `[push] send` does NOT match it: the only line containing that exact
+  string is `[push] send failed`, so the documented term used to return every
+  failure and not one unexpected send, which is precisely inverted for this
+  investigation. Failures are still worth a look, so search both:
+  `[push] sent` for deliveries and `[push] send failed` for attempts that
+  did not land.
 - Cross-reference the channel's recent broadcast history at
   <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
   against our own send log.
 
 ### Execute — Telegram bot rotation
-1. From `@BotFather`: `/revoke` → confirms token revocation. Old
-   token stops working within seconds.
-2. `/token` to issue a fresh token.
-3. `cd ops/hf-watcher && npx wrangler secret put TG_BOT_TOKEN`
-   → paste the new token.
-4. Re-register the webhook:
+
+**There is no overlap window to engineer.** A Telegram bot has exactly
+one token, and `@BotFather`'s `/revoke` invalidates the old one and
+issues the replacement in the same reply — you cannot hold a working
+new token before the old one dies. (`/token` only *displays* the
+current token; it does not mint one.) So the outage is unavoidable and
+the only thing under your control is its LENGTH. Every step that does
+not need the new token is therefore pre-staged, and exactly one command
+runs after revocation.
+
+1. **Pre-stage, while the old token still works.** Resolve the store id
+   and the existing secret's id. `TG_BOT_TOKEN` ALREADY EXISTS in the
+   account-level Secrets Store, so the rotation is an UPDATE and needs
+   that id — `secret create` fails on a duplicate name, and discovering
+   that *after* `/revoke` is what leaves both sides with no working
+   credential.
+
    ```bash
-   curl "https://api.telegram.org/bot<NEW_TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
+   STORE=<the vaipakam-credentials store id>
+   # --per-page: the default is 10 and the store holds ~22 secrets, so
+   # the flag is required or TG_BOT_TOKEN may simply not be on the page.
+   wrangler secrets-store secret list "$STORE" --remote --per-page 100
+   SECRET_ID=<TG_BOT_TOKEN's id from that listing>
    ```
-5. `npm run deploy` to flush any in-memory clients tied to the old
-   token.
+
+   Rotation is in the **account-level Secrets Store**, NOT per Worker.
+   `ops/hf-watcher` was removed by the Stage 3 split; the live consumers
+   are `apps/agent` and `apps/keeper`, and both resolve `TG_BOT_TOKEN`
+   from the shared store — so one write covers both, and a per-Worker
+   `wrangler secret put` would rotate neither.
+2. From `@BotFather`: `/revoke`. The old token dies within seconds and
+   BotFather's reply contains the NEW token. The outage starts here.
+3. Write the new token with the id resolved in step 1 — a single
+   command, no lookups:
+
+   ```bash
+   # No --value and no pipe: wrangler prompts for the secret and it never
+   # enters the command line, so it cannot be recovered from shell history
+   # afterwards. Wrangler's own help calls --value "Only for testing. Not
+   # secure as this will leave secret value in plain-text in terminal
+   # history". A credential minted to evict an attacker is the last one that
+   # should be left lying on the workstation.
+   wrangler secrets-store secret update "$STORE" \
+     --secret-id "$SECRET_ID" --remote
+   ```
+4. Re-register the webhook. The token goes in the URL path, so it must not
+   be typed into the command — that would undo step 3's prompted upload by
+   writing the freshly minted credential straight into shell history, and
+   into the process list where any other user on the box can read it from
+   `ps`. Prompt for it and hand curl its options on **stdin**, so the token
+   appears in neither:
+
+   ```bash
+   read -rsp 'New bot token: ' TG_TOKEN; echo
+
+   printf 'url = "https://api.telegram.org/bot%s/setWebhook"\ndata-urlencode = "url=https://agent.vaipakam.com/tg/webhook"\n' \
+     "$TG_TOKEN" | curl -K -
+
+   # Confirm it took — same pattern, same reason:
+   printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' \
+     "$TG_TOKEN" | curl -K -
+
+   unset TG_TOKEN
+   ```
+
+   `curl -K -` reads its options from standard input, so the assembled URL
+   never becomes a command-line argument. `read -rs` keeps the typed value
+   off the screen and out of history. `unset` drops it from the shell's
+   environment when you are done — a rotation performed to evict an
+   attacker should not leave the replacement credential lying around the
+   workstation.
+
+   `agent.vaipakam.com`, NOT `api.vaipakam.com` — the latter belonged to
+   the removed hf-watcher and no current Worker binds it; `/tg/webhook`
+   exists only in `apps/agent`. Telegram accepts `setWebhook` against a
+   dead host without complaint, so getting this wrong fails SILENTLY: the
+   bot simply stops receiving updates.
+5. Redeploy the live consumers to flush in-memory clients tied to the
+   old token:
+
+   ```bash
+   pnpm --filter @vaipakam/agent exec wrangler deploy
+   # --keep-vars is harmless and correct for TG_BOT_USERNAME, but it is NOT
+   # what keeps the keeper armed — see "How the keeper's arming flags are
+   # actually held" below. A plain deploy does not disarm it.
+   pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
+   ```
 
 No subscriber action required — the bot's @-handle stays
 `@VaipakamBot`, only the API token rotates.
 
 ### Execute — Push channel signer rotation
-1. From the **current** channel-owner wallet, log in to
-   <https://app.push.org/> and open the channel admin page.
-2. **Transfer channel ownership** to a fresh EOA you control. Push
-   surfaces this as a transfer tx that hands the channel + remaining
-   stake to the new owner. Wait for confirmation.
-3. The new EOA's privkey replaces the old `PUSH_CHANNEL_PK`:
+
+**Read this first: there is no signer rotation, and there is no ownership
+transfer.** Both Workers derive the channel identity from the signing key
+(`channelCaip = eip155:1:<wallet(PUSH_CHANNEL_PK).address>`), so changing the
+key changes *which channel the platform posts as*. And Push does not
+implement channel-ownership transfer at all — `PushCoreV2` declares a
+`ChannelOwnershipTransfer` event that is never emitted, and the primitive
+with that shape is `PushCommV2.addDelegate`, which grants delegated SENDING
+rights while the channel stays with its creator. Earlier versions of this
+runbook told the operator to transfer ownership; do not go looking for it.
+
+So rotating this key is a **channel migration**, and subscribers do not come
+with it. Budget for that before you start.
+
+**Failure mode to know before you act:** a send to a channel Push does not
+know does not throw anything user-visible. `sendPush` catches and logs
+`[push] send failed subscriber=… err=…` and moves on — fail-soft and
+UNALERTED. Nothing pages, nothing appears in the app. The only place it shows
+is `wrangler tail`, so verify there rather than assuming success.
+
+1. From a clean EOA you control, **create a new Push channel** —
+   `createChannelWithPUSH`, which requires a **50 PUSH stake**. This is not
+   optional and not avoidable: the new key must be a channel Push recognises
+   or every send is rejected. Acquiring PUSH mid-incident is not a fast path,
+   so treat the stake as a standing prerequisite for being able to rotate.
+2. Write that EOA's private key over `PUSH_CHANNEL_PK` in the **account-level
+   Secrets Store** — `apps/agent` and `apps/keeper` both bind it from there,
+   so one write covers both and a per-Worker `wrangler secret put` would
+   rotate neither:
+
    ```bash
-   cd ops/hf-watcher && npx wrangler secret put PUSH_CHANNEL_PK
+   STORE=<the vaipakam-credentials store id>
+   # --per-page 100: the default page size is 10 against ~22 secrets, so the
+   # flag is required or PUSH_CHANNEL_PK may simply be absent from the page.
+   wrangler secrets-store secret list "$STORE" --remote --per-page 100
+   # No --value and no pipe — wrangler prompts, so the key never enters
+   # shell history (see the Telegram step above for why that matters).
+   wrangler secrets-store secret update "$STORE" \
+     --secret-id <PUSH_CHANNEL_PK's id> --remote
    ```
-4. `npm run deploy` to invalidate the cached PushAPI client (the
-   worker module-scope cache rebuilds on next cron tick).
-5. The channel **address** stays the same iff the channel itself is
-   transferred (Push lets you change the signer, not the channel id).
-   No frontend redeploy needed — `VITE_PUSH_CHANNEL_ADDRESS` is
-   unchanged.
-6. If transfer is impossible (compromised wallet refuses to sign),
-   create a fresh Push channel from a clean EOA, update both
-   `PUSH_CHANNEL_PK` (worker) **and** `VITE_PUSH_CHANNEL_ADDRESS`
-   (frontend), redeploy both. Subscribers must re-subscribe to the
-   new channel; communicate clearly.
+3. Redeploy **both** consumers to drop their cached PushAPI clients:
+
+   ```bash
+   pnpm --filter @vaipakam/agent exec wrangler deploy
+   # --keep-vars: same reason as the Telegram rotation — see "How the
+   # keeper's arming flags are actually held" below. It preserves
+   # TG_BOT_USERNAME; it is not what keeps the keeper armed.
+   pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
+   ```
+4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
+   the new EOA and redeploy `apps/defi`. Leaving it on the old address sends
+   every user who opens the Alerts page to subscribe to a channel the
+   platform no longer posts to — and that subscribe succeeds, so nothing
+   signals the mistake.
+
+   This is a BUILD-time value, so it has to be present when the bundle is
+   built — a shell comment does nothing, and `apps/defi/.env.production`
+   does not currently carry the key at all (only `.env.example` and
+   `.env.local` do, and Vite loads neither for a production build). Set it
+   in the production env file, then deploy:
+
+   ```bash
+   # Add (or update) in apps/defi/.env.production:
+   #   VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
+   pnpm --filter @vaipakam/defi run deploy
+   ```
+
+   (`run` is required: bare `pnpm --filter <pkg> deploy` is pnpm's
+   builtin portable-package command, not the package's script — #1478.)
+
+   `deploy` builds as part of its own pipeline, so a separate `build` is
+   redundant. Confirm afterwards that `/alerts` renders the subscribe
+   link — the page treats an unset value as "no channel" and hides the link
+   entirely, which looks like a deliberate design rather than a broken
+   deploy.
+5. Update the **Vaipakam Push channel reference** block at the top of this
+   section, so the next incident does not cross-reference a dead channel.
+6. Verify with `wrangler tail` on both Workers that a send actually
+   SUCCEEDS — look for `[push] sent channel=…` carrying the new channel
+   address. (The line deliberately does not name the subscriber: it fires on
+   every notification, so carrying the wallet would leave a routine
+   wallet-to-event trail in observability. The channel is the field a
+   rotation changes, and it is all this check needs.) Two quiet tails are NOT
+   confirmation: sends only happen
+   when an eligible subscriber event occurs, so silence means "nothing has
+   been attempted yet" and "every attempt is failing" equally. Wait for a
+   real send, or trigger one, before calling the migration done.
+7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
+   to the OLD channel and nothing migrates them.
+
+**The old channel stays with the compromised key.** There is no way to take
+it back, so assume the attacker can keep posting to the original subscriber
+set until Push acts on an abuse report. That is the strongest argument for
+announcing the migration loudly and quickly, and for the guard rail below
+about never reusing this wallet.
+
+**What #1456 changes.** It makes the channel id a configured value rather
+than something derived from the key. Once it lands, the compromised key can
+be replaced by `addDelegate`-ing a fresh sending EOA from the channel owner
+and pointing `PUSH_CHANNEL_PK` at it — the channel id, the stake and every
+subscriber stay put, and this whole section collapses to a two-line secret
+swap. Until then, plan for migration. If a rotation is foreseeable rather
+than an emergency, landing #1456 first is strictly better.
+
+### How the keeper's arming flags are actually held
+
+**An earlier version of this section had this backwards, and its advice
+would have created the very hazard it warned about.** It is corrected here
+rather than quietly deleted, because the reasoning is the useful part.
+
+The claim was: a bare `wrangler deploy` of `apps/keeper` deletes
+`KEEPER_ENABLED` and silently disarms the keeper, so always pass
+`--keep-vars` — and better still, commit the flags into `wrangler.jsonc`'s
+`vars`.
+
+The `--help` text quoted in support of it is real and says what it was said
+to say: *"When not used (or set to false), Wrangler will delete all vars
+before setting those found in the Wrangler configuration."* The error was
+in the premise, not the citation. **That sentence governs plain `vars`, and
+`KEEPER_ENABLED` is not one.** Verified against the live deployment
+(2026-07-30): on `vaipakam-keeper` it is a **`secret_text`** binding,
+`KEEPER_PRIVATE_KEY` is a `secrets_store_secret`, and `TG_BOT_USERNAME` is
+the only genuine `plain_text` var. Secrets are not rebuilt from the
+committed config and a bare deploy does not touch them.
+
+So: a bare keeper deploy does **not** disarm the keeper, `--keep-vars` is
+not what protects it, and the recommendation to move the flags into `vars`
+would have converted a binding that is currently safe into one that a later
+bare deploy really would delete. It was the one change that could have made
+the documented failure possible.
+
+What the source of the confusion is, and it is worth knowing:
+`apps/keeper/wrangler.jsonc` describes all three flags as
+"operator-managed vars (non-secret config — plain `vars`)". The deployment
+does not match that comment. **The comment is wrong, not the deployment** —
+correcting it is #1465, which is now a comment fix rather than a config
+change.
+
+`--keep-vars` is left on the rotation steps above. It is harmless, it is
+correct for `TG_BOT_USERNAME`, and a deploy flag that preserves state is
+not worth removing under incident pressure — but do not treat it as the
+thing keeping the keeper armed.
+
+The readback below still matters, for a different reason than originally
+given: not because a deploy may have deleted a flag, but because a rotation
+may have set one wrong.
+
+After **any** keeper redeploy, confirm the flags survived by reading the
+deployed variables back — see `OffChainRestore.md` §7a step 4 for the
+command and for the case-sensitivity trap between the two guards.
+
 
 ### Communicate
 - Within 30 min of detection: post on official channels (X, Discord)
@@ -582,10 +794,42 @@ No subscriber action required — the bot's @-handle stays
 
 ---
 
-## 5. LayerZero security alerts (lz-watcher)
+## 5. LayerZero security alerts (lz-watcher) — RETIRED (#1440)
+
+> **DO NOT FOLLOW THIS SECTION DURING AN INCIDENT.** The
+> `vaipakam-lz-watcher` Worker was deleted on 2026-07-28 and its source
+> tree removed; it emits no alerts, so nothing below can fire. The
+> LayerZero transport it watched was retired by the T-068 CCIP migration
+> and the contracts these SOPs tell you to pause are decommissioned —
+> following them would send a responder down an obsolete path while the
+> real incident continues.
+>
+> **Cross-chain ops alerting for CCIP does not exist yet** — that gap is
+> tracked on #250 Phase 1 (Tenderly presets). For a suspected cross-chain
+> problem today, the authoritative enumeration of the live pausable
+> cross-chain set is **`contracts/script/pause-all-chains.sh`** — it names
+> `ccipMessenger`, `buybackRemittanceReceiver` and
+> `rewardRemittanceReceiver` alongside the mirror token.
+>
+> `contracts/RUNBOOK.md` §10 describes the pause MECHANICS, but its list is
+> itself stale: it names the removed `VpfiBuyAdapter` / `VpfiBuyReceiver`
+> and omits both remittance receivers, which are live and expose
+> `whenNotPaused` CCIP ingress. Take the *how* from §10 and the *what* from
+> the script, or a forged buyback or reward message stays executable.
+>
+> Deliberately NOT `AdminKeysAndPause.md`: that document describes the
+> Diamond's `AdminFacet.pause()` and states explicitly that **CCIP ingress
+> is not blocked by it** — so during a suspected message forge or
+> unexpected mint it is the wrong lever, and reaching for it would leave
+> the ingress path open (#1450 r4).
+>
+> Retained below as historical record of what was monitored and why.
+
+<details>
+<summary>Historical SOPs (retired — reference only)</summary>
 
 The `ops/lz-watcher` Cloudflare Worker (separate from
-`ops/hf-watcher` — see DeploymentRunbook.md §9 for setup) fires
+`ops/hf-watcher`) fired
 three alert kinds into the internal ops Telegram channel. Each
 has its own SOP. All three are **detection-only** — there is no
 automated response wired up. The watcher pages humans; humans
@@ -800,6 +1044,8 @@ pause sequence for the affected chain only.
 Internal only unless §5.2 has also fired. The threshold is set
 low enough that we expect periodic benign hits — do not
 publicly comment on each one.
+
+</details>
 
 ---
 

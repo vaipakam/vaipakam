@@ -174,26 +174,72 @@ Verify against `ChainByChainChecks.md` after every change.
 
 ## Off-chain operator keys (alert watchers)
 
-Two Cloudflare Workers hold long-lived secrets that are **not**
-Diamond roles. Losing or rotating them affects only the
-off-chain notification rails, never on-chain protocol authority.
+Two Cloudflare Workers hold long-lived secrets. For most of them,
+losing or rotating the value affects only the off-chain notification
+rails — **with one carve-out: `KEEPER_PRIVATE_KEY` is an on-chain
+signer, not just an off-chain credential.** Its EOA can hold
+`KEEPER_ROLE` (every chain) and is separately the configured
+`rewardRemittanceKeeper` on Base, so a compromise of that row is
+**not** closed by rotating the stored value: the stolen EOA keeps
+its on-chain authority until both are explicitly revoked —
+`revokeRole(KEEPER_ROLE, …)` per chain AND
+`setRewardRemittanceKeeper(…)` on Base. The row below carries the
+full sequence; an earlier revision of this lead-in classified the
+whole section as "never on-chain protocol authority", which is
+exactly the assumption that would leave the attacker authorized
+(#1450 r29).
 
-### `ops/hf-watcher` (public-facing — user HF alerts + autonomous keeper)
+### `apps/keeper` + `apps/agent` (public-facing — user HF alerts + autonomous keeper)
 
-| Key | Purpose | Storage | Compromise blast radius |
-|---|---|---|---|
-| `TG_BOT_TOKEN` | Authenticates the worker as `@VaipakamBot` for Telegram message sends + webhook receives. | `wrangler secret put TG_BOT_TOKEN` (encrypted at rest in Cloudflare Workers). | Attacker can spam our subscriber base with arbitrary Telegram messages branded as the bot. Rotate via @BotFather → `/revoke` → re-issue → re-set the secret. |
-| `PUSH_CHANNEL_PK` | Channel signer privkey for the Vaipakam Push channel `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (<https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>). Used by `@pushprotocol/restapi` to sign outbound notifications. | `wrangler secret put PUSH_CHANNEL_PK` (encrypted at rest). | Attacker can push arbitrary notifications to every Vaipakam Push subscriber. The channel-owner wallet should hold ONLY the 50 PUSH staking deposit + ~$50 of native gas — never operator funds, never connected to a treasury workflow. Rotate by transferring channel ownership at app.push.org to a fresh EOA, updating the secret, redeploying the worker (procedure in `IncidentRunbook.md` §4). |
-| `KEEPER_PRIVATE_KEY` | Hot-key signer for the autonomous-keeper liquidation path inside hf-watcher. Submits `triggerLiquidation` from this EOA when on-chain HF crosses 1.0. Holds **zero** Diamond roles. | `wrangler secret put KEEPER_PRIVATE_KEY` (encrypted at rest). | Attacker who steals the key can submit liquidations with our identity but earns the bonus into the same key — no fund-extraction path against the protocol. They can also drain the keeper EOA's gas balance; bound that balance with a per-chain top-up policy (≤ $200 each). Rotate by writing a fresh privkey, redeploying the worker, then sweeping the old key's residual gas. |
-| `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/app/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `frontend/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. |
-| `RPC_*` (one per chain) | Dedicated RPC URLs — Alchemy / QuickNode / Infura. | `wrangler secret put RPC_BASE` etc. | Quota theft (attacker exhausts our RPC budget). Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
+> These secrets moved when the Stage 3 split replaced the single
+> `ops/hf-watcher` Worker with `apps/{keeper,agent,indexer}`. The
+> user-facing alert and keeper duties are split across `apps/keeper` and
+> `apps/agent`, and the shared credentials now live in the **account-level
+> Secrets Store** rather than per-Worker — so one write covers both
+> consumers, and a per-Worker `wrangler secret put` for a shared value
+> rotates neither.
+>
+> **Every row in this section is store-bound** — `TG_BOT_TOKEN`,
+> `KEEPER_PRIVATE_KEY`, `PUSH_CHANNEL_PK` and the whole `RPC_*` set appear
+> as `secret_name` entries under `secrets_store_secrets`, never as
+> per-Worker values. So no `wrangler secret put` form is correct here. (An
+> earlier revision of this banner claimed the `secret put` forms that
+> remained were "genuinely per-Worker" without checking each row — they
+> were not. `wrangler secret put` still applies elsewhere, e.g. the `ops/*`
+> Workers' `TG_OPS_BOT_TOKEN` and the archive Worker's `B2_*` pair, which
+> are not store-bound.)
+>
+> **Store-bound is not the same as bound everywhere**, and a responder
+> scoping exposure needs the difference — an earlier revision of this
+> banner said every listed key appears in BOTH Workers, which is false in
+> three places. The **Consumers** column is authoritative; it is derived
+> from the `secrets_store_secrets` blocks of `apps/keeper`, `apps/agent`
+> and `apps/indexer`. In particular `KEEPER_PRIVATE_KEY` is bound by
+> `apps/keeper` **only**, and the `RPC_*` set is not uniform. The
+> `apps/indexer` Worker binds most of the `RPC_*` set too, so despite this
+> section's heading it is a consumer of these credentials — it binds no
+> signing key, which is why it is not a heading-level subject here.
 
-### `ops/lz-watcher` (internal-only — LEGACY LayerZero security alerts; deferred for decommission post-T-068)
+| Key | Consumers | Purpose | Storage | Compromise blast radius |
+|---|---|---|---|---|
+| `TG_BOT_TOKEN` | `apps/keeper` + `apps/agent` | Authenticates the worker as `@VaipakamBot` for Telegram message sends + webhook receives. | Account-level **Secrets Store** (`vaipakam-credentials`) — `wrangler secrets-store secret update`. NOT `wrangler secret put`: that writes a per-Worker value, which every consumer here IGNORES, so it would leave the compromised store credential live while looking like a successful rotation. | Attacker can spam our subscriber base with arbitrary Telegram messages branded as the bot. Rotate via @BotFather → `/revoke` → re-issue → re-set the secret. |
+| `PUSH_CHANNEL_PK` | `apps/keeper` + `apps/agent` | Channel signer privkey for the Vaipakam Push channel `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (<https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>). Used by `@pushprotocol/restapi` to sign outbound notifications. | Account-level **Secrets Store** (`vaipakam-credentials`), bound by both `apps/agent` and `apps/keeper` — `wrangler secrets-store secret update`, NOT a per-Worker `wrangler secret put`, which would rotate neither. | Attacker can push arbitrary notifications to every Vaipakam Push subscriber. The channel-owner wallet should hold ONLY the 50 PUSH staking deposit + ~$50 of native gas — never operator funds, never connected to a treasury workflow. Rotation is a channel MIGRATION, not a signer swap: Push implements no channel-ownership transfer (its `ChannelOwnershipTransfer` event is declared but never emitted), and both Workers derive the channel id from this key — so a new key means a new channel, which must be created and staked (50 PUSH) before it can post. Update the secret in the account-level Secrets Store, redeploy BOTH `apps/agent` and `apps/keeper`, repoint `VITE_PUSH_CHANNEL_ADDRESS`, and expect to ask subscribers to re-subscribe. Full procedure in `IncidentRunbook.md` §4; #1456 would reduce this to a secret swap. |
+| `KEEPER_PRIVATE_KEY` | `apps/keeper` **only** — `apps/agent` does not bind it | Hot-key signer for `apps/keeper`'s autonomous paths. Submits `triggerLiquidation` permissionlessly, but **does NOT hold zero Diamond authority** — an earlier revision of this row said so and it is wrong. Verified in source: the EOA can hold `KEEPER_ROLE` (gating `ConfigFacet.setKeeperTier`, deployed on EVERY chain and feeding loan-init LTV limits; `RewardCommitmentFacet.submitCommitmentBatch`; `ClaimFacet.claimAsLenderViaBackstop`) and is separately the configured `rewardRemittanceKeeper` on Base, which `remitRewardBudget` authorises against via `_checkRemitter` **without consulting `KEEPER_ROLE` at all**. | Account-level **Secrets Store** (`vaipakam-credentials`) — `wrangler secrets-store secret update`. NOT `wrangler secret put`: that writes a per-Worker value, which every consumer here IGNORES, so it would leave the compromised store credential live while looking like a successful rotation. | Attacker who steals the key can submit liquidations with our identity but earns the bonus into the same key — no fund-extraction path against the protocol. They can also drain the keeper EOA's gas balance; bound that balance with a per-chain top-up policy (≤ $200 each). **Rotation is a REVOCATION, and sweeping gas is not one** — a swept EOA keeps every authority it held and can be refunded for pennies. Write a fresh privkey, then: (1) `revokeRole(KEEPER_ROLE, <old EOA>)` then `grantRole(..., <new EOA>)` **on every chain including canonical Base**, not mirrors only; (2) `setRewardRemittanceKeeper(<new EOA>)` on Base — a SEPARATE authority that revoking the role does not touch; (3) redeploy the Worker; (4) read both back per chain; (5) then sweep the old key's gas, as housekeeping. Full procedure in `OffChainRestore.md` §1 step 6, compromise branch. |
+| `0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b` (public address) | frontend (`VITE_PUSH_CHANNEL_ADDRESS`) — no Worker binding | The Push channel-owner wallet's public side. Surfaced on the frontend via `VITE_PUSH_CHANNEL_ADDRESS` and rendered on `/alerts` as a "Subscribe on Push →" deep link. | Public — committed to `apps/defi/.env.example`, displayed to every user. | Public info; no compromise model. Changing it requires creating a new Push channel + 50-PUSH stake + frontend redeploy. Note that rotating the `PUSH_CHANNEL_PK` signer forces this too — both Workers derive the channel from the key, so a signer swap IS a channel change and the frontend value must move with it or subscribers land on a silent channel (IncidentRunbook, Push channel signer rotation; #1456). |
+| `RPC_*` (one per chain) | **not uniform.** All three of `apps/{keeper,agent,indexer}` bind `RPC_ARB`, `RPC_ARB_SEPOLIA`, `RPC_BASE`, `RPC_BASE_SEPOLIA`, `RPC_BNB`, `RPC_BNB_TESTNET`, `RPC_ETH`, `RPC_OP`, `RPC_OP_SEPOLIA`, `RPC_SEPOLIA`. `RPC_POLYGON_AMOY` is `apps/agent` + `apps/indexer`; `RPC_POLYGON` is `apps/agent` alone. `apps/keeper` binds no Polygon endpoint. | Dedicated RPC URLs — Alchemy / QuickNode / Infura. | Account-level **Secrets Store** (`vaipakam-credentials`) — `wrangler secrets-store secret update` per chain. NOT `wrangler secret put` (see the rows above). | Quota theft (attacker exhausts our RPC budget). Limited blast radius. Rotate by re-issuing the upstream key + re-setting the secret. |
 
-This Worker is internal ops only. Its alerts go to a private
-Telegram channel. No public surface, no autonomous keeper, no
-user-facing notifications. See `IncidentRunbook.md` §5 for the
-per-alert response SOPs.
+### `ops/lz-watcher` — REMOVED 2026-07-28 (#1440)
+
+> The Worker was **deleted** and its source tree removed; the secrets
+> below no longer exist anywhere and nothing rotates them. Retained only
+> so an operator who finds a stale reference elsewhere can confirm the
+> disposition. `IncidentRunbook.md` §5 is likewise retired — do not
+> follow it. The `vaipakam-lz-alerts-db` database deletion is the one
+> remaining operator step, gated on a clean nightly backup.
+>
+> The live ops-internal watcher is now `ops/mesh-watcher` (VPFI recycling
+> mesh invariants), which has its own D1 and uses the same
+> `TG_OPS_BOT_TOKEN` ops bot.
 
 > **T-068 status:** The cross-chain layer migrated from LayerZero to
 > Chainlink CCIP in PR #46 (2026-05-18). The three checks this
@@ -203,10 +249,21 @@ per-alert response SOPs.
 > `contracts/RUNBOOK.md` §9 (RMN curse-event drift, CCT mint/burn
 > imbalance on `LockReleaseTokenPool` vs sum of mirror
 > `totalSupply()`, lane rate-limit saturation, pause-lever health,
-> CCIP-fee funding). Keys here stay in place only as long as the
-> Worker remains deployed; once it's torn down (operator decision —
-> tracked in the follow-up CCIP-watcher card), the secrets below
-> can be revoked.
+> CCIP-fee funding).
+>
+> **Past tense, per the REMOVED banner above:** these keys existed only
+> while the Worker was deployed. It has been deleted, so they are gone and
+> there is nothing left to revoke or rotate — the earlier "once it's torn
+> down, the secrets below can be revoked" wording described a teardown that
+> has since happened, and reading it as pending contradicted the banner.
+> The one remaining operator step is deleting the `vaipakam-lz-alerts-db`
+> database, gated on a clean nightly backup.
+
+> **The table below is HISTORICAL.** It records what this Worker held
+> while it existed, so an operator meeting a stale reference can confirm
+> the disposition. None of its storage or rotation instructions are
+> executable — the Worker, its per-Worker secret store and its source
+> tree are all gone. Do not follow them; there is nothing to rotate.
 
 | Key | Purpose | Storage | Compromise blast radius |
 |---|---|---|---|
@@ -216,24 +273,42 @@ per-alert response SOPs.
 
 ### Key independence
 
-These watcher secrets are **independent** of the Diamond key
-topology in the upper sections. Compromise of any of them does
-**not** require an on-chain pause — see `IncidentRunbook.md` §4
-for hf-watcher rotation, §5 for lz-watcher response. Conversely,
-rotating Diamond admin roles does not require touching any
-watcher secret.
+Worker secrets are **independent of the Diamond key topology** in the
+upper sections. Compromise of any of them does **not** require an
+on-chain pause — see `IncidentRunbook.md` §4 for the Push channel and
+Telegram rotations. Conversely, rotating Diamond admin roles does not
+require touching any Worker secret. (`IncidentRunbook.md` §5 was the
+lz-watcher response and is retired with that Worker — #1440.)
 
-### Why the two Workers don't share a Cloudflare account secret store
+### How the Workers share credentials — and what that means for scoping
 
-Cloudflare Workers `secret put` is per-Worker. So even if both
-Workers use the same value for, say, `TG_BOT_TOKEN`, they hold
-independent encrypted copies. This means:
+> **SUPERSEDED.** This section previously argued the opposite: that
+> `wrangler secret put` is per-Worker, so two Workers holding the same
+> value keep independent encrypted copies, and one Worker's exfiltration
+> does not expose the other's. That reasoning described the pre-Stage-3
+> `hf-watcher` / `lz-watcher` pair. It is **no longer how these Workers
+> are configured**, and a responder who scoped an incident by it would
+> under-scope it and would reach for a rotation command that updates
+> nothing. Corrected below.
 
-- A Cloudflare account compromise that exfiltrates one Worker's
-  secrets does not automatically expose the other's, **but**
-- Anyone with `Workers Edit` permission on the account can read
-  both. So account-level access controls (2FA, IP allowlisting,
-  member audit) are the real protection. Audit annually.
+The shared credentials now live in **one account-level Secrets Store**
+(`vaipakam-credentials`), bound by `secret_name` from each Worker's
+`secrets_store_secrets` block. There is one encrypted copy, not one per
+Worker. For an incident that means:
+
+- **Exposure is shared by default.** A compromise of a store-bound value
+  exposes it to every Worker that binds it — use the **Consumers** column
+  above to enumerate them, since the set is not uniform (`RPC_POLYGON` is
+  one Worker; the common `RPC_*` are three).
+- **One rotation covers every consumer** — `wrangler secrets-store secret
+  update` writes the single copy. The corollary is the trap the banner
+  above names: a per-Worker `wrangler secret put` of a store-bound value
+  rotates *nothing*, because every consumer reads the store binding and
+  ignores the per-Worker value.
+- **Account-level access control is still the real protection.** Anyone
+  with `Workers Edit` on the account could already read every Worker's
+  secrets under the old model too, so 2FA, IP allowlisting and member
+  audit were always the boundary that mattered. Audit annually.
 
 Per the **post-T-068** cross-chain security model: a Cloudflare
 account compromise drops both Workers, but the cross-chain
