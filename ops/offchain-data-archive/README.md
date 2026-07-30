@@ -73,7 +73,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
      `archives-monthly/` + `manifests-monthly/` 365-day, plus
      `archives-yearly/` + `manifests-yearly/` indefinite.
    - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
-     listFiles + writeFiles, bucket-scoped) for the nightly cron.
+     writeFiles, bucket-scoped — NOT listFiles) for the nightly cron.
    - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +
      listFiles + readFiles, bucket-scoped) for the weekly
      healthcheck.

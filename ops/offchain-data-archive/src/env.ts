@@ -37,7 +37,7 @@ export interface Env {
   // Secrets (wrangler secret put).
   BACKUP_ENCRYPTION_KEY: string;
   // Write-scoped B2 Application Key (capabilities:
-  // listBuckets + listFiles + writeFiles; bucket-scoped).
+  // listBuckets + writeFiles; bucket-scoped — NOT listFiles, #1450 r27).
   // Used by the nightly backup path. A CF compromise exfiltrating
   // these keys cannot read or delete past archives.
   B2_WRITE_ACCESS_KEY_ID: string;
