@@ -337,9 +337,39 @@ comparison for that tick. The Base-side checks still run.
 **One chain's failure does not blind the rest.** Chain reads are collected
 independently, so a transient RPC error on one mirror leaves the others
 evaluated and delivered, with the failed one surfaced as a coverage gap.
-The endpoint's *identity* is not yet verified, though — a misconfigured
-`RPC_<chainId>` pointing at the wrong network would be labelled with the
-configured id. Tracked as **#1445**.
+
+**Each endpoint is checked to BE the chain it is configured as** (#1445).
+Every tick calls `eth_chainId` per target and compares it against the id
+the `RPC_<chainId>` secret is named for. Without this, a secret pointing
+at the wrong network was adopted silently and every figure read through
+it was *labelled* with the configured id — and the dangerous outcome is
+not the noisy one. If the Diamond address happens to carry compatible
+code on the wrong network, every invariant is evaluated against an
+unrelated chain's ledger and the Worker reports a clean tick: confident
+silence, the worst output a watcher has.
+
+A mismatch is reported as its own `chain-mismatch` gap, deliberately not
+as `no-rpc` — the endpoint is reachable, so every reachability remedy is
+the wrong one, and the detail names both the configured and the observed
+chain so the fix is the secret. A mismatched **mirror** is excluded from
+the tick entirely, the same treatment as a stale head and for the same
+reason: comparing a wrong-network ledger against Base would emit a false
+CRITICAL. A mismatched **canonical** chain aborts the tick instead —
+every Base-side figure comes from that client, so a wrong canonical does
+not degrade the tick, it invalidates it.
+
+The verification is issued concurrently with a read each path already
+makes, so it costs a request but no extra round trip.
+
+*Coverage boundary, stated because a partial claim here is worse than
+none:* the unit tests cover `verifyChainIdentity` itself — detection,
+the both-ids detail, the `no-rpc` distinction, secret redaction on an
+`eth_chainId` failure, and that it never throws. They do **not** cover
+the wiring in `mesh.ts` (that both call sites invoke it, that a
+canonical mismatch throws, that a mismatched mirror reaches neither
+`allLocals` nor `freshLocals`), because `observeMesh` builds real
+clients from env and this Worker has no network-level test harness.
+That wiring is reviewed, not tested.
 
 **Secrets are redacted from everything that leaves the Worker.** viem
 embeds the request URL in its error messages and providers put the API key

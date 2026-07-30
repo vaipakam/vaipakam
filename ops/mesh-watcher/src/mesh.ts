@@ -13,6 +13,7 @@ import { REWARD_AGGREGATOR_ABI } from './abi';
 import {
   isCoverageGap,
   resolveChain,
+  verifyChainIdentity,
   type ChainTarget,
   type CoverageGap,
 } from './chains';
@@ -262,7 +263,23 @@ export async function observeMesh(
   // violation, so nothing else would notice. It could then report
   // `ok: true` while blind to a new accounting violation or a
   // newly-wired chain (#1443 r9).
-  const canonicalHead = await canonical.client.getBlock();
+  // #1445 — and it must be the chain we think it is. Issued CONCURRENTLY
+  // with the head read: verification costs one request but no extra round
+  // trip, which is what makes it affordable on every tick.
+  //
+  // A canonical mismatch is FATAL, not a coverage gap. Every Base-side
+  // figure in this tick — the expected chain set, each chain's books, the
+  // whole composition position — is read from this client, so a wrong
+  // canonical does not degrade the tick, it invalidates it. Treating it
+  // as a gap would let the mirror-side checks run and report against
+  // books from an unrelated network.
+  const [canonicalHead, canonicalIdentity] = await Promise.all([
+    canonical.client.getBlock(),
+    verifyChainIdentity(canonical, 'base-books'),
+  ]);
+  if (canonicalIdentity) {
+    throw new Error(makeBaseRedactor(env)(canonicalIdentity.detail));
+  }
   const canonicalBlock = canonicalHead.number;
   const wallClockSeconds = Math.floor(Date.now() / 1000);
   const canonicalAge = wallClockSeconds - Number(canonicalHead.timestamp);
@@ -351,6 +368,22 @@ export async function observeMesh(
       if (isCoverageGap(target)) {
         gaps.push(target);
         return;
+      }
+      // #1445 — verify identity BEFORE reading the ledger, and treat a
+      // mismatch exactly like the freshness gate below: gap, and excluded
+      // from `allLocals` as well as `freshLocals`. A wrong-network ledger
+      // is not merely unusable for cross-chain comparison — it would be
+      // compared against Base as if it were this chain and produce a
+      // false CRITICAL, the worst output this Worker has.
+      //
+      // Skipped for the canonical chain, already verified fatally above;
+      // re-checking would spend a request to re-learn the same answer.
+      if (id !== canonical.chainId) {
+        const identity = await verifyChainIdentity(target, 'own-ledger');
+        if (identity) {
+          gaps.push(identity);
+          return;
+        }
       }
       try {
         const { ledger, gaps: viewGaps } = await readLocalLedger(target);
