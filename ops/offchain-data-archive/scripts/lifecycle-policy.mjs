@@ -61,6 +61,24 @@
  * above the floor so a human has room to act on an out-of-band signal.
  */
 
+/**
+ * The ONLY rule fields B2 accepts. Shared, because both writers need it and a
+ * second copy is the defect this module exists to prevent (#1471 r11).
+ *
+ * A field outside this set is either a typo or a capability we have not wired.
+ * Either way it must not pass silently: `apply-bucket-lifecycle.mjs` projects
+ * each rule onto a fixed shape before comparing and before writing, so an
+ * unrecognised field was DROPPED — `--check` then reported a match while the
+ * declaration asked for something the bucket never received. Review exercised
+ * that with `daysFromUploadingToDeleting` and got a clean exit 0.
+ */
+export const B2_RULE_FIELDS = Object.freeze([
+  'fileNamePrefix',
+  'daysFromUploadingToHiding',
+  'daysFromHidingToDeleting',
+  'daysFromStartingToCancelingUnfinishedLargeFiles',
+]);
+
 /** Prefixes whose retention is bounded by the 30-day ticket promise. */
 export const DAILY_PREFIXES = ['archives/', 'manifests/'];
 /** Prefixes whose retention is bounded by the 12-month promise. */
@@ -99,6 +117,20 @@ export const MIN_RECOVERY_DAYS_MONTHLY = 31;
  *        script reports in its own voice and exits its own way
  */
 export function assertPolicyCeilings(decl, fail) {
+  for (const r of decl.rules) {
+    const unknown = Object.keys(r).filter((k) => !B2_RULE_FIELDS.includes(k));
+    if (unknown.length) {
+      fail(
+        `bucket-lifecycle.json rule "${r.fileNamePrefix}" declares field(s) B2 ` +
+          `does not accept: ${unknown.join(', ')}. A misspelling here is ` +
+          `silently DROPPED by the apply path's projection, so the check would ` +
+          `report a match while the bucket never received it. Fix the spelling, ` +
+          `or add the field to B2_RULE_FIELDS here only if b2_update_bucket ` +
+          `genuinely accepts it.`,
+      );
+    }
+  }
+
   const byPrefix = new Map(decl.rules.map((r) => [r.fileNamePrefix, r]));
 
   // THE YEARLY PREFIXES MUST CARRY NO RULE (#1471 r10). Their indefinite
@@ -109,9 +141,14 @@ export function assertPolicyCeilings(decl, fail) {
   // durability tier, which is the one tier nothing else would notice: no
   // healthcheck reads it (#1476) and no promise caps it, so there is no other
   // signal.
+  // PREFIX MATCHING, NOT EQUALITY (#1471 r11). B2 applies a rule to every key
+  // UNDER its prefix, so `archives-yearly/2025/` expires yearly objects just as
+  // surely as `archives-yearly/` would — and an exact-membership test let it
+  // straight through. Review exercised exactly that with a two-day deletion.
   const YEARLY_PREFIXES = ['archives-yearly/', 'manifests-yearly/'];
   for (const r of decl.rules) {
-    if (YEARLY_PREFIXES.includes(r.fileNamePrefix)) {
+    const p = String(r.fileNamePrefix ?? '');
+    if (YEARLY_PREFIXES.some((y) => p === y || p.startsWith(y))) {
       fail(
         `bucket-lifecycle.json declares a rule for "${r.fileNamePrefix}". The ` +
           `yearly prefixes must have NO rule — their indefinite retention is ` +

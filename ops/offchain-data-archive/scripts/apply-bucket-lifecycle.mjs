@@ -160,7 +160,15 @@ async function main() {
         `(bucket-lifecycle.json is unreadable: ${err.message} — printing live ` +
           `state anyway, which needs nothing from it.)`,
       );
-      declared = { bucket: process.env.BACKBLAZE_BUCKET, rules: [] };
+      // Keep a bucket IDENTITY even here (#1471 r11). The documented print
+      // command exports only the key pair, so `BACKBLAZE_BUCKET` is usually
+      // unset — and an undefined `declared.bucket` made the later name
+      // comparison reject the very bucket a scoped key had just listed. So
+      // print mode resolves its target in order: the env var if set, else the
+      // key's own scope (a bucket-scoped key can only see one bucket, which is
+      // unambiguous), and it only insists on the env var for an account-wide
+      // key, where the target genuinely is ambiguous.
+      declared = { bucket: process.env.BACKBLAZE_BUCKET || null, rules: [] };
     } else {
       console.error(`bucket-lifecycle.json could not be parsed: ${err.message}`);
       process.exit(1);
@@ -213,12 +221,24 @@ async function main() {
   const bucketId = api.bucketId;
   const qs = new URLSearchParams({ accountId: auth.accountId });
   if (bucketId) qs.set('bucketId', bucketId);
-  else qs.set('bucketName', declared.bucket);
+  else if (declared.bucket) qs.set('bucketName', declared.bucket);
+  else {
+    console.error(
+      'No bucket to inspect: the declaration is unreadable, BACKBLAZE_BUCKET is ' +
+        'unset, and this key is account-wide so its scope does not identify one. ' +
+        'Export BACKBLAZE_BUCKET, or use the bucket-scoped read-only key.',
+    );
+    process.exit(2);
+  }
 
   const listed = await b2(`${api.apiUrl}/b2api/v3/b2_list_buckets?${qs}`, {
     headers: { Authorization: token },
   });
-  const bucket = listed.buckets.find((b) => b.bucketName === declared.bucket);
+  // With a scoped key and an unreadable declaration there is exactly one
+  // bucket in the response and no name to compare against; take it.
+  const bucket = declared.bucket
+    ? listed.buckets.find((b) => b.bucketName === declared.bucket)
+    : listed.buckets[0];
   if (!bucket) {
     console.error(`Bucket ${declared.bucket} not found (key sees: ${listed.buckets.map((b) => b.bucketName).join(', ') || 'none'}).`);
     process.exit(1);

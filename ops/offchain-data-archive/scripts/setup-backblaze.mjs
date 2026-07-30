@@ -214,25 +214,13 @@ async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
   // without touching this file, which is the property that was missing.
   //
   // The spread is guarded rather than trusted: an unrecognised key would be
-  // forwarded straight to B2, and this class of defect has now been found
-  // twice in this file (r2 hardcoded one field, r3 dropped another), so it
-  // fails here where it is cheap instead of at `b2_update_bucket`.
-  const B2_RULE_FIELDS = new Set([
-    'fileNamePrefix',
-    'daysFromUploadingToHiding',
-    'daysFromHidingToDeleting',
-    'daysFromStartingToCancelingUnfinishedLargeFiles',
-  ]);
-  for (const r of decl.rules) {
-    const unknown = Object.keys(r).filter((k) => !B2_RULE_FIELDS.has(k));
-    if (unknown.length) {
-      fail(
-        `bucket-lifecycle.json rule "${r.fileNamePrefix}" declares field(s) B2 does ` +
-          `not accept: ${unknown.join(', ')}. Add them to B2_RULE_FIELDS here only ` +
-          `if b2_update_bucket genuinely accepts them.`,
-      );
-    }
-  }
+  // forwarded straight to B2, and this class of defect has been found three
+  // times in this file (r2 hardcoded one field, r3 dropped another, r11 found
+  // the apply path silently discarding a third). The check now lives in
+  // `lifecycle-policy.mjs` and runs for BOTH writers via
+  // `assertPolicyCeilings` below — this file kept a private copy of the field
+  // list until #1471 r11, which is the same duplication the policy module was
+  // created to end, reproduced inside the fix for it.
   // SAME validator the apply path uses (#1471 r5). This is the other
   // documented writer, and a ceiling enforced in only one of two writers is
   // not enforced: rerunning the documented setup flow with a violating
