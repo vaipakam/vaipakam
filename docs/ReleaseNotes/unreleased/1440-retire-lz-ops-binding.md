@@ -224,6 +224,19 @@ rather than left for the incident that would find them:
   surviving compatibility path is an unrelated one. An operator verifying
   a notification-channel migration would have landed on a blank page and
   been unable to confirm the thing they were checking.
+- The advice on restoring the background service's operational switches was
+  checked against the deployed service and turned out to describe something
+  the deployment does not do. The switches are held as secrets, not as
+  ordinary configuration values, so the deploy-time behaviour the earlier
+  advice worked around does not apply to them — and following that advice
+  would have introduced the very fragility it was trying to avoid, by
+  creating an ordinary value alongside the existing secret. The step now
+  restores them the way they are actually held, and says plainly that the
+  service's own configuration comment describes them incorrectly, so a
+  reader trusts the readback rather than the comment. Correcting that comment
+  is filed separately. The same check answered a question that had been left
+  open: the service is armed, and the two reward switches are absent, which
+  is correct while that programme is pre-activation.
 - Both credential rotations end by redeploying the keeper, and a plain
   redeploy of that service deletes the switches that decide whether its
   autonomous duties run at all — because those switches are operator-set

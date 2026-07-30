@@ -1002,62 +1002,43 @@ caught at the cheapest stage.
    is funded on every chain it submits from. After deploying, watch one
    keeper tick.
 
-   **Set them by editing `apps/keeper/wrangler.jsonc`'s `vars` block — all
-   of the ones that were on, together — and deploying once:**
+   **How they are actually held, verified against the live deployment
+   (2026-07-30) — because this document previously guessed, and guessed
+   wrong.** On `vaipakam-keeper`, `KEEPER_ENABLED` is a **`secret_text`**
+   binding (a per-Worker secret, set with `wrangler secret put`), NOT a var.
+   `KEEPER_PRIVATE_KEY` is a `secrets_store_secret`. `TG_BOT_USERNAME` is the
+   only genuine `plain_text` var. `REWARD_REMIT_ENABLED` and
+   `REWARD_COMMIT_ENABLED` are **absent** — the reward passes are dark.
 
-   ```jsonc
-   "vars": {
-     "TG_BOT_USERNAME": "…",
-     "KEEPER_ENABLED": "true",
-     // only those that were on before the outage:
-     "REWARD_REMIT_ENABLED": "true",
-     "REWARD_COMMIT_ENABLED": "true"
-   }
-   ```
+   `apps/keeper/wrangler.jsonc` describes all three flags as
+   "operator-managed vars (non-secret config — plain `vars`)". The deployment
+   does not match that comment. Trust the readback in step 4, not the comment
+   (correcting it is #1465).
+
+   So restore them **the way they are held**:
 
    ```bash
-   ( cd apps/keeper && wrangler deploy )
+   ( cd apps/keeper
+     wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
    ```
 
-   `REWARD_REMIT_ENABLED` has two additional prerequisites, and on a
-   non-compromise restore **both are normally already satisfied** — so
-   VERIFY them rather than assuming they need rebuilding:
+   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way, and
+   only if they were on before — see the on-chain and migration
+   preconditions below.
 
-   - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
-     `apps/indexer/migrations/`, so §1 step 7 applied it along with every
-     other migration. Confirm with
-     `wrangler d1 migrations list vaipakam-archive --remote`.
-   - **The keeper EOA's on-chain `KEEPER_ROLE`** lives on the Diamonds, not
-     in Cloudflare. Losing the account does not revoke it. Confirm by
-     reading the role back on each mirror.
-
-   Reauthorisation is only needed where the keeper key was actually
-   **rotated** — which is the compromise branch in §1 step 6, not a
-   lockout. An earlier revision said neither prerequisite survived a
-   restore, which would have left remittance and acknowledgement switched
-   off indefinitely while both were in fact ready.
-
-   > **Do NOT arm these with `--var`, one flag per deploy.** It fails two
-   > separate ways, and the second is silent and immediate.
+   > **Do NOT use `--var` for these, and do not "helpfully" move them into
+   > the committed `vars` block as part of a restore.** Either creates a
+   > plain var beside the existing secret, and a var IS subject to
+   > wrangler's delete-then-set behaviour (`wrangler deploy --help`: "will
+   > delete all vars before setting those found in the Wrangler
+   > configuration"). So the workaround would introduce exactly the
+   > disarm-on-next-deploy fragility that the secret form does not have.
    >
-   > `wrangler deploy --help` on the pinned version states it plainly:
-   > *"When not used (or set to false), Wrangler will delete all vars before
-   > setting those found in the Wrangler configuration."* So each deploy
-   > rebuilds the var set from the config plus that invocation's `--var`
-   > flags. `KEEPER_ENABLED` is not in the committed config, so a follow-up
-   > `wrangler deploy --var REWARD_REMIT_ENABLED:true` **deletes it** — the
-   > final deployment leaves `isKeeperEnabled()` false and every signing
-   > duty off, with the last command having looked like it succeeded.
-   >
-   > Second, `--var` does not persist: it applies to that deployment only.
-   > Even done correctly in one invocation, the next `wrangler deploy` from
-   > a checkout whose `vars` still omit the flags disarms everything again —
-   > the same invisible-off state this step exists to fix, now with a
-   > completed-looking restore behind it.
-   >
-   > Committing the values avoids both, and leaves a reviewable record. If
-   > you must arm temporarily without editing the config, pass **every**
-   > flag in a **single** `wrangler deploy` and add `--keep-vars`.
+   > An earlier revision of this step recommended precisely that, on the
+   > strength of the config comment rather than the deployment. Whether these
+   > flags *should* be committed vars — reviewable, but then needing
+   > `--keep-vars` discipline — is a real question, and it is #1465's, not a
+   > decision to take mid-restore.
 
 4. **Read the deployed variable values back.** Do not infer the flags took
    from a quiet `wrangler tail`: `runRewardBudgetRemit`, `runRemitAck` and
@@ -1079,7 +1060,13 @@ caught at the cheapest stage.
    unset CF_API_TOKEN
    ```
 
-   Confirm each flag you intended is present and reads the value you meant.
+   Note the settings endpoint lists a `secret_text` binding by NAME with no
+   value — which is enough for the question that matters here ("is it set?")
+   and is why the readback is a presence check for `KEEPER_ENABLED` rather
+   than a value check. Only genuine `plain_text` vars show their values.
+
+   Confirm each flag you intended is present and, where the value is
+   visible, reads what you meant.
    **The two guards do not parse alike**, which is a trap worth knowing
    before you eyeball the output:
 
