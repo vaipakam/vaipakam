@@ -87,7 +87,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](147);
+        selectors = new bytes4[](148);
         // #1448 r6 — pre-seed-fold relocated-custody shape.
         selectors[145] =
             TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
@@ -124,7 +124,13 @@ contract HelperTest {
         selectors[139] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
         selectors[140] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;
         // #1222 M3 B4-d — place the remitted term at the fresh-cap boundary.
-        selectors[146] =
+        // Slot 147, not 146: #1448 r14 claimed 146 for
+        // `setRemitReleasedCountRaw` on the base branch. Both branches picked
+        // "the next free slot" independently and git merged them without a
+        // textual conflict, so the later write silently won and the other
+        // mutator went unrouted (#1457 r7). The zero-slot assert below is
+        // what makes that class impossible to ship again.
+        selectors[147] =
             TestMutatorFacet.setRewardBudgetRemittedGlobalRaw.selector;
         selectors[128] = TestMutatorFacet.userClaimFundingNeedRaw.selector;
         selectors[129] = TestMutatorFacet.setLoanSideRewardedDaysRaw.selector;
@@ -362,6 +368,26 @@ contract HelperTest {
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed
         // staking accrual mutator/getters.
+
+        // #1457 r7 — STRUCTURAL guard against slot collisions. Slots are
+        // assigned by hand, so two branches that each take "the next free
+        // index" collide, and git merges them with no textual conflict
+        // because the two writes sit at different lines. The later write
+        // wins, the earlier mutator is left unrouted, and the only symptom
+        // is a `FunctionNotFound` revert in some unrelated-looking test.
+        //
+        // Every collision leaves exactly one slot at zero — one write fewer
+        // than the declared length — so a zero slot detects the whole class
+        // regardless of which indices were involved. Asserted here, at the
+        // one place every caller passes through, rather than trusting each
+        // future author to scan 147 hand-numbered lines.
+        for (uint256 i; i < selectors.length; ++i) {
+            require(
+                selectors[i] != bytes4(0),
+                "HelperTest: unassigned mutator selector slot - two entries "
+                "likely claimed the same index (see the comment here)"
+            );
+        }
         return selectors;
     }
 
