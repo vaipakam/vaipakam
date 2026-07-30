@@ -48,10 +48,14 @@ receives its scheduled portion centrally, while its recycled portion settles
 locally and moves nothing across chains. The canonical chain is the top-up of
 last resort for the recycled portion specifically — not for the whole share.
 
-Two further behaviours were live but unstated at that level: a chain's funding
-for a day waits on that chain's own report of what it owes for the day, and is
-sized by it, so a day is never funded from a partial or missing picture — a
-late report delays funding rather than zeroing it. And the one deliberate
+Two further behaviours were live but unstated at that level: **once the
+programme is armed**, a chain's funding for a day waits on that chain's own
+report of what it owes for the day, and is sized by it, so such a day is never
+funded from a partial or missing picture — a late report delays funding rather
+than zeroing it. The "once armed" is not decoration: a day from before the
+programme was switched on carries no such report to be sized against, and is
+funded the older way without one. Written without that qualifier, this would
+have someone waiting for a report an unarmed day never produces. And the one deliberate
 exception, a day closed while a chain's activity was missing entirely, is
 excluded from automatic funding on purpose, because that day's share was sized
 without knowing the chain's real demand; an operator funds it separately

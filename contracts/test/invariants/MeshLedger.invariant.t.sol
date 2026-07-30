@@ -513,8 +513,10 @@ contract MeshLedgerInvariant is Test {
     ///
     /// Driven through the commitment term alone, with nothing paid out, so a
     /// regression that dropped `outstandingCommitFresh` from the reserved sum
-    /// fails here and nowhere else — every bound in this suite would stay
-    /// green while the platform drew down past 69M across two open days.
+    /// is caught here — the platform would otherwise draw down past 69M
+    /// across two open days. (Four of the five fixtures catch that mutation;
+    /// see the table below. An earlier version of this sentence said "and
+    /// nowhere else", which the table directly contradicts.)
     // ─────────────────────────────────────────────────────────────────────
     // §7 #2 FRESH-CAP BOUNDARY — MUTATION EVIDENCE
     //
@@ -552,11 +554,27 @@ contract MeshLedgerInvariant is Test {
     //                                               | reservation assertion
     //                                               | (its stamp stays green)
     //
-    // Read down the right column: 5, 4, 3, 2, 1. That descending order IS the
-    // argument for keeping all five fixtures — each mutation is caught by a
-    // strictly smaller set than the one above it, so the last fixture in the
-    // chain is the only thing standing between us and the narrowest mutation.
-    // No fixture is redundant, and none of them is uniquely load-bearing.
+    // WHAT THIS TABLE DOES AND DOES NOT ESTABLISH. It is a COVERAGE record:
+    // for each mutation, which fixtures notice. It does NOT establish that
+    // every fixture is necessary, and an earlier version of this comment
+    // claimed the descending 5/4/3/2/1 column proved exactly that. It does
+    // not, because THE SETS ARE NOT NESTED: drop the remitted-only fixture
+    // and its mutation is still caught by both combination fixtures; drop the
+    // two-term fixture and `max(remitted, outstanding)` is still caught by the
+    // three-term one. For mutation detection alone, some of these are
+    // genuinely redundant.
+    //
+    // That is fine, because mutation detection is not why they exist. Each
+    // fixture pins a distinct BEHAVIOUR at the boundary — clamp-to-headroom;
+    // at the cap, fresh zero while recycled keeps funding; remitted value
+    // reserves identically; two terms sum; three terms sum. Those are the
+    // reasons to keep them, and a fixture whose mutation is also caught
+    // elsewhere still documents its own property.
+    //
+    // Noting this because the failed reasoning is instructive: I replaced an
+    // exclusivity claim with a minimality claim, which was the same error one
+    // level up — inferring a property of the SUITE from a table that only
+    // reports coverage.
     //
     // The last row is why each fixture asserts the RESERVATION and not only
     // the day's published stamp: a mutation that stamps the clamped number
