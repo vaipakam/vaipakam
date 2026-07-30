@@ -152,10 +152,30 @@ then deploy.
    > For a compromise, the credential step is a **rotation**, not a
    > restore. Before deploying:
    >
-   > - **`KEEPER_PRIVATE_KEY`** — generate a fresh EOA, fund it, and grant
-   >   it `KEEPER_ROLE` on every mirror Diamond. Sweep the old key's
-   >   residual gas. Note this makes the on-chain reauthorisation genuinely
-   >   necessary, which it is not on a non-compromise restore (see §7a).
+   > - **`KEEPER_PRIVATE_KEY`** — generate a fresh EOA and fund it. Then,
+   >   and this is the part that is easy to get wrong: **REVOKE the old
+   >   EOA's on-chain authorities. Sweeping its gas is housekeeping, not
+   >   revocation** — a swept EOA keeps every permission it held, and an
+   >   attacker can fund it again for a few cents. There are **two distinct
+   >   authorities**, and revoking one does not touch the other:
+   >
+   >   1. **`KEEPER_ROLE`, on EVERY chain including canonical Base** — not
+   >      mirrors only. `ConfigFacet.setKeeperTier` is `KEEPER_ROLE`-gated
+   >      and deployed everywhere, and it feeds loan-init LTV limits, so a
+   >      retained role on Base is a live risk-affecting write. Also
+   >      `RewardCommitmentFacet.submitCommitmentBatch` and
+   >      `ClaimFacet.claimAsLenderViaBackstop`. Revoke from the old
+   >      address, then grant to the new one, per chain.
+   >   2. **`rewardRemittanceKeeper` on Base** — a SEPARATE authority.
+   >      `remitRewardBudget` authorises through `_checkRemitter`, which
+   >      accepts ADMIN **or** the configured `rewardRemittanceKeeper` — it
+   >      does not consult `KEEPER_ROLE` at all. So revoking the role
+   >      leaves the stolen EOA still able to remit reward budget.
+   >      Repoint it with `setRewardRemittanceKeeper(<new EOA>)`.
+   >
+   >   Read both back per chain before re-arming. This is also what makes
+   >   on-chain reauthorisation genuinely necessary here, which it is *not*
+   >   on a non-compromise restore (see §7a).
    > - **`TG_BOT_TOKEN`** — @BotFather `/revoke`, re-issue, re-register the
    >   webhook (IncidentRunbook §4).
    > - **`PUSH_CHANNEL_PK`** — a channel **migration**, not a signer swap;
@@ -168,10 +188,14 @@ then deploy.
    >   key lets an attacker forge chain events into the indexer.
    > - **`DIAG_WALLET_HMAC_KEY`** — rotate; retained, it de-anonymises the
    >   diagnostics stream.
-   > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys, and treat
-   >   every existing archive as readable by the attacker. Re-encrypting the
-   >   history under a new key is §8; do it, but do not let it block the
-   >   restore.
+   > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys **FIRST**,
+   >   before anything else in this branch, so no further attacker uploads
+   >   can land while you are restoring. Then treat the archive history as
+   >   **attacker-WRITABLE, not merely readable** — see the archive-
+   >   selection warning in §2, which changes how you pick an archive. Do
+   >   NOT re-encrypt the existing history forward before selecting (§8):
+   >   re-encrypting a poisoned set under a fresh key preserves the poison
+   >   and removes the one signal that distinguished it.
    >
    > Rotate **before** the deploy where you can, so no window exists in
    > which the new account runs on known-compromised values. Where a
@@ -511,6 +535,58 @@ then deploy.
 ---
 
 ## 2. Download the most recent archive from B2
+
+> ⚠️ **AFTER A COMPROMISE, "most recent that verifies" IS THE ATTACK.**
+> Skip to the selection rules below before running anything in this
+> section. On a lockout / billing / deploy-mistake restore the ordinary
+> newest-first flow is correct and this box does not apply.
+>
+> The archive Worker's B2 key carries `writeFiles`, and per §1 step 6 a
+> Workers Edit compromise also yields the raw `BACKUP_ENCRYPTION_KEY`. With
+> both, an attacker can upload a **newer** nonce-keyed archive plus a
+> matching manifest, encrypted under the stolen key and self-consistently
+> checksummed. Every verification in this section then **passes**: the
+> manifest's SHA-256 matches the object because they computed it, the byte
+> length matches, and AES-GCM decrypts and authenticates because it is the
+> real key. The `sort … | tail` step selects it precisely *because* it is
+> newest, and §§4–5 then restore attacker-chosen D1 rows and R2 objects
+> into the replacement account.
+>
+> **The checks in this section prove INTEGRITY, not PROVENANCE.** SHA-256
+> and GCM tell you an object is intact and was encrypted under our key.
+> They cannot tell you *who* encrypted it. That distinction is the whole
+> vulnerability, and nothing downstream re-establishes it.
+>
+> So for a compromise, select by **time, not by recency**:
+>
+> 1. **Rotate the B2 keys first** (§1 step 6) so nothing new can land
+>    mid-restore.
+> 2. **Establish the earliest possible compromise time** — first unexplained
+>    deploy, first anomalous access, or if unknown the last moment you can
+>    positively account for. Treat **every object uploaded at or after it as
+>    attacker-controlled**, however well it verifies.
+> 3. **Choose an archive dated safely BEFORE that window** and accept the
+>    extra data loss. A few days of born-off-chain rows is recoverable
+>    ground; a restore of attacker-chosen legal-hold and support-ticket rows
+>    is not.
+> 4. **List every object for the chosen date, not just one.** The
+>    immutable-naming nonce means an attacker cannot overwrite the genuine
+>    archive — so the original survives, and **two objects under one date is
+>    itself evidence of tampering**, not a duplicate to shrug at. Expect
+>    exactly one per date from the legitimate nightly.
+> 5. **Cross-check what you can from outside B2.** The re-derivable tables
+>    are rebuilt from chain in §6, so poisoning those is self-correcting —
+>    the exposure is the born-off-chain set. Compare the manifest's row
+>    counts against any out-of-band record you hold (monitoring history, the
+>    ops Telegram backup notifications) before restoring them.
+> 6. **Do not re-encrypt the history forward until after selection.**
+>    Re-encrypting under a fresh key launders the poisoned objects into the
+>    new key's set and destroys the upload-time signal you just used.
+>
+> If no archive predates the window, the born-off-chain data cannot be
+> trusted from this channel at all; restore the re-derivable half from chain
+> and treat the rest as an incident with its own decision, not a runbook
+> step.
 
 Archive + manifest object keys carry a 32-hex-char nonce per upload
 (the immutable-naming guard against in-place overwrite). The layout

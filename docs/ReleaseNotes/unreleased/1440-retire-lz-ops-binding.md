@@ -157,6 +157,32 @@ rather than left for the incident that would find them:
   recovery. The step now branches on *why* the restore is happening, and
   the compromise branch is a rotation rather than a restore, naming each
   credential and what rotating it costs.
+- The compromise branch above told an operator to replace the signing key
+  and sweep the old one's remaining gas. Sweeping gas is housekeeping, not
+  revocation: the old address keeps every permission it held, and anyone
+  can fund it again for pennies. Worse, there are **two** separate
+  authorities and revoking one leaves the other — the remittance duty
+  authorises against its own configured address, not the role, so an
+  attacker whose role was revoked could still move reward budget. The
+  branch now revokes both, on every chain rather than only the secondary
+  ones, and says to read both back before re-arming.
+- The archive-selection flow reads "take the most recent one that
+  verifies". After a compromise that is the attack. Whoever can read the
+  services holds both the storage write credential and the encryption key,
+  so they can upload a *newer* archive of their own choosing that is
+  correctly checksummed and genuinely decrypts — every check in that
+  section passes, and the newest-first rule selects it. The checks prove
+  the file is intact and encrypted under our key; they cannot say who
+  encrypted it, and nothing downstream re-establishes that. Selection is
+  now by *time* rather than recency: rotate the storage keys first,
+  establish the earliest possible compromise moment, choose an archive
+  safely before it, and accept the extra data loss. Two files under one
+  date is now called out as evidence of tampering rather than a duplicate
+  to ignore — the immutable naming means the genuine archive survives
+  beside any forgery. And re-encrypting the history under a fresh key,
+  previously recommended, is explicitly deferred until after selection: it
+  launders a poisoned set into the new key and destroys the one signal that
+  distinguished it.
 - Switching off the scheduled work was not enough to hold the event reader
   still: it has a second writer. A committed flag routes incoming webhook
   deliveries through a durable object that runs the same indexing, so the
