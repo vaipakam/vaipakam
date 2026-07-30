@@ -148,6 +148,29 @@ rather than left for the incident that would find them:
   versions. It would have shown a healthy deployment while the
   every-minute schedule was still live, which is precisely the mistake
   the check exists to catch. Replaced with a schedule-aware query.
+- The document justified keeping a scoped backup-read credential inside a
+  service on the grounds that it can only reach encrypted data, with the
+  decryption key held offline. That is true if the storage provider is
+  breached and false if the cloud account is: the same service also holds
+  the decryption key, so anyone able to edit it can take both and read
+  every archive in the clear — including the uploaded legal documents.
+  The claim is now stated accurately, with the boundary it really
+  provides, and separating the two is filed as a design decision to make
+  before mainnet.
+- The check on whether the restore had re-armed the autonomous duties
+  read the service's log output. Every one of those duties returns
+  silently when its switch is off *and* when it is on with nothing to do,
+  so silence proved nothing and a restore could finish with remittance or
+  reporting still dark. It now reads the deployed configuration back
+  directly. Writing that up turned up a trap worth stating: the main
+  switch accepts any capitalisation while the two it gates accept only
+  lowercase, so one spelling arms one duty and silently skips the others.
+- Two more credentials were being typed onto command lines — the
+  Cloudflare recovery token, in a check added earlier in this same change,
+  and the third-party marketplace key, whose surrounding text claimed a
+  prompt would appear while the command as written suppressed it. Both now
+  use the prompt-and-stdin pattern, so neither reaches shell history or
+  the process list.
 - The resilience plan listed the nightly backup writer among the services
   a paused copy in a second account could take over. It cannot: its
   database and object-store bindings can only address resources in the

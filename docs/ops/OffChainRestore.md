@@ -27,14 +27,36 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   Cloudflare re-introduces the single point of failure.
 
   This is NOT a prohibition on the scoped `B2_READ_*` pair the archive
-  Worker binds. That key can read only encrypted ciphertext from the
-  archive bucket, which is what the weekly healthcheck verifies against,
-  and the Worker's `assertRequiredEnv()` aborts EVERY scheduled run —
-  nightly backups included — if it is unset. So it is required in the
-  Worker by design. Read the rule as "the restore keys stay offline",
-  not "no B2 read key may exist in a Worker" — the two were previously
-  conflated, which made the prerequisite and the secret list below
-  mutually exclusive.
+  Worker binds. The weekly healthcheck has to perform signed GETs to
+  verify archives, and the Worker's `assertRequiredEnv()` aborts EVERY
+  scheduled run — nightly backups included — if the pair is unset. So it
+  is required in the Worker by design. Read the rule as "the restore keys
+  stay offline", not "no B2 read key may exist in a Worker" — the two were
+  previously conflated, which made the prerequisite and the secret list
+  below mutually exclusive.
+
+  > **What that key does and does not protect, stated accurately.** An
+  > earlier revision justified it as reading "only encrypted ciphertext",
+  > implying the offline AES key still gates plaintext. That is true of a
+  > **B2-side** compromise and false of a **Cloudflare-side** one: the same
+  > Worker binds the raw `BACKUP_ENCRYPTION_KEY` (`env.ts`
+  > declares it, `assertRequiredEnv()` requires it, and `index.ts` imports
+  > it at boot via `importBackupKey`), and this runbook uploads it into the
+  > same store alongside `B2_READ_*`. So an attacker with **Workers Edit**
+  > on the account can deploy code that exfiltrates both, fetch every
+  > archive, and decrypt the born-off-chain tables and the legal vault.
+  >
+  > The real boundaries are therefore: the offline AES key defends against
+  > B2 compromise, loss of the B2 credentials alone, and anyone reading the
+  > bucket without Cloudflare access. It does **not** defend against a
+  > Cloudflare account compromise, which is the same blast radius as the
+  > live data. Treat Workers Edit as equivalent to plaintext archive
+  > access, and account-level controls (2FA, member audit, token scoping)
+  > as the control that actually bounds it.
+  >
+  > Separating the two — so the decryption key never co-resides with the
+  > read credentials — is a design change rather than a runbook edit, and
+  > is tracked as #1463.
 - **Offline copies of every Worker secret.** The B2 archive backs up D1
   rows and R2 objects ONLY. Nothing in it restores the
   `vaipakam-credentials` Secrets Store or the per-Worker secrets — the
@@ -333,9 +355,18 @@ then deploy.
    > directly:
    >
    > ```bash
-   > curl -s -H "Authorization: Bearer $CF_API_TOKEN" \
-   >   "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/<worker-name>/schedules"
+   > read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+   > printf 'url = "https://api.cloudflare.com/client/v4/accounts/%s/workers/scripts/%s/schedules"\nheader = "Authorization: Bearer %s"\nsilent\n' \
+   >   "$CF_ACCOUNT_ID" "<worker-name>" "$CF_API_TOKEN" | curl -K -
    > ```
+   >
+   > The token goes to curl on **stdin**, not in `-H`. A restore-scoped
+   > Cloudflare token is a recovery credential with broad rights over the
+   > replacement account; expanded into an argument it is readable from
+   > `ps` / `/proc/<pid>/cmdline` by any other user on the workstation, for
+   > the lifetime of the request. Same reasoning and same mechanism as the
+   > Telegram rotation in `IncidentRunbook.md` §4. `unset CF_API_TOKEN`
+   > when the restore is done.
    >
    > Do **not** use `wrangler deployments status` for this: it reports
    > deployment metadata and versions, not cron triggers, so it shows a
@@ -823,11 +854,47 @@ caught at the cheapest stage.
    > you must arm temporarily without editing the config, pass **every**
    > flag in a **single** `wrangler deploy` and add `--keep-vars`.
 
-4. **Confirm each armed duty actually runs**, rather than assuming the flag
-   took. `isKeeperEnabled()` reads the string, so a typo reads as false and
-   is indistinguishable from "left off on purpose" — the same failure the
-   flags being uncommitted caused in the first place. One more tail, and
-   check the pass you expect to see logs rather than skips.
+4. **Read the deployed variable values back.** Do not infer the flags took
+   from a quiet `wrangler tail`: `runRewardBudgetRemit`, `runRemitAck` and
+   `runCommitmentReport` all `return` silently at their flag guards, and a
+   correctly-armed pass is *also* silent when there is no pending work or
+   the chain is inapplicable. Silence therefore means "off" and "armed with
+   nothing to do" equally, and the restore can complete with remittance or
+   commitment reporting still dark. A typo reads as false and is
+   indistinguishable from deliberately-off — the same invisible failure the
+   uncommitted flags caused in the first place.
+
+   The authoritative check is the deployed settings, which list the
+   variables actually in effect:
+
+   ```bash
+   read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+   printf 'url = "https://api.cloudflare.com/client/v4/accounts/%s/workers/scripts/vaipakam-keeper/settings"\nheader = "Authorization: Bearer %s"\nsilent\n' \
+     "$CF_ACCOUNT_ID" "$CF_API_TOKEN" | curl -K -
+   unset CF_API_TOKEN
+   ```
+
+   Confirm each flag you intended is present and reads the value you meant.
+   **The two guards do not parse alike**, which is a trap worth knowing
+   before you eyeball the output:
+
+   | | accepts | rejects |
+   |---|---|---|
+   | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` (`flagOn`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+
+   So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is
+   silently off. Use lowercase `true` for all three and the asymmetry
+   never bites.
+
+   Note the second half of the `KEEPER_ENABLED` row: the settings readback
+   shows *variables*, and `isKeeperEnabled` also requires the
+   `KEEPER_PRIVATE_KEY` **secret** to resolve. A green variable readback is
+   necessary, not sufficient — confirm the store binding from §1 step 6
+   too. The Worker's *Settings → Variables* pane shows the same variables.
+
+   Only after that is a tail useful, and then only as positive
+   confirmation: watch for a pass you expect to have work to do.
 
 ---
 

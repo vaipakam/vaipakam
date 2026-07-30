@@ -2222,7 +2222,12 @@ Set the value once at the account level:
 # Positional store id + --name + --scopes workers. `--scopes` is REQUIRED
 # (SecretsStoreMigration.md §9, verified against the live API 2026-05-17);
 # the earlier `--store-id` flag form here would have failed.
-printf '%s' "<value>" | wrangler secrets-store secret create \
+# No pipe and no --value: wrangler PROMPTS for the value, so it never
+# enters the command line and cannot be recovered from shell history.
+# (An earlier revision piped the key in with printf while the sentence
+# below still claimed wrangler would prompt — the pipe SUPPRESSES the
+# prompt, so the text was both insecure and self-contradictory.)
+wrangler secrets-store secret create \
   1e66429d0fa24aa38a27bc05b7bcf63e \
   --name OPENSEA_API_KEY --scopes workers --remote
 ```
