@@ -517,8 +517,14 @@ identity), so rotation is time-sensitive.
   `/start <code>` posts from new chat IDs).
 
 ### Detect
-- Search wrangler logs for unexpected `[push] send` lines outside the
-  cron schedule.
+- Search wrangler logs for unexpected **`[push] sent`** lines outside the
+  cron schedule — that is the success line, and it is the one that matters
+  here. `[push] send` does NOT match it: the only line containing that exact
+  string is `[push] send failed`, so the documented term used to return every
+  failure and not one unexpected send, which is precisely inverted for this
+  investigation. Failures are still worth a look, so search both:
+  `[push] sent` for deliveries and `[push] send failed` for attempts that
+  did not land.
 - Cross-reference the channel's recent broadcast history at
   <https://app.push.org/channels/0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b>
   against our own send log.
@@ -606,8 +612,9 @@ runs after revocation.
 
    ```bash
    pnpm --filter @vaipakam/agent exec wrangler deploy
-   # --keep-vars is REQUIRED on the keeper — see "Never redeploy the
-   # keeper bare" below. A plain deploy here silently disarms it.
+   # --keep-vars is harmless and correct for TG_BOT_USERNAME, but it is NOT
+   # what keeps the keeper armed — see "How the keeper's arming flags are
+   # actually held" below. A plain deploy does not disarm it.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 
@@ -659,8 +666,9 @@ is `wrangler tail`, so verify there rather than assuming success.
 
    ```bash
    pnpm --filter @vaipakam/agent exec wrangler deploy
-   # --keep-vars: same reason as the Telegram rotation — see "Never
-   # redeploy the keeper bare" below.
+   # --keep-vars: same reason as the Telegram rotation — see "How the
+   # keeper's arming flags are actually held" below. It preserves
+   # TG_BOT_USERNAME; it is not what keeps the keeper armed.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to

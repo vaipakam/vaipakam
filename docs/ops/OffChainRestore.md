@@ -57,6 +57,26 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   > Separating the two — so the decryption key never co-resides with the
   > read credentials — is a design change rather than a runbook edit, and
   > is tracked as #1463.
+- **`CF_ACCOUNT_ID` and `CF_API_TOKEN` exported in the shell.** Three
+  commands in this document read them and nothing assigns them, so on the
+  clean recovery workstation this document assumes, the URL silently becomes
+  `/accounts//workers/...` and the API answers with a shape that is not an
+  error you would notice. Set them before starting:
+
+  ```bash
+  # The account id is printed by whoami, and is also the `/accounts/<id>/`
+  # segment of any dashboard URL.
+  wrangler whoami
+  export CF_ACCOUNT_ID=<the account id from above>
+  # A token with Workers Scripts:Read (plus Edit for the deploy steps).
+  read -rs CF_API_TOKEN && export CF_API_TOKEN   # not via argv, not in history
+  # Prove both before relying on them:
+  curl -sS --fail-with-body -K - <<HDR | jq '.result.status'
+  url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
+  header = "Authorization: Bearer $CF_API_TOKEN"
+  HDR
+  ```
+
 - **Offline copies of every Worker secret.** The B2 archive backs up D1
   rows and R2 objects ONLY. Nothing in it restores the
   `vaipakam-credentials` Secrets Store or the per-Worker secrets — the
