@@ -81,15 +81,22 @@
   //                                  procedure in docs/ops/OffChainRestore.md.
   //   B2_WRITE_ACCESS_KEY_ID       — Application Key id, scoped
   //                                  write-only to the backup bucket
-  //                                  (listBuckets + listFiles +
-  //                                  writeFiles). Used by the nightly
-  //                                  cron only. A CF compromise that
-  //                                  steals this can corrupt FUTURE
-  //                                  archives (only at NEW unique
-  //                                  object keys — immutable naming
-  //                                  defeats overwrite of existing
-  //                                  ones) but cannot read past
-  //                                  archives or delete anything.
+  //                                  (listBuckets + writeFiles — NOT
+  //                                  listFiles; #1450 r27). Used by
+  //                                  the nightly cron only. A CF
+  //                                  compromise that steals THIS key
+  //                                  alone can corrupt FUTURE archives
+  //                                  and cannot delete anything.
+  //                                  It canNOT be assumed to be alone,
+  //                                  though: this Worker also binds the
+  //                                  READ key below, which carries
+  //                                  listFiles — so one compromised
+  //                                  environment can enumerate an
+  //                                  existing nonce and overwrite AT
+  //                                  that key. The immutable-naming
+  //                                  guard rests on withholding
+  //                                  listFiles here, and binding both
+  //                                  keys together defeats it.
   //   B2_WRITE_SECRET_ACCESS_KEY   — matching secret of above.
   //   B2_READ_ACCESS_KEY_ID        — Application Key id, scoped
   //                                  read-only to the backup bucket
