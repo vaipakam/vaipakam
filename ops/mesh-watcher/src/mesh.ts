@@ -13,11 +13,12 @@ import { REWARD_AGGREGATOR_ABI } from './abi';
 import {
   isCoverageGap,
   resolveChain,
+  verifyChainIdentity,
   type ChainTarget,
   type CoverageGap,
 } from './chains';
 import type { Config, Env } from './env';
-import { classify, describeFailure } from './errors';
+import { classify, describeFailure, PreclassifiedFailure } from './errors';
 import { makeBaseRedactor } from './redact';
 import {
   asFreshSnapshot,
@@ -262,7 +263,87 @@ export async function observeMesh(
   // violation, so nothing else would notice. It could then report
   // `ok: true` while blind to a new accounting violation or a
   // newly-wired chain (#1443 r9).
-  const canonicalHead = await canonical.client.getBlock();
+  // #1445 — and it must be the chain we think it is. Issued CONCURRENTLY
+  // with the head read: verification costs one request but no extra round
+  // trip, which is what makes it affordable on every tick.
+  //
+  // A canonical mismatch is FATAL, not a coverage gap. Every Base-side
+  // figure in this tick — the expected chain set, each chain's books, the
+  // whole composition position — is read from this client, so a wrong
+  // canonical does not degrade the tick, it invalidates it. Treating it
+  // as a gap would let the mirror-side checks run and report against
+  // books from an unrelated network.
+  // `allSettled`, not `all` (#1464 r2). With `all`, a wrong-network
+  // canonical endpoint that answers `eth_chainId` but whose concurrent
+  // `getBlock` rejects loses the FULFILLED mismatch verdict entirely, and
+  // the operator gets only the generic head-read failure — both chain ids
+  // and the `RPC_<id>` instruction gone. That is the same loss the mirror
+  // path was just fixed for, surviving on the canonical path: the fix has
+  // to be applied to both or the distinction only half exists.
+  //
+  // A partial failure like that is the LIKELY shape, not an exotic one: an
+  // endpoint pointed at the wrong network is often also a different
+  // provider, tier or auth setup, so one call succeeding while another
+  // fails is unremarkable.
+  const [headResult, identityResult] = await Promise.allSettled([
+    canonical.client.getBlock(),
+    verifyChainIdentity(canonical, 'base-books'),
+  ]);
+
+  // A real MISMATCH is preferred over the head failure: a wrong-network
+  // canonical explains any read anomaly, so it is the actionable
+  // diagnosis, and reporting the head error first sends the operator to a
+  // provider for a fault that is not there.
+  //
+  // Gated on `chain-mismatch` specifically (#1464 r4).
+  // `verifyChainIdentity` also returns a truthy gap when `eth_chainId`
+  // itself fails — a `no-rpc`, carrying no diagnosis at all. Preferring
+  // THAT would discard a genuinely more actionable head failure: an HTTP
+  // 401 on `getBlock` says "the credential is wrong", and the operator
+  // would instead be told `eth_chainId` was unreachable, re-labelled
+  // `config`. Two unreachability reports, and we would keep the emptier
+  // one.
+  const canonicalIdentity =
+    identityResult.status === 'fulfilled' ? identityResult.value : null;
+  if (canonicalIdentity?.reason === 'chain-mismatch') {
+    // PRE-CLASSIFIED, not a bare Error (#1464 r1). `runTick` passes what
+    // it catches through `classify`, which substring-matches the message —
+    // and this detail contains "WRONG NETWORK", so the `network` marker
+    // matched and the operator was told "the endpoint could not be
+    // reached", losing both chain ids and the name of the secret to fix.
+    // The whole configuration-fault-vs-reachability distinction this
+    // change introduces was being erased on exactly the path where it
+    // matters most.
+    throw new PreclassifiedFailure({
+      kind: 'config',
+      summary: makeBaseRedactor(env)(canonicalIdentity.detail),
+    });
+  }
+  if (headResult.status === 'rejected') {
+    // No mismatch, and the head read failed: the ordinary
+    // unreachable-canonical case, and the report we PREFER over an
+    // `eth_chainId` reachability gap because it can carry a status code.
+    // Classified rather than forwarded, since viem puts the provider URL —
+    // and its API key — in the message.
+    throw new PreclassifiedFailure(
+      classify(
+        headResult.reason,
+        `canonical head read on chain ${config.canonicalChainId}`,
+      ),
+    );
+  }
+  if (canonicalIdentity) {
+    // Head read fine, but `eth_chainId` failed — so identity is UNKNOWN
+    // rather than wrong. Still fatal: every Base-side figure below would
+    // be read from an endpoint we cannot vouch for, and the canonical path
+    // has no coverage-gap channel. Reported last, since it is the least
+    // informative of the three outcomes.
+    throw new PreclassifiedFailure({
+      kind: 'config',
+      summary: makeBaseRedactor(env)(canonicalIdentity.detail),
+    });
+  }
+  const canonicalHead = headResult.value;
   const canonicalBlock = canonicalHead.number;
   const wallClockSeconds = Math.floor(Date.now() / 1000);
   const canonicalAge = wallClockSeconds - Number(canonicalHead.timestamp);
@@ -352,8 +433,70 @@ export async function observeMesh(
         gaps.push(target);
         return;
       }
+      // #1445 — identity is verified CONCURRENTLY with the ledger read,
+      // not before it (#1464 r2). Awaiting it first added a serialized
+      // round trip to every mirror on every tick and lengthened the
+      // critical path by the slowest mirror's latency — while the comment
+      // and README claimed no extra round trip, which made the claim
+      // false for the path it was written about.
+      //
+      // Skipped for the canonical chain, already verified fatally above;
+      // re-checking would spend a request to re-learn the same answer.
+      const identityPromise =
+        id === canonical.chainId
+          ? Promise.resolve(null)
+          : verifyChainIdentity(target, 'own-ledger');
+
+      // `allSettled`, so a ledger read that throws cannot discard the
+      // identity verdict. Order matters below: a wrong-network endpoint
+      // EXPLAINS a failed or nonsense read, so the mismatch is the more
+      // useful diagnosis and is reported in preference to `no-rpc`.
+      const [identityResult, localResult] = await Promise.allSettled([
+        identityPromise,
+        readLocalLedger(target),
+      ]);
+
+      const identity =
+        identityResult.status === 'fulfilled' ? identityResult.value : null;
+      // Same `chain-mismatch` gating as the canonical path (#1464 r4): an
+      // `eth_chainId` reachability gap must not pre-empt the ledger read's
+      // own failure, which can carry a status code and is the better
+      // diagnosis. The mirror had this bug too — the fix belongs on both
+      // paths or the preference is inconsistent between them.
+      if (identity?.reason === 'chain-mismatch') {
+        // Treated exactly like the freshness gate below: gap, and excluded
+        // from `allLocals` as well as `freshLocals`. A wrong-network ledger
+        // is not merely unusable for cross-chain comparison — it would be
+        // compared against Base as if it were this chain and produce a
+        // false CRITICAL, the worst output this Worker has.
+        gaps.push(identity);
+        return;
+      }
+      if (localResult.status === 'rejected') {
+        // REDACT: viem puts the request URL in its error messages, and
+        // provider URLs carry the API key in the path or query. This
+        // string ends up in a Telegram alert (Codex #1443 r4).
+        gaps.push({
+          chainId: id,
+          reason: 'no-rpc',
+          source: 'own-ledger',
+          detail: describeFailure(
+            classify(localResult.reason, `own-ledger read on chain ${id}`),
+          ),
+        });
+        return;
+      }
+      if (identity) {
+        // Ledger read fine, `eth_chainId` failed: identity UNKNOWN, not
+        // wrong. Recorded as a gap and the chain excluded, because a
+        // snapshot from an endpoint whose identity we cannot vouch for must
+        // not be compared against Base — that is the same reasoning as the
+        // mismatch case, and the weaker evidence does not weaken it.
+        gaps.push(identity);
+        return;
+      }
       try {
-        const { ledger, gaps: viewGaps } = await readLocalLedger(target);
+        const { ledger, gaps: viewGaps } = localResult.value;
         // BEFORE the stale-head early return below, or a chain that is BOTH
         // stale and missing the composition view would lose this gap
         // entirely (#1448 r3).
@@ -385,14 +528,26 @@ export async function observeMesh(
         }
         freshLocals.set(id, verdict.fresh);
       } catch (err) {
-        // REDACT: viem puts the request URL in its error messages, and
-        // provider URLs carry the API key in the path or query. This
-        // string ends up in a Telegram alert (Codex #1443 r4).
+        // The READ's own rejection is handled above, by the `allSettled`
+        // branch. What can still reach here is the post-read processing:
+        // the freshness validation and the map writes. Kept as a net
+        // rather than deleted — a throw from here would otherwise abort
+        // this chain's closure silently and leave it out of the tick with
+        // no gap at all, which is the one outcome this Worker must never
+        // produce — but the CONTEXT no longer says "read", because a
+        // mislabelled gap sends an operator to the RPC provider for a
+        // fault that is not there (#1464 r2).
+        //
+        // REDACT regardless: viem's messages carry the request URL and
+        // provider URLs carry the API key, and this string reaches a
+        // Telegram alert (Codex #1443 r4).
         gaps.push({
           chainId: id,
           reason: 'no-rpc',
           source: 'own-ledger',
-          detail: describeFailure(classify(err, `own-ledger read on chain ${id}`)),
+          detail: describeFailure(
+            classify(err, `own-ledger snapshot processing on chain ${id}`),
+          ),
         });
       }
     }),

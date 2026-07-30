@@ -29,6 +29,12 @@ export type FailureKind =
   | 'decode'
   | 'network'
   | 'storage'
+  /**
+   * An operator CONFIGURATION fault, not a runtime one — the endpoint
+   * worked and told us it is the wrong chain. Distinct from `network`
+   * because every reachability remedy is the wrong response (#1445).
+   */
+  | 'config'
   | 'unknown';
 
 export interface Failure {
@@ -41,6 +47,33 @@ export interface Failure {
    * provider message.
    */
   summary: string;
+}
+
+/**
+ * An error whose summary is ALREADY operator-safe and already classified.
+ *
+ * `classify` works by substring-matching the error text, which is correct
+ * for provider and platform errors but actively harmful for OUR OWN
+ * messages: a hand-built detail gets re-interpreted by whichever marker
+ * its wording happens to contain, and the specific diagnosis is replaced
+ * by a generic one. That is not hypothetical — #1445's canonical
+ * chain-mismatch detail contains the words "WRONG NETWORK", so the
+ * `network` marker matched and the operator was told "the endpoint could
+ * not be reached", losing both chain ids and the instruction naming the
+ * secret to fix (#1464 r1).
+ *
+ * Throwing this instead of a bare `Error` makes the message immune to
+ * re-classification. Fixed HERE rather than by rewording the detail: the
+ * collision is structural, so any future safe message would hit it again,
+ * and re-wording only moves the landmine.
+ */
+export class PreclassifiedFailure extends Error {
+  readonly failure: Failure;
+  constructor(failure: Failure) {
+    super(failure.summary);
+    this.name = 'PreclassifiedFailure';
+    this.failure = failure;
+  }
 }
 
 /** Error shapes viem and the platform actually produce, structurally. */
@@ -92,6 +125,12 @@ function hasMarker(err: unknown, markers: readonly string[], depth = 0): boolean
  *          this module and structured fields (status codes) it extracted.
  */
 export function classify(err: unknown, context?: string): Failure {
+  // FIRST, before any marker matching: an already-classified failure is
+  // returned verbatim. Every check below reads the error TEXT, so placing
+  // this later would let our own wording be re-interpreted — which is the
+  // whole defect this carrier exists to prevent.
+  if (err instanceof PreclassifiedFailure) return err.failure;
+
   const where = context ? `${context}: ` : '';
   const status = findStatus(err);
 

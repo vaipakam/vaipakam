@@ -337,9 +337,60 @@ comparison for that tick. The Base-side checks still run.
 **One chain's failure does not blind the rest.** Chain reads are collected
 independently, so a transient RPC error on one mirror leaves the others
 evaluated and delivered, with the failed one surfaced as a coverage gap.
-The endpoint's *identity* is not yet verified, though — a misconfigured
-`RPC_<chainId>` pointing at the wrong network would be labelled with the
-configured id. Tracked as **#1445**.
+
+**Each endpoint is checked to BE the chain it is configured as** (#1445).
+Every tick calls `eth_chainId` per target and compares it against the id
+the `RPC_<chainId>` secret is named for. Without this, a secret pointing
+at the wrong network was adopted silently and every figure read through
+it was *labelled* with the configured id — and the dangerous outcome is
+not the noisy one. If the Diamond address happens to carry compatible
+code on the wrong network, every invariant is evaluated against an
+unrelated chain's ledger and the Worker reports a clean tick: confident
+silence, the worst output a watcher has.
+
+A mismatch is reported as its own `chain-mismatch` gap, deliberately not
+as `no-rpc` — the endpoint is reachable, so every reachability remedy is
+the wrong one, and the detail names both the configured and the observed
+chain so the fix is the secret. A mismatched **mirror** is excluded from
+the tick entirely, the same treatment as a stale head and for the same
+reason: comparing a wrong-network ledger against Base would emit a false
+CRITICAL. A mismatched **canonical** chain aborts the tick instead —
+every Base-side figure comes from that client, so a wrong canonical does
+not degrade the tick, it invalidates it.
+
+The verification is issued **concurrently** with a read each path already
+makes — the canonical head read, and each mirror's own ledger read — so it
+costs one request but no extra round trip. That concurrency is
+load-bearing rather than incidental: awaiting it first serialises a round
+trip onto every mirror on every tick and lengthens the critical path by
+the slowest mirror's latency. The mirror path is a `Promise.allSettled`
+over both, so a ledger read that throws cannot discard the identity
+verdict, and the mismatch is reported in preference to `no-rpc` — a
+wrong-network endpoint *explains* a failed or nonsense read, so it is the
+more useful diagnosis.
+
+The canonical mismatch is thrown as a **pre-classified** failure, not a
+bare `Error`. `runTick` passes what it catches through `classify`, which
+substring-matches the message — and the mismatch detail contains the words
+"WRONG NETWORK", so the `network` marker matched and the operator was told
+"the endpoint could not be reached", losing both chain ids and the name of
+the secret to fix. `classify` now returns a `PreclassifiedFailure`'s
+carried summary verbatim, ahead of any marker matching. Fixed there rather
+than by re-wording the detail: the collision is structural, so any future
+safe message would hit it again and re-wording only moves the landmine.
+
+*Coverage boundary, stated because a partial claim here is worse than
+none:* the unit tests cover `verifyChainIdentity` itself — detection, the
+both-ids detail, the `no-rpc` distinction, secret redaction on an
+`eth_chainId` failure, that it never throws — and the classifier
+pass-through end to end against the real mismatch detail, including a test
+asserting that a bare `Error` carrying the same text *would* have been
+mangled, so that file cannot be green by accident. They do **not** cover
+the wiring in `mesh.ts` (that both call sites invoke it, that a canonical
+mismatch throws, that a mismatched mirror reaches neither `allLocals` nor
+`freshLocals`, that the two reads actually overlap), because `observeMesh`
+builds real clients from env and this Worker has no network-level test
+harness. That wiring is reviewed, not tested.
 
 **Secrets are redacted from everything that leaves the Worker.** viem
 embeds the request URL in its error messages and providers put the API key
@@ -400,14 +451,17 @@ contracts merge.
 
 ---
 
-### Known limitation
+### Known limitations
 
-**Endpoint identity is unverified.** Each chain's read target is resolved
-from an `RPC_<chainId>` secret plus the committed deployment address, and
-nothing checks that the endpoint actually *is* that chain. A mis-set
-secret pointing at a network where the same address carries compatible
-code would produce a clean report about the wrong chain — confident
-silence, the worst failure mode a watcher has. Tracked as **#1445**.
+**Endpoint identity — RESOLVED (#1445).** Every tick now calls
+`eth_chainId` per target and compares it against the id the
+`RPC_<chainId>` secret is named for, so a mis-set secret can no longer be
+adopted silently. See *Each endpoint is checked to BE the chain it is
+configured as* under Design notes for the handling, which differs by role.
+
+**The `mesh.ts` wiring around it is reviewed, not tested** — see the
+coverage boundary in that same section. That is the Worker's remaining
+untested seam.
 
 *(Resolved since the initial version: the custody-exclusion gap that was
 tracked as **#1446** is now covered by `bucket-composition` +
