@@ -366,7 +366,20 @@ today; the standby applies from its first deploy. `ops/lz-watcher` and
 `ops/hf-watcher` were removed — #1440 and the Stage 3 split
 respectively.) Same Worker code deployed to a second CF account
 (different billing + 2FA) **paused**, with a 1-page runbook for the
-operator to flip DNS / feature flag on primary failure. The protocol
+operator to flip DNS / feature flag on primary failure.
+
+**The DNS/flag flip applies only to the HTTP-fronted Workers.**
+`ops/mesh-watcher` has no HTTP surface, no route, and no enable
+flag — it is a 15-minute cron over its own account-local D1
+(`vaipakam-mesh-alerts-db`) with per-Worker secrets
+(`TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID`). Its standby therefore
+activates by **deployment**, not by a flip: apply its migrations to
+the standby account's D1, set its per-Worker secrets, and
+`wrangler deploy` — the cron registers at deploy and the watcher is
+live on the next tick. Without those three steps a "standby" for it
+is a paused copy with no database and no credentials, and
+recycling-ledger alerting silently stays down through a primary
+failure (#1450 r32). The protocol
 survives keeper / agent downtime by design in the meantime (liquidations
 are permissionless — anyone with the `vaipakam-keeper-bot` reference repo
 can race for the bonus).

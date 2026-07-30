@@ -57,7 +57,8 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   > Separating the two — so the decryption key never co-resides with the
   > read credentials — is a design change rather than a runbook edit, and
   > is tracked as #1463.
-- **`CF_ACCOUNT_ID` and `CF_API_TOKEN` exported in the shell.** Three
+- **`CF_ACCOUNT_ID` (exported) and `CF_API_TOKEN` (shell variable,
+  NOT exported) set in the shell.** Three
   commands in this document read them and nothing assigns them, so on the
   clean recovery workstation this document assumes, the URL silently becomes
   `/accounts//workers/...` and the API answers with a shape that is not an
@@ -81,7 +82,13 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   # Account Settings:Read — the last one is what the validation below calls,
   # and a token without it fails that check while being perfectly usable for
   # everything else, which reads as a wrong account id.
-  read -rs CF_API_TOKEN && export CF_API_TOKEN   # not via argv, not in history
+  read -rs CF_API_TOKEN   # not via argv, not in history — and NOT exported:
+  # the heredoc below is expanded by THIS shell, so a plain variable works,
+  # while `export` would copy the token into the environment of every
+  # wrangler / pnpm / node / curl child spawned for the rest of the restore
+  # (readable via /proc/<pid>/environ and child diagnostics). Later steps
+  # that need the token re-prompt for it. Unset it as soon as the check
+  # below passes (#1450 r32):
 
   # Prove the PAIR, not just the token. `/user/tokens/verify` says the token is
   # valid and says NOTHING about whether CF_ACCOUNT_ID is right or reachable
@@ -96,7 +103,8 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   A non-zero exit or a null name here means the id is wrong, the token cannot
   see that account, or the variable is empty — all three of which otherwise
   surface later as a `/accounts//workers/...` URL and a response shape nobody
-  reads as an error.
+  reads as an error. When it passes, `unset CF_API_TOKEN` — the sections
+  that need it again re-prompt at the point of use.
 
 - **Offline copies of every Worker secret.** The B2 archive backs up D1
   rows and R2 objects ONLY. Nothing in it restores the
@@ -107,7 +115,14 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   archive Worker's own nine. An operator holding only the AES key and the
   B2 read keys will get as far as the deploy step and stop. Treat this
   bullet as the reason the list above is not exhaustive.
-- A workstation with `wrangler ≥ 4`, `node ≥ 22`, and `openssl`.
+- A workstation with `wrangler ≥ 4`, `node ≥ 22`, `pnpm` (the pinned
+  version — corepack reads `packageManager` from the repo root),
+  `openssl`, `curl`, `jq`, and the **Backblaze `b2` CLI** (a major
+  version whose `b2 file download` accepts the `b2://` / `b2id://`
+  URI forms §2 uses — check `b2 version` / `b2 help` before relying
+  on it). None of these are vendored in the repository; §2 stops at
+  its first command on a workstation without the `b2` CLI (#1450
+  r32).
 - Network access to GitHub (for the monorepo) + B2 + the target
   chain RPCs.
 
@@ -710,7 +725,15 @@ then deploy.
 >   delete restored rows in a retention pass, or leave a mixed
 >   snapshot the instant a count passes. Restore and verify with the
 >   writers stopped; re-arm afterwards with the same staged order §6
->   and §7a use for the rebuild path.
+>   and §7a use for the rebuild path — **plus one step those sections
+>   do not cover: re-attach the agent's HTTP origins.** §6 re-arms
+>   only indexer ingest and §7a only the schedules, so on the
+>   selective path the domains detached above stay detached until you
+>   explicitly re-enable `workers.dev` and re-attach the custom
+>   domain after verification. Skipping that leaves thresholds,
+>   Telegram links, tickets, diagnostics, erasure and legal holds
+>   unreachable in production while every checklist reads green
+>   (#1450 r32).
 > - **Restoring the indexer's derived tables goes through §6's
 >   clear-before-replay, not through §4.** Only born-off-chain tables
 >   are imported from the archive; the derived set is re-derived into
@@ -1163,6 +1186,7 @@ wrangler d1 execute vaipakam-archive --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
+DELETE FROM swap_to_repay_intents; \
 DELETE FROM loans; \
 DELETE FROM offers; \
 DELETE FROM oracle_snapshot_state; \
@@ -1182,7 +1206,12 @@ attacker's writes. (`loan_participants` and `notifications` are in
 the list because they are replay-derived too — append-only
 `INSERT OR IGNORE` projections whose rows regenerate from their
 producers; the notification center's read-state is client-side by
-design, so clearing loses nothing user-owned. #1450 r31.)
+design, so clearing loses nothing user-owned. #1450 r31.
+`swap_to_repay_intents` likewise: its only writers are the
+`SwapToRepayIntent*` handlers in `chainIndexer.ts` — verified
+repo-wide, no HTTP or keeper/agent writes — so a fabricated pending
+intent would otherwise survive replay as a visible user action.
+#1450 r32.)
 
 **This list is the archive's re-derivable set plus the two tables
 above, and it is NOT proven complete** — the schema has grown past
@@ -1196,7 +1225,14 @@ Until that audit lands, two rules bound the risk:
 - NEVER clear a table that HTTP routes populate — `signed_offers`
   (user-submitted, chain-updated, and currently not archived at
   all — see #1481) is the standing example: clearing it destroys
-  user data no replay can regenerate.
+  user data no replay can regenerate. Two more resolved-NOT-clearable
+  while verifying this round: `prepay_listing_match_breadcrumbs`
+  (HTTP-written via `loanRoutes.ts`) and
+  `keeper_commitment_reconciled` (also written by the keeper).
+  `prepay_listings` stays with #1481 for a different reason: its
+  replay handlers invoke OpenSea publishing, so whether a
+  clear-and-replay is side-effect-free is an open audit question,
+  not a grep.
 
 **Only now re-arm the indexer's ingest — BOTH of its writers.** The cursor
 reset above is exactly the precondition §1 step 9 held them back for.
@@ -1567,17 +1603,26 @@ two procedures share the offline-key handling discipline.
    the same. A rotated archive under a stale manifest fails both.
    Upload the re-encrypted object and its updated manifest together,
    and verify the pair (download → sha256sum → compare) per archive
-   before moving on.
+   before moving on. **Record the file id of every object this step
+   uploads** (the upload response carries it) — step 6's straggler
+   sweep needs the set to tell your own re-uploads apart from a
+   genuine late Worker write.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
    `vaipakam-offchain-data-archive` to flip the Worker to the new key.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
 6. **Sweep for stragglers before retiring anything**: list every
    object uploaded between the step-1 pause time and the step-4 key
-   switch (the `--long` listing carries upload timestamps). With the
-   cron paused the set should be empty; anything present (a manual
-   trigger, a pause that did not take) is old-key ciphertext that
-   must go through step 3 now. Only then retire the OLD key —
+   switch (the `--long` listing carries upload timestamps), then
+   **subtract the file ids step 3 recorded** — step 3's own
+   re-uploads land in exactly this window, so without the exclusion
+   every rotation "finds" its own writes and an operator trying to
+   old-key-decrypt them gets GCM authentication failures on new-key
+   ciphertext (#1450 r32). Anything REMAINING after the exclusion
+   (a manual trigger, a pause that did not take) is presumed old-key
+   ciphertext and must go through step 3 now — confirm by decrypting
+   it with the old key, and treat an object neither key decrypts as
+   an incident, not a rotation artifact. Only then retire the OLD key —
    destroy the offline copies. Keep ONE
    archived offline copy in case of a B2 lifecycle anomaly that
    surfaces an old-cipher version mid-cycle.
