@@ -18,7 +18,7 @@ import {
   type CoverageGap,
 } from './chains';
 import type { Config, Env } from './env';
-import { classify, describeFailure } from './errors';
+import { classify, describeFailure, PreclassifiedFailure } from './errors';
 import { makeBaseRedactor } from './redact';
 import {
   asFreshSnapshot,
@@ -278,7 +278,18 @@ export async function observeMesh(
     verifyChainIdentity(canonical, 'base-books'),
   ]);
   if (canonicalIdentity) {
-    throw new Error(makeBaseRedactor(env)(canonicalIdentity.detail));
+    // PRE-CLASSIFIED, not a bare Error (#1464 r1). `runTick` passes what
+    // it catches through `classify`, which substring-matches the message —
+    // and this detail contains "WRONG NETWORK", so the `network` marker
+    // matched and the operator was told "the endpoint could not be
+    // reached", losing both chain ids and the name of the secret to fix.
+    // The whole configuration-fault-vs-reachability distinction this
+    // change introduces was being erased on exactly the path where it
+    // matters most.
+    throw new PreclassifiedFailure({
+      kind: 'config',
+      summary: makeBaseRedactor(env)(canonicalIdentity.detail),
+    });
   }
   const canonicalBlock = canonicalHead.number;
   const wallClockSeconds = Math.floor(Date.now() / 1000);
@@ -369,24 +380,56 @@ export async function observeMesh(
         gaps.push(target);
         return;
       }
-      // #1445 — verify identity BEFORE reading the ledger, and treat a
-      // mismatch exactly like the freshness gate below: gap, and excluded
-      // from `allLocals` as well as `freshLocals`. A wrong-network ledger
-      // is not merely unusable for cross-chain comparison — it would be
-      // compared against Base as if it were this chain and produce a
-      // false CRITICAL, the worst output this Worker has.
+      // #1445 — identity is verified CONCURRENTLY with the ledger read,
+      // not before it (#1464 r2). Awaiting it first added a serialized
+      // round trip to every mirror on every tick and lengthened the
+      // critical path by the slowest mirror's latency — while the comment
+      // and README claimed no extra round trip, which made the claim
+      // false for the path it was written about.
       //
       // Skipped for the canonical chain, already verified fatally above;
       // re-checking would spend a request to re-learn the same answer.
-      if (id !== canonical.chainId) {
-        const identity = await verifyChainIdentity(target, 'own-ledger');
-        if (identity) {
-          gaps.push(identity);
-          return;
-        }
+      const identityPromise =
+        id === canonical.chainId
+          ? Promise.resolve(null)
+          : verifyChainIdentity(target, 'own-ledger');
+
+      // `allSettled`, so a ledger read that throws cannot discard the
+      // identity verdict. Order matters below: a wrong-network endpoint
+      // EXPLAINS a failed or nonsense read, so the mismatch is the more
+      // useful diagnosis and is reported in preference to `no-rpc`.
+      const [identityResult, localResult] = await Promise.allSettled([
+        identityPromise,
+        readLocalLedger(target),
+      ]);
+
+      const identity =
+        identityResult.status === 'fulfilled' ? identityResult.value : null;
+      if (identity) {
+        // Treated exactly like the freshness gate below: gap, and excluded
+        // from `allLocals` as well as `freshLocals`. A wrong-network ledger
+        // is not merely unusable for cross-chain comparison — it would be
+        // compared against Base as if it were this chain and produce a
+        // false CRITICAL, the worst output this Worker has.
+        gaps.push(identity);
+        return;
+      }
+      if (localResult.status === 'rejected') {
+        // REDACT: viem puts the request URL in its error messages, and
+        // provider URLs carry the API key in the path or query. This
+        // string ends up in a Telegram alert (Codex #1443 r4).
+        gaps.push({
+          chainId: id,
+          reason: 'no-rpc',
+          source: 'own-ledger',
+          detail: describeFailure(
+            classify(localResult.reason, `own-ledger read on chain ${id}`),
+          ),
+        });
+        return;
       }
       try {
-        const { ledger, gaps: viewGaps } = await readLocalLedger(target);
+        const { ledger, gaps: viewGaps } = localResult.value;
         // BEFORE the stale-head early return below, or a chain that is BOTH
         // stale and missing the composition view would lose this gap
         // entirely (#1448 r3).
@@ -418,14 +461,26 @@ export async function observeMesh(
         }
         freshLocals.set(id, verdict.fresh);
       } catch (err) {
-        // REDACT: viem puts the request URL in its error messages, and
-        // provider URLs carry the API key in the path or query. This
-        // string ends up in a Telegram alert (Codex #1443 r4).
+        // The READ's own rejection is handled above, by the `allSettled`
+        // branch. What can still reach here is the post-read processing:
+        // the freshness validation and the map writes. Kept as a net
+        // rather than deleted — a throw from here would otherwise abort
+        // this chain's closure silently and leave it out of the tick with
+        // no gap at all, which is the one outcome this Worker must never
+        // produce — but the CONTEXT no longer says "read", because a
+        // mislabelled gap sends an operator to the RPC provider for a
+        // fault that is not there (#1464 r2).
+        //
+        // REDACT regardless: viem's messages carry the request URL and
+        // provider URLs carry the API key, and this string reaches a
+        // Telegram alert (Codex #1443 r4).
         gaps.push({
           chainId: id,
           reason: 'no-rpc',
           source: 'own-ledger',
-          detail: describeFailure(classify(err, `own-ledger read on chain ${id}`)),
+          detail: describeFailure(
+            classify(err, `own-ledger snapshot processing on chain ${id}`),
+          ),
         });
       }
     }),

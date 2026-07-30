@@ -139,9 +139,14 @@ export function resolveChain(
  * worst output a watcher has, and it is the one this prevents.
  *
  * Deliberately its own step rather than a check inside `resolveChain`:
- * resolution is pure and synchronous (config in, target out), and the
- * callers below issue this concurrently with a read they already make,
- * so verification costs a request but no extra round trip.
+ * resolution is pure and synchronous (config in, target out). Both callers
+ * issue this CONCURRENTLY with a read they already make — the canonical
+ * head read, and each mirror's own ledger read — so verification costs one
+ * request but no extra round trip. That concurrency is load-bearing, not
+ * incidental: awaiting it first serialises an extra round trip onto every
+ * mirror on every tick and lengthens the critical path by the slowest
+ * mirror's latency (#1464 r2, where the mirror path did exactly that while
+ * the docs claimed otherwise).
  *
  * @returns `null` when the endpoint confirms the expected id, else a
  *          `CoverageGap` naming BOTH ids. Never throws — an endpoint

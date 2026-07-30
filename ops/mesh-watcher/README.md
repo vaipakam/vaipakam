@@ -358,18 +358,39 @@ CRITICAL. A mismatched **canonical** chain aborts the tick instead —
 every Base-side figure comes from that client, so a wrong canonical does
 not degrade the tick, it invalidates it.
 
-The verification is issued concurrently with a read each path already
-makes, so it costs a request but no extra round trip.
+The verification is issued **concurrently** with a read each path already
+makes — the canonical head read, and each mirror's own ledger read — so it
+costs one request but no extra round trip. That concurrency is
+load-bearing rather than incidental: awaiting it first serialises a round
+trip onto every mirror on every tick and lengthens the critical path by
+the slowest mirror's latency. The mirror path is a `Promise.allSettled`
+over both, so a ledger read that throws cannot discard the identity
+verdict, and the mismatch is reported in preference to `no-rpc` — a
+wrong-network endpoint *explains* a failed or nonsense read, so it is the
+more useful diagnosis.
+
+The canonical mismatch is thrown as a **pre-classified** failure, not a
+bare `Error`. `runTick` passes what it catches through `classify`, which
+substring-matches the message — and the mismatch detail contains the words
+"WRONG NETWORK", so the `network` marker matched and the operator was told
+"the endpoint could not be reached", losing both chain ids and the name of
+the secret to fix. `classify` now returns a `PreclassifiedFailure`'s
+carried summary verbatim, ahead of any marker matching. Fixed there rather
+than by re-wording the detail: the collision is structural, so any future
+safe message would hit it again and re-wording only moves the landmine.
 
 *Coverage boundary, stated because a partial claim here is worse than
-none:* the unit tests cover `verifyChainIdentity` itself — detection,
-the both-ids detail, the `no-rpc` distinction, secret redaction on an
-`eth_chainId` failure, and that it never throws. They do **not** cover
-the wiring in `mesh.ts` (that both call sites invoke it, that a
-canonical mismatch throws, that a mismatched mirror reaches neither
-`allLocals` nor `freshLocals`), because `observeMesh` builds real
-clients from env and this Worker has no network-level test harness.
-That wiring is reviewed, not tested.
+none:* the unit tests cover `verifyChainIdentity` itself — detection, the
+both-ids detail, the `no-rpc` distinction, secret redaction on an
+`eth_chainId` failure, that it never throws — and the classifier
+pass-through end to end against the real mismatch detail, including a test
+asserting that a bare `Error` carrying the same text *would* have been
+mangled, so that file cannot be green by accident. They do **not** cover
+the wiring in `mesh.ts` (that both call sites invoke it, that a canonical
+mismatch throws, that a mismatched mirror reaches neither `allLocals` nor
+`freshLocals`, that the two reads actually overlap), because `observeMesh`
+builds real clients from env and this Worker has no network-level test
+harness. That wiring is reviewed, not tested.
 
 **Secrets are redacted from everything that leaves the Worker.** viem
 embeds the request URL in its error messages and providers put the API key
