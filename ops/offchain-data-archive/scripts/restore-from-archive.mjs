@@ -75,8 +75,7 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 // anything else in an archive is wrong or hostile — either way, stop.
 // Keep in sync with backup.ts; the #1481 classification guard watches
 // the backup side of that sync.
-const KNOWN_ARCHIVE_TABLES = new Set([
-  // born-off-chain
+const BORN_OFF_CHAIN_TABLES = new Set([
   'diag_errors',
   'diag_legal_holds',
   'diag_legal_hold_audit',
@@ -85,7 +84,13 @@ const KNOWN_ARCHIVE_TABLES = new Set([
   'pre_grace_notify_state', // archived since #1480; absent from older archives
   'telegram_links',
   'support_tickets',
-  // re-derivable (archived as restore-performance optimisation)
+]);
+// Archived as a restore-performance optimisation ONLY. The runbook's
+// default treatment for these is §6 clear-and-replay from chain — a
+// batch generated from the archive is a stale cross-query snapshot,
+// so these are emitted under a separate skip-by-default heading, never
+// mixed into the apply sequence (Codex #1484 r5).
+const RE_DERIVABLE_TABLES = new Set([
   'offers',
   'loans',
   'activity_events',
@@ -93,6 +98,7 @@ const KNOWN_ARCHIVE_TABLES = new Set([
   'indexer_cursor',
   'liquidity_confidence',
 ]);
+const KNOWN_ARCHIVE_TABLES = new Set([...BORN_OFF_CHAIN_TABLES, ...RE_DERIVABLE_TABLES]);
 const KNOWN_LZ_TABLES = new Set(['lz_alert_state', 'scan_cursor', 'oft_balance_history']);
 
 // FK children of user_thresholds (ON DELETE CASCADE). Replacing the
@@ -351,7 +357,18 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       const sql = tableToSql(table);
       const file = path.join(dir, `${table.name}.sql`);
       writeFileSync(file, sql);
-      entries.push({ name: table.name, file, rowCount: table.rows.length, database });
+      entries.push({
+        name: table.name,
+        file,
+        rowCount: table.rows.length,
+        database,
+        tier:
+          database !== 'vaipakam-archive'
+            ? 'legacy-lz'
+            : RE_DERIVABLE_TABLES.has(table.name)
+              ? 're-derivable'
+              : 'born-off-chain',
+      });
     }
   }
   return entries;
@@ -572,14 +589,29 @@ export function main(argv) {
     );
   }
 
-  console.log(`\nD1: ${d1.length} table batch(es) written. Apply IN THIS ORDER`);
+  const locality = remote ? '--remote' : '--local';
+  const cmd = (e) =>
+    `wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} ${locality}   # ${e.rowCount} rows`;
+  const born = d1.filter((e) => e.tier === 'born-off-chain');
+  const derived = d1.filter((e) => e.tier === 're-derivable');
+  const legacy = d1.filter((e) => e.tier === 'legacy-lz');
+
+  console.log(`\nD1 (born-off-chain): ${born.length} batch(es). Apply IN THIS ORDER`);
   console.log('(parents before children — OffChainRestore.md §4), then verify');
   console.log('each post-import COUNT(*) EQUALS the row count printed here:\n');
-  const locality = remote ? '--remote' : '--local';
-  for (const [i, e] of d1.entries()) {
-    console.log(
-      `  ${i + 1}. wrangler d1 execute ${shQuote(e.database)} --file=${shQuote(e.file)} ${locality}   # ${e.rowCount} rows`,
-    );
+  for (const [i, e] of born.entries()) console.log(`  ${i + 1}. ${cmd(e)}`);
+
+  if (derived.length > 0) {
+    console.log(`\nD1 (re-derivable): ${derived.length} batch(es) written but SKIP BY DEFAULT.`);
+    console.log('The runbook restores these via §6 clear-and-replay from chain —');
+    console.log('these batches are a STALE cross-query snapshot, archived only as a');
+    console.log('restore-performance optimisation. Use them only where §6 explicitly');
+    console.log('permits the fast path, never on a tampering recovery:\n');
+    for (const [i, e] of derived.entries()) console.log(`  (${i + 1}.) ${cmd(e)}`);
+  }
+  if (legacy.length > 0) {
+    console.log(`\nD1 (legacy lz-alerts): ${legacy.length} batch(es) — see §4's lz section:\n`);
+    for (const [i, e] of legacy.entries()) console.log(`  ${i + 1}. ${cmd(e)}`);
   }
   const r2Bytes = r2.reduce((n, o) => n + o.size, 0);
   console.log(`\nR2: ${r2.length} object(s), ${r2Bytes} bytes, SHA-verified under ${path.join(outDir, 'r2')}/`);

@@ -147,6 +147,20 @@ test('convertD1 writes files in apply order and routes lzAlerts separately', () 
   assert.match(sql, /^DELETE FROM "user_thresholds";$/m);
 });
 
+test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {
+  const dir = outDir();
+  const entries = convertD1(
+    {
+      version: 1,
+      d1: { archive: [...baselineArchive(), tableFixture('offers', ['id'], [{ id: 1 }])] },
+    },
+    dir,
+  );
+  const offers = entries.find((e) => e.name === 'offers');
+  assert.equal(offers.tier, 're-derivable');
+  assert.ok(entries.filter((e) => e.tier === 'born-off-chain').length >= 6);
+});
+
 test('an empty or baseline-incomplete d1.archive is truncated, not small', () => {
   const dir = outDir();
   assert.throws(() => convertD1({ version: 1, d1: { archive: [] } }, dir), /baseline/);
