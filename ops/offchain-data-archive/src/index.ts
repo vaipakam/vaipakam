@@ -258,9 +258,19 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
-        // FULL digest, not truncated (#1469). The reason is mundane: a
-        // 16-character prefix is not enough to compare anything against
-        // later, and the other 48 characters are free.
+        // FULL digest, not truncated (#1469). The reason is mundane, and
+        // narrower than an earlier version of this comment claimed: a
+        // 16-character prefix IS comparable — an operator can hash a
+        // candidate archive and check its first 16 hex characters, and an
+        // accidental match is ~2^-64. Saying it "cannot be compared" was
+        // overstating in the opposite direction from the original error.
+        //
+        // What the prefix cannot do is survive an adversary CHOOSING the
+        // input: matching a fixed 64-bit prefix deliberately is a truncated
+        // second-preimage search at ~2^64, which is expensive but is a
+        // bounded target, whereas 256 bits is not a target at all. Since the
+        // other 48 characters are free, there is no reason to leave a bound
+        // on the table.
         //
         // THIS IS NOT A PROVENANCE ANCHOR, and an earlier version of this
         // comment claimed it was. The claim was wrong three times over, and

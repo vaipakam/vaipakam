@@ -2,8 +2,14 @@
 
 The nightly off-chain backup posts an ops summary to the operator Telegram
 channel. It used to include only the first 16 characters of the archive's
-fingerprint, which is too short to compare anything against later. It now
-records the whole thing. The extra characters cost nothing.
+fingerprint; it now records the whole thing, and the extra characters cost
+nothing.
+
+A short prefix is not useless — anyone can fingerprint a candidate archive
+and compare the first 16 characters, and two unrelated files sharing them by
+chance is vanishingly unlikely. What a short prefix cannot do is stand up to
+someone deliberately trying to match it. Recording all of it removes a
+bound rather than fixing a broken comparison.
 
 **A correction, recorded because the mistake is an easy one to repeat.**
 This change was originally justified as closing a real gap: that the
