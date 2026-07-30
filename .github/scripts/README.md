@@ -58,17 +58,37 @@ say so in its finding text, or readers inherit the wrong model from it.
 
 ## The ratchet, and why the bar is not zero
 
-The check is red on its first run — 247 findings — because it describes a
+The check is red on its first run — 203 findings — because it describes a
 real backlog that is already tracked. So it compares against a committed
 per-file baseline of finding **identities** and fails when a file gains one
 that is not in the baseline.
 
 Identities, not counts (#1467 r1): a count-only bar permits swapping one
 stale path for a *different* stale path, since the total is unchanged, and
-banks reusable headroom after any unlowered improvement. Each fingerprint is
-the finding's subject plus an occurrence ordinal — the ordinal so a third
-instance of an already-known subject still registers, and no line number so
-edits above a finding do not read as regressions.
+banks reusable headroom after any unlowered improvement.
+
+A fingerprint is the finding's **subject**, a hash of the **citing line's
+normalised text**, and an occurrence ordinal. The line's text rather than its
+number, because the point is to survive edits *elsewhere* in the document while
+still distinguishing one occurrence from another — the ordinal alone did not
+(#1467 r6): removing a frozen `frontend/` citation and adding a different one
+later in the same file left the key multiset identical, so a genuinely new
+stale instruction passed as "known".
+
+The two guards deliberately use **different** identities, because they ask
+different questions. The regression check asks "is this citation new", and
+answers it with the full fingerprint. The growth guard asks "did a permanent
+exemption get added", and answers it by counting per subject — rewording the
+line around an already-frozen citation re-keys its fingerprint while exempting
+nothing further, and failing that would make ordinary documentation edits
+impossible, which is how a check gets deleted rather than fixed.
+
+*The cost of that split, stated because a green run should not be read as more
+than it is:* a change that relocates a frozen citation — one occurrence removed,
+a different one of the same subject added — **and** regenerates the baseline in
+the same commit passes CI. Without the regeneration it is caught. With one it is
+visible as a replaced fingerprint in the baseline diff, which is a review
+surface rather than a CI one.
 
 **Existence is decided from the tracked tree, not the working tree.** Using
 `existsSync` made the verdict depend on whichever untracked files happened to
@@ -113,7 +133,23 @@ failure mode this exists to prevent:
   how it actually renders; a backticked path is read from the repository root,
   which is this repo's citation form. Collapsing the two made a genuinely
   broken link read as fine (#1467 r2) — it found 78 in `ProjectDetailsREADME.md`
-  alone, all now corrected.
+  alone, all now corrected. Only `./` and `../` make a *backticked* token
+  document-relative: treating every dot-prefixed token that way resolved
+  `.env` and `.github/…` beneath the citing document and froze 44 false
+  findings in the baseline (#1467 r6).
+- A markdown destination skips the recognised-root gate entirely, because a
+  destination is never prose — it is a promise that clicking it lands
+  somewhere. Gating it left two holes: a destination climbing out of the
+  repository normalised to `../…` and matched no root, and the root list is
+  derived from the current tree, so deleting the last file under a top-level
+  directory stopped every stale link into it from being checked in the same
+  commit that broke them (#1467 r6).
+- Paths inside `<!-- HTML comments -->` are ignored. A finding no reader of the
+  rendered document can see is unactionable noise, and this check's whole claim
+  is that its signal is worth reading (#1467 r6).
+- Both standard markdown destination forms are parsed — a titled inline
+  destination and a reference definition. The earlier inline-only pattern saw
+  neither (#1467 r6).
 
 **It is currently non-blocking**, matching this workflow's existing
 philosophy. That is a real limitation, not an oversight: a warning does not

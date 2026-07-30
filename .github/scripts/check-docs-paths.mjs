@@ -15,7 +15,8 @@
  *   - a citation of a directory that was removed or renamed (`REMOVED_DIRS`),
  *     anywhere in the doc set — set membership, so no judgement is involved;
  *   - under `docs/ops/` and `docs/FunctionalSpecs/`, a cited path beginning
- *     with a known top-level directory that is not in the tracked tree.
+ *     with a known top-level directory that is not in the tracked tree, and
+ *     any markdown link destination that does not resolve at all.
  *
  * WHY THERE IS NO `/app/...` ROUTE CHECK. There was one, across four review
  * rounds, and it is DEFERRED to #1479 rather than shipped. It was not failing
@@ -179,7 +180,21 @@ const resolves = (p) => {
 const findings = [];
 
 for (const file of docs) {
-  const lines = readFileSync(file, 'utf8').split('\n');
+  // Strip HTML comments before tokenising (#1467 r6). A path inside
+  // `<!-- … -->` is invisible to every reader of the rendered document, so a
+  // finding on one is unactionable noise — and this check's entire claim is
+  // that its signal is worth reading. Multi-line comments are stripped across
+  // the whole file first, then per-line, so the line numbering below still
+  // points at the right place.
+  const body = readFileSync(file, 'utf8').replace(
+    /<!--[\s\S]*?-->/g,
+    (m) => m.replace(/[^\n]/g, ' '),
+  );
+  const lines = body.split('\n');
+
+  // Reference-style link definitions (`[ref]: path "title"`) are collected
+  // per FILE, because the definition and its use are usually far apart and the
+  // definition line is where the path actually lives (#1467 r6).
   lines.forEach((line, i) => {
     // Backticked tokens and markdown link targets. The two are kept apart
     // because they resolve DIFFERENTLY (#1467 r2): a markdown destination is
@@ -189,9 +204,24 @@ for (const file of docs) {
     // `[x](contracts/src/Foo.sol)` inside `docs/ops/` was accepted because the
     // repo-root file exists, though the rendered link points at the
     // nonexistent `docs/ops/contracts/src/Foo.sol`.
+    //
+    // Both markdown destination forms are matched (#1467 r6): an inline
+    // destination with an optional title, `](path "title")`, and a
+    // reference definition, `[ref]: path "title"`. The earlier
+    // `\]\(([^)\s]+)\)` matched neither — the title made the destination
+    // unparseable and reference links were invisible entirely, so a missing
+    // path or a removed-directory citation written in either standard form
+    // went straight through.
     const tokens = [
       ...[...line.matchAll(/`([^`\s]+)`/g)].map((m) => ({ raw: m[1], link: false })),
-      ...[...line.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => ({ raw: m[1], link: true })),
+      ...[...line.matchAll(/\]\(\s*<?([^)\s>]+)>?(?:\s+["'(][^)]*)?\s*\)/g)].map((m) => ({
+        raw: m[1],
+        link: true,
+      })),
+      ...[...line.matchAll(/^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/g)].map((m) => ({
+        raw: m[1],
+        link: true,
+      })),
     ];
     for (const { raw, link } of tokens) {
       // Strip query + fragment first, so a deep link cannot hide a dead
@@ -215,7 +245,14 @@ for (const file of docs) {
       // every one of those — so stale links, and even references to removed
       // directories, landed unnoticed unless the visible label happened to
       // repeat the path in backticks.
-      const docRelative = tok.startsWith('.') || (link && !tok.startsWith('/'));
+      // `./` or `../` ONLY — not every dot-prefixed token (#1467 r6).
+      // `tok.startsWith('.')` swept in dot-DIRECTORIES: a correct citation of
+      // `.github/workflows/release-notes-drift.yml` resolved to
+      // `docs/…/.github/…` and was reported missing. That false finding was
+      // frozen in the committed baseline, which is the worse half of the bug —
+      // a frozen false positive is a permanent lie about the tree.
+      const docRelative =
+        tok.startsWith('./') || tok.startsWith('../') || (link && !tok.startsWith('/'));
       const asRepoPath = docRelative
         ? posix.normalize(posix.join(dirname(file), tok))
         : tok;
@@ -226,27 +263,48 @@ for (const file of docs) {
       // because a removed name is wrong under either reading — and after
       // doc-relative resolution a link target such as `frontend/src/x.tsx`
       // no longer starts with `frontend/`.
-      const removed = removedDirHit(asRepoPath) ?? removedDirHit(tok);
+      //
+      // The as-written test is skipped when the resolved path RESOLVES
+      // (#1467 r6): a live `docs/ops/frontend/guide.md` linked as
+      // `frontend/guide.md` is correct, and calling it a removed-directory
+      // citation would be the check contradicting the tracked tree. Evidence
+      // beats the name.
+      const removed =
+        removedDirHit(asRepoPath) ?? (resolves(asRepoPath) ? undefined : removedDirHit(tok));
       if (removed) {
         findings.push({
           file,
           n: i + 1,
           tok,
+          line,
           why: `\`${removed[0]}\` no longer exists — ${removed[1]}`,
         });
         continue;
       }
 
       // ── does-it-exist: only in the live operator / spec docs ────────
-      if (
-        STRICT_DIRS.some((d) => file.startsWith(d)) &&
-        ROOTS.some((r) => asRepoPath.startsWith(r))
-      ) {
+      //
+      // A markdown DESTINATION skips the `ROOTS` gate entirely (#1467 r6). The
+      // gate exists to tell a repo path from ordinary prose, and a link
+      // destination is never prose — it is a promise that clicking it lands
+      // somewhere. Gating it on a recognised root left two holes:
+      //
+      //   - a destination that climbs out of the repository
+      //     (`../../../contracts/…` from `docs/ops/`) normalises to `../…`,
+      //     which starts with no root, so the broken link was skipped;
+      //   - `ROOTS` is derived from the CURRENT tree, so a change that deletes
+      //     the last tracked file under a top-level directory deletes the root
+      //     as well — and every stale link into it stopped being checked in
+      //     the same commit that broke them. The gate was weakest exactly when
+      //     it mattered most.
+      const gated = link || ROOTS.some((r) => asRepoPath.startsWith(r));
+      if (STRICT_DIRS.some((d) => file.startsWith(d)) && gated) {
         if (!resolves(asRepoPath)) {
           findings.push({
             file,
             n: i + 1,
             tok,
+            line,
             why: `path does not exist. If it moved, cite the new location; if it was removed, say so`,
           });
         }

@@ -17,6 +17,15 @@ top of the repository, but a link inside a document is followed relative to
 that document, so every one of them led nowhere. Those are corrected here,
 along with fourteen citations of test files that had moved into a subdirectory.
 
+Turning that same reasoning on the check itself removed forty-four findings it
+should never have reported. It had been treating any reference beginning with a
+dot as relative to the citing document, which quietly swept in ordinary
+configuration filenames and dot-directories — a correct reference to a real
+file was being reported as missing, and forty-four of those wrong answers had
+already been frozen into its own record of known findings. A frozen false
+finding is the worse half of that bug: it is a permanent lie about the tree,
+sitting inside the thing whose whole job is to tell the truth about it.
+
 ### Two companion checks were built and deliberately held back
 
 Both are recorded with their findings rather than merged.
@@ -66,21 +75,38 @@ when they were written, and rewriting them to match today would falsify the
 record. The clearest case is the design document that records the removal of a
 directory: it has to name the directory it removed.
 
-Review also found that the record of known findings could be raised in the
+Review also found two ways the record could be gamed. It could be raised in the
 same change that introduced a new one, which would have let the check be
-silenced by exactly the move its own documentation forbids. It now compares
-that record against the state of the branch it is merging into and refuses any
-addition, follows renames so that renaming a document is not mistaken for one,
-and fails rather than shrugging when it cannot work out what to compare
-against. One limit of that guard is stated plainly rather than left implied: it
-cannot protect the very change that establishes the record, since there is
-nothing earlier to compare against. It says so when it runs, and the initial
-set is taken on human review.
+silenced by exactly the move its own documentation forbids. And a known finding
+could be quietly relocated: remove one stale reference, add a different one
+further down the same document, and the record looked untouched even though a
+new wrong instruction had landed.
 
-### Two limits stated in the check itself
+Both are closed. The record is compared against the state of the branch the
+change is merging into and any addition is refused; renames are followed, so
+renaming a document is not mistaken for one; and it fails rather than shrugging
+when it cannot work out what to compare against. And a finding is now identified
+by the wording of the line that carries it rather than by a bare count of how
+many times the same reference appears, so a relocation reads as what it is.
 
-Because treating a clean run as proof is the habit it exists to counter. It
-establishes only that a reference resolves, not that it is the right one. And
-it currently reports rather than blocks, so a warning will not by itself stop a
-new instance being merged — turning it into a gate is a one-line change once
-the signal has been watched for a while.
+Identifying a finding by its line's wording had to be done without making
+ordinary editing painful — rewording a sentence that happens to contain one of
+the two hundred known references must not fail the check, or the check is the
+thing that gets deleted. So the two questions are answered differently on
+purpose: "is this reference new" by the wording, "did the record grow" by the
+count. One consequence is stated rather than left implied — deliberately moving
+a known reference elsewhere in the same document *and* regenerating the record in
+the same change will pass, and is caught by reading the record's diff rather than
+by the machine.
+
+### Limits stated in the check itself
+
+Because treating a clean run as proof is the habit it exists to counter.
+
+It establishes only that a reference resolves, not that it is the right one. It
+cannot vouch for the record that the very change establishing it lays down,
+since there is nothing earlier to compare against — it says so when it runs, and
+that initial set is taken on human review. And it currently reports rather than
+blocks, so a warning will not by itself stop a new instance being merged;
+turning it into a gate is a one-line change once the signal has been watched for
+a while.

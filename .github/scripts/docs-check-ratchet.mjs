@@ -24,6 +24,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -114,20 +115,62 @@ function baseRevisionBaseline(path) {
  * cited path, the `cmd:VARS` pair, `--value`) and deliberately NOT its line
  * number, so unrelated edits above it do not read as regressions.
  */
+export function fingerprint(f) {
+  const subject = f.tok ?? f.why;
+  // CONTEXT, not a line number (#1467 r6). A bare occurrence ordinal made the
+  // stated invariant — "no NEW instance lands" — false: removing a frozen
+  // `frontend/` citation and adding a DIFFERENT one elsewhere in the same file
+  // leaves the multiset of `subject#ordinal` keys identical, so a genuinely new
+  // stale instruction passed as "known". Reproduced in review.
+  //
+  // The context is a hash of the CITING LINE's normalised text, deliberately
+  // NOT its position: edits anywhere else in the document leave it untouched
+  // (which is the whole reason line numbers were excluded), and moving the line
+  // verbatim preserves it. Rewording the line that carries the citation does
+  // re-key it — correctly, because that is the one edit where someone had the
+  // stale citation in front of them.
+  const ctx = createHash('sha1')
+    .update((f.line ?? '').trim().replace(/\s+/g, ' '))
+    .digest('hex')
+    .slice(0, 8);
+  return { subject, ctx };
+}
+
+/**
+ * The SUBJECT of a stored fingerprint — everything before the context hash.
+ *
+ * Used ONLY by the baseline-growth guard, which asks a different question from
+ * the regression check and so needs a different identity (#1467 r6): "did a
+ * permanent exemption get ADDED", not "is this citation new". Rewording the
+ * line around an already-frozen citation re-keys its fingerprint without
+ * exempting anything further, and failing that would make ordinary
+ * documentation edits impossible. Counting per subject asks the question the
+ * guard actually cares about: the number of exempted instances of a subject in
+ * a file may not rise.
+ */
+const subjectOf = (fp) => fp.replace(/@[0-9a-f]{8}#\d+$/, '');
+
+const countBySubject = (fps) => {
+  const c = new Map();
+  for (const fp of fps ?? []) {
+    const s = subjectOf(fp);
+    c.set(s, (c.get(s) ?? 0) + 1);
+  }
+  return c;
+};
+
 export function tally(findings) {
   const t = {};
   const seen = {};
   for (const f of findings) {
-    const subject = f.tok ?? f.why;
-    // ORDINAL-suffixed, so repeat occurrences of one subject stay countable.
-    // De-duplicating by subject alone looked tidier and quietly weakened the
-    // bar: with `cast:PRIVATE_KEY` already twice in a file, a third would add
-    // no new fingerprint and pass. The ordinal restores occurrence
-    // sensitivity while staying immune to line-number churn from edits
-    // above.
-    const key = `${f.file}\u0000${subject}`;
+    const { subject, ctx } = fingerprint(f);
+    // ORDINAL-suffixed within a context, so two identical citations on
+    // identical lines stay countable. De-duplicating looked tidier and quietly
+    // weakened the bar: with `cast:PRIVATE_KEY` already twice in a file, a
+    // third would add no new fingerprint and pass.
+    const key = `${f.file}\u0000${subject}\u0000${ctx}`;
     seen[key] = (seen[key] ?? 0) + 1;
-    (t[f.file] ??= []).push(`${subject}#${seen[key]}`);
+    (t[f.file] ??= []).push(`${subject}@${ctx}#${seen[key]}`);
   }
   for (const k of Object.keys(t)) t[k] = t[k].sort();
   return t;
@@ -240,11 +283,19 @@ export function report(name, findings, baselinePath, { write } = {}) {
       /* rename detection is best-effort; fall through to strict comparison */
     }
 
+    // Counted per SUBJECT, not per exact fingerprint — see `subjectOf` for
+    // why the two guards need different identities (#1467 r6). Rewording the
+    // line around an already-frozen citation re-keys its fingerprint while
+    // exempting nothing further; failing that would make ordinary
+    // documentation edits impossible, which is how a check gets removed.
     const added = [];
     for (const [file, fps] of Object.entries(baseline)) {
       const oldName = renames.get(file);
-      const was = new Set(base.baseline[file] ?? base.baseline[oldName] ?? []);
-      for (const fp of fps) if (!was.has(fp)) added.push(`${file}: ${fp}`);
+      const wasCounts = countBySubject(base.baseline[file] ?? base.baseline[oldName]);
+      for (const [subject, n] of countBySubject(fps)) {
+        const was = wasCounts.get(subject) ?? 0;
+        if (n > was) added.push(`${file}: ${subject} (${was} -> ${n})`);
+      }
     }
     if (added.length) {
       console.error(
@@ -260,6 +311,19 @@ export function report(name, findings, baselinePath, { write } = {}) {
       return 1;
     }
   }
+
+  // LIMITATION OF THE SPLIT IDENTITY, stated rather than left implied
+  // (#1467 r6). Because the guard counts per subject, a change that RELOCATES
+  // a frozen citation — removes one occurrence and adds a different one of the
+  // same subject in the same file — and regenerates the baseline in the same
+  // commit keeps the count identical and passes here. Verified in review.
+  //
+  // That is the price of not failing an ordinary reword, and the alternative is
+  // worse: a per-fingerprint guard fails every edit to any of the lines
+  // carrying a frozen finding, which is how a check gets deleted rather than
+  // fixed. Without a baseline regeneration the relocation IS caught, by the
+  // regression check below. With one, it is visible as a replaced fingerprint
+  // in the baseline diff, which is a human-review surface rather than a CI one.
 
   // ── obsolete entries must be cleaned up (#1467 r2) ────────────────────
   //
@@ -282,10 +346,10 @@ export function report(name, findings, baselinePath, { write } = {}) {
   const addedByFile = new Map(regressions.map((r) => [r.file, new Set(r.added)]));
   const printSeen = {};
   for (const f of findings) {
-    const subject = f.tok ?? f.why;
-    const key = `${f.file}\u0000${subject}`;
+    const { subject, ctx } = fingerprint(f);
+    const key = `${f.file}\u0000${subject}\u0000${ctx}`;
     printSeen[key] = (printSeen[key] ?? 0) + 1;
-    if (addedByFile.get(f.file)?.has(`${subject}#${printSeen[key]}`)) {
+    if (addedByFile.get(f.file)?.has(`${subject}@${ctx}#${printSeen[key]}`)) {
       console.error(`${f.file}:${f.n}  ${f.tok ?? ''}`);
       if (f.line) console.error(`    ${f.line.trim()}`);
       console.error(`    -> ${f.why}\n`);
