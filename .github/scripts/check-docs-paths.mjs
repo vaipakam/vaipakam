@@ -182,6 +182,19 @@ for (const f of TRACKED) {
   for (let i = 1; i < parts.length; i++) TRACKED_DIRS.add(parts.slice(0, i).join('/'));
 }
 /**
+ * Submodule roots are directories, but `git ls-files` reports each as a single
+ * gitlink ENTRY with no children, so the ancestor walk above never adds the
+ * root itself (#1467 r10). Harmless until r9 made a trailing slash mean
+ * "directory" — after which `contracts/lib/limit-order-protocol/` stopped
+ * resolving. A regression my own fix introduced, which is why the trailing-slash
+ * change needed a probe on BOTH the file and directory forms and got one only
+ * for ordinary directories.
+ */
+for (const line of execFileSync('git', ['ls-files', '--stage'], { encoding: 'utf8' }).split('\n')) {
+  const m = line.match(/^160000 [0-9a-f]+ \d+\t(.+)$/);
+  if (m) TRACKED_DIRS.add(m[1]);
+}
+/**
  * A trailing slash means DIRECTORY, so it may only resolve as one (#1467 r9).
  * Stripping it before the lookup let `../../contracts/README.md/` resolve as
  * the tracked file — but a file cannot be traversed as a directory, so that
@@ -210,17 +223,45 @@ const resolves = (p) => {
  * (#1468), not for a silent exemption here.
  */
 function ignoredPaths(candidates) {
-  if (!candidates.length) return new Set();
+  // A path that normalises OUTSIDE the repository makes `git check-ignore` exit
+  // 128 for the whole batch, which `execFileSync` throws on — so one broken
+  // escaping link discarded the ignore result for every other candidate and
+  // re-reported all seven legitimate `.env` citations as regressions (#1467
+  // r10). Failing in the direction of noise is the failure that gets a check
+  // switched off, so escaping and absolute paths are dropped before the call;
+  // they cannot be repo-ignored anyway.
+  const safe = candidates.filter((c) => c && !c.startsWith('../') && !c.startsWith('/'));
+  if (!safe.length) return new Set();
+  let out;
   try {
-    const out = execFileSync('git', ['check-ignore', '--stdin'], {
-      input: candidates.join('\n'),
+    // `-v` names the ignore FILE that matched, which is what makes the next
+    // filter possible.
+    out = execFileSync('git', ['check-ignore', '-v', '--stdin'], {
+      input: safe.join('\n'),
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
-    return new Set(out.split('\n').filter(Boolean));
   } catch {
+    // Exit 1 means nothing matched, which is a real answer, not an error.
     return new Set();
   }
+
+  const ignored = new Set();
+  for (const line of out.split('\n')) {
+    // `<source>:<line>:<pattern>\t<path>`
+    const tab = line.lastIndexOf('\t');
+    if (tab < 0) continue;
+    const source = line.slice(0, line.indexOf(':'));
+    const path = line.slice(tab + 1);
+    // ONLY a committed `.gitignore` counts (#1467 r10). `git check-ignore` also
+    // consults `core.excludesFile` and `.git/info/exclude`, so without this the
+    // verdict depends on the developer's own configuration — the exact
+    // environment-dependence that replacing `existsSync` with the tracked tree
+    // was introduced to remove in r1, quietly reintroduced by r9's fix. A
+    // global exclude could silently exempt a typo that CI would report.
+    if (TRACKED.has(source)) ignored.add(path);
+  }
+  return ignored;
 }
 
 const findings = [];
@@ -247,7 +288,12 @@ const PATTERNS = [
   // which a whitespace-excluding capture cannot see at all.
   { re: new RegExp(`\\]\\(${WS}<([^>\\n]+)>`, 'g'), link: true },
   // Inline destination, bare form, with an optional title.
-  { re: new RegExp(`\\]\\(${WS}([^)\\s<>]+)(?:\\s+["'(][^)]*)?${WS}\\)`, 'g'), link: true },
+  // The title separator is bounded by `WS` too (#1467 r10). Leaving it `\s+`
+  // let it cross a blank line, and a blank line ENDS a link — so
+  // `[x](path\n\n "title")` is not a link at all, yet the destination was
+  // extracted and reported. An inconsistency inside r9's own bounding rule
+  // rather than a new markdown form.
+  { re: new RegExp(`\\]\\(${WS}([^)\\s<>]+)(?:${WS}["'(][^)]*)?${WS}\\)`, 'g'), link: true },
   // A reference DEFINITION takes the same two forms as an inline link, so it
   // needs the same two patterns (#1467 r8). Fixing only the inline sibling in
   // r7 left this one capturing the whitespace-free PREFIX of a spaced

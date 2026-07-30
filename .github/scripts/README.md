@@ -154,6 +154,15 @@ failure mode this exists to prevent:
   findings. It does NOT cover an artifact that is neither tracked nor ignored;
   nothing distinguishes one of those from a typo, so that is a case for a
   reasoned allowlist entry at gate-flip time (#1468), not a silent exemption.
+  Only a **committed** `.gitignore` counts: `git check-ignore` also consults
+  `core.excludesFile` and `.git/info/exclude`, and honouring those would put the
+  verdict back under the developer's own configuration — the environment
+  dependence that replacing `existsSync` with the tracked tree removed in r1
+  (#1467 r10). Candidates that normalise outside the repository are dropped
+  before the batch, because one of them makes Git exit non-zero for the WHOLE
+  batch and every legitimate exemption would be lost with it.
+- **A submodule root is a directory**, even though `git ls-files` reports it as a
+  single gitlink entry with no children (#1467 r10).
 - **A trailing slash means directory**, so it only resolves as one. Stripping it
   before the lookup let `contracts/README.md/` resolve as the tracked file,
   though a file cannot be traversed as a directory (#1467 r9).
