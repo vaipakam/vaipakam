@@ -82,6 +82,13 @@ const ARCHIVE_TABLES_REQUIRED = [
   // losing them = user-visible breakage on restore.
   'user_thresholds',
   'notify_state',
+  // Pre-grace warning dedupe (migration 0023, keeper-written). Same
+  // born-off-chain class as notify_state — and it FK-cascades from
+  // user_thresholds (ON DELETE CASCADE), so a replace-style restore
+  // of the parent destroys it; without a backed-up copy it was
+  // unrecoverable and users got duplicate pre-grace warnings after
+  // every restore (#1480, found in #1450 r30).
+  'pre_grace_notify_state',
   'telegram_links',
 ];
 
