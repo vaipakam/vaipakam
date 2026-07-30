@@ -21,6 +21,7 @@ import {
   convertD1,
   materializeR2,
   invalidLegalDocRefs,
+  invalidLegalRowShapes,
   reconcileLegalHolds,
   shQuote,
   sqlLiteral,
@@ -153,7 +154,11 @@ test('hold↔audit reconciliation catches snapshot races in both directions', ()
   const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
   const reason = 'Court order 42/2026';
   const holdsWith = (rows) =>
-    tableFixture('diag_legal_holds', ['wallet_hash', 'legal_doc_ref', 'hold_reason'], rows);
+    tableFixture(
+      'diag_legal_holds',
+      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note'],
+      rows.map((r) => ({ disclosure_allowed: 0, disclosure_note: null, ...r })),
+    );
   const auditWith = (rows) =>
     tableFixture(
       'diag_legal_hold_audit',
@@ -313,7 +318,11 @@ test('disclosure state replays from the audit, not from the hold row alone', () 
 test('hold reason replays from the latest placement audit (r9)', () => {
   const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
   const holdsWith = (rows) =>
-    tableFixture('diag_legal_holds', ['wallet_hash', 'legal_doc_ref', 'hold_reason'], rows);
+    tableFixture(
+      'diag_legal_holds',
+      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note'],
+      rows.map((r) => ({ disclosure_allowed: 0, disclosure_note: null, ...r })),
+    );
   const auditWith = (rows) =>
     tableFixture(
       'diag_legal_hold_audit',
@@ -355,6 +364,71 @@ test('hold reason replays from the latest placement audit (r9)', () => {
     auditWith([place(1, 100, null)]),
   );
   assert.match(reconcileLegalHolds(nullDetail)[0].problem, /impossible/);
+});
+
+test('legal rows must match the writer column shapes exactly (r11)', () => {
+  const hash = 'a'.repeat(64);
+  const admin = `0x${'b'.repeat(40)}`;
+  const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const holdsWith = (rows) =>
+    tableFixture(
+      'diag_legal_holds',
+      ['wallet_hash', 'legal_doc_ref', 'hold_reason', 'disclosure_allowed', 'disclosure_note'],
+      rows,
+    );
+  const auditWith = (rows) =>
+    tableFixture(
+      'diag_legal_hold_audit',
+      ['id', 'at', 'action', 'wallet_hash', 'admin_wallet', 'legal_doc_ref', 'detail'],
+      rows,
+    );
+  const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
+  const goodHold = { wallet_hash: hash, legal_doc_ref: doc, hold_reason: 'Court order', disclosure_allowed: 0, disclosure_note: null };
+  const goodPlace = { id: 1, at: 100, action: 'place', wallet_hash: hash, admin_wallet: admin, legal_doc_ref: doc, detail: 'Court order' };
+
+  // Canonical rows pass.
+  assert.deepEqual(invalidLegalRowShapes(arch(holdsWith([goodHold]), auditWith([goodPlace]))), []);
+
+  // Malformed wallet_hash on BOTH sides still fails — '' and uppercase
+  // are restorable TEXT but production would never find the row.
+  for (const bad of ['', 'A'.repeat(64), null]) {
+    const problems = invalidLegalRowShapes(
+      arch(
+        holdsWith([{ ...goodHold, wallet_hash: bad }]),
+        auditWith([{ ...goodPlace, wallet_hash: bad }]),
+      ),
+    );
+    assert.equal(problems.length, 2, JSON.stringify(bad));
+    assert.match(problems[0].problem, /wallet_hash/);
+  }
+
+  // admin_wallet attribution cannot be erased or forged.
+  for (const bad of ['', '0x' + 'B'.repeat(40), null, 'not-an-address']) {
+    const problems = invalidLegalRowShapes(arch(holdsWith([goodHold]), auditWith([{ ...goodPlace, admin_wallet: bad }])));
+    assert.match(problems[0].problem, /admin_wallet/, JSON.stringify(bad));
+  }
+
+  // disclosure_allowed must be exactly 0/1 — NULL must not pass as 0.
+  const nullFlag = invalidLegalRowShapes(arch(holdsWith([{ ...goodHold, disclosure_allowed: null }]), auditWith([goodPlace])));
+  assert.match(nullFlag[0].problem, /disclosure_allowed/);
+
+  // A gutted HISTORICAL placement is caught even when a later,
+  // well-formed placement is the latest action.
+  const guttedHistory = invalidLegalRowShapes(
+    arch(
+      holdsWith([goodHold]),
+      auditWith([
+        { ...goodPlace, id: 1, at: 100, detail: '' },
+        { ...goodPlace, id: 2, at: 200, detail: 'Court order' },
+      ]),
+    ),
+  );
+  assert.equal(guttedHistory.length, 1);
+  assert.match(guttedHistory[0].problem, /legal basis/);
+
+  // hold_reason on the register itself must be non-empty too.
+  const guttedReason = invalidLegalRowShapes(arch(holdsWith([{ ...goodHold, hold_reason: '' }]), auditWith([goodPlace])));
+  assert.match(guttedReason[0].problem, /hold_reason/);
 });
 
 test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {

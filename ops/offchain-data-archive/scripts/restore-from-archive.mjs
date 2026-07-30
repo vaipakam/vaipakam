@@ -133,6 +133,17 @@ const ERA_GATED_TABLES = {
 // hold's legal_doc_ref").
 const LEGAL_REF_TABLES = ['diag_legal_holds', 'diag_legal_hold_audit'];
 
+// The writer's per-column shapes for those tables (Codex #1484 r11):
+// `wallet_hash` is always HMAC-SHA256 hex (`diagHash.ts` — 64
+// lowercase hex chars); `admin_wallet` is the lowercased
+// signature-recovered admin address. Anything else can be restored
+// into the TEXT columns without SQLite complaint, but production
+// lookups recompute the canonical values and would never find the
+// row — a hold under a malformed hash blocks nothing, and a gutted
+// admin_wallet erases attribution from the append-only record.
+const WALLET_HASH_SHAPE = /^[0-9a-f]{64}$/;
+const ADMIN_WALLET_SHAPE = /^0x[0-9a-f]{40}$/;
+
 // The ingestion path's byte invariants (`diagLegalDoc.ts`): non-empty,
 // capped, starting with the PDF magic. The key SHAPE guarantees none
 // of this — a correctly content-addressed key can sit over arbitrary
@@ -560,6 +571,56 @@ export function invalidLegalDocRefs(archive) {
   return invalid;
 }
 
+/** Per-row writer invariants for the legal-hold tables (Codex #1484
+ *  r11) — one pass that pins EVERY column shape the production writer
+ *  guarantees, so this class of finding is closed as a whole rather
+ *  than column-by-column:
+ *
+ *  - `wallet_hash` (both tables): canonical 64-lowercase-hex HMAC.
+ *    SQLite would accept '' or any text, but production lookups
+ *    recompute the real hash and never find the row — a hold restored
+ *    under a malformed hash blocks nothing.
+ *  - `admin_wallet` (audit): lowercased signature-recovered EVM
+ *    address. A gutted value erases WHO took the legal action from
+ *    the append-only defensible record.
+ *  - `disclosure_allowed` (holds): exactly 0 or 1 — NOT NULL in the
+ *    schema, and the writer binds only those two values. NULL must
+ *    not be normalized into a comparable 0.
+ *  - `hold_reason` (holds) and every `place` audit `detail`: a
+ *    non-empty string — the parser rejects placements without one,
+ *    and a gutted HISTORICAL placement erases the recorded legal
+ *    basis even when the latest placement looks fine.
+ *
+ *  Returns {table, row, problem} entries for the caller to fail on. */
+export function invalidLegalRowShapes(archive) {
+  const invalid = [];
+  for (const table of archive?.d1?.archive ?? []) {
+    if (!LEGAL_REF_TABLES.includes(table?.name)) continue;
+    for (const [i, row] of (table.rows ?? []).entries()) {
+      const push = (problem) => invalid.push({ table: table.name, row: i, problem });
+      if (typeof row.wallet_hash !== 'string' || !WALLET_HASH_SHAPE.test(row.wallet_hash)) {
+        push(`wallet_hash ${JSON.stringify(row.wallet_hash)} is not the canonical 64-lowercase-hex HMAC — production would never find this row, so a hold under it blocks nothing`);
+      }
+      if (table.name === 'diag_legal_holds') {
+        if (row.disclosure_allowed !== 0 && row.disclosure_allowed !== 1) {
+          push(`disclosure_allowed ${JSON.stringify(row.disclosure_allowed)} is not exactly 0 or 1 — the column is NOT NULL and the writer binds only those values`);
+        }
+        if (typeof row.hold_reason !== 'string' || row.hold_reason === '') {
+          push(`hold_reason ${JSON.stringify(row.hold_reason)} is not a non-empty string — the parser rejects placements without a reason`);
+        }
+      } else {
+        if (typeof row.admin_wallet !== 'string' || !ADMIN_WALLET_SHAPE.test(row.admin_wallet)) {
+          push(`admin_wallet ${JSON.stringify(row.admin_wallet)} is not a lowercased EVM address — the writer records the signature-recovered admin, so attribution was erased or forged`);
+        }
+        if (row.action === 'place' && (typeof row.detail !== 'string' || row.detail === '')) {
+          push(`'place' audit detail ${JSON.stringify(row.detail)} is not the non-empty holdReason — a gutted placement erases the recorded legal basis from the append-only record`);
+        }
+      }
+    }
+  }
+  return invalid;
+}
+
 /** The holds table and its audit trail are exported by SEPARATE
  *  queries, so a `place`/`lift` landing between them yields an archive
  *  where every row is individually valid but the PAIR is not: a
@@ -685,7 +746,11 @@ export function reconcileLegalHolds(archive) {
         expectedAllowed = Number(m[1]);
         expectedNote = m[2];
       }
-      if ((hold.disclosure_allowed ?? 0) !== expectedAllowed || (hold.disclosure_note ?? '') !== expectedNote) {
+      // Strict on the flag: NULL/undefined must not coerce into a
+      // matching 0 (invalidLegalRowShapes rejects the row anyway —
+      // r11). The note's `?? ''` stays: NULL note is a legitimate
+      // writer value and the audit detail encodes it as ''.
+      if (hold.disclosure_allowed !== expectedAllowed || (hold.disclosure_note ?? '') !== expectedNote) {
         problems.push({
           walletHash: wallet,
           problem: "current hold's disclosure flag/note disagrees with the audit replay — restoring could surface (or gag) a retained-by-law note the latest 'set-disclosure' decided otherwise (snapshot race or tampering)",
@@ -764,6 +829,20 @@ export function main(argv) {
   const d1 = convertD1(archive, outDir, { lzDatabase });
   const r2 = materializeR2(archive, outDir);
 
+  // Per-row writer invariants on the legal tables first — a malformed
+  // wallet_hash / admin_wallet / disclosure flag is restorable SQL but
+  // production-impossible data (r11).
+  const badShapes = invalidLegalRowShapes(archive);
+  if (badShapes.length > 0) {
+    for (const { table, row, problem } of badShapes) {
+      console.error(`✗ ${table} row ${row}: ${problem}`);
+    }
+    fail(
+      `${badShapes.length} legal-hold row(s) violate the production writer's column invariants — ` +
+        `the archive carries values the writer cannot produce. Pick a different archive, or ` +
+        `escalate: this can be evidence of pre-backup tampering in D1`,
+    );
+  }
   // Cross-halves check: legal holds must not reference documents the
   // archive does not carry.
   const badDocs = invalidLegalDocRefs(archive);
