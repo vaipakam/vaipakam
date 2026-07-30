@@ -105,6 +105,14 @@ export const DAILY_PREFIXES = ['archives/', 'manifests/'];
 /** Prefixes whose retention is bounded by the 12-month promise. */
 export const MONTHLY_PREFIXES = ['archives-monthly/', 'manifests-monthly/'];
 
+/**
+ * Prefixes that must carry NO rule — their indefinite retention IS that absence,
+ * for legal-audit durability. Module-level beside the others because it is a
+ * policy constant, not a local (#1471 r13: it was declared inside the function
+ * AFTER its first use, which is a TDZ error that broke every invocation).
+ */
+export const YEARLY_PREFIXES = ['archives-yearly/', 'manifests-yearly/'];
+
 /** Published: nightly archives kept 30 days. Minus a day for the prune race. */
 export const DAILY_MAX_TOTAL_DAYS = 29;
 /** Published: monthly archives kept 12 months. */
@@ -166,7 +174,7 @@ export function assertPolicyCeilings(decl, fail) {
   // UNDER its prefix, so `archives-yearly/2025/` expires yearly objects just as
   // surely as `archives-yearly/` would — and an exact-membership test let it
   // straight through. Review exercised exactly that with a two-day deletion.
-  const YEARLY_PREFIXES = ['archives-yearly/', 'manifests-yearly/'];
+
   for (const r of decl.rules) {
     const p = String(r.fileNamePrefix ?? '');
     if (YEARLY_PREFIXES.some((y) => p === y || p.startsWith(y))) {
@@ -196,17 +204,29 @@ export function assertPolicyCeilings(decl, fail) {
   // exact-match map, so a rule for `archives/2025/` was neither matched as the
   // daily prefix nor rejected — while B2 applies it to daily objects, under a
   // ceiling nothing checked. Same defect, other half of the same function.
-  const BOUNDED = [...DAILY_PREFIXES, ...MONTHLY_PREFIXES];
+  // OVERLAP IN BOTH DIRECTIONS (#1471 r13). r12 tested only whether a rule sits
+  // BENEATH a managed prefix, which missed the more dangerous direction: a
+  // PARENT rule. `fileNamePrefix: ""` matches every object in the bucket and
+  // `"archives"` matches both `archives/` and `archives-monthly/` — neither is
+  // nested under a managed prefix, so both passed, and review exercised both.
+  // A parent rule is worse than a nested one because it silently governs the
+  // yearly prefixes too, whose whole guarantee is having no rule at all.
+  const MANAGED = [...DAILY_PREFIXES, ...MONTHLY_PREFIXES, ...YEARLY_PREFIXES];
   for (const r of decl.rules) {
     const p = String(r.fileNamePrefix ?? '');
-    if (BOUNDED.includes(p)) continue;
-    const under = BOUNDED.find((b) => p.startsWith(b));
-    if (under) {
+    if (MANAGED.includes(p)) continue;
+    const clash = MANAGED.find((m) => p.startsWith(m) || m.startsWith(p));
+    if (clash) {
+      const nested = p.startsWith(clash);
       fail(
-        `bucket-lifecycle.json declares a NESTED rule "${p}" beneath the bounded ` +
-          `prefix "${under}". B2 applies it to those objects, but the ceiling and ` +
-          `floor checks key on the exact prefix, so a nested rule bypasses both. ` +
-          `Declare retention on "${under}" itself, or the bound is unenforced.`,
+        `bucket-lifecycle.json declares a rule "${p}" that OVERLAPS the managed ` +
+          `prefix "${clash}" (${nested ? 'nested beneath it' : 'a parent of it'}). ` +
+          `B2 applies a rule to every key under its prefix, while the ceiling and ` +
+          `floor checks key on the EXACT managed prefixes — so an overlapping rule ` +
+          `governs those objects with no bound enforced. ` +
+          `${p === '' ? 'An empty prefix matches the entire bucket, including the ' +
+            'yearly tier whose guarantee is having no rule at all. ' : ''}` +
+          `Declare retention on the managed prefixes themselves.`,
       );
     }
   }
@@ -247,6 +267,25 @@ export function assertPolicyCeilings(decl, fail) {
       }
 
       const total = hide + del;
+
+      // THE MONTHLY PROMISE IS A FLOOR AS WELL AS A CEILING (#1471 r13). "Monthly
+      // archives are kept 12 months" commits us to retaining them that long, not
+      // merely to deleting them by then — the legal-audit durability story rests
+      // on it. r12 checked only `total > max`, so shortening monthly to 1 + 31
+      // was accepted and would have discarded eleven months of records the
+      // published promise covers. The daily tier gets no equivalent floor: its
+      // 30-day statement is a deletion commitment, under-retaining it breaches
+      // nothing, and its recovery-window floor is enforced separately below.
+      if (MONTHLY_PREFIXES.includes(prefix) && total < max) {
+        fail(
+          `bucket-lifecycle.json "${prefix}": worst-case lifetime is ${total} days ` +
+            `(${hide} + ${del}), UNDER the ${max}-day commitment. ${promise} — that ` +
+            `is a promise to KEEP them that long, so a shorter total discards ` +
+            `records we have said we retain. If the intent is genuinely to shorten ` +
+            `monthly retention, the published policy has to change first.`,
+        );
+      }
+
       if (total > max) {
         fail(
           `bucket-lifecycle.json "${prefix}": worst-case lifetime is ${total} ` +
