@@ -138,6 +138,9 @@ const IGNORED = new Set(['d1_migrations']);
 // never open.
 const WRITE_RES = [
   /INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+([a-z][a-z0-9_]*)/gi,
+  // Bare `REPLACE INTO` is SQLite's alias for INSERT OR REPLACE and
+  // writes exactly the same way (Codex #1485 r2).
+  /(?<![A-Za-z_])REPLACE\s+INTO\s+([a-z][a-z0-9_]*)/gi,
   /DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi,
   // `(?!set\b)` keeps upsert syntax (`ON CONFLICT … DO UPDATE SET`)
   // from registering a table named "set".
@@ -201,7 +204,12 @@ const malformed = Object.entries(CLASSIFICATION)
   .map(([t, c]) => `${t} (class: ${JSON.stringify(c.class)})`);
 
 // ── Check 1: every written table is classified ────────────────────────
-const unclassified = [...writers.keys()].filter((t) => !(t in CLASSIFICATION)).sort();
+// `Object.hasOwn`, never `in`: a table named `constructor` (a valid
+// SQL identifier) satisfies `in` via Object.prototype and would slip
+// through unclassified (Codex #1485 r2 probed exactly that).
+const unclassified = [...writers.keys()]
+  .filter((t) => !Object.hasOwn(CLASSIFICATION, t))
+  .sort();
 
 // ── Check 2: classification entries that nothing writes (staleness) ───
 const dead = Object.keys(CLASSIFICATION).filter((t) => !writers.has(t)).sort();
@@ -218,6 +226,24 @@ const archivedSet = archivedTablesFrom(backupSrc);
 const unarchived = Object.entries(CLASSIFICATION)
   .filter(([t, c]) => c.class === 'born-off-chain' && !archivedSet.has(t))
   .map(([t]) => t);
+
+// ── Check 4: replay-derived == the runbook's §6 clear command ─────────
+// The classification's PROMISE for this class is "cleared before the
+// block-zero replay", and the implementation of that promise is the
+// fixed DELETE command in OffChainRestore.md §6. A replay-derived
+// entry missing there lets fabricated rows survive tampering recovery;
+// a cleared table not classified replay-derived means the command
+// deletes something whose restore treatment says otherwise. Both
+// directions fail (Codex #1485 r2).
+const runbookSrc = readFileSync(join(REPO_ROOT, 'docs', 'ops', 'OffChainRestore.md'), 'utf8');
+const clearedSet = clearedTablesFrom(runbookSrc);
+const replaySet = new Set(
+  Object.entries(CLASSIFICATION)
+    .filter(([, c]) => c.class === 'replay-derived')
+    .map(([t]) => t),
+);
+const notCleared = [...replaySet].filter((t) => !clearedSet.has(t)).sort();
+const clearedUnclassified = [...clearedSet].filter((t) => !replaySet.has(t)).sort();
 
 let failed = false;
 if (malformed.length > 0) {
@@ -238,6 +264,17 @@ if (unarchived.length > 0) {
   failed = true;
   console.error('✗ Classified born-off-chain but absent from backup.ts:');
   for (const t of unarchived) console.error(`    ${t}`);
+}
+if (notCleared.length > 0) {
+  failed = true;
+  console.error("✗ Classified replay-derived but missing from OffChainRestore.md §6's");
+  console.error('  clear-before-replay command (fabricated rows would survive recovery):');
+  for (const t of notCleared) console.error(`    ${t}`);
+}
+if (clearedUnclassified.length > 0) {
+  failed = true;
+  console.error("✗ In §6's clear command but not classified replay-derived:");
+  for (const t of clearedUnclassified) console.error(`    ${t}`);
 }
 if (dead.length > 0) {
   // Warn-only: a dropped table leaves a harmless entry; flag for cleanup.
@@ -273,6 +310,27 @@ export function archivedTablesFrom(backupSrc) {
     archived.add(s[1]);
   }
   return archived;
+}
+
+/** Table names deleted by the runbook §6 clear-before-replay command.
+ *  Targets the bash fence(s) that invoke `wrangler d1 execute
+ *  vaipakam-archive` with DELETE statements — prose mentions of
+ *  DELETE FROM elsewhere in the document do not count. */
+export function clearedTablesFrom(runbookSrc) {
+  const cleared = new Set();
+  for (const fence of runbookSrc.matchAll(/```bash\n([\s\S]*?)```/g)) {
+    const body = fence[1];
+    if (!body.includes('wrangler d1 execute vaipakam-archive') || !body.includes('DELETE FROM')) {
+      continue;
+    }
+    for (const m of body.matchAll(/DELETE\s+FROM\s+([a-z][a-z0-9_]*)/gi)) {
+      cleared.add(m[1].toLowerCase());
+    }
+  }
+  if (cleared.size === 0) {
+    throw new Error('could not locate the §6 clear-before-replay command in OffChainRestore.md');
+  }
+  return cleared;
 }
 
 // Run only when invoked directly — importing this module for its
