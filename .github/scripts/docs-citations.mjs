@@ -110,9 +110,9 @@ export function scopedDocs(prefixes) {
  */
 const FORMS = [
   { name: 'code-span', re: /`([^`\n]+)`/g, words: true },
-  { name: 'angle-destination', re: /\]\(\s*<([^>\n]+)>/g },
-  { name: 'inline-destination', re: /\]\(\s*([^)\s<>]+)/g },
-  { name: 'reference-definition', re: /^[ ]{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/gm },
+  { name: 'angle-destination', re: /\]\(\s*<([^>\n]+)>/g, link: true },
+  { name: 'inline-destination', re: /\]\(\s*([^)\s<>]+)/g, link: true },
+  { name: 'reference-definition', re: /^[ ]{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/gm, link: true },
 ];
 
 /**
@@ -149,8 +149,10 @@ const uncomment = (text) =>
 /**
  * Candidate citations in one document.
  *
- * @returns {Array<{tok: string, n: number, line: string}>} — `tok` normalised
- *          (query, fragment and a trailing `:LINE` removed), `n` 1-based.
+ * @returns {Array<{tok: string, n: number, line: string, link: boolean}>} —
+ *          `tok` normalised (query, fragment and a trailing `:LINE` removed),
+ *          `n` 1-based, `link` true for markdown destinations — the one form
+ *          that renders relative to its document (#1467 r13).
  */
 export function citations(file) {
   const body = uncomment(readFileSync(file, 'utf8'));
@@ -171,37 +173,52 @@ export function citations(file) {
 
   const out = [];
   const seen = new Set();
-  const push = (raw, i) => {
+  const push = (raw, i, link = false) => {
     // `path:line` is this repo's ordinary citation form, so the suffix is not
     // part of the name (#1467 r3); query and fragment likewise cannot hide a
     // stale path behind them (#1467 r1).
     const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0].replace(/:(\d+)(-\d+)?$/, '');
     if (!tok) return;
-    const key = `${tok}\u0000${i}`;
+    const key = `${tok}\u0000${i}\u0000${link}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ tok, n: i + 1, line: lines[i] ?? '' });
+    out.push({ tok, n: i + 1, line: lines[i] ?? '', link });
   };
 
-  for (const { re, words } of FORMS) {
+  for (const { re, words, link } of FORMS) {
     for (const m of body.matchAll(re)) {
       const raw = m[1].trim();
       const i = lineAt(m.index + Math.max(0, m[0].indexOf(m[1])));
-      push(raw, i);
+      push(raw, i, Boolean(link));
       if (words) for (const w of pathWords(raw)) push(w, i);
     }
   }
 
   // Fenced code blocks, line by line — a stale path in a fence is shown to the
   // operator exactly like one in a code span (#1467 r12).
-  let inFence = false;
+  // The CLOSER must match its OPENER (#1467 r13): same marker character and
+  // at least the opener's length, with no trailing info string — per
+  // CommonMark, a `~~~` line inside a four-backtick fence is literal content,
+  // and toggling on any marker let such a line end the fence early, hiding
+  // every command after it from the gate.
+  let fence = null; // { ch, len } while inside a fence
   for (let i = 0; i < lines.length; i++) {
-    const fenceMark = /^\s*(```|~~~)/.test(lines[i]);
-    if (fenceMark) {
-      inFence = !inFence;
-      continue;
+    const m = lines[i].match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (m) {
+      const ch = m[1][0];
+      const len = m[1].length;
+      if (!fence) {
+        fence = { ch, len };
+        continue;
+      }
+      if (ch === fence.ch && len >= fence.len && m[2].trim() === '') {
+        fence = null;
+        continue;
+      }
+      // A non-matching marker inside a fence is literal text — fall through
+      // and extract from it like any other fence line.
     }
-    if (inFence) for (const w of pathWords(lines[i])) push(w, i);
+    if (fence) for (const w of pathWords(lines[i])) push(w, i);
   }
 
   return out;

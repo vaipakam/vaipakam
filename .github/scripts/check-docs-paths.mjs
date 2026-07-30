@@ -116,17 +116,18 @@ const TRACKED = new Set(trackedFiles());
  * The tracked tree is consulted in exactly one direction: to ACQUIT. A
  * fragment that resolves to a tracked file is correct whatever it is called, so
  * a live `docs/ops/frontend/guide.md` is never reported (#1467 r6). Resolution
- * is tried in every way the fragment could legitimately be read — as written,
- * with relative prefixes stripped, and RELATIVE TO THE CITING DOCUMENT, since
- * that is how a markdown destination actually renders (#1467 r12: a tracked
- * `docs/ops/frontend/guide.md` linked as `frontend/guide.md` was reported
- * because only the raw token was probed). Using the tree to ACCUSE would be the
- * open-world rule the admission criterion excludes, and is what #1486 carries.
+ * follows how each FORM actually reads (#1467 r12, narrowed in r13): a markdown
+ * DESTINATION also resolves relative to its citing document, because that is
+ * how it renders — but a CODE SPAN is this repo's repository-root citation
+ * form, so giving it the document-relative reading would acquit a root-stale
+ * `` `frontend/guide.md` `` whenever the citing doc happened to sit next to a
+ * same-named live file. Using the tree to ACCUSE would be the open-world rule
+ * the admission criterion excludes, and is what #1486 carries.
  */
-const removedDirHit = (tok, file) => {
+const removedDirHit = (tok, file, link) => {
   const bare = tok.replace(/^(\.\.?\/)+/, '');
-  const rel = posix.normalize(posix.join(dirname(file), tok));
-  if (TRACKED.has(tok) || TRACKED.has(bare) || TRACKED.has(rel)) return undefined;
+  const rel = link ? posix.normalize(posix.join(dirname(file), tok)) : null;
+  if (TRACKED.has(tok) || TRACKED.has(bare) || (rel && TRACKED.has(rel))) return undefined;
   return REMOVED_DIRS.find(
     ([d]) =>
       tok.startsWith(d) ||
@@ -138,8 +139,8 @@ const removedDirHit = (tok, file) => {
 
 const findings = [];
 for (const file of scopedDocs(GATED)) {
-  for (const { tok, n, line } of citations(file)) {
-    const removed = removedDirHit(tok, file);
+  for (const { tok, n, line, link } of citations(file)) {
+    const removed = removedDirHit(tok, file, link);
     if (removed) findings.push({ file, n, tok, line, why: removed[1] });
   }
 }

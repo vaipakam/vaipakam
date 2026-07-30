@@ -253,21 +253,24 @@ once per chain, BEFORE the first `deploy-chain.sh <slug>` (or
 `deploy-mainnet.sh --phase cf-watcher`) targeting that chain. The
 deploy script's hard-fail check refuses to proceed without them:
 
+All three Stage 3 Workers bind their `RPC_*` values from the shared
+account-level Secrets Store (`store_id 1e66429d0fa24aa38a27bc05b7bcf63e`
+in each `wrangler.jsonc`) — a per-Worker `wrangler secret put` would
+provision only that one Worker and leave the indexer/agent bindings
+unset. Create each entry once in the store (`create` for a new name,
+`update --secret-id` for an existing one; `--remote` targets the
+deployed store, and wrangler prompts for the value so it never lands in
+shell history):
+
 ```bash
-cd apps/keeper
+# Existing entries and their IDs:
+npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote
 
-# Testnet trio
-echo -n "$BASE_SEPOLIA_RPC_URL" | npx wrangler secret put RPC_BASE_SEPOLIA
-echo -n "$ARB_SEPOLIA_RPC_URL"  | npx wrangler secret put RPC_ARB_SEPOLIA
-echo -n "$OP_SEPOLIA_RPC_URL"   | npx wrangler secret put RPC_OP_SEPOLIA
-
-# Mainnet (when those phases land)
-echo -n "$RPC_ETH"    | npx wrangler secret put RPC_ETH
-echo -n "$RPC_BASE"   | npx wrangler secret put RPC_BASE
-echo -n "$RPC_ARB"    | npx wrangler secret put RPC_ARB
-echo -n "$RPC_OP"     | npx wrangler secret put RPC_OP
-echo -n "$RPC_ZKEVM"  | npx wrangler secret put RPC_ZKEVM
-echo -n "$RPC_BNB"    | npx wrangler secret put RPC_BNB
+# New entry (e.g. first deploy of a chain):
+npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+    --name RPC_BASE_SEPOLIA --remote
+# Repeat for RPC_ARB_SEPOLIA / RPC_OP_SEPOLIA, and at mainnet for
+# RPC_ETH / RPC_BASE / RPC_ARB / RPC_OP / RPC_BNB.
 ```
 
 Verify with `npx wrangler secret list` from inside `apps/keeper` —
@@ -317,9 +320,12 @@ Within ~5 minutes of `deploy-chain.sh <slug>` returning success,
 confirm the watcher is actually indexing the new chain:
 
 ```bash
-# 1. Confirm the cursor is advancing (not just seeded)
-cd apps/keeper
-npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
+# 1. Confirm the cursor is advancing (not just seeded).
+#    The Stage 3 database is vaipakam-archive, owned by apps/indexer —
+#    vaipakam-alerts-db is the retired pre-split database, and querying
+#    it would inspect data the new indexer never writes.
+cd apps/indexer
+npx wrangler d1 execute vaipakam-archive --remote --json --command \
   "SELECT chain_id, last_block, datetime(updated_at,'unixepoch') as updated
      FROM indexer_cursor WHERE kind='diamond' ORDER BY chain_id;" \
   | jq '.[0].results'
@@ -327,7 +333,7 @@ npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
 
 # 2. Confirm offers / loans rows materialise for the new chain
 #    once smoke-test events have landed on chain.
-npx wrangler d1 execute vaipakam-alerts-db --remote --json --command \
+npx wrangler d1 execute vaipakam-archive --remote --json --command \
   "SELECT chain_id, COUNT(*) FROM offers GROUP BY chain_id;
    SELECT chain_id, COUNT(*) FROM loans  GROUP BY chain_id;" \
   | jq '.[0].results, .[1].results'
@@ -348,7 +354,7 @@ Mismatches mean the watcher pass is silently throwing for that
 chain. Tail the live Worker logs to inspect:
 
 ```bash
-cd apps/keeper && npx wrangler tail --format=pretty
+cd apps/indexer && npx wrangler tail --format=pretty
 ```
 
 ### T-087 — Cross-chain VPFI discount post-deploy activation
@@ -764,7 +770,7 @@ forge script -vv --rpc-url $NEW_CHAIN_RPC_URL \
                                                        # are called in writeChainHeader.
 
 # Frontend side — should compile and the new chainId should appear in the picker
-cd apps/defi && npm run typecheck && npm run dev
+cd apps/defi && node_modules/.bin/tsc -b --noEmit && npm run dev
 ```
 
 After those pass, the per-chain runbook (e.g.
@@ -976,9 +982,11 @@ output byte-identical.
 Run it after every contract redeploy *before*:
 - `cd apps/defi && npm run deploy` (so new addresses inline into
   the JS bundle), AND
-- the Worker deploys (`pnpm --filter @vaipakam/{keeper,indexer,agent}
-  run deploy`), so each reads the new addresses on its next cron
-  tick.
+- the Worker deploys — `--filter` once per package, since brace
+  expansion would hand pnpm `@vaipakam/indexer` as a script name:
+  `pnpm --filter @vaipakam/keeper --filter @vaipakam/indexer
+  --filter @vaipakam/agent run deploy` — so each reads the new
+  addresses on its next cron tick.
 
 **T-041 — chain-indexer D1 migrations.** Whenever a new migration
 file lands under `apps/indexer/migrations/` (e.g. `0006_*.sql`),
@@ -1008,31 +1016,17 @@ from testnet to mainnet, the Worker's cached offer / loan /
 activity rows reference the OLD diamond's offer IDs / loan IDs.
 Cache and chain disagree until you clear the cache.
 
-Per-chain redeploy (testnet diamond bumped on chain X):
-
-```bash
-cd apps/keeper
-npm run db:purge-chain -- <chainId>     # interactive y/N preview
-# … then redeploy contracts on that chain, then:
-npm run deploy
-```
-
-Pre-mainnet full nuke (after extensive testnet iteration —
-optional but recommended for a clean slate):
-
-```bash
-cd apps/keeper
-npm run db:purge-all                    # double-confirmation prompt
-# … then deploy mainnet contracts, run db:migrate if needed,
-#     finally redeploy the Worker:
-npm run deploy
-```
-
-Both scripts preserve `user_locales` (wallet-scoped language
-preference, not chain-scoped). They DELETE rows; they do NOT
-DROP TABLE — schema survives intact, no need to re-run
-migrations after a purge. See
-[`apps/keeper/README.md`](../../apps/keeper/README.md)
+> **The `db:purge-chain` / `db:purge-all` scripts were retired with
+> the pre-split watcher and have no Stage 3 replacement yet.** No
+> package in `apps/` carries them, so the historical commands are not
+> reproduced here — an instruction that fails on contact is worse
+> than a stated gap. Until the tracked replacement lands (**#1491**),
+> a redeploy purge is a manual, previewed `DELETE` against the shared
+> `vaipakam-archive` database, run from its owning Worker
+> (`cd apps/indexer && npx wrangler d1 execute vaipakam-archive
+> --remote --command "..."`), scoped to the affected `chain_id` and
+> preserving `user_locales` (wallet-scoped, not chain-scoped).
+> Preview every `DELETE` with the matching `SELECT COUNT(*)` first.
 "Purge / reset" for the full table list and `FORCE=1` / `LOCAL=1`
 env-knob behaviour.
 
@@ -1801,27 +1795,29 @@ take a few minutes; nothing else to do.
 
 ### 8d. Server-side error capture
 
-The hf-watcher Worker also serves `POST /diag/record` — the
-frontend fires-and-forgets one POST per UI failure event so
-support has a server-side audit trail (UUID embedded in any
-GitHub-issue prefill cross-references back to a real session).
-Lives on the same Worker and the same D1 binding as §8a/§8b
-above; no separate deploy.
+`POST /diag/record` is served by the AGENT Worker
+(`apps/agent/src/index.ts`) — the frontend fires-and-forgets one
+POST per UI failure event so support has a server-side audit trail
+(UUID embedded in any GitHub-issue prefill cross-references back to
+a real session). It writes to the shared `vaipakam-archive` D1 that
+all three Stage 3 Workers bind.
 
 **One-time setup (per environment)**:
 
-1. Apply the new migration to the production database:
+1. Apply the migration to the production database. The schema is
+   owned by `apps/indexer` (`migrations/0003_diag_errors.sql`) and
+   the live database is `vaipakam-archive`:
    ```bash
-   cd apps/keeper
-   npx wrangler d1 migrations apply vaipakam-alerts-db --remote
+   cd apps/indexer
+   npx wrangler d1 migrations apply vaipakam-archive --remote
    ```
    This creates the `diag_errors` table + indexes. Idempotent
    (uses `CREATE TABLE IF NOT EXISTS`).
 
-2. Deploy the worker (same command as §8b — pushes the new
-   `/diag/record` route + the per-IP rate-limit binding):
+2. Deploy the AGENT — `/diag/record` is routed by
+   `apps/agent/src/index.ts`, not the keeper:
    ```bash
-   npx wrangler deploy
+   cd ../agent && npx wrangler deploy
    ```
 
 3. Smoke test the endpoint:

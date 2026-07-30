@@ -534,8 +534,14 @@ identity), so rotation is time-sensitive.
    `wrangler.jsonc`), so a per-Worker secret would leave the revoked
    token live in every other binding:
    ```bash
+   # Find the secret's ID in the store (the update subcommand takes
+   # --secret-id, not a name):
+   npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote
+   # Update it against the DEPLOYED store (--remote; the default is the
+   # local simulator) and let wrangler PROMPT for the value — do not pass
+   # --value, which leaves the new token in shell history:
    npx wrangler secrets-store secret update 1e66429d0fa24aa38a27bc05b7bcf63e \
-       --name TG_BOT_TOKEN --value "<NEW_TG_BOT_TOKEN>"
+       --secret-id <ID_OF_TG_BOT_TOKEN> --remote
    ```
 4. Re-register the webhook:
    ```bash
@@ -558,8 +564,12 @@ No subscriber action required — the bot's @-handle stays
    shared Secrets Store (same reasoning as the Telegram rotation above —
    per-Worker `secret put` would not reach the store-bound Workers):
    ```bash
+   # Same shape as the Telegram rotation above: find the ID, update
+   # --remote, let wrangler prompt rather than passing --value (a private
+   # key in shell history is its own incident):
+   npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote
    npx wrangler secrets-store secret update 1e66429d0fa24aa38a27bc05b7bcf63e \
-       --name PUSH_CHANNEL_PK --value "<NEW_PUSH_CHANNEL_PK>"
+       --secret-id <ID_OF_PUSH_CHANNEL_PK> --remote
    ```
 4. Redeploy every Worker that binds it (`pnpm --filter @vaipakam/keeper
    run deploy`, then the agent) to invalidate the cached PushAPI client
