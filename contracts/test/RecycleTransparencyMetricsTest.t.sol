@@ -270,6 +270,59 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         assertEq(mirror, 0, "canonical chain is not its own mirror");
     }
 
+    // ─── canonical-chain scoping ─────────────────────────────────────────────
+
+    /**
+     * @dev A mirror must REFUSE rather than answer, because on a mirror it
+     *      would answer WRONGLY — and in the more dangerous of the two
+     *      possible ways.
+     *
+     *      `dailyGlobal*InterestNumeraire18` is written only by Base's
+     *      `finalizeDay`. Under the legacy broadcast a mirror still receives
+     *      a `dayPoolStamp`, so the day reads `stamped == true` with a real
+     *      floor and a `freshDrawdown` of ZERO — a plausible number, not an
+     *      obviously absent one. That is the exact failure shape this PR
+     *      fixes for `absorbed[D]`, so shipping it here would have been
+     *      self-defeating (Codex #1487 r1 P2).
+     *
+     *      The canonical half of this test is what makes it non-vacuous: it
+     *      first proves the same call returns a real, non-zero drawdown on
+     *      Base, so the revert afterwards is attributable to the chain role
+     *      and not to an empty fixture.
+     *
+     *      It also asserts the guard is SCOPED. The backing snapshot is a
+     *      purely local figure and must keep working on a mirror — a blanket
+     *      guard over both views would pass a naive revert test while
+     *      removing something mirrors legitimately need.
+     */
+    function testDayMetricsRefusesOnAMirrorWhileBackingStillAnswers() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalize(5);
+
+        (bool stamped, , , uint256 drawdown, , ) =
+            _lens().getRecycleDayMetrics(5);
+        assertTrue(stamped, "canonical chain answers");
+        assertGt(drawdown, 0, "and answers with a REAL figure");
+
+        // Same Diamond, mirror role.
+        _rep().setIsCanonicalRewardChain(false);
+
+        vm.expectRevert(
+            InteractionRewardsLensFacet
+                .RecycleDayMetricsCanonicalChainOnly
+                .selector
+        );
+        _lens().getRecycleDayMetrics(5);
+
+        (uint256 bal, , , , ) = _lens().getRecycleBackingSnapshot();
+        assertEq(
+            bal,
+            DIAMOND_SEED,
+            "the local backing snapshot must survive on a mirror"
+        );
+    }
+
     // ─── the unfinalized day ─────────────────────────────────────────────────
 
     /**
@@ -365,11 +418,38 @@ contract RecycleTransparencyMetricsTest is SetupTest {
      *      pre-netted, per the #1448 posture — consumers derive it and an
      *      independent re-derivation is what catches a relabelled figure.
      *      Both terms must therefore actually move.
+     *
+     *      **The first version of this test was vacuous and the mutation
+     *      matrix did not say so.** It finalized day 5 with an empty
+     *      trailing absorption window, so `Ā` was zero, so `recycledBudget`
+     *      was zero, so nothing reserved and `outstandingCommitRecycled`
+     *      stayed at 0 — the assertion compared 0 to 0. It still DIED to the
+     *      mutation that reads `outstandingCommitFresh` instead, because
+     *      that term is non-zero, which is exactly why the matrix passed it:
+     *      a killed mutation proves the test distinguishes those two slots,
+     *      NOT that it pins the right value. Seeding the trailing window
+     *      below is what makes it pin one.
+     *
+     *      Generalisable: mutation-killed and non-vacuous are different
+     *      properties, and a matrix measures only the first.
      */
     function testBackingSnapshotExposesBothPlatformRetainedTerms() public {
+        // Seed the trailing absorption window so Ā > 0 and the day actually
+        // stamps a recycled budget — without this the reserved amount is
+        // structurally zero and every assertion below holds trivially.
         _mut().setRecycleBucketRaw(1_000_000 ether);
+        for (uint256 d = 1; d <= 5; ++d) {
+            _mut().setRecycledCreditedByDayRaw(d, 50_000 ether);
+        }
         _mut().setGovernorCommitArmedFromDayRaw(5);
         _finalize(5);
+
+        (, , uint256 recycledBudget, , , ) = _lens().getRecycleDayMetrics(5);
+        assertGt(
+            recycledBudget,
+            0,
+            "the day must stamp a NON-ZERO recycled budget, or the rest is vacuous"
+        );
 
         (
             ,
@@ -380,11 +460,47 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         ) = _lens().getRecycleBackingSnapshot();
 
         (, , uint256 stateOutstanding, ) = _agg().getGovernorCommitState();
+        assertGt(
+            stateOutstanding,
+            0,
+            "and must actually RESERVE against it"
+        );
         assertEq(
             outstandingRecycled,
             stateOutstanding,
             "the subtrahend must be the governor's own outstanding sum"
         );
         assertGt(bucket, 0, "bucket term present");
+    }
+
+    /**
+     * @dev `paidOutRecycled` is the return whose documented semantics are
+     *      least obvious — it is NOT monotonic and NOT lifetime outflow,
+     *      because a remittance send advances it before delivery and a
+     *      release reverses it. Nothing asserted it at all until this test,
+     *      which is the worst place to have no coverage: a mislabelled
+     *      counter is exactly what a reader cannot check for themselves.
+     *
+     *      Pinned against the governor's own view of the same slot, and
+     *      driven off zero first, so it cannot pass by both sides being
+     *      empty the way the sibling test above once did.
+     */
+    function testBackingSnapshotReportsTheLiveConsumedRecycledFigure() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+
+        (, , , , uint256 before_) = _lens().getRecycleBackingSnapshot();
+        assertEq(before_, 0, "nothing consumed yet");
+
+        _mut().consumeRecycleRaw(250_000 ether);
+
+        (, , , , uint256 after_) = _lens().getRecycleBackingSnapshot();
+        assertEq(after_, 250_000 ether, "consume advances the live figure");
+
+        (, , , uint256 statePaidOut) = _agg().getGovernorCommitState();
+        assertEq(
+            after_,
+            statePaidOut,
+            "and it is the governor's own slot, not a parallel count"
+        );
     }
 }

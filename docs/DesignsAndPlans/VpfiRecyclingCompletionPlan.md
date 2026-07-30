@@ -532,11 +532,18 @@ derived from that series, `platformRetained` from `getRecycleBucket` +
   read against `scheduleFloor[D]`, and claim-day attribution would score a
   claim spanning D-30…D against day D's floor alone.
 
-  Three bounds ship ON the surface rather than being left to be found:
+  FOUR bounds ship ON the surface rather than being left to be found:
   EXACT for the armed-day global reservation; an APPROXIMATION pre-arming
   (unarmed claim pricing reads the UNCAPPED `halfPoolForDay` while the stamp
-  records `min(schedule, freshAvailable)`); an UPPER BOUND near the 69M cap
-  where claim truncation pays less than was committed. Forfeits are
+  records `min(schedule, freshAvailable)`); ABOVE actual near the 69M cap
+  where claim truncation pays less than was committed; and **BELOW** actual
+  on a zeroed-chain day, where `remitManualBudget` later sends an
+  operator-sized fresh-only amount that retires no finalize-time commitment
+  (none existed), so the recomputation cannot see that drawdown at all.
+  **It is therefore NOT a pure upper bound** — the last two push in opposite
+  directions. The first three-bound version of this row and of the natspec
+  claimed an upper bound outright; Codex #1487 r1 caught that the
+  zeroed-chain manual path breaks it. Forfeits are
   deliberately NOT netted — a forfeited fresh share was emitted and then
   absorbed, so it belongs in `freshDrawdown[D]` and reappears in
   `absorbed[D]`; the two are complementary legs of one movement.

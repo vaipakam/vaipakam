@@ -183,18 +183,38 @@ library LibVpfiRecycle {
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
     }
 
+    /// @notice #1218 M5 — {backingPosition} cannot read a balance because the
+    ///         VPFI token address is unset. Distinct from a zero balance on
+    ///         purpose: an unconfigured Diamond and a drained one are
+    ///         different facts, and a view that returned zero for both would
+    ///         report a fresh deploy as fully depleted.
+    error RecycleBackingTokenUnset();
+
     /**
      * @notice #1218 M5 — the bucket's live BACKING position: how much VPFI
      *         the Diamond actually holds against what the ledger has
      *         labelled as recycled.
      * @dev    Lives here rather than in the reading facet because this
-     *         library owns the separation invariant it measures. {credit}
-     *         and {creditCustodyRelocated} both assert `bal >= bucket +
-     *         amount` before raising the bucket, so the property is enforced
-     *         on every INFLOW. What no path asserts is the same property
-     *         after an OUTFLOW: a fresh-only interaction-reward claim
-     *         transfers VPFI out without re-checking that the remainder
-     *         still backs `recycleBucket` (#1460).
+     *         library owns the bucket ledger it measures. {credit} and
+     *         {creditCustodyRelocated} both assert `bal >= bucket + amount`
+     *         before raising the bucket, so THAT property is enforced on
+     *         every INFLOW. What no path asserts is the same property after
+     *         an OUTFLOW: a fresh-only interaction-reward claim transfers
+     *         VPFI out without re-checking that the remainder still backs
+     *         `recycleBucket` (#1460).
+     *
+     *         It measures ONE term of the separation invariant, not the
+     *         invariant. This library's own natspec states that invariant
+     *         over THREE custody classes — `userLifCustody +
+     *         unclaimedRewardBudget + recycleBucket` — and `unearmarked`
+     *         nets only the last. That is deliberate (it is exactly #1460's
+     *         third condition, as the completion plan §M7 step 0 defines it),
+     *         but it means a healthy figure here is NOT a solvency statement
+     *         across the other two classes. An earlier revision of this
+     *         comment claimed the library "owns the separation invariant it
+     *         measures", which overstated the scope in precisely the way the
+     *         reading facet's own natspec had already been corrected for —
+     *         the same claim, un-swept, one file away.
      *
      *         `unearmarked` is exactly the quantity #1460's third condition
      *         turns on — the defect needs a non-zero bucket AND a
@@ -222,7 +242,15 @@ library LibVpfiRecycle {
         view
         returns (uint256 vpfiBalance, uint256 bucket, uint256 unearmarked)
     {
-        vpfiBalance = IERC20(s.vpfiToken).balanceOf(address(this));
+        // A raw `balanceOf` on an unset token address hits an address with no
+        // code: the call "succeeds" returning empty, and the ABI decoder then
+        // reverts with NO data. That is the worst possible failure for a
+        // transparency read — an operator on a freshly cut Diamond sees an
+        // unexplained revert and cannot tell a misconfiguration from a bug.
+        // Name it instead.
+        address token = s.vpfiToken;
+        if (token == address(0)) revert RecycleBackingTokenUnset();
+        vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
         unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
     }

@@ -365,6 +365,12 @@ contract InteractionRewardsLensFacet {
     }
 
     // ─── #1218 M5 — recycling transparency series ────────────────────────────
+
+    /// @notice {getRecycleDayMetrics} answers for the GLOBAL day pool, which
+    ///         only the canonical reward chain computes. Declared on this
+    ///         facet rather than in the shared errors interface so the ABI
+    ///         churn stays confined to the one facet that can raise it.
+    error RecycleDayMetricsCanonicalChainOnly();
     //
     // The seven figures the governor design §9 ratified for the public
     // dashboard are all derivable from state the protocol ALREADY persists —
@@ -413,8 +419,12 @@ contract InteractionRewardsLensFacet {
      *         be cheaper — a claim spanning days D-30…D would be scored
      *         against day D's floor alone.
      *
-     *         Three bounds, stated here so a consumer cannot mistake the
-     *         figure for something stronger than it is:
+     *         FOUR bounds, stated here so a consumer cannot mistake the
+     *         figure for something stronger than it is. (This header read
+     *         "Three" for one revision after the fourth item landed — the
+     *         same prose-count-versus-list drift this very PR corrects in
+     *         `DeployDiamond.s.sol`. Nothing mechanical checks either one;
+     *         if a fifth is added, this word is part of the edit.)
      *
      *         1. EXACT for the armed-day global reservation — same call,
      *            same inputs.
@@ -422,8 +432,20 @@ contract InteractionRewardsLensFacet {
      *            {halfPoolForDay} directly (the UNCAPPED half), while the
      *            stamp records `min(schedule, freshAvailable)`. The two
      *            coincide except near pool exhaustion.
-     *         3. An UPPER BOUND near the 69M cap, where claim-level
-     *            truncation pays out less than was committed.
+     *         3. Above actual near the 69M cap, where claim-level truncation
+     *            pays out less than was committed.
+     *         4. BELOW actual on a day whose chain contribution was zeroed.
+     *            {RewardRemittanceFacet.remitManualBudget} can later send an
+     *            operator-sized, fresh-only amount for that same day; it
+     *            advances `rewardBudgetRemittedGlobal` but retires no
+     *            finalize-time commitment, because none existed (that
+     *            function's own natspec records it). The drawdown is real and
+     *            this recomputation cannot see it.
+     *
+     *         So it is NOT a pure upper bound — 3 and 4 push in opposite
+     *         directions. An earlier revision of this comment claimed an
+     *         upper bound outright (Codex #1487 r1 P2), which held only until
+     *         the zeroed-chain manual path is used.
      *
      *         Which regime a given day is in is NOT readable from this call —
      *         compare `dayId` against `armedFromDay` from
@@ -447,20 +469,42 @@ contract InteractionRewardsLensFacet {
      * @param  dayId Interaction-reward schedule day index.
      * @return stamped        True once the day finalized. While false the
      *         three POOL figures are zero and must not be read as real
-     *         zeros — an unfinalized day has no pool, not an empty one. The
-     *         two ABSORBED figures stay live either way: credits land on the
-     *         day they occur, well before that day finalizes, so gating them
-     *         on the stamp would hide real absorption on the current day.
+     *         zeros — an unfinalized day has no pool, not an empty one.
+     *
+     *         The two ABSORBED figures are still returned while `stamped` is
+     *         false, but they are NOT equally live and an earlier revision of
+     *         this comment wrongly said they were. `absorbedLocal` genuinely
+     *         is: a credit lands on the day it happens, so gating it on the
+     *         stamp would hide real absorption on the day in progress.
+     *         `absorbedMirror` LAGS — it advances only when a mirror's report
+     *         for that day is accepted, and a mirror cannot close day D until
+     *         its own clock has passed D. So mid-day-D the mirror term is
+     *         STRUCTURALLY zero however much those chains absorbed. Summing
+     *         the pair on an unfinalized day therefore understates global
+     *         absorption, by an amount that is not bounded by anything
+     *         readable here. Read the sum as global only for a FINALIZED day;
+     *         before that, read `absorbedLocal` as this chain's own figure and
+     *         do not present the total as global.
      * @return scheduleFloor  Fresh (pre-fund) half of the day's pool.
      * @return recycledBudget Absorption-coupled recycled half. With
      *         `scheduleFloor` this gives `dailyPool` and hence
      *         `selfFundingRatio[D]`.
      * @return freshDrawdown  `netEmission[D]` — the schedule floor actually
-     *         drawn fresh, subject to the three bounds above.
+     *         drawn fresh, subject to the four bounds above.
      * @return absorbedLocal  This chain's own day-`dayId` recycle credits.
      * @return absorbedMirror Day-`dayId` credits accepted from mirror
      *         chains' reports. `absorbedLocal + absorbedMirror` is the
      *         global `absorbed[D]`.
+     *
+     *         A LOWER bound once the day is finalized, and it is stated here
+     *         because the sibling `freshDrawdown` carries four stated bounds
+     *         and this one carried none. The ingress rejects reports for a
+     *         finalized day, so a mirror whose report arrives late
+     *         contributes nothing to this figure — ever. The absorption was
+     *         real and is counted in that chain's own cumulative; only its
+     *         attribution to THIS day is lost. Treat a rising series as
+     *         evidence of absorption and never a flat one as evidence of its
+     *         absence.
      */
     function getRecycleDayMetrics(uint256 dayId)
         external
@@ -475,6 +519,33 @@ contract InteractionRewardsLensFacet {
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1218 M5 (Codex #1487 r1 P2) — these are GLOBAL figures and only
+        // the canonical chain computes them. A mirror is not merely missing
+        // data, it answers WRONGLY in two different ways: under the V2
+        // broadcast it never receives `dayPoolStamp` at all, so a globally
+        // finalized day reads `stamped == false`; under the legacy broadcast
+        // it DOES get a stamp, but `dailyGlobal*InterestNumeraire18` is
+        // written only by Base's `finalizeDay`, so `committableForDay` reads
+        // unset denominators and returns a `freshDrawdown` of zero next to a
+        // real floor. The second is the dangerous shape — a plausible number
+        // rather than an obviously absent one, which is precisely the failure
+        // this PR fixes for `absorbed[D]`.
+        //
+        // Failing loudly is the right answer and costs a mirror nothing: its
+        // own local absorption is already readable through
+        // {ConfigFacet.getRecycledCreditedByDay}, and the per-chain mesh
+        // ledger through {RewardAggregatorFacet}. Nothing here is the only
+        // route to anything a mirror legitimately holds.
+        // Gated on "IS canonical", not on "is a mirror". `isMirrorRewardChain`
+        // is `!isCanonical && baseChainId != 0`, so an UNWIRED Diamond
+        // (baseChainId still 0) is neither, and a mirror-shaped guard would
+        // wave it through. Nothing is lost by refusing there — the only
+        // writers of the state below are `onlyCanonical` — and failing closed
+        // means a half-configured deployment cannot serve a global figure it
+        // has no way to compute.
+        if (!s.isCanonicalRewardChain) {
+            revert RecycleDayMetricsCanonicalChainOnly();
+        }
         LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
         absorbedLocal = s.recycledCreditedByDay[dayId];
         absorbedMirror = s.dayMirrorRecycledCredit[dayId];
@@ -506,6 +577,21 @@ contract InteractionRewardsLensFacet {
      *         growth overstates the reserve by counting committed-but-
      *         unclaimed user liabilities as retained margin.
      *
+     *         That justification covers only the OVERSTATING direction, and
+     *         the error runs the other way too: `platformRetained` can read a
+     *         FALSE ZERO on the canonical chain. When a wedged recycled
+     *         remittance is released, {LibVpfiRecycle.restoreReleasedRemit}
+     *         adds the full amount back to `outstandingCommitRecycled` while
+     *         deliberately NOT re-crediting `recycleBucket` — those tokens
+     *         are locked in transport, so re-crediting would mint unbacked
+     *         ledger. The subtraction then goes negative and floors at zero,
+     *         reporting no retained reserve where value genuinely remains.
+     *         The gap is not lost: it is what moved into
+     *         `recycleReleasedRemitStrandedCumulative`, readable through
+     *         {RewardAggregatorFacet.getRecycleCompositionPosition}. Read
+     *         that beside this, or a stranded remittance renders as a
+     *         depleted platform reserve.
+     *
      *         `vpfiBalance` / `unearmarked` are NOT in §9. They are here
      *         because every other figure on this surface is computed from
      *         stored COUNTERS, and counters cannot notice that the tokens
@@ -527,10 +613,35 @@ contract InteractionRewardsLensFacet {
      *         A zero here is ambiguous by construction — fully consumed and
      *         in breach look identical. Compare `vpfiBalance` against
      *         `bucket` to separate them.
+     *
+     *         **Scoped to #1460, and NOT a general solvency figure.** It nets
+     *         ONE custody class. {LibVpfiRecycle}'s separation invariant names
+     *         THREE — `userLifCustody + unclaimedRewardBudget + recycleBucket`
+     *         — and the Diamond really does hold the first: borrower LIF paid
+     *         in at `acceptOffer` and held until settlement
+     *         (`borrowerLifRebate[loanId].vpfiHeld`). That VPFI sits INSIDE
+     *         this figure. Matching #1460's third condition is deliberate:
+     *         the completion plan §M7 step 0 defines it as exactly
+     *         `balanceOf − recycleBucket`, and for detecting a scheduled
+     *         payout eating recycle backing that is the correct subtraction.
+     *         But a payout consuming LIF custody is a DIFFERENT defect, and
+     *         this number cannot see it. Do not read a healthy value here as
+     *         "the Diamond is solvent across all custody classes".
      * @return outstandingRecycled Σ armed recycled commitments not yet
      *         consumed — the subtrahend of `platformRetained`.
-     * @return paidOutRecycled     Cumulative recycled payouts, the bucket's
-     *         lifetime outflow.
+     * @return paidOutRecycled     The bucket's LIVE net consumed figure —
+     *         NOT a monotonic cumulative and NOT lifetime outflow (Codex
+     *         #1487 r1 P2 corrected this label, which claimed both).
+     *         {LibVpfiRecycle.consume} advances it when a recycled
+     *         remittance is SENT, before any delivery acknowledgement, and
+     *         {LibVpfiRecycle.restoreReleasedRemit} DECREMENTS it when that
+     *         remittance is released. So during an in-flight send it counts
+     *         tokens nobody has been paid, and after a release it omits
+     *         tokens that physically left the Diamond and are stranded in
+     *         transport. The released amount is not lost to accounting —
+     *         it moves to `recycleReleasedRemitStrandedCumulative`, readable
+     *         via {RewardAggregatorFacet.getRecycleCompositionPosition};
+     *         read the two together to reconstruct gross outflow.
      */
     function getRecycleBackingSnapshot()
         external

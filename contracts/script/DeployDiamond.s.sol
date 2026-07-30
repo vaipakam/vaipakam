@@ -529,7 +529,7 @@ contract DeployDiamond is Script {
         );
         // #1306 follow-up — InteractionRewardsLensFacet: the read-only view /
         // getter surface split off InteractionRewardsFacet (cuts[25]) for
-        // EIP-170 headroom. Shares LibVaipakam storage; the 14 view selectors
+        // EIP-170 headroom. Shares LibVaipakam storage; the view selectors
         // route here instead of the (now leaner) mutating facet.
         cuts[65] = _buildCut(
             address(interactionRewardsLensFacet),
@@ -2117,10 +2117,19 @@ contract DeployDiamond is Script {
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet} for
-    ///      EIP-170 headroom. These 19 selectors route to the lens facet.
-    ///      (The count read "14" while the array held 17 — a stale figure
-    ///      two prior additions each left behind. Nothing verifies a prose
-    ///      count against an array length, so it is stated once, here.)
+    ///      EIP-170 headroom. These selectors route to the lens facet.
+    ///
+    ///      The COUNT is deliberately not written down here, or anywhere.
+    ///      It read "14" against an array of 17 — stale from two prior
+    ///      additions — and the same "14" had also settled into two other
+    ///      comments (this file's cut block below, and
+    ///      `RefreshAllFacetsInPlace.s.sol`'s re-point note). A first attempt
+    ///      at this fix updated the number and asserted it was "stated once,
+    ///      here", which was itself false and would have sent the next
+    ///      person to three disagreeing figures. Nothing mechanical checks a
+    ///      prose count against an array length, so the durable fix is to
+    ///      stop writing the number: `s.length` is the answer and it cannot
+    ///      go stale.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](19);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
