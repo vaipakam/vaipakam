@@ -391,7 +391,7 @@ fi
 # exactly the historical amount, so `ops/mesh-watcher` pages CRITICAL twice
 # from its first tick — on state the supported release path produced.
 #
-# The seed is NOT run automatically: it is ADMIN + onlyCanonical, one-shot,
+# The seed is NOT run automatically: it is ADMIN-gated, one-shot,
 # and it reverts if the derived total does not reconcile both relations. That
 # refusal is the point — it must not be able to quiet a real discrepancy — so
 # it stays a deliberate operator action.
