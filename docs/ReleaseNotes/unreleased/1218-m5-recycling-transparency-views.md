@@ -1,4 +1,4 @@
-## Thread — the recycling dashboard's missing numbers, and one that was wrong (PR #1218 M5)
+## Thread — the recycling dashboard's missing numbers, and one that was wrong (PR #1487)
 
 The recycling programme has been publishing nothing about itself. The design settled a year's worth of argument about *which* numbers the platform should show — seven of them, ratified in the balance-governor design — and then the surface to show them was never built. This adds the two reads that were genuinely missing, and it turns out that is the whole contract-side gap: every one of the seven figures is derivable from state the protocol already keeps, so nothing new is stored and no new event is emitted.
 
