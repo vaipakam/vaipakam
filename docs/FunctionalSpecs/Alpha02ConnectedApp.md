@@ -324,6 +324,19 @@ Thin-market honesty rules apply.
   open offer after posting. Nobody can opt a counterparty in, and a
   signed-order maker has no opt-in surface until the gasless order shape
   carries one.
+- **A party's Full authorization is honoured whichever venue fills their
+  offer.** A standing offer armed with Full is charged the tariff when it is
+  filled by a keeper matching it against a counterparty offer, exactly as it
+  would be on a direct acceptance — the authorization belongs to the party who
+  signed it, not to the route the fill took. The app may therefore present an
+  armed standing offer identically regardless of how it is expected to fill,
+  and must not imply that a matched fill escapes the tariff. The counterparty
+  side is unaffected: each side is resolved from its own signed artifact, so a
+  party who armed nothing is never charged because the other side armed
+  something. The refusal posture travels with the authorization too: while
+  the feature is off, an armed offer whose owner did not permit a downgrade
+  cannot be filled by a match any more than it can be accepted directly — the
+  app must not present a matched fill as a way around a strict opt-in.
 - New Full opt-ins can be collected only while the on-chain fee-entitlement
   feature is enabled. While the feature is off (the launch posture), no
   opt-in control renders — a Full authorization presented while the feature

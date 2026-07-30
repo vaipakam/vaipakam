@@ -291,6 +291,16 @@ read and write a subset of the shared tables via the same binding
 directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.
 
+**`NNNN` must be unique** — enforced by
+`apps/indexer/scripts/check-migration-prefixes.mjs` (wired into
+`pnpm --filter @vaipakam/indexer typecheck`). D1 keys its applied record
+on the FILENAME, so two files sharing a number both apply and nothing
+looks wrong; what breaks is REPLAY ORDER on a fresh environment, which
+sorts lexicographically by slug and need not match the order production
+experienced. One historical collision (`0011`) is grandfathered in the
+script with its reasoning — **do not renumber an already-applied
+migration**, since that changes its `d1_migrations` key and re-runs it.
+
 The `ops/lz-watcher` Worker uses a **separate** D1 (`vaipakam-lz-alerts-db`,
 schema in `ops/lz-watcher/migrations/`) for trust-boundary reasons —
 its internal ops alerts must not co-locate with user-facing data. Don't

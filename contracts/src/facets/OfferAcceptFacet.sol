@@ -1709,10 +1709,40 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.assetType != LibVaipakam.AssetType.ERC20) return false;
         if (s.saleOfferToLoanId[offerId] != 0) return false;
-        return
+        if (
             LibVaipakam.cfgFeeEntitlementEnabled() ||
             (s.acceptAckActive && s.acceptAckAcceptorFull) ||
-            offer.creatorFull;
+            offer.creatorFull
+        ) return true;
+
+        // #1369 — a matched fill accepts the BORROWER offer, so the lender's
+        // authorization lives on THEIR offer and none of the three tests
+        // above can see it. `chargeFullTariff` was taught to read it; this
+        // predicate decides whether that function is entered at all, so
+        // leaving it behind would let the two DISAGREE about where lender
+        // auth lives — and the disagreement is only visible in the
+        // configuration that matters most.
+        //
+        // With the master switch ON the first disjunct already short-circuits
+        // this to true, so the extra read costs nothing on the live path. It
+        // binds when the switch is OFF (today's posture, and permanent on
+        // every non-canonical VPFI chain): there, a lender who armed Full
+        // with `allowFullDowngrade == false` must have the fill REVERT
+        // `FeeEntitlementDisabled` (rev-14 kill-switch rule; silently
+        // continuing as non-Full is named Forbidden). Skipping the tariff
+        // call entirely is exactly that forbidden silent continue, and it
+        // would make the fail-closed guarantee depend on which venue filled
+        // the offer.
+        //
+        // Guarded on `!isLenderOffer` to mirror `chargeFullTariff` exactly:
+        // a matched LENDER offer already resolves through `offer.creatorFull`
+        // above, so the two helpers cannot drift on which side this covers.
+        uint256 lenderAuthOfferId = s.matchLenderAuthOfferId;
+        return
+            s.matchOverride.active &&
+            offer.offerType != LibVaipakam.OfferType.Lender &&
+            lenderAuthOfferId != 0 &&
+            s.offers[lenderAuthOfferId].creatorFull;
     }
 
     /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
