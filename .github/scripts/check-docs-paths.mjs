@@ -214,7 +214,13 @@ for (const file of docs) {
     // went straight through.
     const tokens = [
       ...[...line.matchAll(/`([^`\s]+)`/g)].map((m) => ({ raw: m[1], link: false })),
-      ...[...line.matchAll(/\]\(\s*<?([^)\s>]+)>?(?:\s+["'(][^)]*)?\s*\)/g)].map((m) => ({
+      // The angle-bracket form is matched FIRST and separately, because markdown
+      // permits SPACES inside it (#1467 r7) — `](<a path with spaces>)` — which
+      // a whitespace-excluding capture cannot see at all, so a broken clickable
+      // link produced no token. Anything but `>` and a newline is the
+      // destination.
+      ...[...line.matchAll(/\]\(\s*<([^>\n]+)>/g)].map((m) => ({ raw: m[1].trim(), link: true })),
+      ...[...line.matchAll(/\]\(\s*([^)\s<>]+)(?:\s+["'(][^)]*)?\s*\)/g)].map((m) => ({
         raw: m[1],
         link: true,
       })),
