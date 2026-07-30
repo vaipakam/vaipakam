@@ -9,13 +9,36 @@
 # gap is visible in the Actions tab. It never fails the run — these are
 # disciplines, not merge gates.
 #
+# It also runs two MECHANICAL docs checks, added after three review rounds
+# found the same secret-in-a-command-line defect in three different runbook
+# steps, and a route citation that was wrong in three documents at once.
+# Neither class is preventable by discipline — nothing tells the author of a
+# rename which prose mentions the old name — so both are re-checked here on
+# every push and PR:
+#
+#   - check-docs-secret-argv.mjs  — no credential in an external command's
+#     argv (readable from `ps` for the process's lifetime).
+#   - check-docs-paths.mjs        — cited repo paths and `/app/...` routes
+#     resolve.
+#
+# Both RATCHET against a committed baseline: they fail only when a file
+# GAINS findings, so the existing backlog (#1462) is frozen rather than
+# blocking, and a check that is red on day one cannot become one that gets
+# muted. See .github/scripts/docs-check-ratchet.mjs for why per-file and
+# directional.
+#
 # (Filename kept as release-notes-drift.yml for stable references; the
-# check now covers functional specs too.)
-name: Docs-drift check (release notes + functional specs)
+# check now covers functional specs and the mechanical checks too.)
+name: Docs-drift check (release notes + functional specs + mechanical)
 
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '.github/scripts/check-docs-*.mjs'
+      - '.github/docs-check-baselines/**'
 
 permissions:
   contents: read
@@ -29,6 +52,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check for release-note + functional-spec updates
+        if: github.event_name == 'push'
         env:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
@@ -80,3 +104,41 @@ jobs:
           if [ "$ok" = 1 ]; then
             echo "Docs-drift check OK." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # ── Mechanical docs checks (ratcheted) ────────────────────────────
+      #
+      # NON-BLOCKING, matching this workflow's existing philosophy: the
+      # step reports and never fails the run. That is a deliberate
+      # limitation rather than an oversight — a warning does not stop a new
+      # instance merging. Flipping the `|| true` off makes this a real gate
+      # once the team is happy with the signal.
+      # No `setup-node`: `ubuntu-latest` ships a current Node, and these
+      # scripts use only ESM + `node:fs`/`node:child_process`. Avoiding the
+      # action also avoids the allowlist hazard — a `uses:` whose exact SHA
+      # is not allowlisted fails the WHOLE workflow at startup, not just the
+      # step, and this repo pins a different setup-node SHA elsewhere.
+      - name: Mechanical docs checks (secrets in argv; stale paths/routes)
+        run: |
+          set -uo pipefail
+          fail=0
+          for check in check-docs-secret-argv check-docs-paths; do
+            echo "::group::$check"
+            if node ".github/scripts/$check.mjs"; then
+              echo "$check: OK"
+            else
+              fail=1
+              echo "::warning title=$check::A docs file GAINED findings — see the job log. Fix it, or if the finding is deliberate, explain it in the PR."
+              {
+                echo "### ⚠️ $check"
+                echo ""
+                echo "A \`docs/\` file gained findings against the committed"
+                echo "baseline. Either fix it, or — if the reference is"
+                echo "deliberately historical — move it under a skipped"
+                echo "directory or lower the baseline with a stated reason."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "::endgroup::"
+          done
+          [ "$fail" = 0 ] && echo "Mechanical docs checks OK." >> "$GITHUB_STEP_SUMMARY"
+          # Non-blocking by design — see the comment above this step.
+          exit 0
