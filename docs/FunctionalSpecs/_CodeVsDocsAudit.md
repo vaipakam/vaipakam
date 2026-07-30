@@ -126,9 +126,14 @@ half for an unarmed day.
 
 - **Budget layer — the spec's subject.** `RewardAggregatorFacet._finalizeAndWrite`
   stamps every finalized day, and its UNARMED branch sets
-  `recycledBudget = schedule == 0 ? 0 : min(fundable, coupled)` — a NON-zero
-  recycled portion MEASURED AGAINST the canonical chain's own bucket (not drawn
-  from it — see the follow-up below), written into
+  `recycledBudget = schedule == 0 ? 0 : min(fundable, coupled)` — a recycled
+  portion MEASURED AGAINST the canonical chain's own bucket (not drawn from it —
+  see the follow-up below), and **possibly zero**: the formula yields 0 on day 0
+  and whenever `fundable` or `coupled` is 0. (This line said "NON-zero" until
+  #1457 r18. The summary row and the release note were corrected a round
+  earlier and this one was missed, leaving the entry internally inconsistent —
+  the overstatement was load-bearing for the refutation, which is exactly why it
+  should not have survived anywhere.) Written into
   `dayPoolStamp[dayId].recycledBudget`. That is Phase A′ exactly as specified.
 - **Claim / reservation layer — the cited functions.** While
   `governorCommitArmedFromDay == 0`, the stamp is deliberately a RECORD ONLY and

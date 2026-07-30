@@ -521,9 +521,15 @@ GovernanceRunbook gains a recycling section, executed in order:
    the claim path; `RewardAggregatorFacet` currently states the separation
    as enforced, which it is not; no test asserts it across a **paying**
    claim; and `ops/mesh-watcher` reads no `balanceOf`, so it cannot see the
-   shortfall either. **Arming the recycled programme over this makes the
-   corruption reachable in production**, which is why it sits above the
-   arming step rather than beside it. Closing it means the separation
+   shortfall either. **Arming does not make the corruption
+   reachable — it is reachable now (see the opening of this step). What
+   arming adds is a party that NOTICES: recycled claims begin, and one of
+   them fails over a shortfall an earlier scheduled claim caused.** This
+   sentence claimed reachability until #1457 r18, ten lines below the
+   correction, which is the same deferral licence in the same step. It sits
+   above the arming step because arming over an existing corruption converts
+   quiet book damage into user-visible claim failures, not because arming is
+   what creates it. Closing it means the separation
    enforced at claim time AND asserted across a paying claim — not only at
    the credit chokepoint.
 
