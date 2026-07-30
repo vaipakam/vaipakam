@@ -179,8 +179,10 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
      missing, reuse if present.
    - Set the FOUR lifecycle rules from `bucket-lifecycle.json` (the setup
      script reads that file rather than carrying its own copy): `archives/`
-     and `manifests/` at 20 + 9 = 29 days worst case, `archives-monthly/`
-     and `manifests-monthly/` at 334 + 31 = 365. The yearly prefixes get
+     and `manifests/`, plus their `-monthly/` counterparts — with the values
+     read from that file, not restated here (this line carried a copy of the
+     arithmetic until #1471 r10, four sections below the claim that the numbers
+     are not repeated in this README). The yearly prefixes get
      NO rule, which is what gives them indefinite retention — an earlier
      revision of this line said "six rules … yearly indefinite", which
      described a rule that does not and should not exist. (Their being

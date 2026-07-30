@@ -75,6 +75,25 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DECL = join(HERE, '..', 'bucket-lifecycle.json');
 
+// CONFLICTING MODE FLAGS ARE REFUSED (#1471 r10). The precedence below is
+// `--apply` first, so `--check --apply` (an operator appending a diagnostic to
+// a retried command, say) silently WROTE production lifecycle state while
+// reading like a dry run. Ranking modes is the wrong shape for flags whose
+// blast radii differ this much.
+{
+  const picked = ['--apply', '--check', '--print-live'].filter((f) =>
+    process.argv.includes(f),
+  );
+  if (picked.length > 1) {
+    console.error(
+      `Refusing to run: mutually exclusive modes given (${picked.join(' ')}). ` +
+        'Pass exactly one of --print-live, --check, --apply. ' +
+        '(--apply WRITES; the other two only read.)',
+    );
+    process.exit(2);
+  }
+}
+
 const mode = process.argv.includes('--apply')
   ? 'apply'
   : process.argv.includes('--print-live')
@@ -127,7 +146,26 @@ async function b2(url, init = {}) {
 }
 
 async function main() {
-  const declared = JSON.parse(readFileSync(DECL, 'utf8'));
+  // PARSING IS ALSO DEFERRED FOR print MODE (#1471 r10). An UNPARSEABLE
+  // declaration is the most likely state while repairing one, and it broke
+  // `--print-live` with a raw JSON syntax error — the same defect as the
+  // malformed-`rules` case, one step earlier in the pipeline. Fixing only the
+  // reported step would have left the class open.
+  let declared;
+  try {
+    declared = JSON.parse(readFileSync(DECL, 'utf8'));
+  } catch (err) {
+    if (mode === 'print') {
+      console.warn(
+        `(bucket-lifecycle.json is unreadable: ${err.message} — printing live ` +
+          `state anyway, which needs nothing from it.)`,
+      );
+      declared = { bucket: process.env.BACKBLAZE_BUCKET, rules: [] };
+    } else {
+      console.error(`bucket-lifecycle.json could not be parsed: ${err.message}`);
+      process.exit(1);
+    }
+  }
   // `setup-backblaze.mjs` supports a `BUCKET_NAME` override — the README tells
   // forks to pick a unique name, since B2 bucket names are globally unique — so
   // setup can legitimately be operating on a bucket this declaration does not
@@ -206,6 +244,19 @@ async function main() {
     );
     process.exit(2);
   }
+  // SHAPE FIRST (#1471 r10). `assertPolicyCeilings` iterates `decl.rules`, so a
+  // missing or malformed member surfaced as a raw TypeError ("Cannot read
+  // properties of undefined") rather than as advice. Caught by running the
+  // case rather than by reading the diff: my first attempt at this guard sat
+  // below the ceiling check and never fired.
+  if (mode !== 'print' && !Array.isArray(declared.rules)) {
+    console.error(
+      `bucket-lifecycle.json: \`rules\` is ${declared.rules === undefined ? 'missing' : 'not an array'}. ` +
+        'Fix the declaration — `--print-live` still works and needs nothing from it.',
+    );
+    process.exit(1);
+  }
+
   // Ceilings live in ONE module both writers import — see lifecycle-policy.mjs
   // for the promises, the arithmetic, and why each bound is what it is. The
   // first version of this check lived only here, which left the setup script
@@ -226,13 +277,22 @@ async function main() {
   }
 
   const live = normalise(bucket.lifecycleRules);
-  const want = normalise(declared.rules);
 
+  // PRINT BEFORE TOUCHING THE DECLARATION (#1471 r10). `--print-live` reports
+  // live state and does not consult the declaration, so normalising it first
+  // meant a missing or malformed `rules` member threw before the print branch
+  // was reached — defeating r6's whole point, which was that the one
+  // diagnostic an operator needs while REPAIRING a broken declaration must not
+  // depend on that declaration being valid. r6 skipped the ceiling check for
+  // this mode and left the parse in the shared path; same intent, one line
+  // further down.
   if (mode === 'print') {
     console.log(`live rules on ${bucket.bucketName}:`);
     console.log(fmt(live) || '    (none — B2 default: every version kept forever)');
     return 0;
   }
+
+  const want = normalise(declared.rules);
 
   const same = JSON.stringify(live) === JSON.stringify(want);
 

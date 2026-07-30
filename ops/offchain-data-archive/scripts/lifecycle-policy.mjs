@@ -101,6 +101,28 @@ export const MIN_RECOVERY_DAYS_MONTHLY = 31;
 export function assertPolicyCeilings(decl, fail) {
   const byPrefix = new Map(decl.rules.map((r) => [r.fileNamePrefix, r]));
 
+  // THE YEARLY PREFIXES MUST CARRY NO RULE (#1471 r10). Their indefinite
+  // retention IS the absence of a rule — and this validator iterated only the
+  // daily and monthly groups, so a rule accidentally declared for
+  // `archives-yearly/` or `manifests-yearly/` was ignored here and forwarded
+  // to B2 by both writers. That would silently start expiring the legal-audit
+  // durability tier, which is the one tier nothing else would notice: no
+  // healthcheck reads it (#1476) and no promise caps it, so there is no other
+  // signal.
+  const YEARLY_PREFIXES = ['archives-yearly/', 'manifests-yearly/'];
+  for (const r of decl.rules) {
+    if (YEARLY_PREFIXES.includes(r.fileNamePrefix)) {
+      fail(
+        `bucket-lifecycle.json declares a rule for "${r.fileNamePrefix}". The ` +
+          `yearly prefixes must have NO rule — their indefinite retention is ` +
+          `exactly that absence, and it exists for legal-audit durability. Any ` +
+          `rule here starts expiring that tier, and nothing else would report ` +
+          `it: no healthcheck examines those prefixes (#1476) and no published ` +
+          `promise bounds them.`,
+      );
+    }
+  }
+
   const groups = [
     { prefixes: DAILY_PREFIXES, max: DAILY_MAX_TOTAL_DAYS,
       floor: MIN_RECOVERY_DAYS_DAILY, promise:
