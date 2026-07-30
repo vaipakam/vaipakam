@@ -1,37 +1,35 @@
-### The nightly backup notification now records the archive's full fingerprint
+### Nightly backup notification records the full archive fingerprint
 
-The backup pipeline writes an encrypted archive each night and posts a short
-summary to the operator channel: which files it wrote, how big, how many rows,
-and a shortened fingerprint of the archive. That fingerprint is now recorded
-in full.
+The nightly off-chain backup posts an ops summary to the operator Telegram
+channel. It used to include only the first 16 characters of the archive's
+fingerprint, which is too short to compare anything against later. It now
+records the whole thing. The extra characters cost nothing.
 
-It reads like a cosmetic change and is not. The restore path's existing checks
-establish that an archive is **intact** and was encrypted with our key. They
-cannot establish **who wrote it** — and the two are different questions with
-the same-looking answer. Anyone able to edit the backup service holds both the
-credential that writes to the storage provider and the key that encrypts, so
-they can produce an archive of their own choosing that is correctly
-fingerprinted and genuinely decrypts. Every verification in the restore
-procedure then passes, and the procedure's rule of taking the newest archive
-selects it.
+**A correction, recorded because the mistake is an easy one to repeat.**
+This change was originally justified as closing a real gap: that the
+backup's own manifest can prove an archive is intact and encrypted under
+our key, but cannot prove *who wrote it* — so someone who had taken over
+the backup system could upload a replacement archive with a perfectly
+consistent manifest, and every check the recovery procedure makes would
+pass. That gap is real. The claim that this notification closed it was
+wrong, in three separate ways:
 
-The operator channel is the one record in that chain the same credentials
-cannot rewrite. New messages can be posted, but a message sent on a given
-night stays as it was — so comparing a candidate archive against what was
-recorded at the time is a check the storage side cannot forge. That is the
-only such check available today.
+- The credentials that let someone forge the archive also let them post to
+  the operator channel. They come from the same place. A record cannot
+  vouch for whoever wrote it.
+- The channel is not a permanent record. A bot can edit and delete its own
+  messages, so the original entry is not fixed once posted.
+- Nothing reads it. The recovery procedure checks the archive against its
+  own manifest and never against what was announced at the time.
 
-Binding a candidate to that record needs the whole fingerprint. Shortened, it
-pinned a small fraction of it, and the party being defended against chooses
-the contents being fingerprinted — so they can search for something that
-matches a short prefix. At full length that search stops being worth
-attempting.
+The full fingerprint is still worth recording — an operator comparing two
+candidate archives by hand needs all of it — but as an aid, not a
+safeguard. The real gap is now tracked separately, along with what closing
+it actually requires: a record the backup system itself cannot write to,
+and a recovery step that consults it.
 
-This does not make a forged archive impossible; it makes one detectable by an
-operator who checks. Preventing it outright is a storage-configuration
-question — immutability settings on the bucket — recorded separately, along
-with the finding that the current settings delete a replaced file after about
-a day, so a genuine archive that gets overwritten is not available to fall
-back on for long.
-
-Part of #1469.
+**Also fixed:** a nightly run whose ops notification failed to send used to
+report success and move on, leaving a backup that exists with no record of
+it anywhere an operator looks. The upload has already happened by then, so
+this cannot fail the run — but it is now written to the Worker log, which
+is the only channel left when the alert channel is the thing that broke.

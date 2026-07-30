@@ -244,41 +244,61 @@ async function openSupportTicketCount(env: Env): Promise<string> {
 async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
   try {
     const out = await runNightlyBackup(env, cfg);
-    await tg(
+    // A failed ops notification must not pass silently (#1470 r1). `tg()`
+    // returns false for unset credentials, a non-2xx, or a network error,
+    // and discarding that left a nightly run reporting success with no
+    // record of it anywhere an operator looks. The upload already happened,
+    // so this must not fail the run — but it CAN make the gap visible in
+    // the Worker log, which is the only channel left when the alert channel
+    // is the thing that broke.
+    const notified = await tg(
       env,
       [
         '✅ Nightly off-chain backup succeeded',
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
-        // FULL digest, not truncated (#1469). This message is the archive's
-        // only PROVENANCE anchor, and provenance — not integrity — is the
-        // actual gap in the restore path.
+        // FULL digest, not truncated (#1469). The reason is mundane: a
+        // 16-character prefix is not enough to compare anything against
+        // later, and the other 48 characters are free.
         //
-        // A manifest's own `archive.sha256` proves the archive is intact and
-        // was encrypted under our key. It cannot say WHO wrote it: an
-        // attacker holding the Worker's B2 write key and the AES key (the
-        // same Workers-Edit compromise yields both) can upload a forged
-        // archive with a self-consistent manifest, and every check in the
-        // restore path passes. Integrity is not provenance.
+        // THIS IS NOT A PROVENANCE ANCHOR, and an earlier version of this
+        // comment claimed it was. The claim was wrong three times over, and
+        // is recorded here because the mistake is easy to repeat:
         //
-        // This channel closes that, because it is append-only with respect
-        // to the credentials involved: an attacker can post NEW messages,
-        // but cannot rewrite the message sent on the night in question. So
-        // an operator can bind a candidate archive to what was recorded at
-        // the time — which is the one comparison the B2 side cannot forge.
+        //   1. The SAME credential writes both sides. A Workers-Edit
+        //      compromise yields the B2 write key AND `TG_OPS_BOT_TOKEN`
+        //      from this one environment, so whoever can forge the archive
+        //      can also write the record that would attest to it. A record
+        //      cannot vouch for its own author.
+        //   2. The channel is not append-only. Telegram's `editMessageText`
+        //      lets a bot edit its own messages and `deleteMessage` lets it
+        //      remove them, so "cannot rewrite the message sent that night"
+        //      was simply false.
+        //   3. Nothing reads it. `OffChainRestore.md` verifies the
+        //      manifest's self-reported SHA, byte length and row counts and
+        //      never compares them to any operator record, so even a
+        //      trustworthy anchor would not be consulted.
         //
-        // That binding needs the WHOLE digest. Truncated to 16 hex chars it
-        // pinned only 64 bits, and the attacker chooses the plaintext (they
-        // pick which rows to plant), so they can grind freely against a
-        // 64-bit target. 256 bits makes it infeasible instead of merely
-        // expensive. The extra 48 characters cost nothing here.
+        // The underlying gap is real — a manifest proves integrity, never
+        // authorship, so a forged archive with a self-consistent manifest
+        // passes every check the restore makes. Closing it needs a store
+        // this Worker cannot write to, and a restore step that consults it.
+        // Tracked as #1473; this line is not that.
         `  sha256: ${out.archiveSha256}`,
         `  rows: ${out.rowsBackedUp}, R2 objects: ${out.r2ObjectsBackedUp}`,
         `  open support tickets: ${await openSupportTicketCount(env)}`,
         `  took ${(out.durationMs / 1000).toFixed(1)} s`,
       ].join('\n'),
     );
+    if (!notified) {
+      console.warn(
+        `[cloud-backup] nightly SUCCEEDED but the ops notification did not send. ` +
+          `archive=${out.archiveKey} sha256=${out.archiveSha256} ` +
+          `rows=${out.rowsBackedUp} r2Objects=${out.r2ObjectsBackedUp}. ` +
+          `The backup exists in B2; only the record of it is missing.`,
+      );
+    }
   } catch (err) {
     const msg = (err as Error).message;
     await tg(env, `🚨 Nightly backup FAILED: ${msg}`);
