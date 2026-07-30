@@ -39,17 +39,15 @@ name: Docs-drift check (release notes + functional specs + mechanical)
 on:
   push:
     branches: [main]
+  # NO `paths:` filter (#1467 r3). Any tracked file under any repository root
+  # can be the TARGET of a citation, so deleting or renaming one makes a
+  # document stale without touching that document — and a filter listing
+  # inputs can never enumerate that. An earlier filter listed `docs/**` plus
+  # the checker's own files and still missed the commonest case: a PR that
+  # removes `contracts/script/Foo.s.sol` while every citation of it sits
+  # untouched. The check takes seconds; running it always is cheaper than a
+  # filter that is wrong in the direction of silence.
   pull_request:
-    paths:
-      - 'docs/**'
-      # Every INPUT that decides these checks' verdicts, not just the
-      # checkers themselves (#1467 r1). `App.tsx` is where the mounted-route
-      # list is derived from, and the ratchet + shell parser implement the
-      # verdicts — a PR removing a route or breaking either module would
-      # otherwise get its first signal from the non-blocking post-merge job.
-      - '.github/scripts/**'
-      - '.github/docs-check-baselines/**'
-      - 'apps/defi/src/App.tsx'
 
 permissions:
   contents: read
@@ -136,7 +134,15 @@ jobs:
       # action also avoids the allowlist hazard — a `uses:` whose exact SHA
       # is not allowlisted fails the WHOLE workflow at startup, not just the
       # step, and this repo pins a different setup-node SHA elsewhere.
-      - name: Mechanical docs checks (secrets in argv; stale paths/routes)
+      - name: Mechanical docs checks (stale paths/routes)
+        env:
+          # The revision the ratchet polices its baseline against. `before` on
+          # a push; the PR's own base branch otherwise — never a hardcoded
+          # `main`, which on a push to main compares the baseline with itself.
+          DOCS_CHECK_BASE_REF: >-
+            ${{ github.event_name == 'push'
+                && github.event.before
+                || format('origin/{0}', github.base_ref) }}
         run: |
           set -uo pipefail
           fail=0

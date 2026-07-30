@@ -49,14 +49,27 @@ function baseRevisionBaseline(path) {
   // second, and it would flag a brand-new baseline as "grown" against a
   // format that never existed upstream. Both were live bugs in the first cut
   // of this function.
+  // The base comes from the WORKFLOW EVENT when CI provides one, not from a
+  // hardcoded `origin/main` (#1467 r3). Hardcoding was wrong in two live
+  // cases: on a push to `main`, `origin/main` is already the pushed tip, so
+  // the baseline was compared against ITSELF and a direct increase passed;
+  // and on a PR targeting a branch other than main, differences inherited
+  // from the parent were attributed to the child.
+  //
+  // `DOCS_CHECK_BASE_REF` is set by the workflow — `github.event.before` on
+  // push, `origin/<base_ref>` on pull_request. Falling back to `origin/main`
+  // keeps local runs working.
+  const baseRef = process.env.DOCS_CHECK_BASE_REF || 'origin/main';
   let mergeBase;
   try {
-    mergeBase = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+    mergeBase = execFileSync('git', ['merge-base', 'HEAD', baseRef], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
-    return { kind: 'no-base' };
+    // An explicit base that cannot be resolved is a CI misconfiguration, not
+    // a missing base — say so rather than silently degrading to a warning.
+    return { kind: process.env.DOCS_CHECK_BASE_REF ? 'bad-base-ref' : 'no-base' };
   }
 
   let raw;

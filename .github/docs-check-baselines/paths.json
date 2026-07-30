@@ -264,7 +264,7 @@
     "ops/hf-watcher/src/deployments.json#3",
     "ops/hf-watcher/src/deployments.ts#1",
     "ops/hf-watcher/src/diamondAbi.ts#1",
-    "ops/hf-watcher/src/env.ts:151#1",
+    "ops/hf-watcher/src/env.ts#1",
     "ops/hf-watcher/wrangler.jsonc#1",
     "ops/lz-watcher/wrangler.jsonc#1"
   ],

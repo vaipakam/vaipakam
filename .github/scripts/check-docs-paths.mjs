@@ -175,16 +175,38 @@ function mountedRoutes() {
 }
 
 const routes = mountedRoutes();
-const routeMounted = (cited) => {
+
+/**
+ * Is a cited `/app/...` path the CANONICAL form?
+ *
+ * Deliberately NOT "does the router mount it" (#1467 r3). That question
+ * cannot be answered usefully here, and asking it produced a false claim:
+ * `App.tsx` nests the whole page tree under `<Route path=":locale">`, and
+ * `LocaleResolver` falls back to English for an unrecognised parameter while
+ * STILL rendering its outlet —
+ *
+ *     const target = locale ?? (isSupportedLocale(fromParam) ? fromParam : 'en');
+ *     return <>{children ?? <Outlet />}</>;
+ *
+ * So `:locale` swallows any first segment: `/app/alerts` matches
+ * `:locale="app"` plus the live `alerts` child and renders normally. With a
+ * catch-all segment no two-part path is ever a 404, which makes a
+ * mounted/not-mounted test vacuous — and the earlier message ("the router
+ * mounts no such route") simply false.
+ *
+ * What IS true: `/app/…` is the pre-flattening form. `App.tsx` states the
+ * canonical shape is `defi.vaipakam.com/<route>`, "never
+ * `defi.vaipakam.com/app/...`", and only `app/loans/:loanId` survives, as a
+ * deliberate redirect. Citing the old form points a reader at a URL that
+ * works by accident of the locale fallback, under a path the app does not
+ * treat as its own. Worth correcting — but it is a wrong path to publish,
+ * not a dead link.
+ */
+const isCanonicalAppPath = (cited) => {
   const bare = cited.replace(/^\/+/, '');
   if (routes.has(bare)) return true;
-  // NO "is the flattened form mounted?" fallback. The first cut had one,
-  // and it defeated the entire check: `/app/alerts` was accepted BECAUSE
-  // `alerts` is mounted — which is precisely the fact that makes the
-  // citation wrong. `/app/alerts` 404s regardless of what `/alerts` does.
-  //
-  // A parameterised mount still matches by segment shape, which is what
-  // legitimately accepts the surviving `app/loans/:loanId` redirect.
+  // Shape match, so a concrete id (`app/loans/7`) resolves against the
+  // surviving parameterised redirect `app/loans/:loanId`.
   const segs = bare.split('/');
   for (const r of routes) {
     const rs = r.split('/');
@@ -207,7 +229,15 @@ for (const file of docs) {
     for (const raw of tokens) {
       // Strip query + fragment first, so a deep link cannot hide a dead
       // route or path behind them (#1467 r1).
-      const tok = raw.replace(/[.,;:)]+$/, '').split('?')[0].split('#')[0];
+      // Strip a trailing `:LINE` or `:START-END` before resolving (#1467 r3).
+      // `path:line` is this repo's ordinary citation form — its own docs use
+      // it — and treating the suffix as part of the filename reported tracked
+      // files as missing.
+      const tok = raw
+        .replace(/[.,;:)]+$/, '')
+        .split('?')[0]
+        .split('#')[0]
+        .replace(/:(\d+)(-\d+)?$/, '');
       if (!tok || UNRESOLVABLE.test(tok)) continue;
 
       // Resolve a RELATIVE markdown target against the citing doc's own
@@ -251,12 +281,16 @@ for (const file of docs) {
       // ── app routes ──────────────────────────────────────────────────
       // Only the `/app/...` prefix, because that is the one the flattening
       // invalidated; checking every `/x` token would sweep in prose.
-      if (/^\/app\/[a-zA-Z][\w:/-]*$/.test(tok) && !routeMounted(tok)) {
+      if (/^\/app\/[a-zA-Z][\w:/-]*$/.test(tok) && !isCanonicalAppPath(tok)) {
         findings.push({
           file,
           n: i + 1,
           tok,
-          why: `the dApp router mounts no such route (routes were flattened; the only surviving \`/app/\` path is the loan back-compat redirect)`,
+          why:
+            'non-canonical URL form — the routes were flattened, so the canonical path drops ' +
+            'the `/app/` prefix (only `app/loans/:loanId` survives, as a redirect). NOTE this ' +
+            'URL does still RESOLVE: `:locale` matches any first segment and LocaleResolver ' +
+            'falls back to English, so it renders. It is the wrong path to publish, not a dead one',
         });
       }
     }
