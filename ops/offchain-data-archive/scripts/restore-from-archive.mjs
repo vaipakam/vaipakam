@@ -351,7 +351,11 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
         }
       }
     }
-    const dir = path.join(outDir, subdir);
+    // Absolute from here on: the runbook invokes the converter inside
+    // a `( cd ops/offchain-data-archive && … )` subshell, so a printed
+    // relative path resolves to a DIFFERENT, nonexistent file once the
+    // operator copies the command at the repo root (Codex #1484 r7).
+    const dir = path.resolve(outDir, subdir);
     mkdirSync(dir, { recursive: true });
     for (const table of applyOrder(tables)) {
       const sql = tableToSql(table);
@@ -479,8 +483,12 @@ export function invalidLegalDocRefs(archive) {
         // (`diagErasure.ts` rejects `place` without one), so a
         // current-hold row — or a `place` audit row — with neither
         // field recreates an erasure-blocking hold with no
-        // authorizing evidence. Only non-`place` audit actions
-        // (`lift`, `set-disclosure`) are legitimately doc-less.
+        // authorizing evidence. The doc-less allowance is an exact-
+        // string domain (`lift` / `set-disclosure`) — a relabelled
+        // action (`PLACE`, `delete`, null) must not fall through it
+        // (Codex #1484 r7): the production parser admits only the
+        // three exact strings, so anything else is a corrupted or
+        // hostile audit record.
         if (row.legal_doc_sha256 !== null && row.legal_doc_sha256 !== undefined) {
           invalid.push({ table: table.name, ref, problem: 'recorded sha present but ref is null' });
         } else if (table.name === 'diag_legal_holds') {
@@ -489,11 +497,18 @@ export function invalidLegalDocRefs(archive) {
             ref,
             problem: 'current hold with no authorizing document (place requires one)',
           });
-        } else if (table.name === 'diag_legal_hold_audit' && row.action === 'place') {
+        } else if (
+          table.name === 'diag_legal_hold_audit' &&
+          row.action !== 'lift' &&
+          row.action !== 'set-disclosure'
+        ) {
           invalid.push({
             table: table.name,
             ref,
-            problem: "audit row for a 'place' with no authorizing document",
+            problem:
+              row.action === 'place'
+                ? "audit row for a 'place' with no authorizing document"
+                : `doc-less audit row with action ${JSON.stringify(row.action)} outside the 'lift'/'set-disclosure' domain`,
           });
         }
         continue;
@@ -530,6 +545,62 @@ export function invalidLegalDocRefs(archive) {
     }
   }
   return invalid;
+}
+
+/** The holds table and its audit trail are exported by SEPARATE
+ *  queries, so a `place`/`lift` landing between them yields an archive
+ *  where every row is individually valid but the PAIR is not: a
+ *  `place` audit with no current hold restores WITHOUT a legally
+ *  required erasure block; a hold whose latest audit is `lift`
+ *  resurrects a lifted hold and wrongly blocks erasure (Codex #1484
+ *  r7). Membership semantics from `diagErasure.ts`: `place` upserts
+ *  the hold row, `lift` DELETEs it, `set-disclosure` leaves
+ *  membership alone. Latest action per wallet = max (at, id) — the
+ *  audit table is append-only autoincrement. Returns
+ *  {walletHash, problem} entries for the caller to fail on. */
+export function reconcileLegalHolds(archive) {
+  const tables = archive?.d1?.archive ?? [];
+  const holds = tables.find((t) => t?.name === 'diag_legal_holds');
+  const audit = tables.find((t) => t?.name === 'diag_legal_hold_audit');
+  if (!holds || !audit) return []; // baseline check already fails these
+  const holdByWallet = new Map(holds.rows.map((r) => [r.wallet_hash, r]));
+  const latest = new Map(); // wallet_hash -> latest place/lift audit row
+  for (const row of audit.rows) {
+    if (row.action !== 'place' && row.action !== 'lift') continue;
+    const prev = latest.get(row.wallet_hash);
+    if (!prev || row.at > prev.at || (row.at === prev.at && row.id > prev.id)) {
+      latest.set(row.wallet_hash, row);
+    }
+  }
+  const problems = [];
+  for (const [wallet, last] of latest) {
+    const hold = holdByWallet.get(wallet);
+    if (last.action === 'place' && !hold) {
+      problems.push({
+        walletHash: wallet,
+        problem: "latest audit is 'place' but no current hold exists — restoring omits a legally required erasure block (snapshot race or tampering)",
+      });
+    } else if (last.action === 'lift' && hold) {
+      problems.push({
+        walletHash: wallet,
+        problem: "latest audit is 'lift' but a current hold row exists — restoring resurrects a lifted hold (snapshot race or tampering)",
+      });
+    } else if (last.action === 'place' && hold && hold.legal_doc_ref !== last.legal_doc_ref) {
+      problems.push({
+        walletHash: wallet,
+        problem: "current hold's document differs from its latest 'place' audit — the pair is not from one consistent moment",
+      });
+    }
+  }
+  for (const wallet of holdByWallet.keys()) {
+    if (!latest.has(wallet)) {
+      problems.push({
+        walletHash: wallet,
+        problem: 'current hold has no place/lift audit history at all — the writer always appends one',
+      });
+    }
+  }
+  return problems;
 }
 
 /** Upload each materialized object. argv ARRAY, never a shell string —
@@ -604,6 +675,18 @@ export function main(argv) {
         `restoring would produce holds whose authorizing documents are missing, mislabelled ` +
         `or mismatched. Pick a different archive, or escalate: this can be evidence of ` +
         `pre-backup tampering in D1 or the vault`,
+    );
+  }
+  const holdDrift = reconcileLegalHolds(archive);
+  if (holdDrift.length > 0) {
+    for (const { walletHash, problem } of holdDrift) {
+      console.error(`✗ legal-hold reconciliation, wallet ${walletHash}: ${problem}`);
+    }
+    fail(
+      `${holdDrift.length} wallet(s) fail hold↔audit reconciliation — the two tables were ` +
+        `snapshotted at different moments (or tampered with). A hold that should not exist, ` +
+        `or should, is a legal outcome, not a data glitch: pick an adjacent nightly whose ` +
+        `pair reconciles, or resolve the drift manually before importing`,
     );
   }
 

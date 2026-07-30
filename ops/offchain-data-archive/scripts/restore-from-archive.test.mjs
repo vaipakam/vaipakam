@@ -21,6 +21,7 @@ import {
   convertD1,
   materializeR2,
   invalidLegalDocRefs,
+  reconcileLegalHolds,
   shQuote,
   sqlLiteral,
   tableToSql,
@@ -145,6 +146,51 @@ test('convertD1 writes files in apply order and routes lzAlerts separately', () 
   assert.deepEqual([lz.name, lz.database], ['lz_alert_state', 'my-recreated-lz-db']);
   const sql = readFileSync(entries[0].file, 'utf8');
   assert.match(sql, /^DELETE FROM "user_thresholds";$/m);
+  assert.ok(path.isAbsolute(entries[0].file)); // printed commands must survive the cd-subshell
+});
+
+test('hold↔audit reconciliation catches snapshot races in both directions', () => {
+  const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const holdsWith = (rows) =>
+    tableFixture('diag_legal_holds', ['wallet_hash', 'legal_doc_ref'], rows);
+  const auditWith = (rows) =>
+    tableFixture('diag_legal_hold_audit', ['id', 'at', 'action', 'wallet_hash', 'legal_doc_ref'], rows);
+  const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
+
+  // Consistent pair: place then still held, matching document.
+  const okPair = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc }]),
+    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc }]),
+  );
+  assert.deepEqual(reconcileLegalHolds(okPair), []);
+
+  // place audit, no hold row → a required erasure block would vanish.
+  const placeNoHold = arch(
+    holdsWith([]),
+    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc }]),
+  );
+  assert.match(reconcileLegalHolds(placeNoHold)[0].problem, /omits/);
+
+  // hold present but the LATEST audit is lift → resurrected hold.
+  const liftedButHeld = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc }]),
+    auditWith([
+      { id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc },
+      { id: 2, at: 200, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null },
+    ]),
+  );
+  assert.match(reconcileLegalHolds(liftedButHeld)[0].problem, /resurrects/);
+
+  // hold document differs from its latest place audit.
+  const docDrift = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: `legal-holds/${'d'.repeat(64)}.pdf` }]),
+    auditWith([{ id: 1, at: 100, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc }]),
+  );
+  assert.match(reconcileLegalHolds(docDrift)[0].problem, /differs/);
+
+  // hold with no audit history at all — the writer always appends one.
+  const orphanHold = arch(holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc }]), auditWith([]));
+  assert.match(reconcileLegalHolds(orphanHold)[0].problem, /no place\/lift audit/);
 });
 
 test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {
@@ -318,6 +364,21 @@ test('legal-hold reference PAIR invariants: missing, malformed, and sha-mismatch
     invalidLegalDocRefs({ d1: { archive: [barePlace] }, r2: { objects: [] } })[0].problem,
     /'place' with no authorizing document/,
   );
+
+  // The doc-less allowance is an exact-string domain: a relabelled
+  // action must not fall through it.
+  for (const action of ['PLACE', 'delete', null]) {
+    const relabelled = tableFixture(
+      'diag_legal_hold_audit',
+      ['id', 'action', 'legal_doc_ref', 'legal_doc_sha256'],
+      [{ id: 9, action, legal_doc_ref: null, legal_doc_sha256: null }],
+    );
+    assert.match(
+      invalidLegalDocRefs({ d1: { archive: [relabelled] }, r2: { objects: [] } })[0].problem,
+      /domain/,
+      String(action),
+    );
+  }
 
   const gone = `legal-holds/${'b'.repeat(64)}.pdf`;
   holds.rows.push(
