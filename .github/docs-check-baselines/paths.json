@@ -165,12 +165,8 @@
     "ops/hf-watcher/wrangler.jsonc:vars@9e325738#1"
   ],
   "docs/ops/BNBTestnetDeploy.md": [
-    "contracts/.env@c7fd5b97#1",
     "frontend/src/contracts/deployments.json@a0e29f76#1",
     "ops/hf-watcher/src/deployments.json@88fe54b1#1"
-  ],
-  "docs/ops/CcipCutoverRunbook.md": [
-    "contracts/.env@bfb17c68#1"
   ],
   "docs/ops/ChainByChainChecks.md": [
     "docs/TokenomicsTechSpec.md@4140b731#1"
@@ -180,8 +176,6 @@
     "../../ops/hf-watcher/README.md@62432da8#1",
     "../../ops/hf-watcher/README.md@62432da8#2",
     "../../ops/hf-watcher/src/deployments.ts@c0981de6#1",
-    "contracts/.env@0e091e07#1",
-    "contracts/.env@65585818#1",
     "frontend/.env.example@73d58175#1",
     "frontend/.env.local@9c2e5a6a#1",
     "frontend/.env.local@c0a93dbb#1",
@@ -212,8 +206,6 @@
     "ops/hf-watcher@f9cfddbf#1"
   ],
   "docs/ops/FlashLoanLiquidatorRollout.md": [
-    "contracts/.env@c431029b#1",
-    "contracts/.env@ea98fae0#1",
     "contracts/deployments/base/addresses.json@1483d9c0#1",
     "contracts/deployments/base/addresses.json@25040cd4#1"
   ],
@@ -229,9 +221,6 @@
   "docs/ops/IncidentRunbook.md": [
     "contracts/script/ConfigureLZConfig.s.sol@85f6e573#1",
     "ops/hf-watcher@6ca163c0#1"
-  ],
-  "docs/ops/MainnetMultisigSetup.md": [
-    "../../contracts/.env@3dd0853a#1"
   ],
   "docs/ops/OffChainRestore.md": [
     "./legal-holds/notice-42.pdf@9f547a76#1"

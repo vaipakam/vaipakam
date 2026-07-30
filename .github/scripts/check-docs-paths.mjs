@@ -181,162 +181,195 @@ for (const f of TRACKED) {
   const parts = f.split('/');
   for (let i = 1; i < parts.length; i++) TRACKED_DIRS.add(parts.slice(0, i).join('/'));
 }
+/**
+ * A trailing slash means DIRECTORY, so it may only resolve as one (#1467 r9).
+ * Stripping it before the lookup let `../../contracts/README.md/` resolve as
+ * the tracked file — but a file cannot be traversed as a directory, so that
+ * destination is broken and the check excused it.
+ */
 const resolves = (p) => {
+  const dirOnly = /\/$/.test(p);
   const clean = p.replace(/\/+$/, '');
-  return TRACKED.has(clean) || TRACKED_DIRS.has(clean);
+  return dirOnly ? TRACKED_DIRS.has(clean) : TRACKED.has(clean) || TRACKED_DIRS.has(clean);
 };
 
+/**
+ * Paths the repository deliberately IGNORES are intentionally untracked, so
+ * citing one is correct rather than stale (#1467 r9). A runbook telling an
+ * operator to create `contracts/.env` is right, and calling that a stale
+ * citation is the check contradicting the repo's own stated intent —
+ * `.gitignore` IS that statement, which is what makes this decidable rather
+ * than a guess.
+ *
+ * `git check-ignore` exits 1 when nothing matches, which `execFileSync` throws
+ * on; an empty result is the correct reading of that.
+ *
+ * This does NOT cover a generated artifact that is neither tracked nor
+ * ignored — nothing in the repo distinguishes one of those from a typo. That
+ * is the case for a reasoned allowlist entry when the check becomes a gate
+ * (#1468), not for a silent exemption here.
+ */
+function ignoredPaths(candidates) {
+  if (!candidates.length) return new Set();
+  try {
+    const out = execFileSync('git', ['check-ignore', '--stdin'], {
+      input: candidates.join('\n'),
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    return new Set(out.split('\n').filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
 const findings = [];
+const pending = [];   // {file, n, line, tok, link} awaiting the gitignore pass
+
+/**
+ * At most ONE newline of separating whitespace.
+ *
+ * CommonMark lets a destination sit on the line after its opener — both
+ * `[ref]:\n  ../path` and `[x](\n  ../path)` are real links — and scanning line
+ * by line meant no pattern ever saw the opener and the destination together, so
+ * a broken link written that way bypassed the check entirely (#1467 r9). The
+ * document is now scanned whole. Bounded to a single newline rather than `\s*`
+ * on purpose: a blank line ENDS a link in CommonMark, so allowing more would
+ * match text that is not a link at all.
+ */
+const WS = '[^\\S\\n]*\\n?[^\\S\\n]*';
+
+const PATTERNS = [
+  // Backticked repo-path citations — this repo's prose form.
+  { re: /`([^`\s]+)`/g, link: false },
+  // Inline destination, angle-bracket form. Matched FIRST and separately
+  // because markdown permits SPACES inside it (#1467 r7) — `](<a path>)` —
+  // which a whitespace-excluding capture cannot see at all.
+  { re: new RegExp(`\\]\\(${WS}<([^>\\n]+)>`, 'g'), link: true },
+  // Inline destination, bare form, with an optional title.
+  { re: new RegExp(`\\]\\(${WS}([^)\\s<>]+)(?:\\s+["'(][^)]*)?${WS}\\)`, 'g'), link: true },
+  // A reference DEFINITION takes the same two forms as an inline link, so it
+  // needs the same two patterns (#1467 r8). Fixing only the inline sibling in
+  // r7 left this one capturing the whitespace-free PREFIX of a spaced
+  // destination — and a prefix that happens to name a real directory reads as
+  // resolving, so the broken destination was not merely missed but excused.
+  { re: new RegExp(`^[ ]{0,3}\\[[^\\]]+\\]:${WS}<([^>\\n]+)>`, 'gm'), link: true },
+  { re: new RegExp(`^[ ]{0,3}\\[[^\\]]+\\]:${WS}([^\\s<>]+)`, 'gm'), link: true },
+];
 
 for (const file of docs) {
   // Strip HTML comments before tokenising (#1467 r6). A path inside
   // `<!-- … -->` is invisible to every reader of the rendered document, so a
   // finding on one is unactionable noise — and this check's entire claim is
-  // that its signal is worth reading. Multi-line comments are stripped across
-  // the whole file first, then per-line, so the line numbering below still
-  // points at the right place.
+  // that its signal is worth reading. Newlines are preserved so the line
+  // numbering below still points at the right place.
   const body = readFileSync(file, 'utf8').replace(
     /<!--[\s\S]*?-->/g,
     (m) => m.replace(/[^\n]/g, ' '),
   );
   const lines = body.split('\n');
 
-  // Reference-style link definitions (`[ref]: path "title"`) are collected
-  // per FILE, because the definition and its use are usually far apart and the
-  // definition line is where the path actually lives (#1467 r6).
-  lines.forEach((line, i) => {
-    // Backticked tokens and markdown link targets. The two are kept apart
-    // because they resolve DIFFERENTLY (#1467 r2): a markdown destination is
-    // relative to its own document wherever it does not start with `/`, while
-    // a backticked path is the repo-root citation form this repo writes in
-    // prose. Collapsing them made a genuinely broken link read as fine —
-    // `[x](contracts/src/Foo.sol)` inside `docs/ops/` was accepted because the
-    // repo-root file exists, though the rendered link points at the
-    // nonexistent `docs/ops/contracts/src/Foo.sol`.
-    //
-    // Both markdown destination forms are matched (#1467 r6): an inline
-    // destination with an optional title, `](path "title")`, and a
-    // reference definition, `[ref]: path "title"`. The earlier
-    // `\]\(([^)\s]+)\)` matched neither — the title made the destination
-    // unparseable and reference links were invisible entirely, so a missing
-    // path or a removed-directory citation written in either standard form
-    // went straight through.
-    const tokens = [
-      ...[...line.matchAll(/`([^`\s]+)`/g)].map((m) => ({ raw: m[1], link: false })),
-      // The angle-bracket form is matched FIRST and separately, because markdown
-      // permits SPACES inside it (#1467 r7) — `](<a path with spaces>)` — which
-      // a whitespace-excluding capture cannot see at all, so a broken clickable
-      // link produced no token. Anything but `>` and a newline is the
-      // destination.
-      ...[...line.matchAll(/\]\(\s*<([^>\n]+)>/g)].map((m) => ({ raw: m[1].trim(), link: true })),
-      ...[...line.matchAll(/\]\(\s*([^)\s<>]+)(?:\s+["'(][^)]*)?\s*\)/g)].map((m) => ({
-        raw: m[1],
-        link: true,
-      })),
-      // A reference DEFINITION takes the same two destination forms as an
-      // inline link, so it needs the same two patterns (#1467 r8). Fixing only
-      // the inline sibling last round left this one capturing the
-      // whitespace-free prefix of a spaced destination — and a prefix that
-      // happens to name a real directory reads as resolving, so the broken
-      // destination was not merely missed but actively excused.
-      ...[...line.matchAll(/^\s{0,3}\[[^\]]+\]:\s*<([^>\n]+)>/g)].map((m) => ({
-        raw: m[1].trim(),
-        link: true,
-      })),
-      ...[...line.matchAll(/^\s{0,3}\[[^\]]+\]:\s*([^\s<>]+)/g)].map((m) => ({
-        raw: m[1],
-        link: true,
-      })),
-    ];
-    for (const { raw, link } of tokens) {
-      // Strip query + fragment first, so a deep link cannot hide a dead
-      // route or path behind them (#1467 r1).
-      // Strip a trailing `:LINE` or `:START-END` before resolving (#1467 r3).
-      // `path:line` is this repo's ordinary citation form — its own docs use
-      // it — and treating the suffix as part of the filename reported tracked
-      // files as missing.
-      const tok = raw
-        .replace(/[.,;:)]+$/, '')
-        .split('?')[0]
-        .split('#')[0]
-        .replace(/:(\d+)(-\d+)?$/, '');
-      if (!tok || UNRESOLVABLE.test(tok)) continue;
-
-      // Resolve against the citing doc's own directory whenever that is how
-      // the reference actually resolves: every markdown destination that is
-      // not site-absolute (#1467 r2), and any explicitly relative backticked
-      // path (#1467 r1). Operator docs normally link as
-      // `../../contracts/script/Foo.s.sol`, and the root-prefix test ignored
-      // every one of those — so stale links, and even references to removed
-      // directories, landed unnoticed unless the visible label happened to
-      // repeat the path in backticks.
-      // `./` or `../` ONLY — not every dot-prefixed token (#1467 r6).
-      // `tok.startsWith('.')` swept in dot-DIRECTORIES: a correct citation of
-      // `.github/workflows/release-notes-drift.yml` resolved to
-      // `docs/…/.github/…` and was reported missing. That false finding was
-      // frozen in the committed baseline, which is the worse half of the bug —
-      // a frozen false positive is a permanent lie about the tree.
-      const docRelative =
-        tok.startsWith('./') || tok.startsWith('../') || (link && !tok.startsWith('/'));
-      const asRepoPath = docRelative
-        ? posix.normalize(posix.join(dirname(file), tok))
-        : tok;
-
-      // ── removed / renamed directories: checked EVERYWHERE ───────────
-      //
-      // Tested against the token AS WRITTEN as well as the resolved path,
-      // because a removed name is wrong under either reading — and after
-      // doc-relative resolution a link target such as `frontend/src/x.tsx`
-      // no longer starts with `frontend/`.
-      //
-      // The as-written test is skipped when the resolved path RESOLVES
-      // (#1467 r6): a live `docs/ops/frontend/guide.md` linked as
-      // `frontend/guide.md` is correct, and calling it a removed-directory
-      // citation would be the check contradicting the tracked tree. Evidence
-      // beats the name.
-      const removed =
-        removedDirHit(asRepoPath) ?? (resolves(asRepoPath) ? undefined : removedDirHit(tok));
-      if (removed) {
-        findings.push({
-          file,
-          n: i + 1,
-          tok,
-          line,
-          why: `\`${removed[0]}\` no longer exists — ${removed[1]}`,
-        });
-        continue;
-      }
-
-      // ── does-it-exist: only in the live operator / spec docs ────────
-      //
-      // A markdown DESTINATION skips the `ROOTS` gate entirely (#1467 r6). The
-      // gate exists to tell a repo path from ordinary prose, and a link
-      // destination is never prose — it is a promise that clicking it lands
-      // somewhere. Gating it on a recognised root left two holes:
-      //
-      //   - a destination that climbs out of the repository
-      //     (`../../../contracts/…` from `docs/ops/`) normalises to `../…`,
-      //     which starts with no root, so the broken link was skipped;
-      //   - `ROOTS` is derived from the CURRENT tree, so a change that deletes
-      //     the last tracked file under a top-level directory deletes the root
-      //     as well — and every stale link into it stopped being checked in
-      //     the same commit that broke them. The gate was weakest exactly when
-      //     it mattered most.
-      const gated = link || ROOTS.some((r) => asRepoPath.startsWith(r));
-      if (STRICT_DIRS.some((d) => file.startsWith(d)) && gated) {
-        if (!resolves(asRepoPath)) {
-          findings.push({
-            file,
-            n: i + 1,
-            tok,
-            line,
-            why: `path does not exist. If it moved, cite the new location; if it was removed, say so`,
-          });
-        }
-      }
+  // Cumulative offsets, so a match index maps back to the line that CARRIES
+  // the destination — which is the line a reader has to edit, and the line the
+  // ratchet fingerprints.
+  const lineStarts = [0];
+  for (let i = 0; i < lines.length; i++) lineStarts.push(lineStarts[i] + lines[i].length + 1);
+  const lineAt = (idx) => {
+    let lo = 0;
+    let hi = lines.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= idx) lo = mid;
+      else hi = mid - 1;
     }
+    return lo;
+  };
+
+  const tokens = [];
+  for (const { re, link } of PATTERNS) {
+    for (const m of body.matchAll(re)) {
+      const at = m.index + Math.max(0, m[0].indexOf(m[1]));
+      tokens.push({ raw: m[1].trim(), link, i: lineAt(at) });
+    }
+  }
+
+  for (const { raw, link, i } of tokens) {
+    const line = lines[i] ?? '';
+    // Strip query + fragment first, so a deep link cannot hide a dead path
+    // behind them (#1467 r1). Strip a trailing `:LINE` or `:START-END` before
+    // resolving (#1467 r3) — `path:line` is this repo's ordinary citation
+    // form, and treating the suffix as part of the filename reported tracked
+    // files as missing.
+    const tok = raw
+      .replace(/[.,;:)]+$/, '')
+      .split('?')[0]
+      .split('#')[0]
+      .replace(/:(\d+)(-\d+)?$/, '');
+    if (!tok || UNRESOLVABLE.test(tok)) continue;
+
+    // Resolve against the citing doc's own directory whenever that is how the
+    // reference actually resolves: every markdown destination that is not
+    // site-absolute (#1467 r2), and any explicitly relative backticked path
+    // (#1467 r1). `./` or `../` ONLY for a backtick — not every dot-prefixed
+    // token (#1467 r6), which swept in dot-DIRECTORIES and froze 44 false
+    // findings in the baseline.
+    const docRelative =
+      tok.startsWith('./') || tok.startsWith('../') || (link && !tok.startsWith('/'));
+    const asRepoPath = docRelative
+      ? posix.normalize(posix.join(dirname(file), tok))
+      : tok;
+
+    // ── removed / renamed directories: checked EVERYWHERE ─────────────
+    //
+    // Tested against the token AS WRITTEN as well as the resolved path,
+    // because a removed name is wrong under either reading — and after
+    // doc-relative resolution a link target such as `frontend/src/x.tsx` no
+    // longer starts with `frontend/`. The as-written test is skipped when the
+    // resolved path RESOLVES (#1467 r6): evidence beats the name.
+    const removed =
+      removedDirHit(asRepoPath) ?? (resolves(asRepoPath) ? undefined : removedDirHit(tok));
+    if (removed) {
+      findings.push({
+        file,
+        n: i + 1,
+        tok,
+        line,
+        why: `\`${removed[0]}\` no longer exists — ${removed[1]}`,
+      });
+      continue;
+    }
+
+    // ── does-it-exist: only in the live operator / spec docs ──────────
+    //
+    // A markdown DESTINATION skips the `ROOTS` gate entirely (#1467 r6). The
+    // gate tells a repo path from ordinary prose, and a destination is never
+    // prose — it is a promise that clicking it lands somewhere. Gating it left
+    // two holes: a destination climbing out of the repository normalises to
+    // `../…` and matches no root, and `ROOTS` comes from the CURRENT tree, so
+    // deleting the last file under a directory stopped every stale link into
+    // it from being checked in the same commit that broke them.
+    const gated = link || ROOTS.some((r) => asRepoPath.startsWith(r));
+    if (STRICT_DIRS.some((d) => file.startsWith(d)) && gated) {
+      if (!resolves(asRepoPath)) pending.push({ file, n: i + 1, tok, line, asRepoPath });
+    }
+  }
+}
+
+// One `git check-ignore` pass for every unresolved candidate, rather than one
+// per token (#1467 r9).
+const ignored = ignoredPaths([...new Set(pending.map((f) => f.asRepoPath))]);
+for (const f of pending) {
+  if (ignored.has(f.asRepoPath)) continue;
+  findings.push({
+    file: f.file,
+    n: f.n,
+    tok: f.tok,
+    line: f.line,
+    why: `path does not exist. If it moved, cite the new location; if it was removed, say so`,
   });
 }
+
+findings.sort((a, b) => a.file.localeCompare(b.file) || a.n - b.n);
 
 process.exit(
   report(

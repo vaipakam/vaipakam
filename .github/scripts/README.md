@@ -58,7 +58,7 @@ say so in its finding text, or readers inherit the wrong model from it.
 
 ## The ratchet, and why the bar is not zero
 
-The check is red on its first run — 203 findings — because it describes a
+The check is red on its first run — 196 findings — because it describes a
 real backlog that is already tracked. So it compares against a committed
 per-file baseline of finding **identities** and fails when a file gains one
 that is not in the baseline.
@@ -147,6 +147,22 @@ failure mode this exists to prevent:
 - Paths inside `<!-- HTML comments -->` are ignored. A finding no reader of the
   rendered document can see is unactionable noise, and this check's whole claim
   is that its signal is worth reading (#1467 r6).
+- **A path the repository deliberately ignores is not stale.** A runbook telling
+  an operator to create `contracts/.env` is correct, and `.gitignore` is the
+  repo's own statement that the file is meant to be untracked — which is what
+  makes this decidable rather than a guess (#1467 r9). It removed 7 frozen false
+  findings. It does NOT cover an artifact that is neither tracked nor ignored;
+  nothing distinguishes one of those from a typo, so that is a case for a
+  reasoned allowlist entry at gate-flip time (#1468), not a silent exemption.
+- **A trailing slash means directory**, so it only resolves as one. Stripping it
+  before the lookup let `contracts/README.md/` resolve as the tracked file,
+  though a file cannot be traversed as a directory (#1467 r9).
+- **The document is scanned whole, not line by line.** CommonMark lets a
+  destination sit on the line after its opener, so a line-at-a-time scan never
+  saw the opener and the destination together and a link written that way
+  bypassed the check entirely (#1467 r9). Separating whitespace is bounded to a
+  single newline, because a blank line ends a link — allowing more would match
+  text that is not a link.
 - Both standard markdown destination forms are parsed — a titled inline
   destination and a reference definition. The earlier inline-only pattern saw
   neither (#1467 r6).

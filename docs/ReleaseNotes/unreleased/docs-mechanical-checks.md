@@ -27,8 +27,13 @@ draft of this note said all seventy-eight were fixed; review caught that, and
 the correction belongs here rather than in a quieter place, since overstating
 what a check delivered is the same fault the check exists to catch.
 
-Turning that same reasoning on the check itself removed forty-four findings it
-should never have reported. It had been treating any reference beginning with a
+Turning that same reasoning on the check itself removed fifty-one findings it
+should never have reported. Seven were runbook steps telling an operator to
+create a file the repository deliberately does not track — correct instructions,
+reported as stale references. The repository already states which files those
+are, so the check now reads that statement instead of contradicting it.
+
+The other forty-four came from one rule. It had been treating any reference beginning with a
 dot as relative to the citing document, which quietly swept in ordinary
 configuration filenames and dot-directories — a correct reference to a real
 file was being reported as missing, and forty-four of those wrong answers had
