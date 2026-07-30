@@ -735,8 +735,24 @@ jobs:
       - name: Forge doc --build
         # Builds an mdbook tree under `contracts/docs/book` from the
         # per-function NatSpec comments in `contracts/src/`. Output is
-        # governed by `foundry.toml [doc]`. Reuses the warm `out/` from the
-        # step above — no recompile.
+        # governed by `foundry.toml [doc]`.
+        #
+        # Runs under the QUICK profile, not the job-level cifast (#1490).
+        # `forge doc` does NOT reuse `out/` — it runs its own solc pass
+        # (AST output, different artifact settings) over the ACTIVE
+        # profile's full source glob. cifast's test-skip is an explicit
+        # per-file enumeration, so every top-level test suite added after
+        # that list was written silently re-enters the doc compile —
+        # which crossed the single-unit memory ceiling with #1457's
+        # rewards suites: solc grew unbounded for ~29 min until the
+        # OOM killer took the RUNNER SERVICE down ("runner received a
+        # shutdown signal", exit 143), red on every push since. quick's
+        # `test/**` + `script/**` skip GLOBS can never drift that way,
+        # and src-only is the exact scope the docs site documents:
+        # measured ~2 min / ~1.5 GB peak vs >10 min / >5.7 GB-and-
+        # climbing under cifast.
+        env:
+          FOUNDRY_PROFILE: quick
         run: forge doc --build
 
       - name: Inject site root breadcrumb
