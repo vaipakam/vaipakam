@@ -59,11 +59,26 @@ newer upload at the same key**. The second case is the one that matters: the
 Worker's B2 key has `writeFiles` but **not** `deleteFiles`, so an attacker who
 compromises the Worker can only overwrite an archive, never delete one. The
 genuine version survives until *our own* rule removes it. At 1 day that was
-effectively immediately; the declaration sets 30.
+effectively immediately; the declaration sets **9**.
 
-Note the same setting also extends how long ordinary hidden versions live, so
-the daily series retains ~60 days rather than ~31. Deliberate, and at ~445 KiB
-per nightly it is a fraction of a cent per month.
+Why 9 and not 30, which an earlier revision of this file said: the daily
+prefixes' worst-case object lifetime is capped by a **published promise** —
+`PrivacyPolicy.md` states a support ticket's backup copies persist at most 30
+days beyond deletion, and tickets live only in this tier. Worst case is the
+SUM of both lifecycle terms, so the whole daily budget is 29 days (30 minus a
+day of headroom, because the B2 clock starts at upload and a ticket can be
+pruned from D1 between export and upload). The split is 20 to hide + 9 to
+delete.
+
+9 rather than 8: the forged-overwrite detector is the **weekly** healthcheck,
+so at 7 days an overwrite landing just after one Monday becomes deletable as
+the next Monday's alert fires — the alert races the deletion. 9 puts detection
+strictly inside the window and leaves two days to act.
+
+Raising the ceiling at all means excluding support tickets from this tier,
+which means tickets have no backup — a product decision, tracked as #1474.
+The ceilings are enforced in `scripts/lifecycle-policy.mjs`, which both
+writers must pass through; the numbers are not restated anywhere else.
 
 ## What gets backed up
 

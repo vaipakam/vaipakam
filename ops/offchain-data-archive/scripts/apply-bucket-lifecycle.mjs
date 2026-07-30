@@ -34,9 +34,9 @@
  * overwrite, and it is the cheap reversible half of #1469.
  *
  * Note the same setting also extends how long ordinary hidden versions live,
- * so the daily series retains ~60 days rather than ~31. That is deliberate
- * and stated rather than incidental — at ~445 KiB per nightly it is a
- * fraction of a cent per month.
+ * Retention numbers and the promises that bound them live in
+ * `lifecycle-policy.mjs` — deliberately NOT restated here, because the
+ * previous copy of that explanation went stale in three places at once.
  *
  * USAGE
  *   node scripts/apply-bucket-lifecycle.mjs --check    # read-only, no writes
@@ -62,6 +62,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { assertPolicyCeilings } from './lifecycle-policy.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -173,42 +174,14 @@ async function main() {
     );
     process.exit(2);
   }
-  // THE PUBLISHED-PROMISE CEILING, ENFORCED (#1471 r4).
-  //
-  // PrivacyPolicy.md states that a support ticket's backup copies persist at
-  // most 30 days beyond its deletion, and `backup.ts` keeps that true by
-  // excluding `support_tickets` from the monthly and yearly tiers — so the
-  // daily prefixes are the only place a ticket can live, and their worst-case
-  // lifetime IS that promise.
-  //
-  // Worst case is the SUM of both terms, because a version is deleted
-  // `daysFromHidingToDeleting` after it is hidden, and it is hidden either by
-  // the age rule or by being superseded at the same key. A previous revision
-  // of the declaration set 30 + 30, reasoned only about the first term, and
-  // put the live bucket at a 60-day worst case — in breach of a promise the
-  // policy publishes. A comment saying "keep this under 30" would not have
-  // caught that, because the comment WAS there. This does.
-  const DAILY_PREFIXES = ['archives/', 'manifests/'];
-  const TICKET_BACKUP_MAX_DAYS = 30;
-  for (const r of declared.rules) {
-    if (!DAILY_PREFIXES.includes(r.fileNamePrefix)) continue;
-    const total =
-      (r.daysFromUploadingToHiding ?? 0) + (r.daysFromHidingToDeleting ?? 0);
-    if (total > TICKET_BACKUP_MAX_DAYS) {
-      console.error(
-        `bucket-lifecycle.json: "${r.fileNamePrefix}" allows a worst-case ` +
-          `lifetime of ${total} days (${r.daysFromUploadingToHiding} to hide + ` +
-          `${r.daysFromHidingToDeleting} to delete). PrivacyPolicy.md promises a ` +
-          `support ticket's backup copies persist at most ${TICKET_BACKUP_MAX_DAYS} ` +
-          `days beyond deletion, and the daily tier is the only tier tickets are ` +
-          `in, so this declaration would put us in breach of a published policy.\n` +
-          `Either bring the sum to ${TICKET_BACKUP_MAX_DAYS} or below, or remove ` +
-          `\`support_tickets\` from the daily tier in backup.ts first (#1474) — ` +
-          `that is a product decision, not a config one.`,
-      );
-      process.exit(1);
-    }
-  }
+  // Ceilings live in ONE module both writers import — see lifecycle-policy.mjs
+  // for the promises, the arithmetic, and why each bound is what it is. The
+  // first version of this check lived only here, which left the setup script
+  // free to push a violating declaration to production (#1471 r5).
+  assertPolicyCeilings(declared, (msg) => {
+    console.error(msg);
+    process.exit(1);
+  });
 
   const live = normalise(bucket.lifecycleRules);
   const want = normalise(declared.rules);

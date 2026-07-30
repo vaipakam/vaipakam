@@ -42,6 +42,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { assertPolicyCeilings } from './lifecycle-policy.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -227,6 +228,12 @@ async function setLifecycleRules(apiUrl, authToken, accountId, bucketId) {
       );
     }
   }
+  // SAME validator the apply path uses (#1471 r5). This is the other
+  // documented writer, and a ceiling enforced in only one of two writers is
+  // not enforced: rerunning the documented setup flow with a violating
+  // declaration would have put production straight back over the line.
+  assertPolicyCeilings(decl, (msg) => fail(msg));
+
   const rules = decl.rules.map((r) => ({ ...r }));
   const { ok, status, json } = await b2Post(apiUrl, authToken, '/b2api/v3/b2_update_bucket', {
     accountId,
