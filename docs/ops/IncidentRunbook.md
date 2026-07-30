@@ -536,7 +536,7 @@ identity), so rotation is time-sensitive.
    ```bash
    # Find the secret's ID in the store (the update subcommand takes
    # --secret-id, not a name):
-   npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote
+   npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote --per-page 100
    # Update it against the DEPLOYED store (--remote; the default is the
    # local simulator) and let wrangler PROMPT for the value — do not pass
    # --value, which leaves the new token in shell history:
@@ -567,7 +567,7 @@ No subscriber action required — the bot's @-handle stays
    # Same shape as the Telegram rotation above: find the ID, update
    # --remote, let wrangler prompt rather than passing --value (a private
    # key in shell history is its own incident):
-   npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote
+   npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote --per-page 100
    npx wrangler secrets-store secret update 1e66429d0fa24aa38a27bc05b7bcf63e \
        --secret-id <ID_OF_PUSH_CHANNEL_PK> --remote
    ```

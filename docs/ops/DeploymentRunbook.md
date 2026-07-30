@@ -263,20 +263,34 @@ deployed store, and wrangler prompts for the value so it never lands in
 shell history):
 
 ```bash
-# Existing entries and their IDs:
-npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e --remote
+# Existing entries and their IDs (default page size is 10 and the store
+# holds 20+ names, so raise it or the entry you need may not be shown):
+npx wrangler secrets-store secret list 1e66429d0fa24aa38a27bc05b7bcf63e \
+    --remote --per-page 100
 
-# New entry (e.g. first deploy of a chain):
+# New entry (e.g. first deploy of a chain). --scopes is REQUIRED by the
+# create subcommand; "workers" grants the Workers runtime access:
 npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
-    --name RPC_BASE_SEPOLIA --remote
-# Repeat for RPC_ARB_SEPOLIA / RPC_OP_SEPOLIA, and at mainnet for
-# RPC_ETH / RPC_BASE / RPC_ARB / RPC_OP / RPC_BNB.
+    --name RPC_BASE_SEPOLIA --scopes workers --remote
 ```
 
-Verify with `npx wrangler secret list` from inside `apps/keeper` —
-each chain you plan to index must show its `RPC_<CHAIN>` entry.
-Cloudflare auto-redeploys the Worker on every `secret put` so the
-new value takes effect on the next cron tick.
+The full name set the deploy scripts expect, per chain slug (see the
+`EXPECTED_RPC_SECRET` maps in `deploy-{chain,testnet,mainnet}.sh`):
+testnets `RPC_BASE_SEPOLIA` / `RPC_ARB_SEPOLIA` / `RPC_OP_SEPOLIA` /
+`RPC_SEPOLIA` / `RPC_BNB_TESTNET` / `RPC_POLYGON_AMOY`; mainnets
+`RPC_ETH` / `RPC_BASE` / `RPC_ARB` / `RPC_OP` / `RPC_BNB` /
+`RPC_POLYGON`. The per-Worker chain sets differ — the keeper's
+`wrangler.jsonc` deliberately omits `RPC_POLYGON` / `RPC_POLYGON_AMOY`
+(agent-only) and `RPC_ZKEVM` (out of scope) — so check the target
+Worker's `secrets_store_secrets` block when in doubt.
+
+Verify against the STORE, not a Worker: re-run the `secret list`
+command above and confirm the name is present. (A per-Worker
+`npx wrangler secret list` cannot see store-bound values — and note
+that `verify_rpc_secret_on_worker()` in the deploy scripts still
+checks per-Worker secrets, a latent mismatch tracked as **#1492**;
+until it lands, that preflight can hard-fail even when the store is
+correctly provisioned.)
 
 ### Auto post-deploy steps performed by the script
 
@@ -1734,10 +1748,14 @@ Telegram + Push Protocol. This section is one-time setup and does
    Use the handle `@VaipakamBot` for production. BotFather hands back
    the bot's API token on creation — this is the only time it appears
    in plaintext.
-2. Set worker secrets / vars:
+2. Create the token in the shared Secrets Store — both the keeper and
+   the agent (which owns `/tg/webhook`) bind `TG_BOT_TOKEN` from it, so
+   a per-Worker `wrangler secret put` would leave the agent
+   unprovisioned:
    ```bash
-   cd apps/keeper
-   npx wrangler secret put TG_BOT_TOKEN          # paste BotFather token
+   npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+       --name TG_BOT_TOKEN --scopes workers --remote
+   # wrangler prompts for the value — paste the BotFather token.
    ```
    `TG_BOT_USERNAME` is committed in `wrangler.jsonc` as a public var.
 3. Register the webhook so Telegram pushes inbound DMs into the worker:
@@ -1760,7 +1778,11 @@ Telegram + Push Protocol. This section is one-time setup and does
      the same URL via the `VITE_PUSH_CHANNEL_ADDRESS` env var.
 3. **Channel signer privkey → worker secret.**
    ```bash
-   npx wrangler secret put PUSH_CHANNEL_PK       # paste 0x-prefixed 64-hex
+   # Shared Secrets Store, same reasoning as TG_BOT_TOKEN in §8a
+   # (keeper AND agent bind it; wrangler prompts for the value —
+   # paste the 0x-prefixed 64-hex key):
+   npx wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+       --name PUSH_CHANNEL_PK --scopes workers --remote
    ```
    The private key is **never** committed and never appears in
    `wrangler.jsonc`. The channel-owner wallet should hold only the
@@ -1838,11 +1860,13 @@ all three Stage 3 Workers bind.
 
    Then verify the row landed:
    ```bash
-   npx wrangler d1 execute vaipakam-alerts-db --remote \
+   cd apps/indexer   # owner of the shared vaipakam-archive database
+   npx wrangler d1 execute vaipakam-archive --remote \
      --command "SELECT id, area, flow, recorded_at FROM diag_errors ORDER BY recorded_at DESC LIMIT 1"
    ```
 
-**Tunable knobs** (all in `apps/keeper/wrangler.jsonc`,
+**Tunable knobs** (all in `apps/agent/wrangler.jsonc` — the agent
+serves `/diag/record`,
 override per-environment via `wrangler vars` or the dashboard):
 
 | Var | Default | What it does |
@@ -1874,7 +1898,7 @@ contains `**Report ID:** \`<UUID>\``. Look it up:
 
 ```bash
 cd apps/keeper
-npx wrangler d1 execute vaipakam-alerts-db --remote \
+cd apps/indexer && npx wrangler d1 execute vaipakam-archive --remote \
   --command "SELECT * FROM diag_errors WHERE id = '<UUID>'"
 ```
 

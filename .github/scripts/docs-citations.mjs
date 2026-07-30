@@ -203,7 +203,11 @@ export function citations(file) {
   // every command after it from the gate.
   let fence = null; // { ch, len } while inside a fence
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^\s*(`{3,}|~{3,})(.*)$/);
+    // At most THREE leading spaces (#1467 r14): CommonMark treats a marker
+    // indented four or more as literal content (an indented chunk inside the
+    // fence), and accepting it here let `    \`\`\`\`` close a four-backtick
+    // fence early, hiding the commands after it.
+    const m = lines[i].match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (m) {
       const ch = m[1][0];
       const len = m[1].length;

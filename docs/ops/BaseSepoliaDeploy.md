@@ -597,5 +597,8 @@ and the empty `DIAMOND_ADDR_*` placeholders in
 read from the consolidated JSON. After running the script:
 - `cd apps/defi && npm run deploy` — vite inlines the new
   addresses into the JS bundle.
-- `cd apps/keeper && wrangler deploy` — the watcher picks up
-  the new Diamond addresses on its next cron tick.
+- redeploy ALL THREE Workers, since each bundles the shared
+  deployment JSON at build time — stopping after the keeper leaves
+  indexing and the public agent endpoints on the previous Diamond:
+  `pnpm --filter @vaipakam/keeper --filter @vaipakam/indexer
+  --filter @vaipakam/agent run deploy`.

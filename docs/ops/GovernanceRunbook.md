@@ -449,10 +449,16 @@ re-opens.
 1. Edit the canonical text in `docs/Terms/TermsOfService.md` and the
    mirrored copy in `apps/www/src/pages/TermsPage.tsx`. Verify the two
    bodies are byte-identical (modulo HTML wrapping in the React file).
-2. Compute the canonical content hash. The exact algorithm is whatever
-   the frontend's signing flow uses (see
-   `apps/defi/src/hooks/useTosAcceptance.ts`); typically a
-   `keccak256` over the normalised text.
+2. Compute the canonical content hash. **No derivation utility exists
+   in the repo yet, and the frontend does not derive it** —
+   `apps/defi/src/hooks/useTosAcceptance.ts` only reads the on-chain
+   `currentTosHash` and echoes it back in `acceptTerms`, so whatever
+   bytes32 governance commits IS the hash of record. Before first
+   activation (the gate ships dormant, `currentTosVersion == 0`),
+   governance must pick and record the derivation — e.g. keccak256
+   over the exact committed bytes of `docs/Terms/TermsOfService.md` —
+   and note it in the proposal so the hash can be independently
+   re-derived from the text it covers.
 3. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
    newHash), delay=48h)`. `newVersion` MUST strictly exceed
