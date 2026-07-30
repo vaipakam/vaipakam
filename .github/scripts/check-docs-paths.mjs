@@ -9,10 +9,14 @@
  *     to the removed `frontend/` directory survived across 39 documents
  *     (#1462). An operator following one looks for a file that is not there.
  *   - The dApp's routes were flattened, so `/app/alerts` became `/alerts`.
- *     Three documents still pointed at the old form — including the incident
- *     runbook's verification step for a notification-channel migration, so
- *     the check an operator runs to confirm the migration worked would have
- *     landed on a blank page.
+ *     Three documents still pointed at the old form, including the incident
+ *     runbook's verification step for a notification-channel migration.
+ *     (An earlier version of this comment said that step would land an
+ *     operator on a blank page. It would NOT — `:locale` matches any first
+ *     segment and LocaleResolver falls back to English, so the old form still
+ *     renders. The citation is non-canonical, not dead. The claim was
+ *     asserted rather than checked, and it had already been repeated
+ *     elsewhere before review disproved it.)
  *
  * Neither class is preventable by discipline: nothing tells the author of a
  * rename which prose mentions the old name. Both are mechanically decidable,
@@ -211,6 +215,17 @@ const isCanonicalAppPath = (cited) => {
   for (const r of routes) {
     const rs = r.split('/');
     if (rs.length !== segs.length) continue;
+    // A route whose FIRST segment is a parameter is the `:locale` catch-all,
+    // and it matches EVERY single-segment path (#1467 r4). Letting it shape-
+    // match made `isCanonicalAppPath('/app')` return true, so the bare form
+    // was accepted as canonical — the check silently exempted four of the
+    // very citations it exists to flag, all in WebsiteReadme.md.
+    //
+    // This is the same router behaviour that disproved the blank-page claim
+    // above, which is the point: `:locale` means those URLs still RESOLVE.
+    // Resolving as a language code is not being mounted, and the dashboard's
+    // real address is `/`. Publishing `/app` is the defect either way.
+    if (rs[0].startsWith(':')) continue;
     if (rs.every((seg, i) => seg.startsWith(':') || seg === segs[i])) return true;
   }
   return false;
@@ -281,7 +296,9 @@ for (const file of docs) {
       // ── app routes ──────────────────────────────────────────────────
       // Only the `/app/...` prefix, because that is the one the flattening
       // invalidated; checking every `/x` token would sweep in prose.
-      if (/^\/app\/[a-zA-Z][\w:/-]*$/.test(tok) && !isCanonicalAppPath(tok)) {
+      // `/app` ITSELF, not just `/app/...` (#1467 r4). The old pattern
+      // required a slash after `app`, so a bare dashboard link was invisible.
+      if (/^\/app(\/[a-zA-Z][\w:/-]*)?$/.test(tok) && !isCanonicalAppPath(tok)) {
         findings.push({
           file,
           n: i + 1,

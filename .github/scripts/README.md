@@ -19,7 +19,7 @@ on every change.
 
 | Script | Class it closes | Why it recurred |
 | --- | --- | --- |
-| `check-docs-paths.mjs` | A cited repo path or `/app/...` route that does not exist | 147 references to the removed `frontend/` directory across 39 documents (#1462), and `/app/alerts` wrong in three documents at once — including an incident-runbook verification step that would have landed an operator on a blank page. |
+| `check-docs-paths.mjs` | A cited repo path that does not exist, or a non-canonical `/app/…` URL | 147 references to the removed `frontend/` directory across 39 documents (#1462), and `/app/alerts` wrong in three documents at once — including an incident-runbook verification step that would have landed an operator on a blank page. |
 
 ## Running them
 

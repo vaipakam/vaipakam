@@ -21,9 +21,13 @@ with its findings and ships when it is right.
 The second is a reference to something that no longer exists. The
 application directory was renamed some time ago and one hundred and
 forty-seven mentions of the old name survived; a page in the app was moved
-and three documents still pointed at the old address, one of them the step
-an operator follows to confirm a notification-channel migration worked. That
-step would have shown a blank page and told them nothing. The check
+and three documents still pointed at the old address, one of them the step an
+operator follows to confirm a notification-channel migration worked. Those
+addresses turn out to still load — an unrecognised first path segment is
+treated as a language code and falls back to English — so they are the wrong
+address to publish rather than a broken one. An earlier draft of this note
+claimed they showed a blank page; that was asserted without being checked,
+and review disproved it. The check
 confirms that cited locations and app addresses actually resolve, taking the
 list of real app addresses from the application itself rather than from a
 copy that could drift in its own right.

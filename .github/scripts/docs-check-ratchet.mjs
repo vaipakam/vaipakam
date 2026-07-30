@@ -201,15 +201,49 @@ export function report(name, findings, baselinePath, { write } = {}) {
         'Each entry is a permanent exemption that no automated check has vetted — ' +
         'they need a human read.',
     );
+  } else if (base.kind === 'bad-base-ref') {
+    // An EXPLICIT base ref that will not resolve is a CI misconfiguration,
+    // not an absent base (#1467 r4). Warning and exiting 0 meant the guard
+    // silently stopped guarding whenever the event SHA had not been
+    // fetched — reproduced in review with a bogus ref — so the eventual
+    // gate could be bypassed by breaking the check rather than passing it.
+    console.error(
+      `${name}: DOCS_CHECK_BASE_REF="${process.env.DOCS_CHECK_BASE_REF}" cannot be ` +
+        'resolved. Baseline growth cannot be verified, and a check that cannot ' +
+        'verify must not report success. Ensure the workflow fetches enough ' +
+        'history (fetch-depth: 0) and passes a ref that exists.',
+    );
+    return 1;
   } else if (base.kind !== 'ok') {
     console.warn(
       `${name}: cannot compare the baseline against its base revision (${base.kind}) — ` +
         'baseline growth is NOT verified in this run.',
     );
   } else {
+    // RENAMES first (#1467 r4). A document renamed without content changes
+    // re-keys every one of its fingerprints under the new filename, and each
+    // then looks like a forbidden baseline addition — reproduced in review.
+    // Punishing a rename would push people to avoid the check rather than the
+    // defect. Git already knows; ask it.
+    const renames = new Map();
+    try {
+      const out = execFileSync(
+        'git',
+        ['diff', '--name-status', '--find-renames', `${base.ref}`, 'HEAD'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      for (const line of out.split('\n')) {
+        const m = line.match(/^R\d*\t(.+)\t(.+)$/);
+        if (m) renames.set(m[2], m[1]); // new path -> old path
+      }
+    } catch {
+      /* rename detection is best-effort; fall through to strict comparison */
+    }
+
     const added = [];
     for (const [file, fps] of Object.entries(baseline)) {
-      const was = new Set(base.baseline[file] ?? []);
+      const oldName = renames.get(file);
+      const was = new Set(base.baseline[file] ?? base.baseline[oldName] ?? []);
       for (const fp of fps) if (!was.has(fp)) added.push(`${file}: ${fp}`);
     }
     if (added.length) {
