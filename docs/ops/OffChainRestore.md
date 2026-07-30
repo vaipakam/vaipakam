@@ -63,6 +63,10 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   `/accounts//workers/...` and the API answers with a shape that is not an
   error you would notice. Set them before starting:
 
+  Set them AFTER §1 step 1 creates the account — on a fresh-account recovery
+  there is no account id to export before that, so this cannot be a
+  before-you-start item (#1450 r24):
+
   ```bash
   # The account id is printed by whoami, and is also the `/accounts/<id>/`
   # segment of any dashboard URL.
@@ -70,12 +74,21 @@ produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README
   export CF_ACCOUNT_ID=<the account id from above>
   # A token with Workers Scripts:Read (plus Edit for the deploy steps).
   read -rs CF_API_TOKEN && export CF_API_TOKEN   # not via argv, not in history
-  # Prove both before relying on them:
-  curl -sS --fail-with-body -K - <<HDR | jq '.result.status'
-  url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
+
+  # Prove the PAIR, not just the token. `/user/tokens/verify` says the token is
+  # valid and says NOTHING about whether CF_ACCOUNT_ID is right or reachable
+  # with it — which is the half that was silently wrong. An account-scoped
+  # request exercises both:
+  curl -sS --fail-with-body -K - <<HDR | jq -e '.result.name'
+  url = "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
   header = "Authorization: Bearer $CF_API_TOKEN"
   HDR
   ```
+
+  A non-zero exit or a null name here means the id is wrong, the token cannot
+  see that account, or the variable is empty — all three of which otherwise
+  surface later as a `/accounts//workers/...` URL and a response shape nobody
+  reads as an error.
 
 - **Offline copies of every Worker secret.** The B2 archive backs up D1
   rows and R2 objects ONLY. Nothing in it restores the
