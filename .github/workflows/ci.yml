@@ -737,7 +737,7 @@ jobs:
         # per-function NatSpec comments in `contracts/src/`. Output is
         # governed by `foundry.toml [doc]`.
         #
-        # Runs under the QUICK profile, not the job-level cifast (#1490).
+        # Runs under the QUICK profile, not the job-level cifast (#1493).
         # `forge doc` does NOT reuse `out/` — it runs its own solc pass
         # (AST output, different artifact settings) over the ACTIVE
         # profile's full source glob. cifast's test-skip is an explicit
