@@ -50,11 +50,13 @@
  *   bucket-scoped READ-ONLY key works. That is deliberate: drift must be
  *   observable without holding anything dangerous.
  *
- *   --apply needs `writeBucketLifecycleRules`, which NEITHER of the
+ *   --apply needs `writeBuckets`, which NEITHER of the
  *   pipeline's two keys has, on purpose — the write key exists to push
  *   objects, not to reconfigure the bucket. Use a temporary key scoped to
- *   this bucket with `listBuckets` + `readBucketLifecycleRules` +
- *   `writeBucketLifecycleRules`, and delete it afterwards. Do NOT reach for
+ *   this bucket with `listBuckets` + `writeBuckets`, and delete it
+ *   afterwards. `readBucketLifecycleRules` / `writeBucketLifecycleRules` are
+ *   NOT B2 capabilities — asking for them makes the key creation fail, which
+ *   is how the documented procedure came to be unfollowable. Do NOT reach for
  *   the master key: it also carries `deleteBuckets`, `deleteFiles` and
  *   `bypassGovernance`, none of which this task needs.
  */
@@ -119,6 +121,13 @@ async function b2(url, init = {}) {
 
 async function main() {
   const declared = JSON.parse(readFileSync(DECL, 'utf8'));
+  // `setup-backblaze.mjs` supports a `BUCKET_NAME` override — the README tells
+  // forks to pick a unique name, since B2 bucket names are globally unique — so
+  // setup can legitimately be operating on a bucket this declaration does not
+  // name (#1471 r4). Without honouring it here, every print/check/apply on a
+  // fork looks for the production bucket, a bucket-scoped key cannot see it,
+  // and the failure reads as a permissions problem rather than a name mismatch.
+  if (process.env.BUCKET_NAME) declared.bucket = process.env.BUCKET_NAME;
 
   const auth = await b2('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
     headers: {
@@ -145,7 +154,7 @@ async function main() {
   }
 
   // An ABSENT `lifecycleRules` is not the same as "no rules" (#1471 r1).
-  // B2 omits the field when the key lacks `readBucketLifecycleRules`, and
+  // B2 can omit the field for an under-permissioned key, and
   // treating that as an empty set would report permanent false drift on a
   // correctly configured bucket — then, under `--apply`, present a diff whose
   // "from" side is fiction.
@@ -159,11 +168,48 @@ async function main() {
     console.error(
       `${declared.bucket}: B2 returned no \`lifecycleRules\` field. That means the ` +
         'key cannot read them, NOT that none are set — this key needs ' +
-        '`readBucketLifecycleRules` (or at least `listBuckets` on a key permitted ' +
+        '`listBuckets` on a key permitted ' +
         'to see them). Refusing to report drift against an unknown live state.',
     );
     process.exit(2);
   }
+  // THE PUBLISHED-PROMISE CEILING, ENFORCED (#1471 r4).
+  //
+  // PrivacyPolicy.md states that a support ticket's backup copies persist at
+  // most 30 days beyond its deletion, and `backup.ts` keeps that true by
+  // excluding `support_tickets` from the monthly and yearly tiers — so the
+  // daily prefixes are the only place a ticket can live, and their worst-case
+  // lifetime IS that promise.
+  //
+  // Worst case is the SUM of both terms, because a version is deleted
+  // `daysFromHidingToDeleting` after it is hidden, and it is hidden either by
+  // the age rule or by being superseded at the same key. A previous revision
+  // of the declaration set 30 + 30, reasoned only about the first term, and
+  // put the live bucket at a 60-day worst case — in breach of a promise the
+  // policy publishes. A comment saying "keep this under 30" would not have
+  // caught that, because the comment WAS there. This does.
+  const DAILY_PREFIXES = ['archives/', 'manifests/'];
+  const TICKET_BACKUP_MAX_DAYS = 30;
+  for (const r of declared.rules) {
+    if (!DAILY_PREFIXES.includes(r.fileNamePrefix)) continue;
+    const total =
+      (r.daysFromUploadingToHiding ?? 0) + (r.daysFromHidingToDeleting ?? 0);
+    if (total > TICKET_BACKUP_MAX_DAYS) {
+      console.error(
+        `bucket-lifecycle.json: "${r.fileNamePrefix}" allows a worst-case ` +
+          `lifetime of ${total} days (${r.daysFromUploadingToHiding} to hide + ` +
+          `${r.daysFromHidingToDeleting} to delete). PrivacyPolicy.md promises a ` +
+          `support ticket's backup copies persist at most ${TICKET_BACKUP_MAX_DAYS} ` +
+          `days beyond deletion, and the daily tier is the only tier tickets are ` +
+          `in, so this declaration would put us in breach of a published policy.\n` +
+          `Either bring the sum to ${TICKET_BACKUP_MAX_DAYS} or below, or remove ` +
+          `\`support_tickets\` from the daily tier in backup.ts first (#1474) — ` +
+          `that is a product decision, not a config one.`,
+      );
+      process.exit(1);
+    }
+  }
+
   const live = normalise(bucket.lifecycleRules);
   const want = normalise(declared.rules);
 
@@ -185,7 +231,7 @@ async function main() {
     console.error(fmt(live) || '    (none)');
     console.error('\n  declared:');
     console.error(fmt(want));
-    console.error('\nApply with --apply (needs writeBucketLifecycleRules), or update the declaration if the live state is intended.');
+    console.error('\nApply with --apply (needs a key with `writeBuckets`; `readBucketLifecycleRules` / `writeBucketLifecycleRules` are not B2 capabilities), or update the declaration if the live state is intended.');
     return 1;
   }
 

@@ -20,6 +20,10 @@ by querying the API. That is how `daysFromHidingToDeleting: 1` went unnoticed
 forged overwrite left nothing to fall back on (#1469).
 
 ```bash
+# From the REPOSITORY ROOT this needs the `cd` — the root `package.json` has
+# none of these scripts, so copying the block without it fails with a
+# missing-script error rather than anything that hints at the cause (#1471 r4).
+cd ops/offchain-data-archive
 npm run bucket:lifecycle:print   # what B2 currently has
 npm run bucket:lifecycle:check   # does live match the declaration?
 npm run bucket:lifecycle:apply   # make live match the declaration
