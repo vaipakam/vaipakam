@@ -208,10 +208,13 @@ test('disclosure state replays from the audit, not from the hold row alone', () 
       rows,
     );
   const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
+  // A place audit's detail IS the raw holdReason (the writer binds
+  // the same value into hold_reason) — '' matches a fixture hold with
+  // no hold_reason column.
   const place = (id, at, ref = doc) =>
-    ({ id, at, action: 'place', wallet_hash: 'w1', legal_doc_ref: ref, detail: 'x' });
+    ({ id, at, action: 'place', wallet_hash: 'w1', legal_doc_ref: ref, detail: '' });
   const lift = (id, at) =>
-    ({ id, at, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null, detail: 'x' });
+    ({ id, at, action: 'lift', wallet_hash: 'w1', legal_doc_ref: null, detail: '' });
   const setDisc = (id, at, detail) =>
     ({ id, at, action: 'set-disclosure', wallet_hash: 'w1', legal_doc_ref: null, detail });
 
@@ -274,6 +277,59 @@ test('disclosure state replays from the audit, not from the hold row alone', () 
     auditWith([place(1, 100), setDisc(2, 200, 'oops not the writer format')]),
   );
   assert.match(reconcileLegalHolds(mangledDetail)[0].problem, /structured format/);
+
+  // A set-disclosure while NO hold existed is impossible in production
+  // (the endpoint 404s without appending) — flagged outright, not
+  // silently treated as the expected state (r9). Before the first
+  // place…
+  const discBeforePlace = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 1, disclosure_note: 'planted' }]),
+    auditWith([setDisc(1, 50, 'disclosure_allowed=1; note=planted'), place(2, 100)]),
+  );
+  assert.ok(reconcileLegalHolds(discBeforePlace).some((p) => /no hold existed/.test(p.problem)));
+
+  // …and in the gap between a lift and the fresh re-place.
+  const discInGap = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, disclosure_allowed: 1, disclosure_note: 'planted' }]),
+    auditWith([
+      place(1, 100),
+      lift(2, 200),
+      setDisc(3, 250, 'disclosure_allowed=1; note=planted'),
+      place(4, 300),
+    ]),
+  );
+  assert.ok(reconcileLegalHolds(discInGap).some((p) => /no hold existed/.test(p.problem)));
+});
+
+test('hold reason replays from the latest placement audit (r9)', () => {
+  const doc = `legal-holds/${'c'.repeat(64)}.pdf`;
+  const holdsWith = (rows) =>
+    tableFixture('diag_legal_holds', ['wallet_hash', 'legal_doc_ref', 'hold_reason'], rows);
+  const auditWith = (rows) =>
+    tableFixture(
+      'diag_legal_hold_audit',
+      ['id', 'at', 'action', 'wallet_hash', 'legal_doc_ref', 'detail'],
+      rows,
+    );
+  const arch = (holds, audit) => ({ d1: { archive: [holds, audit] } });
+  const place = (id, at, reason) =>
+    ({ id, at, action: 'place', wallet_hash: 'w1', legal_doc_ref: doc, detail: reason });
+
+  // Consistent: the hold cites the same reason its latest placement
+  // audited.
+  const consistent = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: 'Court order 42/2026' }]),
+    auditWith([place(1, 100, 'Court order 42/2026')]),
+  );
+  assert.deepEqual(reconcileLegalHolds(consistent), []);
+
+  // Re-place with a changed reason landed between the two exports:
+  // the hold still cites the superseded order.
+  const staleReason = arch(
+    holdsWith([{ wallet_hash: 'w1', legal_doc_ref: doc, hold_reason: 'Court order 42/2026' }]),
+    auditWith([place(1, 100, 'Court order 42/2026'), place(2, 200, 'Court order 77/2026')]),
+  );
+  assert.match(reconcileLegalHolds(staleReason)[0].problem, /reason/);
 });
 
 test('re-derivable batches carry the skip-by-default tier, never the apply tier', () => {

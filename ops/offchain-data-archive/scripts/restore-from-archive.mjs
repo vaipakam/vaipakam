@@ -566,80 +566,109 @@ export function invalidLegalDocRefs(archive) {
  *  `place` audit with no current hold restores WITHOUT a legally
  *  required erasure block; a hold whose latest audit is `lift`
  *  resurrects a lifted hold and wrongly blocks erasure (Codex #1484
- *  r7). Membership semantics from `diagErasure.ts`: `place` upserts
- *  the hold row, `lift` DELETEs it, `set-disclosure` leaves
- *  membership alone. Latest action per wallet = max (at, id) — the
- *  audit table is append-only autoincrement.
+ *  r7). The audit trail is replayed per wallet as the writer's own
+ *  STATE MACHINE (`diagErasure.ts`), ordered by (at, id) — the table
+ *  is append-only autoincrement:
  *
- *  Disclosure is reconciled too (Codex #1484 r8): a `set-disclosure`
- *  landing between the two table exports can restore a hold whose
- *  disclosure flag/note the latest audit already revoked — exposing a
- *  gagged hold's retained-by-law note, the exact outcome the flag
- *  exists to prevent. Replay from the audit: a fresh `place` starts at
- *  disclosure_allowed=0 / note NULL, a re-place upsert leaves
- *  disclosure untouched, and a `lift` DELETEs the row — so the
- *  expected state for a held wallet is the latest `set-disclosure`
- *  AFTER the last `lift` (writer detail format
- *  `disclosure_allowed=<0|1>; note=<note ?? ''>`), or the 0/'' fresh
- *  default when there is none. Returns {walletHash, problem} entries
- *  for the caller to fail on. */
+ *  - `place` on an absent wallet inserts a fresh row: reason + doc
+ *    from the request, disclosure_allowed=0 / note NULL. A re-place
+ *    refreshes reason + doc and leaves disclosure UNTOUCHED. The
+ *    place audit's `detail` is the raw holdReason — the same value
+ *    bound into `hold_reason` (Codex #1484 r9 P2: a re-place between
+ *    the two exports must not leave the register citing a stale
+ *    order, so the reason is reconciled too).
+ *  - `lift` DELETEs the row — reason, doc and disclosure state all
+ *    die with it.
+ *  - `set-disclosure` requires an existing hold (the endpoint 404s
+ *    WITHOUT appending an audit row otherwise), then updates
+ *    flag+note; detail format `disclosure_allowed=<0|1>; note=<note>`.
+ *    A `set-disclosure` while no hold existed is therefore an
+ *    impossible record and is flagged outright rather than merely
+ *    ignored (Codex #1484 r9 P1 — r8's after-the-last-lift filter
+ *    let one masquerade as the expected state).
+ *
+ *  The replayed end state (membership, document, reason, disclosure
+ *  flag/note) is compared against the archived hold row; any
+ *  disagreement means the two tables are not from one consistent
+ *  moment (snapshot race) or were tampered with. Off-format
+ *  set-disclosure detail fails rather than guesses (Codex #1484 r8).
+ *  Returns {walletHash, problem} entries for the caller to fail on. */
 export function reconcileLegalHolds(archive) {
   const tables = archive?.d1?.archive ?? [];
   const holds = tables.find((t) => t?.name === 'diag_legal_holds');
   const audit = tables.find((t) => t?.name === 'diag_legal_hold_audit');
   if (!holds || !audit) return []; // baseline check already fails these
   const holdByWallet = new Map(holds.rows.map((r) => [r.wallet_hash, r]));
-  const after = (a, b) => a.at > b.at || (a.at === b.at && a.id > b.id);
-  const latest = new Map(); // wallet_hash -> latest place/lift audit row
-  const lastLift = new Map(); // wallet_hash -> latest lift audit row
+  const byWallet = new Map(); // wallet_hash -> its audit rows
   for (const row of audit.rows) {
-    if (row.action !== 'place' && row.action !== 'lift') continue;
-    const prev = latest.get(row.wallet_hash);
-    if (!prev || after(row, prev)) latest.set(row.wallet_hash, row);
-    if (row.action === 'lift') {
-      const pl = lastLift.get(row.wallet_hash);
-      if (!pl || after(row, pl)) lastLift.set(row.wallet_hash, row);
-    }
-  }
-  // Latest surviving set-disclosure per wallet: rows at or before the
-  // last lift died with the row that lift deleted.
-  const lastDisclosure = new Map();
-  for (const row of audit.rows) {
-    if (row.action !== 'set-disclosure') continue;
-    const lift = lastLift.get(row.wallet_hash);
-    if (lift && !after(row, lift)) continue;
-    const prev = lastDisclosure.get(row.wallet_hash);
-    if (!prev || after(row, prev)) lastDisclosure.set(row.wallet_hash, row);
+    // Unknown actions are already fatal via invalidLegalDocRefs.
+    if (row.action !== 'place' && row.action !== 'lift' && row.action !== 'set-disclosure') continue;
+    let rows = byWallet.get(row.wallet_hash);
+    if (!rows) byWallet.set(row.wallet_hash, (rows = []));
+    rows.push(row);
   }
   const problems = [];
-  for (const [wallet, last] of latest) {
+  const seenWallets = new Set();
+  for (const [wallet, rows] of byWallet) {
+    rows.sort((a, b) => a.at - b.at || a.id - b.id);
+    let held = false;
+    let sawMembership = false;
+    let lastPlace = null; // latest place — carries current reason + doc
+    let discRow = null; // latest set-disclosure on the CURRENT row
+    for (const row of rows) {
+      if (row.action === 'place') {
+        if (!held) discRow = null; // fresh row starts gagged (0/NULL)
+        held = true;
+        sawMembership = true;
+        lastPlace = row;
+      } else if (row.action === 'lift') {
+        held = false;
+        sawMembership = true;
+        discRow = null; // died with the deleted row
+      } else if (!held) {
+        problems.push({
+          walletHash: wallet,
+          problem: "audit has a 'set-disclosure' while no hold existed — the production endpoint 404s without appending, so this record is impossible (tampering)",
+        });
+      } else {
+        discRow = row;
+      }
+    }
     const hold = holdByWallet.get(wallet);
-    if (last.action === 'place' && !hold) {
+    if (sawMembership) seenWallets.add(wallet);
+    if (!sawMembership) {
+      // Only set-disclosure rows — the orphan-hold sweep below decides.
+    } else if (held && !hold) {
       problems.push({
         walletHash: wallet,
         problem: "latest audit is 'place' but no current hold exists — restoring omits a legally required erasure block (snapshot race or tampering)",
       });
-    } else if (last.action === 'lift' && hold) {
+    } else if (!held && hold) {
       problems.push({
         walletHash: wallet,
         problem: "latest audit is 'lift' but a current hold row exists — restoring resurrects a lifted hold (snapshot race or tampering)",
       });
-    } else if (last.action === 'place' && hold) {
-      if (hold.legal_doc_ref !== last.legal_doc_ref) {
+    } else if (held && hold) {
+      if (hold.legal_doc_ref !== lastPlace.legal_doc_ref) {
         problems.push({
           walletHash: wallet,
           problem: "current hold's document differs from its latest 'place' audit — the pair is not from one consistent moment",
         });
       }
-      const disc = lastDisclosure.get(wallet);
+      if ((hold.hold_reason ?? '') !== String(lastPlace.detail ?? '')) {
+        problems.push({
+          walletHash: wallet,
+          problem: "current hold's reason differs from its latest 'place' audit — restoring would leave the legal register citing a stale order or case (snapshot race or tampering)",
+        });
+      }
       let expectedAllowed = 0;
       let expectedNote = '';
-      if (disc) {
-        const m = /^disclosure_allowed=([01]); note=(.*)$/s.exec(String(disc.detail ?? ''));
+      if (discRow) {
+        const m = /^disclosure_allowed=([01]); note=(.*)$/s.exec(String(discRow.detail ?? ''));
         if (!m) {
           problems.push({
             walletHash: wallet,
-            problem: `latest 'set-disclosure' audit detail ${JSON.stringify(disc.detail)} does not match the writer's structured format — cannot verify the hold's disclosure state`,
+            problem: `latest 'set-disclosure' audit detail ${JSON.stringify(discRow.detail)} does not match the writer's structured format — cannot verify the hold's disclosure state`,
           });
           continue;
         }
@@ -655,7 +684,7 @@ export function reconcileLegalHolds(archive) {
     }
   }
   for (const wallet of holdByWallet.keys()) {
-    if (!latest.has(wallet)) {
+    if (!seenWallets.has(wallet)) {
       problems.push({
         walletHash: wallet,
         problem: 'current hold has no place/lift audit history at all — the writer always appends one',
