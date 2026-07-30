@@ -51,8 +51,23 @@ export const MONTHLY_PREFIXES = ['archives-monthly/', 'manifests-monthly/'];
 export const DAILY_MAX_TOTAL_DAYS = 29;
 /** Published: monthly archives kept 12 months. */
 export const MONTHLY_MAX_TOTAL_DAYS = 365;
-/** Weekly detector (Monday 09:00 UTC) must fall strictly inside the window. */
-export const MIN_RECOVERY_DAYS = 8;
+/**
+ * Recovery-window floors, PER TIER, because the two tiers have different
+ * detectors — and the monthly tier has none at all (#1471 r6).
+ *
+ * Daily: the weekly healthcheck (Mon 09:00 UTC) examines
+ * `manifests/<recent dates>/`, so 8 days puts detection strictly inside the
+ * window.
+ *
+ * Monthly: `healthcheck.ts` NEVER looks at the monthly prefixes. So a monthly
+ * overwrite is not detected by anything today, and a 9-day window could not be
+ * justified by "the detector will catch it" — there is no detector. Until
+ * #1476 extends the healthcheck, the window has to be long enough that the
+ * next monthly cycle is still inside it, which is why the floor is 31 rather
+ * than 8. That is a weaker guarantee, stated as such rather than dressed up.
+ */
+export const MIN_RECOVERY_DAYS_DAILY = 8;
+export const MIN_RECOVERY_DAYS_MONTHLY = 31;
 
 /**
  * Throws unless every declared rule is within its published ceiling.
@@ -65,14 +80,16 @@ export function assertPolicyCeilings(decl, fail) {
   const byPrefix = new Map(decl.rules.map((r) => [r.fileNamePrefix, r]));
 
   const groups = [
-    { prefixes: DAILY_PREFIXES, max: DAILY_MAX_TOTAL_DAYS, promise:
+    { prefixes: DAILY_PREFIXES, max: DAILY_MAX_TOTAL_DAYS,
+      floor: MIN_RECOVERY_DAYS_DAILY, promise:
         'PrivacyPolicy.md: nightly archives kept 30 days, and a support ' +
         "ticket's backup copies live only in that tier" },
-    { prefixes: MONTHLY_PREFIXES, max: MONTHLY_MAX_TOTAL_DAYS, promise:
+    { prefixes: MONTHLY_PREFIXES, max: MONTHLY_MAX_TOTAL_DAYS,
+      floor: MIN_RECOVERY_DAYS_MONTHLY, promise:
         'PrivacyPolicy.md: monthly archives kept 12 months, then age out' },
   ];
 
-  for (const { prefixes, max, promise } of groups) {
+  for (const { prefixes, max, floor, promise } of groups) {
     for (const prefix of prefixes) {
       const r = byPrefix.get(prefix);
 
@@ -122,15 +139,23 @@ export function assertPolicyCeilings(decl, fail) {
         );
       }
 
-      if (DAILY_PREFIXES.includes(prefix) && del < MIN_RECOVERY_DAYS) {
+      // The floor applies to EVERY tier, not just the daily one (#1471 r6).
+      // Scoping it to daily left the monthly prefixes free to carry a window
+      // shorter than anything that could notice an overwrite in them.
+      if (del < floor) {
         fail(
           `bucket-lifecycle.json "${prefix}": daysFromHidingToDeleting is ${del}, ` +
-            `under the ${MIN_RECOVERY_DAYS}-day floor.\nThat term is the ONLY ` +
-            `window in which a superseded (possibly forged-over) archive can be ` +
-            `recovered, and the detector is the WEEKLY healthcheck. At 7 days a ` +
-            `forgery landing just after one Monday becomes deletable as the next ` +
-            `Monday's alert fires, so the alert and the deletion race and there ` +
-            `is effectively no window (#1469).`,
+            `under the ${floor}-day floor for this tier.\nThat term is the ONLY ` +
+            `window in which a superseded (possibly forged-over) object can be ` +
+            `recovered.\n` +
+            (DAILY_PREFIXES.includes(prefix)
+              ? `The daily detector is the WEEKLY healthcheck, so at 7 days a ` +
+                `forgery landing just after one Monday becomes deletable as the ` +
+                `next Monday's alert fires — the alert races the deletion (#1469).`
+              : `There is NO detector for the monthly prefixes: healthcheck.ts ` +
+                `examines only \`manifests/<recent dates>/\`. So this window ` +
+                `cannot be justified by detection at all, and must at least ` +
+                `outlast the monthly write cadence (#1476).`),
         );
       }
     }

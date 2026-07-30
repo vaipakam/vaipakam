@@ -22,12 +22,12 @@
     "    the alert races the deletion. 9 puts detection strictly inside the window",
     "    and leaves two days to act.",
     "",
-    "Monthly (archives-monthly/, manifests-monthly/): 356 + 9 = 365 days.",
+    "Monthly (archives-monthly/, manifests-monthly/): 334 + 31 = 365 days.",
     "  - PrivacyPolicy.md and the rendered privacy page both promise monthly",
-    "    archives are kept 12 months and then age out. The previous 365 + 30 came",
-    "    to 395 and overshot that by a month.",
-    "  - The same 9-day recovery term, for the same reason.",
-    "",
+    "  - 31 not 9: `healthcheck.ts` NEVER examines the monthly prefixes, so a",
+    "    monthly overwrite is detected by NOTHING today. A short window could not",
+    "    be justified by detection, so it must at least outlast the monthly write",
+    "    cadence. Extending the healthcheck to cover them is #1476.",
     "Raising the daily ceiling at all means excluding support_tickets from the",
     "daily tier, which means tickets have no backup \u2014 a product decision, #1474."
   ],
@@ -47,14 +47,14 @@
     },
     {
       "fileNamePrefix": "archives-monthly/",
-      "daysFromUploadingToHiding": 356,
-      "daysFromHidingToDeleting": 9,
+      "daysFromUploadingToHiding": 334,
+      "daysFromHidingToDeleting": 31,
       "daysFromStartingToCancelingUnfinishedLargeFiles": null
     },
     {
       "fileNamePrefix": "manifests-monthly/",
-      "daysFromUploadingToHiding": 356,
-      "daysFromHidingToDeleting": 9,
+      "daysFromUploadingToHiding": 334,
+      "daysFromHidingToDeleting": 31,
       "daysFromStartingToCancelingUnfinishedLargeFiles": null
     }
   ]

@@ -178,10 +178,20 @@ async function main() {
   // for the promises, the arithmetic, and why each bound is what it is. The
   // first version of this check lived only here, which left the setup script
   // free to push a violating declaration to production (#1471 r5).
-  assertPolicyCeilings(declared, (msg) => {
-    console.error(msg);
-    process.exit(1);
-  });
+  // NOT for `--print-live` (#1471 r6). That mode reports what B2 currently
+  // has and does not consult the declaration at all, so refusing to run it
+  // because the declaration is invalid removes the one diagnostic an operator
+  // needs WHILE fixing an invalid declaration — and while live may itself be
+  // the thing out of policy. A read-only report must never be gated on the
+  // validity of something it does not read.
+  // The mode VALUE is 'print' — '--print-live' is the flag. Guarding on the
+  // flag name here would have been a no-op that read as a fix.
+  if (mode !== 'print') {
+    assertPolicyCeilings(declared, (msg) => {
+      console.error(msg);
+      process.exit(1);
+    });
+  }
 
   const live = normalise(bucket.lifecycleRules);
   const want = normalise(declared.rules);

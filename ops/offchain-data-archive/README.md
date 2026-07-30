@@ -59,7 +59,7 @@ newer upload at the same key**. The second case is the one that matters: the
 Worker's B2 key has `writeFiles` but **not** `deleteFiles`, so an attacker who
 compromises the Worker can only overwrite an archive, never delete one. The
 genuine version survives until *our own* rule removes it. At 1 day that was
-effectively immediately; the declaration sets **9**.
+effectively immediately; the declaration sets **9** on the daily prefixes and **31** on the monthly ones.
 
 Why 9 and not 30, which an earlier revision of this file said: the daily
 prefixes' worst-case object lifetime is capped by a **published promise** —
@@ -74,6 +74,14 @@ delete.
 so at 7 days an overwrite landing just after one Monday becomes deletable as
 the next Monday's alert fires — the alert races the deletion. 9 puts detection
 strictly inside the window and leaves two days to act.
+
+The monthly floor is higher for a worse reason, stated plainly rather than
+buried: `healthcheck.ts` examines only `manifests/<recent dates>/`, so it never
+looks at the monthly prefixes and **a monthly overwrite is detected by nothing
+today**. A short window there could not be justified by "the detector will
+catch it", so it instead has to outlast the monthly write cadence. Extending
+the healthcheck to cover the monthly tier is #1476, and until it lands the
+monthly guarantee is genuinely weaker than the daily one.
 
 Raising the ceiling at all means excluding support tickets from this tier,
 which means tickets have no backup — a product decision, tracked as #1474.
@@ -140,9 +148,14 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    The script is idempotent — safe to re-run. It will:
    - Create the `vaipakam-offchain-data-archive` bucket (allPrivate) if
      missing, reuse if present.
-   - Set six lifecycle rules: `archives/` + `manifests/` 30-day,
-     `archives-monthly/` + `manifests-monthly/` 365-day, plus
-     `archives-yearly/` + `manifests-yearly/` indefinite.
+   - Set the FOUR lifecycle rules from `bucket-lifecycle.json` (the setup
+     script reads that file rather than carrying its own copy): `archives/`
+     and `manifests/` at 20 + 9 = 29 days worst case, `archives-monthly/`
+     and `manifests-monthly/` at 334 + 31 = 365. The yearly prefixes get
+     NO rule, which is what gives them indefinite retention — an earlier
+     revision of this line said "six rules … yearly indefinite", which
+     described a rule that does not and should not exist. (Their being
+     unverified by the healthcheck is a separate gap, #1476.)
    - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
      listFiles + writeFiles, bucket-scoped) for the nightly cron.
    - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +
