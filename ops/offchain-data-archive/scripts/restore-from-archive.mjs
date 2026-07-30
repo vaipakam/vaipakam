@@ -455,7 +455,14 @@ export function invalidLegalDocRefs(archive) {
     if (!LEGAL_REF_TABLES.includes(table?.name)) continue;
     for (const row of table.rows ?? []) {
       const ref = row.legal_doc_ref;
-      if (ref === null || ref === undefined) continue; // legitimately doc-less rows
+      if (ref === null || ref === undefined) {
+        // Doc-less rows are legitimate — but a HASH without a ref is
+        // not a shape the writer produces (Codex #1484 r4).
+        if (row.legal_doc_sha256 !== null && row.legal_doc_sha256 !== undefined) {
+          invalid.push({ table: table.name, ref, problem: 'recorded sha present but ref is null' });
+        }
+        continue;
+      }
       // The full PAIR must hold, not just key membership (Codex #1484
       // r3): an empty ref, an off-shape ref, and a recorded sha that
       // disagrees with the hash embedded in its own key are all
@@ -471,7 +478,14 @@ export function invalidLegalDocRefs(archive) {
       }
       const keyHash = ref.slice('legal-holds/'.length, -'.pdf'.length);
       const recorded = row.legal_doc_sha256;
-      if (recorded !== null && recorded !== undefined && recorded !== keyHash) {
+      // The production writer stores ref and sha TOGETHER
+      // (`diagErasure.ts` derives docRef/docSha in one step), so a
+      // present ref with a NULL sha is as much a tampering shape as a
+      // mismatched one — the r3 null exemption was wrong (Codex #1484
+      // r4).
+      if (recorded === null || recorded === undefined) {
+        invalid.push({ table: table.name, ref, problem: 'ref present but recorded sha is null' });
+      } else if (recorded !== keyHash) {
         invalid.push({
           table: table.name,
           ref,

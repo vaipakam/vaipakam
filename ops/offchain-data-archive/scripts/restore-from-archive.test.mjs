@@ -286,13 +286,17 @@ test('legal-hold reference PAIR invariants: missing, malformed, and sha-mismatch
     { id: 3, legal_doc_ref: gone, legal_doc_sha256: null },        // absent from archive
     { id: 4, legal_doc_ref: '', legal_doc_sha256: null },          // empty ref = tampering shape
     { id: 5, legal_doc_ref: doc.key, legal_doc_sha256: 'f'.repeat(64) }, // sha disagrees with key
+    { id: 6, legal_doc_ref: doc.key, legal_doc_sha256: null },     // ref without its sha
+    { id: 7, legal_doc_ref: null, legal_doc_sha256: docHash },     // sha without its ref
   );
-  holds.rowCount = 5;
+  holds.rowCount = 7;
   const problems = invalidLegalDocRefs({ d1: { archive: [holds] }, r2: { objects: [doc] } });
-  assert.equal(problems.length, 3);
+  assert.equal(problems.length, 5);
   assert.match(problems[0].problem, /absent/);
   assert.match(problems[1].problem, /not a canonical/);
   assert.match(problems[2].problem, /disagrees/);
+  assert.match(problems[3].problem, /sha is null/);
+  assert.match(problems[4].problem, /ref is null/);
 });
 
 test('non-version-1 archives are rejected before any output', () => {
