@@ -387,15 +387,18 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4, 13, 14 and 16 belong to the **listing** path, 5–10, 15 and 17
-to the **instant-sell** (direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
+Items 1–4, 13, 14, 16 and 17 belong to the **listing** path, 5–10,
+15 and 17 to the **instant-sell** (direct buy-offer) path, and 11 and
+12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
 offer's creator authored has to be re-checked by hand against a live
 loan the offer never described. Items 5–10 and 15 are each a missing
-hand-check of that kind, and item 17 a missing teardown step. See "Recommended shape" at the end of this section: the
-pattern suggests the durable fix is a dedicated position-sale bid rather
+hand-check of that kind, and item 17 is a settlement teardown /
+buyback-carve-out step. See "Recommended shape" at the end of this
+section: the pattern suggests the durable fix is a dedicated
+position-sale bid rather
 than a growing list of patches on generic-offer consumption.
 
 1. **A listing outlives the loan's maturity.** Completion gates only
@@ -625,8 +628,21 @@ than a growing list of patches on generic-offer consumption.
    bounds on BOTH sides of the ratio — not a collateral-value minimum on
    its own. This is the same defect class as item 13: the consent must
    bind the thing it was given for, or it is a signature on a state that
-   no longer exists. On the instant-sell path the buyer is not present at
-   all — the seller fills a
+   no longer exists.
+
+   **The admission rule also has to bind the inherited risk snapshots,
+   not just the live health read.** A loan can have originated under
+   weaker collateral rules than the rules in force when the sale fills;
+   migrating the lender position changes the lender, not the loan's
+   `minHealthFactorAtInit` or `initLtvCapBpsAtInit`. A fill-time health
+   check proves the position is solvent now, but it does not prove the
+   buyer is inheriting the same collateral-withdrawal floor they would
+   have received on a fresh loan today. The borrower can later withdraw
+   collateral down to the older snapshot, so the incoming lender's
+   consent must either bind those inherited snapshots explicitly or
+   require compatibility with the current risk parameters.
+
+   On the instant-sell path the buyer is not present at all — the seller fills a
    standing offer the buyer authored earlier, for no particular loan. A
    blanket "I accept distressed positions" flag on a generic offer
    therefore proves nothing about the position actually assigned, and
@@ -637,8 +653,9 @@ than a growing list of patches on generic-offer consumption.
    that — it informs the wrong party. So for the generic-offer shape the
    choice narrows to two real options: keep a **hard admission floor**
    (no acknowledgement escape), or require a **loan-specific buyer
-   authorization carrying an expiry and minimum health/collateral
-   bounds** — which is the position-sale bid under a different name.
+   authorization carrying an expiry, minimum health bound and inherited
+   risk-snapshot compatibility** — which is the position-sale bid under a
+   different name.
 
    **The unpriceable case needs its own answer, not the same one.**
    Where either leg of the loan is illiquid, the risk math refuses to
@@ -773,7 +790,7 @@ than a growing list of patches on generic-offer consumption.
    Until one route exists, this document's "the seller picks" wording is
    only true when the seller is the caller.
 
-17. **The direct sale strands the seller's intent exposure.** For a loan
+17. **Intent exposure release must not strand capacity or create a buyback escape.** For a loan
    originated through a standing lender intent, the listing-completion
    path clears the origin marker and calls the intent-exposure release;
    the direct-sale path does neither — the release appears exactly once
@@ -785,7 +802,8 @@ than a growing list of patches on generic-offer consumption.
    pure asymmetry between two paths that are supposed to be alternate
    exits from the same position, and the listing side proves the fix is
    already understood. *Required*: release the intent exposure on the
-   direct-sale path too.
+   direct-sale path too, and apply the buyback carve-out below on both sale
+   paths.
 
    **But the release must be conditional on the origin owner actually
    leaving.** Neither sale path stops the intent's own owner being the
@@ -804,8 +822,8 @@ than a growing list of patches on generic-offer consumption.
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
-- **The listing surface does not ship until items 1–4, 11, 12, 13, 14 and
-  16 are resolved.**
+- **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
+  16 and 17 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15 and 17
   are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
@@ -870,13 +888,19 @@ from this list reads as dissolved:
   not frozen between a bid and its fill: the borrower can partially
   repay, collateral can be withdrawn or fall in price, a held-for-lender
   payment can arrive, **and the borrower position itself can transfer to
-  a different holder**. So a bid naming a loan id and a price still buys
+  a different holder**, and on periodic-interest loans the current lender
+  can settle a period or receive an interest-only partial payment that
+  advances `lastPeriodicInterestSettledAt` or
+  `interestPaidSinceLastPeriod` without changing principal, borrower,
+  collateral, or held balance. So a bid naming a loan id and a price still buys
   a position whose shape has moved — the same stale-consent and
   seller-loss race the reshape was meant to end, just relocated. The bid
   therefore needs a **buyer-authored expiry** and **bounds on the
   mutable loan state** it is priced against — outstanding principal,
-  collateral exposure, held balance, **and the expected borrower-NFT
-  holder**. That last one is a distinct requirement, not a restatement of
+  collateral exposure, inherited risk snapshots, held balance,
+  periodic-settlement checkpoints, settled-interest state, **and the
+  expected borrower-NFT holder**. That last one is a distinct
+  requirement, not a restatement of
   item 5: re-resolving the current holder proves the counterparty is
   compliance-eligible and not the buyer themselves, which is a very
   different claim from the buyer having consented to *that* counterparty.
