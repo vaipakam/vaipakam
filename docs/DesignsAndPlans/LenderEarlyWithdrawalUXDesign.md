@@ -380,7 +380,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — twenty-three at
+The adversarial passes on this doc surfaced the gaps below — twenty-four at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -393,7 +393,7 @@ against.
 
 Items 1–4, 13, 14, 16, 17, 19 and 23 belong to the **listing** path,
 5–10, 15, 17 and 18 to the **instant-sell** (direct buy-offer) path,
-and 11, 12, 20, 21 and 22 to both. The instant-sell cluster is
+and 11, 12, 20, 21, 22 and 24 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -718,6 +718,10 @@ than a growing list of patches on generic-offer consumption.
    recomputing at completion. It must also freeze or immediately mark the
    seller's old entry as forfeited so `claimInteractionRewards` cannot
    pay finalized days out to the seller while the migration is pending.
+   The sale also has to install both sides' reward-denominator cutoff
+   deltas, or an equivalent pending placeholder, immediately: if those
+   denominator effects wait for recovery, global reward frontiers can
+   advance past the cutoff and make the later repair non-retroactive.
    Otherwise who receives which days depends on keeper availability — the
    recoverable path would trade one non-determinism for another rather
    than removing it. Until then the copy states the intent without
@@ -937,13 +941,27 @@ than a growing list of patches on generic-offer consumption.
    extensions and settlement mutations while listed are rejected or
    invalidate the authorization through a shared economic-state epoch.
 
+24. **Sale fills must guard periodic-settlement delinquency at the deadline.**
+   Binding cadence, settlement checkpoints, and settled-interest state
+   catches mutations, but it does not catch time crossing the periodic
+   grace threshold with those fields unchanged. Once
+   `lastPeriodicInterestSettledAt + cadence + grace` is reached with a
+   shortfall, settlement becomes permissionless and can liquidate or sell
+   collateral immediately after the stale sale fill. A buyer who signed a
+   listing acceptance, position bid, or generic standing offer before the
+   threshold can therefore receive a position that is already
+   auto-liquidatable while every named state field still matches.
+   *Required*: every sale fill has a fill-time delinquency / shortfall
+   guard, or buyer authorization explicitly binds the periodic settlement
+   deadline and admissible shortfall state.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
-  16, 17, 19, 20, 21, 22 and 23 are resolved.**
+  16, 17, 19, 20, 21, 22, 23 and 24 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15, 17, 18,
-  20, 21 and 22 are resolved.** An earlier draft of this gate said only that the
+  20, 21, 22 and 24 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
@@ -1019,9 +1037,10 @@ from this list reads as dissolved:
   the loan remains active; and partial liquidation can reset
   `interestAccrualStart` and `interestRemainingDays` while leaving the
   nominal start, duration, and exact maturity unchanged; the borrower can
-  also create a preclose offset, live swap-to-repay intent, or applicable
-  prepay-collateral listing order that commits the position to imminent
-  close-out while the listed bounds stay flat.
+  also create a preclose offset, live swap-to-repay intent, active
+  refinance offer, or applicable prepay-collateral listing order that
+  commits the position to imminent close-out while the listed bounds stay
+  flat.
   So a bid naming a loan id and a price still buys
   a position whose shape has moved — the same stale-consent and
   seller-loss race the reshape was meant to end, just relocated. The bid
@@ -1029,12 +1048,13 @@ from this list reads as dissolved:
   mutable loan state** it is priced against — outstanding principal,
   collateral exposure, inherited risk snapshots, inherited economic
   snapshots (treasury fee and fallback split), held balance,
-  periodic-settlement checkpoints, settled-interest state, the dedicated
-  interest-accrual clock (`interestAccrualStart` and
-  `interestRemainingDays`), interest-rate and exact maturity/start-time
-  state, active borrower close-out commitments (preclose offset,
-  swap-to-repay intent, and applicable prepay-listing hash/state), **and
-  the expected borrower-NFT holder**. That
+  periodic-settlement checkpoints, settled-interest state, periodic
+  settlement deadline / delinquency state, the dedicated interest-accrual
+  clock (`interestAccrualStart` and `interestRemainingDays`),
+  interest-rate and exact maturity/start-time state, active borrower
+  close-out commitments (preclose offset, swap-to-repay intent, active
+  refinance offer, and applicable prepay-listing hash/state), **and the
+  expected borrower-NFT holder**. That
   last one is a distinct requirement, not a restatement of
   item 5: re-resolving the current holder proves the counterparty is
   compliance-eligible and not the buyer themselves, which is a very
@@ -1109,7 +1129,13 @@ Before the bid can be treated as implementation-safe, the spec must say:
 - **Reservation lifecycle** — whether the bid amount is escrowed or
   merely approved, and how it is cancelled. An unescrowed bid recreates
   prerequisite 2's failure: an apparently-takeable instrument whose fill
-  always reverts once the funding is moved or revoked.
+  always reverts once the funding is moved or revoked. Independent
+  per-loan escrow creates the opposite portfolio problem: a buyer bidding
+  across many positions has to lock multiples of the capital they can
+  actually deploy, making the replacement market sparse. The spec should
+  choose that cost explicitly, or use a shared funded vault with atomic
+  per-buyer aggregate reservations, or a short-lived RFQ / signature
+  model instead of assuming independent escrow scales.
 
   **This is NOT the same requirement as prerequisite 3, and conflating
   them is a trap.** Escrow settles whether the BUYER's side is reliably
@@ -1189,6 +1215,11 @@ not left out of the implementation PR as "reuse":
 - *Listing teardown* gains a permissionless path callable at expiry or
   maturity while the loan is still `Active`, so the borrower is never
   dependent on the seller's cooperation.
+- *Listing acceptance* gains typed-data / ABI fields for the expected
+  borrower holder, exact maturity / start-time state, behavioural terms,
+  periodic-settlement checkpoints, settled-interest state, and the
+  periodic settlement deadline / delinquency bound; the client wiring and
+  generated types need to carry those values through signing and fill.
 - *The instant-sell entry point* gains, at minimum, a seller-economics
   bound receipt, a deadline, and the buyer-side inherited-state bounds —
   or is replaced by the position-sale bid above, which carries them
