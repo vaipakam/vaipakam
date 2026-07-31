@@ -317,18 +317,20 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         bytes32 sig = keccak256(
-            "GovernorDayPoolStamped(uint256,uint256,uint256,uint256,uint256,uint256)"
+            "GovernorDayPoolStamped(uint256,uint256,uint256,uint256,uint256,uint256,bool)"
         );
         uint256 eventDrawdown;
+        bool eventArmed;
         bool found;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics.length == 0 || logs[i].topics[0] != sig) continue;
             assertEq(uint256(logs[i].topics[1]), 5, "stamp is for day 5");
-            (, , , , uint256 fd) = abi.decode(
+            (, , , , uint256 fd, bool am) = abi.decode(
                 logs[i].data,
-                (uint256, uint256, uint256, uint256, uint256)
+                (uint256, uint256, uint256, uint256, uint256, bool)
             );
             eventDrawdown = fd;
+            eventArmed = am;
             found = true;
         }
         assertTrue(found, "the finalize must emit the day-pool stamp");
@@ -345,6 +347,48 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             lensDrawdown,
             "the event and the getter must publish ONE figure, not two"
         );
+        assertTrue(eventArmed, "day 5 was armed, and the event must say so");
+    }
+
+    /**
+     * @dev The `armed` flag has to actually distinguish, or it is decoration.
+     *      Before arming the calculation still runs and is still published,
+     *      but nothing reserves it and legacy claims price from the uncapped
+     *      half — so the figure is an ESTIMATE, and an event-only consumer
+     *      unable to tell would record estimates as immutable history (Codex
+     *      #1496 r2 P2).
+     *
+     *      Asserts the flag is FALSE on an unarmed day while the drawdown is
+     *      still non-zero: a flag that only ever reads false, or a day that
+     *      published nothing, would both make this vacuous.
+     */
+    function testUnarmedDayPublishesTheFigureButMarksItUnarmed() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        // deliberately NOT arming
+
+        vm.recordLogs();
+        _finalize(5);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 sig = keccak256(
+            "GovernorDayPoolStamped(uint256,uint256,uint256,uint256,uint256,uint256,bool)"
+        );
+        uint256 fd;
+        bool armed;
+        bool found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0 || logs[i].topics[0] != sig) continue;
+            (, , , , uint256 d_, bool a_) = abi.decode(
+                logs[i].data,
+                (uint256, uint256, uint256, uint256, uint256, bool)
+            );
+            fd = d_;
+            armed = a_;
+            found = true;
+        }
+        assertTrue(found, "the stamp is emitted on unarmed days too");
+        assertFalse(armed, "an unarmed day must be marked unarmed");
+        assertGt(fd, 0, "and still publishes the figure, or the flag is moot");
     }
 
     /**

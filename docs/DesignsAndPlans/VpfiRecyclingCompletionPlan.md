@@ -620,11 +620,25 @@ its topic, so days finalized BEFORE the upgrade were announced under the old
 five-argument signature and cannot supply the field; the indexer's derived
 decoder will not match them and its cursor does not rescan. The event stream
 therefore carries the series **from the cutover forward**, not for all history.
-That is not a gap: pre-cutover days are served by `getRecycleDayMetrics`, which
-recomputes them on demand, so the two surfaces are complementary — the event
-pins history as it happens, the getter reconstructs what predates it. A
-deployment wanting the older days in its stored series backfills once from that
-getter, needing no event at all.
+Pre-cutover days are served by `getRecycleDayMetrics`, which recomputes them on
+demand, so the two surfaces are largely complementary — the event pins history
+as it happens, the getter reconstructs what predates it. A deployment wanting
+the older days in its stored series backfills once from that getter.
+
+**There IS a residual gap, and an earlier revision wrongly said there was none
+(Codex #1496 r2 P2).** The getter is the ONLY pre-cutover source, and it
+recomputes from `dayCapThreshold18`, which `setBroadcastDayCapThreshold` can
+overwrite for an already-finalized day on a Diamond demoted from the canonical
+role. If that overwrite lands BEFORE the backfill runs, the getter reconstructs
+a different figure from what the day committed — and because pre-cutover days
+carry no widened event, the original is then unrecoverable from anything.
+
+So the backfill is not a convenience that can be deferred; it is **an operator
+ordering requirement**: back-fill pre-cutover days BEFORE any demotion or
+role migration, and treat the backfilled values as the record from that point.
+Post-cutover days do not have this exposure, because the event is immutable and
+survives the overwrite. Recorded here rather than only in the runbook, since
+the constraint comes from the data model rather than from the ceremony.
 
 **Where the two can disagree, prefer the event.** The getter recomputes from
 `dayCapThreshold18`, and `setBroadcastDayCapThreshold` is a second writer of

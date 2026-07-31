@@ -648,14 +648,30 @@ contract RewardAggregatorFacet is
     ///        that was true when the day closed.
     ///
     ///        Subject to the five bounds documented on that getter: it is the
-    ///        day's COMMITMENT, not its settled payout.
+    ///        day's COMMITMENT, not its settled payout — **and only on an
+    ///        ARMED day**. Read `armed` before using it.
+    /// @param armed Whether this day RESERVED the figure above (Codex #1496
+    ///        r2 P2). Before arming the calculation still runs and is still
+    ///        published, but nothing commits it and legacy claims price from
+    ///        the uncapped `halfPoolForDay` instead — so on an unarmed day
+    ///        `freshDrawdown` is an ESTIMATE of what the day would have
+    ///        committed, not a record of what it did.
+    ///
+    ///        Carried as a field rather than left to consumers to derive by
+    ///        comparing `dayId` against the arming day, because deriving it
+    ///        needs a second read and the whole point of this field set is
+    ///        that a reader following the notices needs nothing else. An
+    ///        event-only consumer that could not tell the two apart would
+    ///        record estimates as immutable history — the exact
+    ///        plausible-looking wrong number this surface exists to avoid.
     event GovernorDayPoolStamped(
         uint256 indexed dayId,
         uint256 scheduleFloor,
         uint256 recycledBudget,
         uint256 aBar,
         uint256 marginBps,
-        uint256 freshDrawdown
+        uint256 freshDrawdown,
+        bool armed
     );
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
@@ -951,7 +967,8 @@ contract RewardAggregatorFacet is
             recycledBudget,
             aBar,
             marginBps,
-            commitFresh
+            commitFresh,
+            armed
         );
 
         _applyRecycleRegister(s, dayId, aBar, marginBps);
