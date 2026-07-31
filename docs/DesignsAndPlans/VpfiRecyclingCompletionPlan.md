@@ -637,6 +637,20 @@ demand, so the two surfaces are largely complementary — the event pins history
 as it happens, the getter reconstructs what predates it. A deployment wanting
 the older days in its stored series backfills once from that getter.
 
+**That backfill MUST carry arming status alongside each value** (Codex #1496
+r7 P2). `getRecycleDayMetrics` returns the recomputed figure and NO armed
+bit. Days before `governorCommitArmedFromDay` are every day of the documented
+initial unarmed deployment — most of what a first backfill would cover — so
+they come back as non-zero figures that nothing reserved. Storing them as the
+record republishes unreserved ESTIMATES as net emission: precisely what the
+event's `armed` field was added to prevent, in the flattering direction.
+
+So the backfill reads `armedFromDay` from
+`RewardAggregatorFacet.getGovernorCommitState` (or the `GovernorCommitArmed`
+event) and, per day, either marks the row an estimate or excludes it — never
+stores a bare figure. Post-cutover days need none of this: the event carries
+`armed` itself, which is why it exists.
+
 **There IS a residual gap, and an earlier revision wrongly said there was none
 (Codex #1496 r2 P2).** The getter is the ONLY pre-cutover source, and it
 recomputes from `dayCapThreshold18`, which `setBroadcastDayCapThreshold` can
