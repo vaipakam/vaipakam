@@ -356,8 +356,14 @@ contract RewardClaimFacet is
         //     against it is unfundable forever and consuming the entry
         //     alongside it costs the claimant nothing. That is the whole
         //     argument for truncating, spelled out at length above.
-        //   - `backingRoom` is NOT monotone. It rises the moment a remit
-        //     lands or absorption credits the bucket. And by this point the
+        //   - `backingRoom` is NOT monotone. It rises when UN-EARMARKED
+        //     funding arrives — a fresh remit. (Absorption specifically does
+        //     NOT raise it, and saying so would be wrong: a receipt credited
+        //     via {LibVpfiRecycle.credit} lifts the balance and the bucket by
+        //     the same amount, leaving the difference unchanged, while a
+        //     forfeit re-labels tokens already held and so lifts only the
+        //     bucket — lowering the room. Only a fresh remit moves it up.)
+        //     And by this point the
         //     claim legs have ALREADY committed — the window cursor moved,
         //     entries are processed, `consumeArmedFresh` retires their
         //     commitments below — so a processed entry can never be claimed

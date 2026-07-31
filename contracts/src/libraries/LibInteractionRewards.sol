@@ -2346,22 +2346,40 @@ library LibInteractionRewards {
     /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
     ///      the cursor advance a view can't perform. Used by the countdown
     ///      estimate so it applies the SAME forfeit-credit backing the sweep
-    ///      does (`payout + recycleBucket + forfeitFresh` when the user has
-    ///      forfeited entries) — otherwise the view would show an imminent
-    ///      expiry for an unbacked-forfeit user whose claim actually reverts
-    ///      and whom the sweep will not accrue (Codex #1317 r4). It stays
-    ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
-    ///      unadvanced entry reads behind (0), matching the documented
-    ///      conservative-estimate caveat on {rewardEntryExpiry}.
+    ///      does — otherwise the view would show an imminent expiry for an
+    ///      unbacked-forfeit user whose claim actually reverts and whom the
+    ///      sweep will not accrue (Codex #1317 r4). It stays optimistic ONLY
+    ///      on the axis a view genuinely cannot resolve: an unadvanced entry
+    ///      reads behind (0), matching the documented conservative-estimate
+    ///      caveat on {rewardEntryExpiry}.
+    ///
+    ///      `recycleBucket` is included UNCONDITIONALLY (#1460, Codex #1497
+    ///      r2). It used to be added only when the user had forfeited
+    ///      entries, which left the fresh-only case testing
+    ///      `balance >= payout` — a balance test that ignores how much of
+    ///      that balance is already earmarked. Once the claim path started
+    ///      refusing a payout that does not fit in `balance − recycleBucket`,
+    ///      that omission became a live divergence: a fully-earmarked
+    ///      deployment (`balance == recycleBucket`) would REFUSE the claim
+    ///      while this predicate still called the entry executable, so the
+    ///      expiry horizon and its notice window would keep accruing against
+    ///      a claimant who cannot claim — and the moment backing was
+    ///      restored the sweep could expire the entry immediately on that
+    ///      stale elapsed time, consuming the notice period the horizon
+    ///      promises. Adding the bucket in both branches makes this the
+    ///      exact complement of the claim gate: `balance >= payout + bucket`
+    ///      is `balance − bucket >= payout`. It can only ever make the
+    ///      predicate STRICTER — fewer entries executable, so the clock runs
+    ///      in fewer states, which is the safe direction for a countdown
+    ///      that destroys value when it fires.
     function _userClaimFundingNeedView(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint256 need) {
-        uint256 payout = userClaimPendingUncapped(s, user);
-        uint256 forfeitFresh = _userForfeitFresh(s, user);
-        need = forfeitFresh == 0
-            ? payout
-            : payout + s.recycleBucket + forfeitFresh;
+        need =
+            userClaimPendingUncapped(s, user) +
+            s.recycleBucket +
+            _userForfeitFresh(s, user);
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).

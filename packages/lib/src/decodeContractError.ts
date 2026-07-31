@@ -662,6 +662,14 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // ── Treasury (TreasuryFacet) ──────────────────────────────────────────
   '0x1f2a2005': 'ZeroAmount()',
 
+  // ── Interaction rewards (RewardClaimFacet) ────────────────────────────
+  // #1460 — without this selector→name row the name-keyed copy above is
+  // unreachable on the raw-payload path (wallets that surface only the
+  // revert data), and the claim would show hex where a plain revert used
+  // to be. The #68 drift test recomputes this key from the signature and
+  // cross-checks the name against the compiled Diamond ABI.
+  '0x6248ee4e': 'InteractionRewardBackingShort(uint256,uint256)',
+
   // ── Vault / NFT infrastructure (IVaipakamErrors + facets) ────────────
   '0xb70f4664': 'NFTMintFailed()',
   '0x6154d8fb': 'NFTBurnFailed()',
