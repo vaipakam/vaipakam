@@ -319,11 +319,17 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     'Both sides must consent to the illiquid-asset terms before this can proceed.',
   RiskTierTooLow: 'Your VPFI risk tier is below what this offer requires.',
   // #1460 — recoverable FUNDING back-pressure, not a terminal state, and the
-  // copy has to say so: the claimant keeps the full entitlement and the same
-  // claim succeeds once funding lands. Deliberately distinct from
-  // InteractionPoolExhausted, which never resolves.
+  // copy has to say so. But it must not overpromise (Codex #1497 r3): the
+  // backing gate runs AFTER the 69M schedule cap, so a claim whose raw
+  // entitlement exceeded the remaining allocation was already scaled down
+  // before this error was raised — funding and retrying pays the capped
+  // amount, not the raw one, and a concurrent claim can reduce it further.
+  // So: nothing is CONSUMED (the distinction that matters versus a partial
+  // payment), and no promise about the amount or about unconditional
+  // success. Deliberately distinct from InteractionPoolExhausted, which
+  // never resolves.
   InteractionRewardBackingShort:
-    'Rewards are temporarily unfunded on this network — the tokens for this claim have not arrived yet. Nothing is lost: your full reward is still owed and the same claim will go through once funding lands. Try again later.',
+    'Rewards are temporarily unfunded on this network — the tokens for this claim have not arrived yet. Your claim was not consumed, so nothing has been used up and you can claim again once funding lands. Try again later.',
   FeeTooHigh: 'The fee for this action exceeds the allowed maximum.',
   UserHasNoVault:
     "You don't have a vault yet — it is created on your first deposit or loan. Try the action that opens it, then retry.",

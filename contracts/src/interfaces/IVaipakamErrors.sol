@@ -206,9 +206,14 @@ interface IVaipakamErrors {
     ///         thin on un-earmarked balance). A FUNDING state, not a
     ///         terminal one — the same claim succeeds once backing lands,
     ///         and the two figures below say how much must land first.
-    /// @param requiredFresh Fresh VPFI wei this claim would pay AFTER the
-    ///                      69M cap has been applied — the amount that would
-    ///                      actually transfer, not the raw entitlement.
+    /// @param requiredFresh Combined fresh BACKING this claim requires after
+    ///                      the 69M cap has been applied: the claimant's
+    ///                      fresh payout plus the fresh share of any forfeit
+    ///                      credited to the recycle bucket. Not a payout
+    ///                      figure — the forfeit share never leaves Diamond
+    ///                      custody, it is re-labelled into the bucket — and
+    ///                      not the raw entitlement, which the cap may
+    ///                      already have reduced.
     /// @param backingRoom   Un-earmarked balance actually available.
     error InteractionRewardBackingShort(
         uint256 requiredFresh,

@@ -50,10 +50,13 @@ describe('decodeContractError — translate hook', () => {
   // exact path showing hex — worse than the plain revert it replaced.
   it('resolves the backing-short error from a bare selector payload', () => {
     const out = decodeContractError({ data: '0x6248ee4e' });
-    // Recoverable funding back-pressure, not a terminal state — the copy has
-    // to say the entitlement survives, or the user assumes the reward is gone.
+    // Recoverable funding back-pressure, not a terminal state — the copy must
+    // say the claim was NOT consumed, or the user assumes the reward is gone.
+    // It must equally not promise a specific amount or guaranteed success:
+    // the 69M cap runs first, so a retry can legitimately pay less
+    // (Codex #1497 r3).
     expect(out).toMatch(/temporarily unfunded/i);
-    expect(out).toMatch(/nothing is lost/i);
+    expect(out).toMatch(/not consumed/i);
     // And it keys by the Solidity name, so a locale bundle can target it.
     const seen: string[] = [];
     decodeContractError(
