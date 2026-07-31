@@ -62,7 +62,7 @@ import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
-import { useOffsetPending } from '../data/offsetPending';
+import { LOCK_PRECLOSE_OFFSET, useOffsetPending } from '../data/offsetPending';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
@@ -362,11 +362,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loanIsRental || !loan.data
       ? undefined
       : (loan.data.lendingAsset as `0x${string}`),
-    Boolean(loan.data) &&
-      !loanIsRental &&
-      (loan.data?.status === 'active' ||
-        loan.data?.status === 'fallback_pending') &&
-      role === 'borrower',
+    // Enabled for the borrower-side holder REGARDLESS of the indexed
+    // loan status (Codex #1500 r4 P1). A funded offset offer stays
+    // locked and cancellable after the loan settles some other way,
+    // and the terminal-row case is exactly when the cancel-to-unwind
+    // card matters most — gating on an open row hid it (and never
+    // recorded `loanActive` at all) right after a full repay, leaving
+    // the escrow stranded with no surface to release it.
+    Boolean(loan.data) && !loanIsRental && role === 'borrower',
   );
   // The listing ended off-page (a buyer accepted, or it was cancelled
   // elsewhere) — surface the outcome once via the page banner.
@@ -1044,7 +1047,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock, saleLock] = await Promise.all([
+      const [live, latestBlock, saleLock, borrowerLock] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
@@ -1060,6 +1063,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             abi: DIAMOND_ABI_VIEM,
             functionName: 'positionLock',
             args: [BigInt(row.lenderTokenId)],
+          })
+          .then((v) => Number(v)),
+        // Codex #1500 r4 P1 — the BORROWER position's lock, read live
+        // here rather than trusted from the render-time offsetPending
+        // branch. `repayPartial` has NO offset guard on chain, so a
+        // partial posted after a cross-device offset went live would
+        // succeed and shrink the principal the linked offer is pinned
+        // to, stranding its escrow until someone cancels. Fail CLOSED:
+        // an unreadable lock blocks the partial (this read THROWS).
+        publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(row.borrowerTokenId)],
           })
           .then((v) => Number(v)),
       ]);
@@ -1088,6 +1106,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       }
       if (saleLock === LOCK_EARLY_WITHDRAWAL_SALE) {
         setError(copy.loanSale.partialBlockedByListing);
+        return;
+      }
+      if (borrowerLock === LOCK_PRECLOSE_OFFSET) {
+        setError(copy.offset.blockedOtherPaths);
         return;
       }
       // A partial equal to the FULL remaining principal is accepted by

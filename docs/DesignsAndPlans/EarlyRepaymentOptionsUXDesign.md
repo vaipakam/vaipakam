@@ -152,11 +152,18 @@ Its surface therefore:
 - watches the completion funding (balance + standing approval) and
   says plainly what a shortfall means and how to fix it (restore
   approval / top up / cancel) — never a warning without a remedy;
-- offers cancel, gated by the protocol cooldown, worded as a full
-  unwind ("your position is unlocked and your lending money is back
-  in your wallet") — and MAKES it a full unwind: the standing payoff
-  approval is revoked best-effort alongside the cancel, with a plain
-  note when the revoke fails;
+- offers cancel, gated by the protocol cooldown, worded as an honest
+  unwind: the position unlocks and the lending money returns to the
+  wallet, and the standing payoff approval is **disclosed, not
+  silently revoked**. A token's spending approval is one shared
+  authorization whose size cannot identify which commitments rest on
+  it (a sibling refinance request or another loan's offset may be
+  resting on the same grant), so automatically zeroing it can strand
+  another counterparty's acceptance. The cancel therefore states that
+  the approval is still standing and points at the wallet's own
+  approvals view. The invariant to preserve is *never silence about a
+  payoff-sized approval outliving its commitment* — not
+  automatic revocation;
 - never presents a dead offset as completable: a loan settled another
   way, or a replacement term that can no longer end by the original
   maturity, flips the story to cancel-to-unwind and silences the

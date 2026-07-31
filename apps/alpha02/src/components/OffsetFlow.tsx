@@ -40,6 +40,8 @@ import {
   type LoanLive,
 } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import { readLiveProtocolFees, useProtocolFees } from '../data/fees';
+import { LOCK_PRECLOSE_OFFSET } from '../data/offsetPending';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
@@ -90,10 +92,17 @@ export function OffsetFlow({
   );
   // The replacement term must END no later than the original maturity
   // (seconds-precise on-chain; whole days here rounds DOWN, so the
-  // default always fits).
+  // default always fits) AND within the protocol's live offer-duration
+  // ceiling — governance can lower that below the remaining term, and
+  // createOffer rejects a longer duration (Codex #1500 r4). The form
+  // uses the tighter of the two; submit re-reads the ceiling live.
+  const fees = useProtocolFees();
   const maxDurationDays = (() => {
     const end = loanEndTimeOf(live);
-    return end > chainNow ? (end - chainNow) / 86_400n : 0n;
+    const remaining = end > chainNow ? (end - chainNow) / 86_400n : 0n;
+    if (!fees.ready) return remaining;
+    const cap = BigInt(fees.maxOfferDurationDays);
+    return remaining < cap ? remaining : cap;
   })();
   const [durationInput, setDurationInput] = useState(() =>
     String(maxDurationDays),
@@ -184,7 +193,7 @@ export function OffsetFlow({
         walletChain.diamondAddress,
         address,
       );
-      const [, liveLoan, latestBlock] = await Promise.all([
+      const [, liveLoan, latestBlock, borrowerLock, liveFees] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -193,6 +202,25 @@ export function OffsetFlow({
         }),
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         publicClient.getBlock({ blockTag: 'latest' }),
+        // Codex #1500 r4 — a cross-device offset posted since this
+        // form's cached read already holds the PrecloseOffset lock;
+        // `offsetWithNewOffer` would revert OffsetAlreadyActive AFTER
+        // this path raised the allowance. Read the live lock in the
+        // same batch and stop before any approval (fail closed: this
+        // read throws on transport failure).
+        publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(row.borrowerTokenId)],
+          })
+          .then((v) => Number(v)),
+        // The live offer-duration ceiling: governance can lower
+        // maxOfferDurationDays below this loan's remaining term, and
+        // createOffer rejects a longer duration — catch it before the
+        // approval, like the other offer-creation flows (Codex r4).
+        readLiveProtocolFees(publicClient, walletChain.diamondAddress),
         assertAssetNotPausedLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -206,6 +234,16 @@ export function OffsetFlow({
       ]);
       if (liveLoan.status !== LOAN_STATUS_ACTIVE) {
         setError(copy.errors.loanAlreadySettled);
+        return;
+      }
+      if (borrowerLock === LOCK_PRECLOSE_OFFSET) {
+        setError(copy.offset.alreadyLive);
+        void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
+        return;
+      }
+      if (durationDays > liveFees.maxOfferDurationDays) {
+        setError(copy.offset.durationOverCap(liveFees.maxOfferDurationDays));
+        void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
         return;
       }
       // Re-judge the term bound by LIVE chain time — the reviewed
@@ -323,6 +361,7 @@ export function OffsetFlow({
             inputMode="decimal"
             value={rateInput}
             onChange={(e) => setTerm(setRateInput, e.target.value.trim())}
+            disabled={busy}
             aria-label={copy.offset.rateLabel}
           />
         </label>
@@ -333,6 +372,7 @@ export function OffsetFlow({
             inputMode="numeric"
             value={durationInput}
             onChange={(e) => setTerm(setDurationInput, e.target.value.trim())}
+            disabled={busy}
             aria-label={copy.offset.durationLabel}
           />
         </label>
@@ -352,6 +392,7 @@ export function OffsetFlow({
             inputMode="decimal"
             value={collateralInput}
             onChange={(e) => setTerm(setCollateralInput, e.target.value.trim())}
+            disabled={busy}
             aria-label={copy.offset.collateralLabel(collateralMeta!.symbol)}
           />
           {!collateralValid && collateralInput !== '' ? (
@@ -399,6 +440,7 @@ export function OffsetFlow({
             <input
               type="checkbox"
               checked={consent}
+              disabled={busy}
               onChange={(e) => setConsent(e.target.checked)}
               style={{ marginTop: 4 }}
             />

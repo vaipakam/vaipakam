@@ -41,6 +41,11 @@ export interface LoanLive {
   allowsPartialRepay: boolean;
   /** LibVaipakam.PeriodicInterestCadence as a number (None = 0). */
   periodicInterestCadence: number;
+  /** Interest ALREADY paid to the lender (periodic deductions,
+   *  partial repayments). The settlement paths credit this against
+   *  gross accrual, so any cost mirror must subtract it or it
+   *  overstates the pull (Codex #1500 r4). */
+  interestSettled: bigint;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -223,9 +228,10 @@ export function saleBuyerRemainingInterest(
  *  accrued = pro-rata to now at the LOAN's rate, and the shortfall
  *  bridging the staying lender back to their original entitlement
  *  when the replacement offer's expected interest is lower:
- *  `max(0, remaining@loanRate − offerTerm@offerRate)`. Gross of
- *  `interestSettled` (the contract credits it — the pull only
- *  shrinks), so quotes/approvals sized from this never undershoot. */
+ *  `max(0, remaining@loanRate − offerTerm@offerRate)`. Accrued is NET
+ *  of `interestSettled`, applying the same saturating credit the
+ *  facet does, so a periodic loan's already-paid interest is not
+ *  charged twice (Codex #1500 r4). */
 export function transferEconomicsOf(
   live: LoanLive,
   offerRateBps: bigint,
@@ -237,7 +243,14 @@ export function transferEconomicsOf(
   const totalSecs = interestRemainingDaysOf(live) * 86_400n;
   const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
   const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  const grossAccrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  // Mirror LibEntitlement.creditSettledInterest: the facet subtracts
+  // interest already paid (periodic deductions / partials), saturating
+  // at zero. Without this the quote — and the submit balance gate —
+  // overstate the pull on a periodic loan and can reject a wallet that
+  // actually holds enough (Codex #1500 r4).
+  const accrued =
+    grossAccrued > live.interestSettled ? grossAccrued - live.interestSettled : 0n;
   const originalRemaining =
     (live.principal * live.interestRateBps * remainingSecs) / denom;
   const newRemaining =
@@ -300,6 +313,7 @@ export async function readLoanLive(
     useFullTermInterest: Boolean(raw.useFullTermInterest),
     allowsPartialRepay: Boolean(raw.allowsPartialRepay),
     periodicInterestCadence: Number(raw.periodicInterestCadence),
+    interestSettled: raw.interestSettled ?? 0n,
     collateralAsset: raw.collateralAsset,
     collateralAssetType: Number(raw.collateralAssetType),
     collateralAmount: raw.collateralAmount,

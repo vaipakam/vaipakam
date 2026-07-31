@@ -1047,9 +1047,9 @@ const copySource = {
     action: 'Review offset offer',
     confirm: 'Confirm — fund and post offer',
     done:
-      'Offset offer posted. When a borrower accepts it, your current loan closes automatically — nothing else to do. You can cancel the offer below while it’s still open.',
+      'Offset offer posted. When a borrower accepts it, your current loan closes automatically — you don’t need to complete anything. Your collateral then becomes claimable (claim it from the Claim Center). You can cancel the offer below while it’s still open.',
     receiptReceive:
-      'You become the lender of a new loan at your chosen terms, your old loan closes, and your collateral is released to claim.',
+      'You become the lender of a new loan at your chosen terms, your old loan closes, and your collateral becomes claimable — claim it from the Claim Center afterwards.',
     receiptLock: tmpl(
       '{{principal}} now (your new offer’s lending money), locked until the offer is accepted or you cancel.',
       ['principal'],
@@ -1066,7 +1066,7 @@ const copySource = {
       'When a borrower accepts your offer (the offset completes in that transaction), or when you cancel it.',
     pendingTitle: 'Offset in progress',
     pendingBody:
-      'A lending offer is live for this loan. As soon as a borrower accepts it, the offset completes automatically — your old loan closes and your collateral is released, no extra click needed.',
+      'A lending offer is live for this loan. As soon as a borrower accepts it, the offset completes automatically — your old loan closes and your collateral is released for you to claim. You don’t need to complete anything yourself; the one remaining step afterwards is claiming that collateral.',
     pendingLoanClosed:
       'This loan has already settled another way, so the linked offer can no longer complete. Cancel it to unlock your position and get your lending money back.',
     pendingTermUnfillable:
@@ -1093,6 +1093,12 @@ const copySource = {
       'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
     blockedOtherPaths:
       'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
+    alreadyLive:
+      'An offset offer is already live for this loan (it may have been posted on another device). Nothing was approved or sent — refresh to see it below.',
+    durationOverCap: tmpl(
+      'Offers can’t run longer than {{max}} days right now. Shorten the length and review again — nothing was approved or sent.',
+      ['max'],
+    ),
     onlyBeforeDue:
       'An offset needs a replacement term that ends before this loan’s due date — it’s no longer available this close to (or past) the due date.',
   },

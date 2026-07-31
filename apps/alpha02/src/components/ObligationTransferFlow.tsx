@@ -32,6 +32,7 @@ import { ensureAllowance } from '../contracts/erc20';
 import {
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
+  isMissingSelectorError,
 } from '../contracts/preflights';
 import {
   loanEndTimeOf,
@@ -52,6 +53,7 @@ import {
   shortAddress,
 } from '../lib/format';
 import { AssetType } from '../lib/types';
+import { WindowedRowList } from '../lib/visibleWindow';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
 
@@ -379,7 +381,18 @@ export function ObligationTransferFlow({
         })
         .then(
           () => 'ok' as const,
-          (e) => (isRevert(e) ? ('blocked' as const) : ('unknown' as const)),
+          (e) =>
+            // A deploy predating the preview selector answers with
+            // FunctionNotFound / zero data, which `isRevert` would
+            // classify as an eligibility BLOCK and disable every
+            // handover (Codex #1500 r4). Check the missing-selector
+            // case FIRST so `blocked` means a real revert from the
+            // actual gate.
+            isMissingSelectorError(e)
+              ? ('unknown' as const)
+              : isRevert(e)
+                ? ('blocked' as const)
+                : ('unknown' as const),
         );
       if (gateVerdict === 'blocked') {
         setError(copy.transferOb.offerNotEligible);
@@ -445,8 +458,14 @@ export function ObligationTransferFlow({
           <p className="field-label" style={{ marginBottom: 4 }}>
             {copy.transferOb.pickLabel}
           </p>
-          <div className="stack" style={{ gap: 8 }}>
-            {candidates.map((o) => {
+          {/* Windowed like every other list in the app (Codex #1500
+              r4): a busy book can return hundreds of eligible
+              requests, and both the render and the per-row economics
+              must grow only with what the user asks to see. */}
+          <WindowedRowList
+            rows={candidates}
+            resetKey={`${row.loanId}:${candidates.length}`}
+            render={(o) => {
               const cost = transferEconomicsOf(
                 live,
                 BigInt(o.interestRateBps),
@@ -481,8 +500,8 @@ export function ObligationTransferFlow({
                   </button>
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         </>
       ) : picked && economics ? (
         <div style={{ marginTop: 8 }}>
