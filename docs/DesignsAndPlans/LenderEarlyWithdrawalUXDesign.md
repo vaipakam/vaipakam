@@ -133,12 +133,16 @@ page in both modes, strictly informational:
   balance (§9 refuses to list a position it cannot unify to a single
   settlement identity — the row says the position must be cleared
   first and names the remaining exits meanwhile), and once the loan
-  has REACHED OR PASSED its maturity
-  — an Active loan inside its grace window is no longer sellable
-  (the sale paths reject a fully-elapsed term), so past maturity the
-  sale rows flip to "the loan is past its due date — the borrower
-  repays or the default process resolves it" instead of advertising
-  an exit that cannot be created. The same rule holds while the
+  has REACHED OR PASSED its maturity — a fully-elapsed term is
+  refused at CREATION, so past maturity the sale rows flip to "the
+  loan is past its due date — the borrower repays or the default
+  process resolves it" instead of advertising an exit that cannot be
+  created. Note the asymmetry that prerequisite 1 exists to close:
+  refusing creation does **not** retire a listing that already went
+  live before the due date, which stays takeable through the grace
+  window — so hiding the row is not the same as closing the sale, and
+  a live listing's own surface must keep telling the truth about it
+  past maturity rather than disappearing. The same rule holds while the
   BORROWER has a live linked exit on the loan (a preclose offset):
   the protocol refuses a sale listing until that offset completes or
   is cancelled, and the row says which pending flow must clear first
@@ -153,11 +157,19 @@ page in both modes, strictly informational:
 
 ### Layer 2 — the tools (Advanced mode, existing flows hardened)
 
-The two sale flows already exist (the instant sell picker and the
-listing form) and already meet the §9 frontend-warning requirement:
-net proceeds after forfeiture/top-up are shown before confirmation,
-computed by the same settlement mirror the submit re-checks. This
-design adds the framing rules, not new mechanics:
+Both sale flows already exist **in alpha02** — the instant-sell picker
+is `apps/alpha02/src/components/EarlyExitFlow.tsx` (it calls
+`sellLoanViaBuyOffer` and quotes net-to-seller from the shared
+`sellerEconomics` settlement mirror) and the listing form is
+`LoanSaleFlow.tsx` with its `LoanSalePendingCard`. Both already meet
+the §9 frontend-warning requirement: net proceeds after
+forfeiture/top-up are shown before confirmation, from the same mirror
+the submit re-checks. (The older `apps/defi` surface implements only
+the listing path — this design targets alpha02, so "harden the
+existing flow" is accurate here and would not be for that app.) This
+design adds the framing rules, not new mechanics — except where the
+Contract-level prerequisites below say a path cannot be made safe by
+framing at all:
 
 1. **Cost before commitment.** The instant-sell picker orders
    candidate offers by net-to-seller (best first) and prints "You'd
@@ -276,6 +288,68 @@ the which-side-is-binding note from Layer 2 as the explanation.
 - Anything on rental positions (excluded from lender early
   withdrawal in Phase 1).
 
+## Contract-level prerequisites (Phase-1 blockers)
+
+The adversarial pass on this doc surfaced five gaps that are **not
+frontend problems** — no amount of copy, preflight, or quoting in the
+app can close them, because the risk lives in the settlement paths
+themselves. They are recorded here as blockers rather than assumed
+away: a UX design that ships the listing surface over them would be
+promising safety the protocol does not provide. Each was verified
+against `EarlyWithdrawalFacet` at the commit this doc was reviewed
+against.
+
+1. **A listing outlives the loan's maturity.** Completion gates only
+   on the loan still being `Active`, which it remains throughout the
+   grace window — so a listing created before the due date stays
+   takeable after it. Hiding the sale row in the app does not make the
+   on-chain offer unsellable: a buyer can still acquire an overdue
+   position, and the seller can still be charged post-term accrual.
+   *Required*: bound listing expiry at the loan's maturity, and permit
+   teardown at that boundary.
+2. **The seller's completion cost is neither escrowed nor reserved.**
+   Completion pulls the cost from the stored lender by transfer, while
+   listing escrows nothing and secures no non-revocable allowance — so
+   a seller with no allowance (or who revokes it later) can publish an
+   apparently-takeable offer whose every acceptance reverts after
+   burning the buyer's gas, while the listing keeps holding the
+   borrower's paths. *Required*: net the cost out of the incoming
+   principal, or reserve it at listing. A frontend allowance preflight
+   cannot prevent later revocation and must not be mistaken for one.
+3. **The listing path has no cost cap.** The direct-sale path refuses
+   a cost above principal (`RateShortfallTooHigh`); the listing
+   completion path has no equivalent guard and pulls the whole cost
+   from the seller. On a long-dated loan the accrued interest or rate
+   top-up can therefore exceed the principal, leaving the seller
+   out of pocket beyond the sale proceeds — which the "principal
+   minus a cost" framing does not describe. *Required*: an equivalent
+   economic cap; failing that, the UI must render and confirm a
+   negative net as an explicit additional payment, never as a receipt.
+4. **A listing binds only the buyer's rate, not the seller's
+   economics.** The seller confirms a figure at listing time, but
+   completion recomputes accrued interest and the top-up at the
+   acceptance block, and a cancel can be raced by a buyer. The
+   approximate-execution note in this design is *disclosure, not
+   consent*. *Required*: an enforceable minimum net (or maximum cost)
+   stored with the listing, a tight enough deadline, or fresh seller
+   authorization when the bound is exceeded.
+5. **The direct sale admits on the stored borrower, not the current
+   one.** That path passes the loan's stored borrower to the
+   compliance check and never compares the buy-offer creator against
+   the current borrower-position holder — so after a borrower-position
+   transfer the picker can admit a buyer incompatible with the actual
+   borrower, or the actual borrower themselves, which leaves one
+   wallet as both lender and borrower and then blocks that borrower's
+   ordinary repayment. *Required*: resolve the current borrower-NFT
+   holder in the on-chain path (the listing-accept path already does),
+   with the frontend filter mirroring it.
+
+Together with the borrower-escape requirement in the Layer-3
+checklist, these gate Phase 1: **the listing surface does not ship
+until items 1–4 are resolved, and the instant-sell picker's admission
+filter is not trustworthy until item 5 is.** The frontend work in this
+design is otherwise ready to build against.
+
 ## Prelive posture
 
 Same as the borrower doc: no migration debt, contract redeploys
@@ -291,11 +365,13 @@ awareness layer and the hardening checklist, not new contract calls.
 chooser card (both modes, wait-first ordering), the Layer-2 framing
 rules on the two existing flows (including the held-balance line in
 every quote), and the Layer-3 parity hardening (fail-closed lock read,
-dead-listing teardown state, stale-marker discard). **Gated on open
-question 0**: the borrower-escape requirement (mandatory finite expiry
-+ permissionless teardown) must be resolvable with the deployed
-contracts, or its contract change lands first — the listing surface
-does not ship without a borrower escape. Fork-tier spec: chooser
+dead-listing teardown state, stale-marker discard). **Gated on the
+Contract-level prerequisites section**: the borrower-escape
+requirement (mandatory finite expiry + permissionless teardown) and
+prerequisites 1-4 must be resolvable with the deployed contracts, or
+their contract changes land first — the listing surface does not ship
+over them, and prerequisite 5 bounds how far the instant-sell
+admission filter can be trusted. Fork-tier spec: chooser
 renders for the lender in Basic mode; instant sell drives to an
 on-chain lender change; listing posts, locks, and cancels; a quote on
 a position carrying a held balance shows that line.
