@@ -528,8 +528,8 @@ jobs:
       # retention-days:1 keeps storage minimal.
       - name: Upload forge artifacts (for slither warm analysis)
         # #1267 (Codex P2) — non-blocking: this is a warm-cache optimization
-        # only (build-docs downloads it continue-on-error and still has the
-        # deterministic forge-build fallback). A transient artifact-service /
+        # only (slither restores it with a deterministic cold-compile
+        # fallback if the restore misses). A transient artifact-service /
         # size / network glitch on the upload must NOT fail the required
         # contracts-fast job and block an otherwise-valid contracts PR.
         continue-on-error: true
@@ -657,11 +657,12 @@ jobs:
   # so the only way to eliminate the racing cold compiles was to fold
   # the docs build into the same workflow.
   #
-  # Now downstream of `contracts-fast`: this job restores the same
-  # `actions/cache` artifacts and runs `forge doc --build` against warm
-  # contracts. One forge cold compile per PR, period — `contracts-fast`
-  # is the chokepoint, every other forge-USE job (slither, build-docs)
-  # consumes its warm cache.
+  # Now downstream of `contracts-fast` for ORDERING only (#1493): the
+  # doc build is self-contained under the `quick` profile — `forge doc`
+  # runs its own solc pass and never consumed contracts-fast's warm
+  # cache (slither is that cache's sole consumer). Keeping the `needs:`
+  # edge means a broken contracts build still short-circuits the doc
+  # job instead of burning a runner on doomed docs.
   #
   # The Pages-deploy step stays in `contracts-docs.yml` (narrowed to
   # push-to-main + workflow_dispatch only). PR-preview artifact upload
