@@ -1,7 +1,10 @@
 # Lender Early-Withdrawal UX Design
 
 Status: proposal (doc-only PR — implement in a follow-up against the
-ratified spec). Sibling of
+ratified spec). **Merge order**: this document cites its sibling,
+`EarlyRepaymentOptionsUXDesign.md`, which lands with PR #1500 — merge
+that PR first so the link below resolves on `main` (until then, read
+the sibling from #1500's branch). Sibling of
 [`EarlyRepaymentOptionsUXDesign.md`](EarlyRepaymentOptionsUXDesign.md),
 which sets the layered-disclosure method this document applies to the
 lender side; the naive-user wording rules and mode boundary come from
@@ -15,8 +18,9 @@ preserve — the shape can still be corrected freely.
 
 The protocol gives a lender three ways to handle an active ERC-20 loan
 position before maturity (§9): sell it instantly into a compatible
-open lending offer, list it for sale at a price of their own choosing,
-or simply hold it to maturity. The app exposes the two sale paths as
+open lending offer, list it for sale at a buyer rate of their own
+choosing (the purchase amount is always the loan's live outstanding
+principal), or simply hold it to maturity. The app exposes the two sale paths as
 Advanced-mode cards with no awareness layer and no comparison
 guidance, and gives the passive path no words at all.
 
@@ -35,15 +39,20 @@ The naive-lender risks mirror the borrower side, with one inversion:
 
 That inversion is this document's central rule: **the borrower chooser
 promotes ways to act; the lender chooser promotes the fact that doing
-nothing is free and complete**, and prices the exits honestly against
-it.
+nothing costs nothing in sale forfeitures**, and prices the exits
+honestly against it. Waiting is free of SALE costs — it is not
+risk-free: the payout depends on the borrower actually repaying, and
+a default resolves through the normal recovery process instead. Every
+wait-path sentence in this design carries that conditionality; a
+"guaranteed payout at maturity" framing is prohibited by the same
+never-promise-yield rule the rest of the app follows.
 
 ## Vocabulary — plain words before mechanics
 
 | Protocol / spec term | User-facing words |
 | --- | --- |
 | §9 Option 1 — sell into a lender (buy) offer (`sellLoanViaBuyOffer`) | "Sell your position now" |
-| §9 Option 2 — sale-vehicle listing (`createLoanSaleOffer` → buyer accepts) | "List your position at your price" |
+| §9 Option 2 — sale-vehicle listing (`createLoanSaleOffer` → buyer accepts) | "List your position at your chosen buyer rate" |
 | §9 Option 3 — wait to maturity | "Keep it to the end (nothing to do)" |
 | Accrued-interest forfeiture | "the interest built up so far is given up" |
 | Rate shortfall (buyer's rate above the loan's) | "buyer rate top-up" |
@@ -72,22 +81,43 @@ One card — "Your options as the lender" — on the lender's active-loan
 page in both modes, strictly informational:
 
 - **Order is the message.** The wait-to-maturity row renders FIRST,
-  marked as the no-cost default: "Nothing to do — you're owed the
-  principal plus the agreed interest at the end, and you claim it
-  after the borrower repays." The sale rows follow, each with its
-  cost stated up front.
+  marked as the default that costs nothing in sale forfeitures — and
+  worded conditionally, never as a promise: "Nothing to do — if the
+  borrower repays, you claim the principal plus the agreed interest
+  at the end; if they don't, the normal default process applies and
+  recovery can be less." The sale rows follow, each with its cost
+  stated up front.
 - Each sale row carries the §9-mandated cost disclosure in one
   sentence: selling early gives up the larger of the interest built
-  up so far or the buyer's rate top-up. The listing row adds its two
-  structural facts: the position is transfer-locked while listed, and
-  the sale settles only when a buyer accepts.
+  up so far or the buyer's rate top-up. The listing row adds its
+  structural facts — and they are cross-party, not just the seller's:
+  the seller's position is transfer-locked while listed, the sale
+  settles only when a buyer accepts, and **while the listing stands
+  it also holds the BORROWER's discretionary paths on the underlying
+  loan** (partial repayment is held by the app and collateral
+  withdrawal is refused by the protocol, both to protect the buyer's
+  signed terms). A listing has no expiry and only the seller cancels
+  it, so the disclosure must say plainly that listing freezes those
+  borrower affordances until the sale completes or the seller
+  cancels — see the Layer-3 checklist and Open Questions for the
+  escape-hatch requirement this creates.
 - Availability is honest and explanatory: the listing row states when
   the path is unavailable on the current network (the app already
-  refuses to render a form whose final signature cannot succeed) and
-  for loans with NFT collateral (Phase 1 listing is ERC-20-collateral
-  only, per §9); the instant-sell row states when no compatible offer
-  is on the book right now. NFT rentals get no chooser at all —
-  lender early withdrawal excludes them entirely in Phase 1.
+  refuses to render a form whose final signature cannot succeed), for
+  loans with NFT collateral (Phase 1 listing is ERC-20-collateral
+  only, per §9), and once the loan has REACHED OR PASSED its maturity
+  — an Active loan inside its grace window is no longer sellable
+  (the sale paths reject a fully-elapsed term), so past maturity the
+  sale rows flip to "the loan is past its due date — the borrower
+  repays or the default process resolves it" instead of advertising
+  an exit that cannot be created. The same rule holds while the
+  BORROWER has a live linked exit on the loan (a preclose offset):
+  the protocol refuses a sale listing until that offset completes or
+  is cancelled, and the row says which pending flow must clear first
+  rather than surfacing the refusal as a revert. The instant-sell row
+  states when no compatible offer is on the book right now. NFT
+  rentals get no chooser at all — lender early withdrawal excludes
+  them entirely in Phase 1.
 - Mode behaviour is identical to the borrower chooser: rows never
   submit; Advanced rows jump to the existing cards; Basic mode gets
   one explicit "Show these tools (switches to Advanced view)" action
@@ -107,18 +137,31 @@ design adds the framing rules, not new mechanics:
    binding (interest so far vs rate top-up) is stated in words when
    the buyer's rate is the driver, because "a higher-rate buyer costs
    you money" is the least intuitive fact on this surface.
-2. **The listing form seeds no misleading defaults.** The asking rate
-   seeds from the loan's own rate (the neutral choice); the form
-   states that a higher ask makes the position cheaper for buyers to
-   ignore, and repeats the forfeit rule against the live figure.
-3. **Failure is framed as safe.** A drifted candidate (consumed,
-   re-priced, expired) stops before any wallet prompt for a fresh
-   review; a buyer's failed acceptance never moves the seller's
-   position.
-4. **No stacked exits.** One live exit vehicle per position: a live
-   listing blocks the instant sell (and vice-versa where the
-   contracts enforce it), said in one line rather than discovered as
-   a revert.
+2. **The listing form's one economic input is a RATE, not a price.**
+   A listing's purchase amount is fixed to the loan's live
+   outstanding principal — the seller never chooses what the buyer
+   pays; they choose the yearly rate the buyer will earn for the
+   remaining term. The form says exactly that, seeds the rate from
+   the loan's own rate (the neutral choice), and states the
+   trade-off in both directions: a HIGHER buyer rate makes the
+   position more attractive to buyers — likelier to sell sooner —
+   but raises the rate top-up the seller funds at completion; a
+   LOWER rate costs the seller less but can sit unsold. The forfeit
+   rule is repeated against the live figure.
+3. **Failure is framed as safe — with the race named honestly.**
+   Drift the app has DETECTED (a consumed, re-priced, or expired
+   candidate) closes the review before any wallet prompt for a fresh
+   look; drift that lands in the gap between the final check and the
+   transaction's inclusion cannot be caught by any frontend and
+   instead produces a safe on-chain refusal, surfaced as a plain
+   explanation with a refreshed view — never money moved. The design
+   promises pre-prompt detection only for what is detectable.
+4. **No stacked exits — across BOTH parties.** One live exit vehicle
+   per position: a live listing blocks the instant sell (and
+   vice-versa where the contracts enforce it), and a live
+   borrower-side linked exit (a preclose offset) blocks creating a
+   listing at all — each said in one line naming which pending flow
+   must clear first, rather than discovered as a revert.
 
 ### Layer 3 — the live listing's standing surface (existing, hardened)
 
@@ -141,20 +184,40 @@ implementation PR:
 - **Full unwind means full unwind**: cancelling a listing releases
   everything the listing set up, and anything that cannot be released
   automatically is said plainly with its remedy.
+- **The borrower-side freeze is owned, not ignored**: because a live
+  listing holds the borrower's partial-repay and
+  collateral-withdrawal affordances indefinitely (no expiry; only
+  the seller cancels), the implementation must (a) disclose that
+  cross-party effect on the listing form BEFORE confirmation, and
+  (b) provide an escape: at minimum an optional listing expiry the
+  seller sets at creation, or the FunctionalSpecs re-sign flow where
+  a partial repayment invalidates the old buyer signature and the
+  buyer simply re-signs for the smaller position (in which case the
+  app's partial-repay hold can be lifted). Which escape ships is an
+  open question below — shipping NEITHER is not an option, or an
+  abandoned listing becomes an indefinite lever over the borrower.
 
 ## Decision guidance the chooser encodes
 
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
-| Keep it to the end | No urgent need for the capital | None — full principal + agreed interest at maturity |
+| Keep it to the end | No urgent need for the capital | No sale forfeiture — principal + agreed interest if the borrower repays; the normal default process (recovery may be less) if they don't |
 | Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly |
-| List at your price | Want liquidity but not at today's book prices | Same forfeit rule at completion; position locked while listed; no guarantee of a buyer |
+| List at your chosen buyer rate | Want liquidity but not at today's book rates | Same forfeit rule at completion; position locked (and the borrower's partial-repay/collateral paths held) while listed; no guarantee of a buyer |
 
-The teaching moment (inverse of the borrower side): **time works FOR
-a waiting lender and AGAINST a selling one** — the longer the loan
-has run, the more accrued interest a sale forfeits, while waiting
-converts that same accrual into the payout. The chooser's cost lines
-make this readable without a formula.
+The teaching moment (inverse of the borrower side) is REGIME-AWARE,
+not absolute, because the seller pays the LARGER of two figures that
+move in opposite directions as time passes: the interest built up so
+far only grows, while a higher-rate buyer's top-up is proportional to
+the remaining term and therefore shrinks. When accrued interest is
+the binding cost (same-or-lower buyer rates — the common book case),
+waiting cheapens nothing and selling later forfeits more; when the
+top-up is binding (a higher-rate buyer), waiting can actually improve
+the seller's net until the two figures cross. The chooser therefore
+never teaches a blanket "sell early or never" rule — the honest
+instrument is the CURRENT net quote on each candidate ("you'd receive
+about X today"), which already embeds whichever side is binding, with
+the which-side-is-binding note from Layer 2 as the explanation.
 
 ## What we deliberately do NOT show
 
@@ -162,8 +225,9 @@ make this readable without a formula.
   anywhere on these surfaces.
 - The sale-vehicle mechanics (§9 Option 2's internal transitional
   structure, consolidation-at-listing, buyer's signed floors) — the
-  user-visible truths are only: your price, the lock, the settlement
-  on acceptance, and the cancel path.
+  user-visible truths are only: your chosen buyer rate, the locks
+  (yours and the borrower-side holds), the settlement on acceptance,
+  and the cancel path.
 - A yield projection on the wait row ("you will earn X by maturity")
   in Phase 1 — it reads as a promise; the app-wide rule is that
   lender yield is never presented as guaranteed. Phase 2's comparison
@@ -202,6 +266,13 @@ chooser stays absent on rentals.
 
 ## Open questions
 
+0. Which borrower-freeze escape ships in Phase 1 (see the Layer-3
+   checklist): a seller-set optional listing expiry (simpler; bounds
+   the freeze by clock), or the FunctionalSpecs buyer re-sign flow
+   that lets partial repayments proceed under a live listing (richer;
+   removes the partial-repay hold entirely)? Leaning expiry-first —
+   it is contract-light and the re-sign flow can layer on later — but
+   one of them is a Phase-1 requirement, not polish.
 1. Should the instant-sell row hide entirely when the book has no
    compatible offer, or show with "no matching offer right now"?
    Leaning show-with-reason — an option that appears only sometimes
