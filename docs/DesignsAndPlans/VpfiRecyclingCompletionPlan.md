@@ -517,7 +517,9 @@ beside the outstanding commitments. The two-term derivation therefore
 overstates retained reserve for as long as the register runs, which is why
 `getRecycleBackingSnapshot` returns the keeper term as a sixth raw value —
 `platformRetained = bucket − outstandingRecycled − keeperBudget`, floored at
-zero (Codex #1487 r2/r3). Two figures were missing outright:
+zero (Codex #1487 r2/r3). Two figures had no DIRECT read — one lacked an
+aggregate and one lacked any getter at all; neither was strictly
+unreachable, and the per-bullet detail below says which is which:
 
 - **`absorbed[D]` was HALF-exposed, which is worse than unexposed.** The
   global figure is `recycledCreditedByDay[D] + dayMirrorRecycledCredit[D]`
