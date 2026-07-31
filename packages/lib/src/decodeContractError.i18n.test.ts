@@ -43,6 +43,34 @@ describe('decodeContractError — translate hook', () => {
     expect(contractErrorCatalog()[key]).toBe(english);
   });
 
+  // #1460 (Codex #1497 r2) — the RAW-PAYLOAD path specifically. A wallet or
+  // RPC that surfaces only the revert data gives the decoder a bare selector,
+  // so the friendly copy is reachable only if the selector resolves to the
+  // error NAME first. Registering the copy without the selector row left this
+  // exact path showing hex — worse than the plain revert it replaced.
+  it('resolves the backing-short error from a bare selector payload', () => {
+    const out = decodeContractError({ data: '0x6248ee4e' });
+    // Recoverable funding back-pressure, not a terminal state — the copy must
+    // say the claim was NOT consumed, or the user assumes the reward is gone.
+    // It must equally not promise a specific amount or guaranteed success:
+    // the 69M cap runs first, so a retry can legitimately pay less
+    // (Codex #1497 r3).
+    expect(out).toMatch(/temporarily unfunded/i);
+    expect(out).toMatch(/not consumed/i);
+    // And it keys by the Solidity name, so a locale bundle can target it.
+    const seen: string[] = [];
+    decodeContractError(
+      { data: '0x6248ee4e' },
+      {
+        translate: (key, english) => {
+          seen.push(key);
+          return english;
+        },
+      },
+    );
+    expect(seen).toEqual(['InteractionRewardBackingShort']);
+  });
+
   it('keys a name-decoded revert by the Solidity error name', () => {
     const out = decodeContractError(
       { revert: { name: 'MaxLendingAboveCeiling' } },

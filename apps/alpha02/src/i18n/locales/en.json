@@ -2034,6 +2034,7 @@
     "KeeperNotApproved": "This keeper is not on your whitelist.",
     "KeeperWhitelistFull": "Keeper whitelist is full — remove an existing keeper before adding a new one.",
     "ZeroAmount": "No treasury balance to claim for this asset.",
+    "InteractionRewardBackingShort": "Rewards are temporarily unfunded on this network — the tokens for this claim have not arrived yet. Your claim was not consumed, so nothing has been used up and you can claim again once funding lands. Try again later.",
     "NFTMintFailed": "Position NFT mint failed — please retry. If it persists, contact support.",
     "NFTBurnFailed": "Position NFT burn failed — please retry.",
     "NFTStatusUpdateFailed": "NFT status update failed — please retry.",

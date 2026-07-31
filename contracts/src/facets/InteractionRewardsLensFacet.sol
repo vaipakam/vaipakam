@@ -681,18 +681,22 @@ contract InteractionRewardsLensFacet {
      *         `vpfiBalance` / `unearmarked` are NOT in §9. They are here
      *         because every other figure on this surface is computed from
      *         stored COUNTERS, and counters cannot notice that the tokens
-     *         behind them have left. #1460 is exactly that: a fresh-only
-     *         claim can spend VPFI backing the recycle bucket, after which
-     *         `platformRetained` keeps reporting reserve that is no longer
+     *         behind them have left. #1460 was exactly that: a fresh-only
+     *         claim could spend VPFI backing the recycle bucket, after which
+     *         `platformRetained` kept reporting reserve that was no longer
      *         there. Publishing a dashboard figure that is silently wrong is
      *         a worse outcome than publishing one alongside the balance that
      *         can falsify it.
      *
-     *         This MEASURES #1460, it does not fix it — the defect remains a
-     *         hard prerequisite for arming (completion plan §M7 step 0).
-     *         `unearmarked < scheduled payout` is its third condition, the
-     *         one that decides whether a deployment satisfying the other two
-     *         is actually corrupted or merely eligible.
+     *         This view MEASURES that quantity; the FIX landed separately in
+     *         {RewardClaimFacet}, which now refuses any claim whose fresh
+     *         components exceed `unearmarked` (#1460, closed — an earlier
+     *         revision here said the defect remained open and a hard arming
+     *         prerequisite, which was true when written). The view keeps its
+     *         value after the fix: the gate stops NEW corruption, it does not
+     *         attest that a Diamond carrying pre-fix history is sound, and
+     *         `unearmarked` is still what separates a deployment that is
+     *         actually corrupted from one that is merely fully consumed.
      * @return vpfiBalance         Diamond's live VPFI balance, all labels.
      * @return bucket              VPFI wei labelled as recycled runway.
      * @return unearmarked         `vpfiBalance − bucket`, floored at zero.

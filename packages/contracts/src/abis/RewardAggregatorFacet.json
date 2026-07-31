@@ -1499,6 +1499,22 @@
   },
   {
     "type": "error",
+    "name": "InteractionRewardBackingShort",
+    "inputs": [
+      {
+        "name": "requiredFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "backingRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
