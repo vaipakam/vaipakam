@@ -335,9 +335,14 @@ implementation PR:
   buyer re-signs for the smaller position) is a valuable ADDITION that
   frees partial repayment sooner, but it is not a substitute: it
   leaves collateral withdrawal blocked on-chain until the listing
-  actually ends. Expiry + permissionless teardown is the floor;
-  re-sign layers on top. Shipping neither leaves an abandoned or
-  malicious listing as an indefinite lever over the borrower.
+  actually ends. Expiry + permissionless teardown is the floor, but it
+  has to leave a real borrower action window: teardown must either be
+  atomic with the borrower action it unblocks, impose a post-expiry
+  relisting cooldown, or enforce equivalent borrower consent /
+  cumulative-tenure protection so the seller or an authorized keeper
+  cannot immediately recreate the freeze and front-run the borrower one
+  listing at a time. Re-sign layers on top. Shipping neither leaves an
+  abandoned or malicious listing as an indefinite lever over the borrower.
 
 ## Decision guidance the chooser encodes
 
@@ -380,7 +385,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — twenty-four at
+The adversarial passes on this doc surfaced the gaps below — twenty-five at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -393,7 +398,7 @@ against.
 
 Items 1–4, 13, 14, 16, 17, 19 and 23 belong to the **listing** path,
 5–10, 15, 17 and 18 to the **instant-sell** (direct buy-offer) path,
-and 11, 12, 20, 21, 22 and 24 to both. The instant-sell cluster is
+and 11, 12, 20, 21, 22, 24 and 25 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -476,11 +481,12 @@ than a growing list of patches on generic-offer consumption.
    the forfeiture is best-effort, so the loss is unreliable; made
    reliable, it is a guaranteed uncapped cost. *Required*: extend the
    seller authorization with a maximum reward forfeiture, a value
-   snapshot, or fresh authorization when it is exceeded. **If that value
-   cannot be read on-chain at acceptance, then the design must stop
-   claiming its bound covers all three declared costs** and say which one
-   is unbounded — an honest gap beats a bound that silently omits a line
-   the same document insists on disclosing.
+   snapshot, a maximum cutoff day / eligible-day count, or fresh
+   authorization when the bound is exceeded. If no calculable proxy can
+   be enforced at acceptance, the sale surface stays unavailable; labeling
+   the line "unbounded" is disclosure, not authorization, and this section
+   already treats disclosure as insufficient for an uncapped wallet debit
+   or reward loss.
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
    compliance check and never compares the buy-offer creator against
@@ -955,13 +961,23 @@ than a growing list of patches on generic-offer consumption.
    guard, or buyer authorization explicitly binds the periodic settlement
    deadline and admissible shortfall state.
 
+25. **Lender migration must preserve position discovery.** Both sale paths
+   migrate the lender position by burning the seller's lender NFT and
+   minting a new one for the buyer. The reverse lookup that maps position
+   token id back to loan id must move atomically with that migration;
+   otherwise the buyer's new token resolves to loan id zero in
+   chain-authoritative position discovery, and the normal loan-management
+   UI treats the acquired position as absent. *Required*: replace the old
+   reverse-index entry with the new lender-token mapping during migration
+   before either sale surface ships.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
-  16, 17, 19, 20, 21, 22, 23 and 24 are resolved.**
+  16, 17, 19, 20, 21, 22, 23, 24 and 25 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15, 17, 18,
-  20, 21, 22 and 24 are resolved.** An earlier draft of this gate said only that the
+  20, 21, 22, 24 and 25 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
