@@ -2346,56 +2346,39 @@ library LibInteractionRewards {
     /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
     ///      the cursor advance a view can't perform. Used by the countdown
     ///      estimate so it applies the SAME forfeit-credit backing the sweep
-    ///      does — otherwise the view would show an imminent expiry for an
-    ///      unbacked-forfeit user whose claim actually reverts and whom the
-    ///      sweep will not accrue (Codex #1317 r4). It stays optimistic ONLY
-    ///      on the axis a view genuinely cannot resolve: an unadvanced entry
-    ///      reads behind (0), matching the documented conservative-estimate
-    ///      caveat on {rewardEntryExpiry}.
+    ///      does (`payout + recycleBucket + forfeitFresh` when the user has
+    ///      forfeited entries) — otherwise the view would show an imminent
+    ///      expiry for an unbacked-forfeit user whose claim actually reverts
+    ///      and whom the sweep will not accrue (Codex #1317 r4). It stays
+    ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
+    ///      unadvanced entry reads behind (0), matching the documented
+    ///      conservative-estimate caveat on {rewardEntryExpiry}.
     ///
-    ///      `recycleBucket` is included UNCONDITIONALLY (#1460, Codex #1497
-    ///      r2), but only against the FRESH terms (Codex #1497 r3). It used
-    ///      to be added only when the user had forfeited entries, which left
-    ///      the fresh-only case testing `balance >= payout` — a balance test
-    ///      that ignores how much of that balance is already earmarked. Once
-    ///      the claim path started refusing a payout that does not fit in
-    ///      `balance − recycleBucket`, that omission became a live
-    ///      divergence: a fully-earmarked deployment
-    ///      (`balance == recycleBucket`) would REFUSE the claim while this
-    ///      predicate still called the entry executable, so the expiry
-    ///      horizon and its notice window kept accruing against a claimant
-    ///      who cannot claim — and the moment backing was restored the sweep
-    ///      could expire the entry immediately on that stale elapsed time,
-    ///      consuming the notice period the horizon promises.
-    ///
-    ///      The RECYCLED share of the payout must be excluded from the term
-    ///      the bucket is added to, or the bucket is counted twice. A
-    ///      recycled payout draws the balance and the bucket down together,
-    ///      so it needs no un-earmarked backing at all; requiring
-    ///      `balance >= recycleBucket + recycledPayout` would hold a
-    ///      recycled-only claim non-executable FOREVER — its entries could
-    ///      never reach the expiry horizon even though the claim itself
-    ///      succeeds. That is the same cancellation the claim gate relies on
-    ///      (`paidRecycled` drops out of both sides of the invariant), so
-    ///      the two now agree on the identical quantity:
-    ///      `balance − bucket >= freshPayout + forfeitFresh`.
-    ///
-    ///      The entry path's recycled share comes straight from
-    ///      {_userEntriesUpperBound}; the legacy window leg is fresh by
-    ///      construction (pre-cutover math), so subtracting that share from
-    ///      the uncapped payout leaves exactly the fresh requirement.
+    ///      KNOWN DIVERGENCE from the #1460 claim-time backing gate, tracked
+    ///      as its own card and NOT patched here. The claim now refuses a
+    ///      payout whose fresh part exceeds `balance - recycleBucket`, while
+    ///      this predicate tests the balance without netting off the
+    ///      earmark — so on a thin deployment the horizon can call an entry
+    ///      executable that the claim refuses. It is INERT today: the sweep
+    ///      returns early while `rewardClaimHorizonDays == 0` (the deploy
+    ///      default — RL-3 shipped dark), so no clock accrues and nothing
+    ///      expires. Aligning the two is a shared-derivation change plus a
+    ///      property-test matrix over the fresh / recycled / loan-side-cap /
+    ///      forfeit combinations, because THREE sites re-derive this split
+    ///      by hand and three successive attempts to hand-align them inside
+    ///      #1497 were each subtly wrong (raw-vs-post-cap recycled, and
+    ///      double-counting the bucket against the recycled payout). It is
+    ///      therefore a precondition on ARMING the RL-3 horizon, not a
+    ///      prerequisite of the claim-time gate.
     function _userClaimFundingNeedView(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint256 need) {
         uint256 payout = userClaimPendingUncapped(s, user);
-        (, uint256 entryRecycled) = _userEntriesUpperBound(s, user);
-        // Saturating: `payout` contains the entry total, which contains the
-        // recycled share, so this cannot underflow — but a future change to
-        // either term should degrade to "all fresh" (stricter) rather than
-        // revert inside a gate that a permissionless sweep calls.
-        uint256 freshPayout = payout > entryRecycled ? payout - entryRecycled : 0;
-        need = freshPayout + s.recycleBucket + _userForfeitFresh(s, user);
+        uint256 forfeitFresh = _userForfeitFresh(s, user);
+        need = forfeitFresh == 0
+            ? payout
+            : payout + s.recycleBucket + forfeitFresh;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
