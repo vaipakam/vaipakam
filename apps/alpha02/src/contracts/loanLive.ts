@@ -41,6 +41,11 @@ export interface LoanLive {
   allowsPartialRepay: boolean;
   /** LibVaipakam.PeriodicInterestCadence as a number (None = 0). */
   periodicInterestCadence: number;
+  /** Interest ALREADY paid to the lender (periodic deductions,
+   *  partial repayments). The settlement paths credit this against
+   *  gross accrual, so any cost mirror must subtract it or it
+   *  overstates the pull (Codex #1500 r4). */
+  interestSettled: bigint;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -215,6 +220,63 @@ export function saleBuyerRemainingInterest(
   );
 }
 
+/** Borrower economics of handing the loan to a replacement borrower
+ *  via `transferObligationViaOffer` (preclose Option 2) — one
+ *  definition for the offer-picker rows, the review receipt, and the
+ *  submit re-check. Mirrors PrecloseFacet's transfer settlement:
+ *  seconds-precision, elapsed measured from the #641 interest clock,
+ *  accrued = pro-rata to now at the LOAN's rate, and the shortfall
+ *  bridging the staying lender back to their original entitlement
+ *  when the replacement offer's expected interest is lower:
+ *  `max(0, remaining@loanRate − offerTerm@offerRate)`. Accrued is NET
+ *  of `interestSettled`, applying the same saturating credit the
+ *  facet does, so a periodic loan's already-paid interest is not
+ *  charged twice (Codex #1500 r4). */
+export function transferEconomicsOf(
+  live: LoanLive,
+  offerRateBps: bigint,
+  offerDurationDays: bigint,
+  chainNow: bigint,
+): { accrued: bigint; shortfall: bigint; total: bigint } {
+  const start = interestAccrualStartOf(live);
+  const elapsed = chainNow > start ? chainNow - start : 0n;
+  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
+  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
+  const grossAccrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  // Mirror LibEntitlement.creditSettledInterest: the facet subtracts
+  // interest already paid (periodic deductions / partials), saturating
+  // at zero. Without this the quote — and the submit balance gate —
+  // overstate the pull on a periodic loan and can reject a wallet that
+  // actually holds enough (Codex #1500 r4).
+  const accrued =
+    grossAccrued > live.interestSettled ? grossAccrued - live.interestSettled : 0n;
+  const originalRemaining =
+    (live.principal * live.interestRateBps * remainingSecs) / denom;
+  const newRemaining =
+    (live.principal * offerRateBps * offerDurationDays * 86_400n) / denom;
+  const shortfall =
+    originalRemaining > newRemaining ? originalRemaining - newRemaining : 0n;
+  return { accrued, shortfall, total: accrued + shortfall };
+}
+
+/** The standing-approval bound for the offset path's COMPLETION pull
+ *  (preclose Option 3). When the linked offer is accepted, the
+ *  contract pulls `principal + accrued + shortfall` from the
+ *  borrower's wallet — and since accrued-to-completion plus the
+ *  rate-shortfall can never exceed the full remaining committed term
+ *  at the loan's own rate (they cover complementary slices of that
+ *  window), `principal + remaining-term interest` bounds the pull
+ *  exactly. Completion is contract-blocked at/after maturity (the
+ *  anti-drift guard), so no late-fee headroom is needed. */
+export function offsetCompletionBoundOf(live: LoanLive): bigint {
+  return (
+    live.principal +
+    (live.principal * live.interestRateBps * interestRemainingDaysOf(live)) /
+      (365n * 10_000n)
+  );
+}
+
 /** The sale path's duration-fit bound: the IMMUTABLE term minus
  *  whole days elapsed since the immutable start — NOT the interest
  *  clock (a partial re-stamps that; the borrower-favourability check
@@ -251,6 +313,7 @@ export async function readLoanLive(
     useFullTermInterest: Boolean(raw.useFullTermInterest),
     allowsPartialRepay: Boolean(raw.allowsPartialRepay),
     periodicInterestCadence: Number(raw.periodicInterestCadence),
+    interestSettled: raw.interestSettled ?? 0n,
     collateralAsset: raw.collateralAsset,
     collateralAssetType: Number(raw.collateralAssetType),
     collateralAmount: raw.collateralAmount,

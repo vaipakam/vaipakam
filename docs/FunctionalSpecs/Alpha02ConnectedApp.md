@@ -787,6 +787,140 @@ Its intended behaviour, as the test oracle for this surface:
   request for the same loan is possible and each device tracks only
   its own. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
+- The borrower of an active ERC-20 loan sees, in BOTH interface
+  modes, one chooser surface that names every early-repayment path
+  the protocol offers — full repayment, partial repayment (marked
+  unavailable when the lender did not enable it), direct early close,
+  handing the obligation to a replacement borrower, offsetting into a
+  new lender position, and refinancing — each with its cost
+  implication stated up front in plain words: a direct close costs
+  the full agreed term's interest (or only accrued interest on a
+  day-by-day loan, per the loan's interest mode), a handover costs
+  the interest accrued so far plus a top-up when the replacement rate
+  earns the staying lender less than promised, and an offset requires
+  fresh lending capital now plus the automatic payoff at completion.
+  The chooser never submits anything itself: in Advanced mode each
+  path leads to its own tool with its own review; in Basic mode the
+  advanced paths share one explicit, clearly labelled action that
+  switches the interface to Advanced in place — the mode change is
+  always the user's own choice, never a side effect. Paths that
+  cannot currently apply (past the due date, held by a live linked
+  request, or one the position doesn't qualify for — refinancing on a
+  position acquired on the secondary market stays with the original
+  borrower) say so instead of disappearing silently; a
+  past-the-due-date unavailability is judged only from chain-anchored
+  time and live terms — with no live reading in hand the chooser
+  leaves the path offered and lets the target tool enforce the real
+  gate, rather than expiring an option off the device clock or a
+  lagging data row. The interest-mode-dependent cost lines are priced
+  from the loan's actual mode in BOTH interface modes, with neutral
+  checking wording while the mode is unknown — the full-term default
+  is never asserted for a loan that may accrue day by day. The chooser is
+  not shown for NFT rentals (their close path is the rental close),
+  nor once the loan is settled or strictly past its grace window.
+- Advanced mode offers the borrower of an active, not-yet-matured
+  ERC-20 loan an obligation handover (preclose Option 2): accepting a
+  standing borrow request from a replacement borrower, who takes over
+  the debt with their own pledged collateral while the original
+  borrower's collateral is released and the lender keeps the same
+  protection. The picker lists only requests the handover can
+  actually complete against — same lending, collateral, and prepay
+  assets; an amount covering the loan's outstanding principal; at
+  least the loan's collateral; a term ending no later than the loan's
+  original due date; not the borrower's own request and not one
+  already promised to another purpose — cheapest handover first, and
+  quotes each candidate's cost to the borrower: the interest accrued
+  so far plus the lender-protection top-up. While the request book is
+  loading it says so, and an unavailable book is stated honestly
+  (loading, empty, and unavailable never look alike). Confirmation
+  re-verifies the chosen request and the loan live: a consumed or
+  no-longer-fitting request — or one that turns out to be a linked
+  sale/position vehicle rather than a genuine standing request (the
+  fast market layer may not label vehicles on older data) — stops
+  before any wallet prompt with a plain explanation, and a request
+  whose terms have CHANGED since the review opened (requests are
+  editable in place, and a lowered rate raises the borrower's top-up)
+  stops for a fresh review rather than charging more than was
+  reviewed; the same fresh-review rule applies when the LOAN's own
+  economic terms moved while the review sat open (a keeper extension
+  re-stamps the rate, term, and interest clock). For NFT collateral,
+  the replacement pledge's exact identity — the token id, and the
+  quantity where applicable — is shown on every candidate row and
+  repeated at confirmation, because the handover adopts the chosen
+  request's pledge and two requests from the same collection can
+  carry materially different tokens; where the collateral is a
+  fungible token whose details have not loaded, the flow says so and
+  holds rather than describing the pledge as an NFT. Before any
+  spending approval is requested, the app also checks — where the
+  protocol exposes it — that the replacement borrower would actually
+  be admitted (risk tier, per-pair consent, jurisdiction), so a
+  request that has gone ineligible since it was posted fails with a
+  plain explanation instead of leaving a pointless approval behind a
+  reverted handover; an unreadable check never blocks an otherwise
+  valid handover. The review states what is paid
+  now, that the exact figure is computed on-chain at execution, that
+  the borrower's collateral is returned straight to their wallet in
+  the same transaction (no separate claim step exists for it), and
+  that a failed check aborts the whole handover leaving the loan
+  unchanged. After a successful handover the page treats the
+  borrower's involvement as ended.
+- Advanced mode offers the borrower of an active, not-yet-matured
+  ERC-20 loan an offset exit (preclose Option 3): funding a new
+  lending offer on the same assets, linked to the loan, whose
+  acceptance by a counterparty automatically pays off the original
+  loan in the same transaction and leaves the exiting borrower as the
+  new loan's lender. The form seeds from the loan's own terms; the
+  replacement term may not extend past the loan's due date and the
+  demanded collateral may not be less than the loan's. Two
+  disclosures must be made BEFORE the review opens and repeated in
+  it: the borrower's position token is transfer-locked while the
+  offer is open (no moving, listing, or selling it until completion
+  or cancel), and posting locks the new offer's lending money now
+  while the payoff — principal plus accrued interest plus any rate
+  top-up for the current lender — is pulled from the wallet
+  automatically at acceptance, so the wallet must stay funded and
+  approved for that pull the whole time the offer is open (a short
+  wallet only makes the acceptance fail; nothing is taken). The
+  token approval granted at posting is sized to the largest pull any
+  completion could make, and the quoted keep-available figure states
+  that bound. A live offset gets a standing view driven by the
+  chain's own lock record — an offset made on another device still
+  shows — with the linked offer's identity when known, warnings when
+  the standing approval or wallet balance no longer covers the
+  completion pull (with a restore action for the approval), and
+  cancellation (available after the protocol's cancel cooldown,
+  judged by chain time), which unlocks the position, returns the
+  lending money straight to the wallet, and removes the standing
+  payoff approval — but never silently: because a token's spending
+  approval is a single shared authorization whose SIZE cannot identify
+  which commitments rest on it, the app does not automatically remove
+  it, and instead states plainly that the approval is still standing
+  and can be reviewed or removed from the wallet's own approvals view.
+  What the user must never get is silence about a payoff-sized
+  approval outliving the commitment it was granted for. If the loan's own economics moved while
+  the posting review sat open (a keeper extension), the submission
+  stops for a fresh review rather than granting a standing approval
+  larger than the reviewed figure. A dead offset is
+  never presented as completable: when the loan has settled another
+  way, or when time has passed the point where the offer's
+  replacement term can still end by the original maturity, the view
+  says the offset can no longer complete, stops the funding warnings
+  (there is nothing left to fund), and keeps cancel as the unwind. A
+  device-remembered offer identity that the chain no longer knows
+  (cancelled elsewhere, with a newer offset now holding the lock) is
+  discarded rather than offered for cancellation. While an offset is
+  live, the other settlement paths are held off or warned: partial
+  repayment, direct close, refinancing, and the handover are not
+  offered (any of them would strand the linked offer), and the
+  always-open full-repayment review carries a warning to cancel the
+  offset first. Because the lock record is chain-authoritative and
+  can be created from another device, those same settlement tools
+  hold in a visible checking state until the app has actually
+  confirmed whether an offset is live — an unresolved or failed lock
+  read must not expose a path that would strand a funded linked
+  offer. An offset is not offered for NFT rentals, while a sale
+  listing is live on the loan, or once the due date is too close for
+  any fitting replacement term.
 - Advanced mode offers the lender of an active, not-yet-matured
   ERC-20 loan an early exit: selling the position into a matching
   open lending offer. The picker lists only offers the sale can

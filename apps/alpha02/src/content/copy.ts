@@ -905,6 +905,210 @@ const copySource = {
       'The late fee for being past due is included in this amount — the same fee a normal repayment would charge.',
   },
 
+  /** The borrower's early-repayment CHOOSER — one card that names
+   *  every way out of an active loan before its due date, with each
+   *  path's cost implication stated up front (FunctionalSpecs §8:
+   *  "path-specific interest implication warning" before any preclose
+   *  signature). Discoverability surface: the flows themselves live
+   *  in their own cards below. */
+  earlyRepay: {
+    title: 'Ways to repay or exit early',
+    blurb:
+      'You don’t have to wait until the due date — and paying everything now isn’t the only way out. Pick the path that fits:',
+    switchToAdvanced: 'Show these tools (switches to Advanced view)',
+    switchNote:
+      'These tools live in the Advanced view. Switching keeps you on this page — nothing is submitted.',
+    jump: 'Go to this option',
+    options: {
+      repayFull: 'Repay in full',
+      repayFullDesc:
+        'Pay everything owed now — principal plus interest — and the loan closes today. Your collateral is released for you to claim.',
+      repayPartial: 'Repay part of it',
+      repayPartialDesc:
+        'Pay down some of the principal now. The loan stays open, but future interest is charged on the smaller balance. You also pay the interest built up so far in the same step, so the amount leaving your wallet is more than the paydown you type.',
+      repayPartialUnavailable:
+        'Not offered on this loan — the lender didn’t enable partial repayments.',
+      closeEarly: 'Close early (pay and settle now)',
+      closeEarlyDesc:
+        'The same total as repaying in full — this tool shows you the exact on-chain figure before you sign and settles everything in one step.',
+      closeEarlyCostChecking:
+        'Checking this loan’s interest mode to price this option…',
+      closeEarlyCostFullTerm:
+        'Costs the full agreed term’s interest even though you’re closing early — that’s this loan’s interest mode.',
+      closeEarlyCostProRata:
+        'This loan accrues day by day, so closing now pays only the interest built up so far.',
+      transfer: 'Hand the loan to another borrower',
+      transferDesc:
+        'Pick a standing borrow request that matches this loan’s assets. That borrower takes over the debt with their own collateral; your collateral is released.',
+      transferCost:
+        'Costs the interest built up so far, plus a top-up if the new borrower’s rate earns your lender less than they were promised.',
+      offset: 'Exit by becoming a lender',
+      offsetDesc:
+        'Fund a new lending offer on the same assets. When someone accepts it, your old loan is paid off automatically and you become the lender of the new loan.',
+      offsetCost:
+        'You put up fresh money to lend now — and at completion your wallet also pays off this loan in full: its principal, the interest built up so far, and any rate top-up for your current lender. Plan for two principal-sized amounts, not one.',
+      refinance: 'Refinance to a new lender',
+      refinanceDesc:
+        'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
+      refinanceCost:
+        'The payoff is principal plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
+      refinanceTransferredUnavailable:
+        'Not available for this position — refinancing stays with the wallet that originally took the loan.',
+    },
+    checkingInterlocks:
+      'Checking for linked requests on this loan…',
+    onlyErc20Note:
+      'NFT rentals don’t use these paths — close the rental from the button below instead.',
+  },
+
+  /** Preclose Option 2 — hand the obligation to a replacement
+   *  borrower by consuming their standing Borrower Offer
+   *  (PrecloseFacet.transferObligationViaOffer). */
+  transferOb: {
+    title: 'Hand this loan to another borrower',
+    blurb:
+      'Another borrower with a matching standing borrow request can take over this debt. They pledge their own collateral (at least as much as yours), your collateral is released, and the lender keeps the same protection. You pay the interest built up so far, plus a top-up if their rate would earn your lender less than promised.',
+    pickLabel: 'Matching borrow requests',
+    candidateLine: tmpl(
+      'Request #{{offerId}} — {{rate}} yearly for {{duration}}, pledging {{collateral}}',
+      ['offerId', 'rate', 'duration', 'collateral'],
+    ),
+    yourCostLine: tmpl('Your cost today: about {{cost}}', ['cost']),
+    collateralUnknown: tmpl(
+      'collateral {{asset}} — amount unavailable right now',
+      ['asset'],
+    ),
+    collateralChecking:
+      'Reading this loan’s collateral details… the handover opens once they load.',
+    select: 'Choose',
+    selected: tmpl('Handing over to request #{{offerId}}.', ['offerId']),
+    changePick: 'Pick a different request',
+    noneFound:
+      'No standing borrow request currently matches this loan (same assets, enough collateral, and a term that ends before your due date). Check back later — or use another path above.',
+    checking: 'Looking for matching borrow requests…',
+    bookUnavailable:
+      'We couldn’t load the request book right now — retrying. The other paths above stay available.',
+    action: 'Review handover',
+    confirm: 'Confirm — hand over loan',
+    done:
+      'Loan handed over. You’re out of the debt, and your collateral was sent straight back to your wallet in the same transaction.',
+    accruedLabel: 'interest built up so far',
+    shortfallLabel: 'lender rate top-up',
+    receiptReceive:
+      'Your collateral back — sent straight to your wallet in the same transaction — and you owe nothing further on this loan.',
+    receiptLock: 'Nothing new.',
+    receiptOwe: tmpl(
+      'About {{total}} now ({{accrued}} interest so far + {{shortfall}} rate top-up). The exact figure is computed on-chain at execution.',
+      ['total', 'accrued', 'shortfall'],
+    ),
+    receiptLose:
+      'Nothing beyond the payment — if anything doesn’t check out, the whole handover fails and your loan continues unchanged.',
+    receiptFees:
+      'The protocol’s usual cut of the interest you pay settles inside the payment.',
+    receiptEnds:
+      'Immediately — the new borrower takes over, and your collateral comes back to your wallet, in this same transaction.',
+    offerGone:
+      'That borrow request is no longer available (accepted, cancelled, or changed). Pick another.',
+    offerNotEligible:
+      'That borrower can’t take over this loan right now — their account no longer meets the requirements for this asset pair. Nothing was approved or sent. Pick a different request.',
+    sameWalletNote:
+      'A request from your own wallet can’t take over your loan.',
+  },
+
+  /** Preclose Option 3 — offset: the borrower funds a NEW lender
+   *  offer pinned to this loan (PrecloseFacet.offsetWithNewOffer);
+   *  acceptance settles the old loan automatically. */
+  offset: {
+    title: 'Exit by becoming a lender (offset)',
+    blurb:
+      'Fund a new lending offer on the same assets as this loan. The moment another borrower accepts it, your old loan is paid off automatically in the same transaction — your collateral is released, and you carry on as the lender of the new loan.',
+    rateLabel: 'Yearly rate for your new lending offer',
+    durationLabel: 'New offer length (days)',
+    durationMax: tmpl(
+      'Must end before this loan’s due date — at most {{max}} days.',
+      ['max'],
+    ),
+    collateralLabel: tmpl(
+      'Collateral to require from the new borrower ({{symbol}})',
+      ['symbol'],
+    ),
+    collateralMin: tmpl(
+      'At least {{min}} — the new borrower must pledge no less than your current loan holds.',
+      ['min'],
+    ),
+    lockWarn:
+      'While this offer is open, your borrower position is transfer-locked — it can’t be moved, listed, or sold until the offset completes or you cancel the offer.',
+    fundsNote: tmpl(
+      'Posting locks {{principal}} from your wallet as the new offer’s lending money. Keep about {{completion}} more available: when someone accepts, the payoff of your current loan is pulled from your wallet automatically in that same transaction.',
+      ['principal', 'completion'],
+    ),
+    consentLabel:
+      'I understand the risk disclosures and the funding terms below and agree to them. My new offer charges the full term’s interest even on an early repayment and does not allow partial repayments.',
+    action: 'Review offset offer',
+    confirm: 'Confirm — fund and post offer',
+    done:
+      'Offset offer posted. When a borrower accepts it, your current loan closes automatically — you don’t need to complete anything. Your collateral then becomes claimable (claim it from the Claim Center). You can cancel the offer below while it’s still open.',
+    receiptReceive:
+      'You become the lender of a new loan at your chosen terms, your old loan closes, and your collateral becomes claimable — claim it from the Claim Center afterwards.',
+    receiptLock: tmpl(
+      '{{principal}} now (your new offer’s lending money), locked until the offer is accepted or you cancel.',
+      ['principal'],
+    ),
+    receiptOwe: tmpl(
+      'At completion, about {{completion}} is pulled from your wallet automatically — your loan’s principal plus interest so far plus any rate top-up for your current lender. The exact figure is computed on-chain when the offer is accepted.',
+      ['completion'],
+    ),
+    receiptLose:
+      'If your wallet can’t cover the payoff when someone accepts, their acceptance simply fails — nothing is taken and your loan continues unchanged.',
+    receiptFees:
+      'The protocol’s usual cut of the interest settles inside the payoff.',
+    receiptEnds:
+      'When a borrower accepts your offer (the offset completes in that transaction), or when you cancel it.',
+    pendingTitle: 'Offset in progress',
+    pendingBody:
+      'A lending offer is live for this loan. As soon as a borrower accepts it, the offset completes automatically — your old loan closes and your collateral is released for you to claim. You don’t need to complete anything yourself; the one remaining step afterwards is claiming that collateral.',
+    pendingLoanClosed:
+      'This loan has already settled another way, so the linked offer can no longer complete. Cancel it to unlock your position and get your lending money back.',
+    pendingTermUnfillable:
+      'The offer’s replacement term can no longer finish before this loan’s due date, so no one can accept it any more. Cancel it to unlock your position and get your lending money back.',
+    pendingOffer: tmpl('Linked offer: #{{offerId}}.', ['offerId']),
+    pendingOfferUnknown:
+      'This device doesn’t remember the linked offer’s number (it may have been created elsewhere). You can still find and cancel it from My positions → your offers.',
+    pendingKeepFunded: tmpl(
+      'Keep about {{completion}} available in your wallet — the payoff is pulled automatically when someone accepts.',
+      ['completion'],
+    ),
+    pendingAllowanceShort:
+      'Your standing approval no longer covers the payoff — an acceptance would fail. Restore it below.',
+    pendingBalanceShort:
+      'Your wallet balance no longer covers the payoff — an acceptance would fail until you top it up.',
+    restoreApproval: 'Restore approval',
+    restoreNoLongerLive:
+      'This offset is no longer live — it was completed or cancelled elsewhere. Nothing was approved; refresh to see the current state.',
+    restoreLoanClosed:
+      'This loan has already settled another way, so the offset can no longer complete. Nothing was approved — cancel the offer to unlock your position and get your lending money back.',
+    blockedByOtherLock:
+      'This position is tied up by another live flow on this loan (a collateral listing, or a sale listing on the lender side). Nothing was approved or sent — clear that first, then post the offset.',
+    approvalRestored: 'Approval restored — the offset can complete again.',
+    cancel: 'Cancel offset offer',
+    cancelCooldown:
+      'Cancelling opens a few minutes after posting.',
+    cancelled:
+      'Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.',
+    cancelledApprovalKept:
+      'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
+    blockedOtherPaths:
+      'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
+    alreadyLive:
+      'An offset offer is already live for this loan (it may have been posted on another device). Nothing was approved or sent — refresh to see it below.',
+    durationOverCap: tmpl(
+      'Offers can’t run longer than {{max}} days right now. Shorten the length and review again — nothing was approved or sent.',
+      ['max'],
+    ),
+    onlyBeforeDue:
+      'An offset needs a replacement term that ends before this loan’s due date — it’s no longer available this close to (or past) the due date.',
+  },
+
   refinance: {
     // Composed receipt lines (extracted from RefinanceFlow.tsx); catalog
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at

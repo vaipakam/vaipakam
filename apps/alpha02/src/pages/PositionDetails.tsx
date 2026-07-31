@@ -36,6 +36,7 @@ import {
 } from '../contracts/preflights';
 import {
   LOAN_STATUS_ACTIVE,
+  loanEndTimeOf,
   readLoanLive,
   readRepaymentDueLive,
 } from '../contracts/loanLive';
@@ -57,6 +58,11 @@ import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
+import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
+import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
+import { OffsetFlow } from '../components/OffsetFlow';
+import { OffsetPendingCard } from '../components/OffsetPendingCard';
+import { LOCK_PRECLOSE_OFFSET, useOffsetPending } from '../data/offsetPending';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
@@ -80,6 +86,8 @@ type ConfirmSurface =
   | 'partial'
   | 'preclose'
   | 'refinance'
+  | 'transfer'
+  | 'offset'
   | 'early-exit'
   | 'loan-sale';
 
@@ -113,7 +121,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
 
-  const { isAdvanced } = useMode();
+  const { isAdvanced, setMode } = useMode();
   // #1037 — which prompt the in-flight action is on (null = idle).
   // One shared phase for the page's actions (they share the busy
   // lock already); a status banner narrates approve → submit.
@@ -260,14 +268,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loan.data?.status === 'fallback_pending'),
     staleTime: 15_000,
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
-    queryFn: async () =>
-      (
-        await readLoanLive(
-          readClient!,
-          readChain.diamondAddress,
-          loan.data!.loanId,
-        )
-      ).status,
+    // Returns the STATUS plus the interest mode: the same single
+    // getLoanDetails call answers both, and the early-repay chooser
+    // needs the mode in Basic mode too (the loanLive strategy read is
+    // advanced-only by design; asserting the full-term default for a
+    // pro-rata loan misprices the close-early options — Codex #1500
+    // r2). No extra RPC — the read already fetched the whole struct.
+    queryFn: async () => {
+      const live = await readLoanLive(
+        readClient!,
+        readChain.diamondAddress,
+        loan.data!.loanId,
+      );
+      return {
+        status: live.status,
+        useFullTermInterest: live.useFullTermInterest,
+      };
+    },
   });
 
   // Effectively OPEN for the live-read enablements: a stale
@@ -279,7 +296,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const effectivelyActive =
     loan.data?.status === 'active' ||
     (loan.data?.status === 'fallback_pending' &&
-      liveStatus.data === LoanStatus.Active);
+      liveStatus.data?.status === LoanStatus.Active);
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
@@ -333,6 +350,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     !loanIsRental && Boolean(loan.data) && role === 'lender',
   );
   const salePending = sale.state?.listed === true;
+
+  // Live-offset state (preclose Option 3) — chain-authoritative
+  // (PrecloseOffset lock on the borrower NFT), page-owned like the
+  // refinance marker: a live offset interlocks the repay-family
+  // surfaces (a settlement through any other path strands the linked
+  // offer) and keeps its own standing card below.
+  const offsetPend = useOffsetPending(
+    loanId,
+    loan.data?.borrowerTokenId,
+    loanIsRental || !loan.data
+      ? undefined
+      : (loan.data.lendingAsset as `0x${string}`),
+    // Enabled for the borrower-side holder REGARDLESS of the indexed
+    // loan status (Codex #1500 r4 P1). A funded offset offer stays
+    // locked and cancellable after the loan settles some other way,
+    // and the terminal-row case is exactly when the cancel-to-unwind
+    // card matters most — gating on an open row hid it (and never
+    // recorded `loanActive` at all) right after a full repay, leaving
+    // the escrow stranded with no surface to release it.
+    Boolean(loan.data) && !loanIsRental && role === 'borrower',
+  );
   // The listing ended off-page (a buyer accepted, or it was cancelled
   // elsewhere) — surface the outcome once via the page banner.
   useEffect(() => {
@@ -520,13 +558,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const liveOverride =
     liveStatus.data === undefined
       ? undefined
-      : liveStatus.data !== LoanStatus.Active
+      : liveStatus.data.status !== LoanStatus.Active
         ? (
             LIVE_STATUS_TO_INDEXED as Record<
               number,
               (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
             >
-          )[liveStatus.data]
+          )[liveStatus.data.status]
         : loan.data.status === 'fallback_pending'
           ? ('active' as const)
           : undefined;
@@ -1009,7 +1047,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock, saleLock] = await Promise.all([
+      const [live, latestBlock, saleLock, borrowerLock] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
@@ -1025,6 +1063,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             abi: DIAMOND_ABI_VIEM,
             functionName: 'positionLock',
             args: [BigInt(row.lenderTokenId)],
+          })
+          .then((v) => Number(v)),
+        // Codex #1500 r4 P1 — the BORROWER position's lock, read live
+        // here rather than trusted from the render-time offsetPending
+        // branch. `repayPartial` has NO offset guard on chain, so a
+        // partial posted after a cross-device offset went live would
+        // succeed and shrink the principal the linked offer is pinned
+        // to, stranding its escrow until someone cancels. Fail CLOSED:
+        // an unreadable lock blocks the partial (this read THROWS).
+        publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(row.borrowerTokenId)],
           })
           .then((v) => Number(v)),
       ]);
@@ -1053,6 +1106,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       }
       if (saleLock === LOCK_EARLY_WITHDRAWAL_SALE) {
         setError(copy.loanSale.partialBlockedByListing);
+        return;
+      }
+      if (borrowerLock === LOCK_PRECLOSE_OFFSET) {
+        setError(copy.offset.blockedOtherPaths);
         return;
       }
       // A partial equal to the FULL remaining principal is accepted by
@@ -1621,6 +1678,45 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </p>
       ) : null}
 
+      {/* Early-repayment CHOOSER (FunctionalSpecs §8) — every way out
+          of an active loan named in one place, in BOTH modes, before
+          any flow opens. Hidden while an offset is live (the pending
+          card below owns the story then) and once grace is verifiably
+          over (every borrower door is shut). */}
+      {role === 'borrower' &&
+      row.status === 'active' &&
+      !closedThisSession &&
+      !isRental &&
+      !offsetPend.pending &&
+      !graceVerifiablyOver ? (
+        <EarlyRepayOptionsCard
+          isAdvanced={isAdvanced}
+          onSwitchToAdvanced={() => setMode('advanced')}
+          partialAllowed={row.allowsPartialRepay}
+          useFullTermInterest={
+            loanLive.data?.live.useFullTermInterest ??
+            liveStatus.data?.useFullTermInterest
+          }
+          // Chain-anchored only (Codex #1500 r2): the device clock or
+          // a lagging indexer row must never mark a path expired while
+          // the chain-authoritative cards below still permit it. With
+          // no live read in hand the hint stays false — the target
+          // cards enforce the real gates.
+          pastDueHint={
+            loanLive.data
+              ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
+              : bannerTerms.data
+                ? BigInt(bannerTerms.data.chainNow) >
+                  loanEndTimeOf(bannerTerms.data.live)
+                : false
+          }
+          refinancePending={refinanceBlocking}
+          refinanceEligible={Boolean(
+            address && address.toLowerCase() === row.borrower.toLowerCase(),
+          )}
+        />
+      ) : null}
+
       {role === 'borrower' &&
       (row.status === 'active' || row.status === 'fallback_pending') &&
       !closedThisSession &&
@@ -1726,12 +1822,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       row.allowsPartialRepay &&
       principal ? (
-        <section className="card">
+        <section className="card" id="partial-repay-card">
           <h3>{copy.positions.details.partial.title}</h3>
           <p className="muted">
             {copy.positions.details.partial.blurb}
           </p>
-          {refinanceBlocking ? (
+          {!offsetPend.pendingKnown ? (
+            // Fail CLOSED until the chain has answered whether an
+            // offset lock is live (it can exist cross-device): a
+            // partial under an unseen offset would drift the linked
+            // offer from the loan it settles (Codex #1500 r1).
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : offsetPend.pending ? (
+            // A live offset's linked offer escrowed the CURRENT
+            // principal — a partial under it would drift the offer
+            // from the loan it settles. Cancel the offset first.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.offset.blockedOtherPaths}
+              </span>
+            </div>
+          ) : refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
             // principal — a partial would strand it unacceptable
             // forever (the contract rejects any accept once amount >
@@ -1833,16 +1946,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       principal &&
       !(sanctions.ready && sanctions.flagged) ? (
-        !loanLive.data || !sanctions.ready || feeEnt.data === undefined ? (
+        !loanLive.data ||
+        !sanctions.ready ||
+        feeEnt.data === undefined ||
+        !offsetPend.pendingKnown ? (
           // Codex #1412 r1 — the fee-entitlement read is part of the
           // preclose disclosure set (a paid Full tariff is NOT
           // refunded on an early close), so the close-early surface
           // holds in the checking/failed state until that read is
           // known, exactly like the live-loan and sanctions reads.
+          // Codex #1500 r1 — same fail-closed posture for the offset
+          // LOCK read: a cross-device offset could be live, and every
+          // settlement tool below would strand its funded linked
+          // offer, so nothing renders until the chain has answered.
           <section className="card">
             <h3>{copy.preclose.title}</h3>
             <p className="muted">
-              {loanLive.isError || feeEnt.isError
+              {loanLive.isError || feeEnt.isError || offsetPend.isError
                 ? copy.preclose.checkFailed
                 : copy.preclose.checking}
             </p>
@@ -1850,7 +1970,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ) : (
         <>
         {liveWithinGraceWindow ? (
-        <section className="card">
+        <section className="card" id="preclose-card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
             {copy.preclose.blurb}{' '}
@@ -1879,7 +1999,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">{copy.preclose.graceNote}</span>
             </div>
           ) : null}
-          {refinanceBlocking ? (
+          {offsetPend.pending ? (
+            // A live offset settles this loan when its offer is
+            // accepted — closing another way first strands the
+            // linked offer. Cancel the offset instead.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.offset.blockedOtherPaths}
+              </span>
+            </div>
+          ) : refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —
             // settling it early would strand the request forever.
             <div className="banner banner-warn" role="alert">
@@ -1945,24 +2074,73 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             below, which outlives these gates). Keyed by chain so a
             chain switch re-seeds per-chain state. */}
         {!refinancePending &&
+        !offsetPend.pending &&
         address &&
         address.toLowerCase() === row.borrower.toLowerCase() ? (
-          <RefinanceFlow
-            key={readChain.chainId}
-            row={row}
-            live={loanLive.data.live}
-            chainNow={loanLive.data.chainNow}
-            graceSeconds={grace.data}
-            principalMeta={principal}
-            confirmOpen={confirmingSurface === 'refinance'}
-            onOpenConfirm={() => setConfirmingSurface('refinance')}
-            onCloseConfirm={() =>
-              setConfirmingSurface((s) => (s === 'refinance' ? null : s))
-            }
-            onPosted={refi.remember}
-            busy={busy}
-            setBusy={setBusy}
-          />
+          <div id="refinance-card">
+            <RefinanceFlow
+              key={readChain.chainId}
+              row={row}
+              live={loanLive.data.live}
+              chainNow={loanLive.data.chainNow}
+              graceSeconds={grace.data}
+              principalMeta={principal}
+              confirmOpen={confirmingSurface === 'refinance'}
+              onOpenConfirm={() => setConfirmingSurface('refinance')}
+              onCloseConfirm={() =>
+                setConfirmingSurface((s) => (s === 'refinance' ? null : s))
+              }
+              onPosted={refi.remember}
+              busy={busy}
+              setBusy={setBusy}
+            />
+          </div>
+        ) : null}
+        {/* Preclose Option 2 (obligation handover) + Option 3 (offset)
+            — pre-maturity only (both need a replacement term that ends
+            before the original due date; the contracts enforce the
+            same bound seconds-precise), never while another linked
+            vehicle (refinance request / offset) is live on this loan. */}
+        {!livePastDue && !refinanceBlocking && !offsetPend.pending ? (
+          <>
+            <ObligationTransferFlow
+              row={row}
+              live={loanLive.data.live}
+              chainNow={loanLive.data.chainNow}
+              principalMeta={principal}
+              collateralMeta={collateralIsNft ? undefined : (collateral ?? undefined)}
+              collateralIsNft={collateralIsNft}
+              confirmOpen={confirmingSurface === 'transfer'}
+              onOpenConfirm={() => setConfirmingSurface('transfer')}
+              onCloseConfirm={() =>
+                setConfirmingSurface((s) => (s === 'transfer' ? null : s))
+              }
+              onDone={() => {
+                setClosedThisSession(true);
+                setDoneMessage(copy.transferOb.done);
+              }}
+              busy={busy}
+              setBusy={setBusy}
+            />
+            {loanLive.data.saleLock !== LOCK_EARLY_WITHDRAWAL_SALE ? (
+              <OffsetFlow
+                key={`offset-${readChain.chainId}`}
+                row={row}
+                live={loanLive.data.live}
+                chainNow={loanLive.data.chainNow}
+                principalMeta={principal}
+                collateralMeta={collateralIsNft ? undefined : (collateral ?? undefined)}
+                confirmOpen={confirmingSurface === 'offset'}
+                onOpenConfirm={() => setConfirmingSurface('offset')}
+                onCloseConfirm={() =>
+                  setConfirmingSurface((s) => (s === 'offset' ? null : s))
+                }
+                onPosted={offsetPend.remember}
+                busy={busy}
+                setBusy={setBusy}
+              />
+            ) : null}
+          </>
         ) : null}
         </>
         )
@@ -2105,6 +2283,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           readiness, sanctions, loan status, maturity): the banner,
           funding watch, and cancel affordance must survive all of
           those windows, including the loan settling another way. */}
+      {/* The live offset's standing surface — rendered on the CHAIN's
+          say-so (PrecloseOffset lock), outside every strategy gate,
+          same rationale as the refinance pending card below. */}
+      {offsetPend.pending && !isRental && role === 'borrower' ? (
+        <OffsetPendingCard
+          loanId={row.loanId}
+          borrowerTokenId={row.borrowerTokenId}
+          offerId={offsetPend.offerId}
+          state={offsetPend.state}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          principalMeta={principal ?? undefined}
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={offsetPend.clear}
+          onDone={setDoneMessage}
+        />
+      ) : null}
+
       {refi.offerId &&
       !isRental &&
       address &&
@@ -2166,7 +2362,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // Position writes go through the SAME six-row review surface
           // as every other write flow — the wallet prompt is never the
           // first place the user sees what a click will do.
-          <section className="card">
+          <section className="card" id="repay-action">
             <ConfirmReceipt
               busy={busy}
               confirmLabel={copy.positions.details.confirmAction(actionLabel)}
@@ -2193,11 +2389,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   </span>
                 </div>
               ) : null}
+              {action === 'repay' && offsetPend.pending && !isRental ? (
+                // Same rule for a live offset: repay stays open (the
+                // safety valve), but settling this way strands the
+                // linked offset offer — say so before signing.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    {copy.offset.blockedOtherPaths}
+                  </span>
+                </div>
+              ) : null}
             </ConfirmReceipt>
           </section>
         ) : (
           <button
             type="button"
+            id="repay-action"
             className="btn btn-primary btn-block"
             disabled={
               busy ||
