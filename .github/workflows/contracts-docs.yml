@@ -16,9 +16,11 @@
 # - `main` push: rebuilds + deploys.
 # - `workflow_dispatch`: manual rebuild + deploy (cache-bust / recovery).
 # - PRs: NO LONGER triggered here. The `build-docs` job in `ci.yml`
-#   handles PR-preview rendering, downstream of `contracts-fast` so
-#   the forge build only happens ONCE per PR (instead of racing with
-#   `contracts-fast` for a parallel cold compile). This file now owns
+#   handles PR-preview rendering, downstream of `contracts-fast` for
+#   ORDERING (a broken contracts build short-circuits the doc job
+#   instead of racing it). Post-#1493 the doc build is a separate,
+#   self-contained quick-profile solc pass (~2 min) — serialized after
+#   contracts-fast's cifast compile, not sharing it. This file now owns
 #   ONLY the Pages-deploy concern on push-to-main.
 
 name: Contracts docs
@@ -70,8 +72,10 @@ jobs:
       # self-contained.
       - name: Forge doc --build
         # Builds an mdbook tree under `contracts/docs/book` from the
-        # per-function NatSpec comments in `contracts/src/`. No CI-side
-        # config — the output is governed by `foundry.toml [doc]`.
+        # per-function NatSpec comments in `contracts/src/`. The
+        # rendered-site configuration comes from `foundry.toml [doc]`;
+        # the ONE load-bearing CI-side setting is the FOUNDRY_PROFILE
+        # override below, which controls the compiler scope.
         #
         # QUICK profile, same as ci.yml's Build docs (#1493): forge doc
         # runs its own solc pass over the ACTIVE profile's source glob
