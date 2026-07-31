@@ -223,13 +223,26 @@ else
   for s in "${STAMPING_SH[@]}"; do
     f="$SCRIPT_DIR/$s"
     # The dirty variable is the SECOND interpolation in the stamp value.
-    dirty_var="$(sed -nE 's/.*monorepoCommit"?:? "?\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$f" | head -1)"
+    # EVERY emission, not just the first (Codex #1495 r7 P2).
+    # `exportSubgraphAbis.sh` already stamps twice — an ABI bundle and a
+    # per-chain manifest — so a `head -1` parser validated one pair and let a
+    # second, independently-assigned pair bypass every predicate. Scripts that
+    # stamp more than once are exactly where a refactor would introduce a late
+    # read, since the second emission is the one nobody remembers.
+    dirty_vars="$(sed -nE 's/.*monorepoCommit"?:? "?\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$f" | sort -u)"
+    commit_vars="$(sed -nE 's/.*monorepoCommit"?:? "?\$([A-Za-z_][A-Za-z0-9_]*)\$[A-Za-z_][A-Za-z0-9_]*.*/\1/p' "$f" | sort -u)"
+    dirty_var="$(echo "$dirty_vars" | head -1)"
     # The COMMIT half must be pinned with the snapshot too (Codex #1495 r3
     # P2). Pairing an early dirty reading with a late `rev-parse` lets a
     # commit landing in between attribute output to a commit that did not
     # produce it — and that half went unchecked for a whole round because the
     # guard only knew about the dirty half.
-    commit_var="$(sed -nE 's/.*monorepoCommit"?:? "?\$([A-Za-z_][A-Za-z0-9_]*)\$[A-Za-z_][A-Za-z0-9_]*.*/\1/p' "$f" | head -1)"
+    commit_var="$(echo "$commit_vars" | head -1)"
+    # Any emission whose variables are NOT the ones validated below is an
+    # unvalidated second stamp; reject rather than silently ignore it.
+    extra_pairs=0
+    for v in $dirty_vars; do [ "$v" = "$dirty_var" ] || extra_pairs=1; done
+    for v in $commit_vars; do [ "$v" = "$commit_var" ] || extra_pairs=1; done
     # Anchor on the ACTUAL git state read, not the empty initializer (Codex
     # #1495 r2 P2). Anchoring on `TREE_DIRTY_AT_START=""` meant an edit that
     # left the initializer early while moving the `git diff` conditional after
@@ -261,6 +274,11 @@ else
     commit_snap_total="$(grep -oE '(^|[;[:space:]])TREE_COMMIT_AT_START=' "$f" | wc -l | tr -d ' ')"
     first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
       | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
+    if [ "$extra_pairs" -ne 0 ]; then
+      echo "  ✗ $s — emits more than one provenance stamp with DIFFERENT variables; every emission must use the validated pair (#1490)" >&2
+      FAIL=1
+      continue
+    fi
     if [ -z "$dirty_var" ]; then
       echo "  ✗ $s — cannot identify the stamp's dirty variable (#1490)" >&2
       FAIL=1

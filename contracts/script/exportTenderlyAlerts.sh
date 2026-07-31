@@ -39,22 +39,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
-# ── Provenance snapshot — taken BEFORE this script writes anything (#1490) ──
-# Brought into line with the other seven stamping scripts (Codex #1495 r6 P2).
-# It had no dirty marker at all, so its stamp said which commit but never
-# whether that commit described the tree — and the guard could not see it,
-# because discovery matched only the JSON emission form. One idiom, eight
-# scripts, no exception for a reader to remember.
-TREE_COMMIT_AT_START="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
-TREE_DIRTY_AT_START=""
-# Excludes ONLY what this script writes.
-if ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)ops/tenderly' 2>/dev/null; then
-  TREE_DIRTY_AT_START=" (dirty)"
-fi
 DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
 TENDERLY_DIR="$REPO_ROOT/ops/tenderly"
 TEMPLATE="$TENDERLY_DIR/alerts.yaml"
 OUT_DIR="$TENDERLY_DIR/generated"
+
+# ── Provenance snapshot — after the OUTPUT PATHS are resolved, before any write ──
+# (#1490, and Codex #1495 r7 P2 for the placement.) The exclusion has to name
+# this run's ACTUAL output, so the snapshot cannot be taken before the output
+# directory is known: a hard-coded default silently excluded the wrong path
+# whenever an operator overrode it, counting the real output as source drift
+# and recreating the false-dirty stamp for exactly the people who customise.
+#
+# It still precedes every write — resolving a path is not writing to it — so
+# the ordering property #1490 is about is unaffected.
+#
+# Excludes ONLY what this script writes. NEVER the enclosing directory: doing
+# that also hides the tracked TEMPLATE that is consumed to produce the output,
+# which turns a real uncommitted edit into a clean reading (r6/r7 found that
+# same mistake in three separate scripts).
+_PROV_ROOT="$(cd "$REPO_ROOT" && pwd)"
+TREE_COMMIT_AT_START="$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
+TREE_DIRTY_AT_START=""
+if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . ":(exclude)${OUT_DIR#$_PROV_ROOT/}" 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 
 if [ ! -f "$TEMPLATE" ]; then
   echo "Error: $TEMPLATE not found." >&2
@@ -105,6 +114,13 @@ fi
 HAVE_ENVSUBST=0
 if command -v envsubst >/dev/null 2>&1; then HAVE_ENVSUBST=1; fi
 
+# HEAD moved between the snapshot and the stamp (Codex #1495 r7 P2). This
+# was the only one of the eight stamping scripts without this comparison,
+# while the release note claimed every exporter had it.
+if [ "$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+     != "$TREE_COMMIT_AT_START" ]; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 COMMIT_HASH="$TREE_COMMIT_AT_START"
 COMMIT_DIRTY="$TREE_DIRTY_AT_START"
 GENERATED_AT=$(date +%Y-%m-%dT%H:%M:%S%z)

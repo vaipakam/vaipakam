@@ -39,30 +39,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
-# (#1490) The tree state recorded in the provenance stamp answers "which
-# source state was this output generated FROM". Testing it AFTER the script
-# has written its own output always reports dirty, because the output IS a
-# working-tree change — so the marker was set on every run and distinguished
-# nothing, least of all the case it exists for: an export taken from a tree
-# with real uncommitted contract edits, which is not reproducible from the
-# recorded commit.
-#
-# `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
-# edits count as dirty too; a bare `git diff` compares against the index and
-# reports a fully-staged change as clean.
-TREE_COMMIT_AT_START="$(git -C "$CONTRACTS_DIR" rev-parse HEAD 2>/dev/null || echo 'unknown')"
-TREE_DIRTY_AT_START=""
-# Anchored at the REPO ROOT and excluding this script's OWN output
-# (Codex #1495 r5 P2). Two things were wrong before: a pathspec was
-# resolved relative to `-C` rather than the root, and — more
-# importantly — the snapshot counted this script's own uncommitted
-# output as source drift, so simply RE-RUNNING an export before
-# committing its result recreated the false-dirty stamp this change
-# exists to remove.
-if ! git -C "$CONTRACTS_DIR/.." diff --quiet HEAD -- . ':(exclude)packages/contracts/src/abis' 2>/dev/null; then
-  TREE_DIRTY_AT_START=" (dirty)"
-fi
 
 # Default workspace layout: monorepo at /work/vaipakam, ABI bundle at
 # /work/vaipakam/packages/contracts/src/abis (Stage 1b moved the ABIs
@@ -80,6 +56,27 @@ fi
 
 CONTRACTS_PKG_DIR="$(cd "$CONTRACTS_PKG_DIR" && pwd)"
 OUT_DIR="$CONTRACTS_PKG_DIR/src/abis"
+
+# ── Provenance snapshot — after the OUTPUT PATHS are resolved, before any write ──
+# (#1490, and Codex #1495 r7 P2 for the placement.) The exclusion has to name
+# this run's ACTUAL output, so the snapshot cannot be taken before the output
+# directory is known: a hard-coded default silently excluded the wrong path
+# whenever an operator overrode it, counting the real output as source drift
+# and recreating the false-dirty stamp for exactly the people who customise.
+#
+# It still precedes every write — resolving a path is not writing to it — so
+# the ordering property #1490 is about is unaffected.
+#
+# Excludes ONLY what this script writes. NEVER the enclosing directory: doing
+# that also hides the tracked TEMPLATE that is consumed to produce the output,
+# which turns a real uncommitted edit into a clean reading (r6/r7 found that
+# same mistake in three separate scripts).
+_PROV_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
+TREE_COMMIT_AT_START="$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
+TREE_DIRTY_AT_START=""
+if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . ":(exclude)${OUT_DIR#$_PROV_ROOT/}" 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 
 if [ ! -d "$OUT_DIR" ]; then
   echo "Error: ABI output dir not found: $OUT_DIR" >&2
