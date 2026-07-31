@@ -344,8 +344,8 @@ implementation PR:
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
 | Keep it to the end | No urgent need for the capital | No sale forfeiture, and your reward credit for this position keeps accruing — principal plus the agreed interest if the borrower repays (paid on the loan's schedule where it has one, otherwise at the close); the normal default process (recovery may be less) if they don't |
-| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer — plus your pending reward credit for this position, which is given up (shown as its own line, or marked unquotable where the value can't be read) |
-| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same three costs at completion (settlement forfeiture + any transferring set-aside money + the given-up reward credit, with the same unquotable fallback); your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
+| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer — plus your pending reward credit for this position, which is given up — plus the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated (shown as its own line, or marked unquotable where the value can't be read) |
+| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, and conditional Full-entitlement lines at completion, with the same unquotable fallback; your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
 The teaching moment (inverse of the borrower side) is REGIME-AWARE,
 not absolute, because the seller pays the LARGER of two figures that
@@ -901,18 +901,25 @@ than a growing list of patches on generic-offer consumption.
    that decision into both tariff prerequisites and seller-side economic
    bounds before any sale quote claims it has enumerated every seller cost.
 
-23. **Listing acceptance must bind the live loan's behavioural terms.**
-   The listing vehicle currently presents sale terms that are not the
-   live loan's full behavioural state: it copies `useFullTermInterest`,
-   but leaves `allowsPartialRepay` and `periodicInterestCadence` at their
-   default false / none values. The buyer can therefore sign acceptance
-   terms that say no partial repayment and no periodic cadence, then
-   receive the unchanged running loan where either behaviour is enabled.
-   Item 7 closes the same class for direct standing-offer consumption;
-   the listing path needs equivalent protection. *Required*: the sale
-   vehicle and acceptance authorization bind the underlying loan's actual
+23. **Listing acceptance must bind the live loan's behavioural and
+   exact maturity state.** The listing vehicle currently presents sale
+   terms that are not the live loan's full behavioural state: it copies
+   `useFullTermInterest`, but leaves `allowsPartialRepay` and
+   `periodicInterestCadence` at their default false / none values. The
+   buyer can therefore sign acceptance terms that say no partial
+   repayment and no periodic cadence, then receive the unchanged running
+   loan where either behaviour is enabled. The same stale-consent class
+   applies to maturity: if both position holders enabled auto-extension,
+   `extendLoanInPlace` can reset `startTime` and extend the exact
+   maturity while reusing the same `durationDays`, so a buyer who bound
+   only the integer duration can receive a materially longer position.
+   Item 7 closes this class for direct standing-offer consumption; the
+   listing path needs equivalent protection. *Required*: the sale vehicle
+   and acceptance authorization bind the underlying loan's actual
    behavioural terms, including partial repayment, full-term-interest
-   mode, periodic cadence, and applicable prepay-listing consent.
+   mode, periodic cadence, applicable prepay-listing consent, and exact
+   maturity / start-time state; or extensions while listed are rejected
+   or invalidate the authorization through a shared economic-state epoch.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
