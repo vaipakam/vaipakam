@@ -184,6 +184,43 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(alice), 0, "nothing paid out");
     }
 
+    /// ORDERING — the backing gate must run AFTER the 69M cap, not before
+    /// (Codex #1497 r1 P1).
+    ///
+    /// The two caps ask different questions and only one of them is about
+    /// what actually transfers. Here the raw entitlement far exceeds both
+    /// the pool headroom and the backing, but the pool truncates the payout
+    /// down to an amount the backing covers exactly — so the claim is fully
+    /// backed for everything it may legally pay and MUST succeed. Gating on
+    /// the pre-cap figure refused it, and that refusal could never clear: a
+    /// mirror cannot obtain the missing headroom, because remittance is
+    /// bounded by the same 69M cap.
+    function testPoolTruncatedClaimSucceedsWhenTheCappedAmountIsBacked()
+        public
+    {
+        (, uint256 expected) = _seedPayable(alice, 46);
+
+        // Pool headroom = a quarter of the entitlement.
+        uint256 headroom = expected / 4;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+        // Backing covers the CAPPED amount but not the raw entitlement.
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        _mut().setRecycleBucketRaw(bal - headroom);
+
+        vm.prank(alice);
+        (uint256 paid, , ) =
+            RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        assertEq(paid, headroom, "pays the pool-capped amount, not refused");
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            _cfg().getRecycleBucket(),
+            "separation still holds at the exact backing boundary"
+        );
+    }
+
     /// Negative control — the gate must not over-refuse. With ample
     /// un-earmarked balance the same claim pays in full.
     function testAmpleBackingPaysInFull() public {

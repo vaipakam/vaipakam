@@ -336,6 +336,17 @@ contract RewardClaimFacet is
         uint256 freshTreasury = treasuryDelta - forfeitRecycled;
         uint256 freshSpend = freshPending + freshTreasury;
 
+        if (freshSpend > remaining) {
+            if (remaining == 0 && paidRecycled + forfeitRecycled == 0) {
+                revert InteractionPoolExhausted();
+            }
+            uint256 scaledFreshPending =
+                freshSpend > 0 ? (freshPending * remaining) / freshSpend : 0;
+            freshTreasury = remaining - scaledFreshPending;
+            freshPending = scaledFreshPending;
+            pending = freshPending + paidRecycled;
+            treasuryDelta = freshTreasury + forfeitRecycled;
+        }
         // #1460 — the backing cap REVERTS; it must not truncate. The two
         // caps in this frame look interchangeable and are not, and getting
         // this wrong trades a books-corruption defect for a value-loss one:
@@ -363,20 +374,22 @@ contract RewardClaimFacet is
         // fraction and silently losing the rest. The recycled component is
         // blocked with it — that is a DELAY, not a loss, and the alternative
         // costs the claimant real value.
-        if (freshSpend > backingRoom) {
-            revert InteractionRewardBackingShort(freshSpend, backingRoom);
-        }
-
-        if (freshSpend > remaining) {
-            if (remaining == 0 && paidRecycled + forfeitRecycled == 0) {
-                revert InteractionPoolExhausted();
-            }
-            uint256 scaledFreshPending =
-                freshSpend > 0 ? (freshPending * remaining) / freshSpend : 0;
-            freshTreasury = remaining - scaledFreshPending;
-            freshPending = scaledFreshPending;
-            pending = freshPending + paidRecycled;
-            treasuryDelta = freshTreasury + forfeitRecycled;
+        //
+        // ORDER MATTERS, and it is the 69M cap that must run first (Codex
+        // #1497 r1 P1). The backing question is not "could the raw
+        // entitlement be paid" but "can what this claim may LEGALLY pay be
+        // paid" — those differ whenever the pool cap truncates. Checking the
+        // pre-cap `freshSpend` refused claims that were fully backed for
+        // their post-cap payout: with 1 VPFI of pool headroom, a 10 VPFI
+        // entitlement and 1 VPFI of backing, the payable amount is exactly
+        // 1 and exactly backed, yet the pre-cap form reverted. Worse, that
+        // refusal could be permanent — a mirror cannot obtain the missing 9,
+        // because remittance is itself bounded by the same pool cap. So the
+        // gate runs on the post-truncation figures, which are the amounts
+        // that actually transfer.
+        uint256 payableFresh = freshPending + freshTreasury;
+        if (payableFresh > backingRoom) {
+            revert InteractionRewardBackingShort(payableFresh, backingRoom);
         }
 
         paid = pending;
