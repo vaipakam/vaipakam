@@ -20,8 +20,9 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
  *         surface (governor design §9).
  *
  *         The slice adds NO storage, and no new event — it widens one
- *         existing event by a single field so the whole series is
- *         derivable from the event stream. So what needs proving is
+ *         existing event by two fields (`freshDrawdown` and `armed`) so the
+ *         per-day series is derivable from the event stream. So what needs
+ *         proving is
  *         not that values persist but that the DERIVATIONS agree with the
  *         protocol they claim to describe:
  *

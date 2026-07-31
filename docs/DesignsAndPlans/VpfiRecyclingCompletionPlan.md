@@ -506,8 +506,12 @@ credits. M5 is unblocked.
 **The contract slice is TWO VIEWS, not a storage change (scouted 2026-07-30,
 verified against source).** All seven §9 figures are derivable from state
 the protocol already persists; nothing new is stored and no NEW event is
-emitted (#1218 M5 step 3a widens `GovernorDayPoolStamped` by one field,
-`freshDrawdown` — see the decision record below). Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
+emitted (#1218 M5 step 3a widens `GovernorDayPoolStamped` by TWO fields,
+`freshDrawdown` **and** `armed` — see the decision record below). The count
+matters literally: a consumer deriving the topic from a six-parameter
+signature computes the wrong hash and silently matches NOTHING, so an
+understated field list does not degrade the series, it empties it
+(Codex #1496 r5 P2). Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
 from `getDayPoolStamp`, `selfFundingRatio[D]` and `runwayExtensionDays`
 derived from that series. `platformRetained` was reachable from
 `getRecycleBucket` + `getGovernorCommitState` ONLY while the keeper register
@@ -579,7 +583,15 @@ is a pure function of the event stream, and that is what makes it replayable
 and race-free under the single-writer alarm. Preserving that property was the
 constraint the design had to satisfy.
 
-Scouting found SIX of the seven §9 figures already derivable from events:
+Scouting found the DAILY series derivable from events, and this is the
+careful statement of it — an earlier revision said "six of the seven §9
+figures", which double-counted absorption's two halves as two figures and
+quietly dropped `platformRetained` (Codex #1496 r5 P2). `platformRetained =
+bucket − outstandingCommitRecycled − keeperBudget` is one of the seven and is
+NOT carried by the three-event recipe; it is a cumulative position read from
+`getRecycleBackingSnapshot`, not a per-day flow, and adding `freshDrawdown`
+does not change that. What the events do give, completely, is the per-day
+series — which is what an indexer accumulates and what the dashboard plots:
 `VpfiRecycled` carries `dayId`, so local absorption buckets per day;
 `ChainRecycledReported` carries `dayCreditAccepted` per `(chain, day)`, so the
 mirror term does too — **but ONLY for chains other than the canonical one**.

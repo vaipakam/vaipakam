@@ -940,7 +940,13 @@ contract RewardAggregatorFacet is
         // `netEmission[D]`. Leaving it out forced the indexer either to make a
         // contract read during ingest, which would end its property of being a
         // pure function of the event stream, or to fan out reads at query
-        // time. One indexed field removes both.
+        // time. Two fields remove both — `freshDrawdown` and the `armed`
+        // flag that says whether it is a commitment or an estimate.
+        //
+        // Scoped precisely: this makes the per-DAY series event-derivable.
+        // `platformRetained` is a cumulative position read from
+        // {InteractionRewardsLensFacet.getRecycleBackingSnapshot}, not a
+        // per-day flow, and no event carries it.
         //
         // CUTOVER, stated because the obvious claim is too strong (Codex
         // #1496 r1 P2): widening the event changes its topic, so days
