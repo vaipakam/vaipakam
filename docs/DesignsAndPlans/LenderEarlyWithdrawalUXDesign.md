@@ -411,8 +411,12 @@ than a growing list of patches on generic-offer consumption.
    takeable after it. Hiding the sale row in the app does not make the
    on-chain offer unsellable: a buyer can still acquire an overdue
    position, and the seller can still be charged post-term accrual.
-   *Required*: bound listing expiry at the loan's maturity, and permit
-   teardown at that boundary.
+   *Required*: bound listing expiry at the loan's maturity, permit
+   teardown at that boundary, and re-check pre-maturity against the live
+   term at fill. If an obligation transfer or extension rewrites the live
+   maturity while a listing is outstanding, the listing must be shortened,
+   invalidated, or refused at completion rather than relying on the
+   creation-time clamp.
 2. **The seller's completion cost is neither escrowed nor reserved.**
    Completion pulls the cost from the stored lender by transfer, while
    listing escrows nothing and secures no non-revocable allowance — so
@@ -711,9 +715,12 @@ than a growing list of patches on generic-offer consumption.
    correspondingly late. Recording the intent to migrate is therefore not
    enough on its own: the sale transaction must persist the effective
    cutoff, and recovery must consume that stored value rather than
-   recomputing at completion. Otherwise who receives which days depends
-   on keeper availability — the recoverable path would trade one
-   non-determinism for another rather than removing it. Until then the copy states the intent without
+   recomputing at completion. It must also freeze or immediately mark the
+   seller's old entry as forfeited so `claimInteractionRewards` cannot
+   pay finalized days out to the seller while the migration is pending.
+   Otherwise who receives which days depends on keeper availability — the
+   recoverable path would trade one non-determinism for another rather
+   than removing it. Until then the copy states the intent without
    asserting certainty, which is a stopgap, not a resolution — a quote
    cannot be made accurate by hedging the sentence. Like item 11, this
    one applies to **both** sale paths.
@@ -883,11 +890,14 @@ than a growing list of patches on generic-offer consumption.
    completion can still run after a borrower creates a swap-to-repay
    intent, and the same stale-position problem exists for an active
    prepay-collateral listing when NFT-collateral support relies on exact
-   binding instead of exclusion. *Required*: every sale shape either
-   rejects live preclose offsets, swap-to-repay intents, and applicable
-   prepay-listing order hashes, binds their identifiers/state into the
-   buyer's authorization, or invalidates the sale when they are created or
-   replaced.
+   binding instead of exclusion. A refinance-tagged offer with
+   `refinanceTargetLoanId == loanId` is the same close-out commitment: a
+   third-party accept can atomically refinance and terminalize the loan
+   without changing the ordinary sale fields. *Required*: every sale
+   shape either rejects live preclose offsets, swap-to-repay intents,
+   active refinance offers, and applicable prepay-listing order hashes,
+   binds their identifiers/state into the buyer's authorization, or
+   invalidates the sale when they are created or replaced.
 
 22. **Full-stamped positions need explicit entitlement accounting on sale.**
    A lender who opened or accepted a Full position already paid `C*`, and
@@ -914,12 +924,18 @@ than a growing list of patches on generic-offer consumption.
    maturity while reusing the same `durationDays`, so a buyer who bound
    only the integer duration can receive a materially longer position.
    Item 7 closes this class for direct standing-offer consumption; the
-   listing path needs equivalent protection. *Required*: the sale vehicle
-   and acceptance authorization bind the underlying loan's actual
-   behavioural terms, including partial repayment, full-term-interest
-   mode, periodic cadence, applicable prepay-listing consent, and exact
-   maturity / start-time state; or extensions while listed are rejected
-   or invalidate the authorization through a shared economic-state epoch.
+   listing path needs equivalent protection. Periodic loans add another
+   mutable dimension: an interest-only partial payment or
+   `settlePeriodicInterest` can advance `interestPaidSinceLastPeriod`,
+   `interestSettled`, or `lastPeriodicInterestSettledAt` after review,
+   letting the seller collect yield the buyer priced into the listed
+   position. *Required*: the sale vehicle and acceptance authorization
+   bind the underlying loan's actual behavioural terms, including partial
+   repayment, full-term-interest mode, periodic cadence, applicable
+   prepay-listing consent, periodic-settlement checkpoints,
+   settled-interest state, and exact maturity / start-time state; or
+   extensions and settlement mutations while listed are rejected or
+   invalidate the authorization through a shared economic-state epoch.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
