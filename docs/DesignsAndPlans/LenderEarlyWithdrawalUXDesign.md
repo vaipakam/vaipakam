@@ -376,7 +376,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — sixteen at
+The adversarial passes on this doc surfaced the gaps below — seventeen at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -387,14 +387,14 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4, 13, 14 and 16 belong to the **listing** path, 5–10 and 15 to
-the **instant-sell** (direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
+Items 1–4, 13, 14 and 16 belong to the **listing** path, 5–10, 15 and 17
+to the **instant-sell** (direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
 offer's creator authored has to be re-checked by hand against a live
 loan the offer never described. Items 5–10 and 15 are each a missing
-hand-check of that kind. See "Recommended shape" at the end of this section: the
+hand-check of that kind, and item 17 a missing teardown step. See "Recommended shape" at the end of this section: the
 pattern suggests the durable fix is a dedicated position-sale bid rather
 than a growing list of patches on generic-offer consumption.
 
@@ -450,6 +450,26 @@ than a growing list of patches on generic-offer consumption.
    transferred held proceeds*; item 4 needs the equivalent — a ceiling on
    the transferring held balance, or a single minimum TOTAL economic
    receipt spanning both lines.
+
+   **And the bound must reach the THIRD cost, not just the first two.**
+   This design tells the seller a sale costs them three things:
+   the settlement forfeiture, any transferring held balance, and the
+   forfeited interaction-reward credit. A bound covering only the first
+   two is therefore not "the bound" the document advertises. The reward
+   accrual keeps growing while a listing sits open, so on a listing that
+   stands for days, acceptance can forfeit materially more than the
+   seller reviewed with both other bounds satisfied — and a buyer can
+   race a cancellation to capture exactly that, the same shape as the
+   accrued-interest race in the paragraph above. Note this becomes
+   *sharper*, not moot, once item 12 makes the migration atomic: today
+   the forfeiture is best-effort, so the loss is unreliable; made
+   reliable, it is a guaranteed uncapped cost. *Required*: extend the
+   seller authorization with a maximum reward forfeiture, a value
+   snapshot, or fresh authorization when it is exceeded. **If that value
+   cannot be read on-chain at acceptance, then the design must stop
+   claiming its bound covers all three declared costs** and say which one
+   is unbounded — an honest gap beats a bound that silently omits a line
+   the same document insists on disclosing.
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
    compliance check and never compares the buy-offer creator against
@@ -507,6 +527,21 @@ than a growing list of patches on generic-offer consumption.
    so the fix must add one rather than inherit it. Layer 1 states that
    BOTH sale rows go unavailable at maturity; the contract must
    actually enforce that on this path, not merely have the UI hide it.
+
+   **Fit-within is not automatically the right rule — see item 15.** A
+   ceiling fixes the case where the buyer is held LONGER than they
+   authored, but leaves the mirror case open: a 30-day offer consumed by
+   a loan with one day left earns one day's interest and destroys the
+   offer, which is the same "whole single-value instrument spent on a
+   smaller exposure" defect item 15 identifies on amount. Ordinary
+   acceptance binds duration exactly, so the sale path is the outlier.
+   The choice must be made explicitly rather than defaulted into:
+   require the remaining term to EQUAL the authored duration, or state
+   plainly that duration is a buyer-consented MAXIMUM which shorter fills
+   may take — and if the latter, the picker must say so where the buyer
+   authors the offer, because that is not what "duration" means anywhere
+   else in the protocol. What is not acceptable is treating fit-within as
+   obviously correct while item 15 argues the opposite for amount.
 10. **The direct sale never checks offer expiry.** A GTT lender offer
    whose deadline has passed but which has not yet been
    permissionlessly cancelled is still consumable: the path checks the
@@ -685,17 +720,46 @@ than a growing list of patches on generic-offer consumption.
    within the granting party's configured caps, so the gap is against
    spec, not merely unfortunate. *Required*: stored lender caps enforced
    on-chain for rate, expiry and the economic bound, or a seller
-   signature over the listing parameters. Until one exists, this
-   document's "the seller picks" wording is only true when the seller is
-   the caller.
+   signature over the listing parameters.
+
+   **If the signature route is chosen it must be single-use.** A bare
+   signature over the parameters authorizes the *shape* of a listing, not
+   one particular listing, so it stays replayable while it remains
+   unexpired: the seller cancels, and the keeper resubmits the same
+   payload — recreating the borrower-side freeze and re-exposing the
+   position for sale with no renewed consent. Cancellation would stop
+   meaning anything. So the authorization must be domain-separated, bound
+   to the loan id AND the current lender (a position transfer must void
+   it), and consumed via a nonce that cancellation also invalidates. A
+   replayable signature is strictly weaker than the stored-caps route,
+   not an equivalent alternative — the caps constrain every future call,
+   whereas an unconsumed signature authorizes an unbounded number of
+   them.
+
+   Until one route exists, this document's "the seller picks" wording is
+   only true when the seller is the caller.
+
+17. **The direct sale strands the seller's intent exposure.** For a loan
+   originated through a standing lender intent, the listing-completion
+   path clears the origin marker and calls the intent-exposure release;
+   the direct-sale path does neither — the release appears exactly once
+   in the facet, on the listing side. So an intent lender who exits via
+   the instant sell gets their capital back but keeps the loan counted
+   against their live-principal cap, potentially until the buyer
+   eventually claims, which may be far off or never prompted. They have
+   sold the position and still cannot redeploy the capacity. This is a
+   pure asymmetry between two paths that are supposed to be alternate
+   exits from the same position, and the listing side proves the fix is
+   already understood. *Required*: release the intent exposure on the
+   direct-sale path too.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14 and
   16 are resolved.**
-- **The instant-sell surface does not ship until items 5–12 and 15 are
-  resolved.** An earlier draft of this gate said only that the
+- **The instant-sell surface does not ship until items 5–12, 15 and 17
+  are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
@@ -705,7 +769,7 @@ checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 ### Recommended shape for the instant-sell path
 
-Items 5–10 and 15 are seven independent re-checks that all exist for the
+Items 5–10, 15 and 17 are eight independent gaps that all exist for the
 same reason: a generic lender offer is a promise to *open* a loan, and the
 instant-sell path spends it to *assume* one. Patching them one at a
 time keeps the mechanism's default wrong — every future term added to
@@ -719,7 +783,10 @@ expressed once against the actual running position instead of being
 reconstructed field-by-field from an offer authored for something else.
 
 **What the reshape actually removes — and what it does not.** The items
-split into three classes, and the bid only dissolves one of them:
+split into three classes, and the bid only dissolves one of them. Every
+instant-sell item is classified below; if a future item is added to that
+path it gets classified here in the same diff, because an item absent
+from this list reads as dissolved:
 
 - *Term-mismatch items (7, 8 — behavioural terms, NFT identity) and the
   duration-COMPARISON half of item 9* dissolve by construction. Each
@@ -771,6 +838,18 @@ split into three classes, and the bid only dissolves one of them:
   revision of this paragraph claimed items 6–10 all "stop being checks at
   all"; that was wrong, and stated that way it would have let the roadmap
   treat the replacement as safe while carrying the races forward.
+- *Item 15 (the buyer's authored amount) is REPLACED, not removed.*
+  Naming a loan and a price says what the buyer will PAY; it does not
+  say what outstanding-principal exposure they are agreeing to take on,
+  and the principal moves with every partial repayment. So the bid must
+  carry the buyer's authored relationship to the live principal —
+  exactly, or as a bounded range they consent to — in the same way item
+  15 demands of the generic-offer path. The mutable-state bullet below
+  already asks for a principal bound as anti-drift protection, but that
+  is a different requirement wearing a similar name: one keeps the
+  position from moving under a consent already given, this one states
+  what the consent WAS. An implementer reading only the dissolving class
+  could ship a bid that binds neither.
 - *Item 12 (the best-effort reward migration) is UNTOUCHED — a third
   class of its own.* The first two classes are both about the buyer's
   consent, which is what the bid reshapes. Item 12 is not: it is a
