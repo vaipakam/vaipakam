@@ -172,6 +172,7 @@ jobs:
       contracts: ${{ steps.diff.outputs.contracts }}
       workspaces: ${{ steps.diff.outputs.workspaces }}
       mesh_watcher: ${{ steps.diff.outputs.mesh_watcher }}
+      offchain_archive: ${{ steps.diff.outputs.offchain_archive }}
     steps:
       - name: Checkout (shallow — diff range only)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -200,6 +201,7 @@ jobs:
             # weekly safety net silently skips that job while reporting
             # green (Codex #1443 r3).
             echo "mesh_watcher=true" >> "$GITHUB_OUTPUT"
+            echo "offchain_archive=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -265,6 +267,20 @@ jobs:
             echo "mesh_watcher=true" >> "$GITHUB_OUTPUT"
           else
             echo "mesh_watcher=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # ops/offchain-data-archive — same standalone-npm-package
+          # situation as mesh-watcher (own trust boundary, outside the
+          # pnpm workspace, so the `workspaces` job cannot reach it).
+          # Gained a test surface with #1477's restore converter, whose
+          # whole value is that its hostile-input rejections actually
+          # fire — so the suite runs in CI, not only on the operator's
+          # machine.
+          OFFCHAIN_ARCHIVE_RE='^(ops/offchain-data-archive/|\.github/workflows/ci\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$OFFCHAIN_ARCHIVE_RE"; then
+            echo "offchain_archive=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "offchain_archive=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── analyze-jstypescript ──────────────────────────────────────────────
@@ -896,3 +912,46 @@ jobs:
 
       - name: Unit tests
         run: ./node_modules/.bin/vitest run
+
+  # ── ops/offchain-data-archive ─────────────────────────────────────────
+  # The nightly-backup Worker + its committed restore converter (#1477).
+  # Standalone npm package outside the pnpm workspace (own trust
+  # boundary — same rationale as mesh-watcher), so the `workspaces` job
+  # cannot reach it. The converter's tests are the reason this job
+  # exists: its hostile-input rejections (path traversal, SQL-identifier
+  # injection, SHA mismatch, unknown value types) are load-bearing for a
+  # compromise-path restore and must go red in CI when weakened, not at
+  # the first real incident. Like mesh-watcher, detection/restore-only —
+  # NOT a required status check.
+  offchain-data-archive:
+    name: ops/offchain-data-archive (typecheck + tests)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.offchain_archive == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: ops/offchain-data-archive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ops/offchain-data-archive/package-lock.json
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: ./node_modules/.bin/tsc --noEmit
+
+      - name: Unit tests
+        run: npm test

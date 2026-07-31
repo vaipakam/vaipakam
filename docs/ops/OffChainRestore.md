@@ -1047,15 +1047,32 @@ For each table:
    the manifest lets you spot drift without diffing column-by-column.
 
 2. Convert each archived table's `rows[]` array into a
-   `restore/<table>.sql` `INSERT` batch. **This document deliberately
-   contains no generator script** — an earlier revision carried an
-   illustrative fragment that presented as runnable and was not
-   (#1450 r28), which is worse than no code: it fails at the moment
-   of use. The committed, tested converter is tracked as **#1477**;
-   until it merges, the transform must be written at restore time,
-   against these requirements:
+   `restore/d1/<table>.sql` `INSERT` batch, using the **committed,
+   tested converter** (#1477):
 
-   - one output file per table, named `restore/<table>.sql`;
+   ```bash
+   ( cd ops/offchain-data-archive && \
+     node scripts/restore-from-archive.mjs /path/to/decrypted-archive.json \
+       --outdir /path/to/restore )
+   ```
+
+   It writes one batch per table under `restore/d1/` (and
+   `restore/d1-lz-alerts/` for a pre-#1440 archive's `lzAlerts`
+   section — pass `--lz-db <name>` if you created that legacy
+   database above under a custom name, so the printed commands
+   target the database you actually made), prints the
+   `wrangler d1 execute` commands **in FK apply
+   order**, and covers §5's R2 materialization in the same run. Its
+   test suite (`scripts/restore-from-archive.test.mjs`, run in CI)
+   pins the hostile-input rejections. This document deliberately
+   contains no inline script — two earlier revisions carried code
+   that presented as runnable and was not (#1450 r28), which is
+   worse than no code: it fails at the moment of use. The converter
+   implements these requirements, which remain the spec if it ever
+   needs to be reproduced by hand:
+
+   - one output file per table, named `restore/d1/<table>.sql`
+     (`restore/d1-lz-alerts/<table>.sql` for a legacy `lzAlerts` section);
    - **each file begins with `DELETE FROM <table>;`** so the import
      REPLACES the table instead of merging into it. On a fresh
      account (tables just created by §1 step 7's migrations) the
@@ -1097,14 +1114,14 @@ For each table:
    archives), `telegram_links`, `support_tickets`.
 
    ```bash
-   wrangler d1 execute vaipakam-archive --file=restore/<table>.sql --remote
+   wrangler d1 execute vaipakam-archive --file=restore/d1/<table>.sql --remote
    ```
 
    **`vaipakam-lz-alerts-db` tables** (lz-watcher): `lz_alert_state`,
    `scan_cursor`, `oft_balance_history`.
 
    ```bash
-   wrangler d1 execute vaipakam-lz-alerts-db --file=restore/<table>.sql --remote
+   wrangler d1 execute vaipakam-lz-alerts-db --file=restore/d1-lz-alerts/<table>.sql --remote
    ```
 
 4. Verify row counts match the manifest before moving to the next
@@ -1121,6 +1138,13 @@ legal-vault keys contain `/` separators), write the bytes to
 `restore/r2/<key>`, and verify the per-object SHA-256 against the
 archive's recorded value. Only then upload.
 
+**The §4 converter run already did all five** — the same
+`restore-from-archive.mjs` invocation materializes and SHA-verifies
+every object under `restore/r2/`, and re-running it with `--upload`
+performs the uploads via argv-array `wrangler r2 object put` calls
+(#1477). The requirements below remain the spec the converter's
+tests pin.
+
 **Key validation comes first because `obj.key` is untrusted input**
 — after a compromise the archive is attacker-influenced, and a key
 like `../../.ssh/authorized_keys` walks the write right out of the
@@ -1133,15 +1157,15 @@ shape is `legal-holds/<64-hex-sha256>.pdf` (generated at
 treat anything that deviates as a reason to stop and look, not to
 skip silently.
 
-**This document deliberately contains no materialize-and-upload
-script.** Earlier revisions carried both an illustrative fragment
-(not runnable on its own) and an "executable" heredoc that skipped
-the materialization entirely and handed wrangler paths to files
-that were never written (#1450 r28). The committed, tested tooling is
-tracked as **#1477** (one script covering both this section and the
-§4 SQL conversion); until it merges, the loop must be written at
-restore time, against the requirements above plus the two pitfalls
-below.
+**This document deliberately contains no inline
+materialize-and-upload script.** Earlier revisions carried both an
+illustrative fragment (not runnable on its own) and an "executable"
+heredoc that skipped the materialization entirely and handed wrangler
+paths to files that were never written (#1450 r28). The committed,
+tested tooling that replaced them is
+`ops/offchain-data-archive/scripts/restore-from-archive.mjs` (#1477 —
+one script covering both this section and the §4 SQL conversion);
+its tests pin the requirements above plus the two pitfalls below.
 
 Two pitfalls to avoid:
 
