@@ -385,7 +385,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — twenty-five at
+The adversarial passes on this doc surfaced the gaps below — twenty-seven at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -396,9 +396,9 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4, 13, 14, 16, 17, 19 and 23 belong to the **listing** path,
+Items 1–4, 13, 14, 16, 17, 19, 23 and 26 belong to the **listing** path,
 5–10, 15, 17 and 18 to the **instant-sell** (direct buy-offer) path,
-and 11, 12, 20, 21, 22, 24 and 25 to both. The instant-sell cluster is
+and 11, 12, 20, 21, 22, 24, 25 and 27 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -513,10 +513,12 @@ than a growing list of patches on generic-offer consumption.
    as well**. A direct sale delayed across a reward-accrual boundary
    forfeits more pending credit than the seller reviewed while a
    settlement-plus-held bound still passes, so the two paths must cap the
-   same three costs or the asymmetry is arbitrary. If the value cannot be
-   read on-chain at execution, say which cost is unbounded rather than
-   implying the bound is complete. The same requirement carries onto the
-   position-sale bid's seller-side bound.
+   same three costs or the asymmetry is arbitrary. If no calculable proxy
+   can be enforced at execution, the direct-sale surface stays
+   unavailable until the seller supplies fresh bounded authorization;
+   labeling the reward loss "unbounded" is disclosure, not consent. The
+   same requirement carries onto the position-sale bid's seller-side
+   bound.
 7. **The direct sale ignores every buyer-authored behavioural term.**
    `allowsPartialRepay`, `useFullTermInterest`,
    `periodicInterestCadence` **and `allowsPrepayListing`** are immutable
@@ -971,13 +973,32 @@ than a growing list of patches on generic-offer consumption.
    reverse-index entry with the new lender-token mapping during migration
    before either sale surface ships.
 
+26. **The listing sale vehicle must not pollute public loan accounting.**
+   Listing acceptance uses an internal transitional loan shape, but if it
+   passes through ordinary loan initialization it can increment public
+   loan counters, rate sums, and initiation events before being marked
+   repaid without a corresponding terminal event. Indexers and activity
+   consumers can then retain a phantom loan the UX says is never visible.
+   *Required*: bypass ordinary metrics/events for the internal sale
+   vehicle, or define an internal lifecycle that fully reverses counters
+   and emits enough terminal information for every consumer to discard it.
+
+27. **Held VPFI migration must restamp both vault owners.** When the
+   held-for-lender balance is denominated in VPFI, sale settlement
+   withdraws it from the seller's vault and credits the buyer's vault.
+   That balance movement must run the same post-balance discount / staking
+   checkpoint routine as any other VPFI vault transfer; otherwise the
+   seller can retain fee-tier or staking credit on VPFI they no longer
+   hold while the buyer's new balance is not checkpointed. *Required*:
+   restamp both vault owners whenever transferred held proceeds are VPFI.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
-  16, 17, 19, 20, 21, 22, 23, 24 and 25 are resolved.**
+  16, 17, 19, 20, 21, 22, 23, 24, 25, 26 and 27 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15, 17, 18,
-  20, 21, 22, 24 and 25 are resolved.** An earlier draft of this gate said only that the
+  20, 21, 22, 24, 25 and 27 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
@@ -987,15 +1008,15 @@ checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 ### Recommended shape for the instant-sell path
 
-Items 5–10, 15, 17, 18, 20 and 22 are the instant-sell blockers
-clustered here. Most exist for the same reason: a generic lender offer is a
+Items 5–10, 15, 17, 18, 20, 22, 25 and 27 are the instant-sell
+blockers clustered here. Most exist for the same reason: a generic lender offer is a
 promise to *open* a loan, and the instant-sell path spends it to
 *assume* one. Patching those hand-check gaps one at a time keeps the
 mechanism's default wrong — every future term added to the offer struct
 becomes a new omission on this path, silently, because the compiler
-cannot notice a comparison nobody wrote. Items 17, 20 and 22 are different: they are
-settlement, migration-auth, and tariff-accounting requirements that
-survive any buyer-consent reshape.
+cannot notice a comparison nobody wrote. Items 17, 20, 22, 25 and 27 are different: they are
+settlement, migration-auth, tariff-accounting, discovery, and VPFI
+accounting requirements that survive any buyer-consent reshape.
 
 The design recommendation is therefore a **dedicated loan-specific
 position-sale bid**: an instrument whose creator names the loan id they
@@ -1093,8 +1114,9 @@ from this list reads as dissolved:
   position from moving under a consent already given, this one states
   what the consent WAS. An implementer reading only the dissolving class
   could ship a bid that binds neither.
-- *Item 17 (the stranded intent exposure), item 20 (keeper-enable
-  invalidation), and item 22 (Full-entitlement accounting) are UNTOUCHED
+- *Items 17 (the stranded intent exposure), 20 (keeper-enable
+  invalidation), 22 (Full-entitlement accounting), 25 (reverse-index
+  migration), and 27 (VPFI restamping) are UNTOUCHED
   — the same third class as item 12.* A loan-specific bid still migrates
   the position and returns the exiting lender's capital; it does not by
   itself clear the origin marker or release the originating owner's
@@ -1104,7 +1126,7 @@ from this list reads as dissolved:
   expires, or is compensated. The reshape changes how the buyer's consent
   is expressed; these are settlement, migration-auth, and tariff-accounting
   steps. An implementation following the bid path reproduces those defects
-  unless it carries items 17, 20, and 22 across explicitly.
+  unless it carries items 17, 20, 22, 25, and 27 across explicitly.
 - *Item 12 (the best-effort reward migration) is UNTOUCHED — a third
   class of its own.* The first two classes are both about the buyer's
   consent, which is what the bid reshapes. Item 12 is not: it is a
@@ -1229,8 +1251,11 @@ not left out of the implementation PR as "reuse":
   entry point accepts none today) and a seller-economics bound — a
   minimum net or maximum cost stored with the listing.
 - *Listing teardown* gains a permissionless path callable at expiry or
-  maturity while the loan is still `Active`, so the borrower is never
-  dependent on the seller's cooperation.
+  maturity while the loan is still `Active`, plus the chosen borrower
+  action-window protection (atomic teardown-and-action, relisting
+  cooldown, borrower consent, or cumulative-tenure limit), so the
+  borrower is never dependent on the seller's cooperation and cannot be
+  front-run into repeated freezes.
 - *Listing acceptance* gains typed-data / ABI fields for the expected
   borrower holder, exact maturity / start-time state, behavioural terms,
   periodic-settlement checkpoints, settled-interest state, and the
@@ -1312,16 +1337,17 @@ chooser stays absent on rentals.
 
 ## Open questions
 
-0. The borrower-freeze escape is REQUIRED (mandatory finite expiry +
-   permissionless teardown — see the Layer-3 checklist); what remains
-   open is its shape: what bounded range the expiry may span (and its
-   default), and whether the current contracts already permit a
-   permissionless teardown of an EXPIRED-but-uncancelled listing or
-   whether that needs a contract change alongside this frontend work.
-   If it needs a contract change, this design's Phase 1 depends on it
-   — the app cannot manufacture a borrower escape the protocol does
-   not expose, and shipping the listing surface without one would
-   knowingly hand sellers an indefinite lever. Resolve before
+0. The borrower-freeze escape is REQUIRED (mandatory finite expiry,
+   permissionless teardown, and a real borrower action window — see the
+   Layer-3 checklist); what remains open is its shape: what bounded range
+   the expiry may span (and its default), whether the action window is
+   atomic teardown-and-action, relisting cooldown, borrower consent, or
+   cumulative-tenure protection, and whether the current contracts can
+   express that escape or need a contract/API change alongside this
+   frontend work. If it needs a contract change, this design's Phase 1
+   depends on it — the app cannot manufacture a borrower escape the
+   protocol does not expose, and shipping the listing surface without one
+   would knowingly hand sellers an indefinite lever. Resolve before
    implementation starts.
 0b. Does the instant-sell path get patched (its per-term guards added
    one by one) or reshaped into a loan-specific position-sale bid (see
