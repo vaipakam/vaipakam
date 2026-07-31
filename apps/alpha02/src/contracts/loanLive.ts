@@ -215,6 +215,55 @@ export function saleBuyerRemainingInterest(
   );
 }
 
+/** Borrower economics of handing the loan to a replacement borrower
+ *  via `transferObligationViaOffer` (preclose Option 2) — one
+ *  definition for the offer-picker rows, the review receipt, and the
+ *  submit re-check. Mirrors PrecloseFacet's transfer settlement:
+ *  seconds-precision, elapsed measured from the #641 interest clock,
+ *  accrued = pro-rata to now at the LOAN's rate, and the shortfall
+ *  bridging the staying lender back to their original entitlement
+ *  when the replacement offer's expected interest is lower:
+ *  `max(0, remaining@loanRate − offerTerm@offerRate)`. Gross of
+ *  `interestSettled` (the contract credits it — the pull only
+ *  shrinks), so quotes/approvals sized from this never undershoot. */
+export function transferEconomicsOf(
+  live: LoanLive,
+  offerRateBps: bigint,
+  offerDurationDays: bigint,
+  chainNow: bigint,
+): { accrued: bigint; shortfall: bigint; total: bigint } {
+  const start = interestAccrualStartOf(live);
+  const elapsed = chainNow > start ? chainNow - start : 0n;
+  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
+  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
+  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  const originalRemaining =
+    (live.principal * live.interestRateBps * remainingSecs) / denom;
+  const newRemaining =
+    (live.principal * offerRateBps * offerDurationDays * 86_400n) / denom;
+  const shortfall =
+    originalRemaining > newRemaining ? originalRemaining - newRemaining : 0n;
+  return { accrued, shortfall, total: accrued + shortfall };
+}
+
+/** The standing-approval bound for the offset path's COMPLETION pull
+ *  (preclose Option 3). When the linked offer is accepted, the
+ *  contract pulls `principal + accrued + shortfall` from the
+ *  borrower's wallet — and since accrued-to-completion plus the
+ *  rate-shortfall can never exceed the full remaining committed term
+ *  at the loan's own rate (they cover complementary slices of that
+ *  window), `principal + remaining-term interest` bounds the pull
+ *  exactly. Completion is contract-blocked at/after maturity (the
+ *  anti-drift guard), so no late-fee headroom is needed. */
+export function offsetCompletionBoundOf(live: LoanLive): bigint {
+  return (
+    live.principal +
+    (live.principal * live.interestRateBps * interestRemainingDaysOf(live)) /
+      (365n * 10_000n)
+  );
+}
+
 /** The sale path's duration-fit bound: the IMMUTABLE term minus
  *  whole days elapsed since the immutable start — NOT the interest
  *  clock (a partial re-stamps that; the borrower-favourability check

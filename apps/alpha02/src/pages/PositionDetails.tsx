@@ -57,6 +57,11 @@ import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
+import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
+import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
+import { OffsetFlow } from '../components/OffsetFlow';
+import { OffsetPendingCard } from '../components/OffsetPendingCard';
+import { useOffsetPending } from '../data/offsetPending';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
@@ -80,6 +85,8 @@ type ConfirmSurface =
   | 'partial'
   | 'preclose'
   | 'refinance'
+  | 'transfer'
+  | 'offset'
   | 'early-exit'
   | 'loan-sale';
 
@@ -113,7 +120,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
 
-  const { isAdvanced } = useMode();
+  const { isAdvanced, setMode } = useMode();
   // #1037 — which prompt the in-flight action is on (null = idle).
   // One shared phase for the page's actions (they share the busy
   // lock already); a status banner narrates approve → submit.
@@ -333,6 +340,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     !loanIsRental && Boolean(loan.data) && role === 'lender',
   );
   const salePending = sale.state?.listed === true;
+
+  // Live-offset state (preclose Option 3) — chain-authoritative
+  // (PrecloseOffset lock on the borrower NFT), page-owned like the
+  // refinance marker: a live offset interlocks the repay-family
+  // surfaces (a settlement through any other path strands the linked
+  // offer) and keeps its own standing card below.
+  const offsetPend = useOffsetPending(
+    loanId,
+    loan.data?.borrowerTokenId,
+    loanIsRental || !loan.data
+      ? undefined
+      : (loan.data.lendingAsset as `0x${string}`),
+    Boolean(loan.data) &&
+      !loanIsRental &&
+      (loan.data?.status === 'active' ||
+        loan.data?.status === 'fallback_pending') &&
+      role === 'borrower',
+  );
   // The listing ended off-page (a buyer accepted, or it was cancelled
   // elsewhere) — surface the outcome once via the page banner.
   useEffect(() => {
@@ -1621,6 +1646,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </p>
       ) : null}
 
+      {/* Early-repayment CHOOSER (FunctionalSpecs §8) — every way out
+          of an active loan named in one place, in BOTH modes, before
+          any flow opens. Hidden while an offset is live (the pending
+          card below owns the story then) and once grace is verifiably
+          over (every borrower door is shut). */}
+      {role === 'borrower' &&
+      row.status === 'active' &&
+      !closedThisSession &&
+      !isRental &&
+      !offsetPend.pending &&
+      !graceVerifiablyOver ? (
+        <EarlyRepayOptionsCard
+          isAdvanced={isAdvanced}
+          onSwitchToAdvanced={() => setMode('advanced')}
+          partialAllowed={row.allowsPartialRepay}
+          useFullTermInterest={loanLive.data?.live.useFullTermInterest}
+          pastDueHint={row.startTime + row.durationDays * 86400 < nowSec}
+          refinancePending={refinanceBlocking}
+        />
+      ) : null}
+
       {role === 'borrower' &&
       (row.status === 'active' || row.status === 'fallback_pending') &&
       !closedThisSession &&
@@ -1726,12 +1772,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       row.allowsPartialRepay &&
       principal ? (
-        <section className="card">
+        <section className="card" id="partial-repay-card">
           <h3>{copy.positions.details.partial.title}</h3>
           <p className="muted">
             {copy.positions.details.partial.blurb}
           </p>
-          {refinanceBlocking ? (
+          {offsetPend.pending ? (
+            // A live offset's linked offer escrowed the CURRENT
+            // principal — a partial under it would drift the offer
+            // from the loan it settles. Cancel the offset first.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.offset.blockedOtherPaths}
+              </span>
+            </div>
+          ) : refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
             // principal — a partial would strand it unacceptable
             // forever (the contract rejects any accept once amount >
@@ -1850,7 +1905,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ) : (
         <>
         {liveWithinGraceWindow ? (
-        <section className="card">
+        <section className="card" id="preclose-card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
             {copy.preclose.blurb}{' '}
@@ -1879,7 +1934,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">{copy.preclose.graceNote}</span>
             </div>
           ) : null}
-          {refinanceBlocking ? (
+          {offsetPend.pending ? (
+            // A live offset settles this loan when its offer is
+            // accepted — closing another way first strands the
+            // linked offer. Cancel the offset instead.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.offset.blockedOtherPaths}
+              </span>
+            </div>
+          ) : refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —
             // settling it early would strand the request forever.
             <div className="banner banner-warn" role="alert">
@@ -1945,24 +2009,72 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             below, which outlives these gates). Keyed by chain so a
             chain switch re-seeds per-chain state. */}
         {!refinancePending &&
+        !offsetPend.pending &&
         address &&
         address.toLowerCase() === row.borrower.toLowerCase() ? (
-          <RefinanceFlow
-            key={readChain.chainId}
-            row={row}
-            live={loanLive.data.live}
-            chainNow={loanLive.data.chainNow}
-            graceSeconds={grace.data}
-            principalMeta={principal}
-            confirmOpen={confirmingSurface === 'refinance'}
-            onOpenConfirm={() => setConfirmingSurface('refinance')}
-            onCloseConfirm={() =>
-              setConfirmingSurface((s) => (s === 'refinance' ? null : s))
-            }
-            onPosted={refi.remember}
-            busy={busy}
-            setBusy={setBusy}
-          />
+          <div id="refinance-card">
+            <RefinanceFlow
+              key={readChain.chainId}
+              row={row}
+              live={loanLive.data.live}
+              chainNow={loanLive.data.chainNow}
+              graceSeconds={grace.data}
+              principalMeta={principal}
+              confirmOpen={confirmingSurface === 'refinance'}
+              onOpenConfirm={() => setConfirmingSurface('refinance')}
+              onCloseConfirm={() =>
+                setConfirmingSurface((s) => (s === 'refinance' ? null : s))
+              }
+              onPosted={refi.remember}
+              busy={busy}
+              setBusy={setBusy}
+            />
+          </div>
+        ) : null}
+        {/* Preclose Option 2 (obligation handover) + Option 3 (offset)
+            — pre-maturity only (both need a replacement term that ends
+            before the original due date; the contracts enforce the
+            same bound seconds-precise), never while another linked
+            vehicle (refinance request / offset) is live on this loan. */}
+        {!livePastDue && !refinanceBlocking && !offsetPend.pending ? (
+          <>
+            <ObligationTransferFlow
+              row={row}
+              live={loanLive.data.live}
+              chainNow={loanLive.data.chainNow}
+              principalMeta={principal}
+              collateralMeta={collateralIsNft ? undefined : (collateral ?? undefined)}
+              confirmOpen={confirmingSurface === 'transfer'}
+              onOpenConfirm={() => setConfirmingSurface('transfer')}
+              onCloseConfirm={() =>
+                setConfirmingSurface((s) => (s === 'transfer' ? null : s))
+              }
+              onDone={() => {
+                setClosedThisSession(true);
+                setDoneMessage(copy.transferOb.done);
+              }}
+              busy={busy}
+              setBusy={setBusy}
+            />
+            {loanLive.data.saleLock !== LOCK_EARLY_WITHDRAWAL_SALE ? (
+              <OffsetFlow
+                key={`offset-${readChain.chainId}`}
+                row={row}
+                live={loanLive.data.live}
+                chainNow={loanLive.data.chainNow}
+                principalMeta={principal}
+                collateralMeta={collateralIsNft ? undefined : (collateral ?? undefined)}
+                confirmOpen={confirmingSurface === 'offset'}
+                onOpenConfirm={() => setConfirmingSurface('offset')}
+                onCloseConfirm={() =>
+                  setConfirmingSurface((s) => (s === 'offset' ? null : s))
+                }
+                onPosted={offsetPend.remember}
+                busy={busy}
+                setBusy={setBusy}
+              />
+            ) : null}
+          </>
         ) : null}
         </>
         )
@@ -2105,6 +2217,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           readiness, sanctions, loan status, maturity): the banner,
           funding watch, and cancel affordance must survive all of
           those windows, including the loan settling another way. */}
+      {/* The live offset's standing surface — rendered on the CHAIN's
+          say-so (PrecloseOffset lock), outside every strategy gate,
+          same rationale as the refinance pending card below. */}
+      {offsetPend.pending && !isRental && role === 'borrower' ? (
+        <OffsetPendingCard
+          offerId={offsetPend.offerId}
+          state={offsetPend.state}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          principalMeta={principal ?? undefined}
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={offsetPend.clear}
+          onDone={setDoneMessage}
+        />
+      ) : null}
+
       {refi.offerId &&
       !isRental &&
       address &&
@@ -2166,7 +2294,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // Position writes go through the SAME six-row review surface
           // as every other write flow — the wallet prompt is never the
           // first place the user sees what a click will do.
-          <section className="card">
+          <section className="card" id="repay-action">
             <ConfirmReceipt
               busy={busy}
               confirmLabel={copy.positions.details.confirmAction(actionLabel)}
@@ -2193,11 +2321,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   </span>
                 </div>
               ) : null}
+              {action === 'repay' && offsetPend.pending && !isRental ? (
+                // Same rule for a live offset: repay stays open (the
+                // safety valve), but settling this way strands the
+                // linked offset offer — say so before signing.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    {copy.offset.blockedOtherPaths}
+                  </span>
+                </div>
+              ) : null}
             </ConfirmReceipt>
           </section>
         ) : (
           <button
             type="button"
+            id="repay-action"
             className="btn btn-primary btn-block"
             disabled={
               busy ||
