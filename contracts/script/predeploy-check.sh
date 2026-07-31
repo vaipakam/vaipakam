@@ -183,49 +183,63 @@ done
 # `monorepoCommit` stamp must snapshot the working-tree state BEFORE it
 # writes its own output — otherwise the dirty marker is set on every run by
 # the script's own artifacts and distinguishes nothing, which is exactly the
-# state #1490 found: five scripts, five always-dirty stamps.
+# state #1490 found: six of the seven stamping scripts, six always-dirty
+# stamps. (The seventh, `exportAbis.sh`, writes into a SIBLING checkout, so
+# its own output never dirtied the tree it tested — it was correct, and is
+# held to the same idiom only so no script here is a special case.)
 #
-# Enforced as an IDIOM rather than by parsing control flow: the snapshot must
-# live in `TREE_DIRTY_AT_START`, that assignment must precede the first write
-# the check knows how to spot, and no other `git diff --quiet` may appear (so
-# nothing recomputes the flag late).
+# Checks the property DIRECTLY rather than by counting `git diff` calls. An
+# earlier revision grepped for the literal `git diff --quiet`, which matched
+# only the explanatory COMMENTS — every real call is spelled
+# `git -C "$SOMEWHERE" diff --quiet HEAD`, so the check was counting its own
+# prose and would have passed a late recomputation written the way the
+# scripts actually write it (Codex #1495 r1 P2). Counting was also the wrong
+# idea outright: `deploy-mainnet.sh` legitimately calls `git diff --quiet` a
+# second time to REFUSE a dirty mainnet deploy, which is a gate, not a stamp.
 #
-# COVERAGE LIMIT, stated rather than implied: the "first write" is found by
+# So instead: find the variable actually interpolated into the stamp, and
+# require that it is assigned exactly once, from the snapshot, and that the
+# snapshot precedes the first write.
+#
+# COVERAGE LIMIT, stated rather than implied: "first write" is found by
 # looking for `forge inspect`, `python3 - `, `jq ` and `cat > "$`. A script
-# that writes by some other means is NOT covered by the ordering half — the
-# idiom half still applies. Widen the pattern rather than trusting silence.
-# Detect by the STAMP-WRITE SHAPE, not by mentioning the word: a script
-# qualifies when it emits a `"monorepoCommit": "..."` field whose value
-# includes a dirty marker. That deliberately excludes this file (whose own
-# messages name the field), and `exportTenderlyAlerts.sh`, which records a
-# commit with no dirty marker at all and so cannot have the ordering bug.
-# This file is excluded by name because the detector's own pattern appears
-# in it literally — a self-match, not a stamping script.
+# writing by some other means is checked for the idiom but NOT for ordering.
+# Widen the pattern rather than trusting silence.
 STAMPING_SH=()
 while IFS= read -r f; do STAMPING_SH+=("$(basename "$f")"); done < <(
   grep -rlE '"monorepoCommit": ".*DIRTY' "$SCRIPT_DIR"/*.sh 2>/dev/null \
     | grep -v '/predeploy-check\.sh$' | sort
 )
 if [ ${#STAMPING_SH[@]} -eq 0 ]; then
-  echo "  · no provenance-stamping scripts found — pattern changed?"
+  echo "  ✗ no provenance-stamping scripts matched — pattern drifted?" >&2
+  FAIL=1
 else
   for s in "${STAMPING_SH[@]}"; do
     f="$SCRIPT_DIR/$s"
+    # The dirty variable is the SECOND interpolation in the stamp value.
+    dirty_var="$(sed -nE 's/.*"monorepoCommit": "\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*)".*/\1/p' "$f" | head -1)"
     snap_line="$(grep -n '^TREE_DIRTY_AT_START=""' "$f" | head -1 | cut -d: -f1)"
-    stray="$(grep -c 'git diff --quiet' "$f" || true)"
     first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
       | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
+    if [ -z "$dirty_var" ]; then
+      echo "  ✗ $s — cannot identify the stamp's dirty variable (#1490)" >&2
+      FAIL=1
+      continue
+    fi
+    # Every assignment of that variable, anywhere in the file.
+    assigns="$(grep -cE "^[[:space:]]*${dirty_var}=" "$f" || true)"
+    from_snap="$(grep -cE "^[[:space:]]*${dirty_var}=\"\\\$TREE_DIRTY_AT_START\"" "$f" || true)"
     if [ -z "$snap_line" ]; then
       echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
       FAIL=1
-    elif [ "$stray" -gt 1 ]; then
-      echo "  ✗ $s — more than one 'git diff --quiet'; the flag must come only from the snapshot (#1490)" >&2
+    elif [ "$assigns" -ne 1 ] || [ "$from_snap" -ne 1 ]; then
+      echo "  ✗ $s — \$$dirty_var must be assigned exactly once, from the snapshot (found $assigns assignment(s), $from_snap from snapshot) (#1490)" >&2
       FAIL=1
     elif [ -n "$first_write" ] && [ "$snap_line" -gt "$first_write" ]; then
       echo "  ✗ $s — snapshot at line $snap_line comes AFTER the first write at line $first_write (#1490)" >&2
       FAIL=1
     else
-      echo "  ✓ $s — provenance snapshot precedes first write"
+      echo "  ✓ $s — stamp derives from a snapshot taken before the first write"
     fi
   done
 fi

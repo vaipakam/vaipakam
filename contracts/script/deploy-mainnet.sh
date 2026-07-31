@@ -789,6 +789,21 @@ EOF
   # at a glance which monorepo commit is live on this chain.
   DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
+  # #1495 r1 P2 — a deploy runs for many minutes and consumes source AFTER
+  # the snapshot (forge build, forge script). The opening reading is
+  # therefore not an immutable description of this run's inputs: a file
+  # edited mid-run would otherwise stamp clean. Re-check the SOURCE paths
+  # here and OR the result in.
+  #
+  # Scoped to source rather than the whole tree on purpose — by now the
+  # deploy's OWN artifacts (addresses.json and friends) have legitimately
+  # changed, and testing the whole tree at this point is precisely the
+  # always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
+  # clear it.
+  if [ -z "$TREE_DIRTY_AT_START" ] \
+     && ! git -C "$REPO_ROOT" diff --quiet HEAD -- contracts/src contracts/script 2>/dev/null; then
+    TREE_DIRTY_AT_START=" (dirty)"
+  fi
   COMMIT_DIRTY="$TREE_DIRTY_AT_START"
   DIAMOND_NOW=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
