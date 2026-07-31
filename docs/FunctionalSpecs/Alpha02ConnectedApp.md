@@ -848,7 +848,16 @@ Its intended behaviour, as the test oracle for this surface:
   quantity where applicable — is shown on every candidate row and
   repeated at confirmation, because the handover adopts the chosen
   request's pledge and two requests from the same collection can
-  carry materially different tokens. The review states what is paid
+  carry materially different tokens; where the collateral is a
+  fungible token whose details have not loaded, the flow says so and
+  holds rather than describing the pledge as an NFT. Before any
+  spending approval is requested, the app also checks — where the
+  protocol exposes it — that the replacement borrower would actually
+  be admitted (risk tier, per-pair consent, jurisdiction), so a
+  request that has gone ineligible since it was posted fails with a
+  plain explanation instead of leaving a pointless approval behind a
+  reverted handover; an unreadable check never blocks an otherwise
+  valid handover. The review states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and
@@ -882,12 +891,13 @@ Its intended behaviour, as the test oracle for this surface:
   cancellation (available after the protocol's cancel cooldown,
   judged by chain time), which unlocks the position, returns the
   lending money straight to the wallet, and removes the standing
-  payoff approval (best effort — a failed removal is said plainly
-  with the wallet's approvals view as the remedy; and because one
-  token's spending approval is shared across everything the wallet
-  has authorized, an approval LARGER than this offset's own footprint
-  is left in place and said so rather than zeroed out from under
-  another live commitment). If the loan's own economics moved while
+  payoff approval — but never silently: because a token's spending
+  approval is a single shared authorization whose SIZE cannot identify
+  which commitments rest on it, the app does not automatically remove
+  it, and instead states plainly that the approval is still standing
+  and can be reviewed or removed from the wallet's own approvals view.
+  What the user must never get is silence about a payoff-sized
+  approval outliving the commitment it was granted for. If the loan's own economics moved while
   the posting review sat open (a keeper extension), the submission
   stops for a fresh review rather than granting a standing approval
   larger than the reviewed figure. A dead offset is

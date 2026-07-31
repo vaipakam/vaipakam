@@ -974,6 +974,12 @@ const copySource = {
       ['offerId', 'rate', 'duration', 'collateral'],
     ),
     yourCostLine: tmpl('Your cost today: about {{cost}}', ['cost']),
+    collateralUnknown: tmpl(
+      'collateral {{asset}} — amount unavailable right now',
+      ['asset'],
+    ),
+    collateralChecking:
+      'Reading this loan’s collateral details… the handover opens once they load.',
     select: 'Choose',
     selected: tmpl('Handing over to request #{{offerId}}.', ['offerId']),
     changePick: 'Pick a different request',
@@ -1003,6 +1009,8 @@ const copySource = {
       'Immediately — the new borrower takes over, and your collateral comes back to your wallet, in this same transaction.',
     offerGone:
       'That borrow request is no longer available (accepted, cancelled, or changed). Pick another.',
+    offerNotEligible:
+      'That borrower can’t take over this loan right now — their account no longer meets the requirements for this asset pair. Nothing was approved or sent. Pick a different request.',
     sameWalletNote:
       'A request from your own wallet can’t take over your loan.',
   },
@@ -1082,9 +1090,7 @@ const copySource = {
     cancelled:
       'Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.',
     cancelledApprovalKept:
-      'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. A larger spending approval on this token was left in place because other activity of yours may rely on it; review it from your wallet’s approvals view if you no longer need it.',
-    cancelledApprovalRemains:
-      'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The payoff spending approval could not be removed automatically; you can revoke it from your wallet’s approvals view.',
+      'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The spending approval you granted for the payoff is left in place, because other activity of yours may rely on the same approval; you can review or remove it from your wallet’s approvals view.',
     blockedOtherPaths:
       'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
     onlyBeforeDue:

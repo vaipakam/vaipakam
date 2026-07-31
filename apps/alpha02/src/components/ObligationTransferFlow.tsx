@@ -41,6 +41,7 @@ import {
   type LoanLive,
 } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import { isRevert } from '../data/liveLoanRow';
 import { useActiveOffers } from '../data/hooks';
 import type { IndexedLoan, IndexedOffer } from '../data/indexer';
 import {
@@ -96,6 +97,7 @@ export function ObligationTransferFlow({
   chainNow,
   principalMeta,
   collateralMeta,
+  collateralIsNft,
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
@@ -108,8 +110,14 @@ export function ObligationTransferFlow({
   /** Chain time from the parent's live query — never the device clock. */
   chainNow: bigint;
   principalMeta: TokenMeta;
-  /** Undefined for NFT collateral — the candidate line degrades. */
+  /** Undefined for NFT collateral OR while an ERC-20 collateral's
+   *  metadata is still loading / failed — `collateralIsNft` is what
+   *  decides the asset TYPE (Codex #1500 r3). */
   collateralMeta: TokenMeta | undefined;
+  /** The loan's collateral leg is an NFT (ERC-721/1155). Separate
+   *  from metadata readiness: conflating them labelled an ERC-20
+   *  pledge as "NFT #0" during a metadata read failure. */
+  collateralIsNft: boolean;
   confirmOpen: boolean;
   onOpenConfirm: () => void;
   onCloseConfirm: () => void;
@@ -181,15 +189,30 @@ export function ObligationTransferFlow({
   // materially different tokens — the token id (and ERC-1155 quantity)
   // must be visible wherever the row is, or visually identical rows
   // hide a real difference (Codex #1500 r2 P1).
+  //
+  // Asset TYPE comes from the offer's own type field, never from
+  // metadata presence (Codex #1500 r3): an ERC-20 pledge whose token
+  // metadata is still loading or failed must not be described as an
+  // NFT — it degrades to an honest unknown-amount line instead, and
+  // the selection gate below holds the flow until the metadata lands.
   function collateralStrOf(o: IndexedOffer): string {
-    if (o.collateralAssetType !== AssetType.ERC20 || !collateralMeta) {
+    if (o.collateralAssetType !== AssetType.ERC20) {
       const qty = BigInt(o.collateralQuantity || '0');
       return `NFT ${shortAddress(o.collateralAsset)} #${o.collateralTokenId}${
         qty > 1n ? ` ×${qty}` : ''
       }`;
     }
+    if (!collateralMeta) {
+      return copy.transferOb.collateralUnknown(shortAddress(o.collateralAsset));
+    }
     return `${formatTokenAmount(o.collateralAmount, collateralMeta.decimals)} ${collateralMeta.symbol}`;
   }
+
+  // An ERC-20 collateral leg whose metadata hasn't resolved cannot be
+  // quoted honestly (amount needs decimals) — hold selection rather
+  // than let a signature land on a line that couldn't state the real
+  // pledge (Codex #1500 r3).
+  const collateralQuotable = collateralIsNft || collateralMeta !== undefined;
 
   async function submit() {
     if (!address || !walletChain || !walletClient || !publicClient) return;
@@ -337,6 +360,32 @@ export function ObligationTransferFlow({
         Number(liveLoan.interestRateBps),
         2,
       );
+      // Gate preflight BEFORE any approval (Codex #1500 r3): on a
+      // deployment with progressive-risk or KYC/country gates armed,
+      // the replacement borrower's tier, per-pair consent, or
+      // jurisdiction can have gone invalid while their request stayed
+      // indexed — the write re-checks all of it, so without this the
+      // approval mines and the handover then reverts, leaving a
+      // pointless allowance behind. The view REVERTS on ineligibility;
+      // a transport failure (or a deploy without the selector) must
+      // NOT block an otherwise-valid handover, so only a decodable
+      // revert stops us.
+      const gateVerdict = await publicClient
+        .readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'assertObligationTransferAllowed',
+          args: [BigInt(row.loanId), BigInt(picked.offerId)],
+        })
+        .then(
+          () => 'ok' as const,
+          (e) => (isRevert(e) ? ('blocked' as const) : ('unknown' as const)),
+        );
+      if (gateVerdict === 'blocked') {
+        setError(copy.transferOb.offerNotEligible);
+        void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+        return;
+      }
       if (liveCost.total > 0n) {
         await assertErc20BalanceLive({
           publicClient,
@@ -383,7 +432,9 @@ export function ObligationTransferFlow({
       <h3>{copy.transferOb.title}</h3>
       <p className="muted">{copy.transferOb.blurb}</p>
 
-      {offers.isLoading || candidates === undefined ? (
+      {!collateralQuotable ? (
+        <p className="muted">{copy.transferOb.collateralChecking}</p>
+      ) : offers.isLoading || candidates === undefined ? (
         <p className="muted">{copy.transferOb.checking}</p>
       ) : candidates === null ? (
         <p className="muted">{copy.transferOb.bookUnavailable}</p>

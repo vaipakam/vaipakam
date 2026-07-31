@@ -184,8 +184,13 @@ the whole term's interest no matter how early — while a handover or
 offset costs only accrued + top-up. The chooser's cost lines make that
 contrast readable without ever showing the formula. On a **pro-rata**
 loan the contrast collapses, and the cost lines switch wording
-accordingly (the interest mode is read live; when unknown the
-conservative full-term wording shows).
+accordingly. The interest mode is read live in BOTH interface modes,
+and the cost line is a **tri-state**: full-term wording, pro-rata
+wording, or — while the mode is still unknown — NEUTRAL checking
+wording. It never falls back to the full-term default: asserting the
+protocol default for a loan that may accrue day by day misprices the
+option in exactly the direction that makes a borrower overpay-averse
+about a cheap close. Later phases (the wizard) inherit this rule.
 
 ## What we deliberately do NOT show
 

@@ -40,8 +40,9 @@ export function EarlyRepayOptionsCard({
   isAdvanced,
   onSwitchToAdvanced,
   partialAllowed,
-  /** Loan interest mode when known (live read); undefined shows the
-   *  conservative full-term wording (the protocol default). */
+  /** Loan interest mode when known (live read). Undefined renders
+   *  NEUTRAL checking wording — never the full-term default, which
+   *  would misprice a pro-rata loan's close (Codex #1500 r2/r3). */
   useFullTermInterest,
   /** Local-clock hint only — annotates the transfer/offset rows once
    *  the due date passed (their cards gate on chain time). */

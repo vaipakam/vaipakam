@@ -2087,6 +2087,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               chainNow={loanLive.data.chainNow}
               principalMeta={principal}
               collateralMeta={collateralIsNft ? undefined : (collateral ?? undefined)}
+              collateralIsNft={collateralIsNft}
               confirmOpen={confirmingSurface === 'transfer'}
               onOpenConfirm={() => setConfirmingSurface('transfer')}
               onCloseConfirm={() =>

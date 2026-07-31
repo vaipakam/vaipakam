@@ -15,12 +15,11 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { erc20Abi } from 'viem';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
+import { ensureAllowance } from '../contracts/erc20';
 import type { OffsetPendingState } from '../data/offsetPending';
 import { formatTokenAmount } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
@@ -67,41 +66,20 @@ export function OffsetPendingCard({
     setError(null);
     try {
       await write('cancelOffer', [BigInt(offerId)]);
-      // The posting-time approval was sized principal + completion
-      // bound; posting consumed only the principal leg, so a payoff-
-      // sized authorization outlives the cancel. Unwind it so "fully
-      // cancelled" means fully cancelled (Codex #1500 r1) — but the
-      // owner→Diamond allowance is ONE shared number per token: if the
-      // live allowance exceeds this offset's own bound, something else
-      // (another loan's refinance request or offset on the same
-      // principal token) plausibly relies on it, and zeroing it would
-      // strand that commitment's counterparty acceptances. Revoke only
-      // when the allowance is within this offset's own footprint; when
-      // it's larger — or unreadable — leave it and say so (Codex
-      // #1500 r2). Best effort throughout: a rejected revoke leaves
-      // the cancel done and points at the wallet's approvals view.
-      try {
-        const allowance = (await publicClient!.readContract({
-          address: principalAsset,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [address, walletChain.diamondAddress],
-        })) as bigint;
-        if (state !== undefined && allowance <= state.completionBound) {
-          await revokeAllowance({
-            publicClient: publicClient!,
-            walletClient: walletClient!,
-            token: principalAsset,
-            owner: address,
-            spender: walletChain.diamondAddress,
-          });
-          onDone(copy.offset.cancelled);
-        } else {
-          onDone(copy.offset.cancelledApprovalKept);
-        }
-      } catch {
-        onDone(copy.offset.cancelledApprovalRemains);
-      }
+      // NO automatic approval revoke (Codex #1500 r3). The
+      // owner→Diamond allowance is ONE shared number per token, and
+      // its SIZE cannot identify which commitments rely on it: a
+      // sibling refinance request, another loan's offset, or a sale
+      // listing may each be resting on an allowance at or below this
+      // offset's own bound (ensureAllowance reuses a sufficient
+      // approval rather than re-granting one), so any size-based
+      // heuristic can zero an authorization another counterparty's
+      // acceptance needs. The honest move is to leave the approval
+      // alone and TELL the user it is still standing, with the
+      // wallet's approvals view as the remedy — the r1 finding
+      // (silence about a lingering payoff-sized approval) is answered
+      // by the disclosure, not by a guess about ownership.
+      onDone(copy.offset.cancelledApprovalKept);
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
