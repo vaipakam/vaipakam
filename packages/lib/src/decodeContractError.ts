@@ -318,6 +318,18 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
   IlliquidPairNotConsented:
     'Both sides must consent to the illiquid-asset terms before this can proceed.',
   RiskTierTooLow: 'Your VPFI risk tier is below what this offer requires.',
+  // #1460 — recoverable FUNDING back-pressure, not a terminal state, and the
+  // copy has to say so. But it must not overpromise (Codex #1497 r3): the
+  // backing gate runs AFTER the 69M schedule cap, so a claim whose raw
+  // entitlement exceeded the remaining allocation was already scaled down
+  // before this error was raised — funding and retrying pays the capped
+  // amount, not the raw one, and a concurrent claim can reduce it further.
+  // So: nothing is CONSUMED (the distinction that matters versus a partial
+  // payment), and no promise about the amount or about unconditional
+  // success. Deliberately distinct from InteractionPoolExhausted, which
+  // never resolves.
+  InteractionRewardBackingShort:
+    'Rewards are temporarily unfunded on this network — the tokens for this claim have not arrived yet. Your claim was not consumed, so nothing has been used up and you can claim again once funding lands. Try again later.',
   FeeTooHigh: 'The fee for this action exceeds the allowed maximum.',
   UserHasNoVault:
     "You don't have a vault yet — it is created on your first deposit or loan. Try the action that opens it, then retry.",
@@ -655,6 +667,14 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
 
   // ── Treasury (TreasuryFacet) ──────────────────────────────────────────
   '0x1f2a2005': 'ZeroAmount()',
+
+  // ── Interaction rewards (RewardClaimFacet) ────────────────────────────
+  // #1460 — without this selector→name row the name-keyed copy above is
+  // unreachable on the raw-payload path (wallets that surface only the
+  // revert data), and the claim would show hex where a plain revert used
+  // to be. The #68 drift test recomputes this key from the signature and
+  // cross-checks the name against the compiled Diamond ABI.
+  '0x6248ee4e': 'InteractionRewardBackingShort(uint256,uint256)',
 
   // ── Vault / NFT infrastructure (IVaipakamErrors + facets) ────────────
   '0xb70f4664': 'NFTMintFailed()',

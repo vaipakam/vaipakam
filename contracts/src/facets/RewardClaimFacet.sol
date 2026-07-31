@@ -275,6 +275,41 @@ contract RewardClaimFacet is
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
 
+        // #1460 — BACKING separation enforced HERE, at the claim, not only at
+        // the credit chokepoint. `recycleBucket` and the fresh reward budget
+        // are two protocol-owned claims on ONE fungible Diamond balance, and
+        // this path previously debited the bucket by the RECYCLED component
+        // only while transferring the AGGREGATE out. Paying a fresh component
+        // that does not fit in `balance - recycleBucket` therefore left the
+        // bucket claiming more tokens than back it: nothing is lost and
+        // nobody is paid wrongly, but a LATER recycled claim reverts for want
+        // of funding THIS claim consumed — the symptom lands maximally far
+        // from its cause, and `ops/mesh-watcher` (which reads no balance)
+        // reports healthy throughout.
+        //
+        // Why gating on the FRESH terms is exactly the right invariant: the
+        // payout removes `freshPending + paidRecycled` from the balance while
+        // the bucket moves by `-paidRecycled + freshTreasury`, so
+        // `paidRecycled` cancels on both sides and the post-state requirement
+        // `balance' >= recycleBucket'` reduces precisely to
+        // `freshPending + freshTreasury <= balance - recycleBucket`. A
+        // recycled-only claim is consequently never capped here — its backing
+        // is in the bucket by construction, which is the promised steady
+        // state at fresh exhaustion.
+        //
+        // Same shape as the two enforcement points that already exist
+        // ({LibVpfiRecycle.credit}'s inflow assert and the RL-3 expiry
+        // sweep's `backingRoom`), so all three agree on what "un-earmarked"
+        // means. KNOWN LIMIT shared with both: per-loan borrower-LIF custody
+        // (`borrowerLifRebate[].vpfiHeld`) also sits in this balance and has
+        // no global counter to subtract, so this is an upper bound on
+        // genuinely free tokens rather than an exact one — tightening it
+        // needs a custody aggregate and is tracked separately.
+        uint256 backingRoom = IERC20(vpfi).balanceOf(address(this));
+        backingRoom = backingRoom > s.recycleBucket
+            ? backingRoom - s.recycleBucket
+            : 0;
+
         // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term
         // only. The recycled components are bucket-backed (sized by the
         // finalize stamp against `fundable`) and NEVER consume the fresh
@@ -300,6 +335,7 @@ contract RewardClaimFacet is
         uint256 freshPending = pending - paidRecycled;
         uint256 freshTreasury = treasuryDelta - forfeitRecycled;
         uint256 freshSpend = freshPending + freshTreasury;
+
         if (freshSpend > remaining) {
             if (remaining == 0 && paidRecycled + forfeitRecycled == 0) {
                 revert InteractionPoolExhausted();
@@ -310,6 +346,56 @@ contract RewardClaimFacet is
             freshPending = scaledFreshPending;
             pending = freshPending + paidRecycled;
             treasuryDelta = freshTreasury + forfeitRecycled;
+        }
+        // #1460 — the backing cap REVERTS; it must not truncate. The two
+        // caps in this frame look interchangeable and are not, and getting
+        // this wrong trades a books-corruption defect for a value-loss one:
+        //
+        //   - `remaining` (the 69M pool) is monotone NON-INCREASING — both
+        //     its subtrahends are append-only — so a remainder trimmed
+        //     against it is unfundable forever and consuming the entry
+        //     alongside it costs the claimant nothing. That is the whole
+        //     argument for truncating, spelled out at length above.
+        //   - `backingRoom` is NOT monotone. It rises when UN-EARMARKED
+        //     funding arrives — a fresh remit. (Absorption specifically does
+        //     NOT raise it, and saying so would be wrong: a receipt credited
+        //     via {LibVpfiRecycle.credit} lifts the balance and the bucket by
+        //     the same amount, leaving the difference unchanged, while a
+        //     forfeit re-labels tokens already held and so lifts only the
+        //     bucket — lowering the room. Only a fresh remit moves it up.)
+        //     And by this point the
+        //     claim legs have ALREADY committed — the window cursor moved,
+        //     entries are processed, `consumeArmedFresh` retires their
+        //     commitments below — so a processed entry can never be claimed
+        //     again. Truncating here would therefore delete value that was
+        //     about to become payable. (Verified, not assumed: the probe in
+        //     {RewardClaimBackingSeparationTest} truncates, restores
+        //     funding, retries, and the retry finds nothing to claim.)
+        //
+        // Reverting keeps the shortfall recoverable, which is precisely what
+        // TokenomicsTechSpec §4a promises for a chain whose funding has not
+        // arrived: "claims revert until the operator/keeper funds it —
+        // recoverable back-pressure, never lost value". The claimant retries
+        // once backing lands and is made whole, rather than being paid a
+        // fraction and silently losing the rest. The recycled component is
+        // blocked with it — that is a DELAY, not a loss, and the alternative
+        // costs the claimant real value.
+        //
+        // ORDER MATTERS, and it is the 69M cap that must run first (Codex
+        // #1497 r1 P1). The backing question is not "could the raw
+        // entitlement be paid" but "can what this claim may LEGALLY pay be
+        // paid" — those differ whenever the pool cap truncates. Checking the
+        // pre-cap `freshSpend` refused claims that were fully backed for
+        // their post-cap payout: with 1 VPFI of pool headroom, a 10 VPFI
+        // entitlement and 1 VPFI of backing, the payable amount is exactly
+        // 1 and exactly backed, yet the pre-cap form reverted. Worse, that
+        // refusal could be permanent — a mirror cannot obtain the missing 9,
+        // because remittance is itself bounded by the same pool cap. So the
+        // gate runs on the post-truncation figures, which are the amounts
+        // that actually transfer.
+        uint256 payableFresh = freshPending + freshTreasury;
+        if (payableFresh > backingRoom) {
+            revert InteractionRewardBackingShort(payableFresh, backingRoom);
         }
 
         paid = pending;

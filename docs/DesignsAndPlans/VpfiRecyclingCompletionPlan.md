@@ -600,7 +600,36 @@ review slot the excision doc recommends); slash path →
 
 GovernanceRunbook gains a recycling section, executed in order:
 
-0. ⛔ **#1460 is BOTH already reachable on an unarmed deployment AND a hard
+0. ✅ **RESOLVED — the separation is now enforced at claim time.**
+   `RewardClaimFacet` requires a claim's FRESH components to fit in
+   `balanceOf − recycleBucket` before anything transfers, reverting
+   `InteractionRewardBackingShort(requiredFresh, backingRoom)` when they do
+   not. It REVERTS rather than truncating, and that distinction is
+   load-bearing: the 69M cap may truncate because `remaining` is monotone
+   non-increasing, so its trimmed remainder is unfundable forever, but
+   `backingRoom` RISES when a remit lands while the claim legs have already
+   consumed the entitlement — so truncating would delete value that was
+   about to become payable, trading a books-corruption defect for a
+   value-loss one. Verified rather than reasoned: a probe that truncates,
+   restores funding and retries finds nothing left to claim. Reverting is
+   also what §4a already promised for an unfunded chain — "recoverable
+   back-pressure, never lost value". The recycled component is never capped — it cancels
+   out of the invariant algebra, so at fresh exhaustion the recycled term
+   still pays, which is the promised steady state.
+   `RewardAggregatorFacet`'s enforcement comment is corrected in the same
+   change, and `RewardClaimBackingSeparationTest` asserts the post-state
+   `balanceOf >= recycleBucket` across a **paying** claim — the assertion
+   whose absence let this survive. One imprecision is stated rather than
+   hidden: per-loan borrower-LIF custody shares the balance and has no
+   running total, so the headroom is an upper bound on free tokens, shared
+   with the two pre-existing enforcement points.
+   **The `BACKING --> ARM` edge in §4 stays** — it is discharged, not
+   deleted; arming still requires this closed.
+   *The forensic account below is retained as the historical record of the
+   defect and of how its framing was corrected twice (r17 → r19/r20). It
+   describes the PRE-FIX code.*
+
+   ⛔ **#1460 was BOTH already reachable on an unarmed deployment AND a hard
    arming gate. Those are not alternatives, and r17 wrongly replaced the
    second with the first (#1457 r19).** THREE conditions, all satisfiable
    before arming:
@@ -790,6 +819,19 @@ GovernanceRunbook gains a recycling section, executed in order:
    horizon on live mirror reward chains without the mesh reproduces
    the arming failure mode). The ≥90-day grandfather window starts at
    activation.
+   ⛔ **AND #1499 closed** — the expiry-horizon predicate
+   (`_userClaimFundingNeedView`, shared by the sweep gate and the
+   countdown mirror) does NOT apply the #1460 claim-time backing
+   condition. Inert while `rewardClaimHorizonDays == 0`, which is why it
+   is a knob precondition rather than a merge blocker; setting the knob
+   is exactly what makes it live. Armed over the divergence, the horizon
+   accrues against claimants whose claims REVERT for want of backing,
+   and restored funding lets the next sweep expire them on that stale
+   elapsed time — consuming the very notice window the two safeguards
+   above exist to guarantee. Deferred out of #1497 after three in-flight
+   alignment attempts were each subtly wrong (all with green suites);
+   the fix is one shared derivation across the three sites plus a
+   property-test matrix, and should land with #1498.
 3. **RL-4 weights** — stay `[keeper 0, reserve 10000]` absent a keeper
    funding need.
 4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate,

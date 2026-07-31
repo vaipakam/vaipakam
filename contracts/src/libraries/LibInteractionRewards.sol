@@ -2353,6 +2353,23 @@ library LibInteractionRewards {
     ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
     ///      unadvanced entry reads behind (0), matching the documented
     ///      conservative-estimate caveat on {rewardEntryExpiry}.
+    ///
+    ///      KNOWN DIVERGENCE from the #1460 claim-time backing gate, tracked
+    ///      as #1499 and NOT patched here. The claim now refuses a
+    ///      payout whose fresh part exceeds `balance - recycleBucket`, while
+    ///      this predicate tests the balance without netting off the
+    ///      earmark — so on a thin deployment the horizon can call an entry
+    ///      executable that the claim refuses. It is INERT today: the sweep
+    ///      returns early while `rewardClaimHorizonDays == 0` (the deploy
+    ///      default — RL-3 shipped dark), so no clock accrues and nothing
+    ///      expires. Aligning the two is a shared-derivation change plus a
+    ///      property-test matrix over the fresh / recycled / loan-side-cap /
+    ///      forfeit combinations, because THREE sites re-derive this split
+    ///      by hand and three successive attempts to hand-align them inside
+    ///      #1497 were each subtly wrong (raw-vs-post-cap recycled, and
+    ///      double-counting the bucket against the recycled payout). It is
+    ///      therefore a precondition on ARMING the RL-3 horizon, not a
+    ///      prerequisite of the claim-time gate.
     function _userClaimFundingNeedView(
         LibVaipakam.Storage storage s,
         address user
