@@ -364,8 +364,8 @@ implementation PR:
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
 | Keep it to the end | No urgent need for the capital | No sale forfeiture, and your reward credit for this position keeps accruing — principal plus the agreed interest if the borrower repays (paid on the loan's schedule where it has one, otherwise at the close); the normal default process (recovery may be less) if they don't |
-| Sell now | Need liquidity today; an acceptable offer or position bid is on the book | Generic offer: principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly. Position bid: the bid's defined gross/net seller receipt, payment asset, and any resolved top-up or no-top-up rule. Both models also show any money already set aside for you on this loan, which transfers to the buyer; your pending reward credit for this position, which is given up; and the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated (shown as its own line, or marked unquotable where the value can't be read). The bid row stays unavailable until its settlement model defines those figures. |
-| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, and conditional Full-entitlement lines at completion, with the same unquotable fallback; your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
+| Sell now | Need liquidity today; an acceptable offer or position bid is on the book | Generic offer: principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly. Position bid: the bid's defined gross/net seller receipt, payment asset, and any resolved top-up or no-top-up rule. Both models also show any money already set aside for you on this loan, which transfers to the buyer; your pending reward credit for this position, which is given up; the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated; and the notification-entitlement line where the migration policy lets paid notification state follow the loan (shown as their own lines, or marked unquotable where the value can't be read). The bid row stays unavailable until its settlement model defines those figures. |
+| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, conditional Full-entitlement, and conditional notification-entitlement lines at completion, with the same unquotable fallback; your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
 For the generic-offer model, the teaching moment (inverse of the
 borrower side) is REGIME-AWARE, not absolute, because the seller pays
@@ -408,7 +408,7 @@ interest/top-up crossing story by default.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — twenty-seven at
+The adversarial passes on this doc surfaced the gaps below — twenty-eight at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -421,7 +421,7 @@ against.
 
 Items 1–4, 13, 14, 16, 17, 19, 23 and 26 belong to the **listing** path,
 5–10, 15, 17 and 18 to the **instant-sell** (direct buy-offer) path,
-and 11, 12, 20, 21, 22, 24, 25 and 27 to both. The instant-sell cluster is
+and 11, 12, 20, 21, 22, 24, 25, 27 and 28 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -1043,13 +1043,25 @@ than a growing list of patches on generic-offer consumption.
    settlement, including the direct-sale buyer whenever the payment asset
    is VPFI.
 
+28. **Sale forfeiture must net already-settled periodic interest.** On a
+   periodic loan, the current lender can receive an interest settlement
+   before they sell. The raw accrual clock can still include time already
+   represented by `interestSettled`, so computing the seller's forfeited
+   accrued-interest amount directly from the clock charges the seller for
+   interest they already received. Binding the settled-interest state only
+   proves it did not drift; it does not make the settlement arithmetic
+   consume that state. *Required*: both sale formulas and every quote
+   mirror net already-settled periodic interest through
+   `creditSettledInterest` or an equivalent calculation before comparing
+   accrued interest to the buyer-rate top-up or bid-specific replacement.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
-  16, 17, 19, 20, 21, 22, 23, 24, 25, 26 and 27 are resolved.**
+  16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27 and 28 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15, 17, 18,
-  20, 21, 22, 24, 25 and 27 are resolved.** An earlier draft of this gate said only that the
+  20, 21, 22, 24, 25, 27 and 28 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
@@ -1158,6 +1170,13 @@ prerequisites gate instead of restating item numbers.
   revision of this paragraph claimed items 6–10 all "stop being checks at
   all"; that was wrong, and stated that way it would have let the roadmap
   treat the replacement as safe while carrying the races forward.
+- *Items 21 (active borrower close-out commitments) and 24 (periodic
+  delinquency at the deadline) are REPLACED by explicit bid bounds and
+  fill-time guards, not dissolved.* Both are already named in the mutable
+  state list above, but the item-by-item maintenance contract requires
+  their classification to be explicit. A bid must bind active close-out
+  commitments and the periodic settlement deadline / admissible shortfall
+  state, or reject at fill time when those bounds no longer hold.
 - *Item 15 (the buyer's authored amount) is REPLACED, not removed.*
   Naming a loan and a price says what the buyer will PAY; it does not
   say what outstanding-principal exposure they are agreeing to take on,
@@ -1172,17 +1191,20 @@ prerequisites gate instead of restating item numbers.
   could ship a bid that binds neither.
 - *Items 17 (the stranded intent exposure), 20 (keeper-enable
   invalidation), 22 (Full-entitlement accounting), 25 (reverse-index
-  migration), and 27 (VPFI restamping) are UNTOUCHED
-  — the same third class as item 12.* A loan-specific bid still migrates
+  migration), 27 (VPFI restamping), and 28 (settled-periodic-interest
+  netting) are UNTOUCHED — the same third class as item 12.* A
+  loan-specific bid still migrates
   the position and returns the exiting lender's capital; it does not by
   itself clear the origin marker or release the originating owner's
   live-principal exposure, supply the origin-owner-buyback carve-out,
   invalidate inherited keeper authority, preserve borrower-authored
-  keeper grants, or decide whether a paid Full entitlement transfers,
-  expires, or is compensated. The reshape changes how the buyer's consent
-  is expressed; these are settlement, migration-auth, and tariff-accounting
-  steps. An implementation following the bid path reproduces those defects
-  unless it carries items 17, 20, 22, 25, and 27 across explicitly.
+  keeper grants, decide whether a paid Full entitlement transfers,
+  expires, or is compensated, or net already-settled periodic interest out
+  of the sale forfeiture arithmetic. The reshape changes how the buyer's
+  consent is expressed; these are settlement, migration-auth, tariff-
+  accounting, discovery, and accounting steps. An implementation following
+  the bid path reproduces those defects unless it carries items 17, 20,
+  22, 25, 27, and 28 across explicitly.
 - *Item 12 (the best-effort reward migration) is UNTOUCHED — a third
   class of its own.* The first two classes are both about the buyer's
   consent, which is what the bid reshapes. Item 12 is not: it is a
