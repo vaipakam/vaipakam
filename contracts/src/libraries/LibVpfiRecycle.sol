@@ -198,10 +198,12 @@ library LibVpfiRecycle {
      *         library owns the bucket ledger it measures. {credit} and
      *         {creditCustodyRelocated} both assert `bal >= bucket + amount`
      *         before raising the bucket, so THAT property is enforced on
-     *         every INFLOW. What no path asserts is the same property after
-     *         an OUTFLOW: a fresh-only interaction-reward claim transfers
-     *         VPFI out without re-checking that the remainder still backs
-     *         `recycleBucket` (#1460).
+     *         every INFLOW. The same property on OUTFLOW is asserted by
+     *         {RewardClaimFacet}'s claim-time gate, which refuses a claim
+     *         whose FRESH components exceed `balanceOf − recycleBucket`
+     *         (#1460 — added after this view; an earlier revision of this
+     *         comment said no path asserted it, which was true when written
+     *         and is not now).
      *
      *         It measures ONE term of the separation invariant, not the
      *         invariant. This library's own natspec states that invariant
