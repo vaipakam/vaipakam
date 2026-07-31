@@ -121,7 +121,11 @@ purchase. On Full-stamped loans, the seller-side total may also include
 the paid Full entitlement that leaves with the continuing lender position;
 the tariff-accounting prerequisite defines whether that entitlement is
 transferred, extinguished, or compensated before the quote can claim it
-has enumerated every seller cost.
+has enumerated every seller cost. The same rule applies to a paid-tier
+lender notification flag that was funded by the seller before migration:
+the implementation must either reset/rekey it for the new lender or show
+it as a paid entitlement transferring with the position and bind it in
+the seller's economic authorization.
 
 Where the pending credit's value cannot be read on the client,
 the line says so explicitly ("your pending reward credit for this
@@ -363,19 +367,27 @@ implementation PR:
 | Sell now | Need liquidity today; an acceptable offer or position bid is on the book | Generic offer: principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly. Position bid: the bid's defined gross/net seller receipt, payment asset, and any resolved top-up or no-top-up rule. Both models also show any money already set aside for you on this loan, which transfers to the buyer; your pending reward credit for this position, which is given up; and the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated (shown as its own line, or marked unquotable where the value can't be read). The bid row stays unavailable until its settlement model defines those figures. |
 | List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, and conditional Full-entitlement lines at completion, with the same unquotable fallback; your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
-The teaching moment (inverse of the borrower side) is REGIME-AWARE,
-not absolute, because the seller pays the LARGER of two figures that
-move in opposite directions as time passes: the interest built up so
-far only grows, while a higher-rate buyer's top-up is proportional to
-the remaining term and therefore shrinks. When accrued interest is
-the binding cost (same-or-lower buyer rates — the common book case),
-waiting cheapens nothing and selling later forfeits more; when the
-top-up is binding (a higher-rate buyer), waiting can actually improve
-the seller's net until the two figures cross. The chooser therefore
-never teaches a blanket "sell early or never" rule — the honest
-instrument is the CURRENT net quote on each candidate ("you'd receive
-about X today"), which already embeds whichever side is binding, with
-the which-side-is-binding note from Layer 2 as the explanation.
+For the generic-offer model, the teaching moment (inverse of the
+borrower side) is REGIME-AWARE, not absolute, because the seller pays
+the LARGER of two figures that move in opposite directions as time
+passes: the interest built up so far only grows, while a higher-rate
+buyer's top-up is proportional to the remaining term and therefore
+shrinks. When accrued interest is the binding cost (same-or-lower buyer
+rates — the common book case), waiting cheapens nothing and selling
+later forfeits more; when the top-up is binding (a higher-rate buyer),
+waiting can actually improve the seller's net until the two figures
+cross. The chooser therefore never teaches a blanket "sell early or
+never" rule — the honest instrument is the CURRENT net quote on each
+candidate ("you'd receive about X today"), which already embeds
+whichever side is binding, with the which-side-is-binding note from
+Layer 2 as the explanation.
+
+For a loan-specific position bid, this teaching paragraph is deliberately
+blank until the bid settlement model is chosen. A bid-specific chooser
+may teach only the quantities that model actually defines — for example,
+a gross bid price, a net seller receipt, a fixed discount/premium, or a
+separately defined top-up — and must not import the generic-offer
+interest/top-up crossing story by default.
 
 ## What we deliberately do NOT show
 
@@ -990,9 +1002,14 @@ than a growing list of patches on generic-offer consumption.
    funded-looking offer into a seller-burning revert. *Required*: replace
    the old reverse-index entry with the new lender-token mapping, append
    the acquired real loan id to the buyer's user-loan index through an
-   O(1) membership map or other bounded deduplication mechanism, and mark
-   a first-time buyer as a seen protocol user during real-position
-   migration before either sale surface ships.
+   O(1) membership map or other bounded deduplication mechanism, mark a
+   first-time buyer as a seen protocol user during real-position
+   migration, and define how loan-scoped paid notification state migrates
+   before either sale surface ships. If `lenderNotifBilled` follows the
+   loan, the seller's transferred paid notification entitlement is a
+   quoted/bounded cost; if each lender must pay separately, the flag is
+   reset or holder-keyed so the buyer cannot consume service funded by
+   the seller's VPFI tariff.
 
 26. **The listing sale vehicle must not pollute public loan accounting.**
    Listing acceptance uses an internal transitional loan shape, but if it
@@ -1042,15 +1059,16 @@ checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 ### Recommended shape for the instant-sell path
 
-Items 5–10, 15, 17, 18, 20, 22, 25 and 27 are the instant-sell
-blockers clustered here. Most exist for the same reason: a generic lender offer is a
-promise to *open* a loan, and the instant-sell path spends it to
-*assume* one. Patching those hand-check gaps one at a time keeps the
+The instant-sell blockers are clustered here by why they exist, not by
+restating the ship gate. Most exist for the same reason: a generic lender
+offer is a promise to *open* a loan, and the instant-sell path spends it
+to *assume* one. Patching those hand-check gaps one at a time keeps the
 mechanism's default wrong — every future term added to the offer struct
 becomes a new omission on this path, silently, because the compiler
-cannot notice a comparison nobody wrote. Items 17, 20, 22, 25 and 27 are different: they are
-settlement, migration-auth, tariff-accounting, discovery, and VPFI
-accounting requirements that survive any buyer-consent reshape.
+cannot notice a comparison nobody wrote. Other blockers are settlement,
+migration-auth, tariff-accounting, discovery, and VPFI-accounting
+requirements that survive any buyer-consent reshape; the classification
+below is the authoritative map for the bid alternative.
 
 The design recommendation is therefore a **dedicated loan-specific
 position-sale bid**: an instrument whose creator names the loan id they
@@ -1059,10 +1077,14 @@ expressed once against the actual running position instead of being
 reconstructed field-by-field from an offer authored for something else.
 
 **What the reshape actually removes — and what it does not.** The items
-split into three classes, and the bid only dissolves one of them. Every
-instant-sell item is classified below; if a future item is added to that
-path it gets classified here in the same diff, because an item absent
-from this list reads as dissolved:
+split into three classes, and the bid only dissolves one of them. This is
+the one allowed exception to the item-number maintenance rule: the
+reshape classification is still authoritative for whether each
+instant-sell prerequisite dissolves, is replaced, or survives under the
+bid model. If a future instant-sell item is added to the prerequisites
+section, classify it here in the same diff, because an item absent from
+this list reads as dissolved. Other sections continue to point at the
+prerequisites gate instead of restating item numbers.
 
 - *Term-mismatch items (7, 8 — behavioural terms, NFT identity) and the
   duration-COMPARISON half of item 9* dissolve by construction. Each
@@ -1334,13 +1356,16 @@ it). The
 awareness layer is the only part of Phase 1 that is unblocked today,
 and it ships with both sale rows reporting as unavailable.
 
-**Maintenance rule — item numbers live in exactly ONE place.** The
-Contract-level prerequisites section is authoritative and is the only
-section that states item numbers or a total count. Everywhere else —
-this Phase-1 gate, the fork-tier schedule below, the not-frontend-only
-note above — points at it instead of restating it.
+**Maintenance rule — item numbers have one gate and one classification.**
+The Contract-level prerequisites section is authoritative for the item
+numbers, total count, and per-path ship gate. The bid-reshape section is
+the only allowed classification copy, because it explains which
+instant-sell prerequisites dissolve, are replaced, or survive under that
+alternative. Everywhere else — this Phase-1 gate, the fork-tier schedule
+below, the not-frontend-only note above — points at the prerequisites
+gate instead of restating it.
 
-That rule was earned. The restatements drifted three times: one draft
+That rule was earned. Gate restatements drifted three times: one draft
 implied a single instant-sale blocker; later listing blockers landed in
 the authoritative gate while the Phase-1 and fork-tier copies kept the
 stale set; and the scoping note kept an obsolete total after the real
@@ -1353,8 +1378,10 @@ threshold was reached, so the numbers are gone.
 
 **When adding an item**: add it to the prerequisites section and its
 per-path gate there. Do not add its number anywhere else in this
-document — if a section seems to need one, that section wants a
-cross-reference.
+document except the dedicated bid-reshape classification section, whose
+job is to say whether each instant-sell prerequisite dissolves, is
+replaced, or survives under that alternative. If any other section seems
+to need a number, that section wants a cross-reference.
 
 Fork-tier spec, scoped to whatever has actually shipped: chooser
 renders for the lender in Basic mode, and a quote on a position
