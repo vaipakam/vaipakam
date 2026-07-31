@@ -56,6 +56,7 @@ never-promise-yield rule the rest of the app follows.
 | §9 Option 3 — wait to maturity | "Keep it to the end (nothing to do)" |
 | Accrued-interest forfeiture | "the interest built up so far is given up" |
 | Rate shortfall (buyer's rate above the loan's) | "buyer rate top-up" |
+| Held-for-lender balance migrating to the buyer | "money already set aside for you on this loan goes to the buyer too" |
 | Sale vehicle / internal transitional loan | never named — implementation detail |
 | Position-NFT transfer lock (live listing) | "your position is transfer-locked while listed" |
 
@@ -64,6 +65,27 @@ exact-on-chain-at-execution note. The forfeit rule is worded as an
 outcome, never a formula: "you receive your principal minus the larger
 of the interest built up so far or the buyer's rate top-up — never
 both."
+
+**The forfeit rule is not the whole cost.** A sale transfers the
+position, and with it any amount the protocol has ALREADY set aside
+for this loan's lender — the held-for-lender balance that accumulates
+from things like an earlier obligation transfer's lender-protection
+payment or a partial internal match. Both sale paths migrate that
+balance to the incoming lender, so a seller with a non-zero held
+balance gives up already-earned claim rights on top of the advertised
+forfeiture. Every net quote and confirmation MUST therefore state the
+full picture:
+
+> what you receive (principal minus the larger of accrued interest or
+> the buyer rate top-up) **and** what transfers with the position
+> (any money already set aside for you on this loan)
+
+A quote that silently omits a non-zero held balance is a
+mispriced sale, not a rounding difference — it can dwarf the
+forfeiture. Where the held balance is non-zero, the sale surfaces it
+as its own line (never folded into the net figure), and where it
+cannot be read the flow says the total cost is unavailable rather
+than quoting a partial one.
 
 ## The layered disclosure model (lender side)
 
@@ -96,16 +118,22 @@ page in both modes, strictly informational:
   it also holds the BORROWER's discretionary paths on the underlying
   loan** (partial repayment is held by the app and collateral
   withdrawal is refused by the protocol, both to protect the buyer's
-  signed terms). A listing has no expiry and only the seller cancels
-  it, so the disclosure must say plainly that listing freezes those
-  borrower affordances until the sale completes or the seller
-  cancels — see the Layer-3 checklist and Open Questions for the
-  escape-hatch requirement this creates.
+  signed terms). As the protocol stands a listing never expires and
+  only the seller cancels it, so the disclosure must say plainly that
+  listing freezes those borrower affordances until the sale completes
+  or the seller cancels — and this design REQUIRES that gap be closed
+  before the surface ships (mandatory finite expiry + permissionless
+  teardown; see the Layer-3 checklist and open question 0), after
+  which the row states the chosen expiry as part of the disclosure.
 - Availability is honest and explanatory: the listing row states when
   the path is unavailable on the current network (the app already
   refuses to render a form whose final signature cannot succeed), for
   loans with NFT collateral (Phase 1 listing is ERC-20-collateral
-  only, per §9), and once the loan has REACHED OR PASSED its maturity
+  only, per §9), when the position carries an unresolved held-VPFI
+  balance (§9 refuses to list a position it cannot unify to a single
+  settlement identity — the row says the position must be cleared
+  first and names the remaining exits meanwhile), and once the loan
+  has REACHED OR PASSED its maturity
   — an Active loan inside its grace window is no longer sellable
   (the sale paths reject a fully-elapsed term), so past maturity the
   sale rows flip to "the loan is past its due date — the borrower
@@ -136,7 +164,12 @@ design adds the framing rules, not new mechanics:
    receive: about X" on every row; which side of the forfeit rule is
    binding (interest so far vs rate top-up) is stated in words when
    the buyer's rate is the driver, because "a higher-rate buyer costs
-   you money" is the least intuitive fact on this surface.
+   you money" is the least intuitive fact on this surface. When the
+   position carries a held-for-lender balance, that transferring
+   amount is its OWN line on every row and in the confirmation (see
+   the vocabulary section) — the ordering compares like with like
+   (net receipt minus what transfers away), and an unreadable held
+   balance blocks quoting rather than under-quoting.
 2. **The listing form's one economic input is a RATE, not a price.**
    A listing's purchase amount is fixed to the loan's live
    outstanding principal — the seller never chooses what the buyer
@@ -185,25 +218,32 @@ implementation PR:
   everything the listing set up, and anything that cannot be released
   automatically is said plainly with its remedy.
 - **The borrower-side freeze is owned, not ignored**: because a live
-  listing holds the borrower's partial-repay and
-  collateral-withdrawal affordances indefinitely (no expiry; only
-  the seller cancels), the implementation must (a) disclose that
-  cross-party effect on the listing form BEFORE confirmation, and
-  (b) provide an escape: at minimum an optional listing expiry the
-  seller sets at creation, or the FunctionalSpecs re-sign flow where
-  a partial repayment invalidates the old buyer signature and the
-  buyer simply re-signs for the smaller position (in which case the
-  app's partial-repay hold can be lifted). Which escape ships is an
-  open question below — shipping NEITHER is not an option, or an
-  abandoned listing becomes an indefinite lever over the borrower.
+  listing holds the borrower's partial-repay AND collateral-withdrawal
+  affordances indefinitely (no expiry; only the seller cancels), the
+  implementation must (a) disclose that cross-party effect on the
+  listing form BEFORE confirmation, and (b) ship an escape that
+  releases **every** hold, not just one of them. The requirement is
+  therefore specific: a **mandatory finite listing expiry** (no
+  never-expires option — the seller picks a duration inside a bounded
+  range, and the form has no way to opt out) **plus a permissionless
+  teardown** once expired, so ANY party — the borrower, a keeper, the
+  app — can clear an abandoned listing and release both the lender-NFT
+  lock and the borrower-side holds. The FunctionalSpecs buyer-re-sign
+  flow (a partial repayment invalidates the old signature and the
+  buyer re-signs for the smaller position) is a valuable ADDITION that
+  frees partial repayment sooner, but it is not a substitute: it
+  leaves collateral withdrawal blocked on-chain until the listing
+  actually ends. Expiry + permissionless teardown is the floor;
+  re-sign layers on top. Shipping neither leaves an abandoned or
+  malicious listing as an indefinite lever over the borrower.
 
 ## Decision guidance the chooser encodes
 
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
 | Keep it to the end | No urgent need for the capital | No sale forfeiture — principal + agreed interest if the borrower repays; the normal default process (recovery may be less) if they don't |
-| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly |
-| List at your chosen buyer rate | Want liquidity but not at today's book rates | Same forfeit rule at completion; position locked (and the borrower's partial-repay/collateral paths held) while listed; no guarantee of a buyer |
+| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer |
+| List at your chosen buyer rate | Want liquidity but not at today's book rates | Same costs at completion (forfeiture + any transferring set-aside money); your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
 The teaching moment (inverse of the borrower side) is REGIME-AWARE,
 not absolute, because the seller pays the LARGER of two figures that
@@ -249,11 +289,16 @@ awareness layer and the hardening checklist, not new contract calls.
 
 **Phase 1 — implementation PR after this doc ratifies.** The lender
 chooser card (both modes, wait-first ordering), the Layer-2 framing
-rules on the two existing flows, and the Layer-3 parity hardening
-(fail-closed lock read, dead-listing teardown state, stale-marker
-discard). Fork-tier spec: chooser renders for the lender in Basic
-mode; instant sell drives to an on-chain lender change; listing
-posts, locks, and cancels.
+rules on the two existing flows (including the held-balance line in
+every quote), and the Layer-3 parity hardening (fail-closed lock read,
+dead-listing teardown state, stale-marker discard). **Gated on open
+question 0**: the borrower-escape requirement (mandatory finite expiry
++ permissionless teardown) must be resolvable with the deployed
+contracts, or its contract change lands first — the listing surface
+does not ship without a borrower escape. Fork-tier spec: chooser
+renders for the lender in Basic mode; instant sell drives to an
+on-chain lender change; listing posts, locks, and cancels; a quote on
+a position carrying a held balance shows that line.
 
 **Phase 2 — comparison quotes (with the borrower "help me choose"
 wizard).** Opt-in side-by-side: "sell now nets about X" vs "holding
@@ -266,13 +311,17 @@ chooser stays absent on rentals.
 
 ## Open questions
 
-0. Which borrower-freeze escape ships in Phase 1 (see the Layer-3
-   checklist): a seller-set optional listing expiry (simpler; bounds
-   the freeze by clock), or the FunctionalSpecs buyer re-sign flow
-   that lets partial repayments proceed under a live listing (richer;
-   removes the partial-repay hold entirely)? Leaning expiry-first —
-   it is contract-light and the re-sign flow can layer on later — but
-   one of them is a Phase-1 requirement, not polish.
+0. The borrower-freeze escape is REQUIRED (mandatory finite expiry +
+   permissionless teardown — see the Layer-3 checklist); what remains
+   open is its shape: what bounded range the expiry may span (and its
+   default), and whether the current contracts already permit a
+   permissionless teardown of an EXPIRED-but-uncancelled listing or
+   whether that needs a contract change alongside this frontend work.
+   If it needs a contract change, this design's Phase 1 depends on it
+   — the app cannot manufacture a borrower escape the protocol does
+   not expose, and shipping the listing surface without one would
+   knowingly hand sellers an indefinite lever. Resolve before
+   implementation starts.
 1. Should the instant-sell row hide entirely when the book has no
    compatible offer, or show with "no matching offer right now"?
    Leaning show-with-reason — an option that appears only sometimes
