@@ -523,9 +523,25 @@ than a growing list of patches on generic-offer consumption.
    frontend surfacing the live figure either way.
 
    **The acknowledgement branch only works where the buyer is present at
-   the fill.** On the listing path they are: the buyer drives acceptance,
-   so consent to *this* position in *this* state can be taken at that
-   moment. On the instant-sell path they are not — the seller fills a
+   the fill — and even there, presence is not consent to the fill-time
+   state.** On the listing path the buyer does drive acceptance, so an
+   acknowledgement can at least be taken from the right party. But
+   "present at the fill" means present at *signing*, and the position
+   keeps moving until *inclusion*: the oracle price can fall further in
+   between, so a bare acknowledgement succeeds against a materially worse
+   — possibly immediately liquidatable — position than the one reviewed.
+   Unlike the hard-floor branch, a bare acknowledgement binds no minimum
+   health factor and no minimum collateral value, so there is nothing for
+   the drift to violate. Surfacing the live figure in the frontend cannot
+   repair this: the gap between the last read and inclusion is precisely
+   the one no frontend can observe, which is this design's own
+   safe-late-drift rule. *So the acknowledgement branch is only
+   admissible if its terms carry a fill-time health / collateral-value
+   bound alongside their deadline* — otherwise keep the hard admission
+   floor. This is the same defect class as item 13: the consent must bind
+   the thing it was given for, or it is a signature on a state that no
+   longer exists. On the instant-sell path the buyer is not present at
+   all — the seller fills a
    standing offer the buyer authored earlier, for no particular loan. A
    blanket "I accept distressed positions" flag on a generic offer
    therefore proves nothing about the position actually assigned, and
@@ -823,9 +839,9 @@ every quote), and the Layer-3 parity hardening (fail-closed lock read,
 dead-listing teardown state, stale-marker discard). **Gated on the
 Contract-level prerequisites section**: the borrower-escape
 requirement (mandatory finite expiry + permissionless teardown) and
-prerequisites **1-4 plus 11 and 12** must land first — the listing surface does
-not ship over them — and prerequisites **5-12** gate the instant-sell
-surface on exactly the same terms. Neither path ships over its own
+prerequisites **1-4 plus 11, 12, 13 and 14** must land first — the listing
+surface does not ship over them — and prerequisites **5-12** gate the
+instant-sell surface on exactly the same terms. Neither path ships over its own
 open items; in particular item 5 is NOT the sole instant-sale blocker
 (an earlier revision of this paragraph implied that, contradicting the
 prerequisites gate above — the authoritative reading is the
@@ -833,11 +849,24 @@ prerequisites section, and this paragraph now matches it). The
 awareness layer is the only part of Phase 1 that is unblocked today,
 and it ships with both sale rows reporting as unavailable.
 
+**Maintenance rule — the item list is restated in three places.** The
+prerequisites section is authoritative; the Phase-1 gate above and the
+fork-tier schedule below restate its item numbers for convenience, and
+BOTH must be updated whenever an item is added. This has now drifted
+twice: once when item 5 was wrongly implied to be the sole instant-sale
+blocker, and again when items 13 and 14 were added to the authoritative
+gate while these two restatements kept the stale set — each time leaving
+a roadmap an implementer could follow to ship a surface over a live
+blocker, while the text claimed the sections agreed. A restatement that
+can silently disagree with its source is worse than a cross-reference,
+so if this drifts a third time, replace the numbers here with a pointer
+to the prerequisites section rather than repairing them again.
+
 Fork-tier spec, scoped to whatever has actually shipped: chooser
 renders for the lender in Basic mode, and a quote on a position
 carrying a held balance shows that line. The listing post/lock/cancel
-drive lands with the listing surface (after items 1-4, 11 and 12); the
-instant-sell on-chain lender-change drive lands with that surface (after
+drive lands with the listing surface (after items 1-4, 11, 12, 13 and 14);
+the instant-sell on-chain lender-change drive lands with that surface (after
 items 5-12). Writing a fork-tier drive for a path still gated open would
 assert behaviour the design says must not be reachable yet.
 
