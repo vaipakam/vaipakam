@@ -176,9 +176,17 @@ export function ObligationTransferFlow({
   const sym = principalMeta.symbol;
   const fmt = (v: bigint) => `${formatTokenAmount(v, dec)} ${sym}`;
 
+  // The handover COPIES the offer's collateral identity into the loan,
+  // so for NFT collateral two rows from the same collection can carry
+  // materially different tokens — the token id (and ERC-1155 quantity)
+  // must be visible wherever the row is, or visually identical rows
+  // hide a real difference (Codex #1500 r2 P1).
   function collateralStrOf(o: IndexedOffer): string {
     if (o.collateralAssetType !== AssetType.ERC20 || !collateralMeta) {
-      return `NFT ${shortAddress(o.collateralAsset)}`;
+      const qty = BigInt(o.collateralQuantity || '0');
+      return `NFT ${shortAddress(o.collateralAsset)} #${o.collateralTokenId}${
+        qty > 1n ? ` ×${qty}` : ''
+      }`;
     }
     return `${formatTokenAmount(o.collateralAmount, collateralMeta.decimals)} ${collateralMeta.symbol}`;
   }
@@ -201,7 +209,7 @@ export function ObligationTransferFlow({
         walletChain.diamondAddress,
         address,
       );
-      const [, liveLoan, liveOffer, latestBlock] = await Promise.all([
+      const [, liveLoan, liveOffer, linkedLoanId, latestBlock] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -226,10 +234,43 @@ export function ObligationTransferFlow({
           collateralAmount: bigint;
           expiresAt: bigint;
         }>,
+        // A lender-sale VEHICLE is a borrower-style offer linked to an
+        // existing loan; the indexed `isSaleVehicle` marker is optional
+        // (older workers omit it), so the picker filter alone is not
+        // proof. Fail closed on ANY linked-loan id at submit — a
+        // vehicle escrows no replacement collateral and the handover
+        // would revert after the approval mined (Codex #1500 r2).
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOfferLinkedLoanId',
+          args: [BigInt(picked.offerId)],
+        }) as Promise<bigint>,
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
       if (liveLoan.status !== LOAN_STATUS_ACTIVE) {
         setError(copy.errors.loanAlreadySettled);
+        return;
+      }
+      // The receipt's economics were computed from the parent's live
+      // snapshot — if the LOAN's economic terms moved since (a keeper
+      // extendLoanInPlace re-stamps rate/term/clock while the receipt
+      // sits open), the reviewed figures no longer describe this
+      // handover. Force a fresh review (Codex #1500 r2 P1). Natural
+      // second-by-second accrual changes no field, so this only trips
+      // on real term mutations.
+      if (
+        liveLoan.principal !== live.principal ||
+        liveLoan.interestRateBps !== live.interestRateBps ||
+        liveLoan.startTime !== live.startTime ||
+        liveLoan.durationDays !== live.durationDays ||
+        liveLoan.interestAccrualStart !== live.interestAccrualStart ||
+        liveLoan.interestRemainingDays !== live.interestRemainingDays
+      ) {
+        setError(copy.match.termsChanged);
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+        setPickedId(null);
+        onCloseConfirm();
         return;
       }
       // Live re-check of the offer: gone/accepted/filled offers, a
@@ -237,6 +278,7 @@ export function ObligationTransferFlow({
       // the indexed row), or drifted terms all fail HERE, before any
       // approval, instead of as an opaque revert.
       const gone =
+        linkedLoanId !== 0n ||
         liveOffer.creator ===
           '0x0000000000000000000000000000000000000000' ||
         liveOffer.accepted ||
@@ -394,6 +436,17 @@ export function ObligationTransferFlow({
       ) : picked && economics ? (
         <div style={{ marginTop: 8 }}>
           <p className="muted" style={{ marginBottom: 8 }}>
+            {/* The full candidate line repeats at confirmation so the
+                replacement collateral's exact identity (token id +
+                quantity for NFTs) is on screen at signing time, not
+                only in the picker (Codex #1500 r2 P1). */}
+            {copy.transferOb.candidateLine(
+              String(picked.offerId),
+              formatBpsAsPercent(picked.interestRateBps),
+              formatDurationDays(picked.durationDays),
+              collateralStrOf(picked),
+            )}
+            {' — '}
             {copy.transferOb.selected(String(picked.offerId))}{' '}
             <button
               type="button"

@@ -807,7 +807,15 @@ Its intended behaviour, as the test oracle for this surface:
   cannot currently apply (past the due date, held by a live linked
   request, or one the position doesn't qualify for — refinancing on a
   position acquired on the secondary market stays with the original
-  borrower) say so instead of disappearing silently. The chooser is
+  borrower) say so instead of disappearing silently; a
+  past-the-due-date unavailability is judged only from chain-anchored
+  time and live terms — with no live reading in hand the chooser
+  leaves the path offered and lets the target tool enforce the real
+  gate, rather than expiring an option off the device clock or a
+  lagging data row. The interest-mode-dependent cost lines are priced
+  from the loan's actual mode in BOTH interface modes, with neutral
+  checking wording while the mode is unknown — the full-term default
+  is never asserted for a loan that may accrue day by day. The chooser is
   not shown for NFT rentals (their close path is the rental close),
   nor once the loan is settled or strictly past its grace window.
 - Advanced mode offers the borrower of an active, not-yet-matured
@@ -826,11 +834,21 @@ Its intended behaviour, as the test oracle for this surface:
   loading it says so, and an unavailable book is stated honestly
   (loading, empty, and unavailable never look alike). Confirmation
   re-verifies the chosen request and the loan live: a consumed or
-  no-longer-fitting request stops before any wallet prompt with a
-  plain explanation, and a request whose terms have CHANGED since the
-  review opened (requests are editable in place, and a lowered rate
-  raises the borrower's top-up) stops for a fresh review rather than
-  charging more than was reviewed. The review states what is paid
+  no-longer-fitting request — or one that turns out to be a linked
+  sale/position vehicle rather than a genuine standing request (the
+  fast market layer may not label vehicles on older data) — stops
+  before any wallet prompt with a plain explanation, and a request
+  whose terms have CHANGED since the review opened (requests are
+  editable in place, and a lowered rate raises the borrower's top-up)
+  stops for a fresh review rather than charging more than was
+  reviewed; the same fresh-review rule applies when the LOAN's own
+  economic terms moved while the review sat open (a keeper extension
+  re-stamps the rate, term, and interest clock). For NFT collateral,
+  the replacement pledge's exact identity — the token id, and the
+  quantity where applicable — is shown on every candidate row and
+  repeated at confirmation, because the handover adopts the chosen
+  request's pledge and two requests from the same collection can
+  carry materially different tokens. The review states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and
@@ -865,7 +883,14 @@ Its intended behaviour, as the test oracle for this surface:
   judged by chain time), which unlocks the position, returns the
   lending money straight to the wallet, and removes the standing
   payoff approval (best effort — a failed removal is said plainly
-  with the wallet's approvals view as the remedy). A dead offset is
+  with the wallet's approvals view as the remedy; and because one
+  token's spending approval is shared across everything the wallet
+  has authorized, an approval LARGER than this offset's own footprint
+  is left in place and said so rather than zeroed out from under
+  another live commitment). If the loan's own economics moved while
+  the posting review sat open (a keeper extension), the submission
+  stops for a fresh review rather than granting a standing approval
+  larger than the reviewed figure. A dead offset is
   never presented as completable: when the loan has settled another
   way, or when time has passed the point where the offer's
   replacement term can still end by the original maturity, the view

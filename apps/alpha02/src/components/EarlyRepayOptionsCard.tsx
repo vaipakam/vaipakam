@@ -62,15 +62,22 @@ export function EarlyRepayOptionsCard({
   refinanceEligible: boolean;
 }) {
   const o = copy.earlyRepay.options;
+  // Tri-state on purpose (Codex #1500 r2): the mode is read live in
+  // BOTH modes (the page's cheap status read carries it), but while
+  // it is unknown the card must not assert the full-term default — a
+  // pro-rata borrower would be told the wrong price for closing.
+  const closeCost =
+    useFullTermInterest === undefined
+      ? o.closeEarlyCostChecking
+      : useFullTermInterest
+        ? o.closeEarlyCostFullTerm
+        : o.closeEarlyCostProRata;
   const rows: OptionRow[] = [
     {
       key: 'full',
       title: o.repayFull,
       desc: o.repayFullDesc,
-      cost:
-        useFullTermInterest === false
-          ? o.closeEarlyCostProRata
-          : o.closeEarlyCostFullTerm,
+      cost: closeCost,
       target: 'repay-action',
       basic: true,
     },
@@ -85,10 +92,7 @@ export function EarlyRepayOptionsCard({
       key: 'close-early',
       title: o.closeEarly,
       desc: o.closeEarlyDesc,
-      cost:
-        useFullTermInterest === false
-          ? o.closeEarlyCostProRata
-          : o.closeEarlyCostFullTerm,
+      cost: closeCost,
       target: 'preclose-card',
     },
     {

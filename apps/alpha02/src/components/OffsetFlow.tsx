@@ -236,6 +236,18 @@ export function OffsetFlow({
       // balance check covers only today's pull (the funding note +
       // pending-card watch own the completion figure).
       const liveBound = offsetCompletionBoundOf(liveLoan);
+      // The receipt disclosed the completion bound from the parent's
+      // live snapshot — if the loan's economics moved since (a keeper
+      // extendLoanInPlace re-stamps rate/term while the receipt sits
+      // open), the standing allowance about to be granted exceeds the
+      // figure the user consented to. Force a fresh review instead of
+      // signing undisclosed headroom (Codex #1500 r2 P1); a SHRUNK
+      // bound (a partial settled) is fine — the pull only gets smaller.
+      if (liveBound > completionBound) {
+        setError(copy.match.termsChanged);
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+        return;
+      }
       await assertErc20BalanceLive({
         publicClient,
         token: liveLoan.principalAsset,

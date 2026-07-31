@@ -589,6 +589,7 @@
         "repayPartialUnavailable": "Not offered on this loan — the lender didn’t enable partial repayments.",
         "closeEarly": "Close early (pay and settle now)",
         "closeEarlyDesc": "The same total as repaying in full — this tool shows you the exact on-chain figure before you sign and settles everything in one step.",
+        "closeEarlyCostChecking": "Checking this loan’s interest mode to price this option…",
         "closeEarlyCostFullTerm": "Costs the full agreed term’s interest even though you’re closing early — that’s this loan’s interest mode.",
         "closeEarlyCostProRata": "This loan accrues day by day, so closing now pays only the interest built up so far.",
         "transfer": "Hand the loan to another borrower",
@@ -665,6 +666,7 @@
       "cancel": "Cancel offset offer",
       "cancelCooldown": "Cancelling opens a few minutes after posting.",
       "cancelled": "Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.",
+      "cancelledApprovalKept": "Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. A larger spending approval on this token was left in place because other activity of yours may rely on it; review it from your wallet’s approvals view if you no longer need it.",
       "cancelledApprovalRemains": "Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The payoff spending approval could not be removed automatically; you can revoke it from your wallet’s approvals view.",
       "blockedOtherPaths": "While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.",
       "onlyBeforeDue": "An offset needs a replacement term that ends before this loan’s due date — it’s no longer available this close to (or past) the due date."

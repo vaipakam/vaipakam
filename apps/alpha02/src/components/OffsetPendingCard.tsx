@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
+import { erc20Abi } from 'viem';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -69,18 +70,35 @@ export function OffsetPendingCard({
       // The posting-time approval was sized principal + completion
       // bound; posting consumed only the principal leg, so a payoff-
       // sized authorization outlives the cancel. Unwind it so "fully
-      // cancelled" means fully cancelled (Codex #1500 r1) — best
-      // effort: a rejected revoke leaves the cancel done and points at
-      // the wallet's approvals view as the remedy.
+      // cancelled" means fully cancelled (Codex #1500 r1) — but the
+      // owner→Diamond allowance is ONE shared number per token: if the
+      // live allowance exceeds this offset's own bound, something else
+      // (another loan's refinance request or offset on the same
+      // principal token) plausibly relies on it, and zeroing it would
+      // strand that commitment's counterparty acceptances. Revoke only
+      // when the allowance is within this offset's own footprint; when
+      // it's larger — or unreadable — leave it and say so (Codex
+      // #1500 r2). Best effort throughout: a rejected revoke leaves
+      // the cancel done and points at the wallet's approvals view.
       try {
-        await revokeAllowance({
-          publicClient: publicClient!,
-          walletClient: walletClient!,
-          token: principalAsset,
-          owner: address,
-          spender: walletChain.diamondAddress,
-        });
-        onDone(copy.offset.cancelled);
+        const allowance = (await publicClient!.readContract({
+          address: principalAsset,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [address, walletChain.diamondAddress],
+        })) as bigint;
+        if (state !== undefined && allowance <= state.completionBound) {
+          await revokeAllowance({
+            publicClient: publicClient!,
+            walletClient: walletClient!,
+            token: principalAsset,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          });
+          onDone(copy.offset.cancelled);
+        } else {
+          onDone(copy.offset.cancelledApprovalKept);
+        }
       } catch {
         onDone(copy.offset.cancelledApprovalRemains);
       }

@@ -36,6 +36,7 @@ import {
 } from '../contracts/preflights';
 import {
   LOAN_STATUS_ACTIVE,
+  loanEndTimeOf,
   readLoanLive,
   readRepaymentDueLive,
 } from '../contracts/loanLive';
@@ -267,14 +268,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loan.data?.status === 'fallback_pending'),
     staleTime: 15_000,
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
-    queryFn: async () =>
-      (
-        await readLoanLive(
-          readClient!,
-          readChain.diamondAddress,
-          loan.data!.loanId,
-        )
-      ).status,
+    // Returns the STATUS plus the interest mode: the same single
+    // getLoanDetails call answers both, and the early-repay chooser
+    // needs the mode in Basic mode too (the loanLive strategy read is
+    // advanced-only by design; asserting the full-term default for a
+    // pro-rata loan misprices the close-early options — Codex #1500
+    // r2). No extra RPC — the read already fetched the whole struct.
+    queryFn: async () => {
+      const live = await readLoanLive(
+        readClient!,
+        readChain.diamondAddress,
+        loan.data!.loanId,
+      );
+      return {
+        status: live.status,
+        useFullTermInterest: live.useFullTermInterest,
+      };
+    },
   });
 
   // Effectively OPEN for the live-read enablements: a stale
@@ -286,7 +296,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const effectivelyActive =
     loan.data?.status === 'active' ||
     (loan.data?.status === 'fallback_pending' &&
-      liveStatus.data === LoanStatus.Active);
+      liveStatus.data?.status === LoanStatus.Active);
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
@@ -545,13 +555,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const liveOverride =
     liveStatus.data === undefined
       ? undefined
-      : liveStatus.data !== LoanStatus.Active
+      : liveStatus.data.status !== LoanStatus.Active
         ? (
             LIVE_STATUS_TO_INDEXED as Record<
               number,
               (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
             >
-          )[liveStatus.data]
+          )[liveStatus.data.status]
         : loan.data.status === 'fallback_pending'
           ? ('active' as const)
           : undefined;
@@ -1661,8 +1671,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           isAdvanced={isAdvanced}
           onSwitchToAdvanced={() => setMode('advanced')}
           partialAllowed={row.allowsPartialRepay}
-          useFullTermInterest={loanLive.data?.live.useFullTermInterest}
-          pastDueHint={row.startTime + row.durationDays * 86400 < nowSec}
+          useFullTermInterest={
+            loanLive.data?.live.useFullTermInterest ??
+            liveStatus.data?.useFullTermInterest
+          }
+          // Chain-anchored only (Codex #1500 r2): the device clock or
+          // a lagging indexer row must never mark a path expired while
+          // the chain-authoritative cards below still permit it. With
+          // no live read in hand the hint stays false — the target
+          // cards enforce the real gates.
+          pastDueHint={
+            loanLive.data
+              ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
+              : bannerTerms.data
+                ? BigInt(bannerTerms.data.chainNow) >
+                  loanEndTimeOf(bannerTerms.data.live)
+                : false
+          }
           refinancePending={refinanceBlocking}
           refinanceEligible={Boolean(
             address && address.toLowerCase() === row.borrower.toLowerCase(),
