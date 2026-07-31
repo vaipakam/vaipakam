@@ -42,6 +42,7 @@ import {
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { readLiveProtocolFees, useProtocolFees } from '../data/fees';
 import { LOCK_PRECLOSE_OFFSET } from '../data/offsetPending';
+import { LOCK_EARLY_WITHDRAWAL_SALE } from '../data/loanSalePending';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
@@ -193,7 +194,8 @@ export function OffsetFlow({
         walletChain.diamondAddress,
         address,
       );
-      const [, liveLoan, latestBlock, borrowerLock, liveFees] = await Promise.all([
+      const [, liveLoan, latestBlock, borrowerLock, lenderLock, liveFees] =
+        await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -216,6 +218,17 @@ export function OffsetFlow({
             args: [BigInt(row.borrowerTokenId)],
           })
           .then((v) => Number(v)),
+        // The LENDER position's lock too: a live sale listing on the
+        // other side of this loan also blocks an offset on chain, and
+        // it is invisible from the borrower token (Codex #1500 r5).
+        publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(row.lenderTokenId)],
+          })
+          .then((v) => Number(v)),
         // The live offer-duration ceiling: governance can lower
         // maxOfferDurationDays below this loan's remaining term, and
         // createOffer rejects a longer duration — catch it before the
@@ -236,9 +249,22 @@ export function OffsetFlow({
         setError(copy.errors.loanAlreadySettled);
         return;
       }
+      // ANY nonzero borrower-position lock conflicts, not just an
+      // offset: a live NFT prepay-collateral listing locks the same
+      // token under a different reason and `offsetWithNewOffer` would
+      // revert after the approval mined. And a concurrent lender sale
+      // locks the OTHER token — invisible on the borrower side — which
+      // the contract refuses too (Codex #1500 r5). Fail before the
+      // approval in every case; only the offset case gets its own copy.
       if (borrowerLock === LOCK_PRECLOSE_OFFSET) {
         setError(copy.offset.alreadyLive);
         void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
+        return;
+      }
+      if (borrowerLock !== 0 || lenderLock === LOCK_EARLY_WITHDRAWAL_SALE) {
+        setError(copy.offset.blockedByOtherLock);
+        void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
+        void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
         return;
       }
       if (durationDays > liveFees.maxOfferDurationDays) {

@@ -18,13 +18,21 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import {
+  LOAN_STATUS_ACTIVE,
+  offsetCompletionBoundOf,
+  readLoanLive,
+} from '../contracts/loanLive';
+import { LOCK_PRECLOSE_OFFSET } from '../data/offsetPending';
 import { ensureAllowance } from '../contracts/erc20';
 import type { OffsetPendingState } from '../data/offsetPending';
 import { formatTokenAmount } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
 
 export function OffsetPendingCard({
+  loanId,
+  borrowerTokenId,
   offerId,
   state,
   principalAsset,
@@ -34,6 +42,9 @@ export function OffsetPendingCard({
   onCleared,
   onDone,
 }: {
+  loanId: number;
+  /** The borrower position token — re-read live before any approval. */
+  borrowerTokenId: string;
   /** Device-remembered linked offer id — null when the lock was seen
    *  but this device never learned the id (cancel degrades to a
    *  pointer at the offers list). */
@@ -96,13 +107,39 @@ export function OffsetPendingCard({
     setBusy(true);
     setError(null);
     try {
+      // `state` is a POLL result: another device may have cancelled or
+      // completed the offset since, and a keeper term change can make
+      // the cached completionBound stale. Re-read the live lock and
+      // loan before granting a payoff-sized allowance, so we never
+      // approve for a commitment that no longer exists — nor restore
+      // an amount that is already short (Codex #1500 r5).
+      const [lockRaw, live] = await Promise.all([
+        publicClient!.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'positionLock',
+          args: [BigInt(borrowerTokenId)],
+        }) as Promise<number | bigint>,
+        readLoanLive(publicClient!, walletChain.diamondAddress, loanId),
+      ]);
+      if (Number(lockRaw) !== LOCK_PRECLOSE_OFFSET) {
+        setError(copy.offset.restoreNoLongerLive);
+        void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
+        return;
+      }
+      if (live.status !== LOAN_STATUS_ACTIVE) {
+        setError(copy.offset.restoreLoanClosed);
+        void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
+        return;
+      }
       await ensureAllowance({
         publicClient: publicClient!,
         walletClient: walletClient!,
         token: principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: state.completionBound,
+        // Sized from the LIVE loan, not the polled snapshot.
+        amount: offsetCompletionBoundOf(live),
       });
       onDone(copy.offset.approvalRestored);
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });

@@ -2288,6 +2288,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           same rationale as the refinance pending card below. */}
       {offsetPend.pending && !isRental && role === 'borrower' ? (
         <OffsetPendingCard
+          loanId={row.loanId}
+          borrowerTokenId={row.borrowerTokenId}
           offerId={offsetPend.offerId}
           state={offsetPend.state}
           principalAsset={row.lendingAsset as `0x${string}`}

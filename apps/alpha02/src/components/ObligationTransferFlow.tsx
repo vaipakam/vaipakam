@@ -464,7 +464,11 @@ export function ObligationTransferFlow({
               must grow only with what the user asks to see. */}
           <WindowedRowList
             rows={candidates}
-            resetKey={`${row.loanId}:${candidates.length}`}
+            // Full list identity per the WindowedRowList contract:
+            // chain + wallet + loan + candidate count, so switching
+            // network or account returns to the 25-row bound instead
+            // of inheriting the previous expansion (Codex #1500 r5).
+            resetKey={`${walletChain?.chainId ?? 0}:${address ?? 'none'}:${row.loanId}:${candidates.length}`}
             render={(o) => {
               const cost = transferEconomicsOf(
                 live,
