@@ -61,10 +61,16 @@ never-promise-yield rule the rest of the app follows.
 | Position-NFT transfer lock (live listing) | "your position is transfer-locked while listed" |
 
 Totals are quoted as "about X" in token units with the
-exact-on-chain-at-execution note. The forfeit rule is worded as an
-outcome, never a formula: "you receive your principal minus the larger
-of the interest built up so far or the buyer's rate top-up — never
-both."
+exact-on-chain-at-execution note. For the generic-offer path, the
+forfeit rule is worded as an outcome, never a formula: "you receive
+your principal minus the larger of the interest built up so far or the
+buyer's rate top-up — never both." A loan-specific position bid does
+NOT inherit that sentence automatically: its chooser row and
+confirmation copy stay blocked until the bid spec defines gross/net
+price, payment asset, any buyer APR or replacement top-up rule, and the
+resulting seller receipt. Copy that mentions a buyer-rate top-up on a
+bid with no buyer rate is as wrong as omitting the generic-offer
+forfeiture.
 
 **The forfeit rule is not the whole cost.** A sale transfers the
 position, and with it any amount the protocol has ALREADY set aside
@@ -969,28 +975,44 @@ than a growing list of patches on generic-offer consumption.
    token id back to loan id must move atomically with that migration;
    otherwise the buyer's new token resolves to loan id zero in
    chain-authoritative position discovery, and the normal loan-management
-   UI treats the acquired position as absent. *Required*: replace the old
-   reverse-index entry with the new lender-token mapping during migration
-   before either sale surface ships.
+   UI treats the acquired position as absent. That is only half the
+   discovery surface: dashboard and history views read the append-only
+   per-user loan index, so the buyer must also receive the REAL loan id
+   there, with the same deduplication used by consolidation. A listing
+   buyer otherwise sees only the temporary sale-vehicle id, and a
+   direct-sale buyer can see no entry at all. *Required*: replace the
+   old reverse-index entry with the new lender-token mapping and append
+   the acquired real loan id to the buyer's user-loan index during
+   migration before either sale surface ships.
 
 26. **The listing sale vehicle must not pollute public loan accounting.**
    Listing acceptance uses an internal transitional loan shape, but if it
    passes through ordinary loan initialization it can increment public
    loan counters, rate sums, and initiation events before being marked
-   repaid without a corresponding terminal event. Indexers and activity
-   consumers can then retain a phantom loan the UX says is never visible.
-   *Required*: bypass ordinary metrics/events for the internal sale
-   vehicle, or define an internal lifecycle that fully reverses counters
-   and emits enough terminal information for every consumer to discard it.
+   repaid without a corresponding terminal event. It can also append the
+   temporary loan id to both parties' per-user histories, where count and
+   pagination views expose the append-only index even after the vehicle
+   is terminal. Indexers, dashboards, and activity consumers can then
+   retain a phantom loan the UX says is never visible. *Required*: bypass
+   ordinary metrics, events, and per-user indexes for the internal sale
+   vehicle, or define an internal lifecycle that fully reverses each of
+   those writes and emits enough terminal information for every consumer
+   to discard it.
 
-27. **Held VPFI migration must restamp both vault owners.** When the
-   held-for-lender balance is denominated in VPFI, sale settlement
-   withdraws it from the seller's vault and credits the buyer's vault.
-   That balance movement must run the same post-balance discount / staking
-   checkpoint routine as any other VPFI vault transfer; otherwise the
-   seller can retain fee-tier or staking credit on VPFI they no longer
-   hold while the buyer's new balance is not checkpointed. *Required*:
-   restamp both vault owners whenever transferred held proceeds are VPFI.
+27. **VPFI sale settlement must restamp every affected vault owner.**
+   When the held-for-lender balance is denominated in VPFI, sale
+   settlement withdraws it from the seller's vault and credits the
+   buyer's vault. The direct-sale path can also consume the buyer's VPFI
+   principal (plus any excess) from their vault even when there are no
+   held proceeds at all. Those balance movements must run the same
+   post-balance discount / staking checkpoint routine as any other VPFI
+   vault transfer; otherwise the seller can retain fee-tier or staking
+   credit on VPFI they no longer hold, the buyer's new held balance may
+   not be checkpointed, or the buyer can retain fee-tier / staking credit
+   on principal they spent to acquire the position. *Required*: restamp
+   every vault owner whose VPFI balance is debited or credited by sale
+   settlement, including the direct-sale buyer whenever the payment asset
+   is VPFI.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
@@ -1172,8 +1194,13 @@ Before the bid can be treated as implementation-safe, the spec must say:
   across many positions has to lock multiples of the capital they can
   actually deploy, making the replacement market sparse. The spec should
   choose that cost explicitly, or use a shared funded vault with atomic
-  per-buyer aggregate reservations, or a short-lived RFQ / signature
-  model instead of assuming independent escrow scales.
+  per-buyer aggregate reservations. A short-lived RFQ or signature is
+  only a substitute when request, funding authorization, and fill are
+  atomic at execution, or when a Permit2-style authorization is checked
+  against live available funds at fill time; duration alone does not make
+  a revocable balance fillable. Otherwise that shape must be labelled
+  deliberately unreserved and kept off the advertised takeable-bid
+  surface.
 
   **This is NOT the same requirement as prerequisite 3, and conflating
   them is a trap.** Escrow settles whether the BUYER's side is reliably
