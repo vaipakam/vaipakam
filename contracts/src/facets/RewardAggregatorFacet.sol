@@ -623,12 +623,22 @@ contract RewardAggregatorFacet is
     ///         `scheduleFloor + recycledBudget`; `aBar` is the trailing
     ///         absorption average the recycled term was sized from.
     /// @custom:event-category informational/reward-governor
+    /// @param freshDrawdown #1218 M5 — `netEmission[D]`: the schedule floor
+    ///        actually drawn fresh, i.e. how much of the budgeted floor real
+    ///        activity earned a claim on. IDENTICAL by construction to what
+    ///        {InteractionRewardsLensFacet.getRecycleDayMetrics} returns for
+    ///        this day — same call, same inputs, same block — and a test
+    ///        binds the two so they cannot drift. Carried here so the whole
+    ///        §9 series is derivable from events alone; see the note at the
+    ///        emit site. Subject to the five bounds documented on that
+    ///        getter: it is the day's COMMITMENT, not its settled payout.
     event GovernorDayPoolStamped(
         uint256 indexed dayId,
         uint256 scheduleFloor,
         uint256 recycledBudget,
         uint256 aBar,
-        uint256 marginBps
+        uint256 marginBps,
+        uint256 freshDrawdown
     );
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
@@ -883,10 +893,25 @@ contract RewardAggregatorFacet is
         // by the resolver above. The fresh reservation is unchanged
         // (recycledHalf = 0 cannot alter commitFresh: armed days carry
         // `t = max`, so no combined-cap trim couples the sides).
+        // #1218 M5 — computed UNCONDITIONALLY so the stamp event can carry
+        // it. Hoisting it out of the `if (armed)` guard is behaviour-neutral:
+        // `committableForDay` is a pure view, and the guard below still gates
+        // the only state writes. The cost is one view call on an unarmed
+        // day's once-daily finalize.
+        //
+        // Why it belongs in the EVENT rather than being read back later: six
+        // of the seven §9 transparency figures are already derivable from the
+        // event stream (`VpfiRecycled` carries `dayId`, `ChainRecycledReported`
+        // carries the per-(chain,day) accepted credit), and this was the only
+        // one that was not — while also being the headline figure,
+        // `netEmission[D]`. Leaving it out forced the indexer either to make a
+        // contract read during ingest, which would end its property of being a
+        // pure function of the event stream, or to fan out reads at query
+        // time. One indexed field removes both.
+        (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
+            s, dayId, scheduleFloor / 2, 0
+        );
         if (armed) {
-            (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
-                s, dayId, scheduleFloor / 2, 0
-            );
             s.outstandingCommitFresh += commitFresh;
             s.outstandingCommitRecycled += totals.reservedBase;
         }
@@ -896,7 +921,8 @@ contract RewardAggregatorFacet is
             scheduleFloor,
             recycledBudget,
             aBar,
-            marginBps
+            marginBps,
+            commitFresh
         );
 
         _applyRecycleRegister(s, dayId, aBar, marginBps);

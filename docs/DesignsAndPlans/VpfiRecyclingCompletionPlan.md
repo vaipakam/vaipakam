@@ -505,8 +505,9 @@ credits. M5 is unblocked.
 
 **The contract slice is TWO VIEWS, not a storage change (scouted 2026-07-30,
 verified against source).** All seven §9 figures are derivable from state
-the protocol already persists; nothing new is stored and no new event is
-emitted. Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
+the protocol already persists; nothing new is stored and no NEW event is
+emitted (#1218 M5 step 3a widens `GovernorDayPoolStamped` by one field,
+`freshDrawdown` — see the decision record below). Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
 from `getDayPoolStamp`, `selfFundingRatio[D]` and `runwayExtensionDays`
 derived from that series. `platformRetained` was reachable from
 `getRecycleBucket` + `getGovernorCommitState` ONLY while the keeper register
@@ -568,6 +569,45 @@ unreachable, and the per-bullet detail below says which is which:
   deliberately NOT netted — a forfeited fresh share was emitted and then
   absorbed, so it belongs in `freshDrawdown[D]` and reappears in
   `absorbed[D]`; the two are complementary legs of one movement.
+
+**Step 3a decision — the day-pool event carries `freshDrawdown` (#1218 M5,
+2026-07-31).** Recorded because it is an architectural choice with a real
+trade, not an implementation detail.
+
+The indexer's ingest path (`chainIngestDO`) makes **zero contract reads**. It
+is a pure function of the event stream, and that is what makes it replayable
+and race-free under the single-writer alarm. Preserving that property was the
+constraint the design had to satisfy.
+
+Scouting found SIX of the seven §9 figures already derivable from events:
+`VpfiRecycled` carries `dayId`, so local absorption buckets per day;
+`ChainRecycledReported` carries `dayCreditAccepted` per `(chain, day)`, so the
+mirror term does too; and `GovernorDayPoolStamped` already carried the floor
+and the recycled budget, from which `selfFundingRatio[D]` and the runway
+series follow. Exactly ONE figure was missing — `freshDrawdown[D]` — and it is
+the headline one, `netEmission[D]`.
+
+Three ways to close that, and why the third wins:
+
+- **Read the contract during ingest.** Ends the purity property for one
+  figure. Rejected — that property is worth more than the field.
+- **Read at query time.** Either fans out one call per displayed day, or needs
+  a cache; and a read-through cache would have to write from the read path,
+  which breaks the DO's single-writer discipline. It also leaves the HEADLINE
+  metric as the one that goes null when RPC is flaky while every other figure
+  serves from D1 — an inconsistency users would see first.
+- **Carry it in the event.** `commitFresh` is already computed inside
+  `_finalizeAndWrite`; it only sat inside the `if (armed)` guard and so was
+  out of scope at the emit. Hoisting it is behaviour-neutral (a pure view; the
+  guard still gates the only state writes) and costs one view call on an
+  unarmed day's once-daily finalize.
+
+The event had **no consumers outside the contract** — declaration and emit
+only — so widening it broke nothing. A test binds the emitted value to what
+`getRecycleDayMetrics` returns for the same day, so the two copies of that
+figure cannot drift; and a second test pins that the hoist did not drag the
+reservation with it, since an unarmed day silently consuming commitment
+headroom would be a far worse bug than the one being fixed.
 
 **One addition beyond §9, decided rather than asked (delegated call,
 recorded here).** M5 also publishes the unearmarked backing figure
