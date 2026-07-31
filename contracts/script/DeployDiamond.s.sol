@@ -529,7 +529,7 @@ contract DeployDiamond is Script {
         );
         // #1306 follow-up — InteractionRewardsLensFacet: the read-only view /
         // getter surface split off InteractionRewardsFacet (cuts[25]) for
-        // EIP-170 headroom. Shares LibVaipakam storage; the 14 view selectors
+        // EIP-170 headroom. Shares LibVaipakam storage; the view selectors
         // route here instead of the (now leaner) mutating facet.
         cuts[65] = _buildCut(
             address(interactionRewardsLensFacet),
@@ -2117,9 +2117,24 @@ contract DeployDiamond is Script {
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet} for
-    ///      EIP-170 headroom. These 14 selectors route to the lens facet.
+    ///      EIP-170 headroom. These selectors route to the lens facet.
+    ///
+    ///      The COUNT is deliberately not written down here, or anywhere.
+    ///      It read "14" against an array of 17 — stale from two prior
+    ///      additions — and the same "14" had also settled into two other
+    ///      comments (this file's cut block below, and
+    ///      `RefreshAllFacetsInPlace.s.sol`'s re-point note). A first attempt
+    ///      at this fix updated the number and asserted it was "stated once,
+    ///      here" — false. A second attempt removed it from three sites and
+    ///      said that was all of them — also false; `HelperTest.sol`'s
+    ///      matching helper carried a fourth. The number has now been wrong
+    ///      or under-swept three times in one PR, which is the actual
+    ///      lesson: nothing mechanical checks a prose count against an array
+    ///      length, so the durable fix is to stop writing it. `s.length` is
+    ///      the answer and it cannot go stale. If you find a count for this
+    ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](19);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2139,6 +2154,9 @@ contract DeployDiamond is Script {
         s[15] = InteractionRewardsLensFacet.getRewardEntryExpiry.selector;
         // #1222 M3 B2-d1 — the commitment keeper's entry-sequence walk.
         s[16] = InteractionRewardsLensFacet.getRewardEntriesRange.selector;
+        // #1218 M5 — the recycling transparency series.
+        s[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
+        s[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for

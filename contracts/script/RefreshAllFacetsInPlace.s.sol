@@ -591,7 +591,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[64] = Item("multicallFacet", address(new MulticallFacet()), _getMulticallFacetSelectors());
         // #1306 follow-up — InteractionRewardsLensFacet. NEW facet carved off
         // InteractionRewardsFacet (view/getter surface) for EIP-170 headroom.
-        // `_split` re-points the 14 view selectors (currently routed to the old
+        // `_split` re-points the view selectors (currently routed to the old
         // InteractionRewardsFacet) to the lens via Replace, so an in-place
         // refresh moves them cleanly.
         items[65] = Item(

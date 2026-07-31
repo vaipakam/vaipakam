@@ -183,6 +183,85 @@ library LibVpfiRecycle {
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
     }
 
+    /// @notice #1218 M5 — {backingPosition} cannot read a balance because the
+    ///         VPFI token address is unset. Distinct from a zero balance on
+    ///         purpose: an unconfigured Diamond and a drained one are
+    ///         different facts, and a view that returned zero for both would
+    ///         report a fresh deploy as fully depleted.
+    error RecycleBackingTokenUnset();
+
+    /**
+     * @notice #1218 M5 — the bucket's live BACKING position: how much VPFI
+     *         the Diamond actually holds against what the ledger has
+     *         labelled as recycled.
+     * @dev    Lives here rather than in the reading facet because this
+     *         library owns the bucket ledger it measures. {credit} and
+     *         {creditCustodyRelocated} both assert `bal >= bucket + amount`
+     *         before raising the bucket, so THAT property is enforced on
+     *         every INFLOW. What no path asserts is the same property after
+     *         an OUTFLOW: a fresh-only interaction-reward claim transfers
+     *         VPFI out without re-checking that the remainder still backs
+     *         `recycleBucket` (#1460).
+     *
+     *         It measures ONE term of the separation invariant, not the
+     *         invariant. This library's own natspec states that invariant
+     *         over THREE custody classes — `userLifCustody +
+     *         unclaimedRewardBudget + recycleBucket` — and `unearmarked`
+     *         nets only the last. That is deliberate (it is exactly #1460's
+     *         third condition, as the completion plan §M7 step 0 defines it),
+     *         but it means a healthy figure here is NOT a solvency statement
+     *         across the other two classes. An earlier revision of this
+     *         comment claimed the library "owns the separation invariant it
+     *         measures", which overstated the scope in precisely the way the
+     *         reading facet's own natspec had already been corrected for —
+     *         the same claim, un-swept, one file away.
+     *
+     *         `unearmarked` is exactly the quantity #1460's third condition
+     *         turns on — the defect needs a non-zero bucket AND a
+     *         scheduled-only claim AND this figure below the scheduled
+     *         payout. The first two are observable in one call each; the
+     *         third was reachable only by chaining three — resolve the token
+     *         via {VPFITokenFacet.getVPFIToken}, call its `balanceOf` on the
+     *         Diamond, subtract {ConfigFacet.getRecycleBucket} — all at the
+     *         same block, or the answer is meaningless. An earlier revision
+     *         called it "observable nowhere", which was the same reachability
+     *         overstatement already corrected for the mirror term (Codex
+     *         #1487 r3). What this adds is ATOMICITY and one call instead of
+     *         three, which is why a deployment could satisfy
+     *         all three and look healthy. Publishing it does NOT close the
+     *         defect; it makes the difference between "corrupted" and
+     *         "merely eligible" readable instead of assumed.
+     *
+     *         Saturating rather than reverting on `bal < bucket`: that state
+     *         IS the breach, and a view that reverts precisely when the
+     *         thing it exists to detect has happened is worse than useless —
+     *         it would blind every monitor at the one moment they must read.
+     * @param  s Diamond storage.
+     * @return vpfiBalance The Diamond's live VPFI balance (all labels).
+     * @return bucket      VPFI wei labelled as recycled reward runway.
+     * @return unearmarked `vpfiBalance − bucket`, floored at zero — the
+     *         balance available to fresh/scheduled payout without eating
+     *         recycle backing. Zero means fully consumed OR in breach; read
+     *         it with `vpfiBalance` and `bucket` to tell those apart.
+     */
+    function backingPosition(LibVaipakam.Storage storage s)
+        internal
+        view
+        returns (uint256 vpfiBalance, uint256 bucket, uint256 unearmarked)
+    {
+        // A raw `balanceOf` on an unset token address hits an address with no
+        // code: the call "succeeds" returning empty, and the ABI decoder then
+        // reverts with NO data. That is the worst possible failure for a
+        // transparency read — an operator on a freshly cut Diamond sees an
+        // unexplained revert and cannot tell a misconfiguration from a bug.
+        // Name it instead.
+        address token = s.vpfiToken;
+        if (token == address(0)) revert RecycleBackingTokenUnset();
+        vpfiBalance = IERC20(token).balanceOf(address(this));
+        bucket = s.recycleBucket;
+        unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
+    }
+
     /**
      * @notice #1222 M3 B2-d5 — credit the RECYCLED share of an arriving
      *         Base-funded remit into this mirror's bucket as RELOCATED

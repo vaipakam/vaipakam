@@ -257,6 +257,88 @@
   },
   {
     "type": "function",
+    "name": "getRecycleBackingSnapshot",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "vpfiBalance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unearmarked",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstandingRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidOutRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "keeperBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRecycleDayMetrics",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "stamped",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "scheduleFloor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshDrawdown",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedLocal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "absorbedMirror",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRewardEntriesRange",
     "inputs": [
       {
@@ -474,6 +556,16 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycleDayMetricsCanonicalChainOnly",
+    "inputs": []
   },
   {
     "type": "error",
