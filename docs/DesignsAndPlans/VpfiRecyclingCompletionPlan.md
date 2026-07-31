@@ -505,8 +505,13 @@ credits. M5 is unblocked.
 
 **The contract slice is TWO VIEWS, not a storage change (scouted 2026-07-30,
 verified against source).** All seven §9 figures are derivable from state
-the protocol already persists; nothing new is stored and no new event is
-emitted. Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
+the protocol already persists; nothing new is stored and no NEW event is
+emitted (#1218 M5 step 3a widens `GovernorDayPoolStamped` by TWO fields,
+`freshDrawdown` **and** `armed` — see the decision record below). The count
+matters literally: a consumer deriving the topic from a six-parameter
+signature computes the wrong hash and silently matches NOTHING, so an
+understated field list does not degrade the series, it empties it
+(Codex #1496 r5 P2). Five were already reachable — `scheduleFloor[D]`/`recycledBudget[D]`
 from `getDayPoolStamp`, `selfFundingRatio[D]` and `runwayExtensionDays`
 derived from that series. `platformRetained` was reachable from
 `getRecycleBucket` + `getGovernorCommitState` ONLY while the keeper register
@@ -568,6 +573,110 @@ unreachable, and the per-bullet detail below says which is which:
   deliberately NOT netted — a forfeited fresh share was emitted and then
   absorbed, so it belongs in `freshDrawdown[D]` and reappears in
   `absorbed[D]`; the two are complementary legs of one movement.
+
+**Step 3a decision — the day-pool event carries `freshDrawdown` (#1218 M5,
+2026-07-31).** Recorded because it is an architectural choice with a real
+trade, not an implementation detail.
+
+The indexer's ingest path (`chainIngestDO`) makes **zero contract reads**. It
+is a pure function of the event stream, and that is what makes it replayable
+and race-free under the single-writer alarm. Preserving that property was the
+constraint the design had to satisfy.
+
+Scouting found the DAILY series derivable from events, and this is the
+careful statement of it — an earlier revision said "six of the seven §9
+figures", which double-counted absorption's two halves as two figures and
+quietly dropped `platformRetained` (Codex #1496 r5 P2). `platformRetained =
+bucket − outstandingCommitRecycled − keeperBudget` is one of the seven and is
+NOT carried by the three-event recipe; it is a cumulative position read from
+`getRecycleBackingSnapshot`, not a per-day flow, and adding `freshDrawdown`
+does not change that. What the events do give, completely, is the per-day
+series — which is what an indexer accumulates and what the dashboard plots:
+`VpfiRecycled` carries `dayId`, so local absorption buckets per day;
+`ChainRecycledReported` carries `dayCreditAccepted` per `(chain, day)`, so the
+mirror term does too — **but ONLY for chains other than the canonical one**.
+`recordChainRecycled` also runs for Base's OWN local close and emits the same
+event for that self-report, while the on-chain accumulator deliberately adds
+to `dayMirrorRecycledCredit` only when `sourceChainId != block.chainid`. Base's
+credit is already counted once via `VpfiRecycled`, so an ingest that consumed
+every chain-report event would count canonical absorption TWICE and inflate the
+published global figure (Codex #1496 r1 P2). **The ingest recipe must filter
+`sourceChainId != <the canonical chain id>` and must have a test that fails if
+that filter is removed** — an inflated absorption number is exactly the
+plausible-looking wrong figure this milestone exists to prevent, and it would
+make the programme look more self-funding than it is; and `GovernorDayPoolStamped` already carried the floor
+and the recycled budget, from which `selfFundingRatio[D]` and the runway
+series follow. Exactly ONE figure was missing — `freshDrawdown[D]` — and it is
+the headline one, `netEmission[D]`.
+
+Three ways to close that, and why the third wins:
+
+- **Read the contract during ingest.** Ends the purity property for one
+  figure. Rejected — that property is worth more than the field.
+- **Read at query time.** Either fans out one call per displayed day, or needs
+  a cache; and a read-through cache would have to write from the read path,
+  which breaks the DO's single-writer discipline. It also leaves the HEADLINE
+  metric as the one that goes null when RPC is flaky while every other figure
+  serves from D1 — an inconsistency users would see first.
+- **Carry it in the event.** `commitFresh` is already computed inside
+  `_finalizeAndWrite`; it only sat inside the `if (armed)` guard and so was
+  out of scope at the emit. Hoisting it is behaviour-neutral (a pure view; the
+  guard still gates the only state writes) and costs one view call on an
+  unarmed day's once-daily finalize.
+
+The event had **no consumers outside the contract** — declaration and emit
+only — so widening it broke nothing.
+
+**Cutover, because the natural claim overreaches.** Widening the event changes
+its topic, so days finalized BEFORE the upgrade were announced under the old
+five-argument signature and cannot supply the field; the indexer's derived
+decoder will not match them and its cursor does not rescan. The event stream
+therefore carries the series **from the cutover forward**, not for all history.
+Pre-cutover days are served by `getRecycleDayMetrics`, which recomputes them on
+demand, so the two surfaces are largely complementary — the event pins history
+as it happens, the getter reconstructs what predates it. A deployment wanting
+the older days in its stored series backfills once from that getter.
+
+**That backfill MUST carry arming status alongside each value** (Codex #1496
+r7 P2). `getRecycleDayMetrics` returns the recomputed figure and NO armed
+bit. Days before `governorCommitArmedFromDay` are every day of the documented
+initial unarmed deployment — most of what a first backfill would cover — so
+they come back as non-zero figures that nothing reserved. Storing them as the
+record republishes unreserved ESTIMATES as net emission: precisely what the
+event's `armed` field was added to prevent, in the flattering direction.
+
+So the backfill reads `armedFromDay` from
+`RewardAggregatorFacet.getGovernorCommitState` (or the `GovernorCommitArmed`
+event) and, per day, either marks the row an estimate or excludes it — never
+stores a bare figure. Post-cutover days need none of this: the event carries
+`armed` itself, which is why it exists.
+
+**There IS a residual gap, and an earlier revision wrongly said there was none
+(Codex #1496 r2 P2).** The getter is the ONLY pre-cutover source, and it
+recomputes from `dayCapThreshold18`, which `setBroadcastDayCapThreshold` can
+overwrite for an already-finalized day on a Diamond demoted from the canonical
+role. If that overwrite lands BEFORE the backfill runs, the getter reconstructs
+a different figure from what the day committed — and because pre-cutover days
+carry no widened event, the original is then unrecoverable from anything.
+
+So the backfill is not a convenience that can be deferred; it is **an operator
+ordering requirement**: back-fill pre-cutover days BEFORE any demotion or
+role migration, and treat the backfilled values as the record from that point.
+Post-cutover days do not have this exposure, because the event is immutable and
+survives the overwrite. Recorded here rather than only in the runbook, since
+the constraint comes from the data model rather than from the ceremony.
+
+**Where the two can disagree, prefer the event.** The getter recomputes from
+`dayCapThreshold18`, and `setBroadcastDayCapThreshold` is a second writer of
+that slot: a Diamond demoted from the canonical role which later receives its
+first V2 broadcast for a day it had already finalized will have that threshold
+overwritten while `dailyGlobalFinalized` stays true. The recomputation can then
+move; the emitted value cannot. The event is the immutable record of what the
+day actually committed. A test binds the emitted value to what
+`getRecycleDayMetrics` returns for the same day, so the two copies of that
+figure cannot drift; and a second test pins that the hoist did not drag the
+reservation with it, since an unarmed day silently consuming commitment
+headroom would be a far worse bug than the one being fixed.
 
 **One addition beyond §9, decided rather than asked (delegated call,
 recorded here).** M5 also publishes the unearmarked backing figure

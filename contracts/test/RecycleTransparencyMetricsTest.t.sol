@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -18,7 +19,10 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
  * @notice #1218 M5 — the two reads that complete the recycling transparency
  *         surface (governor design §9).
  *
- *         The slice adds no storage and no event, so what needs proving is
+ *         The slice adds NO storage, and no new event — it widens one
+ *         existing event by two fields (`freshDrawdown` and `armed`) so the
+ *         per-day series is derivable from the event stream. So what needs
+ *         proving is
  *         not that values persist but that the DERIVATIONS agree with the
  *         protocol they claim to describe:
  *
@@ -278,6 +282,140 @@ contract RecycleTransparencyMetricsTest is SetupTest {
 
         (, , , , , uint256 mirror) = _lens().getRecycleDayMetrics(day);
         assertEq(mirror, 0, "canonical chain is not its own mirror");
+    }
+
+    // ─── the day-pool event carries the series ───────────────────────────────
+
+    /**
+     * @dev #1218 M5 — `GovernorDayPoolStamped` now carries `freshDrawdown`, so
+     *      the whole §9 series is derivable from the event stream and the
+     *      indexer never has to read a contract during ingest.
+     *
+     *      This asserts them EQUAL rather than each against a constant. Two
+     *      copies of one figure is precisely the shape that drifts, and
+     *      nothing in the compiler would catch it: the emit site and the lens
+     *      call `committableForDay` independently.
+     *
+     *      What it proves is equality AT EMISSION — that a code change cannot
+     *      silently separate the two. It does NOT prove they agree forever,
+     *      and the natspec no longer claims they do: the getter recomputes
+     *      from `dayCapThreshold18`, which `setBroadcastDayCapThreshold` can
+     *      overwrite for an already-finalized day on a Diamond demoted from
+     *      the canonical role. Where they later diverge the EVENT is the
+     *      trustworthy one, being immutable — so the property worth pinning
+     *      here is that the immutable record starts out correct.
+     *
+     *      Non-vacuity guarded explicitly — the equality is worthless if both
+     *      sides are zero, which is the trap that made an earlier test in this
+     *      file pass while proving nothing.
+     */
+    function testDayPoolEventCarriesTheSameDrawdownTheLensReports() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        vm.recordLogs();
+        _finalize(5);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 sig = keccak256(
+            "GovernorDayPoolStamped(uint256,uint256,uint256,uint256,uint256,uint256,bool)"
+        );
+        uint256 eventDrawdown;
+        bool eventArmed;
+        bool found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0 || logs[i].topics[0] != sig) continue;
+            assertEq(uint256(logs[i].topics[1]), 5, "stamp is for day 5");
+            (, , , , uint256 fd, bool am) = abi.decode(
+                logs[i].data,
+                (uint256, uint256, uint256, uint256, uint256, bool)
+            );
+            eventDrawdown = fd;
+            eventArmed = am;
+            found = true;
+        }
+        assertTrue(found, "the finalize must emit the day-pool stamp");
+
+        (, , , uint256 lensDrawdown, , ) = _lens().getRecycleDayMetrics(5);
+
+        assertGt(
+            lensDrawdown,
+            0,
+            "non-vacuity: a zero on both sides would prove nothing"
+        );
+        assertEq(
+            eventDrawdown,
+            lensDrawdown,
+            "the event and the getter must publish ONE figure, not two"
+        );
+        assertTrue(eventArmed, "day 5 was armed, and the event must say so");
+    }
+
+    /**
+     * @dev The `armed` flag has to actually distinguish, or it is decoration.
+     *      Before arming the calculation still runs and is still published,
+     *      but nothing reserves it and legacy claims price from the uncapped
+     *      half — so the figure is an ESTIMATE, and an event-only consumer
+     *      unable to tell would record estimates as immutable history (Codex
+     *      #1496 r2 P2).
+     *
+     *      Asserts the flag is FALSE on an unarmed day while the drawdown is
+     *      still non-zero: a flag that only ever reads false, or a day that
+     *      published nothing, would both make this vacuous.
+     */
+    function testUnarmedDayPublishesTheFigureButMarksItUnarmed() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        // deliberately NOT arming
+
+        vm.recordLogs();
+        _finalize(5);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 sig = keccak256(
+            "GovernorDayPoolStamped(uint256,uint256,uint256,uint256,uint256,uint256,bool)"
+        );
+        uint256 fd;
+        bool armed;
+        bool found;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0 || logs[i].topics[0] != sig) continue;
+            (, , , , uint256 d_, bool a_) = abi.decode(
+                logs[i].data,
+                (uint256, uint256, uint256, uint256, uint256, bool)
+            );
+            fd = d_;
+            armed = a_;
+            found = true;
+        }
+        assertTrue(found, "the stamp is emitted on unarmed days too");
+        assertFalse(armed, "an unarmed day must be marked unarmed");
+        assertGt(fd, 0, "and still publishes the figure, or the flag is moot");
+    }
+
+    /**
+     * @dev The hoist that made the field possible must stay behaviour-neutral.
+     *      `committableForDay` moved OUT of the `if (armed)` guard so the emit
+     *      can see it; the guard still gates the only state writes. An unarmed
+     *      day must therefore still reserve NOTHING while the event carries a
+     *      real figure — if the hoist had dragged the reservation with it,
+     *      unarmed days would start consuming commitment headroom silently.
+     */
+    function testHoistDoesNotReserveOnAnUnarmedDay() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        // deliberately NOT arming
+
+        (, uint256 freshBefore, uint256 recycledBefore, ) =
+            _agg().getGovernorCommitState();
+        _finalize(5);
+        (, uint256 freshAfter, uint256 recycledAfter, ) =
+            _agg().getGovernorCommitState();
+
+        assertEq(freshAfter, freshBefore, "unarmed day reserves no fresh");
+        assertEq(
+            recycledAfter,
+            recycledBefore,
+            "unarmed day reserves no recycled"
+        );
     }
 
     // ─── canonical-chain scoping ─────────────────────────────────────────────

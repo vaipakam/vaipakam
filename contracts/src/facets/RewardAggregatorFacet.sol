@@ -623,12 +623,55 @@ contract RewardAggregatorFacet is
     ///         `scheduleFloor + recycledBudget`; `aBar` is the trailing
     ///         absorption average the recycled term was sized from.
     /// @custom:event-category informational/reward-governor
+    /// @param freshDrawdown #1218 M5 — `netEmission[D]`: the schedule floor
+    ///        actually drawn fresh, i.e. how much of the budgeted floor real
+    ///        activity earned a claim on. Equal to what
+    ///        {InteractionRewardsLensFacet.getRecycleDayMetrics} returns for
+    ///        this day AT THE MOMENT OF EMISSION — same call, same inputs,
+    ///        same block — and a test binds the two so a code change cannot
+    ///        silently separate them.
+    ///
+    ///        It is NOT guaranteed equal to that getter forever, and an
+    ///        earlier revision claimed "identical by construction", which was
+    ///        too strong (Codex #1496 r1 P2). The getter RECOMPUTES from
+    ///        `dayCapThreshold18`, and {setBroadcastDayCapThreshold} is a
+    ///        second writer of that slot: a Diamond DEMOTED from the
+    ///        canonical role which then receives its first V2 broadcast for a
+    ///        day it had already finalized will have the threshold
+    ///        overwritten while `dailyGlobalFinalized` stays true, so the
+    ///        recomputation can move while this value cannot.
+    ///
+    ///        That asymmetry is a reason to prefer this field, not a caveat
+    ///        against it: the event is the IMMUTABLE record of what the day
+    ///        actually committed, and the recomputation is the thing that can
+    ///        be perturbed afterwards. Where they disagree, this is the one
+    ///        that was true when the day closed.
+    ///
+    ///        Subject to the five bounds documented on that getter: it is the
+    ///        day's COMMITMENT, not its settled payout — **and only on an
+    ///        ARMED day**. Read `armed` before using it.
+    /// @param armed Whether this day RESERVED the figure above (Codex #1496
+    ///        r2 P2). Before arming the calculation still runs and is still
+    ///        published, but nothing commits it and legacy claims price from
+    ///        the uncapped `halfPoolForDay` instead — so on an unarmed day
+    ///        `freshDrawdown` is an ESTIMATE of what the day would have
+    ///        committed, not a record of what it did.
+    ///
+    ///        Carried as a field rather than left to consumers to derive by
+    ///        comparing `dayId` against the arming day, because deriving it
+    ///        needs a second read and the whole point of this field set is
+    ///        that a reader following the notices needs nothing else. An
+    ///        event-only consumer that could not tell the two apart would
+    ///        record estimates as immutable history — the exact
+    ///        plausible-looking wrong number this surface exists to avoid.
     event GovernorDayPoolStamped(
         uint256 indexed dayId,
         uint256 scheduleFloor,
         uint256 recycledBudget,
         uint256 aBar,
-        uint256 marginBps
+        uint256 marginBps,
+        uint256 freshDrawdown,
+        bool armed
     );
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
@@ -883,10 +926,43 @@ contract RewardAggregatorFacet is
         // by the resolver above. The fresh reservation is unchanged
         // (recycledHalf = 0 cannot alter commitFresh: armed days carry
         // `t = max`, so no combined-cap trim couples the sides).
+        // #1218 M5 — computed UNCONDITIONALLY so the stamp event can carry
+        // it. Hoisting it out of the `if (armed)` guard is behaviour-neutral:
+        // `committableForDay` is a pure view, and the guard below still gates
+        // the only state writes. The cost is one view call on an unarmed
+        // day's once-daily finalize.
+        //
+        // Why it belongs in the EVENT rather than being read back later: six
+        // of the seven §9 transparency figures are already derivable from the
+        // event stream (`VpfiRecycled` carries `dayId`, `ChainRecycledReported`
+        // carries the per-(chain,day) accepted credit), and this was the only
+        // one that was not — while also being the headline figure,
+        // `netEmission[D]`. Leaving it out forced the indexer either to make a
+        // contract read during ingest, which would end its property of being a
+        // pure function of the event stream, or to fan out reads at query
+        // time. Two fields remove both — `freshDrawdown` and the `armed`
+        // flag that says whether it is a commitment or an estimate.
+        //
+        // Scoped precisely: this makes the per-DAY series event-derivable.
+        // `platformRetained` is a cumulative position read from
+        // {InteractionRewardsLensFacet.getRecycleBackingSnapshot}, not a
+        // per-day flow, and no event carries it.
+        //
+        // CUTOVER, stated because the obvious claim is too strong (Codex
+        // #1496 r1 P2): widening the event changes its topic, so days
+        // finalized BEFORE this upgrade were announced under the old
+        // signature and cannot supply this field. The event stream therefore
+        // carries the series from the upgrade FORWARD, not for all history.
+        // Pre-cutover days are covered by
+        // {InteractionRewardsLensFacet.getRecycleDayMetrics}, which
+        // recomputes them on demand — the two surfaces are complementary by
+        // design, and a one-time backfill (if a deployment ever wants the
+        // older days in its series) is a read over that getter, needing no
+        // event at all.
+        (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
+            s, dayId, scheduleFloor / 2, 0
+        );
         if (armed) {
-            (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
-                s, dayId, scheduleFloor / 2, 0
-            );
             s.outstandingCommitFresh += commitFresh;
             s.outstandingCommitRecycled += totals.reservedBase;
         }
@@ -896,7 +972,9 @@ contract RewardAggregatorFacet is
             scheduleFloor,
             recycledBudget,
             aBar,
-            marginBps
+            marginBps,
+            commitFresh,
+            armed
         );
 
         _applyRecycleRegister(s, dayId, aBar, marginBps);
