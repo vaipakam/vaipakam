@@ -951,9 +951,16 @@ contract RewardAggregatorFacet is
     ///      bucket for future days. The keeper share is EARMARKED within the
     ///      bucket (`recycleKeeperBudget`), not moved out of it: `recycleBucket`
     ///      stays the full Diamond-custody total so the audited backing
-    ///      invariant (`balance >= recycleBucket`, enforced by every
-    ///      `LibVpfiRecycle.credit` and the RL-3 claim gate) keeps the keeper
-    ///      budget backed — the earmark only removes it from `fundable` so it
+    ///      invariant (`balance >= recycleBucket`) keeps the keeper budget
+    ///      backed. The enforcement points are worth naming exactly, because
+    ///      this comment previously credited "the RL-3 claim gate" and that
+    ///      was an OVERCLAIM (#1460): RL-3's cap is the expiry SWEEP's, and
+    ///      the CLAIM path had no backing cap at all until #1460 added one.
+    ///      The three real points are {LibVpfiRecycle.credit} /
+    ///      {LibVpfiRecycle.creditCustodyRelocated} on inflow,
+    ///      {InteractionRewardsFacet}'s `backingRoom` cap on the RL-3 expiry
+    ///      sweep, and {RewardClaimFacet}'s fresh-component cap at claim
+    ///      time — the earmark only removes it from `fundable` so it
     ///      can't be re-lent to reward budgets, and the later spend stage
     ///      decrements both ledgers on transfer-out (Codex #1344 P1). Dormant
     ///      (`keeperBps == 0`, the deploy default) this is a no-op — exactly

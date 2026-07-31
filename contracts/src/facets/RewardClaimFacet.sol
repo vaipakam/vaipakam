@@ -72,6 +72,29 @@ contract RewardClaimFacet is
         uint256 amount,
         uint256 claimDayId
     );
+
+    /// @notice #1460 — emitted when a claim's FRESH components were scaled
+    ///         down to fit an available cap. Two caps can bind and the event
+    ///         says which: compare `cappedTo` against `backingRoom` —
+    ///         equal means the un-earmarked BALANCE bound the payout (the
+    ///         deployment is thin on backing), otherwise the 69M schedule
+    ///         did. The backing case is the one worth alerting on: it is a
+    ///         funding state that resolves, and it is the early signal that a
+    ///         later RECYCLED claim would otherwise be the first symptom.
+    ///         Recycled components are never scaled here — their backing sits
+    ///         in the bucket by construction.
+    /// @param user           Claimant whose payout was truncated.
+    /// @param requestedFresh Fresh VPFI wei the claim would have paid
+    ///                       (payout + forfeit-to-treasury share).
+    /// @param cappedTo       Fresh VPFI wei actually available.
+    /// @param backingRoom    `balanceOf(diamond) - recycleBucket` at claim.
+    /// @custom:event-category state-change/reward-claim
+    event InteractionClaimFreshTruncated(
+        address indexed user,
+        uint256 requestedFresh,
+        uint256 cappedTo,
+        uint256 backingRoom
+    );
     // ─── User entry point ────────────────────────────────────────────────────
 
     /**
@@ -275,6 +298,42 @@ contract RewardClaimFacet is
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
 
+        // #1460 — BACKING separation enforced HERE, at the claim, not only at
+        // the credit chokepoint. `recycleBucket` and the fresh reward budget
+        // are two protocol-owned claims on ONE fungible Diamond balance, and
+        // this path previously debited the bucket by the RECYCLED component
+        // only while transferring the AGGREGATE out. Paying a fresh component
+        // that does not fit in `balance - recycleBucket` therefore left the
+        // bucket claiming more tokens than back it: nothing is lost and
+        // nobody is paid wrongly, but a LATER recycled claim reverts for want
+        // of funding THIS claim consumed — the symptom lands maximally far
+        // from its cause, and `ops/mesh-watcher` (which reads no balance)
+        // reports healthy throughout.
+        //
+        // Why capping the FRESH terms is exactly the right invariant: the
+        // payout removes `freshPending + paidRecycled` from the balance while
+        // the bucket moves by `-paidRecycled + freshTreasury`, so
+        // `paidRecycled` cancels on both sides and the post-state requirement
+        // `balance' >= recycleBucket'` reduces precisely to
+        // `freshPending + freshTreasury <= balance - recycleBucket`. A
+        // recycled-only claim is consequently never capped here — its backing
+        // is in the bucket by construction, which is the promised steady
+        // state at fresh exhaustion.
+        //
+        // Same shape as the two enforcement points that already exist
+        // ({LibVpfiRecycle.credit}'s inflow assert and the RL-3 expiry
+        // sweep's `backingRoom`), so all three agree on what "un-earmarked"
+        // means. KNOWN LIMIT shared with both: per-loan borrower-LIF custody
+        // (`borrowerLifRebate[].vpfiHeld`) also sits in this balance and has
+        // no global counter to subtract, so this is an upper bound on
+        // genuinely free tokens rather than an exact one — tightening it
+        // needs a custody aggregate and is tracked separately.
+        uint256 backingRoom = IERC20(vpfi).balanceOf(address(this));
+        backingRoom = backingRoom > s.recycleBucket
+            ? backingRoom - s.recycleBucket
+            : 0;
+        if (backingRoom < remaining) remaining = backingRoom;
+
         // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term
         // only. The recycled components are bucket-backed (sized by the
         // finalize stamp against `fundable`) and NEVER consume the fresh
@@ -302,6 +361,18 @@ contract RewardClaimFacet is
         uint256 freshSpend = freshPending + freshTreasury;
         if (freshSpend > remaining) {
             if (remaining == 0 && paidRecycled + forfeitRecycled == 0) {
+                // #1460 — name the cause. A zero cap has two very different
+                // meanings and the operator response differs: an exhausted
+                // 69M pool is terminal, a short backing is a FUNDING state
+                // that resolves (the mirror's fresh remit lands, or
+                // absorption catches up). Reverting rather than truncating
+                // to zero is deliberate in BOTH cases — a zero-payout claim
+                // would still consume the claimant's entries and retire
+                // their armed commitments, so it would burn the entitlement
+                // to pay nothing.
+                if (backingRoom == 0) {
+                    revert InteractionRewardBackingShort(freshSpend, 0);
+                }
                 revert InteractionPoolExhausted();
             }
             uint256 scaledFreshPending =
@@ -310,6 +381,16 @@ contract RewardClaimFacet is
             freshPending = scaledFreshPending;
             pending = freshPending + paidRecycled;
             treasuryDelta = freshTreasury + forfeitRecycled;
+            // #1460 — the shortfall is now observable instead of silent.
+            // `cappedTo == backingRoom` distinguishes a backing-bound claim
+            // (alert: the deployment is thin, and a recycled claim is the
+            // next thing to fail) from an ordinary 69M-schedule truncation.
+            emit InteractionClaimFreshTruncated(
+                msg.sender,
+                freshSpend,
+                remaining,
+                backingRoom
+            );
         }
 
         paid = pending;

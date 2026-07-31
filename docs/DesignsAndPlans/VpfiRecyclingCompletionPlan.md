@@ -515,7 +515,32 @@ review slot the excision doc recommends); slash path →
 
 GovernanceRunbook gains a recycling section, executed in order:
 
-0. ⛔ **#1460 is BOTH already reachable on an unarmed deployment AND a hard
+0. ✅ **RESOLVED — the separation is now enforced at claim time.**
+   `RewardClaimFacet` caps a claim's FRESH components at
+   `balanceOf − recycleBucket` before anything transfers: where the cap
+   binds the payout is truncated to what is genuinely funded and
+   `InteractionClaimFreshTruncated` announces the shortfall (carrying the
+   backing figure, so a backing-bound claim is distinguishable from an
+   ordinary 69M-schedule truncation); where no backing remains the claim
+   reverts `InteractionRewardBackingShort` rather than paying zero, since a
+   zero payout would still consume the claimant's entries and retire their
+   armed commitments. The recycled component is never capped — it cancels
+   out of the invariant algebra, so at fresh exhaustion the recycled term
+   still pays, which is the promised steady state.
+   `RewardAggregatorFacet`'s enforcement comment is corrected in the same
+   change, and `RewardClaimBackingSeparationTest` asserts the post-state
+   `balanceOf >= recycleBucket` across a **paying** claim — the assertion
+   whose absence let this survive. One imprecision is stated rather than
+   hidden: per-loan borrower-LIF custody shares the balance and has no
+   running total, so the headroom is an upper bound on free tokens, shared
+   with the two pre-existing enforcement points.
+   **The `BACKING --> ARM` edge in §4 stays** — it is discharged, not
+   deleted; arming still requires this closed.
+   *The forensic account below is retained as the historical record of the
+   defect and of how its framing was corrected twice (r17 → r19/r20). It
+   describes the PRE-FIX code.*
+
+   ⛔ **#1460 was BOTH already reachable on an unarmed deployment AND a hard
    arming gate. Those are not alternatives, and r17 wrongly replaced the
    second with the first (#1457 r19).** THREE conditions, all satisfiable
    before arming:

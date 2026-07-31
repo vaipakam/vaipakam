@@ -195,6 +195,21 @@ interface IVaipakamErrors {
     error NoInteractionRewardsToClaim();
     /// @notice The 69M VPFI interaction rewards cap has been fully paid out.
     error InteractionPoolExhausted();
+    /// @notice #1460 — the claim's FRESH component has no un-earmarked VPFI
+    ///         behind it: `balanceOf(diamond) - recycleBucket` is zero, so
+    ///         paying it would leave the recycle bucket claiming tokens that
+    ///         are no longer there. Distinct from
+    ///         {InteractionPoolExhausted}: the 69M schedule may have ample
+    ///         headroom while the tokens to honour it have not arrived (a
+    ///         mirror whose fresh remit is still in flight, or a deployment
+    ///         thin on un-earmarked balance). A FUNDING state, not a
+    ///         terminal one — the same claim succeeds once backing lands.
+    /// @param requiredFresh Fresh VPFI wei the claim would have paid out.
+    /// @param backingRoom   Un-earmarked balance available (zero here).
+    error InteractionRewardBackingShort(
+        uint256 requiredFresh,
+        uint256 backingRoom
+    );
     /// @notice The caller's next claimable day does not yet have the
     ///         finalized global denominator broadcast into this chain's
     ///         `knownGlobal*InterestNumeraire18` slots. Per docs/TokenomicsTechSpec.md
