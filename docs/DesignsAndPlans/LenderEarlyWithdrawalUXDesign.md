@@ -376,7 +376,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced twelve gaps that are **not
+The adversarial passes on this doc surfaced fourteen gaps that are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
 app can close them, because the risk lives in the settlement paths
 themselves. They are recorded here as blockers rather than assumed
@@ -385,8 +385,8 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4 belong to the **listing** path, 5–10 to the **instant-sell**
-(direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
+Items 1–4, 13 and 14 belong to the **listing** path, 5–10 to the
+**instant-sell** (direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -575,12 +575,50 @@ than a growing list of patches on generic-offer consumption.
    asserting certainty, which is a stopgap, not a resolution — a quote
    cannot be made accurate by hedging the sentence. Like item 11, this
    one applies to **both** sale paths.
+13. **Listing acceptance does not bind the borrower the buyer reviewed.**
+   The buyer's bound acceptance terms cover the position's economics —
+   principal equal to live, collateral at or above their floor, duration,
+   rate — but carry **no field for the borrower-position holder**. The
+   loan's current borrower IS resolved live at initiation, and the
+   comments there say what for: the self-buy guard and the compliance
+   recheck. Both are *eligibility* tests. Neither asks whether this is
+   the borrower the buyer priced. So if the borrower position changes
+   hands between the buyer's review (or signature) and inclusion, a
+   different but still-eligible borrower is substituted and the sale
+   succeeds — the buyer gets a counterparty they never assessed. That
+   contradicts this design's own safe-late-drift rule, which promises
+   that drift landing after the final check produces a refusal rather
+   than a silent substitution; here it produces neither a refusal nor a
+   disclosure. Counterparty identity is not a cosmetic term on a credit
+   position: it is most of what a lender underwrites. *Required*: include
+   the expected borrower-NFT holder in the buyer's bound terms so the
+   substitution reverts. A frontend cannot close this — the drift lands
+   inside the gap no frontend can observe, which is exactly why the
+   binding has to be on-chain.
+14. **The expiry escape must survive a pause.** Items 1 and the Layer-3
+   checklist require a mandatory finite listing expiry plus a
+   permissionless teardown, and that escape exists to guarantee the
+   borrower's held paths cannot be frozen indefinitely. But every entry
+   point on the withdrawal facet today — create, cancel, complete — is
+   `whenNotPaused`, so an implementer following the established pattern
+   will inherit it on the new teardown as well. A pause that begins
+   before an expired listing is cleared would then hold the lender-NFT
+   lock and the borrower-side holds until governance restores the
+   protocol, converting the finite expiry back into the indefinite
+   freeze it was introduced to remove — and doing so precisely during an
+   incident, when the escape matters most. *Required*: the expired-listing
+   cleanup stays callable while paused, or ships with a separate
+   emergency unlock. This is defensible because the teardown moves **no
+   value**: it releases a lock and clears holds. Pausing exists to stop
+   value movement, not to strand third-party assets, so exempting a
+   no-value release is consistent with what the pause is for rather than
+   a hole in it.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
-- **The listing surface does not ship until items 1–4, 11 and 12 are
-  resolved.**
+- **The listing surface does not ship until items 1–4, 11, 12, 13 and 14
+  are resolved.**
 - **The instant-sell surface does not ship until items 5–12 are
   resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
@@ -605,8 +643,8 @@ are bidding on and the price they will pay, so their consent is
 expressed once against the actual running position instead of being
 reconstructed field-by-field from an offer authored for something else.
 
-**What the reshape actually removes — and what it does not.** The ten
-items split into two classes, and the bid only dissolves one of them:
+**What the reshape actually removes — and what it does not.** The items
+split into three classes, and the bid only dissolves one of them:
 
 - *Term-mismatch items (7, 8 — behavioural terms, NFT identity) and the
   duration-COMPARISON half of item 9* dissolve by construction. Each
@@ -658,6 +696,26 @@ items split into two classes, and the bid only dissolves one of them:
   revision of this paragraph claimed items 6–10 all "stop being checks at
   all"; that was wrong, and stated that way it would have let the roadmap
   treat the replacement as safe while carrying the races forward.
+- *Item 12 (the best-effort reward migration) is UNTOUCHED — a third
+  class of its own.* The first two classes are both about the buyer's
+  consent, which is what the bid reshapes. Item 12 is not: it is a
+  settlement-atomicity defect in the reward bookkeeping that both sale
+  paths route through a failure-swallowing self-call. Naming the loan in
+  the bid changes nothing about it — the hook is just as best-effort
+  after the reshape as before, so the seller's forfeiture and the buyer's
+  residual entry remain effects the protocol may or may not deliver.
+  Item 12 already says it applies to both sale paths, and the ship gate
+  lists it for both, so a two-class split that quietly dropped it
+  contradicted this document twice over. Making the migration atomic (or
+  durably recoverable) is a prerequisite the bid does not retire.
+
+  The general point, since the split is the thing implementers will read
+  as a to-do list: **the bid reshapes how the buyer's CONSENT is
+  expressed, and nothing else.** Items that exist because consent was
+  reconstructed from the wrong instrument dissolve or get replaced;
+  items that exist because settlement itself is unsound survive
+  untouched. Anything added to this list in future gets classified on
+  that question first.
 
 **The bid's settlement model has to be specified — it is not inherited.**
 A generic lender offer supplies two things this design leans on
