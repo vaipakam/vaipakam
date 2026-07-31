@@ -218,6 +218,12 @@ else
     f="$SCRIPT_DIR/$s"
     # The dirty variable is the SECOND interpolation in the stamp value.
     dirty_var="$(sed -nE 's/.*"monorepoCommit": "\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*)".*/\1/p' "$f" | head -1)"
+    # The COMMIT half must be pinned with the snapshot too (Codex #1495 r3
+    # P2). Pairing an early dirty reading with a late `rev-parse` lets a
+    # commit landing in between attribute output to a commit that did not
+    # produce it — and that half went unchecked for a whole round because the
+    # guard only knew about the dirty half.
+    commit_var="$(sed -nE 's/.*"monorepoCommit": "\$([A-Za-z_][A-Za-z0-9_]*)\$[A-Za-z_][A-Za-z0-9_]*".*/\1/p' "$f" | head -1)"
     # Anchor on the ACTUAL git state read, not the empty initializer (Codex
     # #1495 r2 P2). Anchoring on `TREE_DIRTY_AT_START=""` meant an edit that
     # left the initializer early while moving the `git diff` conditional after
@@ -236,12 +242,16 @@ else
     fi
     # Every assignment of that variable, anywhere in the file.
     assigns="$(grep -cE "^[[:space:]]*${dirty_var}=" "$f" || true)"
+    commit_from_snap="$(grep -cE "^[[:space:]]*${commit_var}=\"\\\$TREE_COMMIT_AT_START\"" "$f" || true)"
     from_snap="$(grep -cE "^[[:space:]]*${dirty_var}=\"\\\$TREE_DIRTY_AT_START\"" "$f" || true)"
     if [ -z "$snap_line" ] || [ "$snap_init" -ne 1 ]; then
       echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
       FAIL=1
     elif [ "$assigns" -ne 1 ] || [ "$from_snap" -ne 1 ]; then
       echo "  ✗ $s — \$$dirty_var must be assigned exactly once, from the snapshot (found $assigns assignment(s), $from_snap from snapshot) (#1490)" >&2
+      FAIL=1
+    elif [ "$commit_from_snap" -ne 1 ]; then
+      echo "  ✗ $s — \$$commit_var must be pinned from \$TREE_COMMIT_AT_START, not re-read at stamp time (#1490)" >&2
       FAIL=1
     elif [ -n "$first_write" ] && [ "$snap_line" -gt "$first_write" ]; then
       echo "  ✗ $s — the git state read at line $snap_line comes AFTER the first write at line $first_write (#1490)" >&2

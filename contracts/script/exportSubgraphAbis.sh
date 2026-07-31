@@ -53,6 +53,7 @@ REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 # `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
 # edits count as dirty too; a bare `git diff` compares against the index and
 # reports a fully-staged change as clean.
+TREE_COMMIT_AT_START="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
 TREE_DIRTY_AT_START=""
 if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
@@ -144,7 +145,19 @@ jq -s 'add' "$TMPDIR"/*.json > "$ABI_DIR/Diamond.json"
 # the operator (and the on-call investigating a misfired alert) can
 # trace exactly which contract source line corresponds to each event
 # signature here.
-COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
+# HEAD moved between the snapshot and the stamp — the pair would be
+# inconsistent, so say so rather than publish a confident wrong answer.
+if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+     != "$TREE_COMMIT_AT_START" ]; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
+# Pinned WITH the snapshot, not re-read here (Codex #1495 r3 P2). A commit
+# landing between the snapshot and this line would otherwise pair a NEW hash
+# with the CLEAN state observed earlier, attributing output to a commit that
+# did not produce it. The window is small for an exporter and not zero, and
+# the deploy scripts already had to solve exactly this — one idiom, no
+# special cases.
+COMMIT_HASH="$TREE_COMMIT_AT_START"
 COMMIT_DIRTY="$TREE_DIRTY_AT_START"
 cat > "$ABI_DIR/_source.json" <<EOF
 {
