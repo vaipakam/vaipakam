@@ -109,7 +109,16 @@ _prov_excl() {
     *) : ;;
   esac
 }
-if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . "$(_prov_excl "$FRONTEND_OUT_FILE")" "$(_prov_excl "$FRONTEND_SOURCE_FILE")" 2>/dev/null; then
+# Built as an ARRAY so an omitted exclusion contributes NO argument
+# (Codex #1495 r9 P2). Filtering the VALUE was not enough: a quoted
+# command substitution that expands to nothing still passes an EMPTY
+# argument, git rejects it with "empty string is not a valid pathspec",
+# and this negated call with discarded stderr turned that into a
+# permanent "(dirty)" — reproduced end-to-end from a clean tree.
+_prov_paths=(.)
+_prov_e="$(_prov_excl "$FRONTEND_OUT_FILE")"; [ -n "$_prov_e" ] && _prov_paths+=("$_prov_e")
+_prov_e="$(_prov_excl "$FRONTEND_SOURCE_FILE")"; [ -n "$_prov_e" ] && _prov_paths+=("$_prov_e")
+if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- "${_prov_paths[@]}" 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 
