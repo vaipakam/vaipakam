@@ -72,29 +72,6 @@ contract RewardClaimFacet is
         uint256 amount,
         uint256 claimDayId
     );
-
-    /// @notice #1460 — emitted when a claim's FRESH components were scaled
-    ///         down to fit an available cap. Two caps can bind and the event
-    ///         says which: compare `cappedTo` against `backingRoom` —
-    ///         equal means the un-earmarked BALANCE bound the payout (the
-    ///         deployment is thin on backing), otherwise the 69M schedule
-    ///         did. The backing case is the one worth alerting on: it is a
-    ///         funding state that resolves, and it is the early signal that a
-    ///         later RECYCLED claim would otherwise be the first symptom.
-    ///         Recycled components are never scaled here — their backing sits
-    ///         in the bucket by construction.
-    /// @param user           Claimant whose payout was truncated.
-    /// @param requestedFresh Fresh VPFI wei the claim would have paid
-    ///                       (payout + forfeit-to-treasury share).
-    /// @param cappedTo       Fresh VPFI wei actually available.
-    /// @param backingRoom    `balanceOf(diamond) - recycleBucket` at claim.
-    /// @custom:event-category state-change/reward-claim
-    event InteractionClaimFreshTruncated(
-        address indexed user,
-        uint256 requestedFresh,
-        uint256 cappedTo,
-        uint256 backingRoom
-    );
     // ─── User entry point ────────────────────────────────────────────────────
 
     /**
@@ -310,7 +287,7 @@ contract RewardClaimFacet is
         // from its cause, and `ops/mesh-watcher` (which reads no balance)
         // reports healthy throughout.
         //
-        // Why capping the FRESH terms is exactly the right invariant: the
+        // Why gating on the FRESH terms is exactly the right invariant: the
         // payout removes `freshPending + paidRecycled` from the balance while
         // the bucket moves by `-paidRecycled + freshTreasury`, so
         // `paidRecycled` cancels on both sides and the post-state requirement
@@ -332,7 +309,6 @@ contract RewardClaimFacet is
         backingRoom = backingRoom > s.recycleBucket
             ? backingRoom - s.recycleBucket
             : 0;
-        if (backingRoom < remaining) remaining = backingRoom;
 
         // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term
         // only. The recycled components are bucket-backed (sized by the
@@ -359,20 +335,40 @@ contract RewardClaimFacet is
         uint256 freshPending = pending - paidRecycled;
         uint256 freshTreasury = treasuryDelta - forfeitRecycled;
         uint256 freshSpend = freshPending + freshTreasury;
+
+        // #1460 — the backing cap REVERTS; it must not truncate. The two
+        // caps in this frame look interchangeable and are not, and getting
+        // this wrong trades a books-corruption defect for a value-loss one:
+        //
+        //   - `remaining` (the 69M pool) is monotone NON-INCREASING — both
+        //     its subtrahends are append-only — so a remainder trimmed
+        //     against it is unfundable forever and consuming the entry
+        //     alongside it costs the claimant nothing. That is the whole
+        //     argument for truncating, spelled out at length above.
+        //   - `backingRoom` is NOT monotone. It rises the moment a remit
+        //     lands or absorption credits the bucket. And by this point the
+        //     claim legs have ALREADY committed — the window cursor moved,
+        //     entries are processed, `consumeArmedFresh` retires their
+        //     commitments below — so a processed entry can never be claimed
+        //     again. Truncating here would therefore delete value that was
+        //     about to become payable. (Verified, not assumed: the probe in
+        //     {RewardClaimBackingSeparationTest} truncates, restores
+        //     funding, retries, and the retry finds nothing to claim.)
+        //
+        // Reverting keeps the shortfall recoverable, which is precisely what
+        // TokenomicsTechSpec §4a promises for a chain whose funding has not
+        // arrived: "claims revert until the operator/keeper funds it —
+        // recoverable back-pressure, never lost value". The claimant retries
+        // once backing lands and is made whole, rather than being paid a
+        // fraction and silently losing the rest. The recycled component is
+        // blocked with it — that is a DELAY, not a loss, and the alternative
+        // costs the claimant real value.
+        if (freshSpend > backingRoom) {
+            revert InteractionRewardBackingShort(freshSpend, backingRoom);
+        }
+
         if (freshSpend > remaining) {
             if (remaining == 0 && paidRecycled + forfeitRecycled == 0) {
-                // #1460 — name the cause. A zero cap has two very different
-                // meanings and the operator response differs: an exhausted
-                // 69M pool is terminal, a short backing is a FUNDING state
-                // that resolves (the mirror's fresh remit lands, or
-                // absorption catches up). Reverting rather than truncating
-                // to zero is deliberate in BOTH cases — a zero-payout claim
-                // would still consume the claimant's entries and retire
-                // their armed commitments, so it would burn the entitlement
-                // to pay nothing.
-                if (backingRoom == 0) {
-                    revert InteractionRewardBackingShort(freshSpend, 0);
-                }
                 revert InteractionPoolExhausted();
             }
             uint256 scaledFreshPending =
@@ -381,16 +377,6 @@ contract RewardClaimFacet is
             freshPending = scaledFreshPending;
             pending = freshPending + paidRecycled;
             treasuryDelta = freshTreasury + forfeitRecycled;
-            // #1460 — the shortfall is now observable instead of silent.
-            // `cappedTo == backingRoom` distinguishes a backing-bound claim
-            // (alert: the deployment is thin, and a recycled claim is the
-            // next thing to fail) from an ordinary 69M-schedule truncation.
-            emit InteractionClaimFreshTruncated(
-                msg.sender,
-                freshSpend,
-                remaining,
-                backingRoom
-            );
         }
 
         paid = pending;

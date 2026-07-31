@@ -2,7 +2,6 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
-import {Vm} from "forge-std/Vm.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -43,14 +42,6 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
     uint256 internal constant DIAMOND_SEED = 100_000_000 ether;
 
     address internal alice;
-
-    /// Mirrors {RewardClaimFacet.InteractionClaimFreshTruncated}.
-    event InteractionClaimFreshTruncated(
-        address indexed user,
-        uint256 requestedFresh,
-        uint256 cappedTo,
-        uint256 backingRoom
-    );
 
     function setUp() public {
         setupHelper();
@@ -120,70 +111,67 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
 
     // ─── The regression ──────────────────────────────────────────────────────
 
-    /// The defect, direct: a fresh-only payout larger than the un-earmarked
-    /// balance. Pre-#1460 it paid in full and left `recycleBucket` claiming
-    /// more tokens than remained behind it.
-    function testPayingClaimIsTruncatedToBackingRoomAndKeepsSeparation()
-        public
-    {
+    /// The defect, direct — and the property that decides its remedy.
+    ///
+    /// A fresh-only payout larger than the un-earmarked balance. Pre-#1460
+    /// it paid in FULL and left `recycleBucket` claiming more tokens than
+    /// remained behind it. It must now be refused — and refusing rather than
+    /// part-paying is the load-bearing choice: the claim legs commit before
+    /// the caps run, so a part-payment would consume the entry and delete
+    /// the untruncated remainder. This test pins BOTH halves: the refusal,
+    /// and that the claimant is made whole once funding lands.
+    function testUnderfundedClaimIsRefusedAndLosesNothing() public {
         (, uint256 expected) = _seedPayable(alice, 42);
 
         uint256 bal = vpfi.balanceOf(address(diamond));
-        // Leave strictly between zero and the accrual, so the backing cap
-        // binds while a partial payout is still possible.
+        // Backing covers a QUARTER of the accrual: enough that a truncating
+        // implementation would happily pay a partial claim here.
         uint256 room = expected / 4;
         _mut().setRecycleBucketRaw(bal - room);
 
-        // Topics-only: the accrual carries the entry formula's integer
-        // rounding, so the amounts are asserted against state below.
-        vm.expectEmit(true, false, false, false, address(diamond));
-        emit InteractionClaimFreshTruncated(alice, expected, room, room);
+        vm.prank(alice);
+        vm.expectPartialRevert(InteractionRewardBackingShort.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        assertEq(vpfi.balanceOf(alice), 0, "nothing paid while underfunded");
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            _cfg().getRecycleBucket(),
+            "separation: bucket still fully backed"
+        );
+
+        // Funding arrives — the bucket's claim on the balance shrinks.
+        _mut().setRecycleBucketRaw(1 ether);
 
         vm.prank(alice);
         (uint256 paid, , ) =
             RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
-        // Exact, not approximate: with no forfeit component the pro-rata
-        // scaling degenerates to the cap itself.
-        assertEq(paid, room, "payout truncated to the un-earmarked balance");
-        assertLt(paid, expected, "the cap actually bound this claim");
-
-        // THE assertion the pre-#1460 suite never made: separation across a
-        // claim that moved tokens.
+        // THE no-value-loss property: the FULL accrual, not the quarter a
+        // truncating implementation would have paid before consuming the
+        // entry. "Recoverable back-pressure, never lost value"
+        // (TokenomicsTechSpec section 4a).
+        assertApproxEqAbs(
+            paid, expected, 1e6, "claimant made whole once backing lands"
+        );
+        assertGt(paid, room * 3, "recovered far more than a part-payment");
         assertGe(
             vpfi.balanceOf(address(diamond)),
             _cfg().getRecycleBucket(),
-            "separation: bucket still fully backed after a PAYING claim"
-        );
-        assertEq(
-            _cfg().getRecycleBucket(),
-            bal - room,
-            "a fresh-only claim neither debits nor credits the bucket"
-        );
-        assertEq(
-            vpfi.balanceOf(alice),
-            room,
-            "claimant received exactly the backed amount"
+            "separation holds across the PAYING claim too"
         );
     }
 
-    /// Zero un-earmarked balance is a FUNDING state, not an exhausted pool —
-    /// and the two must be distinguishable, because the operator response
-    /// differs (wait for the remit vs. the 69M schedule is spent). Reverting
-    /// rather than paying zero is deliberate: a zero-payout claim would still
-    /// consume the entry and retire its commitment.
-    function testZeroBackingRevertsAsBackingShortNotPoolExhausted() public {
+    /// Diagnosis accuracy. Zero backing and an exhausted 69M pool both stop
+    /// a claim, and an operator's response to them differs completely — one
+    /// resolves when funding lands, the other never does. Here the schedule
+    /// has essentially all of its headroom and only the backing is gone, so
+    /// the claim must report a backing shortfall and NOT
+    /// {InteractionPoolExhausted}.
+    function testZeroBackingReportsBackingShortNotPoolExhausted() public {
         _seedPayable(alice, 43);
-
-        // Bucket claims the entire balance ⇒ backingRoom == 0, while the 69M
-        // schedule still has essentially all of its headroom.
         _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
 
-        // Partial match on the SELECTOR: the error carries the exact accrual
-        // (`freshSpend`), which is the entry formula's integer result and not
-        // reproducible from the lens half-pools without re-deriving its
-        // rounding. The selector is the property under test — that this is
-        // reported as a backing shortfall and NOT as {InteractionPoolExhausted}.
         vm.prank(alice);
         vm.expectPartialRevert(InteractionRewardBackingShort.selector);
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
@@ -196,54 +184,12 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(alice), 0, "nothing paid out");
     }
 
-    /// PROBE (#1460 adversarial self-review) — is a backing-truncated
-    /// remainder recoverable once funding arrives?
-    ///
-    /// This is the question that decides truncate-vs-revert for the BACKING
-    /// cap. The 69M pool cap may truncate freely because `remaining` is
-    /// monotone non-increasing, so the trimmed remainder is unfundable
-    /// forever and nothing is lost by consuming the entry. `backingRoom` is
-    /// NOT monotone — it rises the moment a remit lands — so if the claim
-    /// legs have already consumed the entitlement, truncating against
-    /// backing would destroy value that was about to become payable.
-    function testTruncatedRemainderRecoverabilityAfterFunding() public {
-        (, uint256 expected) = _seedPayable(alice, 45);
-        uint256 bal = vpfi.balanceOf(address(diamond));
-        uint256 room = expected / 4;
-        _mut().setRecycleBucketRaw(bal - room);
-
-        vm.prank(alice);
-        (uint256 firstPaid, , ) =
-            RewardClaimFacet(address(diamond)).claimInteractionRewards();
-        assertEq(firstPaid, room, "first claim truncated to backing");
-
-        // Funding arrives: the bucket's claim on the balance shrinks, so the
-        // un-earmarked room now comfortably covers the trimmed remainder.
-        _mut().setRecycleBucketRaw(1 ether);
-
-        vm.prank(alice);
-        try RewardClaimFacet(address(diamond)).claimInteractionRewards()
-        returns (uint256 secondPaid, uint256, uint256) {
-            emit log_named_uint("remainder recovered on retry", secondPaid);
-            assertGt(
-                secondPaid,
-                0,
-                "RECOVERABLE: truncation is safe for a non-monotone cap"
-            );
-        } catch {
-            emit log("retry REVERTED - entitlement was consumed by the first claim");
-            fail();
-        }
-    }
-
-    /// Negative control — the cap must not over-truncate. With ample
-    /// un-earmarked balance the same claim pays in full and emits no
-    /// truncation event.
-    function testAmpleBackingPaysInFullAndDoesNotTruncate() public {
+    /// Negative control — the gate must not over-refuse. With ample
+    /// un-earmarked balance the same claim pays in full.
+    function testAmpleBackingPaysInFull() public {
         (, uint256 expected) = _seedPayable(alice, 44);
         _mut().setRecycleBucketRaw(1 ether); // negligible against the seed
 
-        vm.recordLogs();
         vm.prank(alice);
         (uint256 paid, , ) =
             RewardClaimFacet(address(diamond)).claimInteractionRewards();
@@ -251,20 +197,10 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         assertApproxEqAbs(
             paid, expected, 1e6, "full accrual paid when backing is ample"
         );
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 truncSig = keccak256(
-            "InteractionClaimFreshTruncated(address,uint256,uint256,uint256)"
-        );
-        for (uint256 i = 0; i < logs.length; i++) {
-            assertTrue(
-                logs[i].topics[0] != truncSig,
-                "no truncation event when nothing was truncated"
-            );
-        }
         assertGe(
             vpfi.balanceOf(address(diamond)),
             _cfg().getRecycleBucket(),
-            "separation holds on the untruncated path too"
+            "separation holds on the unblocked path too"
         );
     }
 }

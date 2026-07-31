@@ -516,15 +516,19 @@ review slot the excision doc recommends); slash path →
 GovernanceRunbook gains a recycling section, executed in order:
 
 0. ✅ **RESOLVED — the separation is now enforced at claim time.**
-   `RewardClaimFacet` caps a claim's FRESH components at
-   `balanceOf − recycleBucket` before anything transfers: where the cap
-   binds the payout is truncated to what is genuinely funded and
-   `InteractionClaimFreshTruncated` announces the shortfall (carrying the
-   backing figure, so a backing-bound claim is distinguishable from an
-   ordinary 69M-schedule truncation); where no backing remains the claim
-   reverts `InteractionRewardBackingShort` rather than paying zero, since a
-   zero payout would still consume the claimant's entries and retire their
-   armed commitments. The recycled component is never capped — it cancels
+   `RewardClaimFacet` requires a claim's FRESH components to fit in
+   `balanceOf − recycleBucket` before anything transfers, reverting
+   `InteractionRewardBackingShort(requiredFresh, backingRoom)` when they do
+   not. It REVERTS rather than truncating, and that distinction is
+   load-bearing: the 69M cap may truncate because `remaining` is monotone
+   non-increasing, so its trimmed remainder is unfundable forever, but
+   `backingRoom` RISES when a remit lands while the claim legs have already
+   consumed the entitlement — so truncating would delete value that was
+   about to become payable, trading a books-corruption defect for a
+   value-loss one. Verified rather than reasoned: a probe that truncates,
+   restores funding and retries finds nothing left to claim. Reverting is
+   also what §4a already promised for an unfunded chain — "recoverable
+   back-pressure, never lost value". The recycled component is never capped — it cancels
    out of the invariant algebra, so at fresh exhaustion the recycled term
    still pays, which is the promised steady state.
    `RewardAggregatorFacet`'s enforcement comment is corrected in the same
