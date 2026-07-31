@@ -2355,7 +2355,7 @@ library LibInteractionRewards {
     ///      conservative-estimate caveat on {rewardEntryExpiry}.
     ///
     ///      KNOWN DIVERGENCE from the #1460 claim-time backing gate, tracked
-    ///      as its own card and NOT patched here. The claim now refuses a
+    ///      as #1499 and NOT patched here. The claim now refuses a
     ///      payout whose fresh part exceeds `balance - recycleBucket`, while
     ///      this predicate tests the balance without netting off the
     ///      earmark — so on a thin deployment the horizon can call an entry

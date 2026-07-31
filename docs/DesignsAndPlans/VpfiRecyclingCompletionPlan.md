@@ -734,6 +734,19 @@ GovernanceRunbook gains a recycling section, executed in order:
    horizon on live mirror reward chains without the mesh reproduces
    the arming failure mode). The ≥90-day grandfather window starts at
    activation.
+   ⛔ **AND #1499 closed** — the expiry-horizon predicate
+   (`_userClaimFundingNeedView`, shared by the sweep gate and the
+   countdown mirror) does NOT apply the #1460 claim-time backing
+   condition. Inert while `rewardClaimHorizonDays == 0`, which is why it
+   is a knob precondition rather than a merge blocker; setting the knob
+   is exactly what makes it live. Armed over the divergence, the horizon
+   accrues against claimants whose claims REVERT for want of backing,
+   and restored funding lets the next sweep expire them on that stale
+   elapsed time — consuming the very notice window the two safeguards
+   above exist to guarantee. Deferred out of #1497 after three in-flight
+   alignment attempts were each subtly wrong (all with green suites);
+   the fix is one shared derivation across the three sites plus a
+   property-test matrix, and should land with #1498.
 3. **RL-4 weights** — stay `[keeper 0, reserve 10000]` absent a keeper
    funding need.
 4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate,
