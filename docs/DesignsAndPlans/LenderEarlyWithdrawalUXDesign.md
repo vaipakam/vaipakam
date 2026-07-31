@@ -89,15 +89,31 @@ as its own line (never folded into the net figure), and where it
 cannot be read the flow says the total cost is unavailable rather
 than quoting a partial one.
 
-**The third line is a forfeiture, not a transfer.** Alongside the
-settlement, both sale paths close the exiting lender's accrued
-interaction-reward entry as *forfeited* — the accrual routes to
-treasury, and the incoming lender is opened a fresh entry covering
-only the window from the day after the sale to the original end. The
-seller does not hand this credit to the buyer; they lose it, and the
-buyer starts a shorter one. So a sale can cost a lender three
-distinct things, and the quote must not present the first as the
-total. Where the pending credit's value cannot be read on the client,
+**The third line is a forfeiture, not a transfer — and today it is not
+even guaranteed.** Alongside the settlement, both sale paths *attempt*
+to close the exiting lender's accrued interaction-reward entry as
+*forfeited* — the accrual routes to treasury, and the incoming lender is
+opened a fresh entry covering only the window from the day after the
+sale to the original end. The seller does not hand this credit to the
+buyer; they lose it, and the buyer starts a shorter one. So a sale can
+cost a lender three distinct things, and the quote must not present the
+first as the total.
+
+The word *attempt* is load-bearing. The reward migration runs as a
+best-effort self-call whose failure is deliberately swallowed so that
+settlement proceeds regardless — so on a deployment where that
+bookkeeping reverts or the facet is not cut, the sale still completes,
+the seller's entry is NOT forfeited, and the buyer gets no residual
+entry. The copy must therefore not describe the outcome as inevitable
+while the mechanism is best-effort; **prerequisite 12 requires the
+migration be made atomic or durably recoverable**, and until it is, the
+wording says what is intended to happen rather than asserting it as
+certain. Getting this backwards in either direction is a real cost:
+promising a forfeiture that may not occur misprices the sale, and
+promising a residual entry the buyer may never receive misprices the
+purchase.
+
+Where the pending credit's value cannot be read on the client,
 the line says so explicitly ("your pending reward credit for this
 position is given up — amount not shown here") rather than being
 omitted: an unquotable cost that the user is told about is honest,
@@ -309,8 +325,8 @@ implementation PR:
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
 | Keep it to the end | No urgent need for the capital | No sale forfeiture, and your reward credit for this position keeps accruing — principal plus the agreed interest if the borrower repays (paid on the loan's schedule where it has one, otherwise at the close); the normal default process (recovery may be less) if they don't |
-| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer |
-| List at your chosen buyer rate | Want liquidity but not at today's book rates | Same costs at completion (forfeiture + any transferring set-aside money); your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
+| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer — plus your pending reward credit for this position, which is given up (shown as its own line, or marked unquotable where the value can't be read) |
+| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same three costs at completion (settlement forfeiture + any transferring set-aside money + the given-up reward credit, with the same unquotable fallback); your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
 The teaching moment (inverse of the borrower side) is REGIME-AWARE,
 not absolute, because the seller pays the LARGER of two figures that
@@ -345,7 +361,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced eleven gaps that are **not
+The adversarial passes on this doc surfaced twelve gaps that are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
 app can close them, because the risk lives in the settlement paths
 themselves. They are recorded here as blockers rather than assumed
@@ -355,7 +371,7 @@ against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
 Items 1–4 belong to the **listing** path, 5–10 to the **instant-sell**
-(direct buy-offer) path, and 11 to both. The instant-sell cluster is
+(direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -491,6 +507,23 @@ than a growing list of patches on generic-offer consumption.
    that they are knowingly buying a sub-threshold position, with the
    frontend surfacing the live figure either way.
 
+   **The acknowledgement branch only works where the buyer is present at
+   the fill.** On the listing path they are: the buyer drives acceptance,
+   so consent to *this* position in *this* state can be taken at that
+   moment. On the instant-sell path they are not — the seller fills a
+   standing offer the buyer authored earlier, for no particular loan. A
+   blanket "I accept distressed positions" flag on a generic offer
+   therefore proves nothing about the position actually assigned, and
+   would be strictly worse than no acknowledgement at all: it would let
+   sellers route *subsequently* underwater loans onto standing-offer
+   creators while pointing at a consent they never gave for this trade.
+   Surfacing the health figure in the SELLER's frontend does not repair
+   that — it informs the wrong party. So for the generic-offer shape the
+   choice narrows to two real options: keep a **hard admission floor**
+   (no acknowledgement escape), or require a **loan-specific buyer
+   authorization carrying an expiry and minimum health/collateral
+   bounds** — which is the position-sale bid under a different name.
+
    **The unpriceable case needs its own answer, not the same one.**
    Where either leg of the loan is illiquid, the risk math refuses to
    produce a figure at all — it reverts rather than returning a
@@ -511,17 +544,33 @@ than a growing list of patches on generic-offer consumption.
    chosen, the surface says which case the user is in and never shows a
    health figure for a position that has none — "this position has no
    price-based safety check" is the honest line, not a blank or a zero.
+12. **The reward migration is best-effort, so the third cost line
+   describes an intention rather than an outcome.** Both sale paths route
+   the interaction-reward transfer through a self-call whose failure is
+   deliberately not bubbled — if that bookkeeping reverts, or a deploy
+   omits the facet, the sale settles anyway with the seller's entry
+   un-forfeited and no residual entry for the buyer. The design requires
+   every quote to disclose that forfeiture (see the vocabulary section),
+   and a mandatory disclosure of a best-effort effect is a promise the
+   protocol does not keep — in *either* direction: the seller may be told
+   they lose a credit they keep, or the buyer may be told they receive a
+   residual entry that never opens. *Required*: make the migration atomic
+   with settlement, or durably recoverable (a recorded pending migration
+   any party can complete). Until then the copy states the intent without
+   asserting certainty, which is a stopgap, not a resolution — a quote
+   cannot be made accurate by hedging the sentence. Like item 11, this
+   one applies to **both** sale paths.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
-- **The listing surface does not ship until items 1–4 and 11 are
+- **The listing surface does not ship until items 1–4, 11 and 12 are
   resolved.**
-- **The instant-sell surface does not ship until items 5–11 are
+- **The instant-sell surface does not ship until items 5–12 are
   resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
-  cannot prevent any of items 5–11, and item 5 in particular lets the
+  cannot prevent any of items 5–12, and item 5 in particular lets the
   loan's own borrower acquire the lender position and then be unable to
   repay it. A path whose damage a filter cannot prevent must be OFF,
   not filtered.
@@ -544,41 +593,90 @@ reconstructed field-by-field from an offer authored for something else.
 **What the reshape actually removes — and what it does not.** The ten
 items split into two classes, and the bid only dissolves one of them:
 
-- *Term-mismatch items (7, 8, 9, 10 — behavioural terms, NFT identity,
-  duration as a floor, offer expiry)* dissolve by construction. Each
-  exists purely because an offer authored for a hypothetical loan is
-  being matched against a real one; when the bid names the loan, there
-  is no second set of terms to disagree with. Item 5 likewise reduces to
-  the ordinary current-holder resolution the listing path already does.
+- *Term-mismatch items (7, 8, 9 — behavioural terms, NFT identity,
+  duration as a floor)* dissolve by construction. Each exists purely
+  because an offer authored for a hypothetical loan is being matched
+  against a real one; when the bid names the loan, there is no second set
+  of terms to disagree with. Item 5 likewise reduces to the ordinary
+  current-holder resolution the listing path already does.
+- *Item 10 (expiry) is REPLACED, not removed.* Naming a loan does
+  nothing about a stale consent window: without a stored and enforced
+  bid deadline, a bid stays fillable after its creator's window closes —
+  exactly the defect item 10 describes, in a new wrapper. So the
+  requirement carries over verbatim as a bid-expiry check. (An earlier
+  revision listed item 10 among the dissolving items, which contradicted
+  this section's own demand for a buyer-authored expiry two paragraphs
+  down.)
 - *Mutable-state items (6, and 11 as policy) do NOT dissolve.* A loan is
   not frozen between a bid and its fill: the borrower can partially
-  repay, collateral can be withdrawn or fall in price, and a
-  held-for-lender payment can arrive. So a bid naming a loan id and a
-  price still buys a position whose shape has moved — which is the same
-  stale-consent and seller-loss race the reshape was meant to end, just
-  relocated. The bid therefore needs a **buyer-authored expiry** and
-  **bounds on the mutable loan state** it is priced against
-  (outstanding principal, collateral exposure, held balance), and the
-  seller's fill still needs a **minimum total receipt and a deadline**.
-  An earlier revision of this paragraph claimed items 6–10 all "stop
-  being checks at all"; that was wrong, and stated that way it would
-  have let the roadmap treat the replacement as safe while carrying the
-  races forward.
+  repay, collateral can be withdrawn or fall in price, a held-for-lender
+  payment can arrive, **and the borrower position itself can transfer to
+  a different holder**. So a bid naming a loan id and a price still buys
+  a position whose shape has moved — the same stale-consent and
+  seller-loss race the reshape was meant to end, just relocated. The bid
+  therefore needs a **buyer-authored expiry** and **bounds on the
+  mutable loan state** it is priced against — outstanding principal,
+  collateral exposure, held balance, **and the expected borrower-NFT
+  holder**. That last one is a distinct requirement, not a restatement of
+  item 5: re-resolving the current holder proves the counterparty is
+  compliance-eligible and not the buyer themselves, which is a very
+  different claim from the buyer having consented to *that* counterparty.
+  A bid reviewed against one borrower must either bind that holder or be
+  invalidated (and re-authorized) when the obligation moves. The seller's
+  fill still needs a **minimum total receipt and a deadline**. An earlier
+  revision of this paragraph claimed items 6–10 all "stop being checks at
+  all"; that was wrong, and stated that way it would have let the roadmap
+  treat the replacement as safe while carrying the races forward.
+
+**The bid's settlement model has to be specified — it is not inherited.**
+A generic lender offer supplies two things this design leans on
+throughout: a principal amount that funds settlement, and a buyer APR
+from which the seller's rate top-up is derived. A bid carrying only a
+loan id and a price supplies neither, so the conservation arithmetic the
+rest of this document assumes has no definition under the new shape.
+Before the bid can be treated as implementation-safe, the spec must say:
+
+- **Payment asset and denomination** — what the buyer pays in, and
+  whether it must match the loan's principal asset.
+- **Gross or net** — whether the named price is what the seller receives
+  or what the buyer pays before the settlement forfeiture, and therefore
+  where the accrued-interest forfeiture and any rate top-up are funded
+  from for a discounted or premium bid. "Principal minus a cost" is a
+  statement about the *generic-offer* path; it is not automatically true
+  of a bid at an arbitrary price.
+- **Reservation lifecycle** — whether the bid amount is escrowed or
+  merely approved, and how it is cancelled. An unescrowed bid recreates
+  both defects the listing prerequisites already forbid: prerequisite 2's
+  apparently-takeable-but-always-reverting instrument, and prerequisite
+  3's debit from a wallet balance beyond the trade's own proceeds.
+
+Leaving these open would let the reshape ship as "the safe alternative"
+while reintroducing exactly the failures items 2 and 3 exist to close.
 
 So the honest summary is: the reshape removes the *comparison* burden,
-not the *freshness* burden. Both shapes need bounded consent on both
-sides; only one of them needs a field-by-field compatibility audit that
-silently rots whenever a term is added.
+not the *freshness* burden, and it brings a settlement-model burden of
+its own. Both shapes need bounded consent on both sides; only one needs
+a field-by-field compatibility audit that silently rots whenever a term
+is added.
 
 This is a contract-side recommendation, offered because the UX cost of
 the alternative lands on users: a picker over generic offers has to
 explain, per row, why an offer that looks takeable is not, and that
-explanation is exactly the list above. A loan-specific bid needs no
-such explanation — though it still needs its bounds shown, since a bid
-whose stated basis has drifted must fail before the seller signs.
+explanation is exactly the list above. A loan-specific bid needs no such
+explanation — though it still needs its bounds shown. The same
+detected-versus-late distinction from Layer 2 applies here and is not
+weakened by the bid shape: drift the app has already detected closes the
+review before any wallet prompt, while drift landing between the final
+read and inclusion cannot be caught by any frontend and instead hits the
+bid's on-chain bounds, producing a safe explained revert and a refreshed
+view. The bounds exist precisely because a pre-sign check cannot cover
+that window; requiring every drift to fail before signing would be the
+impossible guarantee this design already rejected once.
+
 Which shape ships is the contract owners' call; this design works
 against either, and the chooser reports the instant-sell row as
-unavailable until one of them exists **with its bounds**.
+unavailable until one of them exists **with its bounds and a defined
+settlement model**.
 
 Everything else in this design — the chooser, the wait-first framing,
 the vocabulary, the quote rules including the held-balance line — is
@@ -636,8 +734,8 @@ every quote), and the Layer-3 parity hardening (fail-closed lock read,
 dead-listing teardown state, stale-marker discard). **Gated on the
 Contract-level prerequisites section**: the borrower-escape
 requirement (mandatory finite expiry + permissionless teardown) and
-prerequisites **1-4 plus 11** must land first — the listing surface does
-not ship over them — and prerequisites **5-11** gate the instant-sell
+prerequisites **1-4 plus 11 and 12** must land first — the listing surface does
+not ship over them — and prerequisites **5-12** gate the instant-sell
 surface on exactly the same terms. Neither path ships over its own
 open items; in particular item 5 is NOT the sole instant-sale blocker
 (an earlier revision of this paragraph implied that, contradicting the
@@ -649,9 +747,9 @@ and it ships with both sale rows reporting as unavailable.
 Fork-tier spec, scoped to whatever has actually shipped: chooser
 renders for the lender in Basic mode, and a quote on a position
 carrying a held balance shows that line. The listing post/lock/cancel
-drive lands with the listing surface (after items 1-4 and 11); the
+drive lands with the listing surface (after items 1-4, 11 and 12); the
 instant-sell on-chain lender-change drive lands with that surface (after
-items 5-11). Writing a fork-tier drive for a path still gated open would
+items 5-12). Writing a fork-tier drive for a path still gated open would
 assert behaviour the design says must not be reachable yet.
 
 **Phase 2 — comparison quotes (with the borrower "help me choose"
@@ -687,6 +785,13 @@ chooser stays absent on rentals.
    deadline; the reshape removes the comparison burden, not the
    freshness one. Contract owners' call; resolve before the instant-sell
    surface is scheduled.
+0d. If the bid shape is chosen: is the named price gross or net, what
+   asset is it denominated in, where is the settlement forfeiture funded
+   from at a discounted or premium price, and is the amount escrowed at
+   bid time? The generic-offer path answers all four implicitly (its
+   principal funds settlement and its APR derives the top-up); a bid
+   answers none of them, so they must be decided rather than assumed —
+   an unescrowed bid recreates prerequisites 2 and 3 verbatim.
 0c. For loans with an illiquid leg, does Phase 1 exclude both sale
    paths or admit them on the existing illiquid-risk consent (item 11's
    unpriceable case)? A policy is required either way, because the risk
