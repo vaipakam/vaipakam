@@ -376,7 +376,9 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced fourteen gaps that are **not
+The adversarial passes on this doc surfaced the gaps below — sixteen at
+the time of writing, and this section is the ONLY place that number is
+stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
 app can close them, because the risk lives in the settlement paths
 themselves. They are recorded here as blockers rather than assumed
@@ -385,14 +387,14 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4, 13 and 14 belong to the **listing** path, 5–10 to the
-**instant-sell** (direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
+Items 1–4, 13, 14 and 16 belong to the **listing** path, 5–10 and 15 to
+the **instant-sell** (direct buy-offer) path, and 11 and 12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
 offer's creator authored has to be re-checked by hand against a live
-loan the offer never described. Items 5–10 are each a missing hand-check
-of that kind. See "Recommended shape" at the end of this section: the
+loan the offer never described. Items 5–10 and 15 are each a missing
+hand-check of that kind. See "Recommended shape" at the end of this section: the
 pattern suggests the durable fix is a dedicated position-sale bid rather
 than a growing list of patches on generic-offer consumption.
 
@@ -434,6 +436,20 @@ than a growing list of patches on generic-offer consumption.
    consent*. *Required*: an enforceable minimum net (or maximum cost)
    stored with the listing, a tight enough deadline, or fresh seller
    authorization when the bound is exceeded.
+
+   **The bound must cover the held balance, not just the settlement.** A
+   minimum-net-or-maximum-cost guard constrains the forfeiture side only.
+   But a partial or internal settlement can park a NEW `heldForLender`
+   amount between listing and acceptance, and completion transfers that
+   amount to the buyer — so the seller can end up materially worse off
+   with neither bound violated. This document insists elsewhere that held
+   funds are their own line and never folded into the net figure, which
+   is exactly why a net-only bound cannot catch this: the drift happens
+   in the line the net deliberately excludes. Item 6 already closes the
+   same race on the direct-sale path by requiring the bound to *count
+   transferred held proceeds*; item 4 needs the equivalent — a ceiling on
+   the transferring held balance, or a single minimum TOTAL economic
+   receipt spanning both lines.
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
    compliance check and never compares the buy-offer creator against
@@ -536,11 +552,22 @@ than a growing list of patches on generic-offer consumption.
    repair this: the gap between the last read and inclusion is precisely
    the one no frontend can observe, which is this design's own
    safe-late-drift rule. *So the acknowledgement branch is only
-   admissible if its terms carry a fill-time health / collateral-value
-   bound alongside their deadline* — otherwise keep the hard admission
-   floor. This is the same defect class as item 13: the consent must bind
-   the thing it was given for, or it is a signature on a state that no
-   longer exists. On the instant-sell path the buyer is not present at
+   admissible if its terms carry a fill-time solvency bound alongside
+   their deadline* — otherwise keep the hard admission floor.
+
+   **That bound has to be ratio-aware — a collateral-value floor alone
+   does not close the race.** Health factor is risk-adjusted collateral
+   value divided by current borrow value, and the denominator moves too:
+   the principal asset's price can RISE between signing and inclusion,
+   and accrued interest grows regardless, so health can fall through the
+   reviewed level while collateral value sits comfortably above any
+   absolute floor. An implementer reading "health / collateral-value
+   bound" as a free choice between the two could therefore pick the one
+   that does not work. The requirement is a **minimum health factor**, or
+   bounds on BOTH sides of the ratio — not a collateral-value minimum on
+   its own. This is the same defect class as item 13: the consent must
+   bind the thing it was given for, or it is a signature on a state that
+   no longer exists. On the instant-sell path the buyer is not present at
    all — the seller fills a
    standing offer the buyer authored earlier, for no particular loan. A
    blanket "I accept distressed positions" flag on a generic offer
@@ -630,12 +657,44 @@ than a growing list of patches on generic-offer consumption.
    no-value release is consistent with what the pause is for rather than
    a hole in it.
 
+15. **The direct sale does not honour a fixed offer's amount.** The
+   admission guard rejects only an offer amount *below* the live
+   principal. When a fixed / all-or-nothing lender offer is written for
+   MORE than the loan's principal, the path withdraws just the principal,
+   refunds the excess, and still marks the entire offer accepted. A buyer
+   who authored a single indivisible amount is therefore forced into a
+   smaller exposure than they signed for, and their offer is consumed
+   whole — they cannot recycle the remainder into the position size they
+   actually wanted. This is the same generic-offer mismatch as items 7-9,
+   on the one term most obviously central to a lending offer, which is
+   why the earlier claim that items 5-10 covered every missing hand-check
+   was wrong. *Required*: exact amount compatibility for fixed/AON
+   offers, or carry the authored amount explicitly into the
+   position-sale-bid consent.
+16. **A keeper can author the seller's listing terms.** `createLoanSaleOffer`
+   is keeper-callable, and the keeper gate checks only the master switch,
+   the per-loan enable, the action bit, and the global keeper pause — it
+   enforces no lender-authored economic caps. That was already true of
+   the buyer rate; this design makes it worse by adding TWO more
+   seller-chosen parameters (the mandatory finite expiry from the Layer-3
+   checklist, and item 4's minimum-net bound). An approved keeper could
+   therefore pick an extreme rate, the longest permitted expiry, and a
+   bound loose enough to strip the protection item 4 exists to provide —
+   all while this document describes those values as the seller's
+   choices. The FunctionalSpecs rule is that a keeper initiation stays
+   within the granting party's configured caps, so the gap is against
+   spec, not merely unfortunate. *Required*: stored lender caps enforced
+   on-chain for rate, expiry and the economic bound, or a seller
+   signature over the listing parameters. Until one exists, this
+   document's "the seller picks" wording is only true when the seller is
+   the caller.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
-- **The listing surface does not ship until items 1–4, 11, 12, 13 and 14
-  are resolved.**
-- **The instant-sell surface does not ship until items 5–12 are
+- **The listing surface does not ship until items 1–4, 11, 12, 13, 14 and
+  16 are resolved.**
+- **The instant-sell surface does not ship until items 5–12 and 15 are
   resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
@@ -646,8 +705,8 @@ checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 ### Recommended shape for the instant-sell path
 
-Items 5–10 are six independent re-checks that all exist for the same
-reason: a generic lender offer is a promise to *open* a loan, and the
+Items 5–10 and 15 are seven independent re-checks that all exist for the
+same reason: a generic lender offer is a promise to *open* a loan, and the
 instant-sell path spends it to *assume* one. Patching them one at a
 time keeps the mechanism's default wrong — every future term added to
 the offer struct becomes a new omission on this path, silently, because
@@ -800,8 +859,9 @@ testnet with the dev wallets once the redeploy lands).
 the wait-first ordering, the vocabulary, the quote rules including the
 held-balance line — builds against the deployed contracts as they stand.
 The two sale surfaces do not: the Layer-3 checklist's mandatory finite
-listing expiry with permissionless teardown, and the eleven
-contract-level prerequisites below it, are contract changes. An earlier
+listing expiry with permissionless teardown, and **every**
+contract-level prerequisite in the section below it, are contract
+changes. An earlier
 revision of this section claimed the implementation "adds the awareness
 layer and the hardening checklist, not new contract calls" — that was
 wrong on its own terms, since a bound expiry, a permissionless teardown,
@@ -839,9 +899,11 @@ every quote), and the Layer-3 parity hardening (fail-closed lock read,
 dead-listing teardown state, stale-marker discard). **Gated on the
 Contract-level prerequisites section**: the borrower-escape
 requirement (mandatory finite expiry + permissionless teardown) and
-prerequisites **1-4 plus 11, 12, 13 and 14** must land first — the listing
-surface does not ship over them — and prerequisites **5-12** gate the
-instant-sell surface on exactly the same terms. Neither path ships over its own
+**the prerequisites the Contract-level prerequisites section lists for
+the listing path** must land first — the listing surface does not ship
+over them — and **the items that section lists for the instant-sell
+path** gate that surface on exactly the same terms. (Item numbers are
+deliberately not repeated here; see the maintenance rule below.) Neither path ships over its own
 open items; in particular item 5 is NOT the sole instant-sale blocker
 (an earlier revision of this paragraph implied that, contradicting the
 prerequisites gate above — the authoritative reading is the
@@ -849,25 +911,36 @@ prerequisites section, and this paragraph now matches it). The
 awareness layer is the only part of Phase 1 that is unblocked today,
 and it ships with both sale rows reporting as unavailable.
 
-**Maintenance rule — the item list is restated in three places.** The
-prerequisites section is authoritative; the Phase-1 gate above and the
-fork-tier schedule below restate its item numbers for convenience, and
-BOTH must be updated whenever an item is added. This has now drifted
-twice: once when item 5 was wrongly implied to be the sole instant-sale
-blocker, and again when items 13 and 14 were added to the authoritative
-gate while these two restatements kept the stale set — each time leaving
-a roadmap an implementer could follow to ship a surface over a live
-blocker, while the text claimed the sections agreed. A restatement that
-can silently disagree with its source is worse than a cross-reference,
-so if this drifts a third time, replace the numbers here with a pointer
-to the prerequisites section rather than repairing them again.
+**Maintenance rule — item numbers live in exactly ONE place.** The
+Contract-level prerequisites section is authoritative and is the only
+section that states item numbers or a total count. Everywhere else —
+this Phase-1 gate, the fork-tier schedule below, the not-frontend-only
+note above — points at it instead of restating it.
+
+That rule was earned. The restatements drifted three times: item 5 was
+once implied to be the sole instant-sale blocker; items 13 and 14 landed
+in the authoritative gate while the Phase-1 and fork-tier copies kept
+the stale set; and the scoping note went on claiming "eleven
+prerequisites" after the real count had moved twice. Each drift left a
+roadmap an implementer could follow to ship a surface over a live
+blocker — and the second one did it while the text asserted the sections
+agreed, which is the worst version: a convenience copy that disagrees
+with its source reads as confirmation. The previous revision of this
+rule said a third drift would replace the numbers with pointers; that
+threshold was reached, so the numbers are gone.
+
+**When adding an item**: add it to the prerequisites section and its
+per-path gate there. Do not add its number anywhere else in this
+document — if a section seems to need one, that section wants a
+cross-reference.
 
 Fork-tier spec, scoped to whatever has actually shipped: chooser
 renders for the lender in Basic mode, and a quote on a position
 carrying a held balance shows that line. The listing post/lock/cancel
-drive lands with the listing surface (after items 1-4, 11, 12, 13 and 14);
-the instant-sell on-chain lender-change drive lands with that surface (after
-items 5-12). Writing a fork-tier drive for a path still gated open would
+drive lands with the listing surface, and the instant-sell on-chain
+lender-change drive lands with that surface — each after its own gating
+items in the Contract-level prerequisites section (numbers not repeated
+here, per the maintenance rule below). Writing a fork-tier drive for a path still gated open would
 assert behaviour the design says must not be reachable yet.
 
 **Phase 2 — comparison quotes (with the borrower "help me choose"
@@ -892,8 +965,8 @@ chooser stays absent on rentals.
    not expose, and shipping the listing surface without one would
    knowingly hand sellers an indefinite lever. Resolve before
    implementation starts.
-0b. Does the instant-sell path get patched (items 5–10 as six separate
-   guards) or reshaped into a loan-specific position-sale bid (see
+0b. Does the instant-sell path get patched (its per-term guards added
+   one by one) or reshaped into a loan-specific position-sale bid (see
    "Recommended shape")? This design works against either, but the
    answer changes what the picker shows: a generic-offer picker must
    explain per row why a takeable-looking offer is refused, whereas a
