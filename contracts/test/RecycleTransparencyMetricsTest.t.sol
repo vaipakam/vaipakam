@@ -290,11 +290,19 @@ contract RecycleTransparencyMetricsTest is SetupTest {
      *      the whole §9 series is derivable from the event stream and the
      *      indexer never has to read a contract during ingest.
      *
-     *      That only holds if the event and the getter can never disagree, so
-     *      this asserts them EQUAL rather than each against a constant. Two
-     *      copies of the same figure is precisely the shape that drifts, and
+     *      This asserts them EQUAL rather than each against a constant. Two
+     *      copies of one figure is precisely the shape that drifts, and
      *      nothing in the compiler would catch it: the emit site and the lens
      *      call `committableForDay` independently.
+     *
+     *      What it proves is equality AT EMISSION — that a code change cannot
+     *      silently separate the two. It does NOT prove they agree forever,
+     *      and the natspec no longer claims they do: the getter recomputes
+     *      from `dayCapThreshold18`, which `setBroadcastDayCapThreshold` can
+     *      overwrite for an already-finalized day on a Diamond demoted from
+     *      the canonical role. Where they later diverge the EVENT is the
+     *      trustworthy one, being immutable — so the property worth pinning
+     *      here is that the immutable record starts out correct.
      *
      *      Non-vacuity guarded explicitly — the equality is worthless if both
      *      sides are zero, which is the trap that made an earlier test in this

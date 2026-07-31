@@ -14,4 +14,10 @@ The figure was already being computed at that exact moment; it simply sat inside
 
 **Two things are asserted so they cannot quietly come apart.** The value in the notice must equal what the on-chain view reports for the same day — they are computed independently, so nothing but a test would catch them diverging, and publishing two different answers to the same question is worse than publishing none. And a day before the programme is armed must still reserve nothing: had the moved calculation dragged the reservation out of the branch with it, unarmed days would have begun quietly consuming the programme's commitment headroom, which is a far worse fault than the one being fixed.
 
+**Two limits, stated here rather than discovered later.**
+
+Widening a notice changes its identifier, so days that closed *before* this change were announced in the old shape and cannot carry the new figure. The stream of notices therefore describes the series from this point forward, not for all history. That is not a hole: the on-chain view reconstructs earlier days on request, so the two surfaces cover different halves of the same question — the notice pins each day as it closes, the view rebuilds what predates the change. Anyone who wants the older days in their stored history fills them in once from the view.
+
+And where the notice and the view ever disagree, **the notice is the one to trust**. The view recalculates from a stored input which, in one supported recovery scenario, a later message can overwrite for a day that already closed. The recalculation can move; the announcement cannot. That asymmetry is an argument for carrying the figure in the notice rather than a caveat against it.
+
 Nothing outside the contracts was reading this notice yet, so widening it broke no consumer. The figure carries the same caveats as the view it mirrors — it is what the day *committed*, not what was ultimately paid, and those limits are documented on the view itself.

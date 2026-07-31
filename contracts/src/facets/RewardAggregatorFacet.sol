@@ -625,13 +625,30 @@ contract RewardAggregatorFacet is
     /// @custom:event-category informational/reward-governor
     /// @param freshDrawdown #1218 M5 — `netEmission[D]`: the schedule floor
     ///        actually drawn fresh, i.e. how much of the budgeted floor real
-    ///        activity earned a claim on. IDENTICAL by construction to what
+    ///        activity earned a claim on. Equal to what
     ///        {InteractionRewardsLensFacet.getRecycleDayMetrics} returns for
-    ///        this day — same call, same inputs, same block — and a test
-    ///        binds the two so they cannot drift. Carried here so the whole
-    ///        §9 series is derivable from events alone; see the note at the
-    ///        emit site. Subject to the five bounds documented on that
-    ///        getter: it is the day's COMMITMENT, not its settled payout.
+    ///        this day AT THE MOMENT OF EMISSION — same call, same inputs,
+    ///        same block — and a test binds the two so a code change cannot
+    ///        silently separate them.
+    ///
+    ///        It is NOT guaranteed equal to that getter forever, and an
+    ///        earlier revision claimed "identical by construction", which was
+    ///        too strong (Codex #1496 r1 P2). The getter RECOMPUTES from
+    ///        `dayCapThreshold18`, and {setBroadcastDayCapThreshold} is a
+    ///        second writer of that slot: a Diamond DEMOTED from the
+    ///        canonical role which then receives its first V2 broadcast for a
+    ///        day it had already finalized will have the threshold
+    ///        overwritten while `dailyGlobalFinalized` stays true, so the
+    ///        recomputation can move while this value cannot.
+    ///
+    ///        That asymmetry is a reason to prefer this field, not a caveat
+    ///        against it: the event is the IMMUTABLE record of what the day
+    ///        actually committed, and the recomputation is the thing that can
+    ///        be perturbed afterwards. Where they disagree, this is the one
+    ///        that was true when the day closed.
+    ///
+    ///        Subject to the five bounds documented on that getter: it is the
+    ///        day's COMMITMENT, not its settled payout.
     event GovernorDayPoolStamped(
         uint256 indexed dayId,
         uint256 scheduleFloor,
@@ -908,6 +925,18 @@ contract RewardAggregatorFacet is
         // contract read during ingest, which would end its property of being a
         // pure function of the event stream, or to fan out reads at query
         // time. One indexed field removes both.
+        //
+        // CUTOVER, stated because the obvious claim is too strong (Codex
+        // #1496 r1 P2): widening the event changes its topic, so days
+        // finalized BEFORE this upgrade were announced under the old
+        // signature and cannot supply this field. The event stream therefore
+        // carries the series from the upgrade FORWARD, not for all history.
+        // Pre-cutover days are covered by
+        // {InteractionRewardsLensFacet.getRecycleDayMetrics}, which
+        // recomputes them on demand — the two surfaces are complementary by
+        // design, and a one-time backfill (if a deployment ever wants the
+        // older days in its series) is a read over that getter, needing no
+        // event at all.
         (uint256 commitFresh, ) = LibInteractionRewards.committableForDay(
             s, dayId, scheduleFloor / 2, 0
         );

@@ -582,7 +582,17 @@ constraint the design had to satisfy.
 Scouting found SIX of the seven §9 figures already derivable from events:
 `VpfiRecycled` carries `dayId`, so local absorption buckets per day;
 `ChainRecycledReported` carries `dayCreditAccepted` per `(chain, day)`, so the
-mirror term does too; and `GovernorDayPoolStamped` already carried the floor
+mirror term does too — **but ONLY for chains other than the canonical one**.
+`recordChainRecycled` also runs for Base's OWN local close and emits the same
+event for that self-report, while the on-chain accumulator deliberately adds
+to `dayMirrorRecycledCredit` only when `sourceChainId != block.chainid`. Base's
+credit is already counted once via `VpfiRecycled`, so an ingest that consumed
+every chain-report event would count canonical absorption TWICE and inflate the
+published global figure (Codex #1496 r1 P2). **The ingest recipe must filter
+`sourceChainId != <the canonical chain id>` and must have a test that fails if
+that filter is removed** — an inflated absorption number is exactly the
+plausible-looking wrong figure this milestone exists to prevent, and it would
+make the programme look more self-funding than it is; and `GovernorDayPoolStamped` already carried the floor
 and the recycled budget, from which `selfFundingRatio[D]` and the runway
 series follow. Exactly ONE figure was missing — `freshDrawdown[D]` — and it is
 the headline one, `netEmission[D]`.
@@ -603,7 +613,26 @@ Three ways to close that, and why the third wins:
   unarmed day's once-daily finalize.
 
 The event had **no consumers outside the contract** — declaration and emit
-only — so widening it broke nothing. A test binds the emitted value to what
+only — so widening it broke nothing.
+
+**Cutover, because the natural claim overreaches.** Widening the event changes
+its topic, so days finalized BEFORE the upgrade were announced under the old
+five-argument signature and cannot supply the field; the indexer's derived
+decoder will not match them and its cursor does not rescan. The event stream
+therefore carries the series **from the cutover forward**, not for all history.
+That is not a gap: pre-cutover days are served by `getRecycleDayMetrics`, which
+recomputes them on demand, so the two surfaces are complementary — the event
+pins history as it happens, the getter reconstructs what predates it. A
+deployment wanting the older days in its stored series backfills once from that
+getter, needing no event at all.
+
+**Where the two can disagree, prefer the event.** The getter recomputes from
+`dayCapThreshold18`, and `setBroadcastDayCapThreshold` is a second writer of
+that slot: a Diamond demoted from the canonical role which later receives its
+first V2 broadcast for a day it had already finalized will have that threshold
+overwritten while `dailyGlobalFinalized` stays true. The recomputation can then
+move; the emitted value cannot. The event is the immutable record of what the
+day actually committed. A test binds the emitted value to what
 `getRecycleDayMetrics` returns for the same day, so the two copies of that
 figure cannot drift; and a second test pins that the hoist did not drag the
 reservation with it, since an unarmed day silently consuming commitment
