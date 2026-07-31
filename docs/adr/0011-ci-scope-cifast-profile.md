@@ -81,9 +81,17 @@ closes #296):
    from `ci.yml`. No `workflow_dispatch` fallback, no weekly cron
    schedule — the structural RSS overrun makes their CI presence a
    footgun even when gated.
-4. **`Slither static analysis`** and **`Build docs`** also run under
-   `FOUNDRY_PROFILE=cifast` — they only need `src/` compiled, and
-   the smaller compile graph drops their cold cost too.
+4. **`Slither static analysis`** also runs under
+   `FOUNDRY_PROFILE=cifast` — it only needs `src/` compiled, and
+   the smaller compile graph drops its cold cost too.
+   *(Amended 2026-07-30, PR #1493: **`Build docs`** originally ran
+   under cifast per this decision, but `forge doc` performs its own
+   solc pass over the active profile's full source glob — and
+   cifast's per-file test-skip enumeration let test suites added
+   after the list was written drift back into that compile, which
+   crossed the runner's memory ceiling with #1457. The doc build now
+   runs under `FOUNDRY_PROFILE=quick`, whose `test/**` + `script/**`
+   skip globs cannot drift.)*
 5. **`mainnet-gate`** keeps the `bash script/predeploy-check.sh
    --full` step in place on push to `release/**`, PR targeting
    `release/**`, every `v*` tag push, and `workflow_dispatch`. It

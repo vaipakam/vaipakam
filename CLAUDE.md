@@ -702,8 +702,9 @@ Three profiles live in `contracts/foundry.toml`:
 - **`cifast`** — narrow scope for the per-PR-push CI lane. Compiles
   `src/` + `script/` + `test/deploy/**` + `test/scenarios/**` +
   `test/mocks/**` + `test/SetupTest.t.sol` + `test/HelperTest.sol` only.
-  Same `viaIR + optimizer=200` settings as default. Used by EVERY
-  forge-using job in `ci.yml` (contracts-fast, build-docs, slither).
+  Same `viaIR + optimizer=200` settings as default. Used by
+  `ci.yml`'s contracts-fast + slither jobs (build-docs runs its
+  `forge doc --build` under `quick` instead — #1493).
   Cold compile: ~5 min, ~3.2 GB peak RSS. Skips the 94 non-positive
   top-level test files + invariants + fork tests — those run locally
   at end-of-step under the default profile.
@@ -726,7 +727,12 @@ Three profiles live in `contracts/foundry.toml`:
   regression command above excludes it): `forge test --match-path
   "test/invariants/*"` — default profile.
 - Pre-PR sanity check (compile + targeted tests): default profile.
-- CI (`ci.yml` + Slither + Build docs): runs under `cifast`. The
+- CI (`ci.yml` + Slither): runs under `cifast`. The Build docs job's
+  `forge doc --build` runs under `quick` instead (#1493): forge doc
+  performs its own solc pass over the active profile's source glob
+  (it never reuses `out/`), and cifast's per-file test-skip
+  enumeration lets newly added test suites drift back into that
+  compile — quick's `test/**`/`script/**` globs can't. The
   `mainnet-gate.yml` workflow runs `predeploy-check.sh --full`
   under the default profile on `ubuntu-latest` and shares the
   16 GB ceiling — see ADR-0011 for the pre-release-track caveat.
