@@ -196,6 +196,46 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(alice), 0, "nothing paid out");
     }
 
+    /// PROBE (#1460 adversarial self-review) — is a backing-truncated
+    /// remainder recoverable once funding arrives?
+    ///
+    /// This is the question that decides truncate-vs-revert for the BACKING
+    /// cap. The 69M pool cap may truncate freely because `remaining` is
+    /// monotone non-increasing, so the trimmed remainder is unfundable
+    /// forever and nothing is lost by consuming the entry. `backingRoom` is
+    /// NOT monotone — it rises the moment a remit lands — so if the claim
+    /// legs have already consumed the entitlement, truncating against
+    /// backing would destroy value that was about to become payable.
+    function testTruncatedRemainderRecoverabilityAfterFunding() public {
+        (, uint256 expected) = _seedPayable(alice, 45);
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        uint256 room = expected / 4;
+        _mut().setRecycleBucketRaw(bal - room);
+
+        vm.prank(alice);
+        (uint256 firstPaid, , ) =
+            RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(firstPaid, room, "first claim truncated to backing");
+
+        // Funding arrives: the bucket's claim on the balance shrinks, so the
+        // un-earmarked room now comfortably covers the trimmed remainder.
+        _mut().setRecycleBucketRaw(1 ether);
+
+        vm.prank(alice);
+        try RewardClaimFacet(address(diamond)).claimInteractionRewards()
+        returns (uint256 secondPaid, uint256, uint256) {
+            emit log_named_uint("remainder recovered on retry", secondPaid);
+            assertGt(
+                secondPaid,
+                0,
+                "RECOVERABLE: truncation is safe for a non-monotone cap"
+            );
+        } catch {
+            emit log("retry REVERTED - entitlement was consumed by the first claim");
+            fail();
+        }
+    }
+
     /// Negative control — the cap must not over-truncate. With ample
     /// un-earmarked balance the same claim pays in full and emits no
     /// truncation event.
