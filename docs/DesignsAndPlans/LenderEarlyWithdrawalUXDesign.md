@@ -77,8 +77,10 @@ forfeiture. Every net quote and confirmation MUST therefore state the
 full picture:
 
 > what you receive (principal minus the larger of accrued interest or
-> the buyer rate top-up) **and** what transfers with the position
-> (any money already set aside for you on this loan)
+> the buyer rate top-up), **and** what transfers with the position
+> (any money already set aside for you on this loan), **and** what is
+> given up outright (your pending reward credit for holding this
+> position)
 
 A quote that silently omits a non-zero held balance is a
 mispriced sale, not a rounding difference — it can dwarf the
@@ -87,13 +89,30 @@ as its own line (never folded into the net figure), and where it
 cannot be read the flow says the total cost is unavailable rather
 than quoting a partial one.
 
+**The third line is a forfeiture, not a transfer.** Alongside the
+settlement, both sale paths close the exiting lender's accrued
+interaction-reward entry as *forfeited* — the accrual routes to
+treasury, and the incoming lender is opened a fresh entry covering
+only the window from the day after the sale to the original end. The
+seller does not hand this credit to the buyer; they lose it, and the
+buyer starts a shorter one. So a sale can cost a lender three
+distinct things, and the quote must not present the first as the
+total. Where the pending credit's value cannot be read on the client,
+the line says so explicitly ("your pending reward credit for this
+position is given up — amount not shown here") rather than being
+omitted: an unquotable cost that the user is told about is honest,
+whereas silence reads as "there is no such cost". This applies to
+every row in the instant-sell picker, the listing form, and both
+confirmations.
+
 ## The layered disclosure model (lender side)
 
 ### Layer 0 — the primary state (Basic mode, unchanged)
 
 A lender on an active loan has no primary action — the page already
 answers "what happens if I do nothing" (the borrower repays or the
-default process runs; the lender claims at the end). Nothing in this
+default process runs; the lender is paid on the loan's schedule where
+it has one, and claims the remainder at the close). Nothing in this
 design adds a primary button, and no surface may ever nudge a lender
 toward selling as the expected next step.
 
@@ -104,10 +123,24 @@ page in both modes, strictly informational:
 
 - **Order is the message.** The wait-to-maturity row renders FIRST,
   marked as the default that costs nothing in sale forfeitures — and
-  worded conditionally, never as a promise: "Nothing to do — if the
-  borrower repays, you claim the principal plus the agreed interest
-  at the end; if they don't, the normal default process applies and
-  recovery can be less." The sale rows follow, each with its cost
+  worded conditionally, never as a promise — and **cadence-aware**,
+  because on a loan with a periodic interest schedule the lender is
+  paid interest DURING the term, not only at the end (a partial
+  repayment can also settle interest early). Two shapes, chosen from
+  the loan's own schedule rather than assumed:
+  - *No schedule (interest settles at the close)*: "Nothing to do — if
+    the borrower repays, you claim the principal plus the agreed
+    interest at the end; if they don't, the normal default process
+    applies and recovery can be less."
+  - *Periodic schedule*: "Nothing to do — interest is paid to you on
+    the loan's own schedule as the borrower settles it, and you claim
+    the principal plus whatever interest is still outstanding at the
+    end; if they don't repay, the normal default process applies and
+    recovery can be less."
+
+  A single end-of-term sentence on a periodically-settling loan
+  misstates WHEN the lender gets paid, which is exactly the fact this
+  row exists to convey. The sale rows follow, each with its cost
   stated up front.
 - Each sale row carries the §9-mandated cost disclosure in one
   sentence: selling early gives up the larger of the interest built
@@ -275,7 +308,7 @@ implementation PR:
 
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
-| Keep it to the end | No urgent need for the capital | No sale forfeiture — principal + agreed interest if the borrower repays; the normal default process (recovery may be less) if they don't |
+| Keep it to the end | No urgent need for the capital | No sale forfeiture, and your reward credit for this position keeps accruing — principal plus the agreed interest if the borrower repays (paid on the loan's schedule where it has one, otherwise at the close); the normal default process (recovery may be less) if they don't |
 | Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer |
 | List at your chosen buyer rate | Want liquidity but not at today's book rates | Same costs at completion (forfeiture + any transferring set-aside money); your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
@@ -458,6 +491,27 @@ than a growing list of patches on generic-offer consumption.
    that they are knowingly buying a sub-threshold position, with the
    frontend surfacing the live figure either way.
 
+   **The unpriceable case needs its own answer, not the same one.**
+   Where either leg of the loan is illiquid, the risk math refuses to
+   produce a figure at all — it reverts rather than returning a
+   conservative number — so neither branch above is implementable as
+   written: a health-factor floor would strand every illiquid position
+   permanently (the read can never pass), and an acknowledgement has no
+   threshold for the buyer to knowingly acknowledge. The policy must
+   therefore be stated explicitly for these positions rather than
+   inherited. Two defensible options, in the contract owners' hands:
+   exclude illiquid-leg loans from both sale paths in Phase 1 (the
+   narrower choice, and consistent with the listing path already being
+   ERC-20-collateral-only), or admit them on the protocol's existing
+   illiquid-risk consent — the incoming lender's standing
+   acknowledgement that this pair carries no price-based safety net.
+   What is NOT acceptable is either extreme by default: silently
+   admitting an unpriceable position because the guard could not run, or
+   silently blocking one because the guard reverted. Whichever is
+   chosen, the surface says which case the user is in and never shows a
+   health figure for a position that has none — "this position has no
+   price-based safety check" is the honest line, not a blank or a zero.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
@@ -486,20 +540,45 @@ position-sale bid**: an instrument whose creator names the loan id they
 are bidding on and the price they will pay, so their consent is
 expressed once against the actual running position instead of being
 reconstructed field-by-field from an offer authored for something else.
-Under that shape items 6, 7, 8, 9 and 10 stop being checks at all —
-there is no mismatch to detect between an offer's terms and a loan's,
-because the bid *is* the loan's terms — and item 5 reduces to the
-ordinary current-holder resolution the listing path already performs.
-Item 11 remains a real decision either way: whether a bid may name an
-under-collateralized position is a policy choice, not a bookkeeping one.
+
+**What the reshape actually removes — and what it does not.** The ten
+items split into two classes, and the bid only dissolves one of them:
+
+- *Term-mismatch items (7, 8, 9, 10 — behavioural terms, NFT identity,
+  duration as a floor, offer expiry)* dissolve by construction. Each
+  exists purely because an offer authored for a hypothetical loan is
+  being matched against a real one; when the bid names the loan, there
+  is no second set of terms to disagree with. Item 5 likewise reduces to
+  the ordinary current-holder resolution the listing path already does.
+- *Mutable-state items (6, and 11 as policy) do NOT dissolve.* A loan is
+  not frozen between a bid and its fill: the borrower can partially
+  repay, collateral can be withdrawn or fall in price, and a
+  held-for-lender payment can arrive. So a bid naming a loan id and a
+  price still buys a position whose shape has moved — which is the same
+  stale-consent and seller-loss race the reshape was meant to end, just
+  relocated. The bid therefore needs a **buyer-authored expiry** and
+  **bounds on the mutable loan state** it is priced against
+  (outstanding principal, collateral exposure, held balance), and the
+  seller's fill still needs a **minimum total receipt and a deadline**.
+  An earlier revision of this paragraph claimed items 6–10 all "stop
+  being checks at all"; that was wrong, and stated that way it would
+  have let the roadmap treat the replacement as safe while carrying the
+  races forward.
+
+So the honest summary is: the reshape removes the *comparison* burden,
+not the *freshness* burden. Both shapes need bounded consent on both
+sides; only one of them needs a field-by-field compatibility audit that
+silently rots whenever a term is added.
 
 This is a contract-side recommendation, offered because the UX cost of
 the alternative lands on users: a picker over generic offers has to
 explain, per row, why an offer that looks takeable is not, and that
 explanation is exactly the list above. A loan-specific bid needs no
-such explanation. Which shape ships is the contract owners' call; this
-design works against either, and the chooser reports the instant-sell
-row as unavailable until one of them exists.
+such explanation — though it still needs its bounds shown, since a bid
+whose stated basis has drifted must fail before the seller signs.
+Which shape ships is the contract owners' call; this design works
+against either, and the chooser reports the instant-sell row as
+unavailable until one of them exists **with its bounds**.
 
 Everything else in this design — the chooser, the wait-first framing,
 the vocabulary, the quote rules including the held-balance line — is
@@ -602,8 +681,18 @@ chooser stays absent on rentals.
    "Recommended shape")? This design works against either, but the
    answer changes what the picker shows: a generic-offer picker must
    explain per row why a takeable-looking offer is refused, whereas a
-   bid book has nothing to explain. Contract owners' call; resolve
-   before the instant-sell surface is scheduled.
+   bid book has nothing to explain. Note that either answer still owes
+   bounded consent on both sides — a bid needs its own expiry and bounds
+   on the mutable loan state, and the fill needs a minimum receipt and
+   deadline; the reshape removes the comparison burden, not the
+   freshness one. Contract owners' call; resolve before the instant-sell
+   surface is scheduled.
+0c. For loans with an illiquid leg, does Phase 1 exclude both sale
+   paths or admit them on the existing illiquid-risk consent (item 11's
+   unpriceable case)? A policy is required either way, because the risk
+   math reverts rather than returning a conservative figure — so the
+   default that falls out of "just add the guard" is a permanent block
+   on those positions, which may not be the intent.
 1. Should the instant-sell row hide entirely when the book has no
    compatible offer, or show with "no matching offer right now"?
    Leaning show-with-reason — an option that appears only sometimes
