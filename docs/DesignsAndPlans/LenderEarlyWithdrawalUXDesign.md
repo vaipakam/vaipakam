@@ -387,7 +387,16 @@ against.
    they authored, and the picker compounds it by displaying the offer's
    shorter duration. *Required*: the loan's live remaining exposure
    must fit *within* the buyer-authored duration (or a dedicated
-   position-sale bid whose signed terms cover the running loan).
+   position-sale bid whose signed terms cover the running loan) —
+   **plus an explicit pre-maturity requirement on this path**. That
+   second half is load-bearing: a fit-within rule ALONE would make
+   overdue direct sales newly consumable, because an `Active` loan
+   inside its grace window has zero remaining days and therefore fits
+   every positive-duration offer. Item 1 supplies the maturity cutoff
+   only for listings, and this path has no maturity check of its own,
+   so the fix must add one rather than inherit it. Layer 1 states that
+   BOTH sale rows go unavailable at maturity; the contract must
+   actually enforce that on this path, not merely have the UI hide it.
 8. **The direct sale never checks offer expiry.** A GTT lender offer
    whose deadline has passed but which has not yet been
    permissionlessly cancelled is still consumable: the path checks the
@@ -437,13 +446,22 @@ every quote), and the Layer-3 parity hardening (fail-closed lock read,
 dead-listing teardown state, stale-marker discard). **Gated on the
 Contract-level prerequisites section**: the borrower-escape
 requirement (mandatory finite expiry + permissionless teardown) and
-prerequisites 1-4 must be resolvable with the deployed contracts, or
-their contract changes land first — the listing surface does not ship
-over them, and prerequisite 5 bounds how far the instant-sell
-admission filter can be trusted. Fork-tier spec: chooser
-renders for the lender in Basic mode; instant sell drives to an
-on-chain lender change; listing posts, locks, and cancels; a quote on
-a position carrying a held balance shows that line.
+prerequisites **1-4** must be resolvable with the deployed contracts,
+or their contract changes land first — the listing surface does not
+ship over them — and prerequisites **5-8** gate the instant-sell
+surface on exactly the same terms. Neither path ships over its own
+open items; in particular item 5 is NOT the sole instant-sale blocker
+(an earlier revision of this paragraph implied that, contradicting the
+prerequisites gate above — the authoritative reading is the
+prerequisites section, and this paragraph now matches it).
+
+Fork-tier spec, scoped to whatever has actually shipped: chooser
+renders for the lender in Basic mode, and a quote on a position
+carrying a held balance shows that line. The listing post/lock/cancel
+drive lands with the listing surface (after items 1-4); the instant-sell
+on-chain lender-change drive lands with that surface (after items
+5-8). Writing a fork-tier drive for a path still gated open would
+assert behaviour the design says must not be reachable yet.
 
 **Phase 2 — comparison quotes (with the borrower "help me choose"
 wizard).** Opt-in side-by-side: "sell now nets about X" vs "holding
