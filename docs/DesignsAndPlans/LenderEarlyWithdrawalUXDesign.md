@@ -376,7 +376,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — eighteen at
+The adversarial passes on this doc surfaced the gaps below — nineteen at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -387,9 +387,9 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4, 13, 14, 16 and 17 belong to the **listing** path, 5–10,
-15, 17 and 18 to the **instant-sell** (direct buy-offer) path, and 11
-and 12 to both. The instant-sell cluster is
+Items 1–4, 13, 14, 16, 17 and 19 belong to the **listing** path,
+5–10, 15, 17 and 18 to the **instant-sell** (direct buy-offer) path,
+and 11 and 12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -843,11 +843,23 @@ than a growing list of patches on generic-offer consumption.
    the current treasury-fee and fallback schedules, or loan-specific
    buyer consent to the inherited snapshots.
 
+19. **Listing acceptances do not apply Full-tariff authorization to the
+   continuing loan.** A buyer accepting a sale vehicle can supply
+   `acceptorFull`, a maximum `C*`, and downgrade choice through ordinary
+   acceptance, but the sale branch does not turn that into a Full stamp
+   on the migrated lender position: the continuing loan keeps the old
+   lender entitlement. A buyer who forbids downgrade can therefore acquire
+   the position without paying `C*`, without receiving the Full yield-fee
+   benefit, and without the fill failing closed. *Required*: define how
+   acceptor-side Full authorization is applied to a continuing lender
+   position, or explicitly reject Full listing acceptances until the
+   secondary-market tariff model exists.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
-  16 and 17 are resolved.**
+  16, 17 and 19 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15, 17 and
   18 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
@@ -924,8 +936,10 @@ from this list reads as dissolved:
   then rewrite `startTime`, `interestRateBps`, and `durationDays` while
   the loan remains active; and partial liquidation can reset
   `interestAccrualStart` and `interestRemainingDays` while leaving the
-  nominal start, duration, and exact maturity unchanged. So a bid naming
-  a loan id and a price still buys
+  nominal start, duration, and exact maturity unchanged; the borrower can
+  also create a preclose offset or live swap-to-repay intent that commits
+  the position to imminent close-out while the listed bounds stay flat.
+  So a bid naming a loan id and a price still buys
   a position whose shape has moved — the same stale-consent and
   seller-loss race the reshape was meant to end, just relocated. The bid
   therefore needs a **buyer-authored expiry** and **bounds on the
@@ -935,8 +949,9 @@ from this list reads as dissolved:
   periodic-settlement checkpoints, settled-interest state, the dedicated
   interest-accrual clock (`interestAccrualStart` and
   `interestRemainingDays`), interest-rate and exact maturity/start-time
-  state, **and the expected borrower-NFT holder**. That last one is a distinct
-  requirement, not a restatement of
+  state, active borrower close-out commitments (preclose offset and
+  swap-to-repay intent), **and the expected borrower-NFT holder**. That
+  last one is a distinct requirement, not a restatement of
   item 5: re-resolving the current holder proves the counterparty is
   compliance-eligible and not the buyer themselves, which is a very
   different claim from the buyer having consented to *that* counterparty.
