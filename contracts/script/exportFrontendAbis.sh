@@ -93,7 +93,15 @@ _prov_excl() {
 # and this negated call with discarded stderr turned that into a
 # permanent "(dirty)" — reproduced end-to-end from a clean tree.
 _prov_paths=(.)
-_prov_e="$(_prov_excl "$OUT_DIR")"; [ -n "$_prov_e" ] && _prov_paths+=("$_prov_e")
+# Only the GENERATED files, never the directory (Codex #1495 r11 P2).
+# `index.ts` lives here too — a hand-maintained barrel this script
+# explicitly does NOT write, which the package re-exports and consumers
+# assemble `DIAMOND_ABI` from. Excluding the directory hid uncommitted
+# edits to it, so the bundle could stamp clean while the effective ABI
+# surface differed from the recorded commit. Fourth instance of
+# over-exclusion in this PR, and the first at file granularity.
+_prov_e="$(_prov_excl "$OUT_DIR")"
+[ -n "$_prov_e" ] && _prov_paths+=("${_prov_e}/*.json")
 if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- "${_prov_paths[@]}" 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi

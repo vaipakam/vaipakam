@@ -212,6 +212,15 @@ if [ "$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
   echo "Error: HEAD moved during generation (started $TREE_COMMIT_AT_START)." >&2
   echo "The generated manifests would carry a commit that no longer describes" >&2
   echo "the inputs they were built from. Re-run from a stable checkout." >&2
+  # REMOVE what this run produced (Codex #1495 r11 P2). Aborting alone is not
+  # enough: the manifests are written DURING the loop, so by the time the
+  # movement is detectable they are already on disk — and the documented apply
+  # step consumes `generated/*.yaml` by glob, so a failed export would leave
+  # stale files carrying the old hash beside possibly-new inputs, ready to be
+  # applied by the next person who runs the apply step. A failed run must
+  # leave nothing behind to pick up.
+  rm -f "$OUT_DIR"/alerts-*.yaml
+  echo "Removed the manifests this run had written." >&2
   exit 1
 fi
 
