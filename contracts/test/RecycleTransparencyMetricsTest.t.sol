@@ -36,8 +36,11 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
  *              and carries every term its own formula needs — including the
  *              keeper earmark, whose omission would overstate platform
  *              reserve the moment the register is switched on.
- *           5. The global series REFUSES on any non-canonical chain, rather
- *              than answering with figures a mirror cannot compute.
+ *           5. The global series is gated on per-day PROVENANCE, not on the
+ *              chain's current role: a day this Diamond finalized stays
+ *              readable even after demotion, while a day it never finalized
+ *              is refused on a non-canonical chain rather than answered with
+ *              figures that chain cannot compute.
  */
 contract RecycleTransparencyMetricsTest is SetupTest {
     VPFIToken internal vpfi;
@@ -302,19 +305,18 @@ contract RecycleTransparencyMetricsTest is SetupTest {
      *      guard over both views would pass a naive revert test while
      *      removing something mirrors legitimately need.
      */
-    function testDayMetricsRefusesOnAMirrorWhileBackingStillAnswers() public {
-        _mut().setRecycleBucketRaw(1_000_000 ether);
-        _mut().setGovernorCommitArmedFromDayRaw(5);
-        _finalize(5);
+    function testDayMetricsRefusesOnAMirrorForDaysItNeverFinalized() public {
+        // As CANONICAL, an unfinalized day is answered — not reverted — and
+        // reads as absent. This half is what makes the revert below
+        // attributable to the chain role rather than to an empty fixture.
+        (bool stamped, , , , , ) = _lens().getRecycleDayMetrics(5);
+        assertFalse(stamped, "unfinalized day reads as absent, not an error");
 
-        (bool stamped, , , uint256 drawdown, , ) =
-            _lens().getRecycleDayMetrics(5);
-        assertTrue(stamped, "canonical chain answers");
-        assertGt(drawdown, 0, "and answers with a REAL figure");
-
-        // Same Diamond, mirror role.
+        // Same Diamond, mirror role, same day: now refused, because a mirror
+        // has no canonical data for it and would otherwise hand back a
+        // plausible-looking `stamped == false` indistinguishable from the
+        // canonical answer above.
         _rep().setIsCanonicalRewardChain(false);
-
         vm.expectRevert(
             InteractionRewardsLensFacet
                 .RecycleDayMetricsCanonicalChainOnly
@@ -322,6 +324,9 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         );
         _lens().getRecycleDayMetrics(5);
 
+        // The backing snapshot is a LOCAL figure and must survive on a
+        // mirror — a blanket guard over both views would pass a naive revert
+        // test while removing something mirrors legitimately need.
         (uint256 bal, , , , , ) = _lens().getRecycleBackingSnapshot();
         assertEq(
             bal,
@@ -389,6 +394,65 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         );
         assertEq(floor_, 0, "and must not leak the broadcast floor");
         assertEq(drawdown, 0, "nor a zero drawdown beside a real floor");
+    }
+
+    /**
+     * @dev The mirror of the promotion case, and the one a role-only gate
+     *      gets wrong in the opposite direction. Demoting a canonical Diamond
+     *      (a role migration, a failover) must NOT erase the days it already
+     *      finalized: their provenance flag, denominators and stamp are
+     *      written together and never cleared, so those days remain exactly
+     *      as computable as before. The promoted replacement cannot serve
+     *      them either — its own provenance is false for them — so a
+     *      role-only gate makes the historical series vanish entirely
+     *      (Codex #1487 r4 P2).
+     *
+     *      Asserts the SAME figures before and after demotion rather than
+     *      merely that the call does not revert: a gate that returned
+     *      `stamped == true` with zeroed pool figures would pass the weaker
+     *      check while still destroying the series.
+     */
+    function testDemotedCanonicalStillServesTheDaysItFinalized() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _finalize(5);
+
+        (
+            bool stampedBefore,
+            uint256 floorBefore,
+            uint256 budgetBefore,
+            uint256 drawdownBefore,
+            ,
+
+        ) = _lens().getRecycleDayMetrics(5);
+        assertTrue(stampedBefore, "canonical serves its finalized day");
+        assertGt(drawdownBefore, 0, "with a real drawdown");
+
+        // Demotion — role migration / failover.
+        _rep().setIsCanonicalRewardChain(false);
+
+        (
+            bool stampedAfter,
+            uint256 floorAfter,
+            uint256 budgetAfter,
+            uint256 drawdownAfter,
+            ,
+
+        ) = _lens().getRecycleDayMetrics(5);
+
+        assertTrue(stampedAfter, "history survives demotion");
+        assertEq(floorAfter, floorBefore, "same floor");
+        assertEq(budgetAfter, budgetBefore, "same recycled budget");
+        assertEq(drawdownAfter, drawdownBefore, "same drawdown");
+
+        // ...but a day it never finalized is still refused, because there is
+        // genuinely no canonical data for it here.
+        vm.expectRevert(
+            InteractionRewardsLensFacet
+                .RecycleDayMetricsCanonicalChainOnly
+                .selector
+        );
+        _lens().getRecycleDayMetrics(6);
     }
 
     // ─── the unfinalized day ─────────────────────────────────────────────────
@@ -484,7 +548,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
     }
 
     /**
-     * @dev `platformRetained` is published as its two raw terms rather than
+     * @dev `platformRetained` is published as its three raw terms rather than
      *      pre-netted, per the #1448 posture — consumers derive it and an
      *      independent re-derivation is what catches a relabelled figure.
      *      Both terms must therefore actually move.
@@ -617,6 +681,19 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             bucket,
             1_000_000 ether,
             "carved from INSIDE the bucket: the bucket itself is unmoved"
+        );
+
+        // PIN the value, not merely its non-zeroness. Asserting `> 0` alone
+        // passes for any non-zero slot, so it proves the sixth return is
+        // WIRED and not that it is the RIGHT slot — the same gap that made
+        // the platformRetained test vacuous earlier in this PR. Bound to the
+        // register's own view of the same figure.
+        (, uint256 registerBudget) =
+            ConfigFacet(address(diamond)).getRecycleRegisterState();
+        assertEq(
+            keeperAfter,
+            registerBudget,
+            "and it is the register's own earmark, not a parallel count"
         );
     }
 }

@@ -377,7 +377,9 @@ contract InteractionRewardsLensFacet {
     // this slice adds no storage and no new event. Five were reachable
     // before it (`scheduleFloor`/`recycledBudget` via `getDayPoolStamp`,
     // `selfFundingRatio` and `runwayExtensionDays` derived from that series,
-    // `platformRetained` from `getRecycleBucket` + `getGovernorCommitState`).
+    // `platformRetained` from `getRecycleBucket` + `getGovernorCommitState`,
+    // but only while the keeper register is dark — see that figure's own
+    // natspec below for the third term the two-getter derivation misses).
     // The two below close what was missing.
 
     /**
@@ -425,7 +427,7 @@ contract InteractionRewardsLensFacet {
      *         after the fifth — the
      *         same prose-count-versus-list drift this very PR corrects in
      *         `DeployDiamond.s.sol`. Nothing mechanical checks either one;
-     *         if a fifth is added, this word is part of the edit.)
+     *         if a sixth is added, this word is part of the edit.)
      *
      *         1. EXACT for the armed-day global reservation — same call,
      *            same inputs.
@@ -486,7 +488,10 @@ contract InteractionRewardsLensFacet {
      *         are complementary, and subtracting here would double-count in
      *         the opposite direction.
      * @param  dayId Interaction-reward schedule day index.
-     * @return stamped        True once the day finalized. While false the
+     * @return stamped        True once THIS Diamond finalized the day as
+     *         the canonical chain — per-day provenance, not merely that a
+     *         stamp exists. A broadcast-written stamp from a mirror era
+     *         reads false here on purpose. While false the
      *         three POOL figures are zero and must not be read as real
      *         zeros — an unfinalized day has no pool, not an empty one.
      *
@@ -567,14 +572,31 @@ contract InteractionRewardsLensFacet {
         // {ConfigFacet.getRecycledCreditedByDay}, and the per-chain mesh
         // ledger through {RewardAggregatorFacet}. Nothing here is the only
         // route to anything a mirror legitimately holds.
-        // Gated on "IS canonical", not on "is a mirror". `isMirrorRewardChain`
-        // is `!isCanonical && baseChainId != 0`, so an UNWIRED Diamond
-        // (baseChainId still 0) is neither, and a mirror-shaped guard would
-        // wave it through. Nothing is lost by refusing there — the only
-        // writers of the state below are `onlyCanonical` — and failing closed
-        // means a half-configured deployment cannot serve a global figure it
-        // has no way to compute.
-        if (!s.isCanonicalRewardChain) {
+        // PROVENANCE first, role only as the fallback (Codex #1487 r4 P2).
+        //
+        // `dailyGlobalFinalized[dayId]` is written solely by
+        // `_finalizeAndWrite`, in the same call as the denominators and the
+        // stamp, and is never cleared. It is therefore an IMMUTABLE record
+        // that THIS Diamond finalized THIS day as the canonical chain — a
+        // fact about history, not about the present.
+        //
+        // An earlier revision gated on the CURRENT role alone and had this
+        // backwards. Demoting a canonical Diamond with
+        // `setIsCanonicalRewardChain(false)` — a role migration or a
+        // failover — made every day it had legitimately finalized
+        // unreadable, while the promoted replacement could not serve them
+        // either (its own provenance flag is false for those days). The
+        // whole historical series would vanish until the old Diamond was
+        // re-promoted: a worse outcome than the mirror bug the gate was
+        // added for.
+        //
+        // So a day carrying local provenance is served whatever the current
+        // role, and the role check applies only to days WITHOUT it — where
+        // this Diamond genuinely has no canonical data, and a mirror would
+        // otherwise receive a plausible-looking `stamped == false` rather
+        // than a clear refusal.
+        bool provenanced = s.dailyGlobalFinalized[dayId];
+        if (!provenanced && !s.isCanonicalRewardChain) {
             revert RecycleDayMetricsCanonicalChainOnly();
         }
         LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
@@ -595,7 +617,7 @@ contract InteractionRewardsLensFacet {
         // denominators and the stamp itself — so it is true only for days
         // THIS Diamond finalized as the canonical chain, and it cannot be
         // false for a day whose denominators exist.
-        if (!s.dailyGlobalFinalized[dayId] || !p.stamped) {
+        if (!provenanced || !p.stamped) {
             return (false, 0, 0, 0, absorbedLocal, absorbedMirror);
         }
         stamped = true;
@@ -634,7 +656,7 @@ contract InteractionRewardsLensFacet {
      *         second call is the kind of thing a dashboard omits and nobody
      *         notices — the register is dark today, so the error would appear
      *         only when it is switched on. It is returned
-     *         as its two RAW terms rather than pre-computed, following the
+     *         as its three RAW terms rather than pre-computed, following the
      *         #1448 posture: the contracts publish the counters, consumers
      *         derive, and an independent re-derivation is what catches a
      *         relabelled figure. The netting is not optional — raw bucket
