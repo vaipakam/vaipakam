@@ -515,11 +515,19 @@ than a growing list of patches on generic-offer consumption.
    state and the prepay-listing facets read THAT copy, but the direct
    sale neither compares nor updates it — so a buyer whose offer set it
    false can inherit a loan where it is true, and the borrower can then
-   list the collateral without the incoming lender's consent. *Required*:
-   compatibility on every buyer-authored loan term including
-   `allowsPrepayListing` — or mandate item 8's NFT-collateral exclusion,
-   which retires this particular exposure along with the token-identity
-   one.
+   list the collateral without the incoming lender's consent. Full-tariff
+   authorization is the same class of buyer-authored term with money
+   attached: a standing offer may set `creatorFull`, `creatorMaxCStar`,
+   and strict downgrade semantics, but the direct-sale path bypasses the
+   ordinary tariff resolver while preserving the original loan's lender
+   mode. *Required*: compatibility on every buyer-authored loan term
+   including `allowsPrepayListing`, plus the offer's Full-tariff
+   authorization; or exclude Full-mode offers from direct sales until a
+   secondary-market tariff model defines whether `C*` is charged, the
+   Full yield-fee benefit is granted, or the fill fails closed. Mandating
+   item 8's NFT-collateral exclusion retires the prepay-listing exposure
+   along with the token-identity one, but it does not retire the Full
+   tariff exposure.
 8. **The direct sale does not bind NFT collateral identity.** For an
    ERC-20-principal loan backed by an NFT, the admission guard compares
    the collateral collection, asset type, and amount — but neither
@@ -820,15 +828,20 @@ than a growing list of patches on generic-offer consumption.
    path's `owner != address(0)` check onto the direct path — is exactly
    the form that opens the hole.
 
-18. **The direct sale does not bind the inherited treasury-fee schedule.**
+18. **The direct sale does not bind inherited economic snapshots.**
    A running loan keeps its `treasuryFeeBpsAtInit` after lender migration,
-   and settlement continues pricing against that snapshot. If governance
-   has lowered the fee since origination, a standing-offer creator who
-   expected a fresh loan under the current schedule can be assigned an
-   older position with a materially higher treasury cut, reducing their
-   net yield while every compatibility check above still passes.
-   *Required*: compatibility with the current treasury-fee schedule, or
-   loan-specific buyer consent to the inherited snapshot.
+   and settlement continues pricing against that snapshot. It also keeps
+   `fallbackLenderBonusBpsAtInit` and `fallbackTreasuryBpsAtInit`, which
+   `LibFallback.computeFallbackEntitlements` uses if failed-liquidation
+   recovery divides principal and collateral later. If governance has
+   lowered the treasury fee or improved the fallback split since
+   origination, a standing-offer creator who expected a fresh loan under
+   the current schedule can be assigned an older position with a higher
+   treasury cut, lower lender fallback bonus, or higher treasury fallback
+   share, reducing their net yield or default recovery while every
+   compatibility check above still passes. *Required*: compatibility with
+   the current treasury-fee and fallback schedules, or loan-specific
+   buyer consent to the inherited snapshots.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
@@ -907,18 +920,22 @@ from this list reads as dissolved:
   can settle a period or receive an interest-only partial payment that
   advances `lastPeriodicInterestSettledAt` or
   `interestPaidSinceLastPeriod` without changing principal, borrower,
-  collateral, or held balance; and auto-extension can settle the old
-  lender, then rewrite `startTime`, `interestRateBps`, and `durationDays`
-  while the loan remains active. So a bid naming a loan id and a price still buys
+  collateral, or held balance; auto-extension can settle the old lender,
+  then rewrite `startTime`, `interestRateBps`, and `durationDays` while
+  the loan remains active; and partial liquidation can reset
+  `interestAccrualStart` and `interestRemainingDays` while leaving the
+  nominal start, duration, and exact maturity unchanged. So a bid naming
+  a loan id and a price still buys
   a position whose shape has moved — the same stale-consent and
   seller-loss race the reshape was meant to end, just relocated. The bid
   therefore needs a **buyer-authored expiry** and **bounds on the
   mutable loan state** it is priced against — outstanding principal,
-  collateral exposure, inherited risk snapshots, treasury-fee snapshot,
-  held balance,
-  periodic-settlement checkpoints, settled-interest state,
-  interest-rate and exact maturity/start-time state, **and the expected
-  borrower-NFT holder**. That last one is a distinct
+  collateral exposure, inherited risk snapshots, inherited economic
+  snapshots (treasury fee and fallback split), held balance,
+  periodic-settlement checkpoints, settled-interest state, the dedicated
+  interest-accrual clock (`interestAccrualStart` and
+  `interestRemainingDays`), interest-rate and exact maturity/start-time
+  state, **and the expected borrower-NFT holder**. That last one is a distinct
   requirement, not a restatement of
   item 5: re-resolving the current holder proves the counterparty is
   compliance-eligible and not the buyer themselves, which is a very
