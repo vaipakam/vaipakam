@@ -8,9 +8,12 @@ paying the whole amount out of the shared holding — so a claim whose
 scheduled part had no funding behind it could quietly be paid out of the
 tokens reserved for recycled payouts.
 
-Nothing was ever paid to the wrong person and no value left the
-platform. What broke was the truthfulness of the books: the recycled
-pool would go on reporting a balance it no longer held, and the failure
+Nothing was ever paid to the wrong person, and no one was paid more than
+they had earned — but value did leave protocol custody, because the
+tokens that funded the payout were the ones earmarked as the recycled
+pool's backing. What broke was the truthfulness of the books: the
+recycled pool would go on reporting a balance it no longer held, and the
+failure
 surfaced much later, on some unrelated recycled claim that could not be
 funded — as far from its cause as a symptom can land. The reconciliation
 tooling could not see it either, because it reads the recorded figures
