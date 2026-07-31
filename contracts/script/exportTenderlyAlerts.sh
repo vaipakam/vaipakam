@@ -61,7 +61,19 @@ OUT_DIR="$TENDERLY_DIR/generated"
 _PROV_ROOT="$(cd "$REPO_ROOT" && pwd)"
 TREE_COMMIT_AT_START="$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
 TREE_DIRTY_AT_START=""
-if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . ":(exclude)${OUT_DIR#$_PROV_ROOT/}" 2>/dev/null; then
+# A path that did not start with the repo root is OUTSIDE the repository, and
+# an absolute path is not a valid repo pathspec — git exits 128, which this
+# negated call with discarded stderr would silently read as "dirty" forever
+# (Codex #1495 r8 P2). Nothing outside the repo can be working-tree drift, so
+# there is simply nothing to exclude in that case.
+_prov_excl() {
+  local abs="$1"
+  case "$abs" in
+    "$_PROV_ROOT"/*) printf '%s' ":(exclude)${abs#"$_PROV_ROOT"/}" ;;
+    *) : ;;
+  esac
+}
+if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . "$(_prov_excl "$OUT_DIR")" 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 
@@ -114,14 +126,14 @@ fi
 HAVE_ENVSUBST=0
 if command -v envsubst >/dev/null 2>&1; then HAVE_ENVSUBST=1; fi
 
-# HEAD moved between the snapshot and the stamp (Codex #1495 r7 P2). This
-# was the only one of the eight stamping scripts without this comparison,
-# while the release note claimed every exporter had it.
+COMMIT_HASH="$TREE_COMMIT_AT_START"
+# Checked HERE, after generation, not before it (Codex #1495 r8 P2). Placed
+# earlier it could not observe HEAD moving DURING the multi-chain loop,
+# which is the only window it was added for.
 if [ "$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
      != "$TREE_COMMIT_AT_START" ]; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
-COMMIT_HASH="$TREE_COMMIT_AT_START"
 COMMIT_DIRTY="$TREE_DIRTY_AT_START"
 GENERATED_AT=$(date +%Y-%m-%dT%H:%M:%S%z)
 EMITTED=0

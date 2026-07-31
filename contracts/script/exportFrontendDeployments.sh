@@ -92,14 +92,26 @@ FRONTEND_OUT_DIR="$CONTRACTS_PKG_DIR/src"
 # that also hides the tracked TEMPLATE that is consumed to produce the output,
 # which turns a real uncommitted edit into a clean reading (r6/r7 found that
 # same mistake in three separate scripts).
+FRONTEND_OUT_FILE="$FRONTEND_OUT_DIR/deployments.json"
+FRONTEND_SOURCE_FILE="$FRONTEND_OUT_DIR/_deployments_source.json"
 _PROV_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 TREE_COMMIT_AT_START="$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
 TREE_DIRTY_AT_START=""
-if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . ":(exclude)${FRONTEND_OUT_FILE#$_PROV_ROOT/}" ":(exclude)${FRONTEND_SOURCE_FILE#$_PROV_ROOT/}" 2>/dev/null; then
+# A path that did not start with the repo root is OUTSIDE the repository, and
+# an absolute path is not a valid repo pathspec — git exits 128, which this
+# negated call with discarded stderr would silently read as "dirty" forever
+# (Codex #1495 r8 P2). Nothing outside the repo can be working-tree drift, so
+# there is simply nothing to exclude in that case.
+_prov_excl() {
+  local abs="$1"
+  case "$abs" in
+    "$_PROV_ROOT"/*) printf '%s' ":(exclude)${abs#"$_PROV_ROOT"/}" ;;
+    *) : ;;
+  esac
+}
+if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- . "$(_prov_excl "$FRONTEND_OUT_FILE")" "$(_prov_excl "$FRONTEND_SOURCE_FILE")" 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
-FRONTEND_OUT_FILE="$FRONTEND_OUT_DIR/deployments.json"
-FRONTEND_SOURCE_FILE="$FRONTEND_OUT_DIR/_deployments_source.json"
 
 if [ ! -d "$DEPLOYMENTS_DIR" ]; then
   echo "Error: contracts deployments dir not found: $DEPLOYMENTS_DIR" >&2

@@ -818,15 +818,25 @@ EOF
   # always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
   # clear it.
 
-  # HEAD can MOVE during a long deploy: an operator committing mid-run
-  # would otherwise leave the late stamp naming a NEW commit while the
-  # bytecode came from the old one. Only HEAD movement is checked here —
-  # mid-run INPUT drift is deliberately NOT detected (deferred to #1502),
-  # and an earlier version of this comment claimed a recheck that this
-  # revision removed.
+  # HEAD moving mid-deploy is a hard STOP on mainnet, not an annotation
+  # (Codex #1495 r8 P2). This script already refuses to START from a dirty
+  # tree, on the stated grounds that incident forensics require
+  # commit-to-bytecode equivalence; completing a phase whose recorded commit
+  # no longer describes the deployed bytecode breaks that same invariant, and
+  # marking it "(dirty)" while proceeding would record the ambiguity rather
+  # than prevent it. Testnet keeps the softer treatment because a rehearsal
+  # can simply be re-run.
   if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
        != "$TREE_COMMIT_AT_START" ]; then
-    TREE_DIRTY_AT_START=" (dirty)"
+    cat >&2 <<EOF
+Refusing to record this mainnet phase: HEAD moved during the deploy.
+  started at: $TREE_COMMIT_AT_START
+  now at:     $(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')
+The deployed bytecode was built from the starting commit, so the recorded
+commit would no longer describe what is on chain. Re-run from a stable
+checkout.
+EOF
+    exit 1
   fi
   COMMIT_DIRTY="$TREE_DIRTY_AT_START"
   DIAMOND_NOW=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")

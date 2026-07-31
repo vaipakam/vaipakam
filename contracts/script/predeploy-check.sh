@@ -240,7 +240,15 @@ else
     commit_var="$(echo "$commit_vars" | head -1)"
     # Any emission whose variables are NOT the ones validated below is an
     # unvalidated second stamp; reject rather than silently ignore it.
+    # Count emissions BEFORE parsing pairs (Codex #1495 r8 P2): an emission
+    # that drops its dirty interpolation matches neither regex, so it vanished
+    # from both sets and the remaining valid stamp kept everything looking
+    # green. A stamp with no dirty half is exactly the regression worth
+    # catching, and it was the one shape that could hide from the checker.
+    emissions="$(grep -cE 'monorepoCommit"?:? "?\$' "$f" || true)"
+    pairs="$(grep -cE 'monorepoCommit"?:? "?\$[A-Za-z_][A-Za-z0-9_]*\$[A-Za-z_]' "$f" || true)"
     extra_pairs=0
+    [ "$emissions" -eq "$pairs" ] || extra_pairs=1
     for v in $dirty_vars; do [ "$v" = "$dirty_var" ] || extra_pairs=1; done
     for v in $commit_vars; do [ "$v" = "$commit_var" ] || extra_pairs=1; done
     # Anchor on the ACTUAL git state read, not the empty initializer (Codex
