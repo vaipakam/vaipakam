@@ -706,6 +706,12 @@ contract InteractionRewardsLensFacet {
      *         it moves to `recycleReleasedRemitStrandedCumulative`, readable
      *         via {RewardAggregatorFacet.getRecycleCompositionPosition};
      *         read the two together to reconstruct gross outflow.
+     * @return keeperBudget        VPFI earmarked INSIDE the bucket for the
+     *         keeper-incentive register. Zero while
+     *         `recycleRegisterKeeperBps` is unset, which is the default.
+     *         The THIRD term of `platformRetained` — see the note above for
+     *         why omitting it overstates the reserve rather than merely
+     *         rounding it.
      */
     function getRecycleBackingSnapshot()
         external
