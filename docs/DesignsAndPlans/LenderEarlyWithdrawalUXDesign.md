@@ -312,14 +312,25 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial pass on this doc surfaced five gaps that are **not
+The adversarial passes on this doc surfaced eleven gaps that are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
 app can close them, because the risk lives in the settlement paths
 themselves. They are recorded here as blockers rather than assumed
-away: a UX design that ships the listing surface over them would be
+away: a UX design that ships a sale surface over them would be
 promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
+
+Items 1–4 belong to the **listing** path, 5–10 to the **instant-sell**
+(direct buy-offer) path, and 11 to both. The instant-sell cluster is
+large for one structural reason worth naming up front: that path
+consumes a *generic standing lender offer* — an instrument authored to
+open a fresh loan, never to assume a running one — so every term the
+offer's creator authored has to be re-checked by hand against a live
+loan the offer never described. Items 5–10 are each a missing hand-check
+of that kind. See "Recommended shape" at the end of this section: the
+pattern suggests the durable fix is a dedicated position-sale bid rather
+than a growing list of patches on generic-offer consumption.
 
 1. **A listing outlives the loan's maturity.** Completion gates only
    on the loan still being `Active`, which it remains throughout the
@@ -370,7 +381,26 @@ against.
    holder in the on-chain path (the listing-accept path already does),
    with the frontend filter mirroring it.
 
-6. **The direct sale does not bind NFT collateral identity.** For an
+6. **The direct sale cannot express the seller's reviewed economics.**
+   The entry point takes only a loan id and an offer id. It recomputes
+   the forfeiture at execution and snapshots whatever held-for-lender
+   balance exists *then* — so even when the offer itself has not
+   drifted, a delayed transaction, or any operation that parks a new
+   held payment in the meantime, can leave the seller receiving
+   materially less than they reviewed or surrendering a payment that
+   arrived after their preview. Prerequisite 4 requires this binding
+   for the listing path; the direct path needs it too. *Required*: an
+   enforceable minimum total receipt (or maximum cost) that **counts
+   transferred held proceeds**, plus a deadline.
+7. **The direct sale ignores every buyer-authored behavioural term.**
+   `allowsPartialRepay`, `useFullTermInterest` and
+   `periodicInterestCadence` are immutable take-it-or-leave-it terms of
+   an offer, and this path compares none of them. A buyer who authored
+   the default no-partial-repay can be migrated into a loan where
+   partial repayment is enabled; a buyer who elected full-term interest
+   can receive a pro-rata loan. *Required*: compatibility on every
+   buyer-authored loan term.
+8. **The direct sale does not bind NFT collateral identity.** For an
    ERC-20-principal loan backed by an NFT, the admission guard compares
    the collateral collection, asset type, and amount — but neither
    `collateralTokenId` nor `collateralQuantity`. A seller can therefore
@@ -379,7 +409,7 @@ against.
    never chose. *Required*: exact token-id (and quantity) binding
    on-chain, mirrored in the picker — or exclude NFT-collateral loans
    from instant selling, as the listing path already does.
-7. **The direct sale ignores the buyer's authored duration as a
+9. **The direct sale ignores the buyer's authored duration as a
    floor.** The guard rejects only an offer *longer* than the loan's
    remaining term. Since the sale does not re-term the live loan, a
    one-day lender offer can be consumed into a position that stays
@@ -397,7 +427,7 @@ against.
    so the fix must add one rather than inherit it. Layer 1 states that
    BOTH sale rows go unavailable at maturity; the contract must
    actually enforce that on this path, not merely have the UI hide it.
-8. **The direct sale never checks offer expiry.** A GTT lender offer
+10. **The direct sale never checks offer expiry.** A GTT lender offer
    whose deadline has passed but which has not yet been
    permissionlessly cancelled is still consumable: the path checks the
    offer type and its accepted flag, and never consults the
@@ -408,19 +438,68 @@ against.
    frontend expiry filter cannot protect an offer creator from a direct
    caller. *Required*: the expiry guard before any lien release or vault
    movement.
+11. **Neither sale path checks the position's live solvency.** Opening
+   an ordinary loan requires a health factor at or above the protocol
+   minimum, and a position that falls under the liquidation threshold is
+   permissionlessly liquidatable. A sale checks neither: both paths gate
+   on the loan being `Active` and nothing more. A lender watching
+   collateral fall can therefore hand an already-underwater position to
+   a counterparty who authored terms on the assumption that a new
+   position starts comfortably over-collateralized — the incoming lender
+   inherits a loan that may be liquidatable in the same block, at a
+   price set from principal and accrued interest that says nothing about
+   the collateral shortfall. This is the one item that is *not*
+   instant-sell-specific: the listing path admits the same trade, and
+   there a buyer at least sees the loan id and can check it, which is
+   why it is stated once here for both. *Required*: an explicit
+   solvency admission floor on both sale paths — either the loan's live
+   health factor at or above a stated sale threshold, or (the honest
+   alternative) an on-chain acknowledgement from the incoming lender
+   that they are knowingly buying a sub-threshold position, with the
+   frontend surfacing the live figure either way.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
-- **The listing surface does not ship until items 1–4 are resolved.**
-- **The instant-sell surface does not ship until items 5–8 are
+- **The listing surface does not ship until items 1–4 and 11 are
+  resolved.**
+- **The instant-sell surface does not ship until items 5–11 are
   resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
-  cannot prevent any of items 5–8, and item 5 in particular lets the
+  cannot prevent any of items 5–11, and item 5 in particular lets the
   loan's own borrower acquire the lender position and then be unable to
   repay it. A path whose damage a filter cannot prevent must be OFF,
   not filtered.
+
+### Recommended shape for the instant-sell path
+
+Items 5–10 are six independent re-checks that all exist for the same
+reason: a generic lender offer is a promise to *open* a loan, and the
+instant-sell path spends it to *assume* one. Patching them one at a
+time keeps the mechanism's default wrong — every future term added to
+the offer struct becomes a new omission on this path, silently, because
+the compiler cannot notice a comparison nobody wrote.
+
+The design recommendation is therefore a **dedicated loan-specific
+position-sale bid**: an instrument whose creator names the loan id they
+are bidding on and the price they will pay, so their consent is
+expressed once against the actual running position instead of being
+reconstructed field-by-field from an offer authored for something else.
+Under that shape items 6, 7, 8, 9 and 10 stop being checks at all —
+there is no mismatch to detect between an offer's terms and a loan's,
+because the bid *is* the loan's terms — and item 5 reduces to the
+ordinary current-holder resolution the listing path already performs.
+Item 11 remains a real decision either way: whether a bid may name an
+under-collateralized position is a policy choice, not a bookkeeping one.
+
+This is a contract-side recommendation, offered because the UX cost of
+the alternative lands on users: a picker over generic offers has to
+explain, per row, why an offer that looks takeable is not, and that
+explanation is exactly the list above. A loan-specific bid needs no
+such explanation. Which shape ships is the contract owners' call; this
+design works against either, and the chooser reports the instant-sell
+row as unavailable until one of them exists.
 
 Everything else in this design — the chooser, the wait-first framing,
 the vocabulary, the quote rules including the held-balance line — is
@@ -432,10 +511,22 @@ rule already in Layer 1).
 
 Same as the borrower doc: no migration debt, contract redeploys
 expected, and the live-review DoD applies to the implementation PR
-(drive the chooser and both sale paths on the deployed testnet with
-the dev wallets once the redeploy lands). The implementation reuses
-the existing flows and settlement mirrors — this design adds the
-awareness layer and the hardening checklist, not new contract calls.
+(drive the chooser and whichever sale paths have shipped on the deployed
+testnet with the dev wallets once the redeploy lands).
+
+**This design is not frontend-only.** The awareness layer — the chooser,
+the wait-first ordering, the vocabulary, the quote rules including the
+held-balance line — builds against the deployed contracts as they stand.
+The two sale surfaces do not: the Layer-3 checklist's mandatory finite
+listing expiry with permissionless teardown, and the eleven
+contract-level prerequisites below it, are contract changes. An earlier
+revision of this section claimed the implementation "adds the awareness
+layer and the hardening checklist, not new contract calls" — that was
+wrong on its own terms, since a bound expiry, a permissionless teardown,
+a cost cap and a seller-economics bound are all new on-chain behaviour.
+Prelive is what makes that affordable: there is no migration debt, so
+the sale paths can be reshaped (see "Recommended shape") rather than
+patched around.
 
 ## Roadmap
 
@@ -446,21 +537,22 @@ every quote), and the Layer-3 parity hardening (fail-closed lock read,
 dead-listing teardown state, stale-marker discard). **Gated on the
 Contract-level prerequisites section**: the borrower-escape
 requirement (mandatory finite expiry + permissionless teardown) and
-prerequisites **1-4** must be resolvable with the deployed contracts,
-or their contract changes land first — the listing surface does not
-ship over them — and prerequisites **5-8** gate the instant-sell
+prerequisites **1-4 plus 11** must land first — the listing surface does
+not ship over them — and prerequisites **5-11** gate the instant-sell
 surface on exactly the same terms. Neither path ships over its own
 open items; in particular item 5 is NOT the sole instant-sale blocker
 (an earlier revision of this paragraph implied that, contradicting the
 prerequisites gate above — the authoritative reading is the
-prerequisites section, and this paragraph now matches it).
+prerequisites section, and this paragraph now matches it). The
+awareness layer is the only part of Phase 1 that is unblocked today,
+and it ships with both sale rows reporting as unavailable.
 
 Fork-tier spec, scoped to whatever has actually shipped: chooser
 renders for the lender in Basic mode, and a quote on a position
 carrying a held balance shows that line. The listing post/lock/cancel
-drive lands with the listing surface (after items 1-4); the instant-sell
-on-chain lender-change drive lands with that surface (after items
-5-8). Writing a fork-tier drive for a path still gated open would
+drive lands with the listing surface (after items 1-4 and 11); the
+instant-sell on-chain lender-change drive lands with that surface (after
+items 5-11). Writing a fork-tier drive for a path still gated open would
 assert behaviour the design says must not be reachable yet.
 
 **Phase 2 — comparison quotes (with the borrower "help me choose"
@@ -485,6 +577,13 @@ chooser stays absent on rentals.
    not expose, and shipping the listing surface without one would
    knowingly hand sellers an indefinite lever. Resolve before
    implementation starts.
+0b. Does the instant-sell path get patched (items 5–10 as six separate
+   guards) or reshaped into a loan-specific position-sale bid (see
+   "Recommended shape")? This design works against either, but the
+   answer changes what the picker shows: a generic-offer picker must
+   explain per row why a takeable-looking offer is refused, whereas a
+   bid book has nothing to explain. Contract owners' call; resolve
+   before the instant-sell surface is scheduled.
 1. Should the instant-sell row hide entirely when the book has no
    compatible offer, or show with "no matching offer right now"?
    Leaning show-with-reason — an option that appears only sometimes
