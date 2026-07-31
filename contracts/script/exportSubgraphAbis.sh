@@ -55,7 +55,14 @@ REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 # reports a fully-staged change as clean.
 TREE_COMMIT_AT_START="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
 TREE_DIRTY_AT_START=""
-if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
+# Anchored at the REPO ROOT and excluding this script's OWN output
+# (Codex #1495 r5 P2). Two things were wrong before: a pathspec was
+# resolved relative to `-C` rather than the root, and — more
+# importantly — the snapshot counted this script's own uncommitted
+# output as source drift, so simply RE-RUNNING an export before
+# committing its result recreated the false-dirty stamp this change
+# exists to remove.
+if ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)ops/subgraph' 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 DEPLOY_ROOT="$CONTRACTS_DIR/deployments"

@@ -205,9 +205,15 @@ done
 # looking for `forge inspect`, `python3 - `, `jq ` and `cat > "$`. A script
 # writing by some other means is checked for the idiom but NOT for ordering.
 # Widen the pattern rather than trusting silence.
+# Discovery keys on the SHAPE of the emission, never on the NAMES of the
+# interpolated variables (Codex #1495 r5 P2). Matching a variable containing
+# `DIRTY` meant an ordinary rename silently dropped a script from this list
+# while the non-empty check stayed green — so a rename bypassed every
+# predicate below without a single failure. Discovery finds the file; the
+# parser below validates the variables.
 STAMPING_SH=()
 while IFS= read -r f; do STAMPING_SH+=("$(basename "$f")"); done < <(
-  grep -rlE '"monorepoCommit": ".*DIRTY' "$SCRIPT_DIR"/*.sh 2>/dev/null \
+  grep -rlE '"monorepoCommit": "\$' "$SCRIPT_DIR"/*.sh 2>/dev/null \
     | grep -v '/predeploy-check\.sh$' | sort
 )
 if [ ${#STAMPING_SH[@]} -eq 0 ]; then
@@ -233,6 +239,19 @@ else
     # moves with it.
     snap_line="$(grep -n '^[[:space:]]*TREE_DIRTY_AT_START=" (dirty)"' "$f" | head -1 | cut -d: -f1)"
     snap_init="$(grep -c '^TREE_DIRTY_AT_START=""' "$f" || true)"
+    # ANY reset to empty, at any indentation, anywhere (Codex #1495 r5 P2).
+    # Counting only the column-zero initializer let a later
+    # `if true; then TREE_DIRTY_AT_START=""; fi` clear a dirty run while every
+    # other predicate stayed green — a dirty tree stamped clean, the precise
+    # outcome this guard exists to prevent.
+    # Count EVERY assignment-to-empty anywhere in the file and require exactly
+    # one — the column-zero initializer. Anything else is a reset. A first
+    # attempt enumerated the shapes a reset might take (leading whitespace, or
+    # after a `;`) and missed `if true; then TREE_DIRTY_AT_START=""; fi`
+    # entirely, which is why this counts rather than pattern-matches: an
+    # enumeration of bad forms is only ever as good as the imagination behind
+    # it, whereas "exactly one, in the right place" has no gaps.
+    snap_empty_total="$(grep -cF 'TREE_DIRTY_AT_START=""' "$f" || true)"
     first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
       | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
     if [ -z "$dirty_var" ]; then
@@ -243,14 +262,19 @@ else
     # Every assignment of that variable, anywhere in the file.
     assigns="$(grep -cE "^[[:space:]]*${dirty_var}=" "$f" || true)"
     commit_from_snap="$(grep -cE "^[[:space:]]*${commit_var}=\"\\\$TREE_COMMIT_AT_START\"" "$f" || true)"
+    # TOTAL assignments too, symmetric with the dirty variable (Codex #1495 r4
+    # P2). Checking only "is assigned from the snapshot once" let a LATE
+    # reassignment from `rev-parse` sit alongside it and pass — the same
+    # half-a-property blind spot that let the commit half through in r3.
+    commit_assigns="$(grep -cE "^[[:space:]]*${commit_var}=" "$f" || true)"
     from_snap="$(grep -cE "^[[:space:]]*${dirty_var}=\"\\\$TREE_DIRTY_AT_START\"" "$f" || true)"
-    if [ -z "$snap_line" ] || [ "$snap_init" -ne 1 ]; then
+    if [ -z "$snap_line" ] || [ "$snap_init" -ne 1 ] || [ "$snap_empty_total" -ne 1 ]; then
       echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
       FAIL=1
     elif [ "$assigns" -ne 1 ] || [ "$from_snap" -ne 1 ]; then
       echo "  ✗ $s — \$$dirty_var must be assigned exactly once, from the snapshot (found $assigns assignment(s), $from_snap from snapshot) (#1490)" >&2
       FAIL=1
-    elif [ "$commit_from_snap" -ne 1 ]; then
+    elif [ "$commit_from_snap" -ne 1 ] || [ "$commit_assigns" -ne 1 ]; then
       echo "  ✗ $s — \$$commit_var must be pinned from \$TREE_COMMIT_AT_START, not re-read at stamp time (#1490)" >&2
       FAIL=1
     elif [ -n "$first_write" ] && [ "$snap_line" -gt "$first_write" ]; then

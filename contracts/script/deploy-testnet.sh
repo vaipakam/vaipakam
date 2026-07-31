@@ -207,7 +207,14 @@ REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 # fully-staged change as clean.
 TREE_COMMIT_AT_START="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
 TREE_DIRTY_AT_START=""
-if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
+# Anchored at the REPO ROOT and excluding this script's OWN output
+# (Codex #1495 r5 P2). Two things were wrong before: a pathspec was
+# resolved relative to `-C` rather than the root, and — more
+# importantly — the snapshot counted this script's own uncommitted
+# output as source drift, so simply RE-RUNNING an export before
+# committing its result recreated the false-dirty stamp this change
+# exists to remove.
+if ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)contracts/deployments' 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
@@ -1008,17 +1015,6 @@ EOF
   # changed, and testing the whole tree at this point is precisely the
   # always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
   # clear it.
-  # Every tracked FORGE INPUT, not just src/script (Codex #1495 r2 P2):
-  # `foundry.toml` sets the lib dir and compiler settings, and `contracts/lib`
-  # submodule pointers change the compiled bytecode too. Excluding only the
-  # generated outputs is the correct shape — an allowlist of input paths
-  # silently misses whatever is added next.
-  if [ -z "$TREE_DIRTY_AT_START" ] \
-     && ! git -C "$REPO_ROOT" diff --quiet HEAD -- contracts \
-          ':(exclude)contracts/out' ':(exclude)contracts/cache' \
-          ':(exclude)contracts/deployments' 2>/dev/null; then
-    TREE_DIRTY_AT_START=" (dirty)"
-  fi
 
   # HEAD can MOVE during a long deploy (Codex #1495 r2 P2): an operator who
   # commits mid-run leaves the late `rev-parse` recording the NEW commit while
