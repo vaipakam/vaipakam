@@ -201,7 +201,29 @@ framing at all:
    instead produces a safe on-chain refusal, surfaced as a plain
    explanation with a refreshed view — never money moved. The design
    promises pre-prompt detection only for what is detectable.
-4. **No stacked exits — across BOTH parties.** One live exit vehicle
+4. **Candidate admission covers the ACCESS gates, not just the
+   economics.** On a risk-gated or permissioned deployment the sale
+   paths re-check the incoming buyer's risk tier / per-pair consent,
+   jurisdiction and KYC, and the sanctions movement gates. The existing
+   picker filters offer shape and economics only, and its pre-sign
+   simulation is advisory — it never disables signing — so an
+   economically perfect candidate can still be one whose acceptance is
+   already certain to revert. *Required hardening*: run the live
+   access/consent, jurisdiction, and sanctions preflights and either
+   exclude such candidates or hard-block the confirm, rather than
+   routing the user into a guaranteed revert. Where a gate has no
+   exposed read, the design says so plainly rather than implying the
+   filter is complete (the same honesty rule the borrower-side
+   compliance deferral follows).
+5. **A zero buyer rate must be offerable.** The neutral seed for the
+   listing form is the loan's own rate — which is `0` for a valid
+   zero-interest loan — but the existing form rejects a rate that is
+   not strictly greater than zero, even though offer creation permits a
+   zero APR. As it stands the promised neutral default is unusable on
+   exactly those loans, pushing the seller to either fund a needless
+   top-up at a positive rate or abandon listing. *Required hardening*:
+   accept zero as a valid buyer rate.
+6. **No stacked exits — across BOTH parties.** One live exit vehicle
    per position: a live listing blocks the instant sell (and
    vice-versa where the contracts enforce it), and a live
    borrower-side linked exit (a preclose offset) blocks creating a
@@ -322,9 +344,13 @@ against.
    from the seller. On a long-dated loan the accrued interest or rate
    top-up can therefore exceed the principal, leaving the seller
    out of pocket beyond the sale proceeds — which the "principal
-   minus a cost" framing does not describe. *Required*: an equivalent
-   economic cap; failing that, the UI must render and confirm a
-   negative net as an explicit additional payment, never as a receipt.
+   minus a cost" framing does not describe. *Required*: the equivalent
+   economic cap on the listing path. **There is no UI alternative.**
+   An earlier draft of this section offered "or render a negative net
+   as an explicit additional payment" as a fallback; that is withdrawn,
+   because it contradicts this section's own premise and would let an
+   implementer treat disclosure as resolution while the uncapped wallet
+   debit ships intact. Disclosure is not a cap.
 4. **A listing binds only the buyer's rate, not the seller's
    economics.** The seller confirms a figure at listing time, but
    completion recomputes accrued interest and the top-up at the
@@ -344,11 +370,54 @@ against.
    holder in the on-chain path (the listing-accept path already does),
    with the frontend filter mirroring it.
 
+6. **The direct sale does not bind NFT collateral identity.** For an
+   ERC-20-principal loan backed by an NFT, the admission guard compares
+   the collateral collection, asset type, and amount — but neither
+   `collateralTokenId` nor `collateralQuantity`. A seller can therefore
+   consume a lender offer authored for a *different token in the same
+   collection* and force that offer's creator into an exposure they
+   never chose. *Required*: exact token-id (and quantity) binding
+   on-chain, mirrored in the picker — or exclude NFT-collateral loans
+   from instant selling, as the listing path already does.
+7. **The direct sale ignores the buyer's authored duration as a
+   floor.** The guard rejects only an offer *longer* than the loan's
+   remaining term. Since the sale does not re-term the live loan, a
+   one-day lender offer can be consumed into a position that stays
+   locked for another thirty — the buyer is committed far past the term
+   they authored, and the picker compounds it by displaying the offer's
+   shorter duration. *Required*: the loan's live remaining exposure
+   must fit *within* the buyer-authored duration (or a dedicated
+   position-sale bid whose signed terms cover the running loan).
+8. **The direct sale never checks offer expiry.** A GTT lender offer
+   whose deadline has passed but which has not yet been
+   permissionlessly cancelled is still consumable: the path checks the
+   offer type and its accepted flag, and never consults the
+   is-expired helper. A seller can take the creator's still-vaulted
+   principal *after* their stated consent window closed. This also
+   corrects a promise made earlier in this design — an expired
+   candidate does **not** produce a safe on-chain refusal today, and a
+   frontend expiry filter cannot protect an offer creator from a direct
+   caller. *Required*: the expiry guard before any lien release or vault
+   movement.
+
 Together with the borrower-escape requirement in the Layer-3
-checklist, these gate Phase 1: **the listing surface does not ship
-until items 1–4 are resolved, and the instant-sell picker's admission
-filter is not trustworthy until item 5 is.** The frontend work in this
-design is otherwise ready to build against.
+checklist, these gate Phase 1 — **both paths, not just the listing**:
+
+- **The listing surface does not ship until items 1–4 are resolved.**
+- **The instant-sell surface does not ship until items 5–8 are
+  resolved.** An earlier draft of this gate said only that the
+  admission filter was "not trustworthy" until item 5 — that was too
+  weak: the on-chain path is callable directly, so a frontend filter
+  cannot prevent any of items 5–8, and item 5 in particular lets the
+  loan's own borrower acquire the lender position and then be unable to
+  repay it. A path whose damage a filter cannot prevent must be OFF,
+  not filtered.
+
+Everything else in this design — the chooser, the wait-first framing,
+the vocabulary, the quote rules including the held-balance line — is
+ready to build against, and the chooser simply reports each sale path
+as unavailable while its prerequisites are open (the honest-availability
+rule already in Layer 1).
 
 ## Prelive posture
 
