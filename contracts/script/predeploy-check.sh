@@ -218,7 +218,15 @@ else
     f="$SCRIPT_DIR/$s"
     # The dirty variable is the SECOND interpolation in the stamp value.
     dirty_var="$(sed -nE 's/.*"monorepoCommit": "\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*)".*/\1/p' "$f" | head -1)"
-    snap_line="$(grep -n '^TREE_DIRTY_AT_START=""' "$f" | head -1 | cut -d: -f1)"
+    # Anchor on the ACTUAL git state read, not the empty initializer (Codex
+    # #1495 r2 P2). Anchoring on `TREE_DIRTY_AT_START=""` meant an edit that
+    # left the initializer early while moving the `git diff` conditional after
+    # the first write still passed — the same mistake as the guard this
+    # replaced, which anchored on a grep for prose instead of the command.
+    # `TREE_DIRTY_AT_START=" (dirty)"` sits INSIDE that conditional, so it
+    # moves with it.
+    snap_line="$(grep -n '^[[:space:]]*TREE_DIRTY_AT_START=" (dirty)"' "$f" | head -1 | cut -d: -f1)"
+    snap_init="$(grep -c '^TREE_DIRTY_AT_START=""' "$f" || true)"
     first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
       | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
     if [ -z "$dirty_var" ]; then
@@ -229,14 +237,14 @@ else
     # Every assignment of that variable, anywhere in the file.
     assigns="$(grep -cE "^[[:space:]]*${dirty_var}=" "$f" || true)"
     from_snap="$(grep -cE "^[[:space:]]*${dirty_var}=\"\\\$TREE_DIRTY_AT_START\"" "$f" || true)"
-    if [ -z "$snap_line" ]; then
+    if [ -z "$snap_line" ] || [ "$snap_init" -ne 1 ]; then
       echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
       FAIL=1
     elif [ "$assigns" -ne 1 ] || [ "$from_snap" -ne 1 ]; then
       echo "  ✗ $s — \$$dirty_var must be assigned exactly once, from the snapshot (found $assigns assignment(s), $from_snap from snapshot) (#1490)" >&2
       FAIL=1
     elif [ -n "$first_write" ] && [ "$snap_line" -gt "$first_write" ]; then
-      echo "  ✗ $s — snapshot at line $snap_line comes AFTER the first write at line $first_write (#1490)" >&2
+      echo "  ✗ $s — the git state read at line $snap_line comes AFTER the first write at line $first_write (#1490)" >&2
       FAIL=1
     else
       echo "  ✓ $s — stamp derives from a snapshot taken before the first write"

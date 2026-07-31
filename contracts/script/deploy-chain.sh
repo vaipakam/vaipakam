@@ -195,6 +195,7 @@ REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 # `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
 # edits count as dirty too; a bare `git diff` compares against the index and
 # reports a fully-staged change as clean.
+TREE_COMMIT_AT_START="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
 TREE_DIRTY_AT_START=""
 if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
@@ -895,7 +896,11 @@ fi
 # sidecar fixes that — written fresh on every deploy completion.
 
 DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
-COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
+# Records the hash pinned WITH the opening snapshot, not a fresh read
+# (Codex #1495 r2 P2). A late `rev-parse` would name whatever HEAD is by
+# the time the deploy finishes, which is not necessarily the commit whose
+# source produced the bytecode this run just deployed.
+COMMIT_HASH="$TREE_COMMIT_AT_START"
 # #1495 r1 P2 — a deploy runs for many minutes and consumes source AFTER
 # the snapshot (forge build, forge script). The opening reading is
 # therefore not an immutable description of this run's inputs: a file
@@ -907,8 +912,26 @@ COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
 # changed, and testing the whole tree at this point is precisely the
 # always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
 # clear it.
+# Every tracked FORGE INPUT, not just src/script (Codex #1495 r2 P2):
+# `foundry.toml` sets the lib dir and compiler settings, and `contracts/lib`
+# submodule pointers change the compiled bytecode too. Excluding only the
+# generated outputs is the correct shape — an allowlist of input paths
+# silently misses whatever is added next.
 if [ -z "$TREE_DIRTY_AT_START" ] \
-   && ! git -C "$REPO_ROOT" diff --quiet HEAD -- contracts/src contracts/script 2>/dev/null; then
+   && ! git -C "$REPO_ROOT" diff --quiet HEAD -- contracts \
+        ':(exclude)contracts/out' ':(exclude)contracts/cache' \
+        ':(exclude)contracts/deployments' 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
+
+# HEAD can MOVE during a long deploy (Codex #1495 r2 P2): an operator who
+# commits mid-run leaves the late `rev-parse` recording the NEW commit while
+# the bytecode was built from the old one — and the drift check above,
+# comparing against the new HEAD, reads clean. The pair would then attribute
+# this run's artifacts to a commit that never produced them, with no marker.
+# Pin the hash WITH the snapshot and treat any movement as dirty.
+if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
+     != "$TREE_COMMIT_AT_START" ]; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 COMMIT_DIRTY="$TREE_DIRTY_AT_START"
