@@ -237,11 +237,26 @@ framing at all:
    pays; they choose the yearly rate the buyer will earn for the
    remaining term. The form says exactly that, seeds the rate from
    the loan's own rate (the neutral choice), and states the
-   trade-off in both directions: a HIGHER buyer rate makes the
-   position more attractive to buyers — likelier to sell sooner —
-   but raises the rate top-up the seller funds at completion; a
-   LOWER rate costs the seller less but can sit unsold. The forfeit
-   rule is repeated against the live figure.
+   trade-off — **qualified by which side of the forfeit rule is
+   currently binding**, because the seller pays the LARGER of accrued
+   interest or the top-up, not their sum:
+   - *While accrued interest is the binding cost* (the common case at
+     or below the loan's own rate): moving the rate does not change
+     what the seller pays at all until the resulting top-up grows past
+     the interest already built up. So the form says raising the rate
+     makes the position more attractive to buyers **at no extra cost
+     to you up to that crossing point**, and says where the crossing
+     point is. Presenting a cost that does not exist would push
+     sellers toward a less marketable rate for nothing.
+   - *While the top-up is the binding cost* (a rate far enough above
+     the loan's): raising it further does add to what the seller funds
+     at completion, and lowering it genuinely reduces that cost — at
+     the price of sitting unsold.
+
+   An unconditional "higher costs you more, lower costs you less" is
+   wrong in the first regime and contradicts the regime-aware
+   explanation in the decision-guidance section below. The forfeit rule
+   is repeated against the live figure either way.
 3. **Failure is framed as safe — with the race named honestly.**
    Drift the app has DETECTED (a consumed, re-priced, or expired
    candidate) closes the review before any wallet prompt for a fresh
@@ -593,12 +608,20 @@ reconstructed field-by-field from an offer authored for something else.
 **What the reshape actually removes — and what it does not.** The ten
 items split into two classes, and the bid only dissolves one of them:
 
-- *Term-mismatch items (7, 8, 9 — behavioural terms, NFT identity,
-  duration as a floor)* dissolve by construction. Each exists purely
-  because an offer authored for a hypothetical loan is being matched
-  against a real one; when the bid names the loan, there is no second set
-  of terms to disagree with. Item 5 likewise reduces to the ordinary
-  current-holder resolution the listing path already does.
+- *Term-mismatch items (7, 8 — behavioural terms, NFT identity) and the
+  duration-COMPARISON half of item 9* dissolve by construction. Each
+  exists purely because an offer authored for a hypothetical loan is
+  being matched against a real one; when the bid names the loan, there is
+  no second set of terms to disagree with. Item 5 likewise reduces to the
+  ordinary current-holder resolution the listing path already does.
+- *Item 9's MATURITY half is REPLACED, not removed.* Item 9 carries two
+  requirements, and only the first is about comparing terms. A bid
+  authored before maturity can carry a buyer-selected expiry that falls
+  *after* it, and the loan stays `Active` right through its grace window
+  — so naming the loan does not stop the seller filling that bid against
+  an overdue position. The explicit pre-maturity check therefore carries
+  into the bid path, either as its own guard or by requiring every bid
+  deadline to be no later than the loan's maturity.
 - *Item 10 (expiry) is REPLACED, not removed.* Naming a loan does
   nothing about a stale consent window: without a stored and enforced
   bid deadline, a bid stays fillable after its creator's window closes —
@@ -607,6 +630,14 @@ items split into two classes, and the bid only dissolves one of them:
   revision listed item 10 among the dissolving items, which contradicted
   this section's own demand for a buyer-authored expiry two paragraphs
   down.)
+
+  The two REPLACED bullets share a lesson worth stating once: an item
+  that bundles a term-comparison requirement with a *time* requirement
+  only half-dissolves under the reshape, because naming the loan settles
+  what the position IS and says nothing about WHEN the consent is still
+  good. An earlier revision got item 10 right and left item 9 in the
+  dissolving group — the same error on the sibling item. When auditing
+  any future item against the bid shape, split it on that axis first.
 - *Mutable-state items (6, and 11 as policy) do NOT dissolve.* A loan is
   not frozen between a bid and its fill: the borrower can partially
   repay, collateral can be withdrawn or fall in price, a held-for-lender
