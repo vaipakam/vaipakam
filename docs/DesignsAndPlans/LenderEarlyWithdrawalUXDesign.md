@@ -528,6 +528,26 @@ Prelive is what makes that affordable: there is no migration debt, so
 the sale paths can be reshaped (see "Recommended shape") rather than
 patched around.
 
+**Interface changes the sale surfaces imply** — scoped here so they are
+not left out of the implementation PR as "reuse":
+
+- *Listing creation* gains a seller-chosen finite expiry (the create
+  entry point accepts none today) and a seller-economics bound — a
+  minimum net or maximum cost stored with the listing.
+- *Listing teardown* gains a permissionless path callable at expiry or
+  maturity while the loan is still `Active`, so the borrower is never
+  dependent on the seller's cooperation.
+- *The instant-sell entry point* gains, at minimum, a bound receipt and
+  a deadline (items 6 and 11) — or is replaced by the position-sale bid
+  above, which carries them natively.
+- *Client wiring* for each of those: a facet ABI re-export, a
+  deployments sync after redeploy, and the consumer typechecks — the
+  monorepo's standing rule for any selector or struct-shape change.
+  Chain-shape and copy work do not substitute for it.
+
+None of that is scheduled by this document; it is named so the estimate
+for whichever sale surface ships first includes it.
+
 ## Roadmap
 
 **Phase 1 — implementation PR after this doc ratifies.** The lender
