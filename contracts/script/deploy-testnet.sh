@@ -193,6 +193,22 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
+
+# ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
+# (#1490) The tree state in the provenance stamp answers "which source state
+# was this deploy made FROM". Testing it after the deploy has written its own
+# artifacts (addresses.json and friends) always reports dirty, so the marker
+# was set on every run and distinguished nothing — least of all the case it
+# exists for: a deploy cut from a tree with real uncommitted edits, which
+# cannot be reproduced from the recorded commit.
+#
+# `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
+# edits count too; a bare `git diff` compares against the index and reports a
+# fully-staged change as clean.
+TREE_DIRTY_AT_START=""
+if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
 # consumption (Stage 3 split)" + "Frontend ABI sync". apps/defi and
 # apps/www are the two SPAs; apps/{keeper,indexer,agent} are the
@@ -976,8 +992,7 @@ EOF
   # at a glance which monorepo commit is live on this chain.
   DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
-  COMMIT_DIRTY=""
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then COMMIT_DIRTY=" (dirty)"; fi
+  COMMIT_DIRTY="$TREE_DIRTY_AT_START"
   DIAMOND_NOW=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
 {

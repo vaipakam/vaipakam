@@ -179,6 +179,57 @@ for s in "${DEPLOY_SH[@]}"; do
   fi
 done
 
+# 3d. Provenance-stamp ordering (#1490). Any script that writes a
+# `monorepoCommit` stamp must snapshot the working-tree state BEFORE it
+# writes its own output — otherwise the dirty marker is set on every run by
+# the script's own artifacts and distinguishes nothing, which is exactly the
+# state #1490 found: five scripts, five always-dirty stamps.
+#
+# Enforced as an IDIOM rather than by parsing control flow: the snapshot must
+# live in `TREE_DIRTY_AT_START`, that assignment must precede the first write
+# the check knows how to spot, and no other `git diff --quiet` may appear (so
+# nothing recomputes the flag late).
+#
+# COVERAGE LIMIT, stated rather than implied: the "first write" is found by
+# looking for `forge inspect`, `python3 - `, `jq ` and `cat > "$`. A script
+# that writes by some other means is NOT covered by the ordering half — the
+# idiom half still applies. Widen the pattern rather than trusting silence.
+# Detect by the STAMP-WRITE SHAPE, not by mentioning the word: a script
+# qualifies when it emits a `"monorepoCommit": "..."` field whose value
+# includes a dirty marker. That deliberately excludes this file (whose own
+# messages name the field), and `exportTenderlyAlerts.sh`, which records a
+# commit with no dirty marker at all and so cannot have the ordering bug.
+# This file is excluded by name because the detector's own pattern appears
+# in it literally — a self-match, not a stamping script.
+STAMPING_SH=()
+while IFS= read -r f; do STAMPING_SH+=("$(basename "$f")"); done < <(
+  grep -rlE '"monorepoCommit": ".*DIRTY' "$SCRIPT_DIR"/*.sh 2>/dev/null \
+    | grep -v '/predeploy-check\.sh$' | sort
+)
+if [ ${#STAMPING_SH[@]} -eq 0 ]; then
+  echo "  · no provenance-stamping scripts found — pattern changed?"
+else
+  for s in "${STAMPING_SH[@]}"; do
+    f="$SCRIPT_DIR/$s"
+    snap_line="$(grep -n '^TREE_DIRTY_AT_START=""' "$f" | head -1 | cut -d: -f1)"
+    stray="$(grep -c 'git diff --quiet' "$f" || true)"
+    first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
+      | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
+    if [ -z "$snap_line" ]; then
+      echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
+      FAIL=1
+    elif [ "$stray" -gt 1 ]; then
+      echo "  ✗ $s — more than one 'git diff --quiet'; the flag must come only from the snapshot (#1490)" >&2
+      FAIL=1
+    elif [ -n "$first_write" ] && [ "$snap_line" -gt "$first_write" ]; then
+      echo "  ✗ $s — snapshot at line $snap_line comes AFTER the first write at line $first_write (#1490)" >&2
+      FAIL=1
+    else
+      echo "  ✓ $s — provenance snapshot precedes first write"
+    fi
+  done
+fi
+
 # 3d. Stale LayerZero deploy-residue guard. T-068 Phase 6.4 stripped the
 #     old LZ deploy variables when the cross-chain layer moved to CCIP.
 #     `lzEid` / `LayerZero` are deliberately NOT banned — the LZ endpoint

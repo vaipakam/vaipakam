@@ -182,6 +182,23 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
+
+# ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
+# (#1490) The tree state recorded in the provenance stamp answers "which
+# source state was this output generated FROM". Testing it AFTER the script
+# has written its own output always reports dirty, because the output IS a
+# working-tree change — so the marker was set on every run and distinguished
+# nothing, least of all the case it exists for: an export taken from a tree
+# with real uncommitted contract edits, which is not reproducible from the
+# recorded commit.
+#
+# `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
+# edits count as dirty too; a bare `git diff` compares against the index and
+# reports a fully-staged change as clean.
+TREE_DIRTY_AT_START=""
+if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 # Stage 3 / Stage 4 source-tree split: SPAs and Workers each live under
 # `apps/<name>` with a wrangler.jsonc, and three Workers replace the
 # old monolithic `ops/hf-watcher`. Every Cloudflare deploy step in this
@@ -879,10 +896,7 @@ fi
 
 DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
 COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
-COMMIT_DIRTY=""
-if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then
-  COMMIT_DIRTY=" (dirty)"
-fi
+COMMIT_DIRTY="$TREE_DIRTY_AT_START"
 cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
 {
   "chainSlug": "$CHAIN_SLUG",

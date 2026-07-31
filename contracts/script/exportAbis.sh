@@ -37,6 +37,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
+# (#1490) The tree state recorded in the provenance stamp answers "which
+# source state was this output generated FROM". Testing it AFTER the script
+# has written its own output always reports dirty, because the output IS a
+# working-tree change — so the marker was set on every run and distinguished
+# nothing, least of all the case it exists for: an export taken from a tree
+# with real uncommitted contract edits, which is not reproducible from the
+# recorded commit.
+#
+# `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
+# edits count as dirty too; a bare `git diff` compares against the index and
+# reports a fully-staged change as clean.
+TREE_DIRTY_AT_START=""
+if ! git -C "$CONTRACTS_DIR" diff --quiet HEAD 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
+
 # Default sibling layout: monorepo at /work/vaipakam, keeper-bot at
 # /work/vaipakam-keeper-bot. Override by exporting KEEPER_BOT_DIR.
 KEEPER_BOT_DIR="${KEEPER_BOT_DIR:-$CONTRACTS_DIR/../../vaipakam-keeper-bot}"
@@ -96,10 +113,7 @@ done
 # auditors can correlate a published bot release with a specific
 # contracts state.
 COMMIT="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
-DIRTY=""
-if ! git diff --quiet HEAD 2>/dev/null; then
-  DIRTY=" (dirty)"
-fi
+DIRTY="$TREE_DIRTY_AT_START"
 cat > "$OUT_DIR/_source.json" <<EOF
 {
   "monorepoCommit": "$COMMIT$DIRTY",
