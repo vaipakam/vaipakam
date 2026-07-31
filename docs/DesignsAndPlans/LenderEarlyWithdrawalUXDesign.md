@@ -168,9 +168,14 @@ page in both modes, strictly informational:
   misstates WHEN the lender gets paid, which is exactly the fact this
   row exists to convey. The sale rows follow, each with its cost
   stated up front.
-- Each sale row carries the §9-mandated cost disclosure in one
-  sentence: selling early gives up the larger of the interest built
-  up so far or the buyer's rate top-up. The listing row adds its
+- Each sale row carries the cost disclosure for the settlement model
+  that is actually being offered. For the generic-offer model, that is
+  the §9 sentence: selling early gives up the larger of the interest
+  built up so far or the buyer's rate top-up. For a loan-specific
+  position bid, the row does NOT reuse that sentence unless the bid spec
+  has defined an equivalent buyer-rate/top-up term; it uses the bid's
+  resolved gross/net price, payment asset, and seller receipt model, and
+  remains unavailable while those are unresolved. The listing row adds its
   structural facts — and they are cross-party, not just the seller's:
   the seller's position is transfer-locked while listed, the sale
   settles only when a buyer accepts, and **while the listing stands
@@ -355,7 +360,7 @@ implementation PR:
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
 | Keep it to the end | No urgent need for the capital | No sale forfeiture, and your reward credit for this position keeps accruing — principal plus the agreed interest if the borrower repays (paid on the loan's schedule where it has one, otherwise at the close); the normal default process (recovery may be less) if they don't |
-| Sell now | Need liquidity today; an acceptable offer is on the book | Principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly — plus any money already set aside for you on this loan, which transfers to the buyer — plus your pending reward credit for this position, which is given up — plus the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated (shown as its own line, or marked unquotable where the value can't be read) |
+| Sell now | Need liquidity today; an acceptable offer or position bid is on the book | Generic offer: principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly. Position bid: the bid's defined gross/net seller receipt, payment asset, and any resolved top-up or no-top-up rule. Both models also show any money already set aside for you on this loan, which transfers to the buyer; your pending reward credit for this position, which is given up; and the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated (shown as its own line, or marked unquotable where the value can't be read). The bid row stays unavailable until its settlement model defines those figures. |
 | List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, and conditional Full-entitlement lines at completion, with the same unquotable fallback; your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
 The teaching moment (inverse of the borrower side) is REGIME-AWARE,
@@ -978,11 +983,15 @@ than a growing list of patches on generic-offer consumption.
    UI treats the acquired position as absent. That is only half the
    discovery surface: dashboard and history views read the append-only
    per-user loan index, so the buyer must also receive the REAL loan id
-   there, with the same deduplication used by consolidation. A listing
-   buyer otherwise sees only the temporary sale-vehicle id, and a
-   direct-sale buyer can see no entry at all. *Required*: replace the
-   old reverse-index entry with the new lender-token mapping and append
-   the acquired real loan id to the buyer's user-loan index during
+   there. A listing buyer otherwise sees only the temporary sale-vehicle
+   id, and a direct-sale buyer can see no entry at all. The append must
+   not literally reuse consolidation's linear lifetime-array scan: a
+   high-volume buyer could otherwise make fills run out of gas and turn a
+   funded-looking offer into a seller-burning revert. *Required*: replace
+   the old reverse-index entry with the new lender-token mapping, append
+   the acquired real loan id to the buyer's user-loan index through an
+   O(1) membership map or other bounded deduplication mechanism, and mark
+   a first-time buyer as a seen protocol user during real-position
    migration before either sale surface ships.
 
 26. **The listing sale vehicle must not pollute public loan accounting.**
@@ -993,11 +1002,14 @@ than a growing list of patches on generic-offer consumption.
    temporary loan id to both parties' per-user histories, where count and
    pagination views expose the append-only index even after the vehicle
    is terminal. Indexers, dashboards, and activity consumers can then
-   retain a phantom loan the UX says is never visible. *Required*: bypass
-   ordinary metrics, events, and per-user indexes for the internal sale
-   vehicle, or define an internal lifecycle that fully reverses each of
-   those writes and emits enough terminal information for every consumer
-   to discard it.
+   retain a phantom loan the UX says is never visible. Bypassing only
+   initialization is not enough: the ordinary terminal transition's
+   metrics hook can later decrement active-loan counters for a temporary
+   loan that was never counted. *Required*: bypass ordinary metrics,
+   events, per-user indexes, and terminal metrics hooks for the internal
+   sale vehicle, or define a paired internal lifecycle that fully balances
+   each write and emits enough terminal information for every consumer to
+   discard it.
 
 27. **VPFI sale settlement must restamp every affected vault owner.**
    When the held-for-lender balance is denominated in VPFI, sale
