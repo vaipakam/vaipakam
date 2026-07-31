@@ -140,6 +140,7 @@ GENERATED_AT=$(date +%Y-%m-%dT%H:%M:%S%z)
 EMITTED=0
 SKIPPED=()
 
+_PROV_WROTE=()
 for slug in "${CHAINS[@]}"; do
   TENDERLY_NETWORK=$(chain_to_tenderly "$slug")
   if [ -z "$TENDERLY_NETWORK" ]; then
@@ -160,6 +161,9 @@ for slug in "${CHAINS[@]}"; do
   fi
 
   OUT_FILE="$OUT_DIR/alerts-$slug.yaml"
+  # Track what THIS run emits, so a later abort can remove exactly that
+  # and nothing else (Codex #1495 r12 P2).
+  _PROV_WROTE+=("$OUT_FILE")
 
   # Provenance header — operator can tell at a glance which monorepo
   # commit + Diamond address produced this expansion. Helps when
@@ -219,7 +223,13 @@ if [ "$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
   # stale files carrying the old hash beside possibly-new inputs, ready to be
   # applied by the next person who runs the apply step. A failed run must
   # leave nothing behind to pick up.
-  rm -f "$OUT_DIR"/alerts-*.yaml
+  # ONLY the files this run wrote (Codex #1495 r12 P2). The previous
+  # version globbed `alerts-*.yaml`, which on a single-chain invocation
+  # — `exportTenderlyAlerts.sh base-sepolia` — would have deleted every
+  # OTHER chain's perfectly valid manifest, turning a provenance abort
+  # into unrelated config loss. A cleanup that removes more than the run
+  # created is worse than no cleanup.
+  [ ${#_PROV_WROTE[@]} -gt 0 ] && rm -f "${_PROV_WROTE[@]}"
   echo "Removed the manifests this run had written." >&2
   exit 1
 fi
