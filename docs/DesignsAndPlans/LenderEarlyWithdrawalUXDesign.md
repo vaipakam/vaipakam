@@ -96,7 +96,7 @@ to close the exiting lender's accrued interaction-reward entry as
 opened a fresh entry covering only the window from the day after the
 sale to the original end. The seller does not hand this credit to the
 buyer; they lose it, and the buyer starts a shorter one. So a sale can
-cost a lender three distinct things, and the quote must not present the
+cost a lender at least three distinct things, and the quote must not present the
 first as the total.
 
 The word *attempt* is load-bearing. The reward migration runs as a
@@ -111,7 +111,11 @@ until it is, the wording says what is intended to happen rather than asserting i
 certain. Getting this backwards in either direction is a real cost:
 promising a forfeiture that may not occur misprices the sale, and
 promising a residual entry the buyer may never receive misprices the
-purchase.
+purchase. On Full-stamped loans, the seller-side total may also include
+the paid Full entitlement that leaves with the continuing lender position;
+the tariff-accounting prerequisite defines whether that entitlement is
+transferred, extinguished, or compensated before the quote can claim it
+has enumerated every seller cost.
 
 Where the pending credit's value cannot be read on the client,
 the line says so explicitly ("your pending reward credit for this
@@ -376,7 +380,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — twenty-one at
+The adversarial passes on this doc surfaced the gaps below — twenty-three at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -387,9 +391,9 @@ promising safety the protocol does not provide. Each was verified
 against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
-Items 1–4, 13, 14, 16, 17 and 19 belong to the **listing** path,
+Items 1–4, 13, 14, 16, 17, 19 and 23 belong to the **listing** path,
 5–10, 15, 17 and 18 to the **instant-sell** (direct buy-offer) path,
-and 11, 12, 20 and 21 to both. The instant-sell cluster is
+and 11, 12, 20, 21 and 22 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
@@ -862,10 +866,13 @@ than a growing list of patches on generic-offer consumption.
    approval and action bit after the sale, letting that keeper create a
    fresh lender listing for a loan the buyer never enabled. Item 16's
    economic caps constrain the listing terms, but they do not establish
-   the missing per-loan consent from the incoming lender. *Required*:
-   lender migration invalidates existing per-loan keeper enables, or each
-   enable is bound to the authorizing holder / position epoch so it cannot
-   carry across a lender transfer.
+   the missing per-loan consent from the incoming lender. *Required*: a
+   side/provenance-aware invalidation that removes only the departing
+   lender's authority, or holder / position-epoch binding on each enable.
+   Blanket invalidation is not an acceptable shortcut: it would also wipe
+   borrower-authored keeper enables for preclose, refinance, and
+   extension automation, letting a lender sale the borrower does not
+   control silently disable time-sensitive borrower grants.
 
 21. **Sale paths must reject or bind active borrower close-out state.** A
    position already committed to imminent borrower close-out is not the
@@ -882,13 +889,38 @@ than a growing list of patches on generic-offer consumption.
    buyer's authorization, or invalidates the sale when they are created or
    replaced.
 
+22. **Full-stamped positions need explicit entitlement accounting on sale.**
+   A lender who opened or accepted a Full position already paid `C*`, and
+   the loan-scoped lender entitlement survives lender migration. Without
+   another rule, the buyer receives the remaining Full yield-fee benefit
+   while the seller's quote and authorization count only settlement,
+   transferred held proceeds, and reward forfeiture. Items 7 and 19 cover
+   the incoming buyer's tariff consent; they do not price the seller's
+   paid entitlement leaving with the position. *Required*: define whether
+   the entitlement is transferred, extinguished, or compensated, and carry
+   that decision into both tariff prerequisites and seller-side economic
+   bounds before any sale quote claims it has enumerated every seller cost.
+
+23. **Listing acceptance must bind the live loan's behavioural terms.**
+   The listing vehicle currently presents sale terms that are not the
+   live loan's full behavioural state: it copies `useFullTermInterest`,
+   but leaves `allowsPartialRepay` and `periodicInterestCadence` at their
+   default false / none values. The buyer can therefore sign acceptance
+   terms that say no partial repayment and no periodic cadence, then
+   receive the unchanged running loan where either behaviour is enabled.
+   Item 7 closes the same class for direct standing-offer consumption;
+   the listing path needs equivalent protection. *Required*: the sale
+   vehicle and acceptance authorization bind the underlying loan's actual
+   behavioural terms, including partial repayment, full-term-interest
+   mode, periodic cadence, and applicable prepay-listing consent.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
-  16, 17, 19, 20 and 21 are resolved.**
+  16, 17, 19, 20, 21, 22 and 23 are resolved.**
 - **The instant-sell surface does not ship until items 5–12, 15, 17, 18,
-  20 and 21 are resolved.** An earlier draft of this gate said only that the
+  20, 21 and 22 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
@@ -898,15 +930,15 @@ checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 ### Recommended shape for the instant-sell path
 
-Items 5–10, 15, 17 and 18 are the instant-sell blockers clustered
-here. Most exist for the same reason: a generic lender offer is a
+Items 5–10, 15, 17, 18, 20 and 22 are the instant-sell blockers
+clustered here. Most exist for the same reason: a generic lender offer is a
 promise to *open* a loan, and the instant-sell path spends it to
 *assume* one. Patching those hand-check gaps one at a time keeps the
 mechanism's default wrong — every future term added to the offer struct
 becomes a new omission on this path, silently, because the compiler
-cannot notice a comparison nobody wrote. Item 17 is different: it is a
-settlement teardown / buyback-carve-out requirement that survives any
-buyer-consent reshape.
+cannot notice a comparison nobody wrote. Items 17, 20 and 22 are different: they are
+settlement, migration-auth, and tariff-accounting requirements that
+survive any buyer-consent reshape.
 
 The design recommendation is therefore a **dedicated loan-specific
 position-sale bid**: an instrument whose creator names the loan id they
@@ -1002,15 +1034,18 @@ from this list reads as dissolved:
   position from moving under a consent already given, this one states
   what the consent WAS. An implementer reading only the dissolving class
   could ship a bid that binds neither.
-- *Item 17 (the stranded intent exposure) is UNTOUCHED — same third
-  class as item 12.* A loan-specific bid still migrates the position and
-  returns the exiting lender's capital; it does not by itself clear the
-  origin marker or release the originating owner's live-principal
-  exposure, nor does it supply the origin-owner-buyback carve-out that
-  item 17 requires. The reshape changes how the buyer's consent is
-  expressed, and this is a settlement teardown step — so an
-  implementation following the bid path reproduces the stranded-cap
-  defect unless it carries item 17 across explicitly.
+- *Item 17 (the stranded intent exposure), item 20 (keeper-enable
+  invalidation), and item 22 (Full-entitlement accounting) are UNTOUCHED
+  — the same third class as item 12.* A loan-specific bid still migrates
+  the position and returns the exiting lender's capital; it does not by
+  itself clear the origin marker or release the originating owner's
+  live-principal exposure, supply the origin-owner-buyback carve-out,
+  invalidate inherited keeper authority, preserve borrower-authored
+  keeper grants, or decide whether a paid Full entitlement transfers,
+  expires, or is compensated. The reshape changes how the buyer's consent
+  is expressed; these are settlement, migration-auth, and tariff-accounting
+  steps. An implementation following the bid path reproduces those defects
+  unless it carries items 17, 20, and 22 across explicitly.
 - *Item 12 (the best-effort reward migration) is UNTOUCHED — a third
   class of its own.* The first two classes are both about the buyer's
   consent, which is what the bid reshapes. Item 12 is not: it is a
