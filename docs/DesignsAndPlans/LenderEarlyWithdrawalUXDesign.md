@@ -105,9 +105,9 @@ settlement proceeds regardless — so on a deployment where that
 bookkeeping reverts or the facet is not cut, the sale still completes,
 the seller's entry is NOT forfeited, and the buyer gets no residual
 entry. The copy must therefore not describe the outcome as inevitable
-while the mechanism is best-effort; **prerequisite 12 requires the
-migration be made atomic or durably recoverable**, and until it is, the
-wording says what is intended to happen rather than asserting it as
+while the mechanism is best-effort; **the reward-migration prerequisite
+requires the migration be made atomic or durably recoverable**, and
+until it is, the wording says what is intended to happen rather than asserting it as
 certain. Getting this backwards in either direction is a real cost:
 promising a forfeiture that may not occur misprices the sale, and
 promising a residual entry the buyer may never receive misprices the
@@ -186,7 +186,7 @@ page in both modes, strictly informational:
   refused at CREATION, so past maturity the sale rows flip to "the
   loan is past its due date — the borrower repays or the default
   process resolves it" instead of advertising an exit that cannot be
-  created. Note the asymmetry that prerequisite 1 exists to close:
+  created. Note the asymmetry that the stale-listing prerequisite exists to close:
   refusing creation does **not** retire a listing that already went
   live before the due date, which stays takeable through the grace
   window — so hiding the row is not the same as closing the sale, and
@@ -376,7 +376,7 @@ the which-side-is-binding note from Layer 2 as the explanation.
 
 ## Contract-level prerequisites (Phase-1 blockers)
 
-The adversarial passes on this doc surfaced the gaps below — seventeen at
+The adversarial passes on this doc surfaced the gaps below — eighteen at
 the time of writing, and this section is the ONLY place that number is
 stated (see the maintenance rule at the end of the section). They are **not
 frontend problems** — no amount of copy, preflight, or quoting in the
@@ -388,17 +388,17 @@ against `EarlyWithdrawalFacet` at the commit this doc was reviewed
 against.
 
 Items 1–4, 13, 14, 16 and 17 belong to the **listing** path, 5–10,
-15 and 17 to the **instant-sell** (direct buy-offer) path, and 11 and
-12 to both. The instant-sell cluster is
+15, 17 and 18 to the **instant-sell** (direct buy-offer) path, and 11
+and 12 to both. The instant-sell cluster is
 large for one structural reason worth naming up front: that path
 consumes a *generic standing lender offer* — an instrument authored to
 open a fresh loan, never to assume a running one — so every term the
 offer's creator authored has to be re-checked by hand against a live
-loan the offer never described. Items 5–10 and 15 are each a missing
-hand-check of that kind, and item 17 is a settlement teardown /
-buyback-carve-out step. See "Recommended shape" at the end of this
-section: the pattern suggests the durable fix is a dedicated
-position-sale bid rather
+loan the offer never described. Items 5–10, 15 and 18 are each a
+missing hand-check or inherited-snapshot consent gap of that kind, and
+item 17 is a settlement teardown / buyback-carve-out step. See
+"Recommended shape" at the end of this section: the pattern suggests
+the durable fix is a dedicated position-sale bid rather
 than a growing list of patches on generic-offer consumption.
 
 1. **A listing outlives the loan's maturity.** Completion gates only
@@ -634,8 +634,9 @@ than a growing list of patches on generic-offer consumption.
    not just the live health read.** A loan can have originated under
    weaker collateral rules than the rules in force when the sale fills;
    migrating the lender position changes the lender, not the loan's
-   `minHealthFactorAtInit` or `initLtvCapBpsAtInit`. A fill-time health
-   check proves the position is solvent now, but it does not prove the
+   `minHealthFactorAtInit`, `initLtvCapBpsAtInit` or
+   `liquidationLtvBpsAtInit`. A fill-time health check proves the
+   position is solvent now, but it does not prove the
    buyer is inheriting the same collateral-withdrawal floor they would
    have received on a fresh loan today. The borrower can later withdraw
    collateral down to the older snapshot, so the incoming lender's
@@ -654,8 +655,8 @@ than a growing list of patches on generic-offer consumption.
    choice narrows to two real options: keep a **hard admission floor**
    (no acknowledgement escape), or require a **loan-specific buyer
    authorization carrying an expiry, minimum health bound and inherited
-   risk-snapshot compatibility** — which is the position-sale bid under a
-   different name.
+   risk-snapshot compatibility, including the liquidation threshold** —
+   which is the position-sale bid under a different name.
 
    **The unpriceable case needs its own answer, not the same one.**
    Where either leg of the loan is illiquid, the risk math refuses to
@@ -819,13 +820,23 @@ than a growing list of patches on generic-offer consumption.
    path's `owner != address(0)` check onto the direct path — is exactly
    the form that opens the hole.
 
+18. **The direct sale does not bind the inherited treasury-fee schedule.**
+   A running loan keeps its `treasuryFeeBpsAtInit` after lender migration,
+   and settlement continues pricing against that snapshot. If governance
+   has lowered the fee since origination, a standing-offer creator who
+   expected a fresh loan under the current schedule can be assigned an
+   older position with a materially higher treasury cut, reducing their
+   net yield while every compatibility check above still passes.
+   *Required*: compatibility with the current treasury-fee schedule, or
+   loan-specific buyer consent to the inherited snapshot.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 - **The listing surface does not ship until items 1–4, 11, 12, 13, 14,
   16 and 17 are resolved.**
-- **The instant-sell surface does not ship until items 5–12, 15 and 17
-  are resolved.** An earlier draft of this gate said only that the
+- **The instant-sell surface does not ship until items 5–12, 15, 17 and
+  18 are resolved.** An earlier draft of this gate said only that the
   admission filter was "not trustworthy" until item 5 — that was too
   weak: the on-chain path is callable directly, so a frontend filter
   cannot prevent any of items 5–12, and item 5 in particular lets the
@@ -835,12 +846,15 @@ checklist, these gate Phase 1 — **both paths, not just the listing**:
 
 ### Recommended shape for the instant-sell path
 
-Items 5–10, 15 and 17 are eight independent gaps that all exist for the
-same reason: a generic lender offer is a promise to *open* a loan, and the
-instant-sell path spends it to *assume* one. Patching them one at a
-time keeps the mechanism's default wrong — every future term added to
-the offer struct becomes a new omission on this path, silently, because
-the compiler cannot notice a comparison nobody wrote.
+Items 5–10, 15, 17 and 18 are the instant-sell blockers clustered
+here. Most exist for the same reason: a generic lender offer is a
+promise to *open* a loan, and the instant-sell path spends it to
+*assume* one. Patching those hand-check gaps one at a time keeps the
+mechanism's default wrong — every future term added to the offer struct
+becomes a new omission on this path, silently, because the compiler
+cannot notice a comparison nobody wrote. Item 17 is different: it is a
+settlement teardown / buyback-carve-out requirement that survives any
+buyer-consent reshape.
 
 The design recommendation is therefore a **dedicated loan-specific
 position-sale bid**: an instrument whose creator names the loan id they
@@ -884,7 +898,8 @@ from this list reads as dissolved:
   good. An earlier revision got item 10 right and left item 9 in the
   dissolving group — the same error on the sibling item. When auditing
   any future item against the bid shape, split it on that axis first.
-- *Mutable-state items (6, and 11 as policy) do NOT dissolve.* A loan is
+- *Mutable-state and inherited-snapshot items (6, 11 as policy, and 18)
+  do NOT dissolve.* A loan is
   not frozen between a bid and its fill: the borrower can partially
   repay, collateral can be withdrawn or fall in price, a held-for-lender
   payment can arrive, **and the borrower position itself can transfer to
@@ -892,14 +907,18 @@ from this list reads as dissolved:
   can settle a period or receive an interest-only partial payment that
   advances `lastPeriodicInterestSettledAt` or
   `interestPaidSinceLastPeriod` without changing principal, borrower,
-  collateral, or held balance. So a bid naming a loan id and a price still buys
+  collateral, or held balance; and auto-extension can settle the old
+  lender, then rewrite `startTime`, `interestRateBps`, and `durationDays`
+  while the loan remains active. So a bid naming a loan id and a price still buys
   a position whose shape has moved — the same stale-consent and
   seller-loss race the reshape was meant to end, just relocated. The bid
   therefore needs a **buyer-authored expiry** and **bounds on the
   mutable loan state** it is priced against — outstanding principal,
-  collateral exposure, inherited risk snapshots, held balance,
-  periodic-settlement checkpoints, settled-interest state, **and the
-  expected borrower-NFT holder**. That last one is a distinct
+  collateral exposure, inherited risk snapshots, treasury-fee snapshot,
+  held balance,
+  periodic-settlement checkpoints, settled-interest state,
+  interest-rate and exact maturity/start-time state, **and the expected
+  borrower-NFT holder**. That last one is a distinct
   requirement, not a restatement of
   item 5: re-resolving the current holder proves the counterparty is
   compliance-eligible and not the buyer themselves, which is a very
@@ -1032,9 +1051,8 @@ testnet with the dev wallets once the redeploy lands).
 the wait-first ordering, the vocabulary, the quote rules including the
 held-balance line — builds against the deployed contracts as they stand.
 The two sale surfaces do not: the Layer-3 checklist's mandatory finite
-listing expiry with permissionless teardown, and **every**
-contract-level prerequisite in the section below it, are contract
-changes. An earlier
+listing expiry with permissionless teardown, and the contract-level
+prerequisites section below it, are contract changes. An earlier
 revision of this section claimed the implementation "adds the awareness
 layer and the hardening checklist, not new contract calls" — that was
 wrong on its own terms, since a bound expiry, a permissionless teardown,
@@ -1052,9 +1070,10 @@ not left out of the implementation PR as "reuse":
 - *Listing teardown* gains a permissionless path callable at expiry or
   maturity while the loan is still `Active`, so the borrower is never
   dependent on the seller's cooperation.
-- *The instant-sell entry point* gains, at minimum, a bound receipt and
-  a deadline (items 6 and 11) — or is replaced by the position-sale bid
-  above, which carries them natively.
+- *The instant-sell entry point* gains, at minimum, a seller-economics
+  bound receipt, a deadline, and the buyer-side inherited-state bounds —
+  or is replaced by the position-sale bid above, which carries them
+  natively.
 - *Client wiring* for each of those: a facet ABI re-export, a
   deployments sync after redeploy, and the consumer typechecks — the
   monorepo's standing rule for any selector or struct-shape change.
@@ -1077,10 +1096,11 @@ the listing path** must land first — the listing surface does not ship
 over them — and **the items that section lists for the instant-sell
 path** gate that surface on exactly the same terms. (Item numbers are
 deliberately not repeated here; see the maintenance rule below.) Neither path ships over its own
-open items; in particular item 5 is NOT the sole instant-sale blocker
-(an earlier revision of this paragraph implied that, contradicting the
-prerequisites gate above — the authoritative reading is the
-prerequisites section, and this paragraph now matches it). The
+open prerequisites; in particular the stored-borrower guard is not the
+sole instant-sale blocker (an earlier revision of this paragraph implied
+that, contradicting the prerequisites gate above — the authoritative
+reading is the prerequisites section, and this paragraph now matches
+it). The
 awareness layer is the only part of Phase 1 that is unblocked today,
 and it ships with both sale rows reporting as unavailable.
 
@@ -1090,14 +1110,13 @@ section that states item numbers or a total count. Everywhere else —
 this Phase-1 gate, the fork-tier schedule below, the not-frontend-only
 note above — points at it instead of restating it.
 
-That rule was earned. The restatements drifted three times: item 5 was
-once implied to be the sole instant-sale blocker; items 13 and 14 landed
-in the authoritative gate while the Phase-1 and fork-tier copies kept
-the stale set; and the scoping note went on claiming "eleven
-prerequisites" after the real count had moved twice. Each drift left a
-roadmap an implementer could follow to ship a surface over a live
-blocker — and the second one did it while the text asserted the sections
-agreed, which is the worst version: a convenience copy that disagrees
+That rule was earned. The restatements drifted three times: one draft
+implied a single instant-sale blocker; later listing blockers landed in
+the authoritative gate while the Phase-1 and fork-tier copies kept the
+stale set; and the scoping note kept an obsolete total after the real
+count had moved twice. Each drift left a roadmap an implementer could
+follow to ship a surface over a live blocker — and the second one did it
+while the text asserted the sections agreed, which is the worst version: a convenience copy that disagrees
 with its source reads as confirmation. The previous revision of this
 rule said a third drift would replace the numbers with pointers; that
 threshold was reached, so the numbers are gone.
@@ -1155,13 +1174,13 @@ chooser stays absent on rentals.
    bid time? The generic-offer path answers all four implicitly (its
    principal funds settlement and its APR derives the top-up); a bid
    answers none of them, so they must be decided rather than assumed —
-   an unescrowed bid recreates prerequisite 2 verbatim, and prerequisite
-   3's seller-side cap must be answered separately (escrow does not
+   an unescrowed bid recreates the revocable-funding failure verbatim,
+   and the seller-side cost cap must be answered separately (escrow does not
    supply it; see the reservation-lifecycle bullet).
 0c. For loans with an illiquid leg, does Phase 1 exclude both sale
-   paths or admit them on the existing illiquid-risk consent (item 11's
-   unpriceable case)? A policy is required either way, because the risk
-   math reverts rather than returning a conservative figure — so the
+   paths or admit them on the existing illiquid-risk consent (the
+   unpriceable-position requirement)? A policy is required either way,
+   because the risk math reverts rather than returning a conservative figure — so the
    default that falls out of "just add the guard" is a permanent block
    on those positions, which may not be the intent.
 1. Should the instant-sell row hide entirely when the book has no
