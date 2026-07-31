@@ -19,7 +19,7 @@ import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance } from '../contracts/erc20';
+import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
 import type { OffsetPendingState } from '../data/offsetPending';
 import { formatTokenAmount } from '../lib/format';
 import type { TokenMeta } from '../contracts/erc20';
@@ -61,12 +61,29 @@ export function OffsetPendingCard({
       : null;
 
   async function cancel() {
-    if (!walletReady || offerId === null) return;
+    if (!walletReady || offerId === null || !address || !walletChain) return;
     setBusy(true);
     setError(null);
     try {
       await write('cancelOffer', [BigInt(offerId)]);
-      onDone(copy.offset.cancelled);
+      // The posting-time approval was sized principal + completion
+      // bound; posting consumed only the principal leg, so a payoff-
+      // sized authorization outlives the cancel. Unwind it so "fully
+      // cancelled" means fully cancelled (Codex #1500 r1) — best
+      // effort: a rejected revoke leaves the cancel done and points at
+      // the wallet's approvals view as the remedy.
+      try {
+        await revokeAllowance({
+          publicClient: publicClient!,
+          walletClient: walletClient!,
+          token: principalAsset,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        });
+        onDone(copy.offset.cancelled);
+      } catch {
+        onDone(copy.offset.cancelledApprovalRemains);
+      }
       onCleared();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -100,11 +117,23 @@ export function OffsetPendingCard({
     }
   }
 
+  // A dead offset (the loan settled another way, or the GTC offer's
+  // replacement term slid past the point where it can still end by the
+  // original maturity) can never complete — the card's story flips to
+  // cancel-to-unwind and every completion-flavoured line goes away
+  // (Codex #1500 r1).
+  const completable =
+    state === undefined || (state.loanActive && !state.termUnfillable);
+
   return (
     <section className="card">
       <h3>{copy.offset.pendingTitle}</h3>
       <p className="muted">
-        {copy.offset.pendingBody}{' '}
+        {state !== undefined && !state.loanActive
+          ? copy.offset.pendingLoanClosed
+          : state?.termUnfillable
+            ? copy.offset.pendingTermUnfillable
+            : copy.offset.pendingBody}{' '}
         {offerId !== null
           ? copy.offset.pendingOffer(offerId)
           : copy.offset.pendingOfferUnknown}
@@ -112,26 +141,28 @@ export function OffsetPendingCard({
       <div className="banner banner-warn" role="note">
         <span className="banner-body">{copy.offset.lockWarn}</span>
       </div>
-      <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>
-        <span className="banner-body">{copy.offset.blockedOtherPaths}</span>
-      </div>
-      {boundStr ? (
+      {completable ? (
+        <div className="banner banner-warn" role="note" style={{ marginTop: 8 }}>
+          <span className="banner-body">{copy.offset.blockedOtherPaths}</span>
+        </div>
+      ) : null}
+      {boundStr && completable ? (
         <p className="muted" style={{ marginTop: 8 }}>
           {copy.offset.pendingKeepFunded(boundStr)}
         </p>
       ) : null}
-      {state?.allowanceShort ? (
+      {state?.allowanceShort && completable ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 8 }}>
           <span className="banner-body">{copy.offset.pendingAllowanceShort}</span>
         </div>
       ) : null}
-      {state?.balanceShort ? (
+      {state?.balanceShort && completable ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 8 }}>
           <span className="banner-body">{copy.offset.pendingBalanceShort}</span>
         </div>
       ) : null}
       <div className="cluster" style={{ marginTop: 12 }}>
-        {state?.allowanceShort ? (
+        {state?.allowanceShort && completable ? (
           <button
             type="button"
             className="btn btn-secondary"

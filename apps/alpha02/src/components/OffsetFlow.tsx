@@ -117,11 +117,16 @@ export function OffsetFlow({
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
+  // Safe-integer guard BEFORE any BigInt conversion: a long-enough
+  // pasted digit string overflows parseInt to a non-safe float (or
+  // Infinity), and BigInt(Infinity) throws at render — validation
+  // must reject it, not crash the page (Codex #1500 r1).
   const durationDays = /^\d+$/.test(durationInput)
     ? parseInt(durationInput, 10)
     : null;
   const durationValid =
     durationDays !== null &&
+    Number.isSafeInteger(durationDays) &&
     durationDays >= 1 &&
     BigInt(durationDays) <= maxDurationDays;
   const collateralIsNft = collateralMeta === undefined;
@@ -159,8 +164,16 @@ export function OffsetFlow({
       return;
     }
     if (!address || !walletChain || !walletClient || !publicClient) return;
-    if (rateBps === null || durationDays === null || collateralWei === null)
+    if (
+      rateBps === null ||
+      durationDays === null ||
+      collateralWei === null ||
+      !rateValid ||
+      !durationValid ||
+      !collateralValid
+    ) {
       return;
+    }
     setBusy(true);
     setError(null);
     try {

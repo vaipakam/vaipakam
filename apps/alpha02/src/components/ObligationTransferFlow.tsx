@@ -258,10 +258,32 @@ export function ObligationTransferFlow({
         void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
         return;
       }
+      // Offers are MUTABLE in place (modifyOffer) — if any reviewed
+      // term drifted since the picker rendered (a lowered rate grows
+      // the shortfall the borrower pays; a changed duration moves it
+      // too), the receipt's figures no longer describe this handover.
+      // Force a fresh review against current terms instead of quietly
+      // paying more than was reviewed (Codex #1500 r1 P1).
+      if (
+        liveOffer.interestRateBps !== BigInt(picked.interestRateBps) ||
+        liveOffer.durationDays !== BigInt(picked.durationDays) ||
+        liveOffer.collateralAmount !== BigInt(picked.collateralAmount)
+      ) {
+        setError(copy.match.termsChanged);
+        void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+        setPickedId(null);
+        onCloseConfirm();
+        return;
+      }
       // The pull = accrued (seconds-precise, keeps growing while the
-      // tx is pending) + shortfall. Recompute from live figures and
-      // pad ~2 days of interest for time-in-flight; the contract
-      // pulls only what it recomputes, so the pad is never spent.
+      // tx is pending) + shortfall. Recompute from live figures; the
+      // BALANCE gate checks what the contract can actually pull now
+      // (seconds-precision growth over a pending tx is negligible —
+      // a short-by-seconds wallet only makes the whole tx revert
+      // safely), while the ALLOWANCE keeps a ~2-day interest pad so a
+      // day-boundary in flight can't strand an otherwise-funded
+      // handover; the contract pulls only what it recomputes, so the
+      // pad is never spent (Codex #1500 r1).
       const liveCost = transferEconomicsOf(
         liveLoan,
         liveOffer.interestRateBps,
@@ -273,22 +295,23 @@ export function ObligationTransferFlow({
         Number(liveLoan.interestRateBps),
         2,
       );
-      const required = liveCost.total + pad;
-      if (required > 0n) {
+      if (liveCost.total > 0n) {
         await assertErc20BalanceLive({
           publicClient,
           token: liveLoan.principalAsset,
           owner: address,
-          amount: required,
+          amount: liveCost.total,
           symbol: sym,
         });
+      }
+      if (liveCost.total + pad > 0n) {
         await ensureAllowance({
           publicClient,
           walletClient,
           token: liveLoan.principalAsset,
           owner: address,
           spender: walletChain.diamondAddress,
-          amount: required,
+          amount: liveCost.total + pad,
         });
       }
       await write('transferObligationViaOffer', [

@@ -154,7 +154,16 @@ Its surface therefore:
   approval / top up / cancel) — never a warning without a remedy;
 - offers cancel, gated by the protocol cooldown, worded as a full
   unwind ("your position is unlocked and your lending money is back
-  in your vault").
+  in your wallet") — and MAKES it a full unwind: the standing payoff
+  approval is revoked best-effort alongside the cancel, with a plain
+  note when the revoke fails;
+- never presents a dead offset as completable: a loan settled another
+  way, or a replacement term that can no longer end by the original
+  maturity, flips the story to cancel-to-unwind and silences the
+  funding warnings;
+- fails CLOSED while unknown: until the lock read answers, the
+  settlement tools that could strand a linked offer hold in a visible
+  checking state (the lock can be created from another device).
 
 ## Decision guidance the chooser encodes
 

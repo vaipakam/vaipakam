@@ -22,6 +22,7 @@ import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import {
   CANCEL_COOLDOWN_SECONDS,
   LOAN_STATUS_ACTIVE,
+  loanEndTimeOf,
   offsetCompletionBoundOf,
   readLoanLive,
 } from '../contracts/loanLive';
@@ -47,11 +48,21 @@ export interface OffsetPendingState {
   offerExists: boolean;
   /** Chain time says the protocol-wide cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
+  /** The linked offer's replacement term can no longer end by the
+   *  original maturity (completion re-checks `now + durationDays`
+   *  against the loan's fixed end, so a GTC offer posted near the
+   *  maximum goes permanently unfillable as time passes) — only
+   *  cancel-to-unwind remains. Judged only when the marker's offer
+   *  record is readable; false otherwise. */
+  termUnfillable: boolean;
   /** Standing approval no longer covers the completion pull bound
    *  (principal + remaining-term interest) — an accept would revert
-   *  and the counterparty's transaction fails. */
+   *  and the counterparty's transaction fails. Suppressed once the
+   *  offset can no longer complete (loan settled / term unfillable):
+   *  there is nothing left to fund. */
   allowanceShort: boolean;
-  /** Wallet balance no longer covers the completion pull bound. */
+  /** Wallet balance no longer covers the completion pull bound.
+   *  Suppressed like `allowanceShort` once completion is impossible. */
   balanceShort: boolean;
   /** The completion pull's approval/balance bound. */
   completionBound: bigint;
@@ -124,6 +135,7 @@ export function useOffsetPending(
                 creator: string;
                 accepted: boolean;
                 createdAt: bigint;
+                durationDays: bigint;
               }>)
             : Promise.resolve(null),
           address
@@ -146,30 +158,52 @@ export function useOffsetPending(
       const locked = Number(lockRaw) === LOCK_PRECLOSE_OFFSET;
       const offerExists =
         offer !== null && offer.creator !== ZERO_ADDRESS && !offer.accepted;
+      const loanActive = live.status === LOAN_STATUS_ACTIVE;
+      // The completion anti-drift bound: acceptance re-checks that the
+      // replacement term still ends by the ORIGINAL maturity, so once
+      // chain time passes (end − duration) the offer is permanently
+      // unfillable and only cancel remains.
+      const termUnfillable =
+        offerExists &&
+        latestBlock.timestamp + offer!.durationDays * 86_400n >
+          loanEndTimeOf(live);
       const completionBound = offsetCompletionBoundOf(live);
       // Disconnected wallet must not paint the funding warnings red
-      // off zero placeholders.
+      // off zero placeholders; a dead offset (loan settled another
+      // way, or the term no longer fits) has nothing left to fund, so
+      // the warnings stop and cancel-to-unwind is the only story.
+      const completable = locked && loanActive && !termUnfillable;
       const fundingKnown = Boolean(address);
       return {
         locked,
-        loanActive: live.status === LOAN_STATUS_ACTIVE,
+        loanActive,
         offerExists,
         cancelUnlocked:
           offer !== null &&
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
+        termUnfillable,
         allowanceShort:
-          fundingKnown && locked && allowance < completionBound,
-        balanceShort: fundingKnown && locked && balance < completionBound,
+          fundingKnown && completable && allowance < completionBound,
+        balanceShort: fundingKnown && completable && balance < completionBound,
         completionBound,
       };
     },
   });
 
-  // Self-heal the marker once the chain says the offset is over (lock
-  // released by completion or cancel) — a stale marker would keep
-  // offering cancel on a deleted offer.
+  // Self-heal the marker when the chain says the offset is over (lock
+  // released by completion or cancel), AND when the remembered offer
+  // record itself is gone while a lock is still live — that lock then
+  // belongs to a NEWER offset posted from another device after this
+  // one's was cancelled there, and keeping the stale id would offer a
+  // cancel against a deleted offer (Codex #1500 r1).
   useEffect(() => {
-    if (query.data && !query.data.locked && offerId !== null) clear();
+    if (
+      query.data &&
+      offerId !== null &&
+      (!query.data.locked || !query.data.offerExists)
+    ) {
+      clear();
+    }
   }, [query.data, offerId, clear]);
 
   return {
@@ -180,6 +214,15 @@ export function useOffsetPending(
     state: query.data,
     /** True the moment the CHAIN says an offset is live. */
     pending: query.data?.locked === true,
+    /** The lock read has ANSWERED (either way). While false the page
+     *  must fail CLOSED: a cross-device offset could be live, and the
+     *  settlement paths that would strand its funded linked offer
+     *  (preclose, partial, refinance, handover, a second offset) must
+     *  hold until the chain has spoken (Codex #1500 r1). */
+    pendingKnown: query.data !== undefined,
+    /** The verification read failed (distinct from still-loading) —
+     *  surfaces the retrying state instead of an eternal "checking". */
+    isError: query.isError,
     remember,
     clear,
   };

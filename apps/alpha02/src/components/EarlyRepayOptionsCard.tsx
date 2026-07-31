@@ -47,6 +47,7 @@ export function EarlyRepayOptionsCard({
    *  the due date passed (their cards gate on chain time). */
   pastDueHint,
   refinancePending,
+  refinanceEligible,
 }: {
   isAdvanced: boolean;
   onSwitchToAdvanced: () => void;
@@ -54,6 +55,11 @@ export function EarlyRepayOptionsCard({
   useFullTermInterest: boolean | undefined;
   pastDueHint: boolean;
   refinancePending: boolean;
+  /** Carry-over refinance binds to the ORIGINAL borrower — a wallet
+   *  that acquired the position on the secondary market never gets
+   *  the refinance card, so the chooser must say why instead of
+   *  offering a jump to nothing (Codex #1500 r1). */
+  refinanceEligible: boolean;
 }) {
   const o = copy.earlyRepay.options;
   const rows: OptionRow[] = [
@@ -106,9 +112,11 @@ export function EarlyRepayOptionsCard({
       title: o.refinance,
       desc: o.refinanceDesc,
       cost: o.refinanceCost,
-      unavailable: refinancePending
-        ? copy.refinance.partialBlockedByPending
-        : undefined,
+      unavailable: !refinanceEligible
+        ? o.refinanceTransferredUnavailable
+        : refinancePending
+          ? copy.refinance.partialBlockedByPending
+          : undefined,
       target: 'refinance-card',
     },
   ];

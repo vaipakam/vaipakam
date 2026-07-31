@@ -950,7 +950,11 @@ const copySource = {
         'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
       refinanceCost:
         'The payoff is principal plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
+      refinanceTransferredUnavailable:
+        'Not available for this position — refinancing stays with the wallet that originally took the loan.',
     },
+    checkingInterlocks:
+      'Checking for linked requests on this loan…',
     onlyErc20Note:
       'NFT rentals don’t use these paths — close the rental from the button below instead.',
   },
@@ -979,11 +983,11 @@ const copySource = {
     action: 'Review handover',
     confirm: 'Confirm — hand over loan',
     done:
-      'Loan handed over. You’re out of the debt and your collateral is released — claim it from the Claim Center.',
+      'Loan handed over. You’re out of the debt, and your collateral was sent straight back to your wallet in the same transaction.',
     accruedLabel: 'interest built up so far',
     shortfallLabel: 'lender rate top-up',
     receiptReceive:
-      'Your collateral back (claim it after the handover), and you owe nothing further on this loan.',
+      'Your collateral back — sent straight to your wallet in the same transaction — and you owe nothing further on this loan.',
     receiptLock: 'Nothing new.',
     receiptOwe: tmpl(
       'About {{total}} now ({{accrued}} interest so far + {{shortfall}} rate top-up). The exact figure is computed on-chain at execution.',
@@ -994,7 +998,7 @@ const copySource = {
     receiptFees:
       'The protocol’s usual cut of the interest you pay settles inside the payment.',
     receiptEnds:
-      'Immediately — the new borrower takes over in this same transaction.',
+      'Immediately — the new borrower takes over, and your collateral comes back to your wallet, in this same transaction.',
     offerGone:
       'That borrow request is no longer available (accepted, cancelled, or changed). Pick another.',
     sameWalletNote:
@@ -1053,6 +1057,10 @@ const copySource = {
     pendingTitle: 'Offset in progress',
     pendingBody:
       'A lending offer is live for this loan. As soon as a borrower accepts it, the offset completes automatically — your old loan closes and your collateral is released, no extra click needed.',
+    pendingLoanClosed:
+      'This loan has already settled another way, so the linked offer can no longer complete. Cancel it to unlock your position and get your lending money back.',
+    pendingTermUnfillable:
+      'The offer’s replacement term can no longer finish before this loan’s due date, so no one can accept it any more. Cancel it to unlock your position and get your lending money back.',
     pendingOffer: tmpl('Linked offer: #{{offerId}}.', ['offerId']),
     pendingOfferUnknown:
       'This device doesn’t remember the linked offer’s number (it may have been created elsewhere). You can still find and cancel it from My positions → your offers.',
@@ -1070,7 +1078,9 @@ const copySource = {
     cancelCooldown:
       'Cancelling opens a few minutes after posting.',
     cancelled:
-      'Offset offer cancelled. Your position is unlocked and your lending money is back in your vault — withdraw it from My vault.',
+      'Offset offer cancelled. Your position is unlocked and your lending money is back in your wallet.',
+    cancelledApprovalRemains:
+      'Offset offer cancelled — your position is unlocked and your lending money is back in your wallet. The payoff spending approval could not be removed automatically; you can revoke it from your wallet’s approvals view.',
     blockedOtherPaths:
       'While this offset is open, repaying or closing another way would strand the linked offer — cancel it first.',
     onlyBeforeDue:

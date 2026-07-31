@@ -1664,6 +1664,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           useFullTermInterest={loanLive.data?.live.useFullTermInterest}
           pastDueHint={row.startTime + row.durationDays * 86400 < nowSec}
           refinancePending={refinanceBlocking}
+          refinanceEligible={Boolean(
+            address && address.toLowerCase() === row.borrower.toLowerCase(),
+          )}
         />
       ) : null}
 
@@ -1777,7 +1780,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <p className="muted">
             {copy.positions.details.partial.blurb}
           </p>
-          {offsetPend.pending ? (
+          {!offsetPend.pendingKnown ? (
+            // Fail CLOSED until the chain has answered whether an
+            // offset lock is live (it can exist cross-device): a
+            // partial under an unseen offset would drift the linked
+            // offer from the loan it settles (Codex #1500 r1).
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : offsetPend.pending ? (
             // A live offset's linked offer escrowed the CURRENT
             // principal — a partial under it would drift the offer
             // from the loan it settles. Cancel the offset first.
@@ -1888,16 +1899,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       principal &&
       !(sanctions.ready && sanctions.flagged) ? (
-        !loanLive.data || !sanctions.ready || feeEnt.data === undefined ? (
+        !loanLive.data ||
+        !sanctions.ready ||
+        feeEnt.data === undefined ||
+        !offsetPend.pendingKnown ? (
           // Codex #1412 r1 — the fee-entitlement read is part of the
           // preclose disclosure set (a paid Full tariff is NOT
           // refunded on an early close), so the close-early surface
           // holds in the checking/failed state until that read is
           // known, exactly like the live-loan and sanctions reads.
+          // Codex #1500 r1 — same fail-closed posture for the offset
+          // LOCK read: a cross-device offset could be live, and every
+          // settlement tool below would strand its funded linked
+          // offer, so nothing renders until the chain has answered.
           <section className="card">
             <h3>{copy.preclose.title}</h3>
             <p className="muted">
-              {loanLive.isError || feeEnt.isError
+              {loanLive.isError || feeEnt.isError || offsetPend.isError
                 ? copy.preclose.checkFailed
                 : copy.preclose.checking}
             </p>

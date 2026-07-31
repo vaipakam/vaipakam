@@ -804,8 +804,10 @@ Its intended behaviour, as the test oracle for this surface:
   advanced paths share one explicit, clearly labelled action that
   switches the interface to Advanced in place — the mode change is
   always the user's own choice, never a side effect. Paths that
-  cannot currently apply (past the due date, or held by a live linked
-  request) say so instead of disappearing silently. The chooser is
+  cannot currently apply (past the due date, held by a live linked
+  request, or one the position doesn't qualify for — refinancing on a
+  position acquired on the secondary market stays with the original
+  borrower) say so instead of disappearing silently. The chooser is
   not shown for NFT rentals (their close path is the rental close),
   nor once the loan is settled or strictly past its grace window.
 - Advanced mode offers the borrower of an active, not-yet-matured
@@ -823,13 +825,17 @@ Its intended behaviour, as the test oracle for this surface:
   so far plus the lender-protection top-up. While the request book is
   loading it says so, and an unavailable book is stated honestly
   (loading, empty, and unavailable never look alike). Confirmation
-  re-verifies the chosen request and the loan live (a consumed,
-  changed, or no-longer-fitting request stops before any wallet
-  prompt with a plain explanation), and the review states what is
-  paid now, that the exact figure is computed on-chain at execution,
-  that the borrower's collateral comes back through the normal claim
-  path, and that a failed check aborts the whole handover leaving the
-  loan unchanged. After a successful handover the page treats the
+  re-verifies the chosen request and the loan live: a consumed or
+  no-longer-fitting request stops before any wallet prompt with a
+  plain explanation, and a request whose terms have CHANGED since the
+  review opened (requests are editable in place, and a lowered rate
+  raises the borrower's top-up) stops for a fresh review rather than
+  charging more than was reviewed. The review states what is paid
+  now, that the exact figure is computed on-chain at execution, that
+  the borrower's collateral is returned straight to their wallet in
+  the same transaction (no separate claim step exists for it), and
+  that a failed check aborts the whole handover leaving the loan
+  unchanged. After a successful handover the page treats the
   borrower's involvement as ended.
 - Advanced mode offers the borrower of an active, not-yet-matured
   ERC-20 loan an offset exit (preclose Option 3): funding a new
@@ -856,15 +862,30 @@ Its intended behaviour, as the test oracle for this surface:
   the standing approval or wallet balance no longer covers the
   completion pull (with a restore action for the approval), and
   cancellation (available after the protocol's cancel cooldown,
-  judged by chain time), which unlocks the position and returns the
-  offer's escrow to the vault. While an offset is live, the other
-  settlement paths are held off or warned: partial repayment, direct
-  close, refinancing, and the handover are not offered (any of them
-  would strand the linked offer), and the always-open full-repayment
-  review carries a warning to cancel the offset first. An offset is
-  not offered for NFT rentals, while a sale listing is live on the
-  loan, or once the due date is too close for any fitting
-  replacement term.
+  judged by chain time), which unlocks the position, returns the
+  lending money straight to the wallet, and removes the standing
+  payoff approval (best effort — a failed removal is said plainly
+  with the wallet's approvals view as the remedy). A dead offset is
+  never presented as completable: when the loan has settled another
+  way, or when time has passed the point where the offer's
+  replacement term can still end by the original maturity, the view
+  says the offset can no longer complete, stops the funding warnings
+  (there is nothing left to fund), and keeps cancel as the unwind. A
+  device-remembered offer identity that the chain no longer knows
+  (cancelled elsewhere, with a newer offset now holding the lock) is
+  discarded rather than offered for cancellation. While an offset is
+  live, the other settlement paths are held off or warned: partial
+  repayment, direct close, refinancing, and the handover are not
+  offered (any of them would strand the linked offer), and the
+  always-open full-repayment review carries a warning to cancel the
+  offset first. Because the lock record is chain-authoritative and
+  can be created from another device, those same settlement tools
+  hold in a visible checking state until the app has actually
+  confirmed whether an offset is live — an unresolved or failed lock
+  read must not expose a path that would strand a funded linked
+  offer. An offset is not offered for NFT rentals, while a sale
+  listing is live on the loan, or once the due date is too close for
+  any fitting replacement term.
 - Advanced mode offers the lender of an active, not-yet-matured
   ERC-20 loan an early exit: selling the position into a matching
   open lending offer. The picker lists only offers the sale can
