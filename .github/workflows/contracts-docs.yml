@@ -46,10 +46,12 @@ jobs:
   build:
     name: Build docs
     runs-on: ubuntu-latest
-    # forge doc on Vaipakam's contract surface (49 facets + libs + lots
-    # of NatSpec) takes 12-20 min cold; the original 15-min cap clipped
-    # the very first PR run. Bumped to 30; foundry cache below makes
-    # subsequent runs much faster.
+    # forge doc runs self-contained under the `quick` profile (#1493):
+    # src-only solc pass + mdbook render, ~2 min / ~1.5 GB measured.
+    # No forge cache — the doc build never read one, and sharing the
+    # profile-agnostic key with ci.yml's cifast jobs risked starving
+    # them (exact-key cache entries are immutable, first save wins).
+    # Cap kept generous for slow runners.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

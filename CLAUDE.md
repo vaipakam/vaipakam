@@ -702,8 +702,9 @@ Three profiles live in `contracts/foundry.toml`:
 - **`cifast`** — narrow scope for the per-PR-push CI lane. Compiles
   `src/` + `script/` + `test/deploy/**` + `test/scenarios/**` +
   `test/mocks/**` + `test/SetupTest.t.sol` + `test/HelperTest.sol` only.
-  Same `viaIR + optimizer=200` settings as default. Used by EVERY
-  forge-using job in `ci.yml` (contracts-fast, build-docs, slither).
+  Same `viaIR + optimizer=200` settings as default. Used by
+  `ci.yml`'s contracts-fast + slither jobs (build-docs runs its
+  `forge doc --build` under `quick` instead — #1493).
   Cold compile: ~5 min, ~3.2 GB peak RSS. Skips the 94 non-positive
   top-level test files + invariants + fork tests — those run locally
   at end-of-step under the default profile.
