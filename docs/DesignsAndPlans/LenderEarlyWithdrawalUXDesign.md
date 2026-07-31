@@ -491,15 +491,32 @@ than a growing list of patches on generic-offer consumption.
    arrived after their preview. Prerequisite 4 requires this binding
    for the listing path; the direct path needs it too. *Required*: an
    enforceable minimum total receipt (or maximum cost) that **counts
-   transferred held proceeds**, plus a deadline.
+   transferred held proceeds**, plus a deadline — and, exactly as item 4
+   now demands on the listing side, **a bound on the reward forfeiture
+   as well**. A direct sale delayed across a reward-accrual boundary
+   forfeits more pending credit than the seller reviewed while a
+   settlement-plus-held bound still passes, so the two paths must cap the
+   same three costs or the asymmetry is arbitrary. If the value cannot be
+   read on-chain at execution, say which cost is unbounded rather than
+   implying the bound is complete. The same requirement carries onto the
+   position-sale bid's seller-side bound.
 7. **The direct sale ignores every buyer-authored behavioural term.**
-   `allowsPartialRepay`, `useFullTermInterest` and
-   `periodicInterestCadence` are immutable take-it-or-leave-it terms of
-   an offer, and this path compares none of them. A buyer who authored
-   the default no-partial-repay can be migrated into a loan where
-   partial repayment is enabled; a buyer who elected full-term interest
-   can receive a pro-rata loan. *Required*: compatibility on every
-   buyer-authored loan term.
+   `allowsPartialRepay`, `useFullTermInterest`,
+   `periodicInterestCadence` **and `allowsPrepayListing`** are immutable
+   take-it-or-leave-it terms of an offer, and this path compares none of
+   them. A buyer who authored the default no-partial-repay can be
+   migrated into a loan where partial repayment is enabled; a buyer who
+   elected full-term interest can receive a pro-rata loan. The
+   prepay-listing flag is the sharpest of the four on an NFT-collateral
+   loan: origination snapshots the lender's consent onto immutable loan
+   state and the prepay-listing facets read THAT copy, but the direct
+   sale neither compares nor updates it — so a buyer whose offer set it
+   false can inherit a loan where it is true, and the borrower can then
+   list the collateral without the incoming lender's consent. *Required*:
+   compatibility on every buyer-authored loan term including
+   `allowsPrepayListing` — or mandate item 8's NFT-collateral exclusion,
+   which retires this particular exposure along with the token-identity
+   one.
 8. **The direct sale does not bind NFT collateral identity.** For an
    ERC-20-principal loan backed by an NFT, the admission guard compares
    the collateral collection, asset type, and amount — but neither
@@ -536,7 +553,13 @@ than a growing list of patches on generic-offer consumption.
    smaller exposure" defect item 15 identifies on amount. Ordinary
    acceptance binds duration exactly, so the sale path is the outlier.
    The choice must be made explicitly rather than defaulted into:
-   require the remaining term to EQUAL the authored duration, or state
+   require the remaining term to EQUAL the authored duration — **and if
+   so, express it as the loan's maturity timestamp or exact remaining
+   seconds, not the integer day field**, because remaining days is
+   computed by flooring elapsed time, so for most of any given day an
+   equality check on whole days still admits an offer whose nominal
+   duration exceeds what the position actually has left; an exact rule
+   written against a rounded quantity is not exact — or state
    plainly that duration is a buyer-consented MAXIMUM which shorter fills
    may take — and if the latter, the picker must say so where the buyer
    authors the offer, because that is not what "duration" means anywhere
@@ -649,7 +672,18 @@ than a growing list of patches on generic-offer consumption.
    they lose a credit they keep, or the buyer may be told they receive a
    residual entry that never opens. *Required*: make the migration atomic
    with settlement, or durably recoverable (a recorded pending migration
-   any party can complete). Until then the copy states the intent without
+   any party can complete).
+
+   **If the recoverable route is chosen, the sale must also freeze the
+   reward cutoff.** The transfer closes the old entry against the day it
+   is *called*, so a pending migration completed late forfeits extra
+   post-sale days from the seller and starts the buyer's residual window
+   correspondingly late. Recording the intent to migrate is therefore not
+   enough on its own: the sale transaction must persist the effective
+   cutoff, and recovery must consume that stored value rather than
+   recomputing at completion. Otherwise who receives which days depends
+   on keeper availability — the recoverable path would trade one
+   non-determinism for another rather than removing it. Until then the copy states the intent without
    asserting certainty, which is a stopgap, not a resolution — a quote
    cannot be made accurate by hedging the sentence. Like item 11, this
    one applies to **both** sale paths.
@@ -753,6 +787,20 @@ than a growing list of patches on generic-offer consumption.
    already understood. *Required*: release the intent exposure on the
    direct-sale path too.
 
+   **But the release must be conditional on the origin owner actually
+   leaving.** Neither sale path stops the intent's own owner being the
+   incoming lender — directly, or by buying the position back after an
+   NFT transfer. Released unconditionally, that owner ends up holding the
+   same live loan with its full amount deleted from their intent
+   exposure: a clean route around the live-principal cap the intent
+   system exists to enforce. So the guard is not "loan has an origin
+   marker" but "the origin owner is no longer the lender": reject an
+   incoming lender equal to `intentOrigin.owner`, or preserve /
+   re-establish the marker and its exposure in that case. Worth stating
+   plainly because the naive form of this fix — mirroring the listing
+   path's `owner != address(0)` check onto the direct path — is exactly
+   the form that opens the hole.
+
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
 
@@ -850,6 +898,15 @@ from this list reads as dissolved:
   position from moving under a consent already given, this one states
   what the consent WAS. An implementer reading only the dissolving class
   could ship a bid that binds neither.
+- *Item 17 (the stranded intent exposure) is UNTOUCHED — same third
+  class as item 12.* A loan-specific bid still migrates the position and
+  returns the exiting lender's capital; it does not by itself clear the
+  origin marker or release the originating owner's live-principal
+  exposure, nor does it supply the origin-owner-buyback carve-out that
+  item 17 requires. The reshape changes how the buyer's consent is
+  expressed, and this is a settlement teardown step — so an
+  implementation following the bid path reproduces the stranded-cap
+  defect unless it carries item 17 across explicitly.
 - *Item 12 (the best-effort reward migration) is UNTOUCHED — a third
   class of its own.* The first two classes are both about the buyer's
   consent, which is what the bid reshapes. Item 12 is not: it is a
@@ -889,9 +946,22 @@ Before the bid can be treated as implementation-safe, the spec must say:
   of a bid at an arbitrary price.
 - **Reservation lifecycle** — whether the bid amount is escrowed or
   merely approved, and how it is cancelled. An unescrowed bid recreates
-  both defects the listing prerequisites already forbid: prerequisite 2's
-  apparently-takeable-but-always-reverting instrument, and prerequisite
-  3's debit from a wallet balance beyond the trade's own proceeds.
+  prerequisite 2's failure: an apparently-takeable instrument whose fill
+  always reverts once the funding is moved or revoked.
+
+  **This is NOT the same requirement as prerequisite 3, and conflating
+  them is a trap.** Escrow settles whether the BUYER's side is reliably
+  fundable; prerequisite 3 is about whether settlement can debit the
+  SELLER beyond the trade's own proceeds, which follows from the
+  gross-versus-net formula and the presence of a cost cap. The two are
+  independent in both directions: a fully escrowed bid can still sit
+  alongside an uncapped seller shortfall, and a capped seller cost does
+  not make an unescrowed bid fillable. Stated as one bundled defect, an
+  implementer could reasonably add escrow and consider prerequisite 3
+  discharged — shipping the uncapped wallet debit that item 3 says
+  explicitly has no UI or adjacent-mechanism substitute. So the bid
+  needs **fillability reservation** and **seller-side cost
+  conservation/capping** specified as two separate requirements.
 
 Leaving these open would let the reshape ship as "the safe alternative"
 while reintroducing exactly the failures items 2 and 3 exist to close.
@@ -1061,7 +1131,9 @@ chooser stays absent on rentals.
    bid time? The generic-offer path answers all four implicitly (its
    principal funds settlement and its APR derives the top-up); a bid
    answers none of them, so they must be decided rather than assumed —
-   an unescrowed bid recreates prerequisites 2 and 3 verbatim.
+   an unescrowed bid recreates prerequisite 2 verbatim, and prerequisite
+   3's seller-side cap must be answered separately (escrow does not
+   supply it; see the reservation-lifecycle bullet).
 0c. For loans with an illiquid leg, does Phase 1 exclude both sale
    paths or admit them on the existing illiquid-risk consent (item 11's
    unpriceable case)? A policy is required either way, because the risk
