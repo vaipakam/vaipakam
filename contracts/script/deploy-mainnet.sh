@@ -197,7 +197,12 @@ TREE_DIRTY_AT_START=""
 # output as source drift, so simply RE-RUNNING an export before
 # committing its result recreated the false-dirty stamp this change
 # exists to remove.
-if ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)contracts/deployments' 2>/dev/null; then
+# NO exclusion here, deliberately (Codex #1495 r6 P2). This reading is
+# taken before the deploy writes anything, so it has no output of its
+# own to discount — and `contracts/deployments` is an INPUT this script
+# consumes (preflight resolves the recorded token address from it), so
+# excluding it would hide a real uncommitted edit that changes the run.
+if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
@@ -813,12 +818,12 @@ EOF
   # always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
   # clear it.
 
-  # HEAD can MOVE during a long deploy (Codex #1495 r2 P2): an operator who
-  # commits mid-run leaves the late `rev-parse` recording the NEW commit while
-  # the bytecode was built from the old one — and the drift check above,
-  # comparing against the new HEAD, reads clean. The pair would then attribute
-  # this run's artifacts to a commit that never produced them, with no marker.
-  # Pin the hash WITH the snapshot and treat any movement as dirty.
+  # HEAD can MOVE during a long deploy: an operator committing mid-run
+  # would otherwise leave the late stamp naming a NEW commit while the
+  # bytecode came from the old one. Only HEAD movement is checked here —
+  # mid-run INPUT drift is deliberately NOT detected (deferred to #1502),
+  # and an earlier version of this comment claimed a recheck that this
+  # revision removed.
   if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
        != "$TREE_COMMIT_AT_START" ]; then
     TREE_DIRTY_AT_START=" (dirty)"

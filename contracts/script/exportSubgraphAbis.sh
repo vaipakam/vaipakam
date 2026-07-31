@@ -62,7 +62,12 @@ TREE_DIRTY_AT_START=""
 # output as source drift, so simply RE-RUNNING an export before
 # committing its result recreated the false-dirty stamp this change
 # exists to remove.
-if ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)ops/subgraph' 2>/dev/null; then
+# Excludes ONLY what THIS script writes, named from its own output
+# variables rather than guessed (Codex #1495 r6 P2). Guessing produced
+# a wrong filename in one script and, worse, over-exclusion in another:
+# hiding a whole subtree also hid an INPUT that is copied into the
+# output, turning a real uncommitted edit into a clean reading.
+if ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)ops/subgraph/abis' ':(exclude)ops/subgraph/generated' 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 DEPLOY_ROOT="$CONTRACTS_DIR/deployments"

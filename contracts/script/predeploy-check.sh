@@ -213,7 +213,7 @@ done
 # parser below validates the variables.
 STAMPING_SH=()
 while IFS= read -r f; do STAMPING_SH+=("$(basename "$f")"); done < <(
-  grep -rlE '"monorepoCommit": "\$' "$SCRIPT_DIR"/*.sh 2>/dev/null \
+  grep -rlE 'monorepoCommit"?:? "?\$' "$SCRIPT_DIR"/*.sh 2>/dev/null \
     | grep -v '/predeploy-check\.sh$' | sort
 )
 if [ ${#STAMPING_SH[@]} -eq 0 ]; then
@@ -223,13 +223,13 @@ else
   for s in "${STAMPING_SH[@]}"; do
     f="$SCRIPT_DIR/$s"
     # The dirty variable is the SECOND interpolation in the stamp value.
-    dirty_var="$(sed -nE 's/.*"monorepoCommit": "\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*)".*/\1/p' "$f" | head -1)"
+    dirty_var="$(sed -nE 's/.*monorepoCommit"?:? "?\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$f" | head -1)"
     # The COMMIT half must be pinned with the snapshot too (Codex #1495 r3
     # P2). Pairing an early dirty reading with a late `rev-parse` lets a
     # commit landing in between attribute output to a commit that did not
     # produce it — and that half went unchecked for a whole round because the
     # guard only knew about the dirty half.
-    commit_var="$(sed -nE 's/.*"monorepoCommit": "\$([A-Za-z_][A-Za-z0-9_]*)\$[A-Za-z_][A-Za-z0-9_]*".*/\1/p' "$f" | head -1)"
+    commit_var="$(sed -nE 's/.*monorepoCommit"?:? "?\$([A-Za-z_][A-Za-z0-9_]*)\$[A-Za-z_][A-Za-z0-9_]*.*/\1/p' "$f" | head -1)"
     # Anchor on the ACTUAL git state read, not the empty initializer (Codex
     # #1495 r2 P2). Anchoring on `TREE_DIRTY_AT_START=""` meant an edit that
     # left the initializer early while moving the `git diff` conditional after
@@ -252,6 +252,13 @@ else
     # enumeration of bad forms is only ever as good as the imagination behind
     # it, whereas "exactly one, in the right place" has no gaps.
     snap_empty_total="$(grep -cF 'TREE_DIRTY_AT_START=""' "$f" || true)"
+    # The COMMIT snapshot needs the same placement check as the dirty one
+    # (Codex #1495 r6 P2): verifying that the stamp derives from
+    # TREE_COMMIT_AT_START says nothing about WHERE that variable is
+    # populated, so moving its assignment late restored the very late-read
+    # this check exists to forbid.
+    commit_snap_line="$(grep -n '^TREE_COMMIT_AT_START=' "$f" | head -1 | cut -d: -f1)"
+    commit_snap_total="$(grep -oE '(^|[;[:space:]])TREE_COMMIT_AT_START=' "$f" | wc -l | tr -d ' ')"
     first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
       | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
     if [ -z "$dirty_var" ]; then
@@ -260,19 +267,28 @@ else
       continue
     fi
     # Every assignment of that variable, anywhere in the file.
-    assigns="$(grep -cE "^[[:space:]]*${dirty_var}=" "$f" || true)"
+    # Counted anywhere on the LINE, not just at line start (Codex #1495 r6 P2).
+    # A line-anchored count missed `if true; then DIRTY=""; fi`, so an inline
+    # reset forced the stamp clean with every predicate green. Same defect I
+    # had already fixed for the snapshot variable and not for these two —
+    # fixing one instance of a class and leaving its siblings, again.
+    assigns="$(grep -oE "(^|[;[:space:]])${dirty_var}=" "$f" | wc -l | tr -d ' ')"
     commit_from_snap="$(grep -cE "^[[:space:]]*${commit_var}=\"\\\$TREE_COMMIT_AT_START\"" "$f" || true)"
     # TOTAL assignments too, symmetric with the dirty variable (Codex #1495 r4
     # P2). Checking only "is assigned from the snapshot once" let a LATE
     # reassignment from `rev-parse` sit alongside it and pass — the same
     # half-a-property blind spot that let the commit half through in r3.
-    commit_assigns="$(grep -cE "^[[:space:]]*${commit_var}=" "$f" || true)"
+    commit_assigns="$(grep -oE "(^|[;[:space:]])${commit_var}=" "$f" | wc -l | tr -d ' ')"
     from_snap="$(grep -cE "^[[:space:]]*${dirty_var}=\"\\\$TREE_DIRTY_AT_START\"" "$f" || true)"
     if [ -z "$snap_line" ] || [ "$snap_init" -ne 1 ] || [ "$snap_empty_total" -ne 1 ]; then
       echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
       FAIL=1
     elif [ "$assigns" -ne 1 ] || [ "$from_snap" -ne 1 ]; then
       echo "  ✗ $s — \$$dirty_var must be assigned exactly once, from the snapshot (found $assigns assignment(s), $from_snap from snapshot) (#1490)" >&2
+      FAIL=1
+    elif [ -z "$commit_snap_line" ] || [ "$commit_snap_total" -ne 1 ] \
+         || { [ -n "$first_write" ] && [ "$commit_snap_line" -gt "$first_write" ]; }; then
+      echo "  ✗ $s — TREE_COMMIT_AT_START must be assigned exactly once, before the first write (#1490)" >&2
       FAIL=1
     elif [ "$commit_from_snap" -ne 1 ] || [ "$commit_assigns" -ne 1 ]; then
       echo "  ✗ $s — \$$commit_var must be pinned from \$TREE_COMMIT_AT_START, not re-read at stamp time (#1490)" >&2
