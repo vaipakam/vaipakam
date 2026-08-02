@@ -32,6 +32,7 @@ import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useMode } from '../app/ModeContext';
+import { formatDateTime } from '../lib/format';
 import {
   RISK_TIER,
   chainNowOf,
@@ -56,17 +57,6 @@ const TIER_OPTIONS = (): Array<{
 
 const tierLabel = (level: number): string =>
   TIER_OPTIONS().find((t) => t.level === level)?.label ?? String(level);
-
-/** Cooldown-end stamp for the advanced detail line — date+time, since
- *  a cooldown routinely ends later the same day. */
-function dateTime(unixSeconds: bigint): string {
-  return new Date(Number(unixSeconds) * 1000).toLocaleString('en-US', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
 
 export function RiskAccess() {
   const { address, onSupportedChain, walletChain } = useActiveChain();
@@ -227,7 +217,12 @@ export function RiskAccess() {
                     onClick={() =>
                       void run(
                         () => submitTierRevalidated(opt.level, { reaffirm: false }),
-                        opt.level > s.rawTier
+                        // Direction is judged against the EFFECTIVE
+                        // tier — the contract's _applyTier does (r5):
+                        // stepping "down" from a held-but-cooling
+                        // Illiquid to Broad is still a RAISE over an
+                        // effective Blue-chip and cooldown-gates.
+                        opt.level > s.effectiveTier
                           ? copy.riskAccess.raisedMsg
                           : copy.riskAccess.loweredMsg,
                       )
@@ -311,7 +306,7 @@ export function RiskAccess() {
                     ? copy.riskAccess.advancedDetail(
                         String(s.termsVersion),
                         String(s.tierAnchorVersion),
-                        dateTime(s.tierUnlockAt),
+                        formatDateTime(Number(s.tierUnlockAt)),
                       )
                     : copy.riskAccess.advancedNoCooldown(
                         String(s.termsVersion),

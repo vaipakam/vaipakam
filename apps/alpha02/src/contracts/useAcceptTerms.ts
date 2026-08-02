@@ -277,9 +277,12 @@ export function useAcceptTermsSigning() {
           // the failure: a creator-side gap must read as the creator's
           // requirement, and an ACCEPTOR tier shortfall (code 1) is
           // recoverable on /risk-access — say so instead of the generic
-          // "can't collect" dead end. A failed/absent creator preview
-          // falls back to the neutral generic message.
-          let creatorBlock = 0;
+          // "can't collect" dead end. An UNKNOWN creator preview
+          // (absent selector / failed read) keeps the neutral generic
+          // message — attributing a possibly-creator-caused code 1 to
+          // the acceptor would send them to raise a tier that cannot
+          // unblock the offer (r5).
+          let creatorBlock: number | null = null;
           try {
             creatorBlock = Number(
               await publicClient.readContract({
@@ -290,12 +293,12 @@ export function useAcceptTermsSigning() {
               }),
             );
           } catch {
-            creatorBlock = 0;
+            creatorBlock = null; // unknown — stay neutral
           }
-          if (creatorBlock !== 0) {
+          if (creatorBlock !== null && creatorBlock !== 0) {
             throw new Error(copy.match.riskGateCreatorBlocked);
           }
-          if (Number(gateBlock) === 1) {
+          if (creatorBlock === 0 && Number(gateBlock) === 1) {
             throw new Error(copy.match.riskGateTierTooLow);
           }
           throw new Error(copy.match.riskGateBlocked);
