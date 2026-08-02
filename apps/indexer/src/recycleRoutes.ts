@@ -232,6 +232,20 @@ export async function handleRecyclingSeries(
     const coverageFromDay = head?.min_day ?? maxDay;
     const cutoff = Math.max(coverageFromDay, maxDay - days + 1);
 
+    // Projection readiness is read FIRST, before the attribution rows
+    // (Codex #1513 r9). The rebuild writes the version LAST, so observing
+    // version 2 here guarantees the rows fetched afterwards are complete.
+    // Reading it after them inverts that: a concurrent first post-migration
+    // scan can populate everything and commit the version in between, so
+    // the request holds stale zeroes AND sees version 2 — publishing the
+    // exact inflated runway the gate exists to suppress.
+    const projectionState = await env.DB.prepare(
+      `SELECT projection_version FROM recycle_series_state WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ projection_version: number }>()
+      .catch(() => null);
+
     // ── ONE merged view of the days, consumed by BOTH the lifetime fold
     // and the windowed series.
     //
@@ -650,12 +664,6 @@ export async function handleRecyclingSeries(
     // accepted credit reads as unattributed — the whole mirror fold is then
     // added on top of the mirrors' full reported cumulatives and the runway
     // inflates. The projection version is what says the rebuild finished.
-    const projectionState = await env.DB.prepare(
-      `SELECT projection_version FROM recycle_series_state WHERE chain_id = ?`,
-    )
-      .bind(chainId)
-      .first<{ projection_version: number }>()
-      .catch(() => null);
     //
     // NARROW, like every other refusal here. A stale rebuild only matters
     // if there is attribution to be stale about: with no reported rows and
@@ -664,8 +672,15 @@ export async function handleRecyclingSeries(
     // tests down with it — the gate was measuring the rebuild rather than
     // the risk.
     const rebuildStale = (projectionState?.projection_version ?? 0) < 2;
-    const attributionAtStake =
-      (reportedRows.results ?? []).length > 0 || cumAbsorbedMirror > 0n;
+    // Only OBSERVED MIRROR ABSORPTION can be missing attribution (Codex
+    // #1513 r9). My r8 version also tripped on "any report row exists",
+    // which is true for a canonical self-report — whose accepted value is
+    // deliberately never attributed — and for a mirror report that
+    // accepted nothing. In both, `mirrorUnreported` is zero and the
+    // numerator is already exact, so withholding was pure loss. Narrowed
+    // twice now, in the same direction: the gate must measure the risk,
+    // not its surroundings.
+    const attributionAtStake = cumAbsorbedMirror > 0n;
     const attributionUnavailable =
       (reportedRows as { attributionUnavailable?: boolean })
         .attributionUnavailable === true ||

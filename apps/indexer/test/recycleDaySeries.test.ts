@@ -1457,6 +1457,37 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     );
   });
 
+  it('does NOT withhold for a report that attributed nothing', async () => {
+    const { h, env } = makeHarness();
+    // A canonical SELF-report (never attributed by design) and a mirror
+    // report that accepted zero both leave `mirrorUnreported` at zero, so
+    // the numerator is already exact. Withholding there is pure loss —
+    // my r8 gate tripped on "a report row exists" rather than on risk.
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 500n, dayId: 1n }),
+        log('ChainRecycledReported', {
+          sourceChainId: CHAIN, // self-report
+          dayId: 1n,
+          cumulative: 500n,
+          forDayReported: 500n,
+          dayCreditAccepted: 500n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    h.db
+      .prepare(`UPDATE recycle_series_state SET projection_version = 1 WHERE chain_id = ?`)
+      .run(CHAIN);
+    const body = await readSeries(env);
+    expect(body.cumulative.absorbedMirror).toBe('0');
+    // 500 / 100 = 5 — served, because nothing about it could be stale.
+    expect(body.cumulative.runwayExtensionDays).toBe(5);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+  });
+
   it('marks event-sourced days so a reader can tell the two apart', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries([stamped(2n)], env, CHAIN);

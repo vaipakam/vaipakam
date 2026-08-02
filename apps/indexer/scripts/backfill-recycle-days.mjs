@@ -238,10 +238,28 @@ async function main() {
     );
   }
 
+  // FINALIZED, not latest (Codex #1513 r9). The head can be reorged, and
+  // these rows are first-write-wins and may become impossible to regenerate
+  // after a demotion — so a capture taken from an orphaned block is recorded
+  // PERMANENTLY and a later canonical run cannot repair it. The risk is not
+  // theoretical for the absorption-only unstamped days this pass now
+  // preserves: a recently delivered mirror credit is exactly the kind of
+  // state a reorg takes back.
+  //
+  // No silent fallback to `latest` if the chain does not serve `finalized`:
+  // that would quietly restore the hazard this exists to remove.
   try {
-    PINNED_BLOCK = await client.getBlockNumber();
+    const finalized = await client.getBlock({ blockTag: 'finalized' });
+    PINNED_BLOCK = finalized.number;
+    if (PINNED_BLOCK === null || PINNED_BLOCK === undefined) {
+      die('the finalized block carries no number; refusing to pin');
+    }
   } catch (err) {
-    die(`cannot read the head block (${err}); refusing to scan against a moving target`);
+    die(
+      `cannot resolve a FINALIZED block (${err}). Refusing to scan against ` +
+        `\`latest\`: a reorg would be recorded permanently into rows that are ` +
+        `first-write-wins and may be unregenerable after a demotion.`,
+    );
   }
 
   let armedFromDay;
