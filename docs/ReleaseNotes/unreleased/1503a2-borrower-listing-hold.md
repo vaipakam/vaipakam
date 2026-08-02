@@ -21,6 +21,25 @@ NOT on the direct early close, which carries no listing guard; the
 same correction is applied to the PR-A wording in the specs and the
 still-unassembled PR-A release fragment.)
 
+One narrow state gets a stronger treatment than a notice. When a buyer
+has already accepted the lender's listing and that sale is still
+mid-completion, the buyer's funds are committed but the purchase has
+not finished — and a borrower who repays, part-pays, closes, transfers
+or refinances in that window would terminalize or reshape the loan the
+purchase depends on, permanently stranding it. The app therefore
+pauses the borrower's settlement options for the duration, with the
+reason stated up front rather than surfacing as an unexplained
+failure, and keeps adding collateral available throughout. The pause
+covers a loan whose fallback resolution is still pending as well, so
+the full-repayment cure that state offers is paused with the same
+explanation instead of being refused only at the final step. This is
+app-level protection over a window the contracts still permit; the
+matching on-chain close-out guard belongs to the #1503 PR-E slice.
+Every settlement path additionally re-asks the chain immediately
+before it sends, so an acceptance that lands while a review screen sits
+open cannot slip past a cached answer, and any unanswered check pauses
+rather than proceeds.
+
 The state is judged from the chain alone, by simulating the exact
 cleanup transaction the button would send and classifying the outcome
 — no local marker, no off-chain index, so a listing made by the
