@@ -103,6 +103,28 @@ async function applyOne(
   );
 
   if (log.eventName === 'GovernorDayPoolStamped') {
+    // The PRE-CUTOVER five-field shape is refused, not coerced (Codex
+    // #1507 r3 P1). Widening the event changed its topic, so days
+    // finalized before the upgrade were announced under the old
+    // signature and simply cannot supply `freshDrawdown` / `armed`.
+    // Reading the absent fields as `0` / `false` would store them as
+    // stamped-but-unarmed days with a zero drawdown — fabricated history
+    // in the shape of real history, and it would drag the coverage
+    // boundary back over days this consumer cannot actually account for.
+    // The ratified cutover puts those days on the getter-based backfill
+    // instead (plan §M5, "Cutover"), which is a separate slice.
+    //
+    // Presence, not a block boundary: a widened emission always carries
+    // both keys and a legacy one carries neither, so this is exact and
+    // needs no operator-supplied cutover height.
+    if (!('freshDrawdown' in log.args) || !('armed' in log.args)) {
+      // Recorded so the audit trail is complete and a replay cannot
+      // re-decide it; the day stays unstamped and absorption-only, which
+      // is the truthful state until the backfill covers it.
+      await env.DB.batch([record]);
+      return true;
+    }
+
     // Absorption columns are deliberately NOT touched here — they are
     // accumulated by their own branches, and a re-stamp of the same day
     // must not reset credits that arrived independently of it.

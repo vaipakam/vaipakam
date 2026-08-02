@@ -597,3 +597,139 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     expect(body.scope).toBe('empty');
   });
 });
+
+describe('handleRecyclingSeries — the ratified window, and what anchors it', () => {
+  /** Stamp days [from..to] armed, with an explicit floor per day. */
+  function floors(from: number, perDay: (d: number) => bigint) {
+    const out = [];
+    for (let d = from; ; d++) {
+      const f = perDay(d);
+      if (f < 0n) break;
+      out.push(stamped(BigInt(d), { scheduleFloor: f, recycledBudget: 0n }));
+    }
+    return out;
+  }
+
+  it('uses the protocol\'s SEVEN-day window, not a longer one', async () => {
+    const { env } = makeHarness();
+    // Day 1 is a huge outlier. Inside a 7-day window (days 4..10) it is
+    // excluded; inside a 30-day one it dominates the mean. The days must
+    // therefore differ — a flat fixture would report the same mean at
+    // every window size and prove nothing.
+    await applyRecycleDaySeries(
+      [
+        ...floors(1, (d) => (d > 10 ? -1n : d === 1 ? 10_000n : 100n)),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 700n, dayId: 5n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env, 30);
+    // mean over days 4..10 = 100  ->  700 / 100 = 7
+    expect(body.cumulative.runwayExtensionDays).toBe(7);
+  });
+
+  it('anchors the window on the latest FINALIZED day, not the latest row', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        ...floors(3, (d) => (d > 9 ? -1n : d === 3 ? 700n : 100n)),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 700n, dayId: 5n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const before = (await readSeries(env, 30)).cumulative.runwayExtensionDays;
+    // mean over days 3..9 = 1300/7  ->  700 / (1300/7) = 3.76923
+    expect(before).toBe(3.76923);
+
+    // The next day BEGINS: a credit lands on day 10, which is not
+    // finalized. Anchoring on the highest row of any kind would slide the
+    // window to 4..10 and drop day 3, changing a lifetime figure because
+    // a day started.
+    await applyRecycleDaySeries(
+      [log('VpfiRecycled', { source: 1, refId: 2n, amount: 1n, dayId: 10n })],
+      env,
+      CHAIN,
+    );
+    const after = (await readSeries(env, 30)).cumulative.runwayExtensionDays;
+    // UNCHANGED. Two rules compose here and I predicted this wrong before
+    // running it: the window does not move (this fix), AND the numerator
+    // does not grow either, because the global absorption cumulative sums
+    // only FINALIZED days — day 10's credit is real and visible in
+    // `absorbedLocal`, but it is not yet part of a global total.
+    expect(after).toBe(before);
+    // Non-vacuous: anchoring on the highest row of ANY kind would slide
+    // the window to 4..10, drop day 3 (the outlier), and report 7.
+    expect(after).not.toBe(7);
+    // …and the credit really did land, so the fixture is live.
+    expect(day(await readSeries(env, 30), 10).absorbedLocal).toBe('1');
+  });
+});
+
+describe('applyRecycleDaySeries — the pre-cutover event shape', () => {
+  it('REFUSES a legacy five-field stamp instead of coercing it', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        // Emitted before the event was widened: no freshDrawdown, no armed.
+        log('GovernorDayPoolStamped', {
+          dayId: 2n,
+          scheduleFloor: 500n,
+          recycledBudget: 60n,
+          aBar: 70n,
+          marginBps: 80n,
+        }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 12n, dayId: 2n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    const d2 = day(body, 2);
+    // Coercing the absent fields would have stored this as a stamped,
+    // unarmed day with a zero drawdown — fabricated history shaped like
+    // real history.
+    expect(d2.stamped).toBe(false);
+    expect(d2.scheduleFloor).toBeNull();
+    expect(d2.freshDrawdown).toBeNull();
+    // The absorption it genuinely observed is still recorded.
+    expect(d2.absorbedLocal).toBe('12');
+    // …and it does not count as a finalized day anywhere.
+    expect(body.scope).toBe('local-only');
+    expect(body.cumulative.absorbed).toBe('0');
+  });
+
+  it('records the refused stamp so a replay cannot re-decide it', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        log('GovernorDayPoolStamped', {
+          dayId: 2n,
+          scheduleFloor: 500n,
+          recycledBudget: 60n,
+          aBar: 70n,
+          marginBps: 80n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const seen = h.db
+      .prepare(
+        `SELECT kind FROM recycle_series_events WHERE chain_id = ? AND day_id = ?`,
+      )
+      .all(CHAIN, 2) as Array<{ kind: string }>;
+    expect(seen).toHaveLength(1);
+  });
+
+  it('still accepts the widened stamp for the same day', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [stamped(2n, { freshDrawdown: 42n, armed: true })],
+      env,
+      CHAIN,
+    );
+    expect(day(await readSeries(env), 2).freshDrawdown).toBe('42');
+  });
+});

@@ -67,8 +67,18 @@ import { jsonResponse } from './offerRoutes';
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;
 
-/** Trailing window for the runway mean, per governor design §9. */
-const RUNWAY_WINDOW_DAYS = 30;
+/**
+ * Trailing smoothing window `W`, in reward days.
+ *
+ * MUST match the protocol's own `RECYCLE_TRAILING_WINDOW_DAYS = 7`
+ * (`LibVaipakam.sol`; governor design §"smoothing window", a compile-time
+ * constant deliberately not a knob). An earlier version of this file used
+ * 30, which made the published runway a different metric from the ratified
+ * one — same name, different denominator — and delayed the self-funded
+ * terminal state (Codex #1507 r3 P2). A dashboard figure that quietly
+ * disagrees with the protocol's own is worse than no figure.
+ */
+const RUNWAY_WINDOW_DAYS = 7;
 
 function parseChainId(raw: string | null): number | null {
   if (!raw) return null;
@@ -303,16 +313,33 @@ export async function handleRecyclingSeries(
     // see — `days=1` computed the mean from a single day — so the same
     // chain state answered differently depending on the question's shape.
     // A cumulative that depends on the query is reporting the query.
+    // Anchored on the latest FINALIZED, armed day — not on the highest
+    // row of any kind (Codex #1507 r3 P2). `maxDay` moves the moment the
+    // next day's first credit arrives, and since the window then excludes
+    // that unstamped row it would silently average W-1 days instead of W.
+    // The reported lifetime runway would change because a day BEGAN,
+    // which is not an event about the trailing window at all.
     let trailingPoolSum = 0n;
     let trailingFloorSum = 0n;
     let trailingCount = 0n;
-    const trailingRows = await env.DB.prepare(
-      `SELECT schedule_floor, recycled_budget
-         FROM recycle_day_pool
-        WHERE chain_id = ? AND day_id >= ? AND stamped = 1 AND armed = 1`,
+    const anchorRow = await env.DB.prepare(
+      `SELECT MAX(day_id) AS anchor FROM recycle_day_pool
+        WHERE chain_id = ? AND stamped = 1 AND armed = 1`,
     )
-      .bind(chainId, Math.max(0, maxDay - RUNWAY_WINDOW_DAYS + 1))
-      .all<{ schedule_floor: string; recycled_budget: string }>();
+      .bind(chainId)
+      .first<{ anchor: number | null }>();
+    const anchor = anchorRow?.anchor ?? null;
+    const trailingRows =
+      anchor === null
+        ? { results: [] as Array<{ schedule_floor: string; recycled_budget: string }> }
+        : await env.DB.prepare(
+            `SELECT schedule_floor, recycled_budget
+               FROM recycle_day_pool
+              WHERE chain_id = ? AND day_id >= ? AND day_id <= ?
+                AND stamped = 1 AND armed = 1`,
+          )
+            .bind(chainId, Math.max(0, anchor - RUNWAY_WINDOW_DAYS + 1), anchor)
+            .all<{ schedule_floor: string; recycled_budget: string }>();
     for (const r of trailingRows.results ?? []) {
       trailingPoolSum += BigInt(r.schedule_floor) + BigInt(r.recycled_budget);
       trailingFloorSum += BigInt(r.schedule_floor);
