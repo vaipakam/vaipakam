@@ -1386,6 +1386,47 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     expect(row?.reported_cumulative).toBe('700');
   });
 
+  it('keeps a real row distinguishable from a dense-series gap', async () => {
+    const { h, env } = makeHarness();
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 1, 0, '0', '0', '0', '60', '0', 0, 0, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries([stamped(3n)], env, CHAIN);
+    const body = await readSeries(env);
+    // A stored absorption-only row keeps its provenance…
+    expect(day(body, 1).origin).toBe('backfill');
+    expect(day(body, 1).absorbedLocal).toBe('60');
+    // …while a synthesised gap has none.
+    expect(day(body, 2).origin).toBeNull();
+  });
+
+  it('WITHHOLDS the runway when the reported table is gone (not a rollout)', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    // A missing TABLE is data loss or a partial restore — not the 0047
+    // window, which has the table minus one column. Publishing then omits
+    // every mirror's reported-only lifetime stock.
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'attribution-column-unavailable',
+    );
+  });
+
   it('marks event-sourced days so a reader can tell the two apart', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries([stamped(2n)], env, CHAIN);

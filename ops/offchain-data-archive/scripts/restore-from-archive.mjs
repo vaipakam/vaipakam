@@ -865,6 +865,18 @@ export function invalidRecycleBackfillRowShapes(archive) {
             `did not come from it and cannot be tied to a computation`,
         );
       }
+      // The generator NEVER supplies these — the getter behind it does not
+      // return them — yet the read surface publishes whatever is stored.
+      // A fabricated margin would silently rewrite historical transparency
+      // figures (Codex #1513 r7).
+      for (const col of ['a_bar', 'margin_bps']) {
+        if (row[col] !== null && row[col] !== undefined) {
+          push(
+            `${col} ${JSON.stringify(row[col])} is not null — the generator ` +
+              `cannot know this field, so a value here did not come from it`,
+          );
+        }
+      }
       if (row.stamped !== 0 && row.stamped !== 1) {
         push(`stamped ${JSON.stringify(row.stamped)} is not exactly 0 or 1`);
       }

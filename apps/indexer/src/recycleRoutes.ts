@@ -314,7 +314,15 @@ export async function handleRecyclingSeries(
             }))
             .catch((e: unknown) => {
               if (!/no such table/i.test(String(e))) throw e;
+              // A MISSING TABLE is not the 0047 rollout shape — that window
+              // has the table without one column. This is the table gone:
+              // data loss, or a partial restore. Treating it as "no reports
+              // exist" publishes a runway built only from the accepted day
+              // fold, silently omitting every mirror's reported-only
+              // lifetime stock (pre-launch, clamped credits). Mark it
+              // unavailable and withhold (Codex #1513 r7).
               return {
+                attributionUnavailable: true,
                 results: [] as Array<{
                   source_chain_id: number;
                   reported_cumulative: string;
@@ -442,7 +450,12 @@ export async function handleRecyclingSeries(
           stamped: false,
           armed: false,
           estimate: false,
-          origin: null,
+          // A real stored row keeps its provenance. Hardcoding null here
+          // made an absorption-only row — from either source — look
+          // identical to a synthetic dense-series gap, even though its
+          // absorption is published (Codex #1513 r7). `null` is reserved
+          // for a day with no stored row at all.
+          origin: r?.origin ?? null,
           scheduleFloor: null,
           recycledBudget: null,
           aBar: null,

@@ -757,7 +757,13 @@ re-litigate:
 - Operator-run rather than a Worker route: it needs chain reads and hand
   sequencing against a demotion, and `apps/indexer` is deliberately
   read-only and operator-key-free. It emits SQL and writes NOTHING on
-  failure, so a redirect cannot leave a partial file. `ON CONFLICT DO
+  failure — but that is NOT enough on its own, and an earlier revision of
+  this row said it was (Codex #1513 r7). A shell `>` TRUNCATES the target
+  before node starts, so a re-run that then fails destroys the previous
+  pre-demotion capture: the one artifact here that cannot be recreated.
+  **Use `OUT=<path>`**, which writes a sibling temp file and renames only
+  after a complete run. Stdout is for inspection and carries no such
+  guarantee. `ON CONFLICT DO
   NOTHING` — the first capture, taken while the inputs were intact, is the
   record.
 
