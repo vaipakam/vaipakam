@@ -364,8 +364,8 @@ implementation PR:
 | Path | When it genuinely fits | Cost shape |
 | --- | --- | --- |
 | Keep it to the end | No urgent need for the capital | No sale forfeiture, and your reward credit for this position keeps accruing — principal plus the agreed interest if the borrower repays (paid on the loan's schedule where it has one, otherwise at the close); the normal default process (recovery may be less) if they don't |
-| Sell now | Need liquidity today; an acceptable offer or position bid is on the book | Generic offer: principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly. Position bid: the bid's defined gross/net seller receipt, payment asset, and any resolved top-up or no-top-up rule. Both models also show any money already set aside for you on this loan, which transfers to the buyer; your pending reward credit for this position, which is given up; the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated; and the notification-entitlement line where the migration policy lets paid notification state follow the loan (shown as their own lines, or marked unquotable where the value can't be read). The bid row stays unavailable until its settlement model defines those figures. |
-| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, conditional Full-entitlement, and conditional notification-entitlement lines at completion, with the same unquotable fallback; your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
+| Sell now | Need liquidity today; an acceptable offer or position bid is on the book | Generic offer: principal minus the larger of interest-so-far or the buyer rate top-up, paid instantly. Position bid: the bid's defined gross/net seller receipt, payment asset, and any resolved top-up or no-top-up rule. Both models also show any money already set aside for you on this loan, which transfers to the buyer; your pending reward credit for this position, which is given up; the Full entitlement line where the tariff prerequisite makes it transferable, extinguished, or compensated; and the notification-entitlement line where the migration policy lets paid notification state follow the loan. Each extra line is shown as its own line — and the unquotable fallback is NOT uniform across them: where a prerequisite requires the cost to be quoted AND bounded (the reward forfeiture under items 4/6, the transferred notification entitlement under item 25), an unreadable value makes the row unavailable or demands fresh bounded seller authorization; marking it "unquotable" is permitted only for lines whose prerequisite accepts disclosure. The bid row stays unavailable until its settlement model defines those figures. |
+| List at your chosen buyer rate | Want liquidity but not at today's book rates | The same settlement, transferred set-aside, reward-forfeiture, conditional Full-entitlement, and conditional notification-entitlement lines at completion, with the same per-line unquotable rule (bounded-consent lines block or require fresh authorization rather than disclose); your position locked and the borrower's partial-repay/collateral paths held until it sells, expires, or you cancel; no guarantee of a buyer |
 
 For the generic-offer model, the teaching moment (inverse of the
 borrower side) is REGIME-AWARE, not absolute, because the seller pays
@@ -1054,6 +1054,24 @@ than a growing list of patches on generic-offer consumption.
    mirror net already-settled periodic interest through
    `creditSettledInterest` or an equivalent calculation before comparing
    accrued interest to the buyer-rate top-up or bid-specific replacement.
+
+   **Netting alone does not handle the EXCESS case.** A periodic
+   auto-liquidation can overdeliver, and a partial repayment deliberately
+   preserves the surplus (`interestSettled` greater than the interest
+   accrued since) as a credit against FUTURE accrual after resetting the
+   clock. The netting helper merely saturates to zero there — it
+   discards the residual for sale pricing while the residual stays on
+   the loan and reduces the interest payable to the INCOMING lender at
+   final settlement. So a seller who sells soon after an overdelivery
+   keeps prepaid future interest while handing the buyer a position
+   whose remaining yield is already partly consumed — with the seller's
+   own forfeiture correctly zero and every bound satisfied. *Required*:
+   the sale calculation must carry any excess settled credit into the
+   buyer's compensation (reduce the price the buyer funds, or add it to
+   the top-up / bid-specific replacement the seller owes), or refuse the
+   sale while a residual credit exists. A zero forfeiture is not the
+   same claim as a clean slate, and only the first is what the netting
+   rule establishes.
 
 Together with the borrower-escape requirement in the Layer-3
 checklist, these gate Phase 1 — **both paths, not just the listing**:
