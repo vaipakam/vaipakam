@@ -985,7 +985,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](32);
         selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
         selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         selectors[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -1016,6 +1016,8 @@ contract HelperTest {
         selectors[27] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3
         selectors[28] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
         selectors[29] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522
+        selectors[30] = RiskAccessFacet.setVaultRiskTierCheckedBySig.selector; // #1522
+        selectors[31] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522
     }
 
     /// @dev #1104 — preview cluster + cross-facet gate asserts split into

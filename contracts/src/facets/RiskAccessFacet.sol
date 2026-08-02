@@ -84,10 +84,11 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         hash is single-use, so rolling terms A→B→A can't revive a stale ack.
     error RiskTermsHashAlreadyUsed();
     /// @notice #1522 — {setVaultRiskTierChecked}'s expectations no longer match
-    ///         the vault's live state: another write landed between the
-    ///         client's reads and this transaction. Nothing was changed; the
-    ///         client refetches and re-presents.
-    error RiskTierStateMoved(uint8 currentTier, uint64 currentAnchorVersion);
+    ///         the vault's live state: another tier write landed (the mutation
+    ///         nonce moved) or governance revealed new terms (the live version
+    ///         moved) between the client's reads and this transaction. Nothing
+    ///         was changed; the client refetches and re-presents.
+    error RiskTierStateMoved(uint64 currentTierNonce, uint64 currentTermsVersion);
 
     // ─── User-facing setters: direct (msg.sender == vault) ───────────────────
 
@@ -99,8 +100,8 @@ contract RiskAccessFacet is DiamondAccessControl {
     }
 
     /// @notice #1522 — conditional variant of {setVaultRiskTier}: applies
-    ///         `level` ONLY while the caller's raw tier and tier-anchor version
-    ///         still equal the expectations the client observed, reverting
+    ///         `level` ONLY while the vault's tier state and the LIVE terms
+    ///         version still equal what the client observed, reverting
     ///         {RiskTierStateMoved} otherwise. Closes the multi-client TOCTOU
     ///         the unconditional setter leaves open: two devices racing the
     ///         same raise both pass their pre-write reads, and the second
@@ -109,17 +110,23 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         transaction. The wallet-confirmation window is unbounded, so no
     ///         client-side revalidation can be atomic with the write; this
     ///         makes the observed-state assumption part of the transaction.
+    /// @dev    `expectedTierNonce` is the per-vault MUTATION NONCE
+    ///         ({getRiskTierMutationNonce}), bumped by every tier write — one
+    ///         monotonic counter subsumes every field a write touches, so an
+    ///         A→B→A sequence that restores the raw tier + anchor still
+    ///         reverts (Codex #1528 r1 P2). `expectedTermsVersion` binds the
+    ///         LIVE `currentRiskTermsVersion`: a governance terms reveal
+    ///         landing after the client's reads reverts instead of letting
+    ///         {_applyTier} silently re-affirm terms the signer never saw
+    ///         (Codex #1528 r1 P1).
     function setVaultRiskTierChecked(
         uint8 level,
-        uint8 expectedRawTier,
-        uint64 expectedAnchorVersion
+        uint64 expectedTierNonce,
+        uint64 expectedTermsVersion
     ) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint8 cur = uint8(s.userRiskAccess[msg.sender]);
-        uint64 anchor = s.riskTierVersionAt[msg.sender];
-        if (cur != expectedRawTier || anchor != expectedAnchorVersion) {
-            revert RiskTierStateMoved(cur, anchor);
-        }
+        _checkTierExpectations(
+            msg.sender, expectedTierNonce, expectedTermsVersion
+        );
         _applyTier(msg.sender, level);
     }
 
@@ -146,6 +153,28 @@ contract RiskAccessFacet is DiamondAccessControl {
         _consumeSig(
             m.vault, m.termsHash, m.nonce, m.deadline,
             LibRiskAccess.digest(m), sig
+        );
+        _applyTier(m.vault, m.level);
+    }
+
+    /// @notice #1522 — checked variant of {setVaultRiskTierBySig}: the signed
+    ///         message additionally binds the tier-state expectations, so the
+    ///         gasless path gets the same TOCTOU guard as the direct one
+    ///         (Codex #1528 r1 P2 — two devices signing DISTINCT replay
+    ///         nonces for the same raise would otherwise both relay
+    ///         successfully, the second restarting the first's cooldown).
+    ///         The expectations are inside the EIP-712 digest, so a relayer
+    ///         can neither alter nor strip them.
+    function setVaultRiskTierCheckedBySig(
+        LibRiskAccess.SetVaultRiskTierChecked calldata m,
+        bytes calldata sig
+    ) external {
+        _consumeSig(
+            m.vault, m.termsHash, m.nonce, m.deadline,
+            LibRiskAccess.digest(m), sig
+        );
+        _checkTierExpectations(
+            m.vault, m.expectedTierNonce, m.expectedTermsVersion
         );
         _applyTier(m.vault, m.level);
     }
@@ -390,6 +419,21 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().riskTierVersionAt[vault];
     }
 
+    /// @notice #1522 — the per-vault tier MUTATION NONCE: incremented by every
+    ///         tier write, never reset. A client planning a
+    ///         {setVaultRiskTierChecked} reads this (in the same pinned block
+    ///         as its other tier reads) and passes it as `expectedTierNonce`;
+    ///         any tier write landing in between moves the nonce and the
+    ///         checked call reverts {RiskTierStateMoved} instead of silently
+    ///         acting on state the user never saw.
+    function getRiskTierMutationNonce(address vault)
+        external
+        view
+        returns (uint64)
+    {
+        return LibVaipakam.storageSlot().riskTierMutation[vault];
+    }
+
     function isProtocolManagedVault(address vault)
         external
         view
@@ -509,6 +553,26 @@ contract RiskAccessFacet is DiamondAccessControl {
 
     // ─── Internals ───────────────────────────────────────────────────────────
 
+    /// @dev #1522 — the shared expectation gate for both checked entry points.
+    ///      Compares the vault's tier MUTATION NONCE and the LIVE terms
+    ///      version against the client's observed values; view-only, so a
+    ///      failed check reverts the whole transaction with nothing consumed.
+    function _checkTierExpectations(
+        address vault,
+        uint64 expectedTierNonce,
+        uint64 expectedTermsVersion
+    ) private view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint64 tierNonce = s.riskTierMutation[vault];
+        uint64 termsVersion = s.currentRiskTermsVersion;
+        if (
+            tierNonce != expectedTierNonce
+                || termsVersion != expectedTermsVersion
+        ) {
+            revert RiskTierStateMoved(tierNonce, termsVersion);
+        }
+    }
+
     function _applyTier(address vault, uint8 level) private {
         if (level > uint8(LibVaipakam.RiskAccessLevel.IlliquidCustom)) {
             revert InvalidRiskLevel(level);
@@ -522,6 +586,12 @@ contract RiskAccessFacet is DiamondAccessControl {
         // otherwise clear the cooldown via the "same level" branch.
         LibVaipakam.RiskAccessLevel effCur =
             LibRiskAccess.effectiveTier(s, vault);
+        // #1522 — every tier write moves the mutation nonce, so a checked
+        // call planned against pre-write reads can never land on top of it.
+        // unchecked: 2^64 writes is unreachable.
+        unchecked {
+            ++s.riskTierMutation[vault];
+        }
         s.userRiskAccess[vault] = newLevel;
         // Re-stamp the version anchor to the live terms so the new tier is fresh.
         s.riskTierVersionAt[vault] = s.currentRiskTermsVersion;

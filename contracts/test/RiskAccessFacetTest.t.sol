@@ -161,6 +161,30 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
+    function _tierCheckedDigest(LibRiskAccess.SetVaultRiskTierChecked memory m)
+        internal
+        view
+        returns (bytes32)
+    {
+        // SetVaultRiskTierChecked digest — single abi.encode in struct order
+        // (typehash, vault, level, expectedTierNonce, expectedTermsVersion,
+        // termsHash, nonce, deadline).
+        return _digest(
+            keccak256(
+                abi.encode(
+                    LibRiskAccess.SET_VAULT_RISK_TIER_CHECKED_TYPEHASH,
+                    m.vault,
+                    m.level,
+                    m.expectedTierNonce,
+                    m.expectedTermsVersion,
+                    m.termsHash,
+                    m.nonce,
+                    m.deadline
+                )
+            )
+        );
+    }
+
     function _illiquidDigest(LibRiskAccess.SetIlliquidPairConsent memory m)
         internal
         view
@@ -231,52 +255,90 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     /// @dev #1522 — the conditional setter: expectations matching the live
-    ///      raw tier + anchor apply exactly like the unconditional setter;
-    ///      either expectation moving underneath reverts RiskTierStateMoved
-    ///      with the CURRENT values (the client's refetch cue) and changes
-    ///      nothing.
+    ///      tier mutation nonce + terms version apply exactly like the
+    ///      unconditional setter (and move the nonce); either expectation
+    ///      moving underneath reverts RiskTierStateMoved with the CURRENT
+    ///      values (the client's refetch cue) and changes nothing.
     function test_checkedSetTier_appliesWhileExpectationsHold() public {
         RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        assertEq(rf.getRiskTierMutationNonce(lender), 0, "fresh vault nonce");
         vm.prank(lender);
-        rf.setVaultRiskTierChecked(BROAD, BLUECHIP, 0);
+        rf.setVaultRiskTierChecked(BROAD, 0, 0);
         assertEq(rf.getVaultRiskTier(lender), BROAD, "raw tier");
         assertEq(rf.getEffectiveRiskTier(lender), BROAD, "effective tier");
         assertEq(rf.getVaultRiskTierVersion(lender), 0, "anchor re-stamped live");
+        assertEq(rf.getRiskTierMutationNonce(lender), 1, "write moved the nonce");
     }
 
-    function test_checkedSetTier_rawTierMovedReverts() public {
+    function test_checkedSetTier_concurrentTierWriteReverts() public {
         RiskAccessFacet rf = RiskAccessFacet(address(diamond));
-        // A concurrent client's raise lands first…
+        // A concurrent client's raise lands first (nonce 0 -> 1)…
         vm.prank(lender);
         rf.setVaultRiskTier(BROAD);
-        // …then this client's write, still expecting BLUECHIP, must NOT
+        // …then this client's write, planned against nonce 0, must NOT
         // re-apply (the unconditional setter here would restart the cooldown).
         vm.prank(lender);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskAccessFacet.RiskTierStateMoved.selector, BROAD, uint64(0)
+                RiskAccessFacet.RiskTierStateMoved.selector,
+                uint64(1),
+                uint64(0)
             )
         );
-        rf.setVaultRiskTierChecked(BROAD, BLUECHIP, 0);
+        rf.setVaultRiskTierChecked(BROAD, 0, 0);
     }
 
-    function test_checkedSetTier_anchorMovedReverts() public {
+    /// @dev Codex #1528 r1 P1 — a governance terms reveal between the
+    ///      client's reads and the transaction must revert, NOT let
+    ///      `_applyTier` silently re-stamp (re-affirm) terms the signer
+    ///      never observed.
+    function test_checkedSetTier_termsBumpAfterReadsReverts() public {
         RiskAccessFacet rf = RiskAccessFacet(address(diamond));
-        vm.prank(lender);
-        rf.setVaultRiskTier(BROAD); // anchor stamped at version 0
-        _bumpRiskTerms(keccak256("rt-1522")); // bump -> live version 1, anchor stays 0
-        // Client observed the POST-BUMP state wrongly (expects anchor 1):
+        // Client reads: nonce 0, live terms version 0. A reveal lands first:
+        _bumpRiskTerms(keccak256("rt-1522")); // live version -> 1
         vm.prank(lender);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskAccessFacet.RiskTierStateMoved.selector, BROAD, uint64(0)
+                RiskAccessFacet.RiskTierStateMoved.selector,
+                uint64(0),
+                uint64(1)
             )
         );
-        rf.setVaultRiskTierChecked(BROAD, BROAD, 1);
-        // Correct expectations (anchor 0) re-affirm and re-stamp to 1.
+        rf.setVaultRiskTierChecked(BROAD, 0, 0);
+        // Refetched expectations (nonce 0, version 1) apply and stamp fresh.
         vm.prank(lender);
-        rf.setVaultRiskTierChecked(BROAD, BROAD, 0);
-        assertEq(rf.getVaultRiskTierVersion(lender), 1, "anchor re-stamped");
+        rf.setVaultRiskTierChecked(BROAD, 0, 1);
+        assertEq(rf.getVaultRiskTierVersion(lender), 1, "anchor stamped live");
+    }
+
+    /// @dev Codex #1528 r1 P2 — an A→B→A sequence restores the raw tier AND
+    ///      the version anchor to the observed values, but `riskTierSettled`
+    ///      / `riskTierUnlockAt` changed underneath. The mutation nonce
+    ///      still moved, so the checked write reverts where a raw-state
+    ///      comparison would have passed.
+    function test_checkedSetTier_abaSequenceReverts() public {
+        RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        vm.prank(lender);
+        rf.setVaultRiskTier(BROAD); // nonce -> 1
+        // This client reads: raw BROAD, anchor 0, nonce 1. Another device
+        // then lowers and re-raises (nonce -> 3) — raw + anchor return to
+        // exactly the observed values:
+        vm.prank(lender);
+        rf.setVaultRiskTier(BLUECHIP); // nonce -> 2
+        vm.prank(lender);
+        rf.setVaultRiskTier(BROAD); // nonce -> 3
+        assertEq(rf.getVaultRiskTier(lender), BROAD, "raw tier ABA-restored");
+        assertEq(rf.getVaultRiskTierVersion(lender), 0, "anchor ABA-restored");
+        // The planned write still reverts — the nonce cannot ABA.
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTierStateMoved.selector,
+                uint64(3),
+                uint64(0)
+            )
+        );
+        rf.setVaultRiskTierChecked(ILLIQUID, 1, 0);
     }
 
     function test_directSetTier_revertsOnInvalidLevel() public {
@@ -335,6 +397,64 @@ contract RiskAccessFacetTest is SetupTest {
         assertTrue(
             RiskAccessFacet(address(diamond)).riskAccessNonceUsed(lender, 1),
             "nonce marked used"
+        );
+    }
+
+    /// @dev #1522 (Codex #1528 r1 P2) — the CHECKED gasless variant: the
+    ///      signed message binds the observed tier state, so two devices
+    ///      signing distinct replay nonces for the same raise can't both
+    ///      land — the second reverts on the moved mutation nonce instead
+    ///      of restarting the first's cooldown.
+    function test_signedSetTierChecked_appliesThenStaleSecondSignerReverts()
+        public
+    {
+        _bumpRiskTerms(keccak256("rt-by-tier-checked")); // live anchor, version 1
+        RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        // Device A signs against observed state (tier nonce 0, version 1).
+        LibRiskAccess.SetVaultRiskTierChecked memory a =
+            LibRiskAccess.SetVaultRiskTierChecked({
+                vault: lender,
+                level: BROAD,
+                expectedTierNonce: 0,
+                expectedTermsVersion: 1,
+                termsHash: _currentHash(),
+                nonce: 11,
+                deadline: block.timestamp + 1 hours
+            });
+        bytes memory sigA = _sign(lenderPk, _tierCheckedDigest(a));
+        // Device B signed the SAME observed state with a DIFFERENT replay
+        // nonce — the unchecked BySig would apply both.
+        LibRiskAccess.SetVaultRiskTierChecked memory b =
+            LibRiskAccess.SetVaultRiskTierChecked({
+                vault: lender,
+                level: BROAD,
+                expectedTierNonce: 0,
+                expectedTermsVersion: 1,
+                termsHash: _currentHash(),
+                nonce: 12,
+                deadline: block.timestamp + 1 hours
+            });
+        bytes memory sigB = _sign(lenderPk, _tierCheckedDigest(b));
+
+        vm.prank(relayer);
+        rf.setVaultRiskTierCheckedBySig(a, sigA);
+        assertEq(rf.getVaultRiskTier(lender), BROAD, "device A applied");
+        assertEq(rf.getRiskTierMutationNonce(lender), 1, "nonce moved");
+
+        // Device B's relay lands second: expectations are stale, revert —
+        // no cooldown restart, and its replay nonce is NOT consumed.
+        vm.prank(relayer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTierStateMoved.selector,
+                uint64(1),
+                uint64(1)
+            )
+        );
+        rf.setVaultRiskTierCheckedBySig(b, sigB);
+        assertFalse(
+            rf.riskAccessNonceUsed(lender, 12),
+            "stale relay consumed nothing"
         );
     }
 
