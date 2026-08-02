@@ -106,6 +106,27 @@ provenance gap tracked as **#1473**, which is what would actually close it. The
 floors in `lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency
 argument, and its comments say so.
 
+### Declare the first archive of each long tier (`ARCHIVE_FIRST_*`)
+
+Two optional vars on the Worker:
+
+- `ARCHIVE_FIRST_MONTHLY` — `YYYY-MM` of the first monthly cut this
+  deployment wrote.
+- `ARCHIVE_FIRST_YEARLY` — `YYYY` of the first yearly cut.
+
+**Set them once each first cut exists.** Without them the healthcheck
+derives what *should* be present from what *is* present, and that is
+circular: delete the oldest yearly archive and the inferred baseline
+advances past it, so the deleted year stops being required; empty the
+family entirely and there is nothing left to infer from, so nothing is
+reported missing and the tier passes. A detector whose expectations come
+from the survivors cannot report a deletion.
+
+They are optional because a fresh deployment genuinely has no baseline to
+state. While unset, the weekly report appends `COVERAGE DEGRADED` to that
+tier's line and says why — the absence of the guarantee is published
+rather than implied.
+
 The monthly floor used to be higher for a worse reason: `healthcheck.ts`
 examined only `manifests/<recent dates>/`, so a monthly overwrite was detected
 by nothing and the window could not be justified by detection at all — it

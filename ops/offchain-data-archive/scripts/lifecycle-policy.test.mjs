@@ -81,3 +81,20 @@ test('exactly the floor is accepted — the bound is inclusive', () => {
   // the two prefixes in a tier are validated independently.
   assert.doesNotThrow(() => assertPolicyCeilings(ok, fail));
 });
+
+test('the healthcheck retention window agrees with the declared lifecycle', async () => {
+  // `MONTHLY_RETAINED_MONTHS` lives in the Worker's tier table and the
+  // retention days live in bucket-lifecycle.json. Nothing else ties them
+  // together, so a lifecycle change could silently make the healthcheck
+  // demand months that have legitimately aged out — a weekly false page.
+  const { MONTHLY_RETAINED_MONTHS } = await import('../src/tiers.ts');
+  const rule = declared.rules.find((r) => r.fileNamePrefix === 'archives-monthly/');
+  const liveMonths = rule.daysFromUploadingToHiding / 30.44; // mean month
+  assert.ok(
+    MONTHLY_RETAINED_MONTHS <= liveMonths,
+    `healthcheck requires ${MONTHLY_RETAINED_MONTHS} months but only ` +
+      `~${liveMonths.toFixed(1)} are retained`,
+  );
+  // …and not so conservative that a deletion goes unnoticed for a year.
+  assert.ok(MONTHLY_RETAINED_MONTHS >= liveMonths - 2);
+});

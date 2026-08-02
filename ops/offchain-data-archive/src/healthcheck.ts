@@ -25,6 +25,7 @@ import {
   classifyListing,
   periodOf,
   siblingArchiveKey,
+  type ArchiveBaseline,
   type Listing,
   type TierName,
   type TierSpec,
@@ -192,6 +193,7 @@ export async function verifyTier(
   b2Cfg: B2Config,
   spec: TierSpec,
   now: number = Date.now(),
+  baseline: ArchiveBaseline = {},
 ): Promise<TierOutcome> {
   const base = { tier: spec.tier, absent: false };
   let listedEntries: S3ListEntry[] = [];
@@ -209,7 +211,18 @@ export async function verifyTier(
     listing = { ok: false, error: (err as Error).message };
   }
 
-  const verdict = classifyListing(spec, listing, now);
+  // The archive prefix is listed too, so a manifest whose archive has
+  // gone can be caught for EVERY required period rather than only for the
+  // one whose bytes are fetched.
+  let archiveListing: Listing;
+  try {
+    const a = await listPrefix(b2Cfg, spec.archivePrefix);
+    archiveListing = { ok: true, keys: a.map((e) => e.key) };
+  } catch (err) {
+    archiveListing = { ok: false, error: (err as Error).message };
+  }
+
+  const verdict = classifyListing(spec, listing, now, baseline, archiveListing);
   if (verdict.done) {
     return {
       ...base,
@@ -218,6 +231,7 @@ export async function verifyTier(
       reason: verdict.reason!,
     };
   }
+  const degraded = verdict.degraded;
 
   // Verify the NEWEST period in full. Presence is asserted for every
   // required period above; full verification is bounded to ONE object so
@@ -319,7 +333,9 @@ export async function verifyTier(
   return {
     ...base,
     ok: true,
-    reason: 'manifest + archive paired, SHA matches, decrypts cleanly',
+    reason:
+      'manifest + archive paired, SHA matches, decrypts cleanly' +
+      (degraded ? ` — COVERAGE DEGRADED: ${degraded}` : ''),
     archiveKey,
     manifestKey: pickedManifest.key,
     archiveAgeHours,
@@ -341,10 +357,14 @@ export async function runHealthcheck(
   b2Cfg: B2Config,
   now: number = Date.now(),
 ): Promise<HealthReport> {
+  const baseline: ArchiveBaseline = {
+    monthly: env.ARCHIVE_FIRST_MONTHLY || undefined,
+    yearly: env.ARCHIVE_FIRST_YEARLY || undefined,
+  };
   const tiers: TierOutcome[] = [];
   for (const spec of TIERS) {
     try {
-      tiers.push(await verifyTier(env, b2Cfg, spec, now));
+      tiers.push(await verifyTier(env, b2Cfg, spec, now, baseline));
     } catch (err) {
       // A thrown tier is a failed tier, not a failed run: the
       // remaining tiers still get checked and reported.

@@ -46,13 +46,14 @@ test('every prefix family the backup writes is covered', () => {
   );
 });
 
+const B = (monthly, yearly) => ({ monthly, yearly });
+const NO_BASELINE = {};
+
 test('daily tolerates ONE missed nightly but not three', () => {
   const now = at('2026-03-01T09:00:00Z');
   const d = tier('daily');
-  // Yesterday present, today not yet uploaded — normal, must not page.
-  assert.deepEqual(d.missingRequired(['2026-02-28'], now), []);
-  // Nothing in three days: the cron has stopped.
-  assert.deepEqual(d.missingRequired(['2026-02-20'], now), [
+  assert.deepEqual(d.missingRequired(['2026-02-28'], now, NO_BASELINE), []);
+  assert.deepEqual(d.missingRequired(['2026-02-20'], now, NO_BASELINE), [
     '2026-03-01',
     '2026-02-28',
     '2026-02-27',
@@ -60,75 +61,103 @@ test('daily tolerates ONE missed nightly but not three', () => {
 });
 
 test('a FAILED monthly cut is reported in the month it failed', () => {
-  // The previous month is REQUIRED, not a fallback. As a fallback, January
-  // satisfied every February check and the missing February cut was never
-  // reported at all once March succeeded — a permanent gap behind green
-  // weekly reports.
   const feb = at('2026-02-16T09:00:00Z');
-  assert.deepEqual(tier('monthly').missingRequired(['2026-01'], feb), ['2026-02']);
+  assert.deepEqual(
+    tier('monthly').missingRequired(['2026-01'], feb, B('2026-01')),
+    ['2026-02'],
+  );
 });
 
 test('…and STILL reported in the months after it failed', () => {
   const mar = at('2026-03-16T09:00:00Z');
   assert.deepEqual(
-    tier('monthly').missingRequired(['2026-01', '2026-03'], mar),
+    tier('monthly').missingRequired(['2026-01', '2026-03'], mar, B('2026-01')),
     ['2026-02'],
   );
 });
 
-test('the current month is excused ONLY on the 1st, the real race window', () => {
-  const first = at('2026-02-01T09:00:00Z');
-  assert.deepEqual(tier('monthly').missingRequired(['2026-01'], first), []);
-  // One day later the excuse is gone.
-  const second = at('2026-02-02T09:00:00Z');
-  assert.deepEqual(tier('monthly').missingRequired(['2026-01'], second), ['2026-02']);
-});
-
-test('an ESTABLISHED yearly tier that loses a year FAILS', () => {
-  // Nothing ages out of the yearly prefixes — that absence of a lifecycle
-  // rule IS the indefinite retention the legal-audit tier rests on. So an
-  // admin deletion or a lifecycle rule drifting onto them must not read as
-  // a young deployment.
-  const now = at('2029-06-01T09:00:00Z');
+test('an OLD monthly snapshot deleted mid-retention is caught', () => {
+  // Requiring only the current and previous month meant deleting April in
+  // June went unnoticed forever: May and June were present, nothing else
+  // was asked about, and April had ~10 months of expected life left.
+  const jun = at('2026-06-16T09:00:00Z');
+  const present = ['2026-01', '2026-02', '2026-03', '2026-05', '2026-06'];
   assert.deepEqual(
-    tier('yearly').missingRequired(['2027', '2029'], now),
-    ['2028'],
+    tier('monthly').missingRequired(present, jun, B('2026-01')),
+    ['2026-04'],
   );
 });
 
-test('a yearly tier wiped ENTIRELY after being established still fails', () => {
-  // The whole family gone is the case a blanket absence exemption made
-  // permanently invisible. It now falls to the absence branch only when
-  // nothing was EVER written; `verifyTier` checks missing first.
-  const now = at('2029-06-01T09:00:00Z');
-  // Nothing present -> no range to require, so the absence branch decides;
-  // that branch is what `absenceIsFailure` governs, asserted below.
-  assert.deepEqual(tier('yearly').missingRequired([], now), []);
-  assert.equal(tier('yearly').absenceIsFailure, false);
+test('monthly never requires a month predating the declared first cut', () => {
+  // The retention window reaches back further than the deployment does.
+  const jun = at('2026-06-16T09:00:00Z');
+  assert.deepEqual(
+    tier('monthly').missingRequired(['2026-05', '2026-06'], jun, B('2026-05')),
+    [],
+  );
 });
 
-test('yearly requires every year since the first, not just the last two', () => {
-  // A two-period lookback never examined older indefinite-retention years.
-  const now = at('2031-06-01T09:00:00Z');
+test('the current month is excused ONLY on the 1st, the real race window', () => {
   assert.deepEqual(
-    tier('yearly').missingRequired(['2027'], now),
-    ['2028', '2029', '2030', '2031'],
+    tier('monthly').missingRequired(['2026-01'], at('2026-02-01T09:00:00Z'), B('2026-01')),
+    [],
+  );
+  assert.deepEqual(
+    tier('monthly').missingRequired(['2026-01'], at('2026-02-02T09:00:00Z'), B('2026-01')),
+    ['2026-02'],
+  );
+});
+
+test('a DECLARED yearly baseline catches deletion of the OLDEST year', () => {
+  // The circularity this fixes: inferring the baseline from surviving
+  // keys means deleting the oldest year advances the baseline past it, so
+  // the deleted year stops being required and the tier passes.
+  const now = at('2029-06-01T09:00:00Z');
+  assert.deepEqual(
+    tier('yearly').missingRequired(['2028', '2029'], now, B(undefined, '2027')),
+    ['2027'],
+  );
+  // Without the declared baseline the same deletion is invisible.
+  assert.deepEqual(
+    tier('yearly').missingRequired(['2028', '2029'], now, NO_BASELINE),
+    [],
+  );
+});
+
+test('a yearly family wiped ENTIRELY fails when a baseline is declared', () => {
+  // With nothing left to infer from, the inferring version had nothing to
+  // report and passed — the worst case reading as the healthiest.
+  const now = at('2029-06-01T09:00:00Z');
+  assert.deepEqual(
+    tier('yearly').missingRequired([], now, B(undefined, '2027')),
+    ['2027', '2028', '2029'],
+  );
+});
+
+test('an ESTABLISHED yearly tier that loses a middle year FAILS', () => {
+  const now = at('2029-06-01T09:00:00Z');
+  assert.deepEqual(
+    tier('yearly').missingRequired(['2027', '2029'], now, B(undefined, '2027')),
+    ['2028'],
   );
 });
 
 test('yearly excuses the current year only on Jan 1', () => {
   assert.deepEqual(
-    tier('yearly').missingRequired(['2027', '2028'], at('2029-01-01T09:00:00Z')),
+    tier('yearly').missingRequired(['2027', '2028'], at('2029-01-01T09:00:00Z'), B(undefined, '2027')),
     [],
   );
   assert.deepEqual(
-    tier('yearly').missingRequired(['2027', '2028'], at('2029-01-02T09:00:00Z')),
+    tier('yearly').missingRequired(['2027', '2028'], at('2029-01-02T09:00:00Z'), B(undefined, '2027')),
     ['2029'],
   );
 });
 
-test('a young deployment with no yearly archive is not a failure', () => {
-  assert.deepEqual(tier('yearly').missingRequired([], at('2026-06-01T09:00:00Z')), []);
+test('a young deployment with no yearly archive and no baseline is not a failure', () => {
+  assert.deepEqual(
+    tier('yearly').missingRequired([], at('2026-06-01T09:00:00Z'), NO_BASELINE),
+    [],
+  );
 });
 
 test('period keys are UTC, not local', () => {
@@ -138,8 +167,6 @@ test('period keys are UTC, not local', () => {
 });
 
 test('month stepping does not skip a month from a 31st', () => {
-  // setUTCMonth rolls FORWARD on short months: a naive step back from
-  // Mar 31 lands on Mar 3, so the previous month would never be required.
   assert.equal(monthKey(at('2026-03-31T09:00:00Z'), 1), '2026-02');
 });
 
@@ -147,12 +174,36 @@ test('year stepping survives a leap day', () => {
   assert.equal(yearKey(at('2028-02-29T09:00:00Z'), 1), '2027');
 });
 
-test('periodOf extracts the period segment, and rejects foreign keys', () => {
+test('a HOSTILE period segment never enters the period set', () => {
+  // The write-only B2 key can create objects, so a holder can upload
+  // `manifests-yearly/-999999999/attack.json`. Unvalidated, that segment
+  // became the start of a required-period RANGE — a synchronous loop of
+  // ~a billion iterations, enough to exhaust the scheduled invocation
+  // before the per-tier catch or the alert ran, taking the Monday backup
+  // sharing that invocation with it.
+  assert.equal(periodOf(tier('yearly'), 'manifests-yearly/-999999999/a.json'), null);
+  assert.equal(periodOf(tier('yearly'), 'manifests-yearly/99999/a.json'), null);
+  assert.equal(periodOf(tier('monthly'), 'manifests-monthly/2026-8/a.json'), null);
+  assert.equal(periodOf(tier('daily'), 'manifests/2026-08/a.json'), null);
+  // …and the canonical shapes still pass.
+  assert.equal(periodOf(tier('yearly'), 'manifests-yearly/2026/a.json'), '2026');
   assert.equal(periodOf(tier('monthly'), 'manifests-monthly/2026-08/a.json'), '2026-08');
   assert.equal(periodOf(tier('daily'), 'manifests/2026-08-02/a.json'), '2026-08-02');
-  // A key directly under the prefix has no period segment.
+});
+
+test('a hostile listing cannot hang the run even if validation regresses', () => {
+  // Second, independent guard: the range expander refuses an implausible
+  // span outright. One regression in `periodOf` must not be able to
+  // reintroduce a denial of service that takes the backup down with it.
+  assert.throws(
+    () => tier('yearly').missingRequired([], at('2029-06-01T09:00:00Z'), B(undefined, '0001')),
+    /implausible yearly range/,
+  );
+});
+
+test('periodOf extracts the period segment, and rejects foreign keys', () => {
+  assert.equal(periodOf(tier('monthly'), 'manifests-monthly/2026-08/a.json'), '2026-08');
   assert.equal(periodOf(tier('daily'), 'manifests/stray.json'), null);
-  // The daily prefix must not swallow the monthly family.
   assert.equal(periodOf(tier('daily'), 'manifests-monthly/2026-08/a.json'), null);
 });
 
@@ -259,10 +310,68 @@ function describe_listing() {
         ],
       },
       at('2026-03-16T09:00:00Z'),
+      { monthly: '2026-01' },
     );
     assert.equal(v.done, false);
     // Lexicographic max, not listing order — S3 lists by key, not by time.
     assert.equal(v.newestPeriod, '2026-03');
+  });
+
+  test('a manifest with NO archive beside it fails the tier', () => {
+    // A period counts as present from its MANIFEST — a few hundred bytes
+    // describing an archive that may no longer be there. Only the newest
+    // period's archive was ever fetched, so an individual deletion or
+    // asymmetric lifecycle drift on an older one passed unseen.
+    const v = classifyListing(
+      tier('monthly'),
+      { ok: true, keys: [K('manifests-monthly/', '2026-02'), K('manifests-monthly/', '2026-03')] },
+      at('2026-03-16T09:00:00Z'),
+      { monthly: '2026-02' },
+      { ok: true, keys: [K('archives-monthly/', '2026-03')] },
+    );
+    assert.equal(v.done, true);
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /NO archive beside it for 2026-02/);
+  });
+
+  test('an unreadable ARCHIVE prefix fails too, like an unreadable manifest one', () => {
+    const v = classifyListing(
+      tier('monthly'),
+      { ok: true, keys: [K('manifests-monthly/', '2026-03')] },
+      at('2026-03-16T09:00:00Z'),
+      { monthly: '2026-03' },
+      { ok: false, error: 'S3 list failed: 503' },
+    );
+    assert.equal(v.done, true);
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /could not list archives-monthly\//);
+  });
+
+  test('a passing tier DISCLOSES that deletion detection is degraded', () => {
+    // Without a declared baseline the tier cannot report that its oldest
+    // periods were deleted. Passing silently would imply a coverage it
+    // does not have — the exact failure this whole PR started from.
+    const v = classifyListing(
+      tier('yearly'),
+      { ok: true, keys: [K('manifests-yearly/', '2028')] },
+      at('2028-06-01T09:00:00Z'),
+      {},
+      { ok: true, keys: [K('archives-yearly/', '2028')] },
+    );
+    assert.equal(v.done, false);
+    assert.match(v.degraded, /no declared first-yearly baseline/);
+  });
+
+  test('…and does NOT claim degradation once a baseline is declared', () => {
+    const v = classifyListing(
+      tier('yearly'),
+      { ok: true, keys: [K('manifests-yearly/', '2028')] },
+      at('2028-06-01T09:00:00Z'),
+      { yearly: '2028' },
+      { ok: true, keys: [K('archives-yearly/', '2028')] },
+    );
+    assert.equal(v.done, false);
+    assert.equal(v.degraded, undefined);
   });
 
   test('keys from a FOREIGN family are ignored, not counted as periods', () => {

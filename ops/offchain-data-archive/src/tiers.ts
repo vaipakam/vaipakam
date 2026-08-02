@@ -19,6 +19,50 @@
 
 export type TierName = 'daily' | 'monthly' | 'yearly';
 
+/**
+ * The first period each long tier is known to have written — DECLARED,
+ * not inferred.
+ *
+ * Inferring the baseline from the surviving keys is circular, and the
+ * circularity is exactly what an attacker or a mis-set lifecycle rule
+ * exploits: delete the oldest yearly object and the inferred baseline
+ * advances to the next one, so the deleted year stops being required;
+ * delete the whole family and there is nothing left to infer from at all,
+ * so "nothing is missing" and the tier passes. A detector whose
+ * expectations are derived from what survived cannot report a deletion.
+ *
+ * These are operator-declared facts about the deployment. Unset is
+ * tolerated — a fresh deployment has no baseline to state — but the tier
+ * then REPORTS that its deletion detection is degraded rather than
+ * implying full coverage.
+ */
+export interface ArchiveBaseline {
+  /** `YYYY-MM` of the first monthly cut this deployment wrote. */
+  monthly?: string;
+  /** `YYYY` of the first yearly cut this deployment wrote. */
+  yearly?: string;
+}
+
+/**
+ * How many completed months of monthly archive should still exist.
+ *
+ * Derived from the declared lifecycle: monthly objects are hidden 334
+ * days after upload, so roughly eleven completed months are still live at
+ * any moment. Requiring only the current and previous month meant that
+ * deleting, say, April's snapshot in June went unnoticed forever — May
+ * and June were present, nothing else was asked about, and April had ten
+ * months of expected life left.
+ *
+ * Deliberately CONSERVATIVE. 334 days is 10.97 mean months, NOT eleven —
+ * I set this to 11 on the reasoning that it was already a month under
+ * twelve, and the cross-file test caught it: requiring an eleventh
+ * completed month demands one that may legitimately have just aged out,
+ * which is a false page on a weekly schedule. That test exists because
+ * this constant and the retention days live in different files and
+ * nothing else ties them together.
+ */
+export const MONTHLY_RETAINED_MONTHS = 10;
+
 export interface TierSpec {
   tier: TierName;
   manifestPrefix: string;
@@ -32,7 +76,11 @@ export interface TierSpec {
    * of that month, and then never reported again once the next cut
    * succeeded. A permanent archive gap behind green weekly reports.
    */
-  missingRequired: (present: string[], now: number) => string[];
+  missingRequired: (
+    present: string[],
+    now: number,
+    baseline: ArchiveBaseline,
+  ) => string[];
   /**
    * Whether finding NOTHING AT ALL under the family should fail the run.
    *
@@ -71,18 +119,58 @@ export function yearKey(now: number, yearsAgo: number): string {
   return d.toISOString().slice(0, 4);
 }
 
+/**
+ * The canonical shape of each tier's period segment.
+ *
+ * Load-bearing against a HOSTILE key, not just a malformed one. The
+ * write-only B2 credential can create objects, so a holder of it can
+ * upload `manifests-yearly/-999999999/attack.json`. An unvalidated
+ * segment became the start of a required-period RANGE, and expanding it
+ * is a synchronous loop of ~a billion iterations — enough to exhaust the
+ * scheduled invocation before the per-tier catch or the Telegram alert
+ * runs, and to take the Monday backup sharing that invocation with it.
+ *
+ * Rejecting the segment here means a foreign key cannot enter the period
+ * set at all, which is a narrower and more durable guarantee than
+ * bounding the loop that consumed it.
+ */
+const PERIOD_SHAPE: Record<TierName, RegExp> = {
+  daily: /^\d{4}-\d{2}-\d{2}$/,
+  monthly: /^\d{4}-\d{2}$/,
+  yearly: /^\d{4}$/,
+};
+
 /** The period segment of a manifest key: `<prefix><period>/<nonce>.json`. */
 export function periodOf(spec: TierSpec, manifestKey: string): string | null {
   if (!manifestKey.startsWith(spec.manifestPrefix)) return null;
   const rest = manifestKey.slice(spec.manifestPrefix.length);
+  if (!rest.includes('/')) return null;
   const seg = rest.split('/')[0];
-  return seg.length > 0 && rest.includes('/') ? seg : null;
+  return PERIOD_SHAPE[spec.tier].test(seg) ? seg : null;
 }
 
-/** Every `YYYY` from `from` to `to` inclusive. */
+/**
+ * Every `YYYY` from `from` to `to` inclusive.
+ *
+ * Bounded independently of `PERIOD_SHAPE`. The shape check is what stops
+ * a hostile segment reaching here, but a range expander that loops on
+ * whatever it is handed is one regression away from being a denial of
+ * service again, and this one runs synchronously inside a scheduled
+ * invocation shared with the nightly backup. Two independent guards for
+ * one failure is proportionate when the failure takes the backup with it.
+ */
+const MAX_YEAR_SPAN = 200;
+
 function yearRange(from: string, to: string): string[] {
+  const a = Number(from);
+  const b = Number(to);
+  if (!Number.isInteger(a) || !Number.isInteger(b) || b - a > MAX_YEAR_SPAN) {
+    throw new Error(
+      `implausible yearly range ${from}..${to} — refusing to expand it`,
+    );
+  }
   const out: string[] = [];
-  for (let y = Number(from); y <= Number(to); y++) out.push(String(y));
+  for (let y = a; y <= b; y++) out.push(String(y));
   return out;
 }
 
@@ -112,9 +200,23 @@ export const TIERS: TierSpec[] = [
     // The current month is required too, except on the 1st itself, which
     // is the only moment the cron may genuinely not have run yet — that
     // race is the entire reason a fallback existed.
-    missingRequired: (present, now) => {
-      const req = [monthKey(now, 1)];
-      if (new Date(now).getUTCDate() !== 1) req.push(monthKey(now, 0));
+    missingRequired: (present, now, baseline) => {
+      // Every month still inside retention, not just the last two.
+      const req: string[] = [];
+      for (let back = MONTHLY_RETAINED_MONTHS; back >= 1; back--) {
+        const m = monthKey(now, back);
+        // Never require a month that predates the deployment's own first
+        // cut — it was legitimately never written.
+        if (baseline.monthly && m < baseline.monthly) continue;
+        req.push(m);
+      }
+      // The current month too, except on the 1st itself: that is the only
+      // moment the cron may genuinely not have run yet, and it is the
+      // entire reason a fallback ever existed.
+      if (new Date(now).getUTCDate() !== 1) {
+        const cur = monthKey(now, 0);
+        if (!baseline.monthly || cur >= baseline.monthly) req.push(cur);
+      }
       return req.filter((m) => !present.includes(m));
     },
     absenceIsFailure: true,
@@ -132,9 +234,13 @@ export const TIERS: TierSpec[] = [
     // or a lifecycle rule drifting onto these prefixes indistinguishable
     // from a young deployment, permanently. The exemption is only for a
     // family that has never been written at all.
-    missingRequired: (present, now) => {
-      if (present.length === 0) return [];
-      const earliest = present.slice().sort()[0];
+    missingRequired: (present, now, baseline) => {
+      // The declared baseline is what makes deletion detectable. Falling
+      // back to the earliest SURVIVING key is the circular version: it
+      // cannot notice that the oldest year is the one that went missing,
+      // and with the family emptied there is nothing to infer from.
+      const earliest = baseline.yearly ?? present.slice().sort()[0];
+      if (!earliest) return [];
       const req = yearRange(earliest, yearKey(now, 1));
       // The current year is required once its Jan 1 has passed; on Jan 1
       // itself the cron may not have run.
@@ -186,6 +292,8 @@ export interface TierVerdict {
   /** Set when `done` is false: the period to verify in full. */
   newestPeriod?: string;
   present?: string[];
+  /** Set when the tier passes but its coverage is knowably incomplete. */
+  degraded?: string;
 }
 
 /**
@@ -217,6 +325,8 @@ export function classifyListing(
   spec: TierSpec,
   listing: Listing,
   now: number,
+  baseline: ArchiveBaseline = {},
+  archiveKeys?: Listing,
 ): TierVerdict {
   if (!listing.ok) {
     return {
@@ -235,7 +345,7 @@ export function classifyListing(
     ),
   ].sort();
 
-  const missing = spec.missingRequired(present, now);
+  const missing = spec.missingRequired(present, now, baseline);
   if (missing.length > 0) {
     return {
       done: true,
@@ -259,5 +369,51 @@ export function classifyListing(
     };
   }
 
-  return { done: false, newestPeriod: present[present.length - 1], present };
+  // A period counts as present from its MANIFEST. The manifest is a few
+  // hundred bytes describing an archive that may no longer be there —
+  // an individual deletion or asymmetric lifecycle drift removes one
+  // without the other, and only the newest period's archive is fetched.
+  // So every required period is checked to still have a sibling archive.
+  if (archiveKeys) {
+    if (!archiveKeys.ok) {
+      return {
+        done: true,
+        ok: false,
+        absent: false,
+        reason:
+          `could not list ${spec.archivePrefix}: ${archiveKeys.error} — ` +
+          `treated as a failure, NOT as an empty tier`,
+      };
+    }
+    const archivePeriods = new Set(
+      archiveKeys.keys
+        .map((k) => periodOf({ ...spec, manifestPrefix: spec.archivePrefix }, k))
+        .filter((p): p is string => !!p),
+    );
+    const orphaned = present.filter((p) => !archivePeriods.has(p));
+    if (orphaned.length > 0) {
+      return {
+        done: true,
+        ok: false,
+        absent: false,
+        reason:
+          `${spec.tier} manifest with NO archive beside it for ` +
+          `${orphaned.join(', ')} — the backup it describes is gone`,
+      };
+    }
+  }
+
+  return {
+    done: false,
+    newestPeriod: present[present.length - 1],
+    present,
+    // Stated, not implied: without a declared baseline this tier cannot
+    // report that its OLDEST periods were deleted, because its
+    // expectations come from what survived.
+    degraded:
+      spec.tier !== 'daily' && !baseline[spec.tier as 'monthly' | 'yearly']
+        ? `no declared first-${spec.tier} baseline — deletion of the oldest ` +
+          `periods is undetectable until one is set`
+        : undefined,
+  };
 }

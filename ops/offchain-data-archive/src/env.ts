@@ -50,6 +50,20 @@ export interface Env {
   // key.
   B2_READ_ACCESS_KEY_ID: string;
   B2_READ_SECRET_ACCESS_KEY: string;
+  /**
+   * The first monthly / yearly archive this deployment wrote — DECLARED,
+   * `YYYY-MM` and `YYYY`. Optional, and optional on purpose: a fresh
+   * deployment has none to state.
+   *
+   * They exist because the healthcheck otherwise derives its expectations
+   * from the archives that survived, which cannot notice that the OLDEST
+   * ones were deleted — and with a family emptied, cannot notice anything
+   * at all. Set these once the first cut of each kind has been written;
+   * until then the weekly report says its deletion detection is degraded
+   * rather than implying full coverage.
+   */
+  ARCHIVE_FIRST_MONTHLY?: string;
+  ARCHIVE_FIRST_YEARLY?: string;
   TG_OPS_BOT_TOKEN: string;
   // Derived at boot — not a binding, attached by `withEncryptionKey`.
   encryptionKey: CryptoKey;
