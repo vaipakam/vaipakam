@@ -1114,12 +1114,13 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     expect(day(body, 2).origin).toBe('backfill');
   });
 
-  it('keeps absorption observed by EVENT on a day the backfill supplies', async () => {
+  it('does NOT add event absorption the backfill snapshot already counted', async () => {
     const { h, env } = makeHarness();
+    // The backfill reads the LIVE on-chain accumulator, which already
+    // includes the very credits the event rows folded. An ordinary
+    // pre-cutover replay therefore has both rows describing the same 100 —
+    // adding them would report 125 for a day that absorbed 100.
     seedBackfill(h, 3, { local: '100' });
-    // A credit for the same day arrives by event, on an unstamped row —
-    // the backfill knows the pool, the event knows this credit. Neither
-    // may displace the other.
     await applyRecycleDaySeries(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 25n, dayId: 3n }),
@@ -1128,10 +1129,33 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
       env,
       CHAIN,
     );
-    const d3 = day(await readSeries(env), 3);
+    const body = await readSeries(env);
+    const d3 = day(body, 3);
     expect(d3.origin).toBe('backfill');
     expect(d3.scheduleFloor).toBe('1000');
-    expect(d3.absorbedLocal).toBe('125');
+    // The snapshot, not the sum.
+    expect(d3.absorbedLocal).toBe('100');
+    expect(body.cumulative.absorbedLocal).toBe('100');
+  });
+
+  it('computes the runway window over BACKFILLED armed days too', async () => {
+    const { h, env } = makeHarness();
+    // A backfill-only dataset: the runway block used to query the event
+    // table directly, so it found no armed days and reported null.
+    seedBackfill(h, 1, { floor: '100', budget: '0', local: '300', armed: 1 });
+    const body = await readSeries(env);
+    // 300 / 100 = 3
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+    expect(body.cumulative.selfFunded).toBe(false);
+  });
+
+  it('anchors the runway on a backfilled day when it is the latest armed one', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 1, { floor: '400', budget: '0', local: '0', armed: 1 });
+    seedBackfill(h, 2, { floor: '100', budget: '0', local: '600', armed: 1 });
+    const body = await readSeries(env);
+    // mean over days 1..2 = 250  ->  600 / 250 = 2.4
+    expect(body.cumulative.runwayExtensionDays).toBe(2.4);
   });
 
   it('still serves the event series when migration 0047 has not run yet', async () => {

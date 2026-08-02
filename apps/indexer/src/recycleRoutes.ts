@@ -291,22 +291,21 @@ export async function handleRecyclingSeries(
       });
     }
     for (const r of poolAll.results ?? []) {
-      // An UNSTAMPED event row must not displace a stamped backfill row:
+      // An UNSTAMPED event row must not displace a stamped backfill row —
       // it carries absorption but no pool, and the backfill is what knows
-      // the pool for a pre-cutover day. Merge the absorption instead.
+      // the pool for a pre-cutover day. It must not be ADDED to it either
+      // (Codex #1513 r2 P1): the backfill's absorption comes from the LIVE
+      // on-chain accumulators, which already include every historical
+      // credit those same event rows folded. Summing them double-counts.
+      //
+      // The snapshot is authoritative and complete for a past day, not
+      // merely preferred: local credits always land on the CURRENT day, and
+      // the ingress refuses a mirror report for an already-finalized day —
+      // so no new absorption can arrive for a day the backfill has covered.
+      // My round-1 version merged the two, fixing a case that cannot occur
+      // and creating one that can.
       const existing = merged.get(r.day_id);
-      if (r.stamped !== 1 && existing?.origin === 'backfill') {
-        merged.set(r.day_id, {
-          ...existing,
-          absorbed_local: (
-            BigInt(existing.absorbed_local) + BigInt(r.absorbed_local)
-          ).toString(),
-          absorbed_mirror: (
-            BigInt(existing.absorbed_mirror) + BigInt(r.absorbed_mirror)
-          ).toString(),
-        });
-        continue;
-      }
+      if (r.stamped !== 1 && existing?.origin === 'backfill') continue;
       merged.set(r.day_id, { ...r, origin: 'event' });
     }
 
@@ -430,27 +429,24 @@ export async function handleRecyclingSeries(
     let trailingPoolSum = 0n;
     let trailingFloorSum = 0n;
     let trailingCount = 0n;
-    const anchorRow = await env.DB.prepare(
-      `SELECT MAX(day_id) AS anchor FROM recycle_day_pool
-        WHERE chain_id = ? AND stamped = 1 AND armed = 1`,
-    )
-      .bind(chainId)
-      .first<{ anchor: number | null }>();
-    const anchor = anchorRow?.anchor ?? null;
-    const trailingRows =
-      anchor === null
-        ? { results: [] as Array<{ schedule_floor: string; recycled_budget: string }> }
-        : await env.DB.prepare(
-            `SELECT schedule_floor, recycled_budget
-               FROM recycle_day_pool
-              WHERE chain_id = ? AND day_id >= ? AND day_id <= ?
-                AND stamped = 1 AND armed = 1`,
-          )
-            .bind(chainId, Math.max(0, anchor - RUNWAY_WINDOW_DAYS + 1), anchor)
-            .all<{ schedule_floor: string; recycled_budget: string }>();
-    for (const r of trailingRows.results ?? []) {
-      trailingPoolSum += BigInt(r.schedule_floor) + BigInt(r.recycled_budget);
-      trailingFloorSum += BigInt(r.schedule_floor);
+    // Read from the MERGED view, like everything else (Codex #1513 r2 P1).
+    // Round 1 claimed every consumer already did; this block still queried
+    // `recycle_day_pool` directly, so a window containing armed BACKFILLED
+    // days anchored short or returned null — and a backfill-only dataset
+    // had no window at all. Asserting the completeness of a fix is not the
+    // same as checking it, and I asserted.
+    const armedDays = [...merged.values()]
+      .filter((d) => d.stamped === 1 && d.armed === 1)
+      .map((d) => d.day_id);
+    const anchor = armedDays.length ? Math.max(...armedDays) : null;
+    const trailingFrom =
+      anchor === null ? 0 : Math.max(0, anchor - RUNWAY_WINDOW_DAYS + 1);
+    for (const d of merged.values()) {
+      if (anchor === null) break;
+      if (d.stamped !== 1 || d.armed !== 1) continue;
+      if (d.day_id < trailingFrom || d.day_id > anchor) continue;
+      trailingPoolSum += BigInt(d.schedule_floor) + BigInt(d.recycled_budget);
+      trailingFloorSum += BigInt(d.schedule_floor);
       trailingCount += 1n;
     }
     const selfFunded = trailingCount > 0n && trailingFloorSum === 0n;
