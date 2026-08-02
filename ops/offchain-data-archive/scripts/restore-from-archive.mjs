@@ -809,6 +809,15 @@ export function invalidLegalDocRefs(archive) {
  *  Returns {table, row, problem} entries for the caller to fail on. */
 /** Unsigned decimal wei, as the writer emits it. */
 const UNSIGNED_DECIMAL = /^[0-9]+$/;
+/** The contract getter behind these figures returns `uint256`. */
+const UINT256_MAX = (1n << 256n) - 1n;
+/**
+ * Digits accepted before we stop parsing at all. `uint256` maxes out at 78
+ * decimal digits, so anything longer cannot be a real figure — and refusing
+ * on LENGTH first means a hostile archive cannot make us build a
+ * multi-megabyte BigInt just to discover it is out of range.
+ */
+const MAX_AMOUNT_DIGITS = 78;
 
 /**
  * Per-row writer invariants for `recycle_day_backfill` (Codex #1513 r3).
@@ -840,6 +849,20 @@ export function invalidRecycleBackfillRowShapes(archive) {
             `${col} ${JSON.stringify(v)} is not an unsigned decimal string — it ` +
               `restores into the TEXT column without complaint and then throws ` +
               `in the read route, 500ing the series for this chain`,
+          );
+        } else if (v.length > MAX_AMOUNT_DIGITS) {
+          // Length BEFORE value: refusing here means a hostile archive cannot
+          // make us construct an enormous BigInt just to learn it is invalid.
+          push(
+            `${col} has ${v.length} digits — a uint256 has at most ` +
+              `${MAX_AMOUNT_DIGITS}, so this cannot be a figure the getter ` +
+              `produced, and parsing it would be the attack rather than the check`,
+          );
+        } else if (BigInt(v) > UINT256_MAX) {
+          push(
+            `${col} ${v} exceeds uint256 — the contract getter behind this ` +
+              `figure cannot return it, so restoring it would publish ` +
+              `impossible history`,
           );
         }
       }

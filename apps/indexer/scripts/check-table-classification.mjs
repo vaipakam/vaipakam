@@ -308,6 +308,46 @@ const unclassified = [...writers.keys()]
 // the output — so the case is declared here with its writer and its reason.
 // The requirement it must NOT weaken: silence is still disallowed, because
 // an entry here is as explicit as a Worker write site.
+/**
+ * Is this tracker number cited anywhere in the design docs?
+ *
+ * Offline stand-in for "does the tracker exist": a card nobody documented
+ * is a card nobody will act on, and a mistyped number fails because nothing
+ * in the repo mentions it.
+ */
+function docsCite(num) {
+  const roots = [join(REPO_ROOT, 'docs', 'DesignsAndPlans'), join(REPO_ROOT, 'docs', 'ReleaseNotes')];
+  const stack = [...roots];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = join(dir, e);
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        stack.push(full);
+      } else if (e.endsWith('.md')) {
+        try {
+          if (readFileSync(full, 'utf8').includes(num)) return true;
+        } catch {
+          /* unreadable file is not a citation */
+        }
+      }
+    }
+  }
+  return false;
+}
+
 const EXTERNAL_WRITERS = {
   recycle_day_backfill: {
     // No writer YET — the operator pass was split out of #1513 after three
@@ -340,9 +380,23 @@ const missingExternal = Object.entries(EXTERNAL_WRITERS)
     }
     if (decl && typeof decl === 'object') {
       if (decl.script) return !existsSync(join(REPO_ROOT, decl.script));
-      // A pending writer must name a tracker AND a reason, so "nothing
-      // writes this yet" stays a decision rather than an oversight.
-      return !(/^#\d+$/.test(decl.pending ?? '') && (decl.why ?? '').length > 20);
+      // A pending writer must name a tracker AND a reason — and the
+      // tracker must be CITED IN A CHECKED-IN DOC.
+      //
+      // Shape alone is not enough (Codex #1513 r11): a mistyped-but-numeric
+      // `#1524` passes a format test, and because this entry is exempt from
+      // the dead-entry check, CI would stay green indefinitely over a
+      // reference to nothing. My earlier claim that mutating the tracker to
+      // 'soon' verified this was an OVERCLAIM — it verified formatting.
+      //
+      // Resolving against the live tracker would put a network call in a
+      // lint. Requiring the number to appear in the design docs is offline,
+      // and it is the property that actually matters: a tracker nobody
+      // documented is one nobody will act on. A typo fails because nothing
+      // in the repo mentions it.
+      const num = decl.pending ?? '';
+      if (!/^#\d+$/.test(num) || (decl.why ?? '').length <= 20) return true;
+      return !docsCite(num);
     }
     return true;
   })

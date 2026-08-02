@@ -2,7 +2,7 @@
 
 When the daily recycling account started announcing its full composition, the announcement's shape changed. Days finalised before that upgrade were announced under the older shape and simply cannot supply two of the figures — how much fresh issuance was actually drawn, and whether the platform had committed to the day at all. The consumer refuses those days rather than reading the absent figures as zero, which would invent finalised, uncommitted, zero-emission days that look exactly like real ones.
 
-This adds where those days come from instead: a pass that asks the contracts to recompute each one, and a place to keep the answers.
+This adds **the place those days will be kept**, and everything needed to read, back up and restore it — the records themselves, their registration with the recovery tool, and the read surface that serves them. The pass that fills them is not here; it is described further down and lands separately.
 
 **Keeping them apart from the announced days is the whole design, not tidiness.** Every other record in this area is a fold of the announcement stream, so rebuilding the platform's off-chain state from scratch reproduces it exactly. These are different: the recomputation reads a value that a role handover can legitimately overwrite for a day already closed. Once that happens, asking again returns a different answer and the original is gone — those days have no announcement to fall back on. So they are backed up and restored, never regenerated, and the restore runbook now says so explicitly next to the list of records it rebuilds instead.
 
