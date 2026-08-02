@@ -28,6 +28,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -86,6 +87,46 @@ export function classifyTeardownProbe(input: {
       return 'live';
     default:
       return 'unknown';
+  }
+}
+
+/** The probe core, extracted so SUBMIT preflights can re-run it LIVE
+ *  (Codex #1511 r5 P1): the hook's cached state can be up to a tip
+ *  interval old, and an acceptance landing inside that window must
+ *  not slip a settlement write through. Throws on RPC failure — the
+ *  caller decides how to fail closed. */
+export async function probeSaleHoldLive(
+  client: Pick<PublicClient, 'simulateContract' | 'readContract'>,
+  diamondAddress: `0x${string}`,
+  loanId: number,
+  lenderTokenId: string,
+  account: `0x${string}` | undefined,
+): Promise<SaleListingHoldState> {
+  try {
+    await client.simulateContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'teardownStaleSaleListing',
+      args: [BigInt(loanId)],
+      account,
+    });
+    return classifyTeardownProbe({ ok: true });
+  } catch (err) {
+    const errorName = probeErrorName(err);
+    if (errorName === null) throw err;
+    let saleLocked: boolean | undefined;
+    if (errorName === 'NoStaleSaleListing' && lenderTokenId) {
+      saleLocked =
+        Number(
+          await client.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(lenderTokenId)],
+          }),
+        ) === LOCK_EARLY_WITHDRAWAL_SALE;
+    }
+    return classifyTeardownProbe({ ok: false, errorName, saleLocked });
   }
 }
 
@@ -153,41 +194,29 @@ export function useSaleListingHold(
     // so a slow cadence is enough; the post-receipt invalidation
     // floor refreshes it immediately after the borrower's own writes.
     refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
-    queryFn: async (): Promise<SaleListingHoldState> => {
-      try {
-        await readClient!.simulateContract({
-          address: readChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'teardownStaleSaleListing',
-          args: [BigInt(loanId)],
-          // The entry is permissionless — any account works for the
-          // eth_call; the connected wallet keeps the probe faithful
-          // to the transaction the button would actually send.
-          account: address,
-        });
-        return classifyTeardownProbe({ ok: true });
-      } catch (err) {
-        const errorName = probeErrorName(err);
-        // Corroborate the ambiguous arm with the lender NFT's sale
-        // lock (Codex #1511 r3) — one extra read ONLY when the
-        // teardown says "nothing stale", which is also the resting
-        // state for most loans; a plain unlisted loan costs the same
-        // two calls as before the split.
-        let saleLocked: boolean | undefined;
-        if (errorName === 'NoStaleSaleListing' && lenderTokenId) {
-          saleLocked =
-            Number(
-              await readClient!.readContract({
-                address: readChain.diamondAddress,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'positionLock',
-                args: [BigInt(lenderTokenId)],
-              }),
-            ) === LOCK_EARLY_WITHDRAWAL_SALE;
-        }
-        return classifyTeardownProbe({ ok: false, errorName, saleLocked });
-      }
-    },
+    // The account keeps the probe faithful to the transaction the
+    // button would send; the entry is permissionless, so any works.
+    // Unknown RPC failures propagate as query errors (fail closed
+    // upstream). The lock corroboration inside costs one extra read
+    // ONLY when the ambiguous NoStaleSaleListing arm fires.
+    queryFn: () =>
+      probeSaleHoldLive(
+        readClient!,
+        readChain.diamondAddress,
+        loanId,
+        lenderTokenId,
+        address,
+      ),
   });
-  return probe;
+  // Fail-CLOSED signal for settlement surfaces (Codex #1511 r5 P1):
+  // while the capability read or the probe itself is still pending —
+  // or the probe errored — the accepted-sale question is UNANSWERED,
+  // and the repay-family flows must wait rather than fail open. A
+  // negative capability (pre-refresh Diamond) resolves to NOT
+  // resolving: no probe exists there, matching pre-PR behaviour.
+  const resolving =
+    enabled &&
+    (cut.isPending ||
+      (cut.data === true && (probe.isPending || probe.isError)));
+  return { ...probe, resolving };
 }

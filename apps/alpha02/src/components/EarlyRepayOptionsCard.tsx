@@ -51,6 +51,7 @@ export function EarlyRepayOptionsCard({
   refinanceEligible,
   saleListingHeld,
   saleCompletionPending,
+  saleHoldChecking,
 }: {
   isAdvanced: boolean;
   onSwitchToAdvanced: () => void;
@@ -65,10 +66,15 @@ export function EarlyRepayOptionsCard({
    *  held by a listing. */
   saleListingHeld?: boolean;
   /** An ACCEPTED sale awaiting completion pauses the settlement rows
-   *  (repay / partial / close-early / refinance) — the buyer's funds
-   *  are committed and settling now would strand the completion
-   *  (Codex #1511 r4 P1). Momentary state (legacy mid-flight shape). */
+   *  (repay / partial / close-early / transfer / refinance) — the
+   *  buyer's funds are committed and settling now would strand the
+   *  completion (Codex #1511 r4 P1 + r5 P1). Momentary state (legacy
+   *  mid-flight shape). */
   saleCompletionPending?: boolean;
+  /** The accepted-sale probe hasn't answered yet — the settlement
+   *  rows wait (fail closed) instead of opening on the undefined
+   *  initial state (Codex #1511 r5 P1). */
+  saleHoldChecking?: boolean;
   /** Carry-over refinance binds to the ORIGINAL borrower — a wallet
    *  that acquired the position on the secondary market never gets
    *  the refinance card, so the chooser must say why instead of
@@ -90,7 +96,9 @@ export function EarlyRepayOptionsCard({
   // the settlement rows (Codex #1511 r4 P1).
   const completionPause = saleCompletionPending
     ? copy.saleHold.completionPaused
-    : undefined;
+    : saleHoldChecking
+      ? copy.earlyRepay.checkingInterlocks
+      : undefined;
   const rows: OptionRow[] = [
     {
       key: 'full',
@@ -126,7 +134,11 @@ export function EarlyRepayOptionsCard({
       title: o.transfer,
       desc: o.transferDesc,
       cost: o.transferCost,
-      unavailable: pastDueHint ? copy.offset.onlyBeforeDue : undefined,
+      // The handover rewrites the loan under a funded acceptance —
+      // paused during the completion window (Codex #1511 r5 P1).
+      unavailable:
+        completionPause ??
+        (pastDueHint ? copy.offset.onlyBeforeDue : undefined),
       target: 'transfer-card',
     },
     {

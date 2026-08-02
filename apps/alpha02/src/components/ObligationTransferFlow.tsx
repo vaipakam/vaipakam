@@ -94,6 +94,7 @@ function offerEligible(
 }
 
 export function ObligationTransferFlow({
+  preSubmitBlock,
   row,
   live,
   chainNow,
@@ -107,6 +108,10 @@ export function ObligationTransferFlow({
   busy,
   setBusy,
 }: {
+  /** Optional page-supplied gate run LIVE at submit start — returns a
+   *  user-facing message to block on (e.g. the accepted-sale
+   *  completion pause, Codex #1511 r5 P1) or null to proceed. */
+  preSubmitBlock?: () => Promise<string | null>;
   row: IndexedLoan;
   live: LoanLive;
   /** Chain time from the parent's live query — never the device clock. */
@@ -217,6 +222,16 @@ export function ObligationTransferFlow({
   const collateralQuotable = collateralIsNft || collateralMeta !== undefined;
 
   async function submit() {
+    // Page-supplied settlement gate (Codex #1511 r5 P1) — a LIVE
+    // accepted-sale re-check immediately before any write that would
+    // settle or rewrite the loan under a funded acceptance.
+    if (preSubmitBlock) {
+      const blockedMsg = await preSubmitBlock();
+      if (blockedMsg) {
+        setError(blockedMsg);
+        return;
+      }
+    }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (!picked || !economics) return;
     // The handover consumes an existing offer — same kill switch as
