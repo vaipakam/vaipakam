@@ -857,7 +857,20 @@ Its intended behaviour, as the test oracle for this surface:
   request that has gone ineligible since it was posted fails with a
   plain explanation instead of leaving a pointless approval behind a
   reverted handover; an unreadable check never blocks an otherwise
-  valid handover. The review states what is paid
+  valid handover. One check cannot be satisfied by that ordering: the
+  accepted-sale interlock has to be asked as late as possible, since
+  its whole purpose is to catch an acceptance that lands while the
+  review sits open, so it necessarily runs after the approval. Where a
+  check must come after the spending approval like that — or where the
+  handover simply fails once the approval has been given — the app
+  withdraws the approval it just obtained, so a handover that never
+  happened leaves no spending authorisation standing against a form
+  with nothing left to cancel. It is best-effort: if the withdrawal is
+  itself declined, the original failure remains the reported one
+  rather than being replaced by a second, more confusing error. An
+  approval the wallet already held is never withdrawn — it was granted
+  for some other purpose and is not this flow's to revoke. The review
+  states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and

@@ -28,7 +28,7 @@ import { captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance } from '../contracts/erc20';
+import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
 import {
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
@@ -262,6 +262,10 @@ export function ObligationTransferFlow({
     }
     setBusy(true);
     setError(null);
+    // Tracks whether THIS attempt granted the handover allowance, so a
+    // submit that never reaches the write can unwind it (#1514).
+    let approvalGranted = false;
+    let approvalToken: `0x${string}` | null = null;
     try {
       // transferObligationViaOffer is Tier-1 — live re-screen first.
       await assertWalletNotSanctionedLive(
@@ -444,7 +448,11 @@ export function ObligationTransferFlow({
         });
       }
       if (liveCost.total + pad > 0n) {
-        await ensureAllowance({
+        // Only a MINED approve arms the unwind. When the wallet already
+        // held a sufficient allowance, ensureAllowance returns null —
+        // that grant belongs to some other arrangement and must not be
+        // zeroed out from under it.
+        const approvalTx = await ensureAllowance({
           publicClient,
           walletClient,
           token: liveLoan.principalAsset,
@@ -452,20 +460,15 @@ export function ObligationTransferFlow({
           spender: walletChain.diamondAddress,
           amount: liveCost.total + pad,
         });
+        approvalGranted = approvalTx !== null;
+        approvalToken = liveLoan.principalAsset;
       }
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
-      // Deliberately does NOT unwind the allowance above, unlike
-      // RefinanceFlow's equivalent: this flow tracks no approval state
-      // and never revokes on ANY post-approval failure (a reverted
-      // write, a rejected signature), so a lone unwind here would be
-      // the odd one out. The residue is the cost of the transfer the
-      // user was actively attempting, not a standing payoff-sized
-      // grant. Giving this flow the tracked-approval + revoke pattern
-      // wholesale is #1514.
       if (preSubmitBlock) {
         const blockedLate = await preSubmitBlock();
         if (blockedLate) {
           setError(blockedLate);
+          await unwindApproval();
           return;
         }
       }
@@ -483,8 +486,32 @@ export function ObligationTransferFlow({
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
       setError(captureTxError(err));
+      await unwindApproval();
     } finally {
       setBusy(false);
+    }
+
+    // Best-effort: no handover happened but the allowance mined, so
+    // leave no spend authorization behind a form with nothing to
+    // cancel (#1514). A second rejection just leaves the wallet's
+    // approvals view as the remedy — the surfaced error already
+    // explains the failure, and overwriting it with a revoke error
+    // would hide the real one.
+    async function unwindApproval() {
+      if (!approvalGranted || !approvalToken) return;
+      if (!publicClient || !walletClient || !address || !walletChain) return;
+      try {
+        await revokeAllowance({
+          publicClient,
+          walletClient,
+          token: approvalToken,
+          owner: address,
+          spender: walletChain.diamondAddress,
+        });
+        approvalGranted = false;
+      } catch {
+        // Intentionally silent — see above.
+      }
     }
   }
 
