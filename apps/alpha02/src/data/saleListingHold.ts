@@ -234,5 +234,10 @@ export function useSaleListingHold(
           // An undecodable probe outcome on a CAPABLE Diamond is
           // ambiguous — fail closed, same rationale.
           probe.data === 'unknown')));
-  return { ...probe, resolving };
+  // A capability ROLLBACK must also silence any previously cached
+  // probe result (Codex #1511 r8): disabling the query keeps its old
+  // data, which would keep rendering a hold (or a teardown button)
+  // under legacy semantics. Mask unless the cut is positively present.
+  const data = cut.data === true ? probe.data : undefined;
+  return { ...probe, data, resolving };
 }

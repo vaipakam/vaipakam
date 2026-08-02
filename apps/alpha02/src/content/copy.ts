@@ -1465,7 +1465,7 @@ const copySource = {
     clearableAction: 'Free held options',
     confirmAction: 'Confirm — free held options',
     clearedNote:
-      'Held options freed. The lender can’t list this loan again for a day — your action window.',
+      'Held options freed. The cleanup also started the lender’s one-day pause on relisting this loan — your action window ran from that moment.',
     workingDots: 'Freeing…',
     receipt: {
       youReceive:

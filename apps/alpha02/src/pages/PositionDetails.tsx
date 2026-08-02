@@ -694,7 +694,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loan.data.lenderTokenId,
         address ?? undefined,
       );
-      return state === 'accepted' ? copy.saleHold.completionPaused : null;
+      if (state === 'accepted') return copy.saleHold.completionPaused;
+      // An unrecognized decoded revert is as unanswered as an RPC
+      // failure (Codex #1511 r8) — the hook fails closed on it, and
+      // the write gate must match.
+      if (state === 'unknown') return copy.saleHold.checkFailed;
+      return null;
     } catch {
       return copy.saleHold.checkFailed;
     }
