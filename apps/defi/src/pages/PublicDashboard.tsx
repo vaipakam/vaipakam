@@ -36,6 +36,7 @@ import { useVPFIToken } from '../hooks/useVPFIToken';
 import { useHistoricalData, type TimeRange } from '../hooks/useHistoricalData';
 import { useCombinedChainsStats } from '../hooks/useCombinedChainsStats';
 import { INDEXER_STATUS_TO_ENUM } from '../lib/indexerClient';
+import RecyclingAccount from '../components/RecyclingAccount';
 import { DataSyncStatus } from '../components/app/DataSyncStatus';
 import { useLiveWatermark } from '../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../hooks/watermarkPolicy';
@@ -1199,6 +1200,8 @@ export default function PublicDashboard() {
               </section>
             </>
           )}
+
+          <RecyclingAccount chainId={chainId} />
 
           <div className="pd-disclaimer" role="note" style={{ marginTop: 24, marginBottom: 0 }}>
             <ShieldCheck size={16} />

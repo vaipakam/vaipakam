@@ -1,0 +1,13 @@
+## Thread — the recycling programme's account, in public (#1349 M5)
+
+The platform has been keeping a daily account of where each reward pool came from and how much of it was drawn. Until now it kept it privately: the contracts announced it, and a recent change recorded it into a queryable history, but nobody outside could look. This puts it on the public analytics page.
+
+**The interesting work was not displaying the numbers — it was not displaying the ones the platform cannot stand behind.** The read surface underneath spends considerable effort refusing to publish figures it cannot justify, and all of that is undone if a page renders a refusal as a zero or a dash. So:
+
+A day that has not closed yet has no pool, and shows as not-yet-closed rather than as a pool of nothing. A day the programme had scheduled but not committed to is marked an estimate, and its drawn column stays **empty** — printing a zero there would assert a commitment that was never made. A cross-chain total still collecting reports likewise stays blank rather than showing a partial sum as if it were final. When the longevity estimate cannot be calculated honestly, the page prints **why** — because a dash reads as *zero runway*, which is the opposite of *we cannot say*. And when the whole account is unreachable, nothing is shown at all, since a zeroed account looks exactly like a quiet programme.
+
+Each of those is pinned by a test, and each test was checked by making the page do the wrong thing and confirming the test noticed.
+
+**The wording was written against the release checklist rather than tidied afterwards.** That checklist exists because, under the interpretive release governing this area, what the issuer says is the dominant factor — so the constraint is on vocabulary, not just on substance. The page describes programme longevity, which the checklist expressly permits, and never a yield, a rate, a return, or a price. It makes no claim about what any holder receives, because it is a programme-level account and says nothing about individuals. It offers nothing to buy and implies no market. And it describes what happened rather than what anyone decided — no "we allocate", no "the team determines".
+
+One deliberate omission: the page does not compute anything of its own from the published figures. Where the underlying account declines to state a total, the page declines too, rather than adding up the parts itself and presenting the result as though it were the same thing.

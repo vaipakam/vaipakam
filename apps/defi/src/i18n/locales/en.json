@@ -2063,5 +2063,35 @@
     "message": "A new version of Vaipakam is available.",
     "reload": "Reload",
     "reloading": "Reloading…"
+  },
+  "recycling": {
+    "title": "Recycling account",
+    "lede": "Where each day's reward pool came from, and how much of it was drawn. Figures are recorded as the programme runs; nothing here is decided after the fact.",
+    "loading": "Loading the recycling account…",
+    "unavailable": "The recycling account is not available right now. Nothing is shown rather than showing zeros, which would look like a quiet programme.",
+    "scopeLocalOnly": "This deployment has not closed a day itself, so programme-wide figures are not available from it. The absorption it observed locally is shown.",
+    "absorbedTotal": "Absorbed into the recycling balance",
+    "absorbedPreLaunch": "Absorbed before the schedule started",
+    "drawnTotal": "Drawn from the scheduled floor",
+    "runway": "Programme longevity",
+    "runwayDays": "About {{days}} days of the recent daily pool",
+    "runwaySelfFunded": "Self-funding — the scheduled floor is currently zero",
+    "runwayUnavailable": {
+      "backfilled-mirror-absorption-not-decomposable": "Not calculable: recovered cross-chain absorption cannot be attributed per chain, so any figure would be a guess.",
+      "attribution-column-unavailable": "Not calculable yet: the attribution records are still being rebuilt.",
+      "no-armed-finalized-days": "Not calculable yet: no closed day has run under the committed schedule.",
+      "unknown": "Not calculable from the records available."
+    },
+    "coverageFrom": "Records begin at programme day {{day}}. Earlier days are not shown rather than shown as quiet.",
+    "tableCaption": "Per-day composition of the reward pool",
+    "colDay": "Day",
+    "colFloor": "Scheduled floor",
+    "colRecycled": "Recycled portion",
+    "colDrawn": "Drawn",
+    "colAbsorbed": "Absorbed",
+    "dayLabel": "Day {{day}}",
+    "estimateBadge": "estimate",
+    "noFinalizedDays": "No day has closed yet in this window.",
+    "footnote": "An “estimate” day is one the programme had scheduled but not yet committed to; its drawn column stays empty because nothing was committed. Blank cells mean a figure is not yet determined — never that it is zero."
   }
 }
