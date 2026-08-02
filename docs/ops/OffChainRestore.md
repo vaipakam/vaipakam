@@ -1235,6 +1235,7 @@ DELETE FROM recycle_series_events; \
 DELETE FROM recycle_series_state; \
 DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
+DELETE FROM recycle_backing_snapshot; \
 DELETE FROM indexer_cursor"
 ```
 
