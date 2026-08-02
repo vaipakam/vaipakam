@@ -339,7 +339,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         );
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
 
         vm.clearMockedCalls();
 

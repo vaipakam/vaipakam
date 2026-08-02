@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
+import {LibFacet} from "./LibFacet.sol";
+import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
 /**
  * @title LibSaleListing
@@ -36,6 +38,12 @@ library LibSaleListing {
     ///         `saleOfferId` as cancelled off the back of this + `offerCancelled`.
     event LoanSaleListingTornDown(uint256 indexed loanId, uint256 indexed saleOfferId);
 
+    // NOTE (Codex #1505 r2): the CANONICAL `OfferCanceled` companion event for
+    // a teardown is emitted by the facet entry (`OfferCancelFacet.
+    // teardownStaleSaleListing`), where the event is already declared — both
+    // teardown paths flow through it, and a library re-declaration would
+    // duplicate the event entry in the facet's exported ABI.
+
     /**
      * @notice Tear down the live sale listing (if any) for a loan that has just
      *         reached a terminal state without a completed sale.
@@ -59,10 +67,70 @@ library LibSaleListing {
         // completeLoanSale (which clears the link). Never disturb it here.
         if (s.offers[saleOfferId].accepted) return;
 
+        _unwind(s, loanId, saleOfferId);
+    }
+
+    /**
+     * @notice Tear down a live listing whose MANDATORY expiry has passed while
+     *         its loan is still live (design item 1 + the borrower action
+     *         window). The caller (OfferCancelFacet.teardownStaleSaleListing)
+     *         has already verified the loan is Active/FallbackPending, the
+     *         sale offer is unaccepted, and `isOfferExpired` is true.
+     * @dev Beyond the shared unwind, stamps the per-loan RELIST COOLDOWN:
+     *      the listing just released the borrower's partial-repay and
+     *      collateral-withdrawal holds, and without a cooldown the seller (or
+     *      their keeper) could immediately relist and front-run the borrower's
+     *      unblocked transaction — chaining bounded listings back into the
+     *      indefinite freeze the mandatory expiry exists to remove.
+     * @param s      Diamond storage pointer.
+     * @param loanId The live loan whose expired listing is being cleared.
+     */
+    function teardownExpired(LibVaipakam.Storage storage s, uint256 loanId) internal {
+        uint256 saleOfferId = s.loanToSaleOfferId[loanId];
+        s.saleRelistCooldownUntil[loanId] = uint64(
+            block.timestamp + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS
+        );
+        _unwind(s, loanId, saleOfferId);
+    }
+
+    /// @dev Shared unwind: release the lender-NFT native lock, cancel the
+    ///      vehicle so it drops off the open book, clear both link directions
+    ///      (which re-opens the borrower's partial-repay / collateral-
+    ///      withdrawal paths — their guards key on `loanToSaleOfferId`).
+    ///      Moves NO value: the sale vehicle escrows nothing at creation
+    ///      (the `saleVehicleCreate` skip in OfferCreateFacet), which is what
+    ///      makes the pause-exempt teardown entry (item 14) safe.
+    function _unwind(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 saleOfferId
+    ) private {
         LibERC721._unlock(s.loans[loanId].lenderTokenId);
 
         s.offerCancelled[saleOfferId] = true;
         LibMetricsHooks.onOfferCancelled(saleOfferId);
+
+        // Codex #1505 r1 P2 — mirror `cancelOffer`'s creator-position-NFT
+        // cleanup. The vehicle minted an offer-position NFT at creation
+        // (`_createOfferFinish` runs for sale vehicles too), and
+        // `MetricsFacet.getUserPositionOffers{Paginated}`'s open-offer filter
+        // relies ENTIRELY on the `offerIdByPositionTokenId` reverse map —
+        // leaving it in place keeps the cancelled vehicle listed as an open
+        // position until a second, redundant `cancelOffer` transaction.
+        // Burning is pause-safe (`burnNFT` carries no `whenNotPaused`; it is
+        // gated on `msg.sender == address(this)`, which this cross-facet hop
+        // satisfies), so the item-14 pause-exempt teardown path keeps working.
+        uint256 vehiclePositionTokenId = s.offers[saleOfferId].positionTokenId;
+        if (vehiclePositionTokenId != 0) {
+            delete s.offerIdByPositionTokenId[vehiclePositionTokenId];
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaipakamNFTFacet.burnNFT.selector,
+                    vehiclePositionTokenId
+                ),
+                bytes4(0)
+            );
+        }
 
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];

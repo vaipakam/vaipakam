@@ -210,6 +210,9 @@ describe('LenderEarlyWithdrawal', () => {
         7n,
         550n,
         true,
+        // PR-A listing lifecycle: this legacy surface pins the 7-day
+        // default listing window (7 * 86400 seconds).
+        604800n,
       ),
     );
   });
@@ -230,6 +233,7 @@ describe('LenderEarlyWithdrawal', () => {
         7n,
         1000n,
         true,
+        604800n, // pinned 7-day default window (see above)
       ),
     );
   });

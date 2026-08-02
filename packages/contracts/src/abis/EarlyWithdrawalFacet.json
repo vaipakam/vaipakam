@@ -43,6 +43,11 @@
         "name": "creatorRiskAndTermsConsent",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "listingSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -1272,6 +1277,11 @@
   },
   {
     "type": "error",
+    "name": "SaleListingWindowInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleNotLinked",
     "inputs": []
   },
@@ -1294,6 +1304,17 @@
     "type": "error",
     "name": "SalePositionNotConsolidatable",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SaleRelistCooldownActive",
+    "inputs": [
+      {
+        "name": "availableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",

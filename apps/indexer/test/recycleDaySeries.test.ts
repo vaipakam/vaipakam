@@ -772,37 +772,23 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
     expect(body.cumulative.absorbedPreLaunch).toBe('640');
   });
 
-  it('warns on day 0 ONLY where the old mixture can exist', async () => {
-    // A chain upgraded in place: a day-0 credit arrives before this chain
-    // has ever emitted a pre-launch event, so it may be old pre-launch
-    // value the previous contracts filed under day 0.
-    const legacy = makeHarness();
+  it('publishes what it observes about day 0 and claims nothing more', async () => {
+    // A fresh deployment that takes NO credits before launch never emits a
+    // pre-launch event, so "has this chain emitted one?" cannot stand in
+    // for "does this chain have the split" — it marks the clean case as
+    // legacy. No provenance flag is published in either direction.
+    const { env } = makeHarness();
     await applyRecycleDaySeries(
       [
         log('VpfiRecycled', { source: 1, refId: 1n, amount: 30n, dayId: 0n }),
         stamped(0n),
       ],
-      legacy.env,
+      env,
       CHAIN,
     );
-    expect(day(await readSeries(legacy.env), 0).preLaunchConflated).toBe(true);
-
-    // A chain that has always had the split: the pre-launch event comes
-    // first, so every later day-0 credit is a genuine first-day credit.
-    const clean = makeHarness();
-    await applyRecycleDaySeries(
-      [
-        log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 900n }),
-        log('VpfiRecycled', { source: 1, refId: 2n, amount: 30n, dayId: 0n }),
-        stamped(0n),
-      ],
-      clean.env,
-      CHAIN,
-    );
-    const body = await readSeries(clean.env);
-    expect(day(body, 0).preLaunchConflated).toBe(false);
-    expect(day(body, 0).absorbedLocal).toBe('30');
-    expect(body.cumulative.absorbedPreLaunch).toBe('900');
+    const d0 = day(await readSeries(env), 0);
+    expect(d0.absorbedLocal).toBe('30');
+    expect('preLaunchConflated' in d0).toBe(false);
   });
 
   it('counts the pre-launch stock in the runway numerator', async () => {

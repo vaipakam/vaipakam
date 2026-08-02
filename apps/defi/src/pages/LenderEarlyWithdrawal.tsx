@@ -74,7 +74,15 @@ export default function LenderEarlyWithdrawal() {
     setStep('submitting');
     const s = beginStep({ ...ctxBase, flow: 'createLoanSaleOffer', step: 'submit-tx' });
     try {
-      const tx = await diamond.createLoanSaleOffer(loan.id, BigInt(bps), riskAndTermsConsent);
+      // Mandatory finite listing window (LenderEarlyWithdrawalUXDesign item
+      // 1): the contract requires a bounded expiry; this legacy surface pins
+      // the 7-day default (the alpha02 flow exposes the seller's choice).
+      const tx = await diamond.createLoanSaleOffer(
+        loan.id,
+        BigInt(bps),
+        riskAndTermsConsent,
+        BigInt(7 * 86400),
+      );
       setTxHash(tx.hash);
       await tx.wait();
       await reload();
@@ -229,10 +237,16 @@ export default function LenderEarlyWithdrawal() {
               <TransferLockWarning mode="active" lock={lock} tokenId={loan.lenderTokenId} />
               <p className="action-desc" style={{ marginTop: 12 }}>
                 A sale offer is live for this loan. As soon as a new lender accepts it, the sale
-                finalizes atomically in the same transaction — no extra click needed. Until
-                acceptance the lender NFT cannot be transferred. To abort the flow, cancel the
-                linked sale offer from the Offer Book. The manual button below is only needed as
-                a recovery hook if auto-completion didn't run.
+                finalizes atomically in the same transaction — no extra click needed. Until the
+                sale completes or the listing ends, the lender NFT cannot be transferred. A
+                listing created from this page expires on its own 7 days after creation (or at
+                the loan's due date, if sooner) and can then no longer be accepted. A listing
+                created before the bounded-window upgrade carries no expiry of its own — it
+                stays buyable until the loan's due date unless cleaned up, and anyone may send
+                that cleanup transaction immediately. Either way, what releases the NFT is
+                cancelling the listing or the cleanup transaction — never expiry alone. To
+                abort the flow, cancel the linked sale offer from the Offer Book. The manual
+                button below is only needed as a recovery hook if auto-completion didn't run.
               </p>
               <div className="action-row">
                 <button
@@ -264,6 +278,18 @@ export default function LenderEarlyWithdrawal() {
                 <span className="data-label">{t('common.remainingTerm')}</span>
                 <span className="data-value">{t('earlyWithdrawal.remainingTermInherits')}</span>
               </div>
+              <div className="data-row">
+                <span className="data-label">Listing window</span>
+                <span className="data-value">7 days (fixed on this page)</span>
+              </div>
+              <p className="action-desc" style={{ marginTop: 8 }}>
+                The listing expires on its own after 7 days — or at the loan's due
+                date, if that comes first — and can then no longer be accepted.
+                Expiry alone does not unlock your lender NFT: cancelling the listing
+                releases it in one step, and after expiry a cleanup transaction
+                anyone may send does the same. Ending a listing without a sale also
+                starts a one-day pause before this loan can be listed again.
+              </p>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"

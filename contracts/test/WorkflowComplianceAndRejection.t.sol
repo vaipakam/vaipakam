@@ -704,7 +704,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Lender tries to create a sale offer for NFT rental loan -> InvalidSaleOffer
         vm.prank(lender);
         vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days);
     }
 
     /// @notice NFT rental loan: refinanceLoan reverts InvalidRefinanceOffer

@@ -51,7 +51,17 @@
  *    "not indexed yet" indistinguishable from "quiet", which is the very
  *    distinction the dense series exists to draw.
  *
- * 5. **No calendar dates.** Days are reported by their reward `dayId`
+ * 5. **No claim about day 0's provenance.** On a deployment upgraded in
+ *    place, credits taken before the split are already inside day 0 and
+ *    nothing separates them. Which contract version a chain runs is
+ *    DEPLOYMENT PROVENANCE, not something the event stream carries — and
+ *    the tempting inference ("this chain emitted a pre-launch event, so it
+ *    has the split") is false on the ordinary case of a fresh deployment
+ *    that simply took no credits before launch (Codex #1508 r3 P2). So no
+ *    flag is published in either direction: a wrong one is worse than none
+ *    here. `absorbedPreLaunch` reports what IS observed.
+ *
+ * 6. **No calendar dates.** Days are reported by their reward `dayId`
  *    only. Mapping those to dates needs `interactionLaunchTimestamp`, and
  *    embedding it here would make this endpoint a second authority on
  *    where day boundaries fall — the precise conflation the 0045 migration
@@ -133,15 +143,11 @@ export async function handleRecyclingSeries(
     // to describe, until some unrelated scheduled event created the first
     // day row.
     const preLaunchRow = await env.DB.prepare(
-      `SELECT absorbed, day0_legacy FROM recycle_prelaunch WHERE chain_id = ?`,
+      `SELECT absorbed FROM recycle_prelaunch WHERE chain_id = ?`,
     )
       .bind(chainId)
-      .first<{ absorbed: string; day0_legacy: string }>();
+      .first<{ absorbed: string }>();
     const preLaunch = preLaunchRow?.absorbed ?? '0';
-    // Day 0 may still hold pre-launch value on a Diamond upgraded in place:
-    // credits taken before the split are already inside it and no code
-    // change separates them. True only where it is true.
-    const dayZeroConflated = BigInt(preLaunchRow?.day0_legacy ?? '0') > 0n;
 
     const head = await env.DB.prepare(
       `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day
@@ -282,7 +288,6 @@ export async function handleRecyclingSeries(
           // label. On a mirror deployment no day is ever stamped, which
           // is why this endpoint needs no canonical-chain check.
           absorbed: null,
-          preLaunchConflated: dayId === 0 && dayZeroConflated,
         });
         continue;
       }
@@ -309,11 +314,6 @@ export async function handleRecyclingSeries(
         absorbedLocal: absorbedLocal.toString(),
         absorbedMirror: absorbedMirror.toString(),
         absorbed: (absorbedLocal + absorbedMirror).toString(),
-        // Only where it is actually true. A chain that has always had the
-        // split files pre-launch value separately, so its day 0 is clean;
-        // a chain upgraded in place carries the old mixture forever and no
-        // code change can separate it (Codex #1508 r2 P2).
-        preLaunchConflated: dayId === 0 && dayZeroConflated,
       });
     }
 

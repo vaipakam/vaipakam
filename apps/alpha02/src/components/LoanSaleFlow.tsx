@@ -37,7 +37,12 @@ export function loanSaleListingEnabled(chainId: number): boolean {
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { encodeFunctionData, parseEventLogs } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  encodeFunctionData,
+  parseEventLogs,
+} from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -50,6 +55,7 @@ import {
 } from '../contracts/preflights';
 import {
   LOAN_STATUS_ACTIVE,
+  MIN_SALE_LISTING_SECONDS,
   readLoanLive,
   type LoanLive,
 } from '../contracts/loanLive';
@@ -57,7 +63,7 @@ import { saleSettlementBound, saleSettlementNow } from '../data/loanSalePending'
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
-import { formatTokenAmount } from '../lib/format';
+import { formatDateTime, formatTokenAmount } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
@@ -105,6 +111,12 @@ export function LoanSaleFlow({
   // offer (creatorRiskAndTermsConsent), so it must be a real tick,
   // voided whenever the reviewed terms change.
   const [consent, setConsent] = useState(false);
+  // Mandatory finite listing window (LenderEarlyWithdrawalUXDesign item 1):
+  // the seller picks a duration; there is no never-expires option. The
+  // contract bounds it to [1 hour, 30 days] and additionally clamps the
+  // resulting expiry at the loan's own maturity.
+  const [listingDays, setListingDays] = useState(7);
+  const listingSeconds = BigInt(listingDays) * 86400n;
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
@@ -125,11 +137,11 @@ export function LoanSaleFlow({
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
         functionName: 'createLoanSaleOffer',
-        args: [BigInt(row.loanId), rateBps, consent],
+        args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
       }),
       value: 0n,
     };
-  }, [walletChain, rateBps, rateValid, consent, row.loanId]);
+  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds]);
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -199,13 +211,61 @@ export function LoanSaleFlow({
         setError(copy.errors.loanAlreadySettled);
         return;
       }
-      // createLoanSaleOffer reverts at/past maturity — fail plainly
-      // before the wallet prompt.
-      if (
-        latestBlock.timestamp >=
-        liveLoan.startTime + liveLoan.durationDays * 86_400n
-      ) {
+      // createLoanSaleOffer reverts at/past maturity, and ALSO when less
+      // than the minimum listing window (1 hour) remains before maturity —
+      // `_boundListingExpiry` clamps every window at maturity and refuses a
+      // clamped window below the minimum. Fail plainly here, BEFORE the
+      // standing approval is granted: without this, the approval tx would
+      // mine and then the guaranteed-to-revert listing tx (plus a revoke
+      // unwind) would follow (Codex #1505 r2).
+      const maturityTs =
+        liveLoan.startTime + liveLoan.durationDays * 86_400n;
+      if (latestBlock.timestamp >= maturityTs) {
         setError(copy.errors.saleListingMatured);
+        return;
+      }
+      if (maturityTs - latestBlock.timestamp < MIN_SALE_LISTING_SECONDS) {
+        setError(copy.errors.saleListingTooCloseToMaturity);
+        return;
+      }
+      // Codex #1505 r5 — simulate the EXACT listing call before granting
+      // the standing approval. The listing itself never touches the
+      // allowance (settlement is pulled inside the buyer's accept
+      // transaction), so the simulation is faithful without it — and it
+      // deterministically catches every listing refusal the explicit
+      // checks above can't see (the one-day relist cooldown, a live
+      // offset offer on the loan, a non-consolidatable position) before
+      // a payoff-sized approval mines for a doomed transaction. The
+      // cooldown gets dedicated copy carrying WHEN relisting opens
+      // (the contract surfaces it in the error for exactly this).
+      try {
+        await publicClient.simulateContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createLoanSaleOffer',
+          args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
+          account: address,
+        });
+      } catch (simErr) {
+        let cooldownUntil: bigint | null = null;
+        if (simErr instanceof BaseError) {
+          const revert = simErr.walk(
+            (e) => e instanceof ContractFunctionRevertedError,
+          ) as ContractFunctionRevertedError | null;
+          if (
+            revert?.data?.errorName === 'SaleRelistCooldownActive' &&
+            typeof revert.data.args?.[0] === 'bigint'
+          ) {
+            cooldownUntil = revert.data.args[0];
+          }
+        }
+        setError(
+          cooldownUntil !== null
+            ? copy.errors.saleRelistCooldownActive(
+                formatDateTime(Number(cooldownUntil)),
+              )
+            : captureTxError(simErr),
+        );
         return;
       }
       // The standing settlement approval — full interest-window
@@ -234,10 +294,41 @@ export function LoanSaleFlow({
       });
       approvalGranted = approvalTx !== null;
       approvalToken = liveLoan.principalAsset;
+      // Codex #1505 r3 — the approval can take blocks to mine, so a loan
+      // that sat just above the minimum window at the preflight can slip
+      // under it by the time the approval receipt lands. Recheck chain time
+      // AFTER ensureAllowance: bail (and unwind a just-granted approval)
+      // instead of sending a listing `_boundListingExpiry` is now
+      // guaranteed to reject.
+      if (approvalGranted) {
+        const postApproval = await publicClient.getBlock({
+          blockTag: 'latest',
+        });
+        if (
+          maturityTs - postApproval.timestamp <
+          MIN_SALE_LISTING_SECONDS
+        ) {
+          try {
+            await revokeAllowance({
+              publicClient,
+              walletClient,
+              token: liveLoan.principalAsset,
+              owner: address,
+              spender: walletChain.diamondAddress,
+            });
+          } catch {
+            // The too-close error below stays the surfaced failure; the
+            // wallet's approvals view is the remedy for a stuck revoke.
+          }
+          setError(copy.errors.saleListingTooCloseToMaturity);
+          return;
+        }
+      }
       const { receipt } = await write('createLoanSaleOffer', [
         BigInt(row.loanId),
         rateBps,
         consent,
+        listingSeconds,
       ]);
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
@@ -295,7 +386,29 @@ export function LoanSaleFlow({
             aria-label={copy.loanSale.rateLabel}
           />
         </label>
+        <label className="field">
+          <span className="field-label">{copy.loanSale.windowLabel}</span>
+          <select
+            className="input"
+            value={listingDays}
+            onChange={(e) => {
+              setListingDays(Number(e.target.value));
+              setConsent(false); // consent covers what was reviewed
+              onCloseConfirm(); // edited terms void the open review
+            }}
+            aria-label={copy.loanSale.windowLabel}
+          >
+            {[1, 3, 7, 14, 30].map((d) => (
+              <option key={d} value={d}>
+                {copy.loanSale.windowOption(d)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+      <p className="field-hint" style={{ marginTop: 8 }}>
+        {copy.loanSale.windowNote}
+      </p>
       {rateBps !== null && BigInt(rateBps) > live.interestRateBps ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
           {copy.loanSale.sweetenNote}

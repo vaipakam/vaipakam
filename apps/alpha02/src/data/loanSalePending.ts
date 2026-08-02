@@ -45,10 +45,11 @@ import { tipAware } from '../chain/railHealth';
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
 /** Extra accrual headroom the standing approval carries past the
- *  interest window's total — the listing never expires on-chain, so
- *  an accept can land after the window ends and the (unclamped)
- *  accrued keeps growing. Beyond this pad the funding watch + the
- *  restore action are the safety net. */
+ *  interest window's total. Listings now expire on-chain (seller-chosen
+ *  window, capped at MAX_SALE_LISTING_SECONDS = 30 days and clamped at
+ *  loan maturity), so 30 days of pad covers the worst-case accrual any
+ *  live listing can still see before an accept lands. Beyond this pad
+ *  the funding watch + the restore action are the safety net. */
 const REACCRUAL_PAD_DAYS = 30n;
 
 /** The standing-approval target: covers the whole interest window's
