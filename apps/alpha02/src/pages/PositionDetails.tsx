@@ -387,9 +387,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // well inside that), whereas 'clearable' also occurs in the moment
   // between our own teardown and its refetch, where resetting would
   // unmount the confirmation it exists to preserve.
+  const [saleHoldDrained, setSaleHoldDrained] = useState(false);
   useEffect(() => {
-    if (saleHold.data === 'live') setSaleHoldCleared(false);
-  }, [saleHold.data]);
+    if (!saleHoldCleared) {
+      if (saleHoldDrained) setSaleHoldDrained(false);
+      return;
+    }
+    // 'none' marks the old lifecycle fully drained (our teardown's
+    // refetch landed). After that, ANY later listing state — 'live',
+    // or 'clearable' when a suspended tab slept through the whole
+    // live phase (Codex #1511 r6) — is a NEW lifecycle and unlatches
+    // the confirmation. Before the drain, 'clearable' is still our
+    // own pre-refetch teardown state and must NOT reset.
+    if (saleHold.data === 'none') {
+      setSaleHoldDrained(true);
+    } else if (
+      saleHold.data === 'live' ||
+      (saleHold.data === 'clearable' && saleHoldDrained)
+    ) {
+      setSaleHoldCleared(false);
+      setSaleHoldDrained(false);
+    }
+  }, [saleHold.data, saleHoldCleared, saleHoldDrained]);
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -835,8 +854,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(copy.saleHold.completionPaused);
         return;
       }
+      // Hold the page lock ACROSS the live probe (Codex #1511 r6) —
+      // the await must not leave Confirm and the sibling surfaces
+      // clickable while this handler is in flight.
+      setPhase('pending');
       const blocked = await assertSaleSettlementSafe();
       if (blocked) {
+        setPhase(null);
         setError(blocked);
         return;
       }
@@ -1150,14 +1174,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setError(copy.saleHold.completionPaused);
       return;
     }
+    // Lock held across the live probe (Codex #1511 r6).
+    setPhase('pending');
     {
       const blocked = await assertSaleSettlementSafe();
       if (blocked) {
+        setPhase(null);
         setError(blocked);
         return;
       }
     }
-    setPhase('pending');
     setError(null);
     try {
       const wei = parseUnits(partialInput, principalMeta.data.decimals);
@@ -1323,14 +1349,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setError(copy.saleHold.completionPaused);
       return;
     }
+    // Lock held across the live probe (Codex #1511 r6).
+    setPhase('pending');
     {
       const blocked = await assertSaleSettlementSafe();
       if (blocked) {
+        setPhase(null);
         setError(blocked);
         return;
       }
     }
-    setPhase('pending');
     setError(null);
     try {
       // precloseDirect is a Tier-1 entry point — live re-screen, plus
@@ -1824,6 +1852,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <SaleListingHoldCard
           loanId={loanId}
           state={saleHold.data ?? 'unknown'}
+          cleared={saleHoldCleared}
           confirmOpen={confirmingSurface === 'sale-teardown'}
           onOpenConfirm={() => setConfirmingSurface('sale-teardown')}
           onCloseConfirm={() =>

@@ -226,7 +226,15 @@ export function ObligationTransferFlow({
     // accepted-sale re-check immediately before any write that would
     // settle or rewrite the loan under a funded acceptance.
     if (preSubmitBlock) {
+      if (busy) return;
+      // Hold the shared lock ACROSS the await (Codex #1511 r6): with
+      // the old await-then-lock ordering a slow probe left Confirm/
+      // Back live and un-mutexed. Released before falling through —
+      // the continuation to this flow's own lock acquisition is
+      // synchronous, so nothing can interleave.
+      setBusy(true);
       const blockedMsg = await preSubmitBlock();
+      setBusy(false);
       if (blockedMsg) {
         setError(blockedMsg);
         return;

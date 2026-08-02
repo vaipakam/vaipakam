@@ -26,7 +26,7 @@
  * the page, which keeps this card mounted after the probe refetches
  * to `none`; a NEW listing ('live') outranks and resets the latch.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Hourglass } from 'lucide-react';
 import { copy } from '../content/copy';
@@ -38,6 +38,7 @@ import type { SaleListingHoldState } from '../data/saleListingHold';
 export function SaleListingHoldCard({
   loanId,
   state,
+  cleared,
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
@@ -45,6 +46,10 @@ export function SaleListingHoldCard({
   setBusy,
   onCleared,
 }: {
+  /** PAGE-owned durable success flag (with its drained-lifecycle
+   *  reset — Codex #1511 r6): the card renders the confirmation from
+   *  it and never keeps a competing local latch. */
+  cleared: boolean;
   loanId: number;
   state: SaleListingHoldState;
   /** The page's single confirmation slot — opening this receipt
@@ -63,15 +68,6 @@ export function SaleListingHoldCard({
   const { write, ready } = useDiamondWrite();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [cleared, setCleared] = useState(false);
-
-  // A NEW listing outranks the old lifecycle's confirmation (Codex
-  // #1511 r2): a relist always starts 'live', so that state resets
-  // the latch. ('clearable' must NOT — it is also the state in the
-  // moment between our own teardown and its refetch.)
-  useEffect(() => {
-    if (cleared && state === 'live') setCleared(false);
-  }, [cleared, state]);
 
   if (
     state !== 'live' &&
@@ -87,7 +83,6 @@ export function SaleListingHoldCard({
     setBusy(true);
     try {
       await write('teardownStaleSaleListing', [BigInt(loanId)]);
-      setCleared(true);
       onCleared();
       onCloseConfirm();
       void queryClient.invalidateQueries({
@@ -106,7 +101,7 @@ export function SaleListingHoldCard({
         <Hourglass aria-hidden />
         <h3 style={{ margin: 0 }}>{copy.saleHold.title}</h3>
       </div>
-      {cleared ? (
+      {cleared && state !== 'live' ? (
         <p className="muted">{copy.saleHold.clearedNote}</p>
       ) : state === 'live' ? (
         <>

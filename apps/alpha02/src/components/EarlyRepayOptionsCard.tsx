@@ -150,11 +150,16 @@ export function EarlyRepayOptionsCard({
       // offsetWithNewOffer reverts SaleListingActiveOnLoan while a
       // listing is linked — the offset card is hidden then, so the
       // row must say why instead of jumping to nothing.
-      unavailable: saleListingHeld
-        ? o.offsetHeldBySale
-        : pastDueHint
-          ? copy.offset.onlyBeforeDue
-          : undefined,
+      // The completion pause outranks the live-listing explanation
+      // (Codex #1511 r6): offsetHeldBySale says repay/close stay
+      // open, which is false during the accepted window.
+      unavailable:
+        completionPause ??
+        (saleListingHeld
+          ? o.offsetHeldBySale
+          : pastDueHint
+            ? copy.offset.onlyBeforeDue
+            : undefined),
       target: 'offset-card',
     },
     {

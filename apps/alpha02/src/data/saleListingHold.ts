@@ -170,7 +170,9 @@ export function useSaleListingHold(
     // otherwise never notice the capability arriving — a deploy
     // doesn't reload existing tabs. Positive results never refetch.
     refetchInterval: (query) =>
-      query.state.data === false ? 600_000 : false,
+      query.state.data === false || query.state.status === 'error'
+        ? 600_000
+        : false,
     queryFn: async (): Promise<boolean> => {
       const facet = (await readClient!.readContract({
         address: readChain.diamondAddress,
@@ -217,6 +219,17 @@ export function useSaleListingHold(
   const resolving =
     enabled &&
     (cut.isPending ||
-      (cut.data === true && (probe.isPending || probe.isError)));
+      // A FAILED capability read is as unanswered as a pending one
+      // (Codex #1511 r6 P1) — without this, exhausted retries would
+      // silently re-open every settlement surface. The interval
+      // retry above keeps re-asking; the live pre-write gate stays
+      // the final arbiter either way.
+      cut.isError ||
+      (cut.data === true &&
+        (probe.isPending ||
+          probe.isError ||
+          // An undecodable probe outcome on a CAPABLE Diamond is
+          // ambiguous — fail closed, same rationale.
+          probe.data === 'unknown')));
   return { ...probe, resolving };
 }
