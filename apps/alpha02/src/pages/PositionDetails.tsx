@@ -1968,15 +1968,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             // the seller-hygiene branch — no cooldown was stamped, so
             // the action-window confirmation would be false. Left
             // unlatched, the card simply unmounts on the refetch.
+            // Bind the whole continuation to the chain this card was
+            // RENDERED on. Read from the closure, never from the ref:
+            // onCleared fires only after the teardown tx has mined, so
+            // a switch during that (multi-second) write has ALREADY
+            // moved the ref — snapshotting it here would compare the
+            // new chain against itself and always pass. The running
+            // freeOptions instance still holds this render's callback,
+            // so this value is the pre-switch chain, which is exactly
+            // what the ref must be compared against.
+            const startedOnChainId = readChain.chainId;
             void (async () => {
               try {
                 if (!publicClient || !walletChain) return;
-                // Bind the continuation to the chain it started on
-                // (Codex #1511 r11): a chain switch during the await
-                // resets the latch, and this late result — read from
-                // the OLD chain's loan — must not re-latch it onto the
-                // new chain's loan N.
-                const startedOnChainId = saleHoldChainRef.current;
+                if (saleHoldChainRef.current !== startedOnChainId) return;
                 const live = await readLoanLive(
                   publicClient,
                   walletChain.diamondAddress,
