@@ -440,6 +440,61 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     setSaleHoldDrained(false);
   }, [readChain.chainId]);
 
+  // The LIVE re-check every settlement write runs immediately before
+  // sending (Codex #1511 r5 P1): the cached state can be a tip
+  // interval old, and an acceptance landing inside that window must
+  // not slip through. Fail closed on RPC failure.
+  //
+  // Declared HERE, in the hooks region, and NOT down with the derived
+  // flags it reads alongside: everything below the loading/not-found
+  // early returns is conditional, so a hook there is skipped on the
+  // loading render and called on the next one — "Rendered more hooks
+  // than during the previous render", on every page load. It needs
+  // nothing from the reconciled row, so it belongs up here.
+  const assertSaleSettlementSafe = useCallback(async (): Promise<
+    string | null
+  > => {
+    // A loan that can never be listed (non-ERC-20 principal or
+    // collateral) has nothing to probe (Codex #1511 r7).
+    if (!saleEligible) return null;
+    if (!publicClient || !walletChain || !loan.data) {
+      return copy.saleHold.checkFailed;
+    }
+    try {
+      const state = await probeSaleHoldLive(
+        publicClient,
+        walletChain.diamondAddress,
+        loanId,
+        loan.data.lenderTokenId,
+        address ?? undefined,
+      );
+      if (state === 'accepted') {
+        // Block ONLY while the loan is genuinely Active. A sale
+        // completion reverts LoanNotActive on anything else, so on a
+        // non-Active loan there is no completion left to strand — and
+        // blocking would trap the borrower permanently, since nothing
+        // they can reach from a blocked UI returns the loan to Active.
+        // Read live rather than trusting the reconciled row: this gate
+        // exists precisely because cached state can be stale.
+        const live = await readLoanLive(
+          publicClient,
+          walletChain.diamondAddress,
+          loanId,
+        );
+        return Number(live.status) === LOAN_STATUS_ACTIVE
+          ? copy.saleHold.completionPaused
+          : null;
+      }
+      // An unrecognized decoded revert is as unanswered as an RPC
+      // failure (Codex #1511 r8) — the hook fails closed on it, and
+      // the write gate must match.
+      if (state === 'unknown') return copy.saleHold.checkFailed;
+      return null;
+    } catch {
+      return copy.saleHold.checkFailed;
+    }
+  }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
+
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
   // refinance marker: a live offset interlocks the repay-family
@@ -722,53 +777,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // the cure shut indefinitely).
   const saleHoldResolving =
     row.status === 'active' && saleHold.resolving === true;
-  // The LIVE re-check every settlement write runs immediately before
-  // sending (Codex #1511 r5 P1): the cached state can be a tip
-  // interval old, and an acceptance landing inside that window must
-  // not slip through. Fail closed on RPC failure.
-  const assertSaleSettlementSafe = useCallback(async (): Promise<
-    string | null
-  > => {
-    // A loan that can never be listed (non-ERC-20 principal or
-    // collateral) has nothing to probe (Codex #1511 r7).
-    if (!saleEligible) return null;
-    if (!publicClient || !walletChain || !loan.data) {
-      return copy.saleHold.checkFailed;
-    }
-    try {
-      const state = await probeSaleHoldLive(
-        publicClient,
-        walletChain.diamondAddress,
-        loanId,
-        loan.data.lenderTokenId,
-        address ?? undefined,
-      );
-      if (state === 'accepted') {
-        // Block ONLY while the loan is genuinely Active. A sale
-        // completion reverts LoanNotActive on anything else, so on a
-        // non-Active loan there is no completion left to strand — and
-        // blocking would trap the borrower permanently, since nothing
-        // they can reach from a blocked UI returns the loan to Active.
-        // Read live rather than trusting the reconciled row: this gate
-        // exists precisely because cached state can be stale.
-        const live = await readLoanLive(
-          publicClient,
-          walletChain.diamondAddress,
-          loanId,
-        );
-        return Number(live.status) === LOAN_STATUS_ACTIVE
-          ? copy.saleHold.completionPaused
-          : null;
-      }
-      // An unrecognized decoded revert is as unanswered as an RPC
-      // failure (Codex #1511 r8) — the hook fails closed on it, and
-      // the write gate must match.
-      if (state === 'unknown') return copy.saleHold.checkFailed;
-      return null;
-    } catch {
-      return copy.saleHold.checkFailed;
-    }
-  }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
   const principal = principalMeta.data;
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(

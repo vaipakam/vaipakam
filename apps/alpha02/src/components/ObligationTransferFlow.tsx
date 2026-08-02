@@ -187,6 +187,18 @@ export function ObligationTransferFlow({
     }
   }, [pickedId, candidates, picked, onCloseConfirm]);
 
+  // The pick is LOCAL state but the confirm slot is the PAGE's, so a
+  // remount separates them: the slot still says 'transfer' while the
+  // pick is gone. That combination renders neither the picker nor the
+  // receipt — an empty card with no way back. Reachable by toggling
+  // Basic/Advanced with a review open, and (since this flow gained
+  // fail-closed unmount conditions) by a single probe hiccup. Hand the
+  // slot back so the picker returns. Selecting an offer sets both in
+  // one batched handler, so this can never race a legitimate open.
+  useEffect(() => {
+    if (confirmOpen && pickedId === null) onCloseConfirm();
+  }, [confirmOpen, pickedId, onCloseConfirm]);
+
   const dec = principalMeta.decimals;
   const sym = principalMeta.symbol;
   const fmt = (v: bigint) => `${formatTokenAmount(v, dec)} ${sym}`;

@@ -172,10 +172,24 @@ export function computeHoldGate(input: {
   const { enabled, cut, probe } = input;
   const capabilityPresent = cut.data === true;
   // Never answered at all: pending, or errored with nothing cached.
-  // Scoped to `data === undefined` deliberately — a query that already
-  // answered FALSE keeps that answer through a failed re-ask, and
-  // pausing on it would strand every borrower on a pre-refresh
-  // deployment behind a transient RPC hiccup, repay included.
+  //
+  // Scoped to `data === undefined` deliberately. A query that already
+  // answered FALSE keeps that answer through a failed re-ask, and on a
+  // deployment whose answer IS false — which is every user on the
+  // pre-refresh Diamond today — pausing there would strand borrowers
+  // behind one rate-limited RPC call, repay included, for as long as
+  // the RPC stays unhealthy. That is a pure availability regression
+  // against a feature the chain does not even have yet.
+  //
+  // The counter-argument is that an errored negative has UNBOUNDED
+  // staleness (the capability could have flipped and we cannot tell),
+  // so it is not the same as a bounded-stale success. True — but this
+  // flag was never the thing keeping a settlement safe. Every
+  // settlement path re-probes the chain LIVE immediately before it
+  // sends, with no version gate, and refuses on anything it cannot
+  // classify. That gate is the arbiter; `resolving` only decides
+  // whether the UI says "checking…" first. Failing this flag open
+  // costs no safety and buys back the borrower's ability to repay.
   const capabilityUnanswered =
     cut.data === undefined && (cut.isPending || cut.isError);
   const resolving =
