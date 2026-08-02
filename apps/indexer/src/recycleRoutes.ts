@@ -259,26 +259,112 @@ function isKnownChainId(chainId: number): boolean {
 }
 
 const BACKING_MAX_AGE_MS = 10_000;
-const backingLast = new Map<number, { at: number; snap: BackingSnapshot }>();
+/**
+ * A FAILED read is held only briefly — long enough that a fast sequential
+ * failure storm cannot spend one upstream call each, short enough that a
+ * recovered RPC is picked up on the next tick rather than after the full
+ * success window.
+ */
+const BACKING_FAILURE_MAX_AGE_MS = 2_000;
+
+/**
+ * Colo-wide, not isolate-local.
+ *
+ * The `Map` this replaces bounded calls only within ONE isolate, so
+ * requests distributed across isolates each missed it and spent the
+ * shared operator RPC quota — the amplification bound was real but far
+ * smaller than it looked. `caches.default` is shared across the colo, so
+ * the bound holds against the traffic pattern a public endpoint actually
+ * sees.
+ *
+ * The CLIENT response stays `no-store`; this is a server-side read cache
+ * whose age is published as `asOf`, never a browser-cacheable answer.
+ */
+const BACKING_CACHE_ORIGIN = 'https://recycling-backing.internal';
+
+/** `caches.default` is a Workers extension the DOM `CacheStorage` type
+ *  does not declare. Narrowed here rather than cast at each use. */
+function coloCache(): Cache | null {
+  if (typeof caches === 'undefined') return null;
+  const d = (caches as unknown as { default?: Cache }).default;
+  return d ?? null;
+}
+
+async function cachedBacking(chainId: number): Promise<BackingSnapshot | null> {
+  const cache = coloCache();
+  if (!cache) return null;
+  try {
+    const hit = await cache.match(`${BACKING_CACHE_ORIGIN}/${chainId}`);
+    return hit ? ((await hit.json()) as BackingSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function putCachedBacking(
+  chainId: number,
+  snap: BackingSnapshot,
+): Promise<void> {
+  const cache = coloCache();
+  if (!cache) return;
+  const ttl = snap.unavailableReason === null
+    ? BACKING_MAX_AGE_MS
+    : BACKING_FAILURE_MAX_AGE_MS;
+  try {
+    await cache.put(
+      `${BACKING_CACHE_ORIGIN}/${chainId}`,
+      new Response(JSON.stringify(snap), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `max-age=${Math.ceil(ttl / 1000)}`,
+        },
+      }),
+    );
+  } catch {
+    // A cache write failing must never fail the read it was optimising.
+  }
+}
+
+/**
+ * ONE deadline across every phase of the read.
+ *
+ * viem applies its transport timeout PER REQUEST, and block-pinning
+ * introduced a second sequential phase — so `getChainId`/`getBlockNumber`
+ * could take the full budget and the contract reads take it again,
+ * doubling past the frontend's abort. That is the earlier timeout defect
+ * reintroduced by the later pinning fix. Racing the whole sequence
+ * against a single timer bounds the TOTAL regardless of how many phases
+ * a future change adds.
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms`)), ms),
+    ),
+  ]);
+}
 
 async function readBacking(
   env: Env,
   chainId: number,
   deadlineAt: number,
 ): Promise<BackingSnapshot> {
-  const fresh = backingLast.get(chainId);
-  if (fresh && Date.now() - fresh.at < BACKING_MAX_AGE_MS) return fresh.snap;
+  const cached = await cachedBacking(chainId);
+  if (cached) return cached;
   const existing = backingInFlight.get(chainId);
   if (existing) return existing;
   const budget = deadlineAt - Date.now();
   if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
-  const p = readBackingUncoalesced(env, chainId, Math.min(budget, BACKING_RPC_TIMEOUT_MS))
-    .then((snap) => {
-      // Only a SUCCESSFUL read is worth reusing; a failure must be retried
-      // by the next caller rather than pinned for the whole window.
-      if (snap.unavailableReason === null) {
-        backingLast.set(chainId, { at: Date.now(), snap });
-      }
+  const total = Math.min(budget, BACKING_RPC_TIMEOUT_MS);
+  const p = withDeadline(
+    readBackingUncoalesced(env, chainId, total),
+    total,
+    'backing read',
+  )
+    .catch(() => BACKING_UNAVAILABLE('deadline-exceeded'))
+    .then(async (snap) => {
+      await putCachedBacking(chainId, snap);
       return snap;
     })
     .finally(() => {
