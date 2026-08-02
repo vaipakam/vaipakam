@@ -1,0 +1,30 @@
+## The backup healthcheck was only ever looking at a third of the backups (#1476)
+
+The nightly backup writes three families of archive: a daily one, a monthly one cut on the 1st, and a yearly one cut on Jan 1. The weekly healthcheck verified the daily family — fetching the newest archive, checking it against its manifest, and decrypting it to prove the key still works — and never looked at the other two at all.
+
+**The damage was not the missing check so much as the confident report.** Every week the operator received "Weekly backup healthcheck PASS", with nothing in it to suggest a scope. Two of the three families had never been examined by anything, and a monthly archive that had been overwritten or had quietly stopped being written would have produced exactly the same green message, indefinitely.
+
+It also propagated. The retention policy sets a floor on how long a superseded archive stays recoverable, and that floor is derived from how often something routinely looks at these objects. For the monthly family there was nothing to derive it from, so the floor was set to a longer, weaker figure chosen only to outlast the monthly write cadence — and the reasoning was recorded honestly as such. A number stood in for a detector that did not exist.
+
+The healthcheck now runs the same verification against all three families.
+
+**The retention floor did not change, and the reason is worth stating.** Having built the detector, the obvious next step was to shorten the monthly recovery window on the grounds that something now watches those archives weekly. It does — but only in part. The check verifies the *newest* archive of each family completely: hash, size, and a real decryption. Every older archive still inside its retention gets a cheaper check that it is present and correctly paired. An archive that is silently corrupted or overwritten in place keeps both of those properties, so it passes.
+
+The floor's whole justification is that the recovery window outlives one full round of whatever routinely inspects these files. That holds for the objects inspected in full and not for the rest, so shortening the window would have rested on a detector that does not watch them — the same substitution of a number for a detector that this change set out to remove, made again one level down. Rotating the full check across the older archives was considered and is worse: it would put each one under inspection roughly every eleven weeks, implying a *longer* floor than today's, not a shorter one.
+
+Two smaller decisions worth stating:
+
+**The alert now lists every tier on every run**, pass or fail. Extending the check without changing the message would have fixed this instance and left the next one — a report that does not say what it examined invites the reader to assume it examined everything.
+
+**A yearly archive that has never been written is reported but not paged.** A deployment that has not yet lived through a Jan 1 legitimately has none, and that is a normal state lasting up to a year; paging weekly for it would train the operator to ignore the alert. That exemption is deliberately narrow: nothing ages out of the yearly archives, so once the first one exists, *every* year since must still be there, and a gap fails like any other. A missing daily or monthly archive always fails.
+
+**The check asks which archives should exist, rather than looking back a fixed number of them.** That distinction turned out to matter more than it sounds. A fixed lookback cannot tell an archive that never arrived from one that has legitimately aged out — so a failed monthly cut was covered by the previous month for the remainder of that month, and then, once the following month succeeded, was never looked at again. The gap stayed permanently, behind green weekly reports. The previous month is now required rather than a fallback, and the fallback survives only for the one moment it was meant for: the 1st itself, before that night's upload has run.
+
+This closes a detection gap, not the forgery gap: an attacker who holds both the upload credential and the encryption key can still write a self-consistent archive that passes every one of these checks. That remains tracked separately, and the retention floors remain a floor of usefulness rather than a sufficiency argument.
+
+**A detector cannot derive its expectations from the survivors.** The first version of this checked which archives existed and required those to keep existing — which sounds right and is circular. Delete the oldest archive and the baseline quietly advances past it, so the deleted one stops being expected; delete the whole family and there is nothing left to infer from, so nothing is missing and the check passes. The worst case read as the healthiest. The operator can now declare when each long tier's first archive was written, and until they do, the weekly report says in as many words that its deletion detection is degraded.
+
+Three related gaps closed with it. Only the current and previous month were checked although monthly archives live for about a year, so deleting an older one was never noticed. A period counted as present on the strength of its manifest alone — a few hundred bytes describing an archive that might no longer be there — so only the newest archive was ever confirmed to exist. And a period label taken from the storage listing was used unchecked to build a range of expected years: an upload named `-999999999` would have sent the check into a loop of roughly a billion iterations, inside the same scheduled run as the nightly backup. Labels are now validated to their exact expected shape, and the range builder independently refuses an implausible span.
+
+One number in this change was wrong and a test caught it: the retention window was set to eleven months on the reasoning that it was already a month inside the twelve-month promise. The real figure is 10.97 months, so requiring an eleventh would have paged every week for an archive that had legitimately expired.
+

@@ -106,13 +106,48 @@ provenance gap tracked as **#1473**, which is what would actually close it. The
 floors in `lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency
 argument, and its comments say so.
 
-The monthly floor is higher for a worse reason, stated plainly rather than
-buried: `healthcheck.ts` examines only `manifests/<recent dates>/`, so it never
-looks at the monthly prefixes and **a monthly overwrite is detected by nothing
-today**. A short window there could not be justified by detection at all, so it
-instead has to outlast the monthly write cadence. Extending the healthcheck to
-cover that tier is **#1476**; until it lands the monthly guarantee is genuinely
-weaker than the daily one.
+### Declare the first archive of each long tier (`ARCHIVE_FIRST_*`)
+
+Two optional vars on the Worker:
+
+- `ARCHIVE_FIRST_MONTHLY` — `YYYY-MM` of the first monthly cut this
+  deployment wrote.
+- `ARCHIVE_FIRST_YEARLY` — `YYYY` of the first yearly cut.
+
+**Set them once each first cut exists.** Without them the healthcheck
+derives what *should* be present from what *is* present, and that is
+circular: delete the oldest yearly archive and the inferred baseline
+advances past it, so the deleted year stops being required; empty the
+family entirely and there is nothing left to infer from, so nothing is
+reported missing and the tier passes. A detector whose expectations come
+from the survivors cannot report a deletion.
+
+They are optional because a fresh deployment genuinely has no baseline to
+state. While unset, the tier falls back to the earliest archive it can still
+see — enough to catch a gap ABOVE that point, blind to a deletion below it —
+and the weekly report appends `COVERAGE DEGRADED` to that tier's line saying
+so. The absence of the guarantee is published rather than implied.
+
+A malformed value fails **only its own tier**: a typo in
+`ARCHIVE_FIRST_MONTHLY` must not suppress the daily and yearly checks for the
+week, or an alert about a typo hides a simultaneous loss elsewhere.
+
+The monthly floor is higher than the daily one, and **#1476 did not change
+that** — deliberately, after trying to.
+
+Before #1476, `healthcheck.ts` examined only `manifests/<recent dates>/`, so a
+monthly overwrite was detected by nothing at all and the window could not be
+justified by detection in any form; it simply had to outlast the monthly write
+cadence. #1476 closed that gap: the weekly run now reads every prefix family.
+
+It did not earn a shorter window. The run verifies the NEWEST period of each
+family in full — hash, size, decryption — while every older period still inside
+retention gets a presence-and-pairing check, which an archive corrupted or
+overwritten in place passes unchanged. The floor's derivation is "the window
+outlives one full cycle of the routine inspection", and that only holds for the
+periods actually inspected in full. Rotating the full check across the retained
+months implies a floor near 78 days, not a shorter one. See the note above
+`MIN_RECOVERY_DAYS_MONTHLY` in `lifecycle-policy.mjs`.
 
 Raising the daily ceiling at all means excluding support tickets from that tier,
 which means tickets have no backup — a product decision, tracked as **#1474**.
@@ -200,8 +235,10 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
      are not repeated in this README). The yearly prefixes get
      NO rule, which is what gives them indefinite retention — an earlier
      revision of this line said "six rules … yearly indefinite", which
-     described a rule that does not and should not exist. (Their being
-     unverified by the healthcheck is a separate gap, #1476.)
+     described a rule that does not and should not exist. (The healthcheck
+     verifies the newest yearly object since #1476, but treats its ABSENCE as
+     expected rather than pageable — a deployment that has not lived through a
+     Jan 1 legitimately has none.)
    - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
      writeFiles, bucket-scoped — NOT listFiles) for the nightly cron.
    - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +

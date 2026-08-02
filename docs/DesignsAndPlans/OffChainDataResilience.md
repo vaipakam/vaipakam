@@ -240,13 +240,41 @@ healthcheck in parallel — two independent `ctx.waitUntil` calls, no
 shared state, separate scoped B2 keys (write-only for backup,
 read-only for healthcheck). The healthcheck:
 
-- Lists the `manifests/<recent-date>/` prefix to discover the latest
-  archive (looks back 0..2 days to tolerate a single missed nightly).
+- Runs the same verification against **every** prefix family the backup
+  writes — daily, monthly and yearly (#1476). It originally examined
+  only the daily prefixes, which left the other two unverified by
+  anything while a green PASS implied otherwise.
+- Lists each family's root prefix ONCE and asks which periods should be
+  present, rather than looking back a fixed number of them. A fixed
+  lookback cannot tell a period that never arrived from one that has aged
+  out: a failed monthly cut was covered by the previous month for the rest
+  of that month and then never examined again. So the previous month is
+  REQUIRED, not a fallback — the current month is excused only on the 1st,
+  the one moment the cron may genuinely not have run. Nothing ages out of
+  the yearly prefixes, so every year since the first one written must
+  still be present.
+- Treats a listing FAILURE as a tier failure, never as an empty tier. An
+  unreadable prefix would otherwise be indistinguishable from an absent
+  one, which on the yearly family — whose absence is excused — turned an
+  S3 outage into a green PASS.
 - Fetches that manifest + the sibling archive at the matching nonce.
 - Verifies the archive's SHA-256 matches the manifest's stamp.
 - Decrypts the archive locally to confirm the key + ciphertext are
   intact.
-- Pages the operator on any failure via Telegram (`TG_OPS_CHAT_ID`).
+- Reports **one line per tier on every run**, pass or fail, so the
+  alert states what was actually examined instead of leaving a reader
+  to assume it covered everything.
+- Pages the operator on any failure via Telegram (`TG_OPS_CHAT_ID`). The
+  yearly exemption is narrow: it covers only a family that has NEVER been
+  written, since a deployment that has not lived through a Jan 1
+  legitimately has none. An *established* yearly family that loses a year
+  fails like any other — that tier has no lifecycle rule, so nothing
+  should ever disappear from it.
+- Verifies the newest period of each family in full (hash, byte length,
+  decryption) and asserts PRESENCE for every other required period. Full
+  verification is bounded to one object per family so the Worker's memory
+  and CPU budget cannot grow with the archive's age; that boundary is the
+  stated coverage limit rather than an oversight.
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare

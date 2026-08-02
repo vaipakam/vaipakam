@@ -7,7 +7,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --test scripts/*.test.mjs",
+    "test": "node --experimental-strip-types --test scripts/*.test.mjs",
     "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit",
     "bucket:lifecycle:check": "node scripts/apply-bucket-lifecycle.mjs --check",
     "bucket:lifecycle:print": "node scripts/apply-bucket-lifecycle.mjs --print-live",
@@ -18,5 +18,8 @@
     "@cloudflare/workers-types": "^4.20240924.0",
     "typescript": "^5.5.0",
     "wrangler": "^4.85.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }
