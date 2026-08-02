@@ -2095,6 +2095,7 @@
     "footnote": "An “estimate” day is one the programme had scheduled but not yet committed to; its drawn column stays empty because nothing was committed. A “recomputed” day was reconstructed afterwards rather than recorded as it happened, from state a later role handover can rewrite. Blank cells mean a figure is not yet determined — never that it is zero.",
     "absorbedLocal": "Absorbed on this deployment",
     "absorbedMirror": "Absorbed on other reward chains",
+    "belowThreshold": "less than 0.0001",
     "colSelfFunded": "Self-funded share",
     "selfFundedPct": "{{pct}}%",
     "recomputedBadge": "recomputed",

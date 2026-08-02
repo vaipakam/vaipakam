@@ -13,6 +13,84 @@ const WINDOW_DAYS = 30;
 /** The dashboard's own refresh cadence, so this section does not go stale. */
 const REFRESH_MS = 60_000;
 
+/** Fractional digits `formatUnitsPretty` keeps by default. */
+const DISPLAY_FRAC_DIGITS = 4;
+/**
+ * The smallest amount that survives rendering. Anything positive below it
+ * formats to "0" — which on an accounting surface is a false statement,
+ * not a rounding artefact, so it is shown as a below-threshold marker.
+ */
+const MIN_DISPLAYABLE = 10n ** BigInt(18 - DISPLAY_FRAC_DIGITS);
+
+/** Wire amounts are unsigned integer decimal strings. Nothing else is one. */
+const WELL_FORMED_AMOUNT = /^\d+$/;
+
+/** Every field of the payload that is a token amount. */
+const AMOUNT_FIELDS = {
+  cumulative: [
+    'absorbed',
+    'absorbedPreLaunch',
+    'absorbedLocal',
+    'absorbedMirror',
+    'freshDrawdown',
+    'recycledBudget',
+  ],
+  daily: [
+    'scheduleFloor',
+    'recycledBudget',
+    'aBar',
+    'freshDrawdown',
+    'netEmission',
+    'absorbedLocal',
+    'absorbedMirror',
+    'absorbed',
+  ],
+} as const;
+
+/**
+ * Reject a payload whose amounts are not amounts, BEFORE rendering.
+ *
+ * `BigInt('')` throws, and this component renders inside the routed
+ * surface's error boundary — so one corrupt field from a bad D1 row or a
+ * tampered cache would replace the whole of /analytics with the app-crash
+ * fallback. Validating here degrades to this section's own "cannot say"
+ * state instead, which is both narrower and honest.
+ *
+ * It deliberately does NOT coerce a bad field to zero: that would turn a
+ * detected corruption into a confident false figure, which is the failure
+ * this entire surface is built to avoid.
+ */
+function amountsAreWellFormed(s: RecyclingSeries): boolean {
+  const ok = (v: unknown) =>
+    v === null || (typeof v === 'string' && WELL_FORMED_AMOUNT.test(v));
+  const cum = s.cumulative as unknown as Record<string, unknown>;
+  for (const f of AMOUNT_FIELDS.cumulative) if (!ok(cum[f])) return false;
+  for (const d of s.daily) {
+    const row = d as unknown as Record<string, unknown>;
+    for (const f of AMOUNT_FIELDS.daily) if (!ok(row[f])) return false;
+  }
+  return true;
+}
+
+/**
+ * The self-funded share, rounded so it can never overstate.
+ *
+ * `Math.round` turns 0.9995 into 100%, presenting a day that still drew a
+ * fresh floor as fully self-funded — and contradicting the runway card,
+ * whose `selfFunded` state is exact. Rounding DOWN means the error can
+ * only ever understate how self-funding the programme was, which is the
+ * safe direction for a figure the platform publishes about itself.
+ *
+ * No clamp at the top: the ratio is `recycledBudget / (floor +
+ * recycledBudget)`, so it reaches 1 exactly when the floor is zero and
+ * cannot exceed it. `Math.floor(1 * 1000) / 10` is already 100, so an
+ * explicit `>= 1` branch would be unreachable — it survived deletion
+ * under mutation, which is how it was found.
+ */
+function selfFundedPct(ratio: number): number {
+  return Math.floor(ratio * 1000) / 10;
+}
+
 /**
  * What a day's absorption may STATE — decided once, for every cell.
  *
@@ -104,8 +182,9 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
       fetchRecyclingSeries(chainId, WINDOW_DAYS)
         .then((s) => {
           if (cancelled) return;
-          // A null read is "we cannot say", not "nothing happened".
-          if (!s) {
+          // A null read is "we cannot say", not "nothing happened" — and
+          // a malformed one is the same answer, reached differently.
+          if (!s || !amountsAreWellFormed(s)) {
             setState('unavailable');
             return;
           }
@@ -147,8 +226,16 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   const { cumulative, daily, scope, coverageFromDay } = series;
   // Every amount arrives as an 18-decimal wei decimal string. Rendering it
   // verbatim shows a 20-digit integer for an ordinary figure.
-  const amt = (v: string | null): string =>
-    v === null ? '' : formatUnitsPretty(BigInt(v), 18);
+  const amt = (v: string | null): string => {
+    if (v === null) return '';
+    const n = BigInt(v);
+    // A positive amount must never render as "0". Below the display
+    // threshold the formatter truncates to zero, and a zero here is
+    // indistinguishable from a genuinely quiet programme — the single
+    // reading this surface exists to prevent.
+    if (n > 0n && n < MIN_DISPLAYABLE) return t('recycling.belowThreshold');
+    return formatUnitsPretty(n, 18);
+  };
   const globalScope = scope === 'global';
   // The reconciliation note is shown exactly when the figures ON SCREEN
   // actually disagree — not as a standing caveat.
@@ -258,7 +345,12 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
         {t('recycling.windowNote', { days: WINDOW_DAYS })}
       </p>
 
-      <table className="recycling-days">
+      {/* An eight-column table with no scroller expands the DOCUMENT on a
+          narrow viewport, pushing the drawn and absorbed columns off-screen
+          — the figures this section exists to show. Same container the
+          dashboard's other tables use. */}
+      <div className="pd-table-wrap" data-testid="recycling-table-wrap">
+        <table className="recycling-days">
         <caption className="sr-only">{t('recycling.tableCaption')}</caption>
         <thead>
           <tr>
@@ -302,7 +394,7 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
                 {d.selfFundingRatio === null
                   ? ''
                   : t('recycling.selfFundedPct', {
-                      pct: Math.round(d.selfFundingRatio * 1000) / 10,
+                      pct: selfFundedPct(d.selfFundingRatio),
                     })}
               </td>
               {/* Empty, not zero: an unarmed day committed nothing. */}
@@ -322,7 +414,8 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
 
       {daily.length === 0 && (
         <p className="muted" data-testid="recycling-no-days">

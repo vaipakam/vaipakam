@@ -318,7 +318,103 @@ describe('RecyclingAccount — M5 content requirements', () => {
   });
 });
 
+describe('RecyclingAccount — a positive figure is never rendered as zero', () => {
+  it('marks a small nonzero amount below the display threshold', async () => {
+    // 1 wei formats to "0" at four fractional digits. On an accounting
+    // surface that is a false statement, not a rounding artefact: it is
+    // indistinguishable from a programme that absorbed nothing.
+    mockSeries(
+      series({
+        cumulative: { ...series().cumulative, absorbedPreLaunch: '1' },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-prelaunch').textContent).toBe(
+        'recycling.belowThreshold',
+      ),
+    );
+  });
+
+  it('still renders a genuine zero as zero', async () => {
+    // The marker must mean "small", not "unknown" — a true zero is a fact
+    // the platform can state.
+    mockSeries(
+      series({
+        cumulative: { ...series().cumulative, absorbedPreLaunch: '0' },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-prelaunch').textContent).toBe('0'),
+    );
+  });
+
+  it('never rounds a partially self-funded day up to 100%', async () => {
+    // Math.round(0.9995) reaches 100%, presenting a day that still drew a
+    // fresh floor as fully self-funded — and contradicting the runway
+    // card, whose selfFunded state is exact.
+    mockSeries(series({ daily: [day({ dayId: 8, selfFundingRatio: 0.9995 })] }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() => expect(screen.getByTestId('selffunded-8')).toBeDefined());
+    expect(screen.getByTestId('selffunded-8').textContent).not.toContain('100');
+    expect(screen.getByTestId('selffunded-8').textContent).toContain('99.9');
+  });
+
+  it('shows 100% only when the day genuinely reached it', async () => {
+    mockSeries(series({ daily: [day({ dayId: 10, selfFundingRatio: 1 })] }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('selffunded-10').textContent).toContain('100'),
+    );
+  });
+});
+
+describe('RecyclingAccount — a corrupt payload degrades narrowly', () => {
+  it('falls back to unavailable rather than throwing through the boundary', async () => {
+    // BigInt('') throws during render, and the only error boundary wraps
+    // the whole routed surface — so one bad field would replace all of
+    // /analytics with the app-crash fallback.
+    mockSeries(
+      series({
+        cumulative: { ...series().cumulative, absorbedLocal: 'not-a-number' },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByText('recycling.unavailable');
+  });
+
+  it('rejects a corrupt DAILY amount too, not only a cumulative one', async () => {
+    mockSeries(series({ daily: [day({ dayId: 3, scheduleFloor: '12,34' })] }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByText('recycling.unavailable');
+  });
+
+  it('does NOT substitute a zero for the corrupt field', async () => {
+    // Coercing a detected corruption into a confident figure is worse
+    // than refusing: it is the failure this whole surface prevents.
+    mockSeries(
+      series({
+        cumulative: { ...series().cumulative, absorbedLocal: 'x' },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByText('recycling.unavailable');
+    expect(screen.queryByTestId('recycling-absorbed-local')).toBeNull();
+  });
+});
+
 describe('RecyclingAccount — per-day provenance and scope', () => {
+  it('keeps the daily table scrollable on a narrow viewport', async () => {
+    // Without its own scroller the eight-column table expands the
+    // DOCUMENT, pushing the drawn and absorbed columns off-screen.
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    const wrap = await screen.findByTestId('recycling-table-wrap');
+    expect(wrap.className).toContain('pd-table-wrap');
+    expect(wrap.querySelector('table.recycling-days')).not.toBeNull();
+  });
+
   it('shows each day\'s local and mirror components, not only the combined', async () => {
     mockSeries(
       series({
