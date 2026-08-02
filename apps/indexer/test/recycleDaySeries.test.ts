@@ -1427,6 +1427,36 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     );
   });
 
+  it('WITHHOLDS the runway until the attribution rebuild has actually run', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 400n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // Migration 0047 creates the column defaulted to zero, so between the
+    // migration landing and the next scan the column EXISTS while
+    // attribution is still empty. Presence is not readiness — the
+    // projection version is what says the rebuild finished.
+    h.db
+      .prepare(`UPDATE recycle_series_state SET projection_version = 1 WHERE chain_id = ?`)
+      .run(CHAIN);
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'attribution-column-unavailable',
+    );
+  });
+
   it('marks event-sourced days so a reader can tell the two apart', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries([stamped(2n)], env, CHAIN);

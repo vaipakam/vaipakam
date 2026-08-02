@@ -28,8 +28,11 @@
  * runbook uses.
  *
  * Usage:
+ *   # 1. deploy ops/offchain-data-archive so the nightly backup carries
+ *   #    recycle_day_backfill, and confirm one run has included it.
+ *   # 2. then, and only then:
  *   mkdir -p restore/d1
- *   RPC_URL=... DIAMOND=0x... CHAIN_ID=8453 \
+ *   ARCHIVE_READY=1 RPC_URL=... DIAMOND=0x... CHAIN_ID=8453 \
  *     OUT=restore/d1/recycle_day_backfill.sql \
  *     node apps/indexer/scripts/backfill-recycle-days.mjs --to <lastDay>
  *
@@ -108,6 +111,22 @@ const FROM = Number(arg('--from') ?? 0);
 const TO = Number(arg('--to'));
 const OUT = process.env.OUT;
 
+// ── The rows this pass creates are IRREPLACEABLE, and nothing in the
+// rollout deploys the thing that backs them up (Codex #1513 r8 P1).
+//
+// `contracts/script/deploy-{mainnet,testnet,chain}.sh` deploy the indexer
+// and apply migration 0047; NONE of them deploys `ops/offchain-data-archive`,
+// and no other automation does either. So following the canonical rollout
+// creates these rows while the live nightly worker is still running its old
+// table list and omitting them. After a demotion makes regeneration
+// impossible, a D1 loss in that window loses the capture permanently.
+//
+// The pass cannot observe whether the archive worker is deployed, so it
+// refuses to guess: the operator states it. An explicit acknowledgement is
+// the honest instrument here — a silent default in either direction is
+// either an obstacle or a trap.
+const ARCHIVE_READY = process.env.ARCHIVE_READY === '1';
+
 if (!RPC_URL) die('RPC_URL is required');
 if (!DIAMOND) die('DIAMOND is required');
 if (!Number.isFinite(CHAIN_ID) || CHAIN_ID <= 0) die('CHAIN_ID is required');
@@ -133,6 +152,18 @@ if (TO - FROM + 1 > MAX_SCAN_DAYS) {
     `refusing to scan ${TO - FROM + 1} days (cap ${MAX_SCAN_DAYS}) — that is ` +
       `one RPC round trip per day; narrow the range or raise the cap ` +
       `deliberately`,
+  );
+}
+
+if (!ARCHIVE_READY) {
+  die(
+    'refusing to create irreplaceable rows that nothing backs up yet.\n' +
+      '  These rows cannot be regenerated after a role demotion, and no deploy\n' +
+      '  script deploys ops/offchain-data-archive — so the live nightly worker\n' +
+      '  may still be running a table list that omits recycle_day_backfill.\n' +
+      '  Deploy the archive worker FIRST (it must carry the table, migration\n' +
+      '  0047), confirm a nightly run has included it, then re-run with\n' +
+      '  ARCHIVE_READY=1.',
   );
 }
 

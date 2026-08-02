@@ -767,8 +767,20 @@ re-litigate:
   NOTHING` — the first capture, taken while the inputs were intact, is the
   record.
 
-**The operator ordering requirement is unchanged and is the live risk:**
-back-fill BEFORE any demotion or role migration.
+**TWO operator ordering requirements, and the second was missed until
+Codex #1513 r8:**
+
+1. Back-fill BEFORE any demotion or role migration (the getter's inputs).
+2. **Deploy `ops/offchain-data-archive` BEFORE running the pass**, and
+   confirm a nightly run has included `recycle_day_backfill`. No deploy
+   script deploys that Worker — `deploy-{mainnet,testnet,chain}.sh` deploy
+   the indexer and apply 0047 and stop — so following the canonical rollout
+   creates IRREPLACEABLE rows while the live nightly is still running a
+   table list that omits them. After a demotion makes regeneration
+   impossible, a D1 loss in that window loses the capture permanently.
+   The pass now refuses without an explicit `ARCHIVE_READY=1`, because it
+   cannot observe the answer and a silent default is either an obstacle or
+   a trap.
 
 **(Historical note — why it was a separate slice, and the restore
 classification is why.)** `check-table-classification.mjs` requires every

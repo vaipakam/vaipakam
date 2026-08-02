@@ -887,6 +887,23 @@ export function invalidRecycleBackfillRowShapes(archive) {
             `emission rather than as an estimate`,
         );
       }
+      // The writer SKIPS an unfinalized day with no absorption — there is
+      // nothing to preserve. A restored empty row is therefore not a shape
+      // it produces, and it is not inert: every row participates in the
+      // head query's MIN(day_id), so an invented early one drags the
+      // coverage boundary back and makes the API publish synthetic quiet
+      // buckets for days it never observed (Codex #1513 r8).
+      if (
+        row.stamped === 0 &&
+        String(row.absorbed_local) === '0' &&
+        String(row.absorbed_mirror) === '0'
+      ) {
+        push(
+          `an unfinalized row with no absorption is not a shape the writer ` +
+            `emits (it skips those) — restored, it would drag coverage back ` +
+            `and fabricate quiet days`,
+        );
+      }
       if (row.stamped === 0 && row.armed === 1) {
         push(
           `an unfinalized day cannot be armed — the writer emits armed=0 for ` +

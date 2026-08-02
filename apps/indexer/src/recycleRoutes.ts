@@ -644,9 +644,32 @@ export async function handleRecyclingSeries(
     const backfilledMirror = [...merged.values()].some(
       (d) => (d.snapshot_mirror ?? 0n) > 0n,
     );
+    // Unavailable until the REBUILD has run, not merely until the column
+    // exists (Codex #1513 r8). Migration 0047 creates it defaulted to zero,
+    // so between the migration landing and the next scan every historical
+    // accepted credit reads as unattributed — the whole mirror fold is then
+    // added on top of the mirrors' full reported cumulatives and the runway
+    // inflates. The projection version is what says the rebuild finished.
+    const projectionState = await env.DB.prepare(
+      `SELECT projection_version FROM recycle_series_state WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ projection_version: number }>()
+      .catch(() => null);
+    //
+    // NARROW, like every other refusal here. A stale rebuild only matters
+    // if there is attribution to be stale about: with no reported rows and
+    // no mirror fold the mirror term is zero either way. A first draft of
+    // this gate withheld unconditionally and took three backfill-only
+    // tests down with it — the gate was measuring the rebuild rather than
+    // the risk.
+    const rebuildStale = (projectionState?.projection_version ?? 0) < 2;
+    const attributionAtStake =
+      (reportedRows.results ?? []).length > 0 || cumAbsorbedMirror > 0n;
     const attributionUnavailable =
       (reportedRows as { attributionUnavailable?: boolean })
-        .attributionUnavailable === true;
+        .attributionUnavailable === true ||
+      (rebuildStale && attributionAtStake);
     const mirrorUnreported =
       mirrorFold > mirrorAttributed ? mirrorFold - mirrorAttributed : 0n;
     const mirrorTerm = mirrorReported + mirrorUnreported;
