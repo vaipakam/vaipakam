@@ -70,7 +70,10 @@ import {
   applyRewardLoopLedger,
   ensureRewardLoopBackfill,
 } from './rewardLoopLedger';
-import { applyRecycleDaySeries } from './recycleDaySeries';
+import {
+  applyRecycleDaySeries,
+  ensureRecycleSeriesBackfill,
+} from './recycleDaySeries';
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
@@ -578,6 +581,23 @@ export async function runChainIndexerForChain(
     .first<{ last_block: number }>();
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
   const scanFrom = lastBlock + 1n;
+
+  // One-time activity_events backfills, run BEFORE the caught-up branch
+  // below (Codex #1507 r2 P1). Both of these seed a projection from
+  // history the shared cursor has already passed, so both must run even
+  // when there is nothing to scan — a deploy landing on an already-caught-
+  // up chain would otherwise serve an empty metric until an unrelated
+  // future log happened to arrive.
+  //
+  // Placed here rather than duplicated into the quiet path and the scan
+  // path: I did exactly that and got it wrong, because the recycling one
+  // sat inside the ingest helper the quiet path never reaches. Two call
+  // sites that must be kept in sync is the defect; one call site above
+  // every return is the fix, and the next backfill added here inherits it.
+  // Cheap after the first run — one flag SELECT each.
+  await ensureRewardLoopBackfill(env, chainId);
+  await ensureRecycleSeriesBackfill(env, chainId);
+
   if (scanFrom > head) {
     // Caught up — no new blocks. Still sweep market_summary (Codex
     // #1288 r4): a market whose only order expired purely BY CLOCK has
@@ -619,12 +639,7 @@ export async function runChainIndexerForChain(
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
     await stampNotifiedWatermark(env, chainId, lastBlock);
-    // RL-2 (Codex #1310 r2 P2) — seed the loop-closure ledger's one-time
-    // activity_events backfill on quiet chains too: a deploy landing on
-    // an already-caught-up chain would otherwise serve zeros from
-    // /metrics/loop-closure until an unrelated future log arrived.
-    // Cheap after the first run (a single flag SELECT).
-    await ensureRewardLoopBackfill(env, chainId);
+    // (Both one-time backfills already ran above, before this branch.)
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
