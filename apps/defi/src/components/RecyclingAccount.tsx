@@ -25,15 +25,6 @@ const MIN_DISPLAYABLE = 10n ** BigInt(18 - DISPLAY_FRAC_DIGITS);
 /** Wire amounts are unsigned integer decimal strings. Nothing else is one. */
 const WELL_FORMED_AMOUNT = /^\d+$/;
 
-/** The backing members this page actually RENDERS. The publish gate needs
- *  every one of them, not a representative sample. */
-const BACKING_DISPLAYED = [
-  'platformRetained',
-  'vpfiBalance',
-  'bucket',
-  'unearmarked',
-] as const;
-
 /** Every field of the payload that is a token amount. */
 const AMOUNT_FIELDS = {
   cumulative: [
@@ -256,9 +247,20 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   // and rendered the reserve with an empty balance cell beside it. That is
   // the all-or-nothing rule failing on precisely the untrusted-payload
   // path it exists to cover.
+  // Driven off the AMOUNT FAMILY, not a second hand-kept list.
+  //
+  // Two lists that must agree is how this rule failed three times in one
+  // PR: the gate covered two of the four members, then four of the five
+  // once `releasedRemitStranded` was added. A field can now only enter
+  // the payload through `AMOUNT_FIELDS.backing`, and entering it puts the
+  // field in the gate automatically. `unavailableReason` being null means
+  // the read SUCCEEDED, so every amount it returns must be present; a
+  // null among them is a partial payload, not a withheld one.
   const backingPublishable = (b: RecyclingSeries['backing']): boolean =>
     b.unavailableReason === null &&
-    BACKING_DISPLAYED.every((f) => b[f] !== null);
+    AMOUNT_FIELDS.backing.every(
+      (f) => (b as unknown as Record<string, unknown>)[f] !== null,
+    );
 
   // An indexer that predates the backing block serves no `backing` at all.
   // Treat that as the same refusal a failed read produces — the page must

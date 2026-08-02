@@ -2112,6 +2112,6 @@
     "backedLabel": "Recycled pool fully backed?",
     "backedYes": "Yes — the platform holds at least the pool it reports",
     "backedShort": "No — the pool is short by {{amount}} VPFI",
-    "strandedLabel": "Sent but not yet delivered"
+    "strandedLabel": "Released from the pool and never credited back"
   }
 }

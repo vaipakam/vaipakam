@@ -321,17 +321,30 @@ async function readBackingUncoalesced(
     // the same deterministic address, the read succeeds and we would
     // publish another chain's reserve under this chain's id — a wrong
     // figure presented with full confidence, which is worse than none.
-    const [observedChainId, snap, composition] = await Promise.all([
+    // PINNED TO ONE BLOCK. These two reads explain each other: the second
+    // is what stops a released remittance rendering as a depleted
+    // reserve. Read at `latest` independently, a release landing between
+    // them yields the post-release `outstandingCommitRecycled` beside the
+    // pre-release stranded counter — a reserve floored to zero with no
+    // explanation, which is precisely the false-depletion state the
+    // second read was added to prevent. Two reads that explain each other
+    // have to describe the same moment.
+    const [observedChainId, blockNumber] = await Promise.all([
       client.getChainId(),
+      client.getBlockNumber(),
+    ]);
+    const [snap, composition] = await Promise.all([
       client.readContract({
         address: chain.diamond as Address,
         abi: InteractionRewardsLensFacetABI,
         functionName: 'getRecycleBackingSnapshot',
+        blockNumber,
       }) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>,
       client.readContract({
         address: chain.diamond as Address,
         abi: RewardAggregatorFacetABI,
         functionName: 'getRecycleCompositionPosition',
+        blockNumber,
       }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
     ]);
     if (observedChainId !== chainId) {

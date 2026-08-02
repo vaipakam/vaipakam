@@ -740,4 +740,19 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
     await screen.findByTestId('recycling-backed');
     expect(screen.queryByTestId('recycling-stranded')).toBeNull();
   });
+
+  it('withholds the block when the STRANDED term is null', async () => {
+    // Third time this rule failed on a newly added member. The gate is
+    // now derived from the amount family itself, so a field cannot enter
+    // the payload without entering the gate — this test pins that the
+    // newest member is genuinely covered rather than separately listed.
+    mockSeries(
+      series({
+        backing: { ...series().backing, releasedRemitStranded: null },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
 });
