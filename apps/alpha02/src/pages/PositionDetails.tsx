@@ -650,10 +650,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // Judged on the RECONCILED status (live override folded in): a loan
   // the chain already knows is terminal must not show the hold card
   // even while the indexed row lags (Codex #1511 r1 P2).
+  // 'clearable' additionally requires a POSITIVE live Active reading
+  // (Codex #1511 r9): with the indexed row stale-active and the live
+  // status pending/failed, the teardown also succeeds on a TERMINAL
+  // loan (the seller-hygiene branch — no borrower options to free, no
+  // cooldown stamped), and the borrower cleanup invite must not
+  // render on that ambiguity. 'live' needs no such confirmation — the
+  // SaleListingLoanStillLive revert itself proves the loan is live
+  // on-chain. 'accepted' stays presented on the indexed row alone:
+  // its only effect is a protective pause on flows that would revert
+  // on a terminal loan anyway.
+  const liveActiveConfirmed =
+    liveStatus.data?.status === LoanStatus.Active;
   const saleListingHeld =
     row.status === 'active' &&
     (saleHold.data === 'live' ||
-      saleHold.data === 'clearable' ||
+      (saleHold.data === 'clearable' && liveActiveConfirmed) ||
       // Accepted-awaiting-completion keeps `loanToSaleOfferId` set, so
       // the offset path stays refused (Codex #1511 r3).
       saleHold.data === 'accepted');
