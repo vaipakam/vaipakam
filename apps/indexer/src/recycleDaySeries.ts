@@ -366,8 +366,16 @@ export async function ensureRecycleSeriesBackfill(
  * so databases that already completed the activity_events replay rebuild it.
  *
  * 1 — `recycle_chain_reported` (per-source lifetime cumulative).
+ * 2 — `attributed_cumulative` on the same table. 0047 initialises it to
+ *     zero, so a database that already completed version 1 would return
+ *     early and never populate it — and the read surface would then treat
+ *     every historical accepted credit as UNREPORTED and add it on top of
+ *     its source's full reported cumulative (Codex #1513 r5 P1).
+ *
+ * The rule is written at the top of 0046 and I broke it one round later,
+ * in this file: adding a column to a projection is adding a projection.
  */
-const PROJECTION_VERSION = 1;
+const PROJECTION_VERSION = 2;
 
 /**
  * Rebuild the per-source lifetime cumulative from `activity_events`.

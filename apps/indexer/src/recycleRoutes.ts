@@ -206,6 +206,7 @@ export async function handleRecyclingSeries(
           freshDrawdown: '0',
           recycledBudget: '0',
           runwayExtensionDays: null,
+          runwayUnavailableReason: 'no-armed-finalized-days',
           // Present with the same shape as every non-empty response, so a
           // dashboard's no-data state does not need a special case to tell
           // "not self-funded" from "field absent" (Codex #1507 r1 P2).
@@ -266,6 +267,13 @@ export async function handleRecyclingSeries(
           if (!/no such table/i.test(String(err))) throw err;
           return { results: [] as Array<Omit<PoolRow, 'a_bar' | 'margin_bps'>> };
         }),
+      // Same rollout window as the backfill query below: every deploy
+      // script deploys the Worker BEFORE applying migrations, so pre-0047
+      // this table exists WITHOUT `attributed_cumulative` and an uncaught
+      // `no such column` rejects the whole `Promise.all` — a 500 for the
+      // length of the rollout, and indefinitely if the migration fails
+      // (Codex #1513 r5 P2). I made the sibling query tolerant and left
+      // this one, in the same expression.
       env.DB.prepare(
         `SELECT source_chain_id, reported_cumulative, attributed_cumulative
            FROM recycle_chain_reported WHERE chain_id = ?`,
@@ -275,7 +283,32 @@ export async function handleRecyclingSeries(
           source_chain_id: number;
           reported_cumulative: string;
           attributed_cumulative: string;
-        }>(),
+        }>()
+        .catch((err: unknown) => {
+          if (!/no such (column|table)/i.test(String(err))) throw err;
+          return env.DB.prepare(
+            `SELECT source_chain_id, reported_cumulative
+               FROM recycle_chain_reported WHERE chain_id = ?`,
+          )
+            .bind(chainId)
+            .all<{ source_chain_id: number; reported_cumulative: string }>()
+            .then((r) => ({
+              results: (r.results ?? []).map((x) => ({
+                ...x,
+                attributed_cumulative: '0',
+              })),
+            }))
+            .catch((e: unknown) => {
+              if (!/no such table/i.test(String(e))) throw e;
+              return {
+                results: [] as Array<{
+                  source_chain_id: number;
+                  reported_cumulative: string;
+                  attributed_cumulative: string;
+                }>,
+              };
+            });
+        }),
     ]);
 
     const merged = new Map<number, MergedDay>();
@@ -548,19 +581,52 @@ export async function handleRecyclingSeries(
     // reported total, and taking the reported figure alone drops every
     // recovered credit. Applying the rule to one side and not the other
     // was the same omission twice in one expression.
-    // Attributed-from-reporting-sources: the part of the merged mirror fold
-    // that the reported cumulatives above already account for. Anything the
-    // fold saw beyond it belongs to a source with no report in this
-    // consumer's coverage, and is added rather than compared away.
+    // ── The mirror term is REFUSED rather than estimated when a backfilled
+    // day contributes cross-chain absorption. Four consecutive review
+    // rounds found this figure wrong in a new way, and they were all one
+    // problem: the day series' mirror total is summed ACROSS MIRRORS on
+    // chain, so a backfilled day cannot be decomposed per source, and no
+    // arithmetic over aggregates recovers what the sources were.
+    //
+    //   r2: the fold left out this chain's own pre-launch stock.
+    //   r3: it left out every other chain's.
+    //   r4: max(Σ reported, Σ fold) drops a backfill-only mirror whenever
+    //       another mirror's reported figure dominates.
+    //   r5: max(snapshot, fold) is only valid when one source set CONTAINS
+    //       the other — a snapshot holding B's 200 and a fold holding C's
+    //       300 really total 500, and the maximum says 300.
+    //
+    // Each fix was locally right and the next case broke it, because the
+    // information needed is not in the data. So the endpoint does what it
+    // does everywhere else on this surface and REFUSES: a plausible wrong
+    // number is worse than an absent one, and every component it is built
+    // from is still published for anyone who wants to reason about it.
+    //
+    // Exactness is recoverable later — per-source per-day attribution, or
+    // pinning the snapshot block and treating later credits as a delta —
+    // but that is a change to what the backfill RECORDS, not to how this
+    // arithmetic is arranged. Tracked as its own card.
     const mirrorFold = cumAbsorbedMirror;
+    const backfilledMirror = [...merged.values()].some(
+      (d) => d.origin === 'backfill' && BigInt(d.absorbed_mirror) > 0n,
+    );
     const mirrorUnreported =
       mirrorFold > mirrorAttributed ? mirrorFold - mirrorAttributed : 0n;
     const mirrorTerm = mirrorReported + mirrorUnreported;
     const runwayNumerator = localTerm + mirrorTerm;
     const runwayExtensionDays =
-      trailingCount === 0n || selfFunded
+      trailingCount === 0n || selfFunded || backfilledMirror
         ? null
         : ratio6(runwayNumerator * trailingCount, trailingPoolSum);
+    // Why it is null, so a consumer is not left guessing between "no data",
+    // "self-funded" and "cannot be computed honestly".
+    const runwayUnavailableReason = selfFunded
+      ? 'self-funded'
+      : trailingCount === 0n
+        ? 'no-armed-finalized-days'
+        : backfilledMirror
+          ? 'backfilled-mirror-absorption-not-decomposable'
+          : null;
 
     return jsonResponse({
       chainId,
@@ -588,6 +654,7 @@ export async function handleRecyclingSeries(
         freshDrawdown: cumFreshDrawdown.toString(),
         recycledBudget: cumRecycledBudget.toString(),
         runwayExtensionDays,
+        runwayUnavailableReason,
         selfFunded,
       },
     });

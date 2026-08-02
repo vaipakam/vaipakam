@@ -181,7 +181,7 @@ const REQUIRED_TABLE_COLUMNS = {
   recycle_day_backfill: [
     'chain_id', 'day_id', 'stamped', 'schedule_floor', 'recycled_budget',
     'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
-    'armed_from_day', 'recorded_at',
+    'armed_from_day', 'recorded_at', 'generator_rev',
   ],
 };
 
@@ -852,6 +852,18 @@ export function invalidRecycleBackfillRowShapes(archive) {
         if (!Number.isSafeInteger(v) || v < 0) {
           push(`${col} ${JSON.stringify(v)} is not a non-negative safe integer`);
         }
+      }
+      // Provenance the writer always stamps. Without it an archive can
+      // restore rows under the schema's empty-string default, which makes
+      // first-write-wins captures from DIFFERENT computations
+      // indistinguishable — the exact ambiguity the column was added to
+      // remove (Codex #1513 r5 P2).
+      if (typeof row.generator_rev !== 'string' || row.generator_rev === '') {
+        push(
+          `generator_rev ${JSON.stringify(row.generator_rev)} is not a ` +
+            `non-empty string — the writer stamps every row, so a blank one ` +
+            `did not come from it and cannot be tied to a computation`,
+        );
       }
       if (row.stamped !== 0 && row.stamped !== 1) {
         push(`stamped ${JSON.stringify(row.stamped)} is not exactly 0 or 1`);
