@@ -675,15 +675,20 @@ describe('handleRecyclingSeries — the ratified window, and what anchors it', (
       CHAIN,
     );
     const after = (await readSeries(env, 30)).cumulative.runwayExtensionDays;
-    // UNCHANGED. Two rules compose here and I predicted this wrong before
-    // running it: the window does not move (this fix), AND the numerator
-    // does not grow either, because the global absorption cumulative sums
-    // only FINALIZED days — day 10's credit is real and visible in
-    // `absorbedLocal`, but it is not yet part of a global total.
-    expect(after).toBe(before);
-    // Non-vacuous: anchoring on the highest row of ANY kind would slide
-    // the window to 4..10, drop day 3 (the outlier), and report 7.
-    expect(after).not.toBe(7);
+    // The NUMERATOR legitimately grows by the new credit — it is a lifetime
+    // recycled stock and that value is really in the bucket. What must not
+    // move is the DENOMINATOR: the window stays days 3..9.
+    //
+    // An earlier version of this test asserted `after === before`, which
+    // held only because the numerator then summed finalized days alone. It
+    // was pinning an accident of that implementation, not the window rule,
+    // and it broke the moment the numerator was corrected. Assert the
+    // denominator instead, by recomputing against it.
+    //   701 / (1300 / 7) = 3.774615
+    expect(after).toBe(3.774615);
+    // Non-vacuous: anchoring on the highest row of ANY kind would slide the
+    // window to 4..10, drop day 3 (the outlier), and report 701/(600/6).
+    expect(after).not.toBe(7.01);
     // …and the credit really did land, so the fixture is live.
     expect(day(await readSeries(env, 30), 10).absorbedLocal).toBe('1');
   });
@@ -815,5 +820,82 @@ describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
     );
     // (300 + 200) / 100 = 5
     expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(5);
+  });
+});
+
+describe('handleRecyclingSeries — a mesh runway counts every chain in full', () => {
+  it("includes a mirror's LIFETIME reported cumulative, not just its accepted days", async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        // The mirror reports a lifetime total of 500 but only 100 is
+        // attributable to this day — the rest is its own pre-launch stock
+        // plus whatever attribution headroom clamped away. All 500 is real
+        // recycled value sitting in that chain's bucket.
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 500n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // 500 / 100 = 5. Counting only the accepted day credit would give 1.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(5);
+  });
+
+  it('does not count a mirror twice when its day credit is also attributed', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 300n,
+          forDayReported: 300n,
+          dayCreditAccepted: 300n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    // The day still shows its attributed credit…
+    expect(day(body, 1).absorbedMirror).toBe('300');
+    // …but the lifetime numerator counts 300 once, not 600.
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+  });
+
+  it('never walks a reported cumulative backwards on a replayed report', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 400n,
+          forDayReported: 0n,
+          dayCreditAccepted: 0n,
+        }),
+        // An out-of-order / stale report for an earlier day.
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 0n,
+          cumulative: 50n,
+          forDayReported: 0n,
+          dayCreditAccepted: 0n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // 400 / 100 = 4 — the stale 50 must not replace it.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(4);
   });
 });

@@ -196,6 +196,13 @@ export async function handleRecyclingSeries(
     // the programme. Both reads return rows and the folding happens in
     // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
     // them would silently overflow SQLite's int64.
+    const reportedRows = await env.DB.prepare(
+      `SELECT source_chain_id, reported_cumulative
+         FROM recycle_chain_reported WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .all<{ source_chain_id: number; reported_cumulative: string }>();
+
     const [windowRows, lifetime] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, stamped, schedule_floor, recycled_budget, a_bar,
@@ -361,12 +368,29 @@ export async function handleRecyclingSeries(
       trailingCount += 1n;
     }
     const selfFunded = trailingCount > 0n && trailingFloorSum === 0n;
-    // The numerator is the LIFETIME recycled stock, which genuinely includes
-    // pre-launch credits — they are in the bucket and in the on-chain
-    // recycled cumulative (Codex #1508 r2 P2). Keeping them out of `Ā` is a
-    // statement about a trailing RATE and says nothing about this total; I
-    // conflated the two and understated the runway.
-    const runwayNumerator = cumAbsorbed + BigInt(preLaunch);
+    // The numerator is the LIFETIME recycled stock. Two rounds of getting
+    // this wrong in the same direction:
+    //
+    //   r2 — it used only day-attributed absorption, so this chain's own
+    //        pre-launch stock was missing. Keeping that out of `Ā` is a
+    //        statement about a trailing RATE and says nothing about a
+    //        lifetime total.
+    //   r4 — adding only the LOCAL pre-launch stock fixed the single-chain
+    //        case and still understated a mesh. A mirror's pre-launch stock
+    //        never reaches this indexer (its `VpfiRecycledPreLaunch` is on
+    //        its own chain), and its day reports carry only what was
+    //        ACCEPTED — bounded by that chain's attribution headroom.
+    //
+    // So each mirror contributes its own reported LIFETIME cumulative, which
+    // counts every credit it ever took, and its accepted day credits are
+    // excluded to avoid counting the same value twice.
+    let mirrorReported = 0n;
+    for (const r of reportedRows.results ?? []) {
+      if (r.source_chain_id === chainId) continue; // local side, counted below
+      mirrorReported += BigInt(r.reported_cumulative);
+    }
+    const runwayNumerator =
+      cumAbsorbedLocal + BigInt(preLaunch) + mirrorReported;
     const runwayExtensionDays =
       trailingCount === 0n || selfFunded
         ? null

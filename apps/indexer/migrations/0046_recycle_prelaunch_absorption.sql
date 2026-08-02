@@ -33,3 +33,32 @@ CREATE TABLE IF NOT EXISTS recycle_prelaunch (
   chain_id INTEGER NOT NULL PRIMARY KEY,
   absorbed TEXT NOT NULL DEFAULT '0'
 );
+
+-- Per-source LIFETIME recycled cumulative, as each chain reports it.
+--
+-- The runway numerator is "cumulative recycled" — a lifetime stock. On the
+-- canonical chain the day series only carries what was ATTRIBUTED to days,
+-- and two kinds of real recycled value sit outside it:
+--
+--   * a mirror's PRE-LAUNCH stock, which belongs to no day and is never in
+--     any day report;
+--   * value clamped away at attribution time (`accepted` is bounded by the
+--     reporting chain's remaining headroom), which is still absorbed value
+--     in that chain's bucket.
+--
+-- Both are inside the `cumulative` a chain reports, which is its own
+-- `recycleCreditedCumulative` and counts every credit it ever took. So the
+-- numerator uses that figure per mirror instead of the sum of accepted day
+-- credits — otherwise adding only the canonical chain's own pre-launch stock
+-- fixes the single-chain case and still understates a mesh (Codex #1508 r4).
+--
+-- Monotonic by construction on-chain, and stored as a MAX so an out-of-order
+-- or replayed report can never walk it backwards.
+--
+-- REPLAY-DERIVED: a fold of chain logs, rebuilt from block zero on restore.
+CREATE TABLE IF NOT EXISTS recycle_chain_reported (
+  chain_id INTEGER NOT NULL,
+  source_chain_id INTEGER NOT NULL,
+  reported_cumulative TEXT NOT NULL DEFAULT '0',
+  PRIMARY KEY (chain_id, source_chain_id)
+);

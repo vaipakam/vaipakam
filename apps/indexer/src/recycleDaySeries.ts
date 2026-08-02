@@ -219,9 +219,41 @@ async function applyOne(
   // figure the day-pool stamp was sized from.
   const sourceChainId = Number(argBig(log.args.sourceChainId));
   const accepted = argBig(log.args.dayCreditAccepted);
+
+  // Record the reporting chain's LIFETIME cumulative regardless of what was
+  // accepted for the day (#1508 r4). `accepted` is bounded by that chain's
+  // remaining attribution headroom, and its pre-launch stock is in no day
+  // report at all — so the day series alone cannot see all of a mirror's
+  // recycled value. `cumulative` is that chain's own
+  // `recycleCreditedCumulative`, which counts every credit it ever took.
+  // Stored as a MAX because a replayed or out-of-order report must never
+  // walk a monotonic figure backwards.
+  const reported = argBig(log.args.cumulative);
+  const prevReported = await env.DB.prepare(
+    `SELECT reported_cumulative FROM recycle_chain_reported
+      WHERE chain_id = ? AND source_chain_id = ?`,
+  )
+    .bind(chainId, sourceChainId)
+    .first<{ reported_cumulative: string }>();
+  const reportedWrite = env.DB.prepare(
+    `INSERT INTO recycle_chain_reported
+       (chain_id, source_chain_id, reported_cumulative)
+     VALUES (?, ?, ?)
+     ON CONFLICT (chain_id, source_chain_id)
+     DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+  ).bind(
+    chainId,
+    sourceChainId,
+    (reported > big(prevReported?.reported_cumulative)
+      ? reported
+      : big(prevReported?.reported_cumulative)
+    ).toString(),
+  );
   if (sourceChainId === chainId || accepted === 0n) {
-    // Still recorded, so a replay cannot re-evaluate the filter.
-    await env.DB.batch([record]);
+    // Still recorded, so a replay cannot re-evaluate the filter — and the
+    // reporting chain's lifetime cumulative is kept either way, since a
+    // zero-credit day still carries a truthful total.
+    await env.DB.batch([record, reportedWrite]);
     return true;
   }
 
@@ -233,6 +265,7 @@ async function applyOne(
     .first<{ absorbed_mirror: string }>();
   await env.DB.batch([
     record,
+    reportedWrite,
     ensureRow(env, chainId, dayId),
     env.DB.prepare(
       `UPDATE recycle_day_pool SET absorbed_mirror = ?
