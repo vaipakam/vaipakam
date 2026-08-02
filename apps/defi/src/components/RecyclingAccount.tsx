@@ -132,6 +132,11 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
         )}
         {/* The split is published because a combined figure alone hides
             exactly the cross-chain activity the programme exists to show. */}
+        {/* SCOPE DIFFERS from the combined total above, and saying so is
+            the fix: the endpoint folds EVERY row into these components and
+            only FINALIZED rows into `absorbed`, so during normal live
+            operation local+mirror legitimately exceeds it. Presenting them
+            adjacently without that note invites the reader to subtract. */}
         <div>
           <dt>{t('recycling.absorbedLocal')}</dt>
           <dd data-testid="recycling-absorbed-local">
@@ -177,6 +182,10 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
         </div>
       </dl>
 
+      <p className="muted" data-testid="recycling-split-scope">
+        {t('recycling.splitScopeNote')}
+      </p>
+
       {coverageFromDay !== null && (
         <p className="muted" data-testid="recycling-coverage">
           {t('recycling.coverageFrom', { day: coverageFromDay })}
@@ -195,6 +204,8 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
             <th scope="col">{t('recycling.colRecycled')}</th>
             <th scope="col">{t('recycling.colSelfFunded')}</th>
             <th scope="col">{t('recycling.colDrawn')}</th>
+            <th scope="col">{t('recycling.colAbsorbedLocal')}</th>
+            <th scope="col">{t('recycling.colAbsorbedMirror')}</th>
             <th scope="col">{t('recycling.colAbsorbed')}</th>
           </tr>
         </thead>
@@ -233,7 +244,19 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
               </td>
               {/* Empty, not zero: an unarmed day committed nothing. */}
               <td data-testid={`drawn-${d.dayId}`}>{amt(d.netEmission)}</td>
-              {/* Likewise while a day is still collecting reports. */}
+              {/* The COMPONENTS are always real and always shown — this is
+                  the whole reason an unfinalized day is listed at all. r1
+                  listed the row for its live absorption and then rendered
+                  only the combined figure, which is null on exactly those
+                  rows, so the absorption stayed invisible. */}
+              <td data-testid={`absorbed-local-${d.dayId}`}>
+                {amt(d.absorbedLocal)}
+              </td>
+              <td data-testid={`absorbed-mirror-${d.dayId}`}>
+                {amt(d.absorbedMirror)}
+              </td>
+              {/* The COMBINED figure only once finalized: before that it is
+                  whichever cross-chain reports happen to have arrived. */}
               <td data-testid={`absorbed-${d.dayId}`}>{amt(d.absorbed)}</td>
             </tr>
           ))}

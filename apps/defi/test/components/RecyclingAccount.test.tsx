@@ -233,7 +233,11 @@ describe('RecyclingAccount — M5 content requirements', () => {
     // Filtering it out hid absorption the endpoint deliberately serves live.
     await waitFor(() => expect(screen.getByTestId('recycling-day-11')).toBeDefined());
     expect(screen.getByTestId('drawn-11').textContent).toBe('');
+    // The COMBINED figure is withheld until the day closes…
     expect(screen.getByTestId('absorbed-11').textContent).toBe('');
+    // …but the live component is the whole reason the row is listed. r1
+    // listed the row and then showed nothing in it.
+    expect(screen.getByTestId('absorbed-local-11').textContent).toBe('2');
   });
 
   it('marks a recomputed day as reconstructed, not recorded', async () => {
@@ -263,5 +267,38 @@ describe('RecyclingAccount — M5 content requirements', () => {
     await waitFor(() =>
       expect(screen.getByTestId('recycling-window').textContent).toContain('30'),
     );
+  });
+});
+
+describe('RecyclingAccount — per-day provenance and scope', () => {
+  it('shows each day\'s local and mirror components, not only the combined', async () => {
+    mockSeries(
+      series({
+        daily: [
+          day({
+            dayId: 6,
+            absorbedLocal: (3n * 10n ** 18n).toString(),
+            absorbedMirror: (4n * 10n ** 18n).toString(),
+            absorbed: (7n * 10n ** 18n).toString(),
+          }),
+        ],
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('absorbed-local-6').textContent).toBe('3');
+      expect(screen.getByTestId('absorbed-mirror-6').textContent).toBe('4');
+      expect(screen.getByTestId('absorbed-6').textContent).toBe('7');
+    });
+  });
+
+  it('explains why the split can exceed the combined total', async () => {
+    // The endpoint folds EVERY row into the components and only FINALIZED
+    // rows into the combined total, so during live operation the two
+    // legitimately disagree. Adjacency without that note invites a reader
+    // to treat the difference as an error.
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-split-scope');
   });
 });
