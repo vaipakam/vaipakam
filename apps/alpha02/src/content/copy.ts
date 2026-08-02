@@ -1453,9 +1453,11 @@ const copySource = {
     liveBody:
       'While the listing stands, two of your options are held: exiting via the offset path (it posts an offer pinned to this loan, which can’t coexist with the listing) and withdrawing collateral. Everything else stays open — repay in full, repay partially, or close the loan early; a partial repayment shrinks the amount a buyer would take over. The listing ends on its own: at latest 30 days after it was created, or at the loan’s due date, whichever comes first (the lender can also cancel it sooner).',
     liveEnds:
-      'The moment the listing ends, you can free the held options yourself — a cleanup button will appear here.',
+      'If the listing expires without a sale, a cleanup button appears here to free the held options; if the lender cancels the listing, the hold simply ends on its own — no cleanup needed.',
+    acceptedBody:
+      'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). Your offset and collateral-withdrawal options stay held until the sale completes. Repaying — fully, partially, or closing early — stays open.',
     clearableBody:
-      'The listing has ended but still holds your offset and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold.',
+      'The listing has ended but still holds your offset and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold. (The cleanup releases the hold itself — whichever held option the loan’s remaining term still allows becomes usable again; an offset needs at least a day of term left.)',
     clearableAction: 'Free held options',
     confirmAction: 'Confirm — free held options',
     clearedNote:
@@ -1463,13 +1465,13 @@ const copySource = {
     workingDots: 'Freeing…',
     receipt: {
       youReceive:
-        'Nothing is paid to you — this only releases the hold on your offset and collateral-withdrawal options.',
+        'Nothing is paid to you — this only releases the hold on your offset and collateral-withdrawal options (each then usable as far as the loan’s remaining term allows).',
       youLock: 'Nothing.',
       youMayOwe: 'Only network gas for this one transaction.',
       youCanLose: 'Nothing — the cleanup moves no funds and touches no balances.',
       fees: 'None.',
       whenThisEnds:
-        'Immediately when the transaction confirms — the options are freed and the lender can’t relist this loan for a day.',
+        'Immediately when the transaction confirms — the hold is released (each option is then usable as far as the loan’s remaining term allows) and the lender can’t relist this loan for a day.',
     },
   },
 

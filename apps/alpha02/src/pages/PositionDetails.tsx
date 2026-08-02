@@ -91,7 +91,8 @@ type ConfirmSurface =
   | 'transfer'
   | 'offset'
   | 'early-exit'
-  | 'loan-sale';
+  | 'loan-sale'
+  | 'sale-teardown';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -364,6 +365,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // that cleanup is the SELLER's story (#1506), not this card's.
   const saleHold = useSaleListingHold(
     loanId,
+    loan.data?.lenderTokenId ?? '',
     // `effectivelyActive`, not the raw indexed status (Codex #1511 r2):
     // a cured fallback_pending row gets its borrower actions back from
     // the live reconciliation before the indexer catches up — the hold
@@ -615,7 +617,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // even while the indexed row lags (Codex #1511 r1 P2).
   const saleListingHeld =
     row.status === 'active' &&
-    (saleHold.data === 'live' || saleHold.data === 'clearable');
+    (saleHold.data === 'live' ||
+      saleHold.data === 'clearable' ||
+      // Accepted-awaiting-completion keeps `loanToSaleOfferId` set, so
+      // the offset path stays refused (Codex #1511 r3).
+      saleHold.data === 'accepted');
   const principal = principalMeta.data;
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
@@ -1733,6 +1739,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <SaleListingHoldCard
           loanId={loanId}
           state={saleHold.data ?? 'unknown'}
+          confirmOpen={confirmingSurface === 'sale-teardown'}
+          onOpenConfirm={() => setConfirmingSurface('sale-teardown')}
+          onCloseConfirm={() =>
+            setConfirmingSurface((s) => (s === 'sale-teardown' ? null : s))
+          }
+          busy={busy}
+          setBusy={setBusy}
           onCleared={() => setSaleHoldCleared(true)}
         />
       ) : null}

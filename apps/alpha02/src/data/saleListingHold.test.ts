@@ -19,10 +19,31 @@ describe('classifyTeardownProbe', () => {
     expect(classifyTeardownProbe({ ok: true })).toBe('clearable');
   });
 
-  it('NoStaleSaleListing means no listing — nothing held, nothing rendered', () => {
+  it('NoStaleSaleListing with an unlocked lender NFT means no listing', () => {
+    expect(
+      classifyTeardownProbe({
+        ok: false,
+        errorName: 'NoStaleSaleListing',
+        saleLocked: false,
+      }),
+    ).toBe('none');
+    // Lock unreadable/unknown degrades to `none` — never a false hold.
     expect(
       classifyTeardownProbe({ ok: false, errorName: 'NoStaleSaleListing' }),
     ).toBe('none');
+  });
+
+  it('NoStaleSaleListing with a sale-locked lender NFT is an accepted sale — hold continues', () => {
+    // The teardown deliberately refuses an accepted-awaiting-completion
+    // sale with the SAME error as "no listing"; only the lender NFT's
+    // EarlyWithdrawalSale lock distinguishes them (Codex #1511 r3).
+    expect(
+      classifyTeardownProbe({
+        ok: false,
+        errorName: 'NoStaleSaleListing',
+        saleLocked: true,
+      }),
+    ).toBe('accepted');
   });
 
   it('SaleListingLoanStillLive means a live bounded listing holds the options', () => {
