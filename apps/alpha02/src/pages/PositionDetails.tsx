@@ -8,7 +8,7 @@
  *   lender  + repaid   → Claim principal + interest
  *   lender  + defaulted→ Claim the collateral
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -378,8 +378,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // `effectivelyActive`, not the raw indexed status (Codex #1511 r2):
     // a cured fallback_pending row gets its borrower actions back from
     // the live reconciliation before the indexer catches up — the hold
-    // notice and cleanup must come back with them.
-    Boolean(loan.data) && saleEligible && role === 'borrower' && effectivelyActive,
+    // notice and cleanup must come back with them. An UNCURED
+    // fallback_pending loan stays probed too (Codex #1511 r11): its
+    // full-repay CURE surface still renders, and an accepted sale must
+    // pause that cure with the explanation up front rather than let
+    // the live pre-write gate block it as a surprise.
+    Boolean(loan.data) &&
+      saleEligible &&
+      role === 'borrower' &&
+      (effectivelyActive || loan.data?.status === 'fallback_pending'),
   );
   // Durable success flag — keeps the card (and its confirmation)
   // mounted after the post-teardown refetch flips the probe to
@@ -422,8 +429,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   }, [saleHold.data, saleHoldCleared, saleHoldDrained]);
   // A chain switch keeps this component mounted (its key is the loan
   // id), so the latch must not carry one chain's success onto another
-  // chain's loan N (Codex #1511 r7).
+  // chain's loan N (Codex #1511 r7). The ref lets in-flight async
+  // continuations (the onCleared verification below) detect that the
+  // chain moved under them and discard their result instead of
+  // re-latching the freshly reset state (Codex #1511 r11).
+  const saleHoldChainRef = useRef(readChain.chainId);
   useEffect(() => {
+    saleHoldChainRef.current = readChain.chainId;
     setSaleHoldCleared(false);
     setSaleHoldDrained(false);
   }, [readChain.chainId]);
@@ -682,14 +694,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // the buyer funded. UI-level protection (the contract's Tier-2
   // repay stays open by design); the contract-side close-out guard
   // for this window belongs to the #1503 PR-E slice.
+  // fallback_pending is included (Codex #1511 r11): that state's
+  // full-repay CURE is still a settlement of an open loan, so an
+  // accepted sale must pause it with the same explanation — otherwise
+  // the cure form renders open and the live pre-write gate blocks it
+  // confusingly late. (Add-collateral is untouched by this flag and
+  // stays available as the non-settling cure.)
   const saleCompletionPending =
-    row.status === 'active' && saleHold.data === 'accepted';
+    (row.status === 'active' || row.status === 'fallback_pending') &&
+    saleHold.data === 'accepted';
   // Fail CLOSED while the accepted-sale question is unanswered (Codex
   // #1511 r5 P1): the settlement surfaces wait on the probe rather
   // than opening on its undefined initial state. False on the
   // pre-refresh Diamond (no probe exists there — pre-PR behaviour).
   const saleHoldResolving =
-    row.status === 'active' && saleHold.resolving === true;
+    (row.status === 'active' || row.status === 'fallback_pending') &&
+    saleHold.resolving === true;
   // The LIVE re-check every settlement write runs immediately before
   // sending (Codex #1511 r5 P1): the cached state can be a tip
   // interval old, and an acceptance landing inside that window must
@@ -1951,11 +1971,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             void (async () => {
               try {
                 if (!publicClient || !walletChain) return;
+                // Bind the continuation to the chain it started on
+                // (Codex #1511 r11): a chain switch during the await
+                // resets the latch, and this late result — read from
+                // the OLD chain's loan — must not re-latch it onto the
+                // new chain's loan N.
+                const startedOnChainId = saleHoldChainRef.current;
                 const live = await readLoanLive(
                   publicClient,
                   walletChain.diamondAddress,
                   row.loanId,
                 );
+                if (saleHoldChainRef.current !== startedOnChainId) return;
                 if (Number(live.status) === LOAN_STATUS_ACTIVE) {
                   setSaleHoldCleared(true);
                 }

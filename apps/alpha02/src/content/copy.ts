@@ -1455,9 +1455,9 @@ const copySource = {
     liveEnds:
       'If the listing expires without a sale, a cleanup button appears here to free the held options; if the lender cancels the listing, the hold simply ends on its own — no cleanup needed.',
     acceptedBody:
-      'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). The buyer’s funds are already committed, so your repayment and exit options are briefly paused — repaying, closing, or changing the amount now would break the in-flight purchase. Everything returns the moment the sale settles.',
+      'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). The buyer’s funds are already committed, so your repayment and exit options are briefly paused — repaying, closing, or changing the amount now would break the in-flight purchase. Once the sale settles, whichever options the loan’s remaining term still allows come back.',
     completionPaused:
-      'Paused while an accepted sale of the lender’s position completes — the buyer’s funds are already committed, and settling or changing this loan now would break that in-flight purchase. This state normally lasts moments; your options return when the sale settles.',
+      'Paused while an accepted sale of the lender’s position completes — the buyer’s funds are already committed, and settling or changing this loan now would break that in-flight purchase. This state normally lasts moments; once the sale settles, the options the loan’s remaining term still allows come back.',
     checkFailed:
       'We couldn’t verify whether a sale of the lender’s position is mid-completion — nothing was sent. Try again in a moment.',
     clearableBody:

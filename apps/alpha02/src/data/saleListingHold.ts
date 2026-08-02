@@ -238,6 +238,13 @@ export function useSaleListingHold(
   // probe result (Codex #1511 r8): disabling the query keeps its old
   // data, which would keep rendering a hold (or a teardown button)
   // under legacy semantics. Mask unless the cut is positively present.
-  const data = cut.data === true ? probe.data : undefined;
+  // An ERRORED refetch keeps its last-success data too (Codex #1511
+  // r11) — while either query is in error the answer is stale-behind-
+  // a-failure, so surface nothing and let `resolving` pause the
+  // settlement surfaces instead.
+  const data =
+    cut.data === true && !cut.isError && !probe.isError
+      ? probe.data
+      : undefined;
   return { ...probe, data, resolving };
 }

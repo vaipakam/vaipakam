@@ -428,6 +428,23 @@ export function RefinanceFlow({
         const blockedLate = await preSubmitBlock();
         if (blockedLate) {
           setError(blockedLate);
+          // This return skips the catch, but the payoff approval may
+          // already have MINED above — unwind it the same best-effort
+          // way (Codex #1511 r11): a blocked submit must not leave a
+          // payoff-sized authorization behind a pristine form.
+          if (approvalGranted && approvalToken) {
+            try {
+              await revokeAllowance({
+                publicClient,
+                walletClient,
+                token: approvalToken,
+                owner: address,
+                spender: walletChain.diamondAddress,
+              });
+            } catch {
+              // Leave the block message as the surfaced outcome.
+            }
+          }
           return;
         }
       }
