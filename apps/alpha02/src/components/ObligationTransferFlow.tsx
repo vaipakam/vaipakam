@@ -442,6 +442,14 @@ export function ObligationTransferFlow({
         });
       }
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
+      // Deliberately does NOT unwind the allowance above, unlike
+      // RefinanceFlow's equivalent: this flow tracks no approval state
+      // and never revokes on ANY post-approval failure (a reverted
+      // write, a rejected signature), so a lone unwind here would be
+      // the odd one out. The residue is the cost of the transfer the
+      // user was actively attempting, not a standing payoff-sized
+      // grant. Giving this flow the tracked-approval + revoke pattern
+      // wholesale is #1514.
       if (preSubmitBlock) {
         const blockedLate = await preSubmitBlock();
         if (blockedLate) {
