@@ -25,11 +25,12 @@
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
 import { ShieldCheck } from 'lucide-react';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useMode } from '../app/ModeContext';
 import {
   RISK_TIER,
@@ -71,6 +72,7 @@ export function RiskAccess() {
   const { address, onSupportedChain, walletChain } = useActiveChain();
   const { isAdvanced } = useMode();
   const { write } = useDiamondWrite();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
   const risk = useRiskAccess();
 
@@ -94,6 +96,43 @@ export function RiskAccess() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Live pre-write revalidation (Codex #1517 r4): the rendered state
+   *  can be a poll interval old — another device/app may have moved
+   *  the tier since. A same-tier re-submit RESTARTS the raise cooldown
+   *  on-chain (`_applyTier`), so abort-and-refresh instead of writing
+   *  when the live raw tier already equals the request (unless this is
+   *  the re-affirm path and the anchor is still confirmed stale). */
+  async function submitTierRevalidated(level: RiskTier, opts: { reaffirm: boolean }) {
+    if (!publicClient || !walletChain || !address) {
+      throw new Error(copy.errors.walletConnectFirst);
+    }
+    const readLive = <T,>(functionName: string, args?: readonly unknown[]) =>
+      publicClient.readContract({
+        address: walletChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName,
+        args: args as unknown[],
+      }) as Promise<T>;
+    const liveRaw = Number(await readLive<number | bigint>('getVaultRiskTier', [address]));
+    if (opts.reaffirm) {
+      // Only re-affirm while the anchor is STILL stale live — a
+      // just-landed re-affirm from another device makes this one a
+      // pure cooldown-restarting no-op.
+      const [anchor, terms] = await Promise.all([
+        readLive<number | bigint>('getVaultRiskTierVersion', [address]).then(BigInt),
+        readLive<bigint>('getCurrentRiskTermsVersion').then(BigInt),
+      ]);
+      if (liveRaw !== level || anchor >= terms) {
+        await queryClient.invalidateQueries({ queryKey: ['riskAccess'] });
+        throw new Error(copy.riskAccess.noLongerStaleAbort);
+      }
+    } else if (liveRaw === level) {
+      await queryClient.invalidateQueries({ queryKey: ['riskAccess'] });
+      throw new Error(copy.riskAccess.alreadySelectedAbort);
+    }
+    await write('setVaultRiskTier', [level]);
   }
 
   const s = risk.data;
@@ -186,11 +225,12 @@ export function RiskAccess() {
                     }}
                     disabled={busy || selected}
                     onClick={() =>
-                      void run(async () => {
-                        await write('setVaultRiskTier', [opt.level]);
-                      }, opt.level > s.rawTier
-                        ? copy.riskAccess.raisedMsg
-                        : copy.riskAccess.loweredMsg)
+                      void run(
+                        () => submitTierRevalidated(opt.level, { reaffirm: false }),
+                        opt.level > s.rawTier
+                          ? copy.riskAccess.raisedMsg
+                          : copy.riskAccess.loweredMsg,
+                      )
                     }
                   >
                     <span className="row-main">
@@ -234,12 +274,14 @@ export function RiskAccess() {
                 className="btn btn-primary"
                 disabled={busy}
                 onClick={() =>
-                  void run(async () => {
-                    // Same-tier re-submit re-stamps the anchor to the
-                    // live risk-terms version (#735) — how a terms-bump
-                    // re-lock is cleared without lower-then-raise.
-                    await write('setVaultRiskTier', [s.rawTier]);
-                  }, copy.riskAccess.reaffirmedMsg)
+                  // Same-tier re-submit re-stamps the anchor to the
+                  // live risk-terms version (#735) — how a terms-bump
+                  // re-lock is cleared without lower-then-raise. Live-
+                  // revalidated: only lands while still stale (r4).
+                  void run(
+                    () => submitTierRevalidated(s.rawTier, { reaffirm: true }),
+                    copy.riskAccess.reaffirmedMsg,
+                  )
                 }
               >
                 {busy ? copy.riskAccess.reaffirming : copy.riskAccess.reaffirm}
@@ -283,8 +325,12 @@ export function RiskAccess() {
 
       {/* NOT gated on criticalReadFailed (Codex #1517 r2): the strict
           card renders from its own read — a strict vault must keep the
-          risk-DECREASING disable action even when an unrelated tier
-          read failed (strictModeKnown covers its own failure). */}
+          disable recovery action even when an unrelated tier read
+          failed (strictModeKnown covers its own failure). Disabling is
+          risk-INCREASING per the contract's model — the disable-linger
+          cooldown exists to close that window — but it does not depend
+          on the tier value, so a tier-read failure is no reason to
+          withhold it (r4 wording fix). */}
       {address && onSupportedChain && s?.supported ? (
         <section className="card">
           <div className="card-title">
@@ -301,9 +347,11 @@ export function RiskAccess() {
                   demands has no collection surface in this app yet —
                   the accept flow hard-blocks on it — so an enable here
                   would lock the user out of their own mid-tier deals
-                  once enforcement is on. DISABLE stays available: it is
-                  risk-decreasing and the recovery path for a vault that
-                  enabled strict mode elsewhere. */}
+                  once enforcement is on. DISABLE stays available as the
+                  recovery path for a vault that enabled strict mode
+                  elsewhere — a risk-INCREASING change under the
+                  contract's model, bounded by the disable-linger
+                  cooldown (r4 wording fix). */}
               {s.strictMode ? (
                 <button
                   type="button"

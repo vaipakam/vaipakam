@@ -271,10 +271,42 @@ export function useAcceptTermsSigning() {
           args: [input.offerId, address],
         })) as number | bigint;
         if (Number(gateBlock) !== 0 && Number(gateBlock) !== 4) {
+          // Codex #1517 r4 — the combined preview reports the CREATOR's
+          // block first (RiskPreviewFacet.previewOfferAcceptBlock), so
+          // disambiguate with the creator-only preview before wording
+          // the failure: a creator-side gap must read as the creator's
+          // requirement, and an ACCEPTOR tier shortfall (code 1) is
+          // recoverable on /risk-access — say so instead of the generic
+          // "can't collect" dead end. A failed/absent creator preview
+          // falls back to the neutral generic message.
+          let creatorBlock = 0;
+          try {
+            creatorBlock = Number(
+              await publicClient.readContract({
+                address: diamondAddr,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'previewCreatorBlock',
+                args: [input.offerId],
+              }),
+            );
+          } catch {
+            creatorBlock = 0;
+          }
+          if (creatorBlock !== 0) {
+            throw new Error(copy.match.riskGateCreatorBlocked);
+          }
+          if (Number(gateBlock) === 1) {
+            throw new Error(copy.match.riskGateTierTooLow);
+          }
           throw new Error(copy.match.riskGateBlocked);
         }
       } catch (e) {
-        if (e instanceof Error && e.message === copy.match.riskGateBlocked) {
+        if (
+          e instanceof Error &&
+          (e.message === copy.match.riskGateBlocked ||
+            e.message === copy.match.riskGateTierTooLow ||
+            e.message === copy.match.riskGateCreatorBlocked)
+        ) {
           throw e;
         }
         if (!isMissingSelectorError(e)) throw e;

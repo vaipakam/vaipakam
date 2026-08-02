@@ -724,6 +724,13 @@ const copySource = {
       'We couldn’t confirm the repayment grace window, and the review must show the real one — signing stays paused until it succeeds.',
     riskGateBlocked:
       'The protocol’s risk-access rules block this acceptance for your wallet right now — it needs a standing on-chain acknowledgement or access level this app can’t collect yet. Nothing was sent or approved.',
+    // Codex #1517 r4 — the RECOVERABLE tier-shortfall block gets its
+    // own message pointing at the fix this app now ships, and a
+    // CREATOR-side block is never presented as the acceptor's problem.
+    riskGateTierTooLow:
+      'This deal needs a higher risk level than your vault currently allows. You can raise it under Settings → Risk access, then come back and accept. Nothing was sent or approved.',
+    riskGateCreatorBlocked:
+      'The offer creator’s risk settings no longer cover this deal, so it can’t be accepted right now. Nothing was sent or approved.',
   },
 
   borrow: {
@@ -1375,6 +1382,13 @@ const copySource = {
       'Chosen, but not active yet — either a cooldown is still running or the risk terms changed. If it doesn’t activate, pick a lower level and then re-choose this one.',
     reaffirm: 'Confirm my level again',
     reaffirming: 'Confirming…',
+    // Codex #1517 r4 — pre-write live revalidation aborts. A same-tier
+    // re-submit RESTARTS the raise cooldown on-chain, so a click over a
+    // stale page must abort, refresh, and say why instead of writing.
+    alreadySelectedAbort:
+      'That level is already set for your vault — this page was showing older information and has refreshed. Nothing was sent.',
+    noLongerStaleAbort:
+      'Your level no longer needs re-confirming — it was already brought up to date (perhaps from another device). This page has refreshed; nothing was sent.',
     directionNote:
       'Moving down is instant. Moving up may wait out a short safety cooldown before it becomes active.',
     raisedMsg:
@@ -1391,8 +1405,12 @@ const copySource = {
       // strict mode demands a fresh per-deal acknowledgement this app
       // can't collect yet, so switching it on from here would lock the
       // user out of their own mid-tier accepts once enforcement is on.
-      // Turning it OFF is always offered (risk-decreasing, and the
-      // recovery path for a vault that enabled strict mode elsewhere).
+      // Turning it OFF is always offered as the recovery path for a
+      // vault that enabled strict mode elsewhere — but note it is a
+      // risk-INCREASING change (it removes the extra per-pair
+      // acknowledgement requirement), which is exactly why the
+      // contract's disable-linger cooldown keeps that requirement in
+      // force for a window after the disable.
       offLocked:
         'Strict mode is OFF. Turning it on isn’t offered here yet: while on, every mid-tier deal needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.',
       updating: 'Updating…',

@@ -468,7 +468,9 @@
       "linkedLoanCheckFailed": "We couldn’t check whether this offer is a position sale of a running loan, and that check decides an important disclosure — signing stays paused until it succeeds.",
       "graceChecking": "Confirming the repayment grace window this deal is judged against…",
       "graceCheckFailed": "We couldn’t confirm the repayment grace window, and the review must show the real one — signing stays paused until it succeeds.",
-      "riskGateBlocked": "The protocol’s risk-access rules block this acceptance for your wallet right now — it needs a standing on-chain acknowledgement or access level this app can’t collect yet. Nothing was sent or approved."
+      "riskGateBlocked": "The protocol’s risk-access rules block this acceptance for your wallet right now — it needs a standing on-chain acknowledgement or access level this app can’t collect yet. Nothing was sent or approved.",
+      "riskGateTierTooLow": "This deal needs a higher risk level than your vault currently allows. You can raise it under Settings → Risk access, then come back and accept. Nothing was sent or approved.",
+      "riskGateCreatorBlocked": "The offer creator’s risk settings no longer cover this deal, so it can’t be accepted right now. Nothing was sent or approved."
     },
     "borrow": {
       "title": "Borrow assets",
@@ -815,6 +817,8 @@
       "unknownHeldNote": "Chosen, but not active yet — either a cooldown is still running or the risk terms changed. If it doesn’t activate, pick a lower level and then re-choose this one.",
       "reaffirm": "Confirm my level again",
       "reaffirming": "Confirming…",
+      "alreadySelectedAbort": "That level is already set for your vault — this page was showing older information and has refreshed. Nothing was sent.",
+      "noLongerStaleAbort": "Your level no longer needs re-confirming — it was already brought up to date (perhaps from another device). This page has refreshed; nothing was sent.",
       "directionNote": "Moving down is instant. Moving up may wait out a short safety cooldown before it becomes active.",
       "raisedMsg": "Level raised. If a safety cooldown is configured, it becomes active once the cooldown finishes.",
       "loweredMsg": "Level updated.",
