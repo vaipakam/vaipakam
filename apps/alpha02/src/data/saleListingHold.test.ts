@@ -12,6 +12,7 @@ import { BaseError, ContractFunctionRevertedError } from 'viem';
 import {
   classifyTeardownProbe,
   computeHoldGate,
+  probeSaleHoldLive,
   probeErrorName,
 } from './saleListingHold';
 import type {
@@ -260,5 +261,110 @@ describe('computeHoldGate', () => {
         }
       }
     }
+  });
+});
+
+/**
+ * The probe's call shape. The lock read comes FIRST and short-circuits
+ * the common no-listing case, so these pin both the classification and
+ * the number of round-trips — the volume matters because this probe
+ * rides the tip-driven invalidation set, and its own rate-limit
+ * failures are what push the surface into its errored state.
+ */
+describe('probeSaleHoldLive', () => {
+  const DIAMOND = '0xdia0000000000000000000000000000000000000' as const;
+
+  function fakeClient(opts: {
+    lock: number;
+    simulate?: () => never;
+  }) {
+    const calls: string[] = [];
+    return {
+      calls,
+      client: {
+        readContract: async () => {
+          calls.push('positionLock');
+          return BigInt(opts.lock);
+        },
+        simulateContract: async () => {
+          calls.push('simulate');
+          if (opts.simulate) opts.simulate();
+          return {} as never;
+        },
+      },
+    };
+  }
+
+  function revertWith(name: string): () => never {
+    return () => {
+      const inner = new ContractFunctionRevertedError({
+        abi: [
+          {
+            type: 'error',
+            name,
+            inputs: [],
+          },
+        ],
+        data: undefined,
+        functionName: 'teardownStaleSaleListing',
+      });
+      // viem builds `data` from the ABI when decoding; set it directly
+      // so the walk in probeErrorName finds the name.
+      (inner as unknown as { data: { errorName: string } }).data = {
+        errorName: name,
+      };
+      const err = new BaseError('reverted');
+      (err as unknown as { walk: (fn: unknown) => unknown }).walk = () => inner;
+      throw err;
+    };
+  }
+
+  it('an unlocked lender position is answered by ONE read, no simulation', async () => {
+    const { client, calls } = fakeClient({ lock: 0 });
+    await expect(
+      probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
+    ).resolves.toBe('none');
+    expect(calls).toEqual(['positionLock']);
+  });
+
+  it('a sale-locked position still simulates, and a live listing reads as live', async () => {
+    const { client, calls } = fakeClient({
+      lock: 2,
+      simulate: revertWith('SaleListingLoanStillLive'),
+    });
+    await expect(
+      probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
+    ).resolves.toBe('live');
+    expect(calls).toEqual(['positionLock', 'simulate']);
+  });
+
+  it('a sale-locked position whose teardown succeeds is clearable', async () => {
+    const { client } = fakeClient({ lock: 2 });
+    await expect(
+      probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
+    ).resolves.toBe('clearable');
+  });
+
+  it('sale-locked + NoStaleSaleListing is an accepted sale, not "nothing here"', async () => {
+    const { client, calls } = fakeClient({
+      lock: 2,
+      simulate: revertWith('NoStaleSaleListing'),
+    });
+    await expect(
+      probeSaleHoldLive(client as never, DIAMOND, 42, '7', undefined),
+    ).resolves.toBe('accepted');
+    // The lock reading is reused — the ambiguous arm costs nothing extra.
+    expect(calls).toEqual(['positionLock', 'simulate']);
+  });
+
+  it('with no token id the lock cannot rule anything out, so it simulates', async () => {
+    const { client, calls } = fakeClient({
+      lock: 0,
+      simulate: revertWith('NoStaleSaleListing'),
+    });
+    await expect(
+      probeSaleHoldLive(client as never, DIAMOND, 42, '', undefined),
+    ).resolves.toBe('none');
+    expect(calls).toEqual(['simulate']);
   });
 });

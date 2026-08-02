@@ -438,6 +438,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     saleHoldChainRef.current = readChain.chainId;
     setSaleHoldCleared(false);
     setSaleHoldDrained(false);
+    // The open REVIEW is chain-scoped too. Leaving the slot set would
+    // let the card remount on the destination chain with its
+    // confirmation already open — one click from sending a cleanup the
+    // borrower never opened a review for, against a different chain's
+    // listing. Only this surface's slot is cleared; other flows own
+    // their own reset.
+    setConfirmingSurface((s) => (s === 'sale-teardown' ? null : s));
   }, [readChain.chainId]);
 
   // The LIVE re-check every settlement write runs immediately before
@@ -1998,12 +2005,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           busy={busy}
           setBusy={setBusy}
           onCleared={() => {
-            // Latch only if the loan is STILL Active post-mining
-            // (Codex #1511 r10): a terminal transition between the
-            // render-time read and the receipt means the teardown took
-            // the seller-hygiene branch — no cooldown was stamped, so
-            // the action-window confirmation would be false. Left
+            // Latch only if the loan is still LIVE post-mining (Codex
+            // #1511 r10): a terminal transition between the render-time
+            // read and the receipt means the teardown took the
+            // seller-hygiene branch — no cooldown was stamped, so the
+            // action-window confirmation would be false. Left
             // unlatched, the card simply unmounts on the refetch.
+            //
+            // "Live" is Active OR FallbackPending, matching the
+            // contract exactly: teardownStaleSaleListing routes both to
+            // teardownExpired, which stamps the relist cooldown. An
+            // Active-only test would swallow the success confirmation
+            // for a loan that slipped into fallback while the review
+            // was open — a cleanup that really did run, and really did
+            // start the borrower's window.
             // Bind the whole continuation to the chain this card was
             // RENDERED on. Read from the closure, never from the ref:
             // onCleared fires only after the teardown tx has mined, so
@@ -2024,7 +2039,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   row.loanId,
                 );
                 if (saleHoldChainRef.current !== startedOnChainId) return;
-                if (Number(live.status) === LOAN_STATUS_ACTIVE) {
+                const st = Number(live.status);
+                if (
+                  st === LOAN_STATUS_ACTIVE ||
+                  st === LoanStatus.FallbackPending
+                ) {
                   setSaleHoldCleared(true);
                 }
               } catch {
@@ -2161,6 +2180,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                     <span className="banner-body">
                       {copy.positions.details.addCollateral.fallbackWarn}
+                    </span>
+                  </div>
+                ) : null}
+                {saleAcceptedOnFallback ? (
+                  // The OTHER cure needs the same disclosure. A top-up
+                  // big enough to cure returns the loan to Active,
+                  // which is exactly the condition the stranded sale
+                  // was waiting on — so this signature can hand the
+                  // lender position to a buyer. The repay review says
+                  // so; this one must too, or the consequence lands
+                  // only on whichever cure the borrower happens not to
+                  // pick.
+                  <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                    <span className="banner-body">
+                      {copy.saleHold.acceptedOnFallback}
                     </span>
                   </div>
                 ) : null}

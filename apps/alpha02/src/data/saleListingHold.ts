@@ -102,6 +102,36 @@ export async function probeSaleHoldLive(
   lenderTokenId: string,
   account: `0x${string}` | undefined,
 ): Promise<SaleListingHoldState> {
+  // LOCK FIRST. The lender position NFT carries the EarlyWithdrawalSale
+  // lock for the WHOLE listing lifecycle — stamped at creation, released
+  // only by the teardown or the completion — so an unlocked position
+  // PROVES there is nothing to classify, without simulating anything.
+  //
+  // This is the overwhelmingly common case (most loans were never
+  // listed), and it is the case that used to cost the most: the
+  // simulation reverted NoStaleSaleListing and we then read the lock
+  // anyway to disambiguate, so every poll spent two calls to learn
+  // "no listing". This probe rides the tip-driven invalidation set, so
+  // that doubled every visible borrower tab's call volume — and the
+  // rate-limit failures it invited are precisely what puts this hook
+  // into its errored state. One read now answers it.
+  let saleLocked: boolean | undefined;
+  if (lenderTokenId) {
+    saleLocked =
+      Number(
+        await client.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'positionLock',
+          args: [BigInt(lenderTokenId)],
+        }),
+      ) === LOCK_EARLY_WITHDRAWAL_SALE;
+    if (!saleLocked) return 'none';
+  }
+  // Locked (or the token id is unknown, so the lock can't rule it out):
+  // simulate to tell a live listing from an ended one from an accepted
+  // sale. The lock reading already in hand answers the ambiguous
+  // NoStaleSaleListing arm at no extra cost.
   try {
     await client.simulateContract({
       address: diamondAddress,
@@ -114,18 +144,6 @@ export async function probeSaleHoldLive(
   } catch (err) {
     const errorName = probeErrorName(err);
     if (errorName === null) throw err;
-    let saleLocked: boolean | undefined;
-    if (errorName === 'NoStaleSaleListing' && lenderTokenId) {
-      saleLocked =
-        Number(
-          await client.readContract({
-            address: diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(lenderTokenId)],
-          }),
-        ) === LOCK_EARLY_WITHDRAWAL_SALE;
-    }
     return classifyTeardownProbe({ ok: false, errorName, saleLocked });
   }
 }
