@@ -130,12 +130,15 @@ describe('RecyclingAccount — refusals must survive rendering', () => {
   it('publishes the pre-launch stock as its own figure', async () => {
     mockSeries(
       series({
-        cumulative: { ...series().cumulative, absorbedPreLaunch: '4200' },
+        cumulative: {
+          ...series().cumulative,
+          absorbedPreLaunch: (42n * 10n ** 18n).toString(),
+        },
       }),
     );
     render(<RecyclingAccount chainId={8453} />);
     await waitFor(() =>
-      expect(screen.getByTestId('recycling-prelaunch').textContent).toBe('4200'),
+      expect(screen.getByTestId('recycling-prelaunch').textContent).toBe('42'),
     );
   });
 
@@ -148,8 +151,117 @@ describe('RecyclingAccount — refusals must survive rendering', () => {
   });
 
   it('says no day has closed rather than rendering an empty table silently', async () => {
-    mockSeries(series({ daily: [day({ stamped: false })] }));
+    mockSeries(series({ daily: [] }));
     render(<RecyclingAccount chainId={8453} />);
     await screen.findByTestId('recycling-no-days');
+  });
+});
+
+describe('RecyclingAccount — M5 content requirements', () => {
+  it('formats wei rather than printing the raw integer', async () => {
+    mockSeries(
+      series({
+        daily: [day({ dayId: 1, scheduleFloor: (1234n * 10n ** 18n).toString() })],
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-day-1').textContent).toContain('1,234'),
+    );
+    // The raw wei string must not appear anywhere.
+    expect(screen.getByTestId('recycling-day-1').textContent).not.toContain(
+      '1234000000000000000000',
+    );
+  });
+
+  it('WITHHOLDS global totals on a local-only deployment', async () => {
+    mockSeries(
+      series({
+        scope: 'local-only',
+        cumulative: {
+          ...series().cumulative,
+          absorbed: '0',
+          freshDrawdown: '0',
+          absorbedLocal: (7n * 10n ** 18n).toString(),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-scope-note');
+    // A zero here is exactly the "looks like a quiet programme" failure.
+    expect(screen.queryByTestId('recycling-absorbed')).toBeNull();
+    expect(screen.queryByTestId('recycling-drawn')).toBeNull();
+    // …while what WAS observed locally is shown.
+    expect(screen.getByTestId('recycling-absorbed-local').textContent).toBe('7');
+  });
+
+  it('publishes the local / mirror split, not just a combined figure', async () => {
+    mockSeries(
+      series({
+        cumulative: {
+          ...series().cumulative,
+          absorbedLocal: (3n * 10n ** 18n).toString(),
+          absorbedMirror: (4n * 10n ** 18n).toString(),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('recycling-absorbed-local').textContent).toBe('3');
+      expect(screen.getByTestId('recycling-absorbed-mirror').textContent).toBe('4');
+    });
+  });
+
+  it('LISTS an unfinalized day so its live absorption is visible', async () => {
+    mockSeries(
+      series({
+        daily: [
+          day({
+            dayId: 11,
+            stamped: false,
+            scheduleFloor: null,
+            recycledBudget: null,
+            netEmission: null,
+            absorbed: null,
+            selfFundingRatio: null,
+            absorbedLocal: (2n * 10n ** 18n).toString(),
+          }),
+        ],
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    // Filtering it out hid absorption the endpoint deliberately serves live.
+    await waitFor(() => expect(screen.getByTestId('recycling-day-11')).toBeDefined());
+    expect(screen.getByTestId('drawn-11').textContent).toBe('');
+    expect(screen.getByTestId('absorbed-11').textContent).toBe('');
+  });
+
+  it('marks a recomputed day as reconstructed, not recorded', async () => {
+    mockSeries(series({ daily: [day({ dayId: 4, origin: 'backfill' })] }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recomputed-4');
+  });
+
+  it('shows the self-funded share the endpoint already computes', async () => {
+    mockSeries(series({ daily: [day({ dayId: 5, selfFundingRatio: 0.25 })] }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('selffunded-5').textContent).toContain('25'),
+    );
+  });
+
+  it('states the drawn figure\'s limits ON THIS SURFACE', async () => {
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    // The ratified spec: a caveat kept elsewhere is one a reader over-trusts.
+    await screen.findByTestId('recycling-drawn-bounds');
+  });
+
+  it('discloses that the table is a window, not the whole programme', async () => {
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-window').textContent).toContain('30'),
+    );
   });
 });
