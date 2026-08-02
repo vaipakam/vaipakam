@@ -389,6 +389,42 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
         }
 
+        // ─── #1503 PR-A — listing lifecycle: retire the 3-arg selector ──────
+        //
+        // PR-A changed `createLoanSaleOffer` from 3 args to 4 (the mandatory
+        // `listingSeconds` window), so its SELECTOR changed. This script
+        // Replaces/Adds but never Removes (SCOPE note above), which would
+        // leave the retired 3-arg selector routed to the PREVIOUS facet
+        // bytecode — a direct caller could keep creating expiry-free GTC
+        // listings, bypassing both the mandatory window and the
+        // relist-cooldown gate and preserving the indefinite borrower freeze
+        // the change exists to eliminate (Codex #1505 r1 P1). Remove it
+        // explicitly. No companion state migration is needed: listings
+        // created through the old selector BEFORE this refresh are handled
+        // structurally — `teardownStaleSaleListing` admits a linked sale
+        // vehicle with the GTC sentinel (`expiresAt == 0`) to immediate
+        // permissionless teardown, and the accept path refuses any sale fill
+        // at/past the linked loan's live maturity. Gated on the old selector
+        // still being routed, so this runs exactly once.
+        bytes4 oldCreateLoanSaleOffer = bytes4(
+            keccak256("createLoanSaleOffer(uint256,uint256,bool)")
+        );
+        if (loupe.facetAddress(oldCreateLoanSaleOffer) != address(0)) {
+            bytes4[] memory rmSale = new bytes4[](1);
+            rmSale[0] = oldCreateLoanSaleOffer;
+            IDiamondCut.FacetCut[] memory rmSaleCut =
+                new IDiamondCut.FacetCut[](1);
+            rmSaleCut[0] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: rmSale
+            });
+            IDiamondCut(diamond).diamondCut(rmSaleCut, address(0), "");
+            console.log(
+                "#1503 PR-A: removed retired 3-arg createLoanSaleOffer selector"
+            );
+        }
+
         // Post-cut verification: every canonical selector must route to its
         // fresh implementation. Runs BEFORE the unpause (still inside the
         // broadcast; these are view calls) so a failed refresh stays frozen.

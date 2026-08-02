@@ -184,6 +184,16 @@ contract OfferAcceptFacet is
     // storage row is still in place. The matching `MatchError.OfferExpired`
     // classifier in `LibOfferMatch.previewMatch` lets bots short-circuit.
     error OfferExpired(uint256 offerId, uint64 expiresAt);
+    // #1503 PR-A (Codex #1505 r1) — a lender-sale vehicle's acceptance was
+    // attempted at or past the linked loan's LIVE maturity
+    // (`startTime + durationDays`, read at accept time). Post-upgrade
+    // vehicles are normally caught by `OfferExpired` first (their expiry is
+    // clamped at the maturity), so this primarily guards pre-upgrade GTC
+    // vehicles (`expiresAt == 0`) and any term rewritten after listing. An
+    // `Active` loan status alone is not proof of a pre-maturity loan — it
+    // persists through the grace window, and a position must not change
+    // lender hands while overdue.
+    error SaleLoanPastMaturity();
     // #125 — AON ("All-or-Nothing") fill-mode terminal. Fired from
     // `OfferMatchFacet.matchOffers` when the matcher's would-be
     // matchAmount doesn't fully consume an AON offer, OR when the AON
@@ -816,6 +826,29 @@ contract OfferAcceptFacet is
         // the frontend can render "this offer expired N minutes ago".
         if (LibVaipakam.isOfferExpired(offer)) {
             revert OfferExpired(offerId, offer.expiresAt);
+        }
+        // #1503 PR-A (Codex #1505 r1 P1) — a sale VEHICLE's fill must also
+        // respect the linked loan's LIVE maturity, enforced HERE, before any
+        // value moves. Post-upgrade vehicles are covered by the expiry gate
+        // above (their `expiresAt` is clamped at the loan's maturity at
+        // listing), but a PRE-UPGRADE vehicle carries the GTC sentinel
+        // (`expiresAt == 0`) and sails past it — without this gate a buyer
+        // could purchase an overdue position inside the grace window.
+        // Deliberately NOT re-checked in `completeLoanSale`: the completion
+        // hop finishes what acceptance already committed (buyer principal
+        // moved, temp vehicle loan live), so refusing there would strand a
+        // committed buyer on the documented manual-recovery path — maturity
+        // must gate the entry, not the settlement of an entered position.
+        {
+            uint256 saleLoanId = s.saleOfferToLoanId[offerId];
+            if (saleLoanId != 0) {
+                LibVaipakam.Loan storage saleLoan = s.loans[saleLoanId];
+                if (
+                    block.timestamp >=
+                    uint256(saleLoan.startTime) +
+                        uint256(saleLoan.durationDays) * 1 days
+                ) revert SaleLoanPastMaturity();
+            }
         }
 
         // #569 decision D-2 (Codex #572 P1 #4, 2026-06-13) — accept-time

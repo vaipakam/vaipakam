@@ -219,8 +219,17 @@ contract EarlyWithdrawalFacetTest is Test {
         // #1104 — RiskPreviewFacet hosts previewOfferAcceptBlock /
         // acceptMidTierAckPair / previewCreatorBlock the buyer-side gate tests read.
         RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        // #1503 PR-A (Codex #1505 r1 P2) — MetricsFacet hosts
+        // getUserPositionOffers, which the teardown position-NFT-cleanup test
+        // reads to prove a torn-down vehicle drops out of the open-position view.
+        MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](25);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        cuts[25] = IDiamondCut.FacetCut({
+            facetAddress: address(metricsFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getMetricsFacetSelectors()
+        });
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(configFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -2939,6 +2948,14 @@ contract EarlyWithdrawalFacetTest is Test {
     function _scaffoldSaleListing(uint256 loanId, uint256 saleOfferId) internal {
         TestMutatorFacet(address(diamond)).setLoanToSaleOfferIdRaw(loanId, saleOfferId);
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(saleOfferId, loanId);
+        // #1503 PR-A — stamp a realistic POST-UPGRADE expiry on the synthetic
+        // vehicle. A zero `expiresAt` is now the pre-upgrade GTC sentinel and
+        // is admitted to immediate teardown (Codex #1505 r1 P1), which would
+        // invert the still-live refusal tests scaffolded through this helper.
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        o.expiresAt = uint64(block.timestamp + 7 days);
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, o);
         LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(loanId);
         TestMutatorFacet(address(diamond)).lockNFTRaw(
             ld.lenderTokenId, LibERC721.LockReason.EarlyWithdrawalSale
@@ -3327,14 +3344,98 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      maturity at fill: an accepted sale on a loan that has since
     ///      reached maturity (Active persists through grace) must not hand
     ///      the position over.
-    function test_completeLoanSale_revertsPastLiveMaturity() public {
+    /// @dev Codex #1505 r1 P1 — the live-maturity gate fires at ACCEPT time,
+    ///      before any buyer value moves. A post-upgrade vehicle would be
+    ///      caught by `OfferExpired` first (expiry clamped at maturity), so
+    ///      this simulates the PRE-UPGRADE shape it primarily protects: a
+    ///      legacy GTC vehicle (`expiresAt == 0`) that sails past the expiry
+    ///      gate and must still be refused once the loan is at/past maturity.
+    function test_saleAccept_revertsPastMaturity_legacyGtcVehicle() public {
         uint256 saleOfferId = _listSaleOffer();
-        _setOfferAccepted(saleOfferId); // mid-flight sale, manual-recovery path
+        // Rewrite the vehicle to the pre-upgrade GTC sentinel.
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        o.expiresAt = 0;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, o);
+
         LibVaipakam.Loan memory ld =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        vm.warp(ld.startTime + ld.durationDays * 1 days); // maturity reached
+        vm.warp(uint256(ld.startTime) + uint256(ld.durationDays) * 1 days);
+        // Terms built + signed AFTER the warp (fresh buyer deadline) — the
+        // linked loan's maturity must be the failing gate, and the GTC
+        // sentinel means the expiry gate stays silent.
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("gtcMaturityBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        vm.prank(buyer);
+        vm.expectRevert(OfferAcceptFacet.SaleLoanPastMaturity.selector);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev Codex #1505 r1 P1 — a PRE-UPGRADE listing (GTC sentinel,
+    ///      `expiresAt == 0`) is admitted to the permissionless teardown
+    ///      immediately: `isOfferExpired` would short-circuit false for it
+    ///      forever, which would preserve exactly the indefinite borrower
+    ///      freeze the mandatory expiry removes. The relist cooldown still
+    ///      stamps, so the borrower gets their action window.
+    function test_teardown_legacyGtcListing_admittedImmediately() public {
+        uint256 saleOfferId = _listSaleOffer();
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        o.expiresAt = 0;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, o);
+
+        uint256 lockedBefore =
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(lender);
+        address anyone = makeAddr("legacyGtcCleaner");
+        vm.prank(anyone); // no warp — teardown admitted right away
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLockedTokenCount(lender),
+            lockedBefore - 1,
+            "lender NFT unlocked after legacy-GTC teardown"
+        );
+        // Cooldown stamped — immediate relist refused.
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.SaleLoanPastMaturity.selector);
-        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalFacet.SaleRelistCooldownActive.selector,
+                uint64(block.timestamp + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS)
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(
+            activeLoanId, 500, true, 7 days
+        );
+    }
+
+    /// @dev Codex #1505 r1 P2 — the teardown must mirror `cancelOffer`'s
+    ///      creator-position-NFT cleanup: the vehicle's offer-position NFT is
+    ///      burned and its `offerIdByPositionTokenId` entry cleared, so
+    ///      `MetricsFacet.getUserPositionOffers` stops reporting the dead
+    ///      vehicle as an open position (no second cancel tx needed).
+    function test_teardownExpired_clearsVehiclePositionNft() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (uint256[] memory offerIdsBefore, ) =
+            MetricsFacet(address(diamond)).getUserPositionOffers(lender);
+        bool listedBefore;
+        for (uint256 i; i < offerIdsBefore.length; i++) {
+            if (offerIdsBefore[i] == saleOfferId) listedBefore = true;
+        }
+        assertTrue(listedBefore, "vehicle listed as open position pre-teardown");
+
+        vm.warp(block.timestamp + 7 days); // listing expired, loan still live
+        vm.prank(makeAddr("positionNftCleaner"));
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+
+        (uint256[] memory offerIdsAfter, ) =
+            MetricsFacet(address(diamond)).getUserPositionOffers(lender);
+        for (uint256 i; i < offerIdsAfter.length; i++) {
+            assertTrue(
+                offerIdsAfter[i] != saleOfferId,
+                "torn-down vehicle must drop out of open-position view"
+            );
+        }
     }
 }

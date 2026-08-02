@@ -8,16 +8,24 @@ loan's due date is clamped to end exactly there, and a position too close
 to maturity to stand for even the minimum window is refused at listing
 time. An expired listing can no longer be bought — a buyer's acceptance at
 or after the expiry moment is refused regardless of how fresh the buyer's
-own signature is — and independently, a sale can never complete at or past
-the underlying loan's due date even on a still-live listing (a matured
-position has zero remaining term; the buyer would be purchasing nothing).
-The expiry rides the same offer-expiry machinery regular offers use, so
-the open book, the accept gate, and the lazy-clear path all treat a sale
-vehicle's window uniformly.
+own signature is — and independently, no buyer can enter a position sale
+at or past the underlying loan's due date (a matured position has zero
+remaining term; the buyer would be purchasing nothing). That maturity
+refusal fires at the moment of purchase, before any buyer funds move; a
+sale entered before the due date remains completable on the documented
+manual-recovery path, so a committed buyer is never stranded. The expiry
+rides the same offer-expiry machinery regular offers use, so the open
+book, the accept gate, and the lazy-clear path all treat a sale vehicle's
+window uniformly. Listings created before this change (which carry no
+expiry) are admitted to the permissionless cleanup immediately, and the
+in-place testnet refresh script now removes the retired listing entry
+point so the pre-change shape cannot be recreated.
 
 Once a listing has expired on a still-active loan, anyone may tear it
 down: the cleanup unlocks the seller's lender position NFT, cancels the
-stale sale offer out of the open book, and severs the loan↔listing link.
+stale sale offer out of the open book (including the vehicle's own
+offer-position record, so it also drops out of the open-position views),
+and severs the loan↔listing link.
 This teardown stays available while the protocol is paused — it moves no
 value and creates nothing; it only releases a lock that no longer protects
 anything, so an incident pause must not trap a seller's NFT behind a dead

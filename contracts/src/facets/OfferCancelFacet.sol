@@ -582,7 +582,22 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             st == LibVaipakam.LoanStatus.Active ||
             st == LibVaipakam.LoanStatus.FallbackPending
         ) {
-            if (!LibVaipakam.isOfferExpired(s.offers[saleOfferId])) {
+            // A PRE-UPGRADE listing carries the GTC sentinel
+            // (`expiresAt == 0`) — `isOfferExpired` short-circuits false for
+            // it FOREVER, which would leave exactly the indefinite borrower
+            // freeze this teardown exists to remove (and, during a pause,
+            // with no seller `cancelOffer` escape either). The design retires
+            // GTC listings outright, so a legacy vehicle is admitted to
+            // teardown immediately: the borrower's held paths re-open, and
+            // the seller may relist under the bounded rules once the stamped
+            // cooldown passes. Post-upgrade vehicles always carry a non-zero
+            // expiry (`_boundListingExpiry` refuses 0), so this branch can
+            // never claw back a live bounded listing (Codex #1505 r1 P1).
+            LibVaipakam.Offer storage saleOffer = s.offers[saleOfferId];
+            if (
+                saleOffer.expiresAt != 0 &&
+                !LibVaipakam.isOfferExpired(saleOffer)
+            ) {
                 revert SaleListingLoanStillLive();
             }
             LibSaleListing.teardownExpired(s, loanId);

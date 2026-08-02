@@ -1458,10 +1458,10 @@ const copySource = {
       ['amount', 'symbol'],
     ),
     consentLabel: 'I understand the lock, the settlement pull, and the standing approval below and agree to them.',
-    receiptLock: 'Your lender position NFT, until the sale completes, the listing expires, or you cancel it. Nothing else.',
+    receiptLock: 'Your lender position NFT, until the sale completes or the listing ends. Cancelling releases it in one step; after the listing expires, a small cleanup transaction (which anyone — you, or a helper bot — can send, even while the protocol is paused) releases it. Nothing else.',
     receiptCanLose: 'If your balance or the standing approval goes short, a buyer’s acceptance simply fails — nothing is taken, but the listing sits unfillable until you restore it or cancel.',
     receiptFees: 'The protocol’s cut comes out of the settlement figure — nothing beyond it.',
-    receiptEnds: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, or when it expires on its own — at the end of your chosen window, or at the loan’s due date, whichever comes first.',
+    receiptEnds: 'When a buyer accepts (everything settles in their transaction), when you cancel the listing, or when it expires — at the end of your chosen window, or at the loan’s due date, whichever comes first. An expired listing can’t be bought any more; your NFT then unlocks with the cancel action or a cleanup transaction anyone can send.',
     title: 'List this position for sale',
     blurb:
       'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you receive the full outstanding amount in that same transaction. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
@@ -1469,13 +1469,13 @@ const copySource = {
     windowLabel: 'Listing window',
     windowOption: tmpl('{{days}} days', ['days']),
     windowNote:
-      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. After it expires or you cancel, this loan can’t be listed again for a day — a breathing space for the borrower, whose repayment options are held while a listing stands.',
+      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose repayment options are held while a listing stands.',
     action: 'Review listing',
     confirm: 'Confirm — list my position',
     // Spec rule (WebsiteReadme "borrower preclose flow" analog): the
     // NFT lock must be disclosed BEFORE confirmation.
     lockWarning:
-      'Listing locks your lender position NFT — it can’t be transferred until the sale completes, the listing expires, or you cancel it. Your claim rights are unaffected.',
+      'Listing locks your lender position NFT — it can’t be transferred until the sale completes or the listing ends (cancelling unlocks it in one step; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
     approvalNote: tmpl(
       `Listing sets a standing approval of up to {{amount}} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest accrued by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
       ['amount'],

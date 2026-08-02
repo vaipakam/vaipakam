@@ -147,14 +147,13 @@ contract EarlyWithdrawalFacet is
     ///         the timestamp at which listing re-opens so the frontend can say
     ///         when instead of just "no".
     error SaleRelistCooldownActive(uint64 availableAt);
-    /// @notice Lender-sale lifecycle (design item 1, round-22 tightening) —
-    ///         completion was attempted at or past the loan's LIVE maturity
-    ///         (`startTime + durationDays`, read at fill time, so a term
-    ///         rewritten by an obligation transfer is honoured). An `Active`
-    ///         status alone is not proof of a pre-maturity loan: it persists
-    ///         through the grace window, and a position must not change lender
-    ///         hands while overdue.
-    error SaleLoanPastMaturity();
+    // NOTE (#1503 PR-A, Codex #1505 r1): the live-maturity gate for a sale
+    // fill lives in `OfferAcceptFacet` (`SaleLoanPastMaturity`), enforced at
+    // ACCEPT time — before any buyer value moves. `_completeLoanSaleImpl`
+    // deliberately does NOT re-check maturity: completion finishes what
+    // acceptance already committed (buyer principal moved, temp vehicle loan
+    // live), and refusing there would strand a committed buyer on the
+    // documented manual-recovery path.
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -918,18 +917,13 @@ contract EarlyWithdrawalFacet is
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
-        // Design item 1 (round-22 tightening) — recheck maturity against the
-        // LIVE term at fill, not just `Active` status. `Active` persists
-        // through the grace window, and an obligation transfer can rewrite
-        // `startTime`/`durationDays` after the listing (and even after the
-        // buyer's accept, on the manual-recovery completion path), so the
-        // create-time expiry clamp alone is not proof the loan is still
-        // pre-maturity at the moment the position actually changes hands.
-        if (
-            block.timestamp >=
-            uint256(loan.startTime) + uint256(loan.durationDays) * 1 days
-        ) revert SaleLoanPastMaturity();
-
+        // Design item 1 — the live-maturity gate for a sale fill is enforced
+        // at ACCEPT time in OfferAcceptFacet (`SaleLoanPastMaturity`), before
+        // any buyer value moves. It is deliberately NOT re-checked here: on
+        // the atomic accept-then-complete path both run in one transaction
+        // (same timestamp, so a re-check could never differ), and on the
+        // manual-recovery path a re-check would permanently strand a buyer
+        // whose principal already moved at acceptance (Codex #1505 r1 P1).
         uint256 saleOfferId = s.loanToSaleOfferId[loanId];
         if (saleOfferId == 0) revert SaleNotLinked();
 

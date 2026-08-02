@@ -958,7 +958,12 @@ Its intended behaviour, as the test oracle for this surface:
   acknowledgement already given and closes an open review.
   Before confirming, the review must disclose: the
   lender position NFT is locked for transfer until the sale
-  completes, the listing expires, or it is cancelled; the settlement (the larger
+  completes or the listing ends — and honestly, not loosely: expiry
+  by itself stops the listing being buyable, while the lock is
+  released by cancelling or by a cleanup step that anyone may
+  trigger after expiry (even while the protocol is paused), and the
+  disclosure must say so rather than imply the lock vanishes at the
+  expiry moment; the settlement (the larger
   of interest accrued by acceptance or the rate difference for the
   remaining term — never both) is pulled from the seller's wallet
   inside the buyer's transaction, so listing sets a standing

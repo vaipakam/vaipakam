@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
+import {LibFacet} from "./LibFacet.sol";
+import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
 /**
  * @title LibSaleListing
@@ -101,6 +103,28 @@ library LibSaleListing {
 
         s.offerCancelled[saleOfferId] = true;
         LibMetricsHooks.onOfferCancelled(saleOfferId);
+
+        // Codex #1505 r1 P2 — mirror `cancelOffer`'s creator-position-NFT
+        // cleanup. The vehicle minted an offer-position NFT at creation
+        // (`_createOfferFinish` runs for sale vehicles too), and
+        // `MetricsFacet.getUserPositionOffers{Paginated}`'s open-offer filter
+        // relies ENTIRELY on the `offerIdByPositionTokenId` reverse map —
+        // leaving it in place keeps the cancelled vehicle listed as an open
+        // position until a second, redundant `cancelOffer` transaction.
+        // Burning is pause-safe (`burnNFT` carries no `whenNotPaused`; it is
+        // gated on `msg.sender == address(this)`, which this cross-facet hop
+        // satisfies), so the item-14 pause-exempt teardown path keeps working.
+        uint256 vehiclePositionTokenId = s.offers[saleOfferId].positionTokenId;
+        if (vehiclePositionTokenId != 0) {
+            delete s.offerIdByPositionTokenId[vehiclePositionTokenId];
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaipakamNFTFacet.burnNFT.selector,
+                    vehiclePositionTokenId
+                ),
+                bytes4(0)
+            );
+        }
 
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];
