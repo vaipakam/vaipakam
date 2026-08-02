@@ -238,10 +238,13 @@ export default function LenderEarlyWithdrawal() {
               <p className="action-desc" style={{ marginTop: 12 }}>
                 A sale offer is live for this loan. As soon as a new lender accepts it, the sale
                 finalizes atomically in the same transaction — no extra click needed. Until the
-                sale completes or the listing ends, the lender NFT cannot be transferred. The
-                listing expires on its own 7 days after it was created (or at the loan's due
-                date, if sooner); an expired listing can no longer be accepted, and the NFT is
-                then released by cancelling it or by a cleanup transaction anyone may send. To
+                sale completes or the listing ends, the lender NFT cannot be transferred. A
+                listing created from this page expires on its own 7 days after creation (or at
+                the loan's due date, if sooner) and can then no longer be accepted. A listing
+                created before the bounded-window upgrade carries no expiry of its own — it
+                stays buyable until the loan's due date unless cleaned up, and anyone may send
+                that cleanup transaction immediately. Either way, what releases the NFT is
+                cancelling the listing or the cleanup transaction — never expiry alone. To
                 abort the flow, cancel the linked sale offer from the Offer Book. The manual
                 button below is only needed as a recovery hook if auto-completion didn't run.
               </p>
