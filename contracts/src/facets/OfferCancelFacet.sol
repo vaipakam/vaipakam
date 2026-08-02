@@ -604,6 +604,18 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         } else {
             LibSaleListing.teardownOnLoanExit(s, loanId);
         }
+        // Codex #1505 r2 — emit the CANONICAL cancellation event alongside the
+        // library's sale-specific `LoanSaleListingTornDown`. The indexer's
+        // offer-status path flips a row terminal only on `OfferCanceled` /
+        // `OfferClosed`, and a torn-down vehicle — especially a pre-upgrade
+        // GTC one whose `expires_at == 0` defeats the API's time-expiry
+        // predicate — would otherwise sit `active` in the indexed book forever
+        // after its links and position NFT are already gone. Attributed to the
+        // offer's CREATOR (the seller), not the permissionless caller — same
+        // #195 rationale as cancelOffer. Emitted here (not in LibSaleListing)
+        // so the event isn't double-declared in this facet's exported ABI;
+        // both teardown paths flow through this entry.
+        emit OfferCanceled(saleOfferId, s.offers[saleOfferId].creator);
     }
 
     /**

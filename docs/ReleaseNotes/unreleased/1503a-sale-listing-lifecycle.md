@@ -25,7 +25,9 @@ Once a listing has expired on a still-active loan, anyone may tear it
 down: the cleanup unlocks the seller's lender position NFT, cancels the
 stale sale offer out of the open book (including the vehicle's own
 offer-position record, so it also drops out of the open-position views),
-and severs the loan↔listing link.
+severs the loan↔listing link, and announces the cancellation the same
+way an ordinary cancel does — so off-chain indexes mark the listing
+terminal without any extra transaction.
 This teardown stays available while the protocol is paused — it moves no
 value and creates nothing; it only releases a lock that no longer protects
 anything, so an incident pause must not trap a seller's NFT behind a dead

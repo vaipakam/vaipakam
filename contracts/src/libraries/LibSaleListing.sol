@@ -38,6 +38,12 @@ library LibSaleListing {
     ///         `saleOfferId` as cancelled off the back of this + `offerCancelled`.
     event LoanSaleListingTornDown(uint256 indexed loanId, uint256 indexed saleOfferId);
 
+    // NOTE (Codex #1505 r2): the CANONICAL `OfferCanceled` companion event for
+    // a teardown is emitted by the facet entry (`OfferCancelFacet.
+    // teardownStaleSaleListing`), where the event is already declared — both
+    // teardown paths flow through it, and a library re-declaration would
+    // duplicate the event entry in the facet's exported ABI.
+
     /**
      * @notice Tear down the live sale listing (if any) for a loan that has just
      *         reached a terminal state without a completed sale.

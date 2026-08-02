@@ -3410,6 +3410,45 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev Codex #1505 r2 P2 — preview parity for the accept path's
+    ///      live-maturity gate. A legacy GTC vehicle (`expiresAt == 0`) never
+    ///      trips the `OfferExpired` classifier, so without the appended
+    ///      `SaleLoanPastMaturity` classifier the preview would return `None`
+    ///      for an acceptance that deterministically reverts.
+    function test_previewAccept_saleVehicle_flagsPastMaturity() public {
+        uint256 saleOfferId = _listSaleOffer();
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        o.expiresAt = 0; // pre-upgrade GTC sentinel
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, o);
+
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        vm.warp(uint256(ld.startTime) + uint256(ld.durationDays) * 1 days);
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanPastMaturity),
+            "preview mirrors the accept path's live-maturity refusal"
+        );
+    }
+
+    /// @dev Codex #1505 r2 P2 — the teardown must emit the CANONICAL
+    ///      `OfferCanceled` (same topic0 as cancelOffer's) alongside the
+    ///      sale-specific event, attributed to the seller: the indexer's
+    ///      offer-status path flips rows terminal only on
+    ///      `OfferCanceled`/`OfferClosed`, and a torn-down GTC vehicle
+    ///      (`expires_at == 0`) also defeats the API's time-expiry predicate.
+    function test_teardown_emitsCanonicalOfferCanceled() public {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.warp(block.timestamp + 7 days); // expire the listing
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit OfferCancelFacet.OfferCanceled(saleOfferId, lender);
+        vm.prank(makeAddr("canonicalEventCleaner"));
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
     /// @dev Codex #1505 r1 P2 — the teardown must mirror `cancelOffer`'s
     ///      creator-position-NFT cleanup: the vehicle's offer-position NFT is
     ///      burned and its `offerIdByPositionTokenId` entry cleared, so

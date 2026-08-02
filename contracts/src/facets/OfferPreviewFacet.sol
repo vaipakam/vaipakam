@@ -244,6 +244,21 @@ contract OfferPreviewFacet {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
                 return preview;
             }
+            // #1503 PR-A (Codex #1505 r2) — mirror the accept path's
+            // live-maturity gate: `Active` persists through the grace window,
+            // and a pre-upgrade GTC vehicle (`expiresAt == 0`) never trips
+            // the `OfferExpired` classifier above, so without this predicate
+            // the preview would return `None` for an acceptance that
+            // deterministically reverts `SaleLoanPastMaturity`.
+            if (
+                block.timestamp >=
+                uint256(_saleLoan.startTime) +
+                    uint256(_saleLoan.durationDays) * 1 days
+            ) {
+                preview.errorCode =
+                    OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;
+                return preview;
+            }
             if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;

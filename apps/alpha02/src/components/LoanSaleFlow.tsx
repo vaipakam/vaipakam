@@ -50,6 +50,7 @@ import {
 } from '../contracts/preflights';
 import {
   LOAN_STATUS_ACTIVE,
+  MIN_SALE_LISTING_SECONDS,
   readLoanLive,
   type LoanLive,
 } from '../contracts/loanLive';
@@ -205,13 +206,21 @@ export function LoanSaleFlow({
         setError(copy.errors.loanAlreadySettled);
         return;
       }
-      // createLoanSaleOffer reverts at/past maturity — fail plainly
-      // before the wallet prompt.
-      if (
-        latestBlock.timestamp >=
-        liveLoan.startTime + liveLoan.durationDays * 86_400n
-      ) {
+      // createLoanSaleOffer reverts at/past maturity, and ALSO when less
+      // than the minimum listing window (1 hour) remains before maturity —
+      // `_boundListingExpiry` clamps every window at maturity and refuses a
+      // clamped window below the minimum. Fail plainly here, BEFORE the
+      // standing approval is granted: without this, the approval tx would
+      // mine and then the guaranteed-to-revert listing tx (plus a revoke
+      // unwind) would follow (Codex #1505 r2).
+      const maturityTs =
+        liveLoan.startTime + liveLoan.durationDays * 86_400n;
+      if (latestBlock.timestamp >= maturityTs) {
         setError(copy.errors.saleListingMatured);
+        return;
+      }
+      if (maturityTs - latestBlock.timestamp < MIN_SALE_LISTING_SECONDS) {
+        setError(copy.errors.saleListingTooCloseToMaturity);
         return;
       }
       // The standing settlement approval — full interest-window

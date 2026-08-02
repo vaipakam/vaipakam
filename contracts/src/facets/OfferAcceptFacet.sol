@@ -1892,7 +1892,15 @@ contract OfferAcceptFacet is
         // #951 v2 (Codex #959) — the offer is cancelled (`offerCancelled` set,
         // e.g. by a stale-sale-listing teardown). Surfaced so the UI disables
         // "Accept" without a revert. APPENDED — prior values stay stable.
-        OfferIsCancelled
+        OfferIsCancelled,
+        // #1503 PR-A (Codex #1505 r2) — a sale vehicle's linked loan is at or
+        // past its LIVE maturity, so the acceptance would revert
+        // `SaleLoanPastMaturity`. Reachable in preview primarily for a
+        // pre-upgrade GTC vehicle (`expiresAt == 0` sails past the
+        // `OfferExpired` classifier); post-upgrade vehicles normally classify
+        // as `OfferExpired` first (expiry clamped at maturity). APPENDED —
+        // prior values stay stable.
+        SaleLoanPastMaturity
     }
 
     /// @notice Projection of the loan that would land if the supplied
