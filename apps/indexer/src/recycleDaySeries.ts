@@ -38,6 +38,7 @@ export interface RecycleSeriesLog {
 const HANDLED = new Set([
   'GovernorDayPoolStamped',
   'VpfiRecycled',
+  'VpfiRecycledPreLaunch',
   'ChainRecycledReported',
 ]);
 
@@ -77,7 +78,13 @@ async function applyOne(
   log: RecycleSeriesLog,
 ): Promise<boolean> {
   const blockNumber = Number(log.blockNumber);
-  const dayId = Number(argBig(log.args.dayId));
+  // A pre-launch credit carries NO dayId — deliberately, so that a field
+  // that always reads zero cannot re-create the day-0 attribution (#1504).
+  // Recorded as -1 in the audit table so it can never be mistaken for day 0.
+  const dayId =
+    log.eventName === 'VpfiRecycledPreLaunch'
+      ? -1
+      : Number(argBig(log.args.dayId));
 
   // Exactly-once gate: overlapping scan ranges (webhook + sweep) must not
   // double-count an absorption credit.
@@ -155,6 +162,28 @@ async function applyOne(
     return true;
   }
 
+  // #1504 — absorption credited while the schedule was INACTIVE. It has no
+  // day, so it is kept as a single per-chain total rather than forced into
+  // one: filing it under day 0 is the defect the contracts just stopped
+  // committing. Published beside the series because it is what reconciles
+  // the bucket against the sum of the days.
+  if (log.eventName === 'VpfiRecycledPreLaunch') {
+    const amount = argBig(log.args.amount);
+    const row = await env.DB.prepare(
+      `SELECT absorbed FROM recycle_prelaunch WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ absorbed: string }>();
+    await env.DB.batch([
+      record,
+      env.DB.prepare(
+        `INSERT INTO recycle_prelaunch (chain_id, absorbed) VALUES (?, ?)
+         ON CONFLICT (chain_id) DO UPDATE SET absorbed = excluded.absorbed`,
+      ).bind(chainId, (big(row?.absorbed) + amount).toString()),
+    ]);
+    return true;
+  }
+
   if (log.eventName === 'VpfiRecycled') {
     const amount = argBig(log.args.amount);
     const row = await env.DB.prepare(
@@ -163,14 +192,16 @@ async function applyOne(
     )
       .bind(chainId, dayId)
       .first<{ absorbed_local: string }>();
-    await env.DB.batch([
+    const writes = [
       record,
       ensureRow(env, chainId, dayId),
       env.DB.prepare(
         `UPDATE recycle_day_pool SET absorbed_local = ?
           WHERE chain_id = ? AND day_id = ?`,
       ).bind((big(row?.absorbed_local) + amount).toString(), chainId, dayId),
-    ]);
+    ];
+
+    await env.DB.batch(writes);
     return true;
   }
 
@@ -188,9 +219,41 @@ async function applyOne(
   // figure the day-pool stamp was sized from.
   const sourceChainId = Number(argBig(log.args.sourceChainId));
   const accepted = argBig(log.args.dayCreditAccepted);
+
+  // Record the reporting chain's LIFETIME cumulative regardless of what was
+  // accepted for the day (#1508 r4). `accepted` is bounded by that chain's
+  // remaining attribution headroom, and its pre-launch stock is in no day
+  // report at all — so the day series alone cannot see all of a mirror's
+  // recycled value. `cumulative` is that chain's own
+  // `recycleCreditedCumulative`, which counts every credit it ever took.
+  // Stored as a MAX because a replayed or out-of-order report must never
+  // walk a monotonic figure backwards.
+  const reported = argBig(log.args.cumulative);
+  const prevReported = await env.DB.prepare(
+    `SELECT reported_cumulative FROM recycle_chain_reported
+      WHERE chain_id = ? AND source_chain_id = ?`,
+  )
+    .bind(chainId, sourceChainId)
+    .first<{ reported_cumulative: string }>();
+  const reportedWrite = env.DB.prepare(
+    `INSERT INTO recycle_chain_reported
+       (chain_id, source_chain_id, reported_cumulative)
+     VALUES (?, ?, ?)
+     ON CONFLICT (chain_id, source_chain_id)
+     DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+  ).bind(
+    chainId,
+    sourceChainId,
+    (reported > big(prevReported?.reported_cumulative)
+      ? reported
+      : big(prevReported?.reported_cumulative)
+    ).toString(),
+  );
   if (sourceChainId === chainId || accepted === 0n) {
-    // Still recorded, so a replay cannot re-evaluate the filter.
-    await env.DB.batch([record]);
+    // Still recorded, so a replay cannot re-evaluate the filter — and the
+    // reporting chain's lifetime cumulative is kept either way, since a
+    // zero-credit day still carries a truthful total.
+    await env.DB.batch([record, reportedWrite]);
     return true;
   }
 
@@ -202,6 +265,7 @@ async function applyOne(
     .first<{ absorbed_mirror: string }>();
   await env.DB.batch([
     record,
+    reportedWrite,
     ensureRow(env, chainId, dayId),
     env.DB.prepare(
       `UPDATE recycle_day_pool SET absorbed_mirror = ?
@@ -248,6 +312,7 @@ export async function ensureRecycleSeriesBackfill(
       WHERE chain_id = ?
         AND kind IN ('GovernorDayPoolStamped',
                      'VpfiRecycled',
+                     'VpfiRecycledPreLaunch',
                      'ChainRecycledReported')
       ORDER BY block_number ASC, log_index ASC`,
   )
@@ -287,6 +352,85 @@ export async function ensureRecycleSeriesBackfill(
 }
 
 /**
+ * Current projection version. BUMP THIS when a new derived table is added,
+ * so databases that already completed the activity_events replay rebuild it.
+ *
+ * 1 — `recycle_chain_reported` (per-source lifetime cumulative).
+ */
+const PROJECTION_VERSION = 1;
+
+/**
+ * Rebuild the per-source lifetime cumulative from `activity_events`.
+ *
+ * Separate from {ensureRecycleSeriesBackfill} on purpose. That replay is
+ * gated by the exactly-once dedup table, so on a database that has already
+ * run it every relevant event is marked seen and a re-run applies nothing —
+ * which is right for the day series and wrong for a projection introduced
+ * afterwards (Codex #1508 r5 P2). Folding the source rows directly sidesteps
+ * the gate, and a MAX fold is idempotent by construction, so this needs no
+ * exactly-once machinery of its own.
+ */
+export async function ensureReportedCumulativeProjection(
+  env: Env,
+  chainId: number,
+): Promise<void> {
+  const state = await env.DB.prepare(
+    `SELECT projection_version FROM recycle_series_state WHERE chain_id = ?`,
+  )
+    .bind(chainId)
+    .first<{ projection_version: number }>();
+  if ((state?.projection_version ?? 0) >= PROJECTION_VERSION) return;
+
+  const rows = await env.DB.prepare(
+    `SELECT args_json FROM activity_events
+      WHERE chain_id = ? AND kind = 'ChainRecycledReported'
+      ORDER BY block_number ASC, log_index ASC`,
+  )
+    .bind(chainId)
+    .all<{ args_json: string }>();
+
+  const maxBySource = new Map<number, bigint>();
+  for (const row of rows.results ?? []) {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(row.args_json) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const src = Number(argBig(args.sourceChainId));
+    const cum = argBig(args.cumulative);
+    if (cum > (maxBySource.get(src) ?? 0n)) maxBySource.set(src, cum);
+  }
+
+  for (const [src, cum] of maxBySource) {
+    const prev = await env.DB.prepare(
+      `SELECT reported_cumulative FROM recycle_chain_reported
+        WHERE chain_id = ? AND source_chain_id = ?`,
+    )
+      .bind(chainId, src)
+      .first<{ reported_cumulative: string }>();
+    if (cum <= big(prev?.reported_cumulative)) continue;
+    await env.DB.prepare(
+      `INSERT INTO recycle_chain_reported
+         (chain_id, source_chain_id, reported_cumulative)
+       VALUES (?, ?, ?)
+       ON CONFLICT (chain_id, source_chain_id)
+       DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+    )
+      .bind(chainId, src, cum.toString())
+      .run();
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO recycle_series_state (chain_id, projection_version)
+     VALUES (?, ?)
+     ON CONFLICT (chain_id) DO UPDATE SET projection_version = excluded.projection_version`,
+  )
+    .bind(chainId, PROJECTION_VERSION)
+    .run();
+}
+
+/**
  * Ingest entry point — called from the chain scan with every decoded log.
  * Returns the number of events actually applied (fresh, non-replay).
  *
@@ -300,6 +444,7 @@ export async function applyRecycleDaySeries(
   chainId: number,
 ): Promise<number> {
   await ensureRecycleSeriesBackfill(env, chainId);
+  await ensureReportedCumulativeProjection(env, chainId);
 
   let applied = 0;
   for (const log of logs) {

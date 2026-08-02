@@ -83,15 +83,49 @@ library LibVpfiRecycle {
     ///               0 for aggregate credits such as a claim-path forfeit
     ///               batch spanning several entries).
     /// @param amount VPFI wei credited to the bucket.
-    /// @param dayId  Interaction-reward schedule day the credit landed in
-    ///               (0 pre-launch — aged out of the trailing window once
-    ///               emissions start).
+    /// @param dayId  Interaction-reward schedule day the credit landed in.
+    ///               Day 0 means the FIRST SCHEDULED DAY and nothing else —
+    ///               pre-launch credits announce themselves through
+    ///               {VpfiRecycledPreLaunch} instead (#1504).
     /// @custom:event-category state-change/treasury-mutation
     event VpfiRecycled(
         uint8 indexed source,
         uint256 indexed refId,
         uint256 amount,
         uint256 dayId
+    );
+
+    /// @notice Absorption credited while the emission schedule is INACTIVE.
+    ///         Same movement of value as {VpfiRecycled}; it simply belongs
+    ///         to no programme day (#1504).
+    /// @dev    A SEPARATE event rather than a widened {VpfiRecycled}, chosen
+    ///         for how each shape FAILS on a consumer that has not been
+    ///         updated:
+    ///
+    ///         - a sentinel `dayId` puts a magic value into a field several
+    ///           consumers iterate as a day;
+    ///         - an added flag is silently absent when unread, so the credit
+    ///           lands in day 0 anyway — the very defect being fixed;
+    ///         - a separate event is simply NOT MATCHED, so the value is
+    ///           OMITTED.
+    ///
+    ///         Omission understates the series; mis-bucketing inflates day 0.
+    ///         For a transparency figure the conservative failure is the only
+    ///         acceptable one. It also spares {VpfiRecycled} a second topic
+    ///         change, which would have needed its own cutover and its own
+    ///         pre-cutover backfill so soon after #1496's.
+    ///
+    ///         No `dayId` parameter deliberately: there is no day to name,
+    ///         and an argument that always reads zero invites exactly the
+    ///         attribution this event exists to prevent.
+    /// @param  source  Absorption class (same enum as {VpfiRecycled}).
+    /// @param  refId   Class-specific reference id.
+    /// @param  amount  VPFI credited to the recycle bucket.
+    /// @custom:event-category state-change/treasury-mutation
+    event VpfiRecycledPreLaunch(
+        uint8 indexed source,
+        uint256 indexed refId,
+        uint256 amount
     );
 
     /// @notice The Diamond's live VPFI balance cannot back the post-credit
@@ -126,7 +160,6 @@ library LibVpfiRecycle {
         uint256 needed = s.recycleBucket + amount;
         if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
-        if (!active) dayId = 0;
         // #1222 M3 B1 — monotonic cumulative of every credit on this chain,
         // reported mirror→Base on each day-close so Base's per-chain
         // availability ledger self-heals across missed reports. Counts
@@ -137,13 +170,28 @@ library LibVpfiRecycle {
         // would be double-counted through the floor.
         uint256 cumulativeBefore = creditedCumulative(s);
         s.recycleBucket = needed;
-        s.recycledCreditedByDay[dayId] += amount;
+        // Pre-launch credits are kept OUT of the day series (#1504). They
+        // used to land in day 0, which made that bucket the sum of an
+        // arbitrarily long pre-launch period AND the first scheduled day —
+        // unseparable, published as an ordinary day, and folded into `Ā`'s
+        // trailing MEAN DAILY rate for a full window at programme start.
+        // The bucket, the cumulative and therefore every backing and
+        // availability figure are unchanged; only the attribution moves.
+        if (active) {
+            s.recycledCreditedByDay[dayId] += amount;
+        } else {
+            s.recycledCreditedPreLaunch += amount;
+        }
         s.recycleCreditedCumulative = cumulativeBefore + amount;
         // #1448 r4 — see the storage docs: `recycleCreditedCumulative == 0`
         // cannot by itself distinguish an un-seeded upgraded Diamond from a
         // fresh chain that has absorbed nothing yet.
         s.recycleAccountingSeeded = true;
-        emit VpfiRecycled(uint8(source), refId, amount, dayId);
+        if (active) {
+            emit VpfiRecycled(uint8(source), refId, amount, dayId);
+        } else {
+            emit VpfiRecycledPreLaunch(uint8(source), refId, amount);
+        }
     }
 
     /**
@@ -300,6 +348,12 @@ library LibVpfiRecycle {
         uint256 needed = s.recycleBucket + amount;
         if (bal < needed) revert InsufficientRecycleBacking(needed, bal);
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
+        // Keeps the day-0 label pre-launch, unlike {credit} above (#1504).
+        // Deliberate, not an oversight: relocation is NOT absorption and
+        // writes no day-keyed accumulator, so the day here is an
+        // informational label on the event rather than an attribution that
+        // feeds `Ā` or the published per-day series. Nothing reads it as a
+        // bucket. Revisit if a consumer ever buckets relocations by day.
         if (!active) dayId = 0;
         // #1448 r3 — SEED the stored cumulative from the derived floor
         // before relocating, on an in-place-upgraded Diamond whose slot is
@@ -411,6 +465,10 @@ library LibVpfiRecycle {
         s.recycleCommitRetiredCumulative += retired;
         s.paidOutRecycled += amount;
         (uint256 dayId, bool active) = LibInteractionRewards.currentDayOrZero();
+        // As in {creditCustodyRelocated}: an informational label, not an
+        // attribution — consumption writes no day-keyed accumulator (#1504).
+        // Pre-launch consumption also needs an armed governor, which needs
+        // an active schedule, so this branch is not reachable today.
         if (!active) dayId = 0;
         emit VpfiRecycleConsumed(amount, dayId);
     }

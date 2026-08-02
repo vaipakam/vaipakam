@@ -51,7 +51,17 @@
  *    "not indexed yet" indistinguishable from "quiet", which is the very
  *    distinction the dense series exists to draw.
  *
- * 5. **No calendar dates.** Days are reported by their reward `dayId`
+ * 5. **No claim about day 0's provenance.** On a deployment upgraded in
+ *    place, credits taken before the split are already inside day 0 and
+ *    nothing separates them. Which contract version a chain runs is
+ *    DEPLOYMENT PROVENANCE, not something the event stream carries — and
+ *    the tempting inference ("this chain emitted a pre-launch event, so it
+ *    has the split") is false on the ordinary case of a fresh deployment
+ *    that simply took no credits before launch (Codex #1508 r3 P2). So no
+ *    flag is published in either direction: a wrong one is worse than none
+ *    here. `absorbedPreLaunch` reports what IS observed.
+ *
+ * 6. **No calendar dates.** Days are reported by their reward `dayId`
  *    only. Mapping those to dates needs `interactionLaunchTimestamp`, and
  *    embedding it here would make this endpoint a second authority on
  *    where day boundaries fall — the precise conflation the 0045 migration
@@ -126,6 +136,19 @@ export async function handleRecyclingSeries(
     // keeps this endpoint free of the launch timestamp (see the header):
     // the series describes protocol days, and the newest one it knows
     // about is the newest one there is.
+    // Read BEFORE the empty-series branch below (Codex #1508 r2 P2). A
+    // chain that has only ever taken pre-launch credits — the NORMAL state
+    // before the schedule starts — has no day rows at all, so reading this
+    // afterwards would report zero for exactly the period the figure exists
+    // to describe, until some unrelated scheduled event created the first
+    // day row.
+    const preLaunchRow = await env.DB.prepare(
+      `SELECT absorbed FROM recycle_prelaunch WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ absorbed: string }>();
+    const preLaunch = preLaunchRow?.absorbed ?? '0';
+
     const head = await env.DB.prepare(
       `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day
          FROM recycle_day_pool WHERE chain_id = ?`,
@@ -145,6 +168,7 @@ export async function handleRecyclingSeries(
         coverageFromDay: null,
         cumulative: {
           absorbed: '0',
+          absorbedPreLaunch: preLaunch,
           absorbedLocal: '0',
           absorbedMirror: '0',
           freshDrawdown: '0',
@@ -172,6 +196,13 @@ export async function handleRecyclingSeries(
     // the programme. Both reads return rows and the folding happens in
     // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
     // them would silently overflow SQLite's int64.
+    const reportedRows = await env.DB.prepare(
+      `SELECT source_chain_id, reported_cumulative
+         FROM recycle_chain_reported WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .all<{ source_chain_id: number; reported_cumulative: string }>();
+
     const [windowRows, lifetime] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, stamped, schedule_floor, recycled_budget, a_bar,
@@ -264,7 +295,6 @@ export async function handleRecyclingSeries(
           // label. On a mirror deployment no day is ever stamped, which
           // is why this endpoint needs no canonical-chain check.
           absorbed: null,
-          preLaunchConflated: dayId === 0,
         });
         continue;
       }
@@ -291,14 +321,6 @@ export async function handleRecyclingSeries(
         absorbedLocal: absorbedLocal.toString(),
         absorbedMirror: absorbedMirror.toString(),
         absorbed: (absorbedLocal + absorbedMirror).toString(),
-        // Day 0's absorption is NOT day 0's absorption: while the emission
-        // schedule is inactive every credit is mapped to day 0, so this
-        // bucket is the sum of all pre-launch absorption AND the first
-        // scheduled day, inseparably (#1504). Flagged rather than silently
-        // charted — a consumer must exclude or relabel it. The contract
-        // fix that makes the figure correct by construction is its own
-        // change; this marker goes away with it.
-        preLaunchConflated: dayId === 0,
       });
     }
 
@@ -346,10 +368,50 @@ export async function handleRecyclingSeries(
       trailingCount += 1n;
     }
     const selfFunded = trailingCount > 0n && trailingFloorSum === 0n;
+    // The numerator is the LIFETIME recycled stock. Two rounds of getting
+    // this wrong in the same direction:
+    //
+    //   r2 — it used only day-attributed absorption, so this chain's own
+    //        pre-launch stock was missing. Keeping that out of `Ā` is a
+    //        statement about a trailing RATE and says nothing about a
+    //        lifetime total.
+    //   r4 — adding only the LOCAL pre-launch stock fixed the single-chain
+    //        case and still understated a mesh. A mirror's pre-launch stock
+    //        never reaches this indexer (its `VpfiRecycledPreLaunch` is on
+    //        its own chain), and its day reports carry only what was
+    //        ACCEPTED — bounded by that chain's attribution headroom.
+    //
+    // So each mirror contributes its own reported LIFETIME cumulative, which
+    // counts every credit it ever took, and its accepted day credits are
+    // excluded to avoid counting the same value twice.
+    let mirrorReported = 0n;
+    let selfReported = 0n;
+    for (const r of reportedRows.results ?? []) {
+      if (r.source_chain_id === chainId) {
+        selfReported = BigInt(r.reported_cumulative);
+        continue;
+      }
+      mirrorReported += BigInt(r.reported_cumulative);
+    }
+
+    // The LOCAL term prefers this chain's own self-report when there is one
+    // (Codex #1508 r5 P2). The event fold is bounded by this consumer's own
+    // coverage — `coverageFromDay` exists precisely because indexing can
+    // begin mid-programme — so credits taken before it started watching are
+    // missing from it forever. The self-report carries the chain's
+    // self-healing `recycleCreditedCumulative`, which counts every credit it
+    // ever took, pre-launch included.
+    //
+    // MAX rather than a straight substitution: a self-report can lag the
+    // newest locally observed credits, and a lifetime figure must never go
+    // backwards because a report is a few blocks stale.
+    const localFold = cumAbsorbedLocal + BigInt(preLaunch);
+    const localTerm = selfReported > localFold ? selfReported : localFold;
+    const runwayNumerator = localTerm + mirrorReported;
     const runwayExtensionDays =
       trailingCount === 0n || selfFunded
         ? null
-        : ratio6(cumAbsorbed * trailingCount, trailingPoolSum);
+        : ratio6(runwayNumerator * trailingCount, trailingPoolSum);
 
     return jsonResponse({
       chainId,
@@ -365,6 +427,13 @@ export async function handleRecyclingSeries(
       daily,
       cumulative: {
         absorbed: cumAbsorbed.toString(),
+        // #1504 — absorption credited before the schedule started. It has no
+        // day, so it appears here and nowhere in `daily`. Day 0 used to
+        // carry it, which made that bucket the sum of an arbitrarily long
+        // pre-launch period and the first real day; the contracts now file
+        // it separately and so does this. It is the term that reconciles the
+        // recycle bucket against the sum of the day series.
+        absorbedPreLaunch: preLaunch,
         absorbedLocal: cumAbsorbedLocal.toString(),
         absorbedMirror: cumAbsorbedMirror.toString(),
         freshDrawdown: cumFreshDrawdown.toString(),

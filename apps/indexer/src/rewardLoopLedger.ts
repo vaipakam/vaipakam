@@ -85,6 +85,14 @@ const HANDLED = new Set([
   // designated feed (spec §9). Not user-keyed; applied as a per-day
   // aggregate + cumulative counter.
   'VpfiRecycled',
+  // #1504 — pre-launch absorption now announces itself separately. RL-2's
+  // ratio buckets by the UTC block day and is about VALUE LEAVING/RE-ENTERING
+  // the sink, not about programme days, so a pre-launch credit belongs here
+  // exactly as a scheduled one does. Omitting it would have made
+  // `absorbed[D]`, `cum_absorbed` and both published ratios permanently
+  // undercount (Codex #1508 r1 P2) — the fix for one metric silently
+  // breaking a different one.
+  'VpfiRecycledPreLaunch',
 ]);
 
 /** Kinds applied as retention DEBITS. Beyond the canonical
@@ -141,7 +149,7 @@ async function applyOne(
 
   // Absorption credits are day-aggregates, not per-user retention flows —
   // handled on their own branch (dedup row + day absorbed + cum counter).
-  if (ev.kind === 'VpfiRecycled') {
+  if (ev.kind === 'VpfiRecycled' || ev.kind === 'VpfiRecycledPreLaunch') {
     const dayAbs = await env.DB.prepare(
       `SELECT absorbed FROM reward_loop_day
         WHERE chain_id = ? AND day_id = ?`,
@@ -322,7 +330,9 @@ function eventFromActivityRow(row: {
     } else if (row.kind === 'VPFIDiscountApplied') {
       user = String(args.borrower ?? '').toLowerCase();
       amount = BigInt(String(args.vpfiDeducted ?? '0'));
-    } else if (row.kind === 'VpfiRecycled') {
+    } else if (
+      row.kind === 'VpfiRecycled' || row.kind === 'VpfiRecycledPreLaunch'
+    ) {
       user = ZERO_ADDR;
       amount = BigInt(String(args.amount ?? '0'));
     } else {
@@ -383,6 +393,7 @@ export async function ensureRewardLoopBackfill(
                      'RewardDeliveredToVault',
                      'VaultVpfiDebited',
                      'VpfiRecycled',
+                     'VpfiRecycledPreLaunch',
                      'VPFIWithdrawnFromVault',
                      'NotificationFeeBilled',
                      'VPFIDiscountApplied')
@@ -473,7 +484,8 @@ export async function applyRewardLoopLedger(
     }
 
     const user =
-      log.eventName === 'VpfiRecycled'
+      log.eventName === 'VpfiRecycled' ||
+      log.eventName === 'VpfiRecycledPreLaunch'
         ? ZERO_ADDR
         : String(log.args.user ?? '').toLowerCase();
     const amount = BigInt((log.args.amount as bigint) ?? 0n);

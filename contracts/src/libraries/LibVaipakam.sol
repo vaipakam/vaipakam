@@ -5212,8 +5212,11 @@ library LibVaipakam {
         /// @dev Day-bucketed credit totals feeding the trailing-window
         ///      absorption average `Ā[D]` cheaply at day finalization
         ///      (governor §3.1/§5). Key = the interaction-reward schedule day
-        ///      the credit landed in (day 0 collects pre-launch credits — the
-        ///      trailing window ages them out naturally once emissions start).
+        ///      the credit landed in. Day 0 means the FIRST SCHEDULED DAY and
+        ///      nothing else — pre-launch credits go to
+        ///      `recycledCreditedPreLaunch`, which lives at the APPEND-ONLY
+        ///      TAIL of this struct rather than here beside its sibling
+        ///      (#1504; Codex #1508 r1 P1).
         mapping(uint256 => uint256) recycledCreditedByDay;
         // ─── VPFI recycling governor PR-3b (#1217 §3.1) — day-pool stamps ───
         /// @dev Per-day governor stamp, written ONCE at day finalization
@@ -5939,6 +5942,40 @@ library LibVaipakam {
         //   changed hands; the new lender starts unencumbered) and never
         //   read for terminal loans (they can't relist regardless).
         mapping(uint256 => uint64) saleRelistCooldownUntil;
+        // `recycledCreditedPreLaunch` (#1504) — APPENDED AT THE TAIL, not
+        //   placed beside `recycledCreditedByDay` where it belongs
+        //   logically. Inserting it mid-struct shifts `dayPoolStamp` and
+        //   every later member by a slot, so a Diamond REFRESHED IN PLACE
+        //   would stop seeing its own governor, remittance and commitment
+        //   state and would overwrite unrelated values on the next write
+        //   (Codex #1508 r1 P1). The struct's own rule calls reordering
+        //   free pre-launch, which is true of MAINNET and false of the
+        //   deployed testnets, which are upgraded in place — and those are
+        //   exactly where this recycling ledger is being exercised.
+        //
+        /// @dev Absorption credited while the emission schedule is INACTIVE,
+        ///      kept out of the day series entirely (#1504).
+        ///
+        ///      These credits are real and the tokens are in the bucket —
+        ///      `recycleBucket` and {recycleCreditedCumulative} count them
+        ///      exactly as before, so backing, availability and every
+        ///      cumulative are unchanged. What changes is attribution: they
+        ///      used to land in `recycledCreditedByDay[0]`, which made day 0
+        ///      the sum of an arbitrarily long pre-launch period AND the
+        ///      first scheduled day, inseparably.
+        ///
+        ///      Two things went wrong with that. The published per-day series
+        ///      showed a day-0 bucket that could dwarf every real day, and
+        ///      `Ā` — a trailing MEAN DAILY rate — folded it in for a full
+        ///      window at programme start, sizing the earliest coupled
+        ///      budgets off value no single day produced. A stock must not
+        ///      inflate a rate.
+        ///
+        ///      Deliberately NOT fed into the trailing fold: nothing is lost,
+        ///      because the value still backs the bucket and still raises
+        ///      availability, which is a separate clamp. It simply stops
+        ///      pretending to be a day's activity.
+        uint256 recycledCreditedPreLaunch;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

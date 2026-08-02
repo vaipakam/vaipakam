@@ -403,6 +403,47 @@ describe('robustness (Codex #1310 round 1)', () => {
     expect(body.cumulative.cumAbsorbed).toBe('60');
   });
 
+  it('VpfiRecycledPreLaunch feeds absorption too — this ratio is not day-scoped', async () => {
+    const { env } = makeHarness();
+    // #1504 split pre-launch absorption onto its own event so the RECYCLING
+    // day series would stop filing it under day 0. RL-2's ratio is a
+    // different metric: it buckets by the UTC BLOCK day and asks whether
+    // value came back into the sink, not which programme day earned it.
+    // Dropping the new event here would have made `absorbed`, `cum_absorbed`
+    // and both ratios permanently undercount — a fix for one metric
+    // silently breaking another (Codex #1508 r1 P2).
+    await applyRewardLoopLedger(
+      [
+        log('InteractionRewardsClaimed', ALICE, 100n),
+        {
+          // No dayId at all: the event deliberately names no day.
+          eventName: 'VpfiRecycledPreLaunch',
+          args: { source: 0, refId: 7n, amount: 40n },
+          blockNumber: 100n,
+          transactionHash: `0x${'ef'.repeat(32)}`,
+          logIndex: 998,
+        },
+      ],
+      env,
+      CHAIN,
+      ts([[100n, TODAY_TS]]),
+    );
+    const res = await handleLoopClosure(
+      new Request(
+        `http://indexer.local/metrics/loop-closure?chainId=${CHAIN}&days=7`,
+      ),
+      env,
+    );
+    const body = (await res.json()) as {
+      daily: Array<{ dayId: number; absorbed: string; ratio: number | null }>;
+      cumulative: { cumAbsorbed: string };
+    };
+    const today = body.daily.find((d) => d.dayId === TODAY)!;
+    expect(today.absorbed).toBe('40');
+    expect(today.ratio).toBe(0.4);
+    expect(body.cumulative.cumAbsorbed).toBe('40');
+  });
+
   it('backfill replays historical fee debits (NotificationFeeBilled / VPFIDiscountApplied) pre-boundary, with (block, log_index) precision', async () => {
     const { h, env } = makeHarness();
     const seed = (

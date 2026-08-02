@@ -42,6 +42,29 @@ contract InteractionRewardsLensFacet {
         return LibVaipakam.storageSlot().interactionLaunchTimestamp;
     }
 
+    /**
+     * @notice Absorption this chain credited BEFORE the emission schedule
+     *         started — real value in the recycle bucket that belongs to no
+     *         programme day (#1504).
+     * @dev    Published rather than merely excluded. The point of #1504 is
+     *         that this value stops being mis-attributed to day 0, not that
+     *         it stops being visible: it backs the bucket, it is inside
+     *         {getRecycleBackingSnapshot}'s balance and inside the recycled
+     *         cumulative, and a reader reconciling those against the day
+     *         series needs to see the term that explains the difference.
+     *
+     *         It is deliberately NOT part of `Ā`'s trailing fold. `Ā` is a
+     *         mean DAILY rate and this is a stock accumulated over an
+     *         arbitrary period; folding it in would inflate the earliest
+     *         coupled budgets off value no single day produced. Nothing is
+     *         lost by the exclusion — the tokens still raise availability,
+     *         which is a separate clamp.
+     * @return VPFI wei credited while the schedule was inactive.
+     */
+    function getRecycledCreditedPreLaunch() external view returns (uint256) {
+        return LibVaipakam.storageSlot().recycledCreditedPreLaunch;
+    }
+
     /// @notice Effective per-user daily VPFI cap (whole VPFI per 1 ETH of
     ///         eligible interest). Reflects the admin override when set,
     ///         otherwise {LibVaipakam.INTERACTION_CAP_DEFAULT_VPFI_PER_ETH}.
@@ -517,17 +540,21 @@ contract InteractionRewardsLensFacet {
      *         drawn fresh, subject to the five bounds above.
      * @return absorbedLocal  This chain's own day-`dayId` recycle credits.
      *
-     *         **Day 0 is a catch-all, not a normal day.**
-     *         {LibVpfiRecycle.credit} maps every credit taken while the
-     *         emission schedule is inactive to day 0, and genuine day-0
-     *         credits land in the same slot — so `getRecycleDayMetrics(0)`
-     *         reports pre-launch absorption and the first schedule day added
-     *         together, with no way to separate them, and mirror reports
-     *         propagate the same conflation (Codex #1487 r3 P2). Separating
-     *         them would need a new storage slot, which this slice
-     *         deliberately does not add; a consumer plotting a day series
-     *         should either exclude day 0 or label it as the pre-launch
-     *         bucket rather than as the programme's first day.
+     *         **Day 0 now means the first scheduled day and nothing else**
+     *         (#1504). It used to be a catch-all: {LibVpfiRecycle.credit}
+     *         mapped every credit taken while the emission schedule was
+     *         inactive to day 0, so this figure reported an arbitrarily long
+     *         pre-launch period and the first schedule day added together,
+     *         inseparably (Codex #1487 r3 P2). Pre-launch credits now
+     *         accumulate in their own slot, readable via
+     *         {getRecycledCreditedPreLaunch}, and a plotted series needs no
+     *         day-0 caveat.
+     *
+     *         The LOCAL term is exact from the fix onward. A chain upgraded
+     *         in place keeps whatever its day-0 slot already held, so its
+     *         historical day 0 stays conflated — the fix cannot rewrite
+     *         credits already taken. On a fresh deploy (the pre-live
+     *         posture) day 0 is clean by construction.
      * @return absorbedMirror Day-`dayId` credits accepted from mirror
      *         chains' reports. `absorbedLocal + absorbedMirror` is the
      *         global `absorbed[D]`.

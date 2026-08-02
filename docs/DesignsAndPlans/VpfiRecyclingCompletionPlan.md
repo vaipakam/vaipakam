@@ -705,6 +705,33 @@ are load-bearing and should not be re-litigated:
   nowhere to live inside a running total, so an estimate folded into one
   becomes indistinguishable from a commitment.
 
+**#1504 CLOSED — day 0 now means the first scheduled day.** Pre-launch
+credits accumulate in `recycledCreditedPreLaunch` (read via
+`getRecycledCreditedPreLaunch`) instead of `recycledCreditedByDay[0]`, so
+the published series carries no day-0 caveat and `Ā`'s trailing fold is no
+longer inflated by a stock at programme start. Bucket, cumulative and every
+backing/availability figure are unchanged — only attribution moved.
+
+The event decision is the part not to re-open: pre-launch credits announce
+themselves through a SEPARATE `VpfiRecycledPreLaunch`, not a widened
+`VpfiRecycled` and not a sentinel `dayId`. Chosen on FAILURE MODE — an
+unrecognised event is omitted, whereas an unread flag is absent and absent
+reads as day 0, which is the defect itself. Omission understates;
+mis-bucketing inflates. A test asserts the old event is NOT emitted for a
+pre-launch credit.
+
+Two siblings (`creditCustodyRelocated`, `consume`) keep the day-0 label
+deliberately — neither writes a day-keyed accumulator, so the day is an
+informational label rather than an attribution; both now say so in-line.
+The mirror side needed no change: a mirror's pre-launch value reports into
+the availability cumulative but never into a day figure, which only widens
+the already-intended `chainAttributedRecycled ≤ chainReportedRecycled` gap
+(`LibVaipakam.sol` — the clamp baseline advances ONLY by accepted credit).
+
+Scope limit, stated because the natural claim overreaches: this cannot
+rewrite credits already taken. An in-place-upgraded chain keeps whatever
+its day-0 slot holds; on a fresh deploy day 0 is clean by construction.
+
 **The pre-cutover backfill is NOT in that slice, and the restore
 classification is why.** `check-table-classification.mjs` requires every
 written table to declare its restore treatment, and the two classes get

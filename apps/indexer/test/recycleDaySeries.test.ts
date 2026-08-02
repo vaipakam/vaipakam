@@ -490,20 +490,42 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     expect(narrow.cumulative.absorbed).toBe(wide.cumulative.absorbed);
   });
 
-  it('flags day 0 as conflated with pre-launch absorption', async () => {
+  it('files pre-launch absorption apart from the day series', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries(
       [
+        // No dayId at all — the contracts stopped naming one (#1504).
+        log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 900n }),
         stamped(0n),
-        stamped(1n),
-        log('VpfiRecycled', { source: 1, refId: 1n, amount: 9n, dayId: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 2n, amount: 7n, dayId: 0n }),
       ],
       env,
       CHAIN,
     );
     const body = await readSeries(env);
-    expect(day(body, 0).preLaunchConflated).toBe(true);
-    expect(day(body, 1).preLaunchConflated).toBe(false);
+    // Day 0 is the first SCHEDULED day and nothing else.
+    expect(day(body, 0).absorbedLocal).toBe('7');
+    // …and the pre-launch stock is published, not dropped — it is what
+    // reconciles the bucket against the sum of the days.
+    expect(body.cumulative.absorbedPreLaunch).toBe('900');
+  });
+
+  it('never lets a pre-launch credit reach a day bucket', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 5n })],
+      env,
+      CHAIN,
+    );
+    const rows = h.db
+      .prepare(`SELECT day_id FROM recycle_day_pool WHERE chain_id = ?`)
+      .all(CHAIN) as Array<{ day_id: number }>;
+    expect(rows).toHaveLength(0);
+    // Audited as -1, so it can never be mistaken for day 0 downstream.
+    const ev = h.db
+      .prepare(`SELECT day_id FROM recycle_series_events WHERE chain_id = ?`)
+      .all(CHAIN) as Array<{ day_id: number }>;
+    expect(ev[0].day_id).toBe(-1);
   });
 
   it('rebuilds the series from activity_events when the cursor has passed', async () => {
@@ -653,15 +675,20 @@ describe('handleRecyclingSeries — the ratified window, and what anchors it', (
       CHAIN,
     );
     const after = (await readSeries(env, 30)).cumulative.runwayExtensionDays;
-    // UNCHANGED. Two rules compose here and I predicted this wrong before
-    // running it: the window does not move (this fix), AND the numerator
-    // does not grow either, because the global absorption cumulative sums
-    // only FINALIZED days — day 10's credit is real and visible in
-    // `absorbedLocal`, but it is not yet part of a global total.
-    expect(after).toBe(before);
-    // Non-vacuous: anchoring on the highest row of ANY kind would slide
-    // the window to 4..10, drop day 3 (the outlier), and report 7.
-    expect(after).not.toBe(7);
+    // The NUMERATOR legitimately grows by the new credit — it is a lifetime
+    // recycled stock and that value is really in the bucket. What must not
+    // move is the DENOMINATOR: the window stays days 3..9.
+    //
+    // An earlier version of this test asserted `after === before`, which
+    // held only because the numerator then summed finalized days alone. It
+    // was pinning an accident of that implementation, not the window rule,
+    // and it broke the moment the numerator was corrected. Assert the
+    // denominator instead, by recomputing against it.
+    //   701 / (1300 / 7) = 3.774615
+    expect(after).toBe(3.774615);
+    // Non-vacuous: anchoring on the highest row of ANY kind would slide the
+    // window to 4..10, drop day 3 (the outlier), and report 701/(600/6).
+    expect(after).not.toBe(7.01);
     // …and the credit really did land, so the fixture is live.
     expect(day(await readSeries(env, 30), 10).absorbedLocal).toBe('1');
   });
@@ -731,5 +758,241 @@ describe('applyRecycleDaySeries — the pre-cutover event shape', () => {
       CHAIN,
     );
     expect(day(await readSeries(env), 2).freshDrawdown).toBe('42');
+  });
+});
+
+describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
+  it('reports pre-launch absorption when there are NO day rows at all', async () => {
+    const { env } = makeHarness();
+    // The normal state before the schedule starts: credits exist, days do
+    // not. Reading the total after the empty-series branch would report
+    // zero for exactly the period the figure describes.
+    await applyRecycleDaySeries(
+      [log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 640n })],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.daily).toEqual([]);
+    expect(body.cumulative.absorbedPreLaunch).toBe('640');
+  });
+
+  it('publishes what it observes about day 0 and claims nothing more', async () => {
+    // A fresh deployment that takes NO credits before launch never emits a
+    // pre-launch event, so "has this chain emitted one?" cannot stand in
+    // for "does this chain have the split" — it marks the clean case as
+    // legacy. No provenance flag is published in either direction.
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 30n, dayId: 0n }),
+        stamped(0n),
+      ],
+      env,
+      CHAIN,
+    );
+    const d0 = day(await readSeries(env), 0);
+    expect(d0.absorbedLocal).toBe('30');
+    expect('preLaunchConflated' in d0).toBe(false);
+  });
+
+  it('counts the pre-launch stock in the runway numerator', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const before = (await readSeries(env)).cumulative.runwayExtensionDays;
+    // 300 / 100 = 3
+    expect(before).toBe(3);
+
+    // The pre-launch stock is real recycled value in the bucket, so the
+    // LIFETIME numerator includes it. Keeping it out of the trailing rate
+    // says nothing about this total.
+    await applyRecycleDaySeries(
+      [log('VpfiRecycledPreLaunch', { source: 1, refId: 2n, amount: 200n })],
+      env,
+      CHAIN,
+    );
+    // (300 + 200) / 100 = 5
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(5);
+  });
+});
+
+describe('handleRecyclingSeries — a mesh runway counts every chain in full', () => {
+  it("includes a mirror's LIFETIME reported cumulative, not just its accepted days", async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        // The mirror reports a lifetime total of 500 but only 100 is
+        // attributable to this day — the rest is its own pre-launch stock
+        // plus whatever attribution headroom clamped away. All 500 is real
+        // recycled value sitting in that chain's bucket.
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 500n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // 500 / 100 = 5. Counting only the accepted day credit would give 1.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(5);
+  });
+
+  it('does not count a mirror twice when its day credit is also attributed', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 300n,
+          forDayReported: 300n,
+          dayCreditAccepted: 300n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    // The day still shows its attributed credit…
+    expect(day(body, 1).absorbedMirror).toBe('300');
+    // …but the lifetime numerator counts 300 once, not 600.
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+  });
+
+  it('never walks a reported cumulative backwards on a replayed report', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 400n,
+          forDayReported: 0n,
+          dayCreditAccepted: 0n,
+        }),
+        // An out-of-order / stale report for an earlier day.
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 0n,
+          cumulative: 50n,
+          forDayReported: 0n,
+          dayCreditAccepted: 0n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // 400 / 100 = 4 — the stale 50 must not replace it.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(4);
+  });
+});
+
+describe('handleRecyclingSeries — coverage-bounded folds vs self-healing reports', () => {
+  it("uses this chain's own self-report when it exceeds the observed fold", async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 50n, dayId: 1n }),
+        // This consumer started indexing mid-programme, so its fold sees 50.
+        // The chain says it has absorbed 800 in its lifetime.
+        log('ChainRecycledReported', {
+          sourceChainId: CHAIN,
+          dayId: 1n,
+          cumulative: 800n,
+          forDayReported: 50n,
+          dayCreditAccepted: 50n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // 800 / 100 = 8, not 50/100.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(8);
+  });
+
+  it('never goes backwards when the self-report lags observed credits', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: CHAIN,
+          dayId: 1n,
+          cumulative: 200n,
+          forDayReported: 0n,
+          dayCreditAccepted: 0n,
+        }),
+        // Credits observed AFTER the report was sent.
+        log('VpfiRecycled', { source: 1, refId: 9n, amount: 700n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    // The fold (700) exceeds the stale self-report (200); take the larger.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(7);
+  });
+
+  it('rebuilds the per-source projection on a database that already backfilled', async () => {
+    const { h, env } = makeHarness();
+    // Simulate 0045's replay having completed before this projection existed:
+    // the event is in the feed AND already marked seen by the dedup table.
+    h.db
+      .prepare(
+        `INSERT INTO activity_events
+           (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        CHAIN,
+        10,
+        0,
+        '0xaa',
+        'ChainRecycledReported',
+        JSON.stringify({
+          sourceChainId: MIRROR,
+          dayId: '1',
+          cumulative: '900',
+          forDayReported: '0',
+          dayCreditAccepted: '0',
+        }),
+        1_700_000_000,
+      );
+    h.db
+      .prepare(
+        `INSERT INTO recycle_series_events
+           (chain_id, block_number, log_index, tx_hash, kind, day_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(CHAIN, 10, 0, '0xaa', 'ChainRecycledReported', 1);
+    h.db
+      .prepare(
+        `INSERT INTO recycle_series_state (chain_id, backfill_done)
+         VALUES (?, 1)`,
+      )
+      .run(CHAIN);
+
+    // The ingest replay is gated by the dedup row, so ONLY a projection
+    // rebuild can populate the new table here.
+    await applyRecycleDaySeries(
+      [stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n })],
+      env,
+      CHAIN,
+    );
+    // 900 / 100 = 9 — the mirror is not omitted.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(9);
   });
 });
