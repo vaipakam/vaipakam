@@ -996,3 +996,96 @@ describe('handleRecyclingSeries — coverage-bounded folds vs self-healing repor
     expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(9);
   });
 });
+
+describe('handleRecyclingSeries — pre-cutover backfill', () => {
+  function seedBackfill(
+    h: SqliteD1,
+    dayId: number,
+    opts: {
+      floor?: string;
+      budget?: string;
+      drawdown?: string;
+      armed?: number;
+      local?: string;
+    } = {},
+  ) {
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at)
+         VALUES (?, ?, 1, ?, ?, ?, ?, '0', ?, 0, 1700000000)`,
+      )
+      .run(
+        CHAIN,
+        dayId,
+        opts.floor ?? '1000',
+        opts.budget ?? '250',
+        opts.drawdown ?? '900',
+        opts.local ?? '0',
+        opts.armed ?? 1,
+      );
+  }
+
+  it('serves a pre-cutover day the event stream refuses', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 4, { local: '55' });
+    // A later day arrives by event, so the window covers day 4.
+    await applyRecycleDaySeries([stamped(6n)], env, CHAIN);
+
+    const d4 = day(await readSeries(env), 4);
+    expect(d4.stamped).toBe(true);
+    expect(d4.origin).toBe('backfill');
+    expect(d4.scheduleFloor).toBe('1000');
+    expect(d4.freshDrawdown).toBe('900');
+    expect(d4.absorbedLocal).toBe('55');
+    // 250 / (1000 + 250) = 0.2
+    expect(d4.selfFundingRatio).toBe(0.2);
+  });
+
+  it('serves NULL for the two fields the getter cannot supply', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 4);
+    await applyRecycleDaySeries([stamped(6n)], env, CHAIN);
+    const d4 = day(await readSeries(env), 4);
+    // Not 0 — a zero margin is a real, different thing.
+    expect(d4.aBar).toBeNull();
+    expect(d4.marginBps).toBeNull();
+  });
+
+  it('withholds netEmission on an UNARMED backfilled day', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 4, { armed: 0, drawdown: '777' });
+    await applyRecycleDaySeries([stamped(6n)], env, CHAIN);
+    const d4 = day(await readSeries(env), 4);
+    expect(d4.armed).toBe(false);
+    expect(d4.estimate).toBe(true);
+    expect(d4.freshDrawdown).toBe('777');
+    // The whole reason the backfill must carry arming status: these are
+    // unreserved estimates and must not be republished as net emission.
+    expect(d4.netEmission).toBeNull();
+  });
+
+  it('PREFERS THE EVENT where both sources describe the same day', async () => {
+    const { h, env } = makeHarness();
+    // The backfill recomputes from a slot a demotion can overwrite; the
+    // event is immutable. Where they disagree, the event is the record.
+    seedBackfill(h, 5, { floor: '111', drawdown: '111' });
+    await applyRecycleDaySeries(
+      [stamped(5n, { scheduleFloor: 999n, freshDrawdown: 999n })],
+      env,
+      CHAIN,
+    );
+    const d5 = day(await readSeries(env), 5);
+    expect(d5.origin).toBe('event');
+    expect(d5.scheduleFloor).toBe('999');
+    expect(d5.freshDrawdown).toBe('999');
+  });
+
+  it('marks event-sourced days so a reader can tell the two apart', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries([stamped(2n)], env, CHAIN);
+    expect(day(await readSeries(env), 2).origin).toBe('event');
+  });
+});

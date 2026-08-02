@@ -732,8 +732,40 @@ Scope limit, stated because the natural claim overreaches: this cannot
 rewrite credits already taken. An in-place-upgraded chain keeps whatever
 its day-0 slot holds; on a fresh deploy day 0 is clean by construction.
 
-**The pre-cutover backfill is NOT in that slice, and the restore
-classification is why.** `check-table-classification.mjs` requires every
+**The pre-cutover backfill LANDED (#1349 M5).** Migration 0047 +
+`apps/indexer/scripts/backfill-recycle-days.mjs`. Decisions not to
+re-litigate:
+
+- The table is **BORN-OFF-CHAIN** — archived and re-imported on restore,
+  and deliberately absent from §6's clear-before-replay command. Every
+  other `recycle_*` table is a chain-log fold that the replay rebuilds;
+  these rows are recomputed from `getRecycleDayMetrics`, whose
+  `dayCapThreshold18` input `setBroadcastDayCapThreshold` can overwrite for
+  an already-finalized day on a demoted Diamond. After that a re-run yields
+  DIFFERENT figures and the original is unrecoverable.
+- **Event precedence is READ-TIME**, not a write rule: separate tables mean
+  the preference is a property of the lookup, which nothing can violate.
+  A shared table with a `source` column would have made it a rule about
+  write order.
+- **Every row carries `armed`**, resolved once from
+  `getGovernorCommitState` and stamped on all of them. The pass FAILS
+  CLOSED if it cannot read that — bare figures are the one outcome it
+  exists to prevent. It honours the zero sentinel: `armedFromDay == 0`
+  means NEVER ARMED, and a bare `day >= armedFromDay` is forbidden.
+- `aBar` / `marginBps` are **NULL, not 0** — the getter does not return
+  them, and a zero margin is a real, different thing.
+- Operator-run rather than a Worker route: it needs chain reads and hand
+  sequencing against a demotion, and `apps/indexer` is deliberately
+  read-only and operator-key-free. It emits SQL and writes NOTHING on
+  failure, so a redirect cannot leave a partial file. `ON CONFLICT DO
+  NOTHING` — the first capture, taken while the inputs were intact, is the
+  record.
+
+**The operator ordering requirement is unchanged and is the live risk:**
+back-fill BEFORE any demotion or role migration.
+
+**(Historical note — why it was a separate slice, and the restore
+classification is why.)** `check-table-classification.mjs` requires every
 written table to declare its restore treatment, and the two classes get
 OPPOSITE handling: replay-derived tables are CLEARED before the block-zero
 replay, born-off-chain tables are IMPORTED from the archive. The event-fed

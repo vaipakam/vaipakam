@@ -1,0 +1,21 @@
+## Thread — the days that predate the announcement (#1349 M5)
+
+When the daily recycling account started announcing its full composition, the announcement's shape changed. Days finalised before that upgrade were announced under the older shape and simply cannot supply two of the figures — how much fresh issuance was actually drawn, and whether the platform had committed to the day at all. The consumer refuses those days rather than reading the absent figures as zero, which would invent finalised, uncommitted, zero-emission days that look exactly like real ones.
+
+This adds where those days come from instead: a pass that asks the contracts to recompute each one, and a place to keep the answers.
+
+**Keeping them apart from the announced days is the whole design, not tidiness.** Every other record in this area is a fold of the announcement stream, so rebuilding the platform's off-chain state from scratch reproduces it exactly. These are different: the recomputation reads a value that a role handover can legitimately overwrite for a day already closed. Once that happens, asking again returns a different answer and the original is gone — those days have no announcement to fall back on. So they are backed up and restored, never regenerated, and the restore runbook now says so explicitly next to the list of records it rebuilds instead.
+
+A record cannot be half-rebuilt, and the treatment is decided per record, so keeping both kinds in one place would have guaranteed one of them the wrong handling during exactly the incident the distinction exists for.
+
+A second benefit falls out of the separation. Where a day is described by both sources, the announcement wins — it is immutable, while the recomputation can drift. With two separate records that preference is a property of **how the read looks things up**, which nothing can violate. Had they shared one record it would have been a rule about which write happened last, which is the kind of guarantee that holds until it doesn't.
+
+**Every recomputed day carries whether the platform had committed to it.** The recomputation returns figures and no such marker, and the days it covers are mostly from the period before any commitment was made — so storing the figures bare would republish estimates as though they were emissions, in the flattering direction. That is precisely what the marker on the announcement exists to prevent. The pass resolves the commitment start once and stamps every row, and it **refuses to write anything at all** if it cannot establish that — a backfill that guesses is worse than no backfill. There is a documented trap here that it honours: the "not yet committed" state is recorded as a zero, and reading that as "everything is committed" would mark the entire pre-commitment history as real emission.
+
+Two figures are stored as *unknown* rather than zero, because the recomputation genuinely does not return them. A zero margin is a real and different thing, and this surface has been caught by that ambiguity twice already.
+
+**Why an operator-run pass rather than something automatic.** It needs to read the chain, and it has to be sequenced by hand relative to a role handover — run it before, or the answers it captures are already the wrong ones. The indexing service is deliberately read-only and holds no keys, and adding a privileged write path to it for a one-time job would be a change in posture out of proportion to the task. It emits ordinary statements, applied with the same command the rest of the restore runbook uses, and it produces **nothing at all** on failure so a redirect cannot leave a half-written file.
+
+Re-running it will not overwrite what is already stored. The first capture is the one taken while the inputs were intact; correcting a row afterwards is a deliberate act, not a side effect of running a command twice.
+
+**One check had to learn a new shape.** The repository requires every stored record to declare how it should be treated on restore, and it finds them by looking for writes inside the services. This one is written by an operator pass, so it would have been flagged as orphaned forever — and a check that always warns is a check people stop reading. It now accepts an explicit declaration naming the writer and why it is not a service, and fails if that declaration points at a script that does not exist.

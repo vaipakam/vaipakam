@@ -149,9 +149,16 @@ export async function handleRecyclingSeries(
       .first<{ absorbed: string }>();
     const preLaunch = preLaunchRow?.absorbed ?? '0';
 
+    // Coverage spans BOTH sources. The backfill exists precisely to supply
+    // days EARLIER than the event stream reaches, so a boundary computed
+    // from the event table alone would put every backfilled day outside the
+    // window and serve none of them — the union would be silently inert.
     const head = await env.DB.prepare(
-      `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day
-         FROM recycle_day_pool WHERE chain_id = ?`,
+      `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day FROM (
+         SELECT day_id FROM recycle_day_pool WHERE chain_id = ?1
+         UNION ALL
+         SELECT day_id FROM recycle_day_backfill WHERE chain_id = ?1
+       )`,
     )
       .bind(chainId)
       .first<{ max_day: number | null; min_day: number | null }>();
@@ -196,6 +203,25 @@ export async function handleRecyclingSeries(
     // the programme. Both reads return rows and the folding happens in
     // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
     // them would silently overflow SQLite's int64.
+    // Pre-cutover days, recomputed from the getter by the operator pass.
+    // Read alongside the event series; EVENT PRECEDENCE is applied below.
+    const backfillRows = await env.DB.prepare(
+      `SELECT day_id, schedule_floor, recycled_budget, fresh_drawdown,
+              absorbed_local, absorbed_mirror, armed
+         FROM recycle_day_backfill
+        WHERE chain_id = ? AND day_id >= ?`,
+    )
+      .bind(chainId, cutoff)
+      .all<{
+        day_id: number;
+        schedule_floor: string;
+        recycled_budget: string;
+        fresh_drawdown: string;
+        absorbed_local: string;
+        absorbed_mirror: string;
+        armed: number;
+      }>();
+
     const reportedRows = await env.DB.prepare(
       `SELECT source_chain_id, reported_cumulative
          FROM recycle_chain_reported WHERE chain_id = ?`,
@@ -266,6 +292,24 @@ export async function handleRecyclingSeries(
     const rowsByDay = new Map<number, PoolRow>();
     for (const r of windowRows.results ?? []) rowsByDay.set(r.day_id, r);
 
+    // Event precedence, enforced by READ ORDER rather than by write order.
+    //
+    // Where the two sources disagree the event is the record: it is
+    // immutable, while the backfill recomputes from `dayCapThreshold18`,
+    // which a second writer can overwrite for an already-finalized day on a
+    // demoted Diamond. Keeping them in separate tables makes "prefer the
+    // event" a property of this lookup, which nothing can violate — a
+    // single table with a source column would have made it a rule about
+    // which write happened last.
+    // ONE place decides, not two. An earlier version also filtered
+    // event-covered days out of this map, which read as belt-and-braces and
+    // was in fact dead: the consult below is already gated on the day
+    // having no event stamp, so the filter could be deleted with every test
+    // still green. Two sites enforcing one rule is how a rule quietly
+    // stops being enforced anywhere.
+    const backfillByDay = new Map<number, (typeof backfillRows.results)[number]>();
+    for (const b of backfillRows.results ?? []) backfillByDay.set(b.day_id, b);
+
     // Dense series: emit EVERY day in the window so a consumer can tell a
     // quiet day from a missing bucket (the same convention RL-2 pins).
     for (let dayId = cutoff; dayId <= maxDay; dayId++) {
@@ -275,12 +319,43 @@ export async function handleRecyclingSeries(
       const stamped = r?.stamped === 1;
       const armed = r?.armed === 1;
 
+      const bf = backfillByDay.get(dayId);
+      if (!stamped && bf) {
+        const bfFloor = BigInt(bf.schedule_floor);
+        const bfBudget = BigInt(bf.recycled_budget);
+        const bfArmed = bf.armed === 1;
+        const bfLocal = BigInt(bf.absorbed_local);
+        const bfMirror = BigInt(bf.absorbed_mirror);
+        daily.push({
+          dayId,
+          stamped: true,
+          armed: bfArmed,
+          estimate: !bfArmed,
+          origin: 'backfill',
+          scheduleFloor: bfFloor.toString(),
+          recycledBudget: bfBudget.toString(),
+          // The getter returns neither, so a backfilled day genuinely does
+          // not know them. NULL, not 0 — a zero margin is a real, different
+          // thing, and this surface has been bitten by that ambiguity twice.
+          aBar: null,
+          marginBps: null,
+          freshDrawdown: bf.fresh_drawdown,
+          netEmission: bfArmed ? bf.fresh_drawdown : null,
+          selfFundingRatio: ratio6(bfBudget, bfFloor + bfBudget),
+          absorbedLocal: bfLocal.toString(),
+          absorbedMirror: bfMirror.toString(),
+          absorbed: (bfLocal + bfMirror).toString(),
+        });
+        continue;
+      }
+
       if (!stamped) {
         daily.push({
           dayId,
           stamped: false,
           armed: false,
           estimate: false,
+          origin: null,
           scheduleFloor: null,
           recycledBudget: null,
           aBar: null,
@@ -311,6 +386,7 @@ export async function handleRecyclingSeries(
         // An unarmed day's pool figures are unreserved estimates. Shown,
         // but labelled, and with the derived emission withheld.
         estimate: !armed,
+        origin: 'event',
         scheduleFloor: scheduleFloor.toString(),
         recycledBudget: recycledBudget.toString(),
         aBar: r!.a_bar,
