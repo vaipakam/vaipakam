@@ -264,11 +264,17 @@ export function useAcceptTermsSigning() {
       // enforces; a transport failure fails CLOSED (retrying is free,
       // a wasted approval is not).
       try {
+        // Both previews pinned to ONE block (Codex #1517 r6): a
+        // creator tier change / terms bump mining between them could
+        // pair a creator-caused code 1 with creator code 0 and
+        // misattribute the block to the acceptor (or vice versa).
+        const gateProbeBlock = await publicClient.getBlockNumber();
         const gateBlock = (await publicClient.readContract({
           address: diamondAddr,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'previewOfferAcceptBlock',
           args: [input.offerId, address],
+          blockNumber: gateProbeBlock,
         })) as number | bigint;
         if (Number(gateBlock) !== 0 && Number(gateBlock) !== 4) {
           // Codex #1517 r4 — the combined preview reports the CREATOR's
@@ -290,6 +296,7 @@ export function useAcceptTermsSigning() {
                 abi: DIAMOND_ABI_VIEM,
                 functionName: 'previewCreatorBlock',
                 args: [input.offerId],
+                blockNumber: gateProbeBlock,
               }),
             );
           } catch {

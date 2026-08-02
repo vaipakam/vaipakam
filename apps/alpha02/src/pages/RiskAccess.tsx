@@ -70,13 +70,16 @@ export function RiskAccess() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  async function run(fn: () => Promise<void>, doneMsg: string) {
+  /** `fn` RETURNS the success message — flows that revalidate live
+   *  state derive the right wording from what they actually read
+   *  (Codex #1517 r6), rather than a caller-side guess off the cached
+   *  snapshot. */
+  async function run(fn: () => Promise<string>) {
     setBusy(true);
     setError(null);
     setDone(null);
     try {
-      await fn();
-      setDone(doneMsg);
+      setDone(await fn());
       // AWAIT the refetch: the controls render from query data, so
       // dropping busy before fresh data lands re-enables a control
       // still showing the pre-write value — inviting a duplicate tx.
@@ -93,19 +96,33 @@ export function RiskAccess() {
    *  the tier since. A same-tier re-submit RESTARTS the raise cooldown
    *  on-chain (`_applyTier`), so abort-and-refresh instead of writing
    *  when the live raw tier already equals the request (unless this is
-   *  the re-affirm path and the anchor is still confirmed stale). */
-  async function submitTierRevalidated(level: RiskTier, opts: { reaffirm: boolean }) {
+   *  the re-affirm path and the anchor is still confirmed stale).
+   *  RETURNS the success message, derived from the LIVE effective tier
+   *  read in the same pinned-block batch (r6): the cached snapshot's
+   *  direction can be wrong by submission time (an expired cooldown
+   *  flips a "raise" into an immediate lowering and vice versa). */
+  async function submitTierRevalidated(
+    level: RiskTier,
+    opts: { reaffirm: boolean },
+  ): Promise<string> {
     if (!publicClient || !walletChain || !address) {
       throw new Error(copy.errors.walletConnectFirst);
     }
+    // One pinned block for the whole revalidation — same coherence
+    // rule as the snapshot hook (r3).
+    const block = await publicClient.getBlock();
     const readLive = <T,>(functionName: string, args?: readonly unknown[]) =>
       publicClient.readContract({
         address: walletChain.diamondAddress,
         abi: DIAMOND_ABI_VIEM,
         functionName,
         args: args as unknown[],
+        blockNumber: block.number,
       }) as Promise<T>;
-    const liveRaw = Number(await readLive<number | bigint>('getVaultRiskTier', [address]));
+    const [liveRaw, liveEffective] = await Promise.all([
+      readLive<number | bigint>('getVaultRiskTier', [address]).then(Number),
+      readLive<number | bigint>('getEffectiveRiskTier', [address]).then(Number),
+    ]);
     if (opts.reaffirm) {
       // Only re-affirm while the anchor is STILL stale live — a
       // just-landed re-affirm from another device makes this one a
@@ -123,6 +140,12 @@ export function RiskAccess() {
       throw new Error(copy.riskAccess.alreadySelectedAbort);
     }
     await write('setVaultRiskTier', [level]);
+    if (opts.reaffirm) return copy.riskAccess.reaffirmedMsg;
+    // Direction judged against the LIVE effective tier — the same
+    // comparison `_applyTier` makes at execution.
+    return level > liveEffective
+      ? copy.riskAccess.raisedMsg
+      : copy.riskAccess.loweredMsg;
   }
 
   const s = risk.data;
@@ -215,16 +238,11 @@ export function RiskAccess() {
                     }}
                     disabled={busy || selected}
                     onClick={() =>
-                      void run(
-                        () => submitTierRevalidated(opt.level, { reaffirm: false }),
-                        // Direction is judged against the EFFECTIVE
-                        // tier — the contract's _applyTier does (r5):
-                        // stepping "down" from a held-but-cooling
-                        // Illiquid to Broad is still a RAISE over an
-                        // effective Blue-chip and cooldown-gates.
-                        opt.level > s.effectiveTier
-                          ? copy.riskAccess.raisedMsg
-                          : copy.riskAccess.loweredMsg,
+                      // Success wording comes from the LIVE effective
+                      // tier inside the revalidation (r5/r6) — never a
+                      // caller-side guess off the cached snapshot.
+                      void run(() =>
+                        submitTierRevalidated(opt.level, { reaffirm: false }),
                       )
                     }
                   >
@@ -273,9 +291,8 @@ export function RiskAccess() {
                   // live risk-terms version (#735) — how a terms-bump
                   // re-lock is cleared without lower-then-raise. Live-
                   // revalidated: only lands while still stale (r4).
-                  void run(
-                    () => submitTierRevalidated(s.rawTier, { reaffirm: true }),
-                    copy.riskAccess.reaffirmedMsg,
+                  void run(() =>
+                    submitTierRevalidated(s.rawTier, { reaffirm: true }),
                   )
                 }
               >
@@ -357,7 +374,8 @@ export function RiskAccess() {
                   onClick={() =>
                     void run(async () => {
                       await write('setRiskStrictMode', [false]);
-                    }, copy.riskAccess.strict.disabledMsg)
+                      return copy.riskAccess.strict.disabledMsg;
+                    })
                   }
                 >
                   {busy
