@@ -8,7 +8,7 @@
  *   lender  + repaid   → Claim principal + interest
  *   lender  + defaulted→ Claim the collateral
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -62,6 +62,11 @@ import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
+import { SaleListingHoldCard } from '../components/SaleListingHoldCard';
+import {
+  probeSaleHoldLive,
+  useSaleListingHold,
+} from '../data/saleListingHold';
 import { LOCK_PRECLOSE_OFFSET, useOffsetPending } from '../data/offsetPending';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
@@ -89,7 +94,8 @@ type ConfirmSurface =
   | 'transfer'
   | 'offset'
   | 'early-exit'
-  | 'loan-sale';
+  | 'loan-sale'
+  | 'sale-teardown';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -351,6 +357,151 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   );
   const salePending = sale.state?.listed === true;
 
+  // Borrower-side view of the SAME lender-sale listing (#1503 PR-A
+  // follow-up): the teardown probe classifies whether a listing holds
+  // this loan's preclose/collateral-withdrawal options ('live'), can
+  // be freed right now ('clearable'), or isn't there ('none').
+  // Borrower viewers only — the lender has their own pending card.
+  // Gated to OPEN loans (Codex #1511 r1 P2): on a terminal loan the
+  // teardown also succeeds (the seller-hygiene branch), but there are
+  // no borrower options left to free and no cooldown is stamped —
+  // that cleanup is the SELLER's story (#1506), not this card's.
+  // Contract-mirroring sale-eligibility (Codex #1511 r7):
+  // createLoanSaleOffer requires ERC-20 principal AND ERC-20
+  // collateral (SaleOfferCollateralMustBeERC20) — a loan outside that
+  // shape can never carry a listing, so it must not pay the probes or
+  // ever fail closed on them.
+  const saleEligible = !loanIsRental && !collateralIsNft;
+  const saleHold = useSaleListingHold(
+    loanId,
+    loan.data?.lenderTokenId ?? '',
+    // `effectivelyActive`, not the raw indexed status (Codex #1511 r2):
+    // a cured fallback_pending row gets its borrower actions back from
+    // the live reconciliation before the indexer catches up — the hold
+    // notice and cleanup must come back with them. An UNCURED
+    // fallback_pending loan stays probed too (Codex #1511 r11): its
+    // full-repay CURE surface still renders, and an accepted sale must
+    // pause that cure with the explanation up front rather than let
+    // the live pre-write gate block it as a surprise.
+    Boolean(loan.data) &&
+      saleEligible &&
+      role === 'borrower' &&
+      (effectivelyActive || loan.data?.status === 'fallback_pending'),
+  );
+  // Durable success flag — keeps the card (and its confirmation)
+  // mounted after the post-teardown refetch flips the probe to
+  // 'none' (Codex #1511 r1 P2). (`saleListingHeld` itself is derived
+  // below, after the reconciled `row` exists.)
+  const [saleHoldCleared, setSaleHoldCleared] = useState(false);
+  // …and un-latched the moment a NEW listing appears (Codex #1511 r2):
+  // a lender relist after the cooldown must show the fresh hold, not
+  // a stale "freed" confirmation. Reset ONLY on 'live' — a relist
+  // always starts live (bounded ≥ 1 h; the registered rails observe it
+  // well inside that), whereas 'clearable' also occurs in the moment
+  // between our own teardown and its refetch, where resetting would
+  // unmount the confirmation it exists to preserve.
+  const [saleHoldDrained, setSaleHoldDrained] = useState(false);
+  useEffect(() => {
+    if (!saleHoldCleared) {
+      if (saleHoldDrained) setSaleHoldDrained(false);
+      return;
+    }
+    // 'none' marks the old lifecycle fully drained (our teardown's
+    // refetch landed). After that, ANY later listing state — 'live',
+    // or 'clearable' when a suspended tab slept through the whole
+    // live phase (Codex #1511 r6) — is a NEW lifecycle and unlatches
+    // the confirmation. Before the drain, 'clearable' is still our
+    // own pre-refetch teardown state and must NOT reset.
+    if (saleHold.data === 'none') {
+      setSaleHoldDrained(true);
+    } else if (
+      saleHold.data === 'live' ||
+      // 'accepted' resets regardless of the drain marker (Codex #1511
+      // r10): our own teardown can never produce it, so it always
+      // signals a NEW lifecycle — and its warning must outrank the
+      // old confirmation.
+      saleHold.data === 'accepted' ||
+      (saleHold.data === 'clearable' && saleHoldDrained)
+    ) {
+      setSaleHoldCleared(false);
+      setSaleHoldDrained(false);
+    }
+  }, [saleHold.data, saleHoldCleared, saleHoldDrained]);
+  // A chain switch keeps this component mounted (its key is the loan
+  // id), so the latch must not carry one chain's success onto another
+  // chain's loan N (Codex #1511 r7). The ref lets in-flight async
+  // continuations (the onCleared verification below) detect that the
+  // chain moved under them and discard their result instead of
+  // re-latching the freshly reset state (Codex #1511 r11).
+  const saleHoldChainRef = useRef(readChain.chainId);
+  useEffect(() => {
+    saleHoldChainRef.current = readChain.chainId;
+    setSaleHoldCleared(false);
+    setSaleHoldDrained(false);
+    // The open REVIEW is chain-scoped too. Leaving the slot set would
+    // let the card remount on the destination chain with its
+    // confirmation already open — one click from sending a cleanup the
+    // borrower never opened a review for, against a different chain's
+    // listing. Only this surface's slot is cleared; other flows own
+    // their own reset.
+    setConfirmingSurface((s) => (s === 'sale-teardown' ? null : s));
+  }, [readChain.chainId]);
+
+  // The LIVE re-check every settlement write runs immediately before
+  // sending (Codex #1511 r5 P1): the cached state can be a tip
+  // interval old, and an acceptance landing inside that window must
+  // not slip through. Fail closed on RPC failure.
+  //
+  // Declared HERE, in the hooks region, and NOT down with the derived
+  // flags it reads alongside: everything below the loading/not-found
+  // early returns is conditional, so a hook there is skipped on the
+  // loading render and called on the next one — "Rendered more hooks
+  // than during the previous render", on every page load. It needs
+  // nothing from the reconciled row, so it belongs up here.
+  const assertSaleSettlementSafe = useCallback(async (): Promise<
+    string | null
+  > => {
+    // A loan that can never be listed (non-ERC-20 principal or
+    // collateral) has nothing to probe (Codex #1511 r7).
+    if (!saleEligible) return null;
+    if (!publicClient || !walletChain || !loan.data) {
+      return copy.saleHold.checkFailed;
+    }
+    try {
+      const state = await probeSaleHoldLive(
+        publicClient,
+        walletChain.diamondAddress,
+        loanId,
+        loan.data.lenderTokenId,
+        address ?? undefined,
+      );
+      if (state === 'accepted') {
+        // Block ONLY while the loan is genuinely Active. A sale
+        // completion reverts LoanNotActive on anything else, so on a
+        // non-Active loan there is no completion left to strand — and
+        // blocking would trap the borrower permanently, since nothing
+        // they can reach from a blocked UI returns the loan to Active.
+        // Read live rather than trusting the reconciled row: this gate
+        // exists precisely because cached state can be stale.
+        const live = await readLoanLive(
+          publicClient,
+          walletChain.diamondAddress,
+          loanId,
+        );
+        return Number(live.status) === LOAN_STATUS_ACTIVE
+          ? copy.saleHold.completionPaused
+          : null;
+      }
+      // An unrecognized decoded revert is as unanswered as an RPC
+      // failure (Codex #1511 r8) — the hook fails closed on it, and
+      // the write gate must match.
+      if (state === 'unknown') return copy.saleHold.checkFailed;
+      return null;
+    } catch {
+      return copy.saleHold.checkFailed;
+    }
+  }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
+
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
   // refinance marker: a live offset interlocks the repay-family
@@ -575,6 +726,64 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : loan.data;
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
+  // Judged on the RECONCILED status (live override folded in): a loan
+  // the chain already knows is terminal must not show the hold card
+  // even while the indexed row lags (Codex #1511 r1 P2).
+  // 'clearable' additionally requires a POSITIVE live Active reading
+  // (Codex #1511 r9): with the indexed row stale-active and the live
+  // status pending/failed, the teardown also succeeds on a TERMINAL
+  // loan (the seller-hygiene branch — no borrower options to free, no
+  // cooldown stamped), and the borrower cleanup invite must not
+  // render on that ambiguity. 'live' needs no such confirmation — the
+  // SaleListingLoanStillLive revert itself proves the loan is live
+  // on-chain. 'accepted' stays presented on the indexed row alone:
+  // its only effect is a protective pause on flows that would revert
+  // on a terminal loan anyway.
+  const liveActiveConfirmed =
+    liveStatus.data?.status === LoanStatus.Active;
+  const saleListingHeld =
+    row.status === 'active' &&
+    (saleHold.data === 'live' ||
+      (saleHold.data === 'clearable' && liveActiveConfirmed) ||
+      // Accepted-awaiting-completion keeps `loanToSaleOfferId` set, so
+      // the offset path stays refused (Codex #1511 r3).
+      saleHold.data === 'accepted');
+  // Accepted-awaiting-completion additionally pauses the borrower's
+  // SETTLEMENT flows (Codex #1511 r4 P1): the buyer's principal has
+  // already moved, and completeLoanSale requires the loan still
+  // Active — a repay/close here terminalizes it and permanently
+  // strands the recovery completion; a partial changes the principal
+  // the buyer funded. UI-level protection (the contract's Tier-2
+  // repay stays open by design); the contract-side close-out guard
+  // for this window belongs to the #1503 PR-E slice.
+  // ACTIVE only — deliberately NOT fallback_pending. Round 11 widened
+  // this and the pre-merge review caught the deadlock: a sale
+  // completion requires an Active loan (_completeLoanSaleImpl reverts
+  // LoanNotActive), an accepted listing can be neither cancelled nor
+  // torn down, and nothing the borrower can do from a paused UI
+  // returns the loan to Active — while claimAsLender stays open to the
+  // counterparty throughout. The pause would be permanent, it would
+  // protect a completion that is already unreachable, and it would
+  // shut the borrower's last settlement door. The window is real only
+  // while the loan is Active; there it genuinely is momentary.
+  const saleCompletionPending =
+    row.status === 'active' && saleHold.data === 'accepted';
+  // The same fact, stated instead of enforced: on a fallback_pending
+  // loan the borrower still needs to KNOW an accepted sale is linked
+  // (it changes what their choice costs), but must not be blocked by
+  // it. Renders as a warning inside the repay review, never a gate.
+  const saleAcceptedOnFallback =
+    row.status === 'fallback_pending' && saleHold.data === 'accepted';
+  // Fail CLOSED while the accepted-sale question is unanswered (Codex
+  // #1511 r5 P1): the settlement surfaces wait on the probe rather
+  // than opening on its undefined initial state. False on the
+  // pre-refresh Diamond (no probe exists there — pre-PR behaviour).
+  // Mirrors saleCompletionPending's scope: this flag pauses the same
+  // surfaces, so widening it to fallback_pending would reintroduce the
+  // deadlock above by a slower route (an unanswerable probe holding
+  // the cure shut indefinitely).
+  const saleHoldResolving =
+    row.status === 'active' && saleHold.resolving === true;
   const principal = principalMeta.data;
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
@@ -737,6 +946,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function run(kind: Exclude<Action, null>) {
     if (!address || !walletChain || !walletClient || !publicClient) return;
+    // Accepted-sale completion window (Codex #1511 r4 P1 + r5 P1): a
+    // repay here terminalizes the loan and permanently strands the
+    // buyer's recovery completion. Cached fast-path, then a LIVE
+    // re-check — the cached state can be a tip interval old.
+    if (kind === 'repay') {
+      if (saleCompletionPending || saleHoldResolving) {
+        setError(copy.saleHold.completionPaused);
+        return;
+      }
+      // Hold the page lock ACROSS the live probe (Codex #1511 r6) —
+      // the await must not leave Confirm and the sibling surfaces
+      // clickable while this handler is in flight.
+      setPhase('pending');
+      const blocked = await assertSaleSettlementSafe();
+      if (blocked) {
+        setPhase(null);
+        setError(blocked);
+        return;
+      }
+    }
     setPhase('pending');
     setError(null);
     try {
@@ -866,6 +1095,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           });
         }
         setPhase('submitting');
+        // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
+        // the reads/approval steps above — a buyer acceptance can land
+        // during them. Re-check immediately before the protocol write;
+        // the on-chain close-out guard that fully closes the signing
+        // race is the #1503 PR-E slice.
+        {
+          const blockedLate = await assertSaleSettlementSafe();
+          if (blockedLate) {
+            setPhase(null);
+            setError(blockedLate);
+            return;
+          }
+        }
         await write('repayLoan', [BigInt(row.loanId)]);
         setClosedThisSession(true);
         setDoneMessage(
@@ -1038,7 +1280,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function runPartialRepay() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    // Accepted-sale completion window (Codex #1511 r4 P1 + r5 P1):
+    // the buyer funded the ACCEPTED principal — a partial now changes
+    // it under the in-flight purchase. Cached fast-path + LIVE
+    // re-check.
+    if (saleCompletionPending || saleHoldResolving) {
+      setError(copy.saleHold.completionPaused);
+      return;
+    }
+    // Lock held across the live probe (Codex #1511 r6).
     setPhase('pending');
+    {
+      const blocked = await assertSaleSettlementSafe();
+      if (blocked) {
+        setPhase(null);
+        setError(blocked);
+        return;
+      }
+    }
     setError(null);
     try {
       const wei = parseUnits(partialInput, principalMeta.data.decimals);
@@ -1047,24 +1306,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock, saleLock, borrowerLock] = await Promise.all([
+      const [live, latestBlock, borrowerLock] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
         publicClient.getBlock({ blockTag: 'latest' }),
-        // A live sale listing freezes the sale price at the CURRENT
-        // principal — a partial repay under it would make the next
-        // buyer overpay for a smaller claim. This read failing THROWS
-        // (fail closed): unknown lock state must not wave a partial
-        // through.
-        publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(row.lenderTokenId)],
-          })
-          .then((v) => Number(v)),
+        // (The lender NFT's sale-listing lock is deliberately NOT read
+        // here any more — Codex #1511 r1 P1: repayPartial has no
+        // listing hold on-chain and the buyer's acceptance re-binds to
+        // the shrunk principal, so a listing never blocks a partial.)
         // Codex #1500 r4 P1 — the BORROWER position's lock, read live
         // here rather than trusted from the render-time offsetPending
         // branch. `repayPartial` has NO offset guard on chain, so a
@@ -1104,10 +1354,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(copy.errors.pastGrace);
         return;
       }
-      if (saleLock === LOCK_EARLY_WITHDRAWAL_SALE) {
-        setError(copy.loanSale.partialBlockedByListing);
-        return;
-      }
+      // NOTE deliberately NO sale-listing guard here (Codex #1511 r1
+      // P1): repayPartial carries no listing hold on-chain, and the
+      // buyer's acceptance binds to the loan's CURRENT principal — a
+      // partial repayment during a listing shrinks the claim and the
+      // pending buyer simply re-signs. The pre-binding UI block that
+      // lived here contradicted both.
       if (borrowerLock === LOCK_PRECLOSE_OFFSET) {
         setError(copy.offset.blockedOtherPaths);
         return;
@@ -1181,6 +1433,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         amount: required,
       });
       setPhase('submitting');
+      // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
+      // the reads/approval steps above — a buyer acceptance can land
+      // during them. Re-check immediately before the protocol write;
+      // the on-chain close-out guard that fully closes the signing
+      // race is the #1503 PR-E slice.
+      {
+        const blockedLate = await assertSaleSettlementSafe();
+        if (blockedLate) {
+          setPhase(null);
+          setError(blockedLate);
+          return;
+        }
+      }
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage(copy.positions.details.done.partialRepaid);
       setPartialInput('');
@@ -1200,7 +1465,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function runPreclose() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    // NOTE deliberately NO guard for a LIVE/expired listing here
+    // (Codex #1511 r2): `precloseDirect` carries no
+    // `loanToSaleOfferId` check on-chain — the listing's hold is on
+    // the OFFSET path and collateral withdrawal, never the direct
+    // close. The ACCEPTED completion window is different (Codex
+    // #1511 r4 P1): a close there terminalizes the loan and strands
+    // the buyer's recovery completion.
+    if (saleCompletionPending || saleHoldResolving) {
+      setError(copy.saleHold.completionPaused);
+      return;
+    }
+    // Lock held across the live probe (Codex #1511 r6).
     setPhase('pending');
+    {
+      const blocked = await assertSaleSettlementSafe();
+      if (blocked) {
+        setPhase(null);
+        setError(blocked);
+        return;
+      }
+    }
     setError(null);
     try {
       // precloseDirect is a Tier-1 entry point — live re-screen, plus
@@ -1281,6 +1566,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         amount: due,
       });
       setPhase('submitting');
+      // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
+      // the reads/approval steps above — a buyer acceptance can land
+      // during them. Re-check immediately before the protocol write;
+      // the on-chain close-out guard that fully closes the signing
+      // race is the #1503 PR-E slice.
+      {
+        const blockedLate = await assertSaleSettlementSafe();
+        if (blockedLate) {
+          setPhase(null);
+          setError(blockedLate);
+          return;
+        }
+      }
       await write('precloseDirect', [BigInt(row.loanId)]);
       setClosedThisSession(true);
       setDoneMessage(copy.preclose.done);
@@ -1683,6 +1981,79 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           any flow opens. Hidden while an offset is live (the pending
           card below owns the story then) and once grace is verifiably
           over (every borrower door is shut). */}
+      {/* Borrower-side listing-hold notice — rendered on the CHAIN's
+          say-so (the teardown probe), so a listing made by the lender
+          on any device shows here. Sits above the chooser: it is the
+          "why" for the chooser's held close-early row. */}
+      {role === 'borrower' &&
+      !closedThisSession &&
+      !isRental &&
+      // The latched confirmation must not outlive the loan (Codex
+      // #1511 r7): once the reconciled status is terminal there is no
+      // action window to talk about.
+      row.status === 'active' &&
+      (saleListingHeld || saleHoldCleared) ? (
+        <SaleListingHoldCard
+          loanId={loanId}
+          state={saleHold.data ?? 'unknown'}
+          cleared={saleHoldCleared}
+          confirmOpen={confirmingSurface === 'sale-teardown'}
+          onOpenConfirm={() => setConfirmingSurface('sale-teardown')}
+          onCloseConfirm={() =>
+            setConfirmingSurface((s) => (s === 'sale-teardown' ? null : s))
+          }
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={() => {
+            // Latch only if the loan is still LIVE post-mining (Codex
+            // #1511 r10): a terminal transition between the render-time
+            // read and the receipt means the teardown took the
+            // seller-hygiene branch — no cooldown was stamped, so the
+            // action-window confirmation would be false. Left
+            // unlatched, the card simply unmounts on the refetch.
+            //
+            // "Live" is Active OR FallbackPending, matching the
+            // contract exactly: teardownStaleSaleListing routes both to
+            // teardownExpired, which stamps the relist cooldown. An
+            // Active-only test would swallow the success confirmation
+            // for a loan that slipped into fallback while the review
+            // was open — a cleanup that really did run, and really did
+            // start the borrower's window.
+            // Bind the whole continuation to the chain this card was
+            // RENDERED on. Read from the closure, never from the ref:
+            // onCleared fires only after the teardown tx has mined, so
+            // a switch during that (multi-second) write has ALREADY
+            // moved the ref — snapshotting it here would compare the
+            // new chain against itself and always pass. The running
+            // freeOptions instance still holds this render's callback,
+            // so this value is the pre-switch chain, which is exactly
+            // what the ref must be compared against.
+            const startedOnChainId = readChain.chainId;
+            void (async () => {
+              try {
+                if (!publicClient || !walletChain) return;
+                if (saleHoldChainRef.current !== startedOnChainId) return;
+                const live = await readLoanLive(
+                  publicClient,
+                  walletChain.diamondAddress,
+                  row.loanId,
+                );
+                if (saleHoldChainRef.current !== startedOnChainId) return;
+                const st = Number(live.status);
+                if (
+                  st === LOAN_STATUS_ACTIVE ||
+                  st === LoanStatus.FallbackPending
+                ) {
+                  setSaleHoldCleared(true);
+                }
+              } catch {
+                // Unverifiable → stay unlatched (fail closed).
+              }
+            })();
+          }}
+        />
+      ) : null}
+
       {role === 'borrower' &&
       row.status === 'active' &&
       !closedThisSession &&
@@ -1714,6 +2085,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           refinanceEligible={Boolean(
             address && address.toLowerCase() === row.borrower.toLowerCase(),
           )}
+          saleListingHeld={saleListingHeld}
+          saleCompletionPending={saleCompletionPending}
+          saleHoldChecking={saleHoldResolving}
         />
       ) : null}
 
@@ -1809,6 +2183,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     </span>
                   </div>
                 ) : null}
+                {saleAcceptedOnFallback ? (
+                  // The OTHER cure needs the same disclosure. A top-up
+                  // big enough to cure returns the loan to Active,
+                  // which is exactly the condition the stranded sale
+                  // was waiting on — so this signature can hand the
+                  // lender position to a buyer. The repay review says
+                  // so; this one must too, or the consequence lands
+                  // only on whichever cure the borrower happens not to
+                  // pick.
+                  <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                    <span className="banner-body">
+                      {copy.saleHold.acceptedOnFallback}
+                    </span>
+                  </div>
+                ) : null}
               </ConfirmReceipt>
             </div>
           ) : null}
@@ -1827,7 +2216,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <p className="muted">
             {copy.positions.details.partial.blurb}
           </p>
-          {!offsetPend.pendingKnown ? (
+          {!offsetPend.pendingKnown || saleHoldResolving ? (
             // Fail CLOSED until the chain has answered whether an
             // offset lock is live (it can exist cross-device): a
             // partial under an unseen offset would drift the linked
@@ -1844,6 +2233,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.offset.blockedOtherPaths}
               </span>
             </div>
+          ) : saleCompletionPending ? (
+            // Accepted-sale completion window (Codex #1511 r4 P1): the
+            // buyer funded the ACCEPTED principal — a partial now
+            // changes it under the in-flight purchase.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.saleHold.completionPaused}
+              </span>
+            </div>
           ) : refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
             // principal — a partial would strand it unacceptable
@@ -1854,18 +2252,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.refinance.partialBlockedByPending}
               </span>
             </div>
-          ) : loanLive.data?.saleLock === LOCK_EARLY_WITHDRAWAL_SALE ? (
-            // Same freeze from the LENDER's side: a live sale listing
-            // charges buyers the current outstanding amount, so a
-            // partial under it would mislead the buyer. (Best-effort
-            // render copy — the submit path re-checks the lock live
-            // and fails closed.)
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">
-                {copy.loanSale.partialBlockedByListing}
-              </span>
-            </div>
           ) : (
+          // NOTE deliberately NO sale-listing branch here (Codex #1511
+          // r1 P1): a listing never holds partial repayment — the
+          // buyer's acceptance binds to the CURRENT principal and
+          // re-signs after a paydown, so the pre-binding "would
+          // mislead the buyer" freeze that lived here was stale.
           <>
           <div className="cluster">
             <input
@@ -1999,7 +2391,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">{copy.preclose.graceNote}</span>
             </div>
           ) : null}
-          {offsetPend.pending ? (
+          {saleHoldResolving ? (
+            // Fail CLOSED while the accepted-sale probe is unanswered
+            // (Codex #1511 r5 P1).
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : saleCompletionPending ? (
+            // Accepted-sale completion window (Codex #1511 r4 P1): a
+            // close here terminalizes the loan and strands the
+            // buyer's recovery completion.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.saleHold.completionPaused}
+              </span>
+            </div>
+          ) : offsetPend.pending ? (
             // A live offset settles this loan when its offer is
             // accepted — closing another way first strands the
             // linked offer. Cancel the offset instead.
@@ -2075,11 +2482,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             chain switch re-seeds per-chain state. */}
         {!refinancePending &&
         !offsetPend.pending &&
+        // Accepted-sale completion window (Codex #1511 r4 P1): a
+        // carry-over refinance settles this loan and strands the
+        // buyer's recovery completion — hidden like the other
+        // settlement flows; the chooser row says why.
+        !saleCompletionPending &&
+        !saleHoldResolving &&
         address &&
         address.toLowerCase() === row.borrower.toLowerCase() ? (
           <div id="refinance-card">
             <RefinanceFlow
               key={readChain.chainId}
+              preSubmitBlock={assertSaleSettlementSafe}
               row={row}
               live={loanLive.data.live}
               chainNow={loanLive.data.chainNow}
@@ -2101,9 +2515,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             before the original due date; the contracts enforce the
             same bound seconds-precise), never while another linked
             vehicle (refinance request / offset) is live on this loan. */}
-        {!livePastDue && !refinanceBlocking && !offsetPend.pending ? (
+        {!livePastDue &&
+        !refinanceBlocking &&
+        !offsetPend.pending &&
+        // Accepted-sale completion window (Codex #1511 r5 P1): the
+        // handover rewrites borrower/collateral/duration/rate under
+        // the buyer's funded acceptance — paused (and waited on) like
+        // the other settlement flows. The chooser rows say why.
+        !saleCompletionPending &&
+        !saleHoldResolving ? (
           <>
             <ObligationTransferFlow
+              preSubmitBlock={assertSaleSettlementSafe}
               row={row}
               live={loanLive.data.live}
               chainNow={loanLive.data.chainNow}
@@ -2122,7 +2545,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               busy={busy}
               setBusy={setBusy}
             />
-            {loanLive.data.saleLock !== LOCK_EARLY_WITHDRAWAL_SALE ? (
+            {loanLive.data.saleLock !== LOCK_EARLY_WITHDRAWAL_SALE &&
+            !saleListingHeld ? (
+              // Hidden when EITHER independent signal reports the sale
+              // lifecycle (Codex #1511 r7): the loanLive lock cache and
+              // the hold probe refresh on different rails, and the form
+              // must not render while either says the offset would
+              // revert.
               <OffsetFlow
                 key={`offset-${readChain.chainId}`}
                 row={row}
@@ -2357,7 +2786,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </div>
       ) : null}
 
-      {actionLabel && action && actionReceipt ? (
+      {action === 'repay' && (saleCompletionPending || saleHoldResolving) && !isRental ? (
+        // Accepted-sale completion window (Codex #1511 r4 P1): repay
+        // is normally the never-blocked safety valve, but here it
+        // would terminalize the loan under the buyer's committed
+        // funds and permanently strand the recovery completion. The
+        // window is momentary (post-refresh acceptance auto-completes
+        // atomically; this state is the legacy mid-flight shape).
+        <div className="banner banner-warn" role="alert">
+          <span className="banner-body">
+            {saleCompletionPending
+              ? copy.saleHold.completionPaused
+              : copy.earlyRepay.checkingInterlocks}
+          </span>
+        </div>
+      ) : actionLabel && action && actionReceipt ? (
         confirmingSurface === 'action' ? (
           // Position writes go through the SAME six-row review surface
           // as every other write flow — the wallet prompt is never the
@@ -2386,6 +2829,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">
                     {copy.refinance.repayWarnPending}
+                  </span>
+                </div>
+              ) : null}
+              {action === 'repay' && saleAcceptedOnFallback && !isRental ? (
+                // Stated, not enforced: the linked purchase is already
+                // stranded by the fallback state, so this settlement
+                // is the borrower's to make — but it decides the
+                // purchase's fate, so say so before they sign.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    {copy.saleHold.acceptedOnFallback}
                   </span>
                 </div>
               ) : null}

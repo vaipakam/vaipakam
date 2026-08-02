@@ -337,6 +337,15 @@ implementation PR:
 - **The borrower-side freeze is owned, not ignored**: because a live
   listing holds the borrower's partial-repay AND collateral-withdrawal
   affordances indefinitely (no expiry; only the seller cancels), the
+  > **As-built note (PR #1505 + #1511):** the buyer-re-sign flow
+  > anticipated below SHIPPED with the acceptance binding, so partial
+  > repayment is simply open during a listing; the concrete on-chain
+  > hold set as built is the **offset close-out** (its pinned lender
+  > offer cannot coexist with the listing) **plus collateral
+  > withdrawal** — the direct early close was never guarded. The
+  > FunctionalSpecs carry the authoritative as-built statement; this
+  > paragraph is preserved as the design-time intent that motivated
+  > the expiry + teardown + cooldown floor, which shipped as specified.
   implementation must (a) disclose that cross-party effect on the
   listing form BEFORE confirmation, and (b) ship an escape that
   releases **every** hold, not just one of them. The requirement is

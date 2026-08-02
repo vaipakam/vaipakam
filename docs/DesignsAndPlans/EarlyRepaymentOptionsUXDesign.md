@@ -172,6 +172,39 @@ Its surface therefore:
   settlement tools that could strand a linked offer hold in a visible
   checking state (the lock can be created from another device).
 
+### Layer 3b — the lender-sale listing hold (shipped, PR #1511)
+
+The same chain-authoritative posture extends to the OTHER party's
+linked vehicle: a lender-sale listing on the borrower's loan. The
+chooser surface participates in three ways, all judged from the chain
+alone (the state is a simulation of the exact cleanup transaction the
+borrower could send, corroborated by the lender position's lock — no
+local marker, no off-chain index):
+
+- **A hold notice above the chooser** owns the story: while a listing
+  is live it names what is held (the offset exit — its pinned lender
+  offer cannot coexist with the listing — and collateral withdrawal),
+  what stays open (repay in full, repay partially, close early), and
+  the structural bound on the hold; once the listing has ended it
+  grows the one-click permissionless cleanup (through the standard
+  review receipt and the page's single confirmation slot), available
+  even during an operator pause, and confirms the lender's one-day
+  relist quiet period. If a buyer has ACCEPTED and completion is
+  pending, the notice says so and every settlement row pauses — the
+  buyer's funds are committed, and settling or rewriting the loan
+  would strand the in-flight purchase.
+- **Held rows say why**, per this document's own rule: the offset row
+  during any listing, and all five settlement rows (full, partial,
+  close-early, handover, refinance) during the accepted-completion
+  window, each carry the one-line explanation instead of vanishing.
+- **Fail-closed twice over**: the settlement rows wait in the checking
+  state until the hold probe has answered (its undefined startup state
+  must not read as "safe"), and every settlement write re-runs the
+  probe live immediately before sending — a cached answer a few
+  blocks old must not let a just-landed acceptance be settled over.
+  On a deployment that predates the bounded-listing lifecycle the
+  probe stays silent and the page behaves as before.
+
 ## Decision guidance the chooser encodes
 
 The cost sentences are not boilerplate — they encode the real
@@ -253,6 +286,13 @@ consumed action.
 **Phase 1 — shipped with this design.** Chooser card (both modes),
 handover flow, offset flow + pending card, interlocks, fork-tier spec,
 functional-spec section.
+
+**Phase 1b — lender-sale listing hold (shipped, PR #1511).** The
+borrower-side surface of the #1503 PR-A listing lifecycle: the hold
+notice + permissionless cleanup, held-row annotations, the
+accepted-completion settlement pause, and the fail-closed probe
+(Layer 3b above). Self-arming fork spec; live review gated on the
+testnet facet refresh.
 
 **Phase 2 — "help me choose" (proposed).** An opt-in, question-first
 wizard layered on the chooser: "Do you have the cash to repay? →

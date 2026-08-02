@@ -55,6 +55,10 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   'loanLiveStatus',
   'loanRisk',
   'positionOwners',
+  // Borrower listing-hold probe (#1511): an own teardown (or any own
+  // write that settles the loan) must flip the hold card promptly in
+  // every tab.
+  'saleListingHold',
   // Codex #1228 r1 — desk views: the flows' surface-specific desk
   // invalidations are LOCAL to the acting tab, so the cross-tab floor
   // must carry them or a second tab on Rate Desk misses an own fill

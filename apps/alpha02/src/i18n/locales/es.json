@@ -790,7 +790,6 @@
       "fundingUnknown": "No pudimos identificar el registro de oferta de este listado desde este dispositivo, así que no podemos verificar aquí su financiación de liquidación — gestiónalo desde el dispositivo que lo listó, o mantén una aprobación y saldo generosos.",
       "ended": "Tu listado de venta ya no está activo. Si un comprador lo aceptó, el pago ya está en tu billetera y la liquidación se extrajo mediante la aprobación permanente; cualquier aprobación restante puede revocarse desde la vista de aprobaciones de tokens de tu billetera.",
       "listingUnavailable": "Listar tu posición a tu propio precio aún no está disponible — el paso on-chain que necesita se está arreglando. La salida instantánea de arriba funciona: vende de inmediato contra una oferta abierta compatible.",
-      "partialBlockedByListing": "El prestamista tiene esta posición listada para venta por su monto pendiente actual. El pago parcial está pausado mientras el listado exista — cambiaría ese monto y engañaría a un comprador. Aún puedes pagar completo o cerrar antes en cualquier momento.",
       "consentLabel": "Entiendo el bloqueo, el cobro de liquidación y la aprobación permanente de abajo, y los acepto.",
       "receiptCanLose": "Si tu saldo o la aprobación permanente quedan cortos, la aceptación de un comprador simplemente falla — no se toma nada, pero la publicación queda imposible de llenar hasta que la restaures o canceles.",
       "receiptEnds": "Cuando un comprador acepta (todo se liquida en su transacción) o cuando cancelas la publicación. No vence sola.",

@@ -953,10 +953,11 @@ Its intended behaviour, as the test oracle for this surface:
   or at the loan's due date, whichever comes first — and that once a
   listing ends without a sale (expiry or cancellation) the same loan
   cannot be listed again for a day, a breathing space for the
-  borrower whose preclose and collateral-withdrawal options are held
-  while a listing stands (partial repayment is never held — it stays
-  available throughout, and a pending buyer re-signs for the smaller
-  position).
+  borrower whose offset close-out (its pinned lender offer cannot
+  coexist with the listing) and collateral-withdrawal options are held
+  while a listing stands (repayment is never held — full, partial, and
+  the direct early close all stay available, and a pending buyer
+  re-signs for the smaller position after a paydown).
   Changing the chosen window, like changing the rate, voids any
   acknowledgement already given and closes an open review.
   Before confirming, the review must disclose: the
@@ -1005,18 +1006,78 @@ Its intended behaviour, as the test oracle for this surface:
   though the listing card closes. When a listing ends off-page (a
   buyer accepted, or it was cancelled elsewhere), the page states
   that outcome once instead of letting the card silently vanish.
-  While a listing stands, the sell-into-offer exit is not offered,
-  and the borrower's partial-repayment surface is held off with an
-  explanation — the listing sells the claim at its frozen outstanding
-  amount, and a partial repayment under it would make the buyer
-  overpay for a smaller claim. Full repayment and close-early remain
-  open to the borrower, and a terminal loan state should show the
-  seller a clear cancel-to-unlock path for any stale listing. The
+  While a listing stands, the sell-into-offer exit is not offered.
+  The borrower's repayment surfaces are NOT held off — full and
+  partial repayment stay open throughout (a buyer's acceptance binds
+  to the loan's current outstanding amount, so a partial repayment
+  simply shrinks the claim and a pending buyer re-signs for the
+  smaller position — the buyer can never overpay for a shrunk claim).
+  What a listing does hold is the borrower's offset close-out (its
+  pinned lender offer cannot coexist with the listing) and
+  collateral-withdrawal options, and the borrower-side surface must
+  say so (see the borrower listing-hold notice below). The direct
+  early close is never held — a borrower may settle the loan under a
+  live listing, after which the dangling listing is cleaned up
+  permissionlessly. A terminal
+  loan state should show the seller a clear cancel-to-unlock path
+  for any stale listing. The
   listing form is offered only on networks
   where the protocol's listing entry point is known to work
   end-to-end; elsewhere it is withheld and replaced by a plain note
   pointing at the working instant exit. Every standing-surface rule
   above applies to any listing that exists either way.
+- On the BORROWER's own loan page, a lender-sale listing on their
+  loan is surfaced as a listing-hold notice — the borrower is exactly
+  who the listing lifecycle's action window exists for, so the notice
+  is where that escape reaches them. While the listing is live it
+  explains, honestly and without any action: which options are held
+  (the offset exit and withdrawing collateral), which stay open
+  (repaying fully or partially and closing early — with the note that
+  a partial repayment shrinks what a buyer would take over), and the structural
+  bound on the hold (the listing ends on its own — at latest the
+  maximum listing window after creation, sooner at the loan's due
+  date — or earlier if the lender cancels). The chooser's offset
+  entry is marked held with the same why instead of jumping to a flow
+  that would fail. Once the listing has ended but the hold has not
+  yet been cleaned up, the notice grows a one-click cleanup that
+  anyone may send — available even while the protocol is paused —
+  which frees the held options immediately and reminds the borrower
+  that the lender cannot relist for the quiet period. The notice's
+  existence is judged from the chain alone (never a local marker or
+  an off-chain index), it appears for a listing made on any device,
+  and when the state cannot be judged the surface shows NOTHING
+  rather than a false hold or a cleanup that would fail.
+- A sale that a buyer has ACCEPTED but which has not yet finished
+  completing is the one state where the borrower's settlement options
+  are paused rather than merely explained. In that window the buyer's
+  funds are committed while the purchase still depends on the loan
+  standing as it is, so repaying, part-paying, closing early,
+  transferring the obligation, or requesting a refinance would strand
+  the purchase permanently. The app must pause those paths for the
+  duration and state the reason up front, rather than letting the
+  attempt fail unexplained at the end; adding collateral stays
+  available throughout, since it strands nothing. The pause is honest
+  about its own limits: it promises that the options the loan's
+  remaining term still allows come back once the sale settles, not
+  that every option returns.
+  The pause holds ONLY while the loan is running normally. A purchase
+  can only complete against a running loan, so once a loan has fallen
+  into fallback resolution the purchase is already stranded and there
+  is nothing left for a pause to protect — while the lender's own
+  claim stays available to them throughout. Pausing there would be
+  permanent, not momentary, and would close the borrower's last door.
+  So in that state the app states the situation instead of enforcing
+  it: the borrower is told a purchase is attached, that it cannot
+  complete until the loan is brought back to normal, and that settling
+  the loan instead ends the purchase with it — and then the borrower's
+  own choice is left open to them. The same rule binds the final
+  pre-send check: it may only refuse a settlement on a loan the chain
+  confirms is still running.
+  Because a cached answer can be stale by the time a review screen is
+  confirmed, every one of those settlement paths must re-ask the chain
+  immediately before it sends, and an unanswered check must pause the
+  path rather than let it through. This is app-level protection over a
+  window the protocol itself still permits.
   On the BUYER side, an offer tied to an already-running loan is
   reviewed by KIND. A position sale gets a real buy-a-running-loan
   review: it is introduced as buying the lender side of a named,

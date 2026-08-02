@@ -931,6 +931,8 @@ const copySource = {
       closeEarly: 'Close early (pay and settle now)',
       closeEarlyDesc:
         'The same total as repaying in full — this tool shows you the exact on-chain figure before you sign and settles everything in one step.',
+      offsetHeldBySale:
+        'Held while the lender’s sale listing stands — this exit posts an offer pinned to the loan, which can’t coexist with the listing. Repaying (fully or partially) and closing early stay open. See the listing notice above for when this frees up.',
       closeEarlyCostChecking:
         'Checking this loan’s interest mode to price this option…',
       closeEarlyCostFullTerm:
@@ -1442,6 +1444,43 @@ const copySource = {
       'We couldn’t read this loan’s exit details right now — retrying.',
   },
 
+  // Borrower-side view of a lender-sale listing on THEIR loan
+  // (#1503 PR-A follow-up): what a live listing holds, what stays
+  // open, and the permissionless cleanup that frees the held options
+  // once the listing has ended.
+  saleHold: {
+    title: 'The lender listed this position for sale',
+    liveBody:
+      'While the listing stands, two of your options are held: exiting via the offset path (it posts an offer pinned to this loan, which can’t coexist with the listing) and withdrawing collateral. Everything else stays open — repay in full, repay partially, or close the loan early; a partial repayment shrinks the amount a buyer would take over. The listing ends on its own: at latest 30 days after it was created, or at the loan’s due date, whichever comes first (the lender can also cancel it sooner).',
+    liveEnds:
+      'If the listing expires without a sale, a cleanup button appears here to free the held options; if the lender cancels the listing, the hold simply ends on its own — no cleanup needed.',
+    acceptedBody:
+      'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). The buyer’s funds are already committed, so your repayment and exit options are briefly paused — repaying, closing, or changing the amount now would break the in-flight purchase. Once the sale settles, whichever options the loan’s remaining term still allows come back.',
+    completionPaused:
+      'Paused while an accepted sale of the lender’s position completes — the buyer’s funds are already committed, and settling or changing this loan now would break that in-flight purchase. This state normally lasts moments; once the sale settles, the options the loan’s remaining term still allows come back.',
+    acceptedOnFallback:
+      'A buyer accepted the lender’s sale listing, but that purchase cannot complete while this loan is awaiting its fallback resolution — so nothing here is being held up waiting for it, and your options stay open. Restoring enough collateral returns the loan to normal, after which the purchase can finish; settling the loan instead ends it, and the purchase ends with it.',
+    checkFailed:
+      'We couldn’t verify whether a sale of the lender’s position is mid-completion — nothing was sent. Try again in a moment.',
+    clearableBody:
+      'The listing has ended but still holds your offset and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold. (The cleanup releases the hold itself — whichever held option the loan’s remaining term still allows becomes usable again; an offset needs at least a day of term left.)',
+    clearableAction: 'Free held options',
+    confirmAction: 'Confirm — free held options',
+    clearedNote:
+      'Held options freed. The cleanup also started the lender’s one-day pause on relisting this loan — your action window ran from that moment.',
+    workingDots: 'Freeing…',
+    receipt: {
+      youReceive:
+        'Nothing is paid to you — this only releases the hold on your offset and collateral-withdrawal options (each then usable as far as the loan’s remaining term allows).',
+      youLock: 'Nothing.',
+      youMayOwe: 'Only network gas for this one transaction.',
+      youCanLose: 'Nothing — the cleanup moves no funds and touches no balances.',
+      fees: 'None.',
+      whenThisEnds:
+        'Immediately when the transaction confirms — the hold is released (each option is then usable as far as the loan’s remaining term allows) and the lender can’t relist this loan for a day.',
+    },
+  },
+
   loanSale: {
     // Review-receipt / hint lines (extracted from LoanSaleFlow.tsx +
     // LoanSalePendingCard.tsx inline templates).
@@ -1513,8 +1552,6 @@ const copySource = {
     // form is feature-gated off until the contract fix lands.
     listingUnavailable:
       'Listing your position at your own price isn’t available yet — the on-chain step it needs is being fixed. The instant exit above works: it sells into a matching open offer right away.',
-    partialBlockedByListing:
-      'The lender has this position listed for sale at its current outstanding amount. Partial repayment is paused while the listing stands — it would change that amount and mislead a buyer. You can still repay in full or close early at any time.',
   },
 
   positions: {

@@ -790,7 +790,6 @@
       "fundingUnknown": "इस device से इस listing का offer record identify नहीं कर सके, इसलिए यहाँ इसकी settlement funding verify नहीं कर सकते — जिस device से listed किया वहाँ manage करें, या generous approval और balance रखें।",
       "ended": "आपकी sale listing अब active नहीं है। अगर buyer ने accept किया, payout पहले से wallet में है और settlement standing approval से pulled हुआ; remaining approval wallet के token-approvals view से revoke कर सकते हैं।",
       "listingUnavailable": "अपनी price पर position list करना अभी available नहीं — on-chain step fix हो रहा है। ऊपर instant exit काम करता है: matching open offer में तुरंत sell करता है।",
-      "partialBlockedByListing": "Lender ने इस position को current outstanding amount पर sale के लिए listed किया है। Listing standing रहने तक partial repayment paused है — यह amount बदल देगा और buyer को mislead करेगा। आप अभी भी full repay या early close कभी भी कर सकते हैं।",
       "consentLabel": "मैं नीचे दिए lock, settlement pull और standing approval को समझता/समझती हूँ और उनसे सहमत हूँ।",
       "receiptCanLose": "अगर आपका balance या standing approval short हो जाए, buyer की acceptance बस fail हो जाती है — कुछ नहीं लिया जाता, लेकिन listing unfillable रहती है जब तक आप restore या cancel न करें।",
       "receiptEnds": "जब buyer accept करता है (सब कुछ उसकी transaction में settle होता है) या जब आप listing cancel करते हैं। यह अपने आप expire नहीं होती।",

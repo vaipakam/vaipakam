@@ -49,6 +49,9 @@ export function EarlyRepayOptionsCard({
   pastDueHint,
   refinancePending,
   refinanceEligible,
+  saleListingHeld,
+  saleCompletionPending,
+  saleHoldChecking,
 }: {
   isAdvanced: boolean;
   onSwitchToAdvanced: () => void;
@@ -56,6 +59,22 @@ export function EarlyRepayOptionsCard({
   useFullTermInterest: boolean | undefined;
   pastDueHint: boolean;
   refinancePending: boolean;
+  /** A lender-sale listing (live or ended-but-not-cleaned) holds the
+   *  OFFSET path on-chain (#1503 PR-A: offsetWithNewOffer reverts
+   *  SaleListingActiveOnLoan) — the offset row must say so instead of
+   *  jumping to a hidden card. Repay and direct close-early are never
+   *  held by a listing. */
+  saleListingHeld?: boolean;
+  /** An ACCEPTED sale awaiting completion pauses the settlement rows
+   *  (repay / partial / close-early / transfer / refinance) — the
+   *  buyer's funds are committed and settling now would strand the
+   *  completion (Codex #1511 r4 P1 + r5 P1). Momentary state (legacy
+   *  mid-flight shape). */
+  saleCompletionPending?: boolean;
+  /** The accepted-sale probe hasn't answered yet — the settlement
+   *  rows wait (fail closed) instead of opening on the undefined
+   *  initial state (Codex #1511 r5 P1). */
+  saleHoldChecking?: boolean;
   /** Carry-over refinance binds to the ORIGINAL borrower — a wallet
    *  that acquired the position on the secondary market never gets
    *  the refinance card, so the chooser must say why instead of
@@ -73,12 +92,20 @@ export function EarlyRepayOptionsCard({
       : useFullTermInterest
         ? o.closeEarlyCostFullTerm
         : o.closeEarlyCostProRata;
+  // Accepted-sale completion pause outranks every other annotation on
+  // the settlement rows (Codex #1511 r4 P1).
+  const completionPause = saleCompletionPending
+    ? copy.saleHold.completionPaused
+    : saleHoldChecking
+      ? copy.earlyRepay.checkingInterlocks
+      : undefined;
   const rows: OptionRow[] = [
     {
       key: 'full',
       title: o.repayFull,
       desc: o.repayFullDesc,
       cost: closeCost,
+      unavailable: completionPause,
       target: 'repay-action',
       basic: true,
     },
@@ -86,7 +113,9 @@ export function EarlyRepayOptionsCard({
       key: 'partial',
       title: o.repayPartial,
       desc: o.repayPartialDesc,
-      unavailable: partialAllowed ? undefined : o.repayPartialUnavailable,
+      unavailable:
+        completionPause ??
+        (partialAllowed ? undefined : o.repayPartialUnavailable),
       target: 'partial-repay-card',
     },
     {
@@ -94,6 +123,10 @@ export function EarlyRepayOptionsCard({
       title: o.closeEarly,
       desc: o.closeEarlyDesc,
       cost: closeCost,
+      // Deliberately NOT held by a LIVE sale listing (Codex #1511 r2):
+      // precloseDirect carries no listing guard on-chain. The ACCEPTED
+      // completion window does pause it (r4 P1).
+      unavailable: completionPause,
       target: 'preclose-card',
     },
     {
@@ -101,7 +134,11 @@ export function EarlyRepayOptionsCard({
       title: o.transfer,
       desc: o.transferDesc,
       cost: o.transferCost,
-      unavailable: pastDueHint ? copy.offset.onlyBeforeDue : undefined,
+      // The handover rewrites the loan under a funded acceptance —
+      // paused during the completion window (Codex #1511 r5 P1).
+      unavailable:
+        completionPause ??
+        (pastDueHint ? copy.offset.onlyBeforeDue : undefined),
       target: 'transfer-card',
     },
     {
@@ -109,7 +146,20 @@ export function EarlyRepayOptionsCard({
       title: o.offset,
       desc: o.offsetDesc,
       cost: o.offsetCost,
-      unavailable: pastDueHint ? copy.offset.onlyBeforeDue : undefined,
+      // The listing hold lands HERE (Codex #1511 r2):
+      // offsetWithNewOffer reverts SaleListingActiveOnLoan while a
+      // listing is linked — the offset card is hidden then, so the
+      // row must say why instead of jumping to nothing.
+      // The completion pause outranks the live-listing explanation
+      // (Codex #1511 r6): offsetHeldBySale says repay/close stay
+      // open, which is false during the accepted window.
+      unavailable:
+        completionPause ??
+        (saleListingHeld
+          ? o.offsetHeldBySale
+          : pastDueHint
+            ? copy.offset.onlyBeforeDue
+            : undefined),
       target: 'offset-card',
     },
     {
@@ -117,11 +167,13 @@ export function EarlyRepayOptionsCard({
       title: o.refinance,
       desc: o.refinanceDesc,
       cost: o.refinanceCost,
-      unavailable: !refinanceEligible
-        ? o.refinanceTransferredUnavailable
-        : refinancePending
-          ? copy.refinance.partialBlockedByPending
-          : undefined,
+      unavailable:
+        completionPause ??
+        (!refinanceEligible
+          ? o.refinanceTransferredUnavailable
+          : refinancePending
+            ? copy.refinance.partialBlockedByPending
+            : undefined),
       target: 'refinance-card',
     },
   ];

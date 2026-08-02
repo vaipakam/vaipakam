@@ -84,6 +84,7 @@ import type { TokenMeta } from '../contracts/erc20';
 const REQUEST_WINDOW_DAYS = 30n;
 
 export function RefinanceFlow({
+  preSubmitBlock,
   row,
   live,
   chainNow,
@@ -96,6 +97,10 @@ export function RefinanceFlow({
   busy,
   setBusy,
 }: {
+  /** Optional page-supplied gate run LIVE at submit start — returns a
+   *  user-facing message to block on (e.g. the accepted-sale
+   *  completion pause, Codex #1511 r5 P1) or null to proceed. */
+  preSubmitBlock?: () => Promise<string | null>;
   row: IndexedLoan;
   live: LoanLive;
   /** Chain time from the parent's live query — maturity gates never
@@ -222,6 +227,24 @@ export function RefinanceFlow({
   const pastGrace = chainNow > loanEndTimeOf(live) + graceSec;
 
   async function submit() {
+    // Page-supplied settlement gate (Codex #1511 r5 P1) — a LIVE
+    // accepted-sale re-check immediately before any write that would
+    // settle or rewrite the loan under a funded acceptance.
+    if (preSubmitBlock) {
+      if (busy) return;
+      // Hold the shared lock ACROSS the await (Codex #1511 r6): with
+      // the old await-then-lock ordering a slow probe left Confirm/
+      // Back live and un-mutexed. Released before falling through —
+      // the continuation to this flow's own lock acquisition is
+      // synchronous, so nothing can interleave.
+      setBusy(true);
+      const blockedMsg = await preSubmitBlock();
+      setBusy(false);
+      if (blockedMsg) {
+        setError(blockedMsg);
+        return;
+      }
+    }
     // #1028 — a refinance request IS a createOffer: it must respect
     // the same kill switch as the direct post path during an
     // OfferFacet incident. (Refinance is optional — blocking it traps
@@ -400,6 +423,31 @@ export function RefinanceFlow({
         // (and the bound the approval above was computed against).
         expiresAt: requestExpiry,
       });
+      // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
+      if (preSubmitBlock) {
+        const blockedLate = await preSubmitBlock();
+        if (blockedLate) {
+          setError(blockedLate);
+          // This return skips the catch, but the payoff approval may
+          // already have MINED above — unwind it the same best-effort
+          // way (Codex #1511 r11): a blocked submit must not leave a
+          // payoff-sized authorization behind a pristine form.
+          if (approvalGranted && approvalToken) {
+            try {
+              await revokeAllowance({
+                publicClient,
+                walletClient,
+                token: approvalToken,
+                owner: address,
+                spender: walletChain.diamondAddress,
+              });
+            } catch {
+              // Leave the block message as the surfaced outcome.
+            }
+          }
+          return;
+        }
+      }
       const { receipt } = await write('createOffer', [payload]);
       const created = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,

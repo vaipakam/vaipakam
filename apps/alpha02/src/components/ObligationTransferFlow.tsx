@@ -94,6 +94,7 @@ function offerEligible(
 }
 
 export function ObligationTransferFlow({
+  preSubmitBlock,
   row,
   live,
   chainNow,
@@ -107,6 +108,10 @@ export function ObligationTransferFlow({
   busy,
   setBusy,
 }: {
+  /** Optional page-supplied gate run LIVE at submit start — returns a
+   *  user-facing message to block on (e.g. the accepted-sale
+   *  completion pause, Codex #1511 r5 P1) or null to proceed. */
+  preSubmitBlock?: () => Promise<string | null>;
   row: IndexedLoan;
   live: LoanLive;
   /** Chain time from the parent's live query — never the device clock. */
@@ -182,6 +187,18 @@ export function ObligationTransferFlow({
     }
   }, [pickedId, candidates, picked, onCloseConfirm]);
 
+  // The pick is LOCAL state but the confirm slot is the PAGE's, so a
+  // remount separates them: the slot still says 'transfer' while the
+  // pick is gone. That combination renders neither the picker nor the
+  // receipt — an empty card with no way back. Reachable by toggling
+  // Basic/Advanced with a review open, and (since this flow gained
+  // fail-closed unmount conditions) by a single probe hiccup. Hand the
+  // slot back so the picker returns. Selecting an offer sets both in
+  // one batched handler, so this can never race a legitimate open.
+  useEffect(() => {
+    if (confirmOpen && pickedId === null) onCloseConfirm();
+  }, [confirmOpen, pickedId, onCloseConfirm]);
+
   const dec = principalMeta.decimals;
   const sym = principalMeta.symbol;
   const fmt = (v: bigint) => `${formatTokenAmount(v, dec)} ${sym}`;
@@ -217,6 +234,24 @@ export function ObligationTransferFlow({
   const collateralQuotable = collateralIsNft || collateralMeta !== undefined;
 
   async function submit() {
+    // Page-supplied settlement gate (Codex #1511 r5 P1) — a LIVE
+    // accepted-sale re-check immediately before any write that would
+    // settle or rewrite the loan under a funded acceptance.
+    if (preSubmitBlock) {
+      if (busy) return;
+      // Hold the shared lock ACROSS the await (Codex #1511 r6): with
+      // the old await-then-lock ordering a slow probe left Confirm/
+      // Back live and un-mutexed. Released before falling through —
+      // the continuation to this flow's own lock acquisition is
+      // synchronous, so nothing can interleave.
+      setBusy(true);
+      const blockedMsg = await preSubmitBlock();
+      setBusy(false);
+      if (blockedMsg) {
+        setError(blockedMsg);
+        return;
+      }
+    }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (!picked || !economics) return;
     // The handover consumes an existing offer — same kill switch as
@@ -417,6 +452,22 @@ export function ObligationTransferFlow({
           spender: walletChain.diamondAddress,
           amount: liveCost.total + pad,
         });
+      }
+      // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
+      // Deliberately does NOT unwind the allowance above, unlike
+      // RefinanceFlow's equivalent: this flow tracks no approval state
+      // and never revokes on ANY post-approval failure (a reverted
+      // write, a rejected signature), so a lone unwind here would be
+      // the odd one out. The residue is the cost of the transfer the
+      // user was actively attempting, not a standing payoff-sized
+      // grant. Giving this flow the tracked-approval + revoke pattern
+      // wholesale is #1514.
+      if (preSubmitBlock) {
+        const blockedLate = await preSubmitBlock();
+        if (blockedLate) {
+          setError(blockedLate);
+          return;
+        }
       }
       await write('transferObligationViaOffer', [
         BigInt(row.loanId),
