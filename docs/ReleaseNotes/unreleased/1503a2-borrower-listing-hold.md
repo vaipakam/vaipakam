@@ -70,5 +70,19 @@ confirmation survives the state refetch. A matching stale passage in
 the connected-app functional spec (which claimed the reverse hold
 set) was corrected the same way.
 
+A pre-merge adversarial sweep of this work caught three defects the
+review rounds had not, and all three are fixed here. The most serious
+was self-inflicted and would have shipped a crash on every load of the
+position page. The other two were failure modes of the safety
+machinery itself: a paused surface that could never un-pause, and a
+transient network error that could have stopped a borrower repaying on
+the deployment as it stands today. Their common shape is worth naming
+— each came from a protective check that was correct about the danger
+it named and wrong about its own blast radius, which is why the
+protection is now expressed as one tested rule rather than several
+conditions maintained in parallel. The gap that let a page-crash
+survive review — the connected app runs no linting at all — is
+tracked as #1516.
+
 Part of the #1503 series; the lender-side pending-card teardown
 surface remains tracked as #1506.
