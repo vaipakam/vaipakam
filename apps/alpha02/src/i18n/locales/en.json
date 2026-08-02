@@ -793,7 +793,7 @@
       "currentLevel": "Your active level: {{tier}}",
       "heldHigher": "You’ve chosen {{tier}}, but it isn’t active yet — see the note on that option below.",
       "enforcementOn": "This choice is enforced on this network: offers you create or accept are checked against it.",
-      "enforcementOff": "Not enforced on this network yet — your choice is saved on-chain and starts applying the moment enforcement is switched on.",
+      "enforcementOff": "Not enforced on this network yet — your choice is saved on-chain, and whatever level is active at the time applies once enforcement is switched on.",
       "enforcementUnknown": "We couldn’t tell whether this choice is currently being enforced on this network.",
       "tierHeading": "Your risk level",
       "tiers": {
@@ -831,7 +831,8 @@
         "unreadable": "We couldn’t read the strict-mode setting right now."
       },
       "advancedDetail": "risk-terms version {{terms}} · your anchor {{anchor}} · raise cooldown ends {{until}}",
-      "advancedNoCooldown": "risk-terms version {{terms}} · your anchor {{anchor}} · no cooldown pending"
+      "advancedNoCooldown": "risk-terms version {{terms}} · your anchor {{anchor}} · no cooldown pending",
+      "advancedCooldownUnknown": "risk-terms version {{terms}} · your anchor {{anchor}} · cooldown state couldn’t be read"
     },
     "keepers": {
       "title": "Keeper permissions",

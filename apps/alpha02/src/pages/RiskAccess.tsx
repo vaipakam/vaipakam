@@ -254,25 +254,35 @@ export function RiskAccess() {
                 {/* The contract stamps the unlock timestamp on EVERY
                     tier write (lowers included), so a nonzero value is
                     not "cooldown pending" — only a FUTURE one is
-                    (Codex #1517 r1). */}
-                {s.tierUnlockKnown &&
-                s.tierUnlockAt > BigInt(Math.floor(Date.now() / 1000))
-                  ? copy.riskAccess.advancedDetail(
+                    (Codex #1517 r1). A FAILED unlock read is its own
+                    state — claiming "no cooldown" over it would
+                    contradict a cooling tier note above (r2). */}
+                {!s.tierUnlockKnown
+                  ? copy.riskAccess.advancedCooldownUnknown(
                       String(s.termsVersion),
                       String(s.tierAnchorVersion),
-                      dateTime(s.tierUnlockAt),
                     )
-                  : copy.riskAccess.advancedNoCooldown(
-                      String(s.termsVersion),
-                      String(s.tierAnchorVersion),
-                    )}
+                  : s.tierUnlockAt > BigInt(Math.floor(Date.now() / 1000))
+                    ? copy.riskAccess.advancedDetail(
+                        String(s.termsVersion),
+                        String(s.tierAnchorVersion),
+                        dateTime(s.tierUnlockAt),
+                      )
+                    : copy.riskAccess.advancedNoCooldown(
+                        String(s.termsVersion),
+                        String(s.tierAnchorVersion),
+                      )}
               </p>
             ) : null}
           </div>
         )}
       </section>
 
-      {address && onSupportedChain && s?.supported && !s.criticalReadFailed ? (
+      {/* NOT gated on criticalReadFailed (Codex #1517 r2): the strict
+          card renders from its own read — a strict vault must keep the
+          risk-DECREASING disable action even when an unrelated tier
+          read failed (strictModeKnown covers its own failure). */}
+      {address && onSupportedChain && s?.supported ? (
         <section className="card">
           <div className="card-title">
             <ShieldCheck aria-hidden />

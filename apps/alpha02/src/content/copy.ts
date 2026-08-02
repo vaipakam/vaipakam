@@ -1340,8 +1340,11 @@ const copySource = {
     ),
     enforcementOn:
       'This choice is enforced on this network: offers you create or accept are checked against it.',
+    // Careful wording (Codex #1517 r2): what enforcement would honour
+    // is the ACTIVE (effective) level — a saved-but-cooling/stale
+    // higher choice does NOT spring into force when the gate turns on.
     enforcementOff:
-      'Not enforced on this network yet — your choice is saved on-chain and starts applying the moment enforcement is switched on.',
+      'Not enforced on this network yet — your choice is saved on-chain, and whatever level is active at the time applies once enforcement is switched on.',
     enforcementUnknown:
       'We couldn’t tell whether this choice is currently being enforced on this network.',
     tierHeading: 'Your risk level',
@@ -1409,6 +1412,12 @@ const copySource = {
     ),
     advancedNoCooldown: tmpl(
       'risk-terms version {{terms}} · your anchor {{anchor}} · no cooldown pending',
+      ['terms', 'anchor'],
+    ),
+    // A FAILED unlock read must not read as "no cooldown" (Codex
+    // #1517 r2) — the tier may simultaneously show as cooling.
+    advancedCooldownUnknown: tmpl(
+      'risk-terms version {{terms}} · your anchor {{anchor}} · cooldown state couldn’t be read',
       ['terms', 'anchor'],
     ),
   },

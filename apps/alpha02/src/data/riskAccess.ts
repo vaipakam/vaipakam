@@ -31,7 +31,6 @@ import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { isMissingSelectorError } from '../contracts/preflights';
-import { signalAware } from '../chain/railHealth';
 
 /** `LibVaipakam.RiskAccessLevel` ordinals. */
 export const RISK_TIER = {
@@ -131,9 +130,12 @@ export function useRiskAccess() {
       Boolean(address) &&
       onSupportedChain &&
       Boolean(walletChain?.diamondAddress),
-    // RPC read-diet PR A — receipt-patched own-wallet state; the
-    // stretched net only delays the (harmless) reconcile (§4.1.2).
-    refetchInterval: signalAware(60_000),
+    // UNSTRETCHED interval (Codex #1517 r2): signalAware's stretch
+    // assumes the push rail covers the root, but riskAccess has no
+    // push key / LiveChainSync root — a cooldown expiry, governance
+    // terms bump, or a write made from the reference app arrives only
+    // via this poll (own writes are receipt-floored separately).
+    refetchInterval: 60_000,
     queryFn: async (): Promise<RiskAccessSnapshot> => {
       const diamond = walletChain!.diamondAddress;
       const read = <T,>(functionName: string, args?: readonly unknown[]) =>
