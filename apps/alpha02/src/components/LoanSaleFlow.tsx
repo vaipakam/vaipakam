@@ -37,7 +37,12 @@ export function loanSaleListingEnabled(chainId: number): boolean {
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { encodeFunctionData, parseEventLogs } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  encodeFunctionData,
+  parseEventLogs,
+} from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -58,7 +63,7 @@ import { saleSettlementBound, saleSettlementNow } from '../data/loanSalePending'
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
-import { formatTokenAmount } from '../lib/format';
+import { formatDateTime, formatTokenAmount } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { SimulationPreview } from './SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
@@ -221,6 +226,46 @@ export function LoanSaleFlow({
       }
       if (maturityTs - latestBlock.timestamp < MIN_SALE_LISTING_SECONDS) {
         setError(copy.errors.saleListingTooCloseToMaturity);
+        return;
+      }
+      // Codex #1505 r5 — simulate the EXACT listing call before granting
+      // the standing approval. The listing itself never touches the
+      // allowance (settlement is pulled inside the buyer's accept
+      // transaction), so the simulation is faithful without it — and it
+      // deterministically catches every listing refusal the explicit
+      // checks above can't see (the one-day relist cooldown, a live
+      // offset offer on the loan, a non-consolidatable position) before
+      // a payoff-sized approval mines for a doomed transaction. The
+      // cooldown gets dedicated copy carrying WHEN relisting opens
+      // (the contract surfaces it in the error for exactly this).
+      try {
+        await publicClient.simulateContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'createLoanSaleOffer',
+          args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
+          account: address,
+        });
+      } catch (simErr) {
+        let cooldownUntil: bigint | null = null;
+        if (simErr instanceof BaseError) {
+          const revert = simErr.walk(
+            (e) => e instanceof ContractFunctionRevertedError,
+          ) as ContractFunctionRevertedError | null;
+          if (
+            revert?.data?.errorName === 'SaleRelistCooldownActive' &&
+            typeof revert.data.args?.[0] === 'bigint'
+          ) {
+            cooldownUntil = revert.data.args[0];
+          }
+        }
+        setError(
+          cooldownUntil !== null
+            ? copy.errors.saleRelistCooldownActive(
+                formatDateTime(Number(cooldownUntil)),
+              )
+            : captureTxError(simErr),
+        );
         return;
       }
       // The standing settlement approval — full interest-window

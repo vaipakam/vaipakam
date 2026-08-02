@@ -1469,7 +1469,7 @@ const copySource = {
     windowLabel: 'Listing window',
     windowOption: tmpl('{{days}} days', ['days']),
     windowNote:
-      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose repayment options are held while a listing stands.',
+      'Every listing expires on its own: at the end of your chosen window, or at the loan’s due date, whichever comes first. Once a listing ends without a sale — you cancel, or it expires and is cleaned up — this loan can’t be listed again for a day: a breathing space for the borrower, whose early-close and collateral-withdrawal options are held while a listing stands. (Partial repayments are never held — the outstanding amount can shrink while your listing is live, in which case a pending buyer simply re-signs for the smaller position.)',
     action: 'Review listing',
     confirm: 'Confirm — list my position',
     // Spec rule (WebsiteReadme "borrower preclose flow" analog): the
@@ -2638,6 +2638,10 @@ const copySource = {
       'This loan is past its due date, so the position can no longer be listed for sale — nothing was sent.',
     saleListingTooCloseToMaturity:
       'This loan is less than an hour from its due date — too close for a listing to stand its minimum window, so it can no longer be listed for sale. Nothing was sent; the normal claim at maturity is unaffected.',
+    saleRelistCooldownActive: tmpl(
+      'A listing on this loan ended recently, and listing again is paused for the borrower’s one-day action window. This position can be listed again after {{time}}. Nothing was sent.',
+      ['time'],
+    ),
     refinanceNotOriginalBorrower:
       'This position changed hands since the loan began, so its collateral can’t carry over into a refinance — nothing was sent. Repaying or closing early stays available.',
     lenderBlockedPartial:

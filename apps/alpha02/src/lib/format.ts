@@ -59,6 +59,21 @@ export function formatDurationDays(days: number): string {
   return copy.units.durationDay(days);
 }
 
+/** Unix-seconds → localized date + time ("12 Jun 2026, 14:05" / …).
+ *  For moments where the hour matters (e.g. the one-day relist
+ *  cooldown) — `formatDate` alone would render "today" and "tomorrow
+ *  morning" identically. */
+export function formatDateTime(unixSeconds: number): string {
+  const locale = i18n.isInitialized && i18n.language ? i18n.language : 'en-US';
+  return new Date(unixSeconds * 1000).toLocaleString(locale, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /** Unix-seconds → localized date ("12 Jun 2026" / "2026年6月12日" / …).
  *  Uses the active UI language so the month name and ordering match
  *  the rest of the surface; falls back to en-US before i18next is
