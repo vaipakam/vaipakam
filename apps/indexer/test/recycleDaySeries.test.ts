@@ -1083,6 +1083,72 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     expect(d5.freshDrawdown).toBe('999');
   });
 
+  it('folds backfilled days into the LIFETIME aggregates, not just the chart', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 2, {
+      floor: '1000',
+      budget: '400',
+      drawdown: '900',
+      local: '77',
+      armed: 1,
+    });
+    await applyRecycleDaySeries([stamped(6n, { freshDrawdown: 10n, recycledBudget: 5n })], env, CHAIN);
+
+    const body = await readSeries(env);
+    // A backfilled day is a finalized day: it belongs in every total, not
+    // only in the day it is drawn on.
+    expect(body.cumulative.absorbed).toBe('77');
+    expect(body.cumulative.absorbedLocal).toBe('77');
+    expect(body.cumulative.freshDrawdown).toBe('910'); // 900 + 10
+    expect(body.cumulative.recycledBudget).toBe('405'); // 400 + 5
+  });
+
+  it('reports GLOBAL scope for a backfill-only dataset', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 2, { local: '5' });
+    // No event rows at all — the only finalized days this chain has are
+    // backfilled ones. Calling that "local-only" would say the deployment
+    // never finalized a day, which is false.
+    const body = await readSeries(env);
+    expect(body.scope).toBe('global');
+    expect(day(body, 2).origin).toBe('backfill');
+  });
+
+  it('keeps absorption observed by EVENT on a day the backfill supplies', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 3, { local: '100' });
+    // A credit for the same day arrives by event, on an unstamped row —
+    // the backfill knows the pool, the event knows this credit. Neither
+    // may displace the other.
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 25n, dayId: 3n }),
+        stamped(6n),
+      ],
+      env,
+      CHAIN,
+    );
+    const d3 = day(await readSeries(env), 3);
+    expect(d3.origin).toBe('backfill');
+    expect(d3.scheduleFloor).toBe('1000');
+    expect(d3.absorbedLocal).toBe('125');
+  });
+
+  it('still serves the event series when migration 0047 has not run yet', async () => {
+    // Every deploy script runs `wrangler deploy` BEFORE
+    // `migrations apply`, so the new Worker answers requests against a
+    // database without this table for the length of the rollout — and
+    // indefinitely if the migration fails. 500ing the whole endpoint over
+    // an ADDITIVE change is worse than serving yesterday's series.
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_day_backfill`).run();
+    await applyRecycleDaySeries([stamped(3n, { freshDrawdown: 12n })], env, CHAIN);
+
+    const body = await readSeries(env);
+    expect(day(body, 3).freshDrawdown).toBe('12');
+    expect(body.cumulative.freshDrawdown).toBe('12');
+  });
+
   it('marks event-sourced days so a reader can tell the two apart', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries([stamped(2n)], env, CHAIN);

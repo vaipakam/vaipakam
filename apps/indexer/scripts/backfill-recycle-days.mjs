@@ -86,7 +86,17 @@ const TO = Number(arg('--to'));
 if (!RPC_URL) die('RPC_URL is required');
 if (!DIAMOND) die('DIAMOND is required');
 if (!Number.isFinite(CHAIN_ID) || CHAIN_ID <= 0) die('CHAIN_ID is required');
-if (!Number.isFinite(TO) || TO < FROM) die('--to <lastDay> is required');
+// `--from` is validated as strictly as `--to` (Codex #1513 r1 P2). An
+// invocation like `--from --to 100` leaves it NaN, every comparison against
+// NaN is false, the loop body never runs — and the pass EXITS 0 reporting
+// zero rows. A backfill that silently scans nothing while claiming success
+// is worse than one that fails, because the operator moves on.
+if (!Number.isInteger(FROM) || FROM < 0) {
+  die('--from must be a non-negative integer day');
+}
+if (!Number.isInteger(TO) || TO < FROM) {
+  die('--to <lastDay> is required and must be >= --from');
+}
 
 const client = createPublicClient({ transport: http(RPC_URL) });
 
@@ -116,6 +126,26 @@ function isArmed(day, armedFromDay) {
 const q = (v) => `'${String(v).replace(/'/g, "''")}'`;
 
 async function main() {
+  // CHAIN_ID is only the SQL label — the client follows whatever network
+  // RPC_URL points at (Codex #1513 r1 P2). Pair a valid Diamond and RPC for
+  // one chain with another chain's id and every read succeeds while the
+  // rows are written under the wrong chain. `ON CONFLICT DO NOTHING` then
+  // makes that unrepairable by a later correct run: the wrong rows win.
+  // Check before reading anything.
+  let live;
+  try {
+    live = await client.getChainId();
+  } catch (err) {
+    die(`cannot read the chain id from RPC_URL (${err})`);
+  }
+  if (live !== CHAIN_ID) {
+    die(
+      `RPC_URL is chain ${live} but CHAIN_ID says ${CHAIN_ID}. Rows would be ` +
+        `labelled for a chain they did not come from, and ON CONFLICT DO ` +
+        `NOTHING would make that permanent.`,
+    );
+  }
+
   let armedFromDay;
   try {
     [armedFromDay] = await read('getGovernorCommitState');

@@ -84,6 +84,14 @@ const BORN_OFF_CHAIN_TABLES = new Set([
   'pre_grace_notify_state', // archived since #1480; absent from older archives
   'telegram_links',
   'support_tickets',
+  // #1349 M5 (migration 0047) — pre-cutover recycling day figures. The one
+  // born-off-chain table in the recycling set: the rest are chain-log folds
+  // that §6 replays, but these are recomputed from a getter whose input a
+  // role demotion can overwrite, after which a re-run yields different
+  // numbers and the original is gone. Unknown tables are rejected as
+  // hostile, so omitting it here would make every post-rollout archive
+  // unrestorable (Codex #1513 r1 P1).
+  'recycle_day_backfill',
 ]);
 // Archived as a restore-performance optimisation ONLY. The runbook's
 // default treatment for these is §6 clear-and-replay from chain — a
@@ -126,6 +134,7 @@ const BASELINE_TABLES = [
 // check below, with the cascade-specific consequence spelled out.)
 const ERA_GATED_TABLES = {
   support_tickets: 'migration 0028 (#1040)',
+  recycle_day_backfill: 'migration 0047 (#1349 M5)',
 };
 
 // Live column sets for the born-off-chain tables (Codex #1484 r13):
@@ -166,6 +175,14 @@ const REQUIRED_TABLE_COLUMNS = {
     'id', 'at', 'action', 'wallet_hash', 'admin_wallet',
     'detail', 'legal_doc_ref', 'legal_doc_sha256',
   ],
+  // `armed` is the load-bearing one: an archive omitting it would restore
+  // every pre-cutover day as NOT armed, republishing figures nothing
+  // reserved as though the platform had committed to them.
+  recycle_day_backfill: [
+    'chain_id', 'day_id', 'stamped', 'schedule_floor', 'recycled_budget',
+    'fresh_drawdown', 'absorbed_local', 'absorbed_mirror', 'armed',
+    'armed_from_day', 'recorded_at',
+  ],
 };
 
 // TRUSTED primary keys for the born-off-chain tables, from the same
@@ -184,6 +201,7 @@ const TRUSTED_PRIMARY_KEYS = {
   support_tickets: ['ticket_id'],
   diag_legal_holds: ['wallet_hash'],
   diag_legal_hold_audit: ['id'],
+  recycle_day_backfill: ['chain_id', 'day_id'],
 };
 
 // The archived legal-hold tables whose rows carry `legal_doc_ref`

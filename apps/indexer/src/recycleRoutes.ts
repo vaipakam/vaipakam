@@ -122,6 +122,20 @@ interface PoolRow {
   absorbed_mirror: string;
 }
 
+/**
+ * A day as the rest of this handler sees it, whatever produced it.
+ *
+ * `a_bar` / `margin_bps` are nullable HERE and not on the event row: the
+ * event carries both, the getter behind a backfilled day returns neither.
+ * The merged shape has to admit that absence, or the merge would have to
+ * invent a zero — and a zero margin is a real, different thing.
+ */
+interface MergedDay extends Omit<PoolRow, 'a_bar' | 'margin_bps'> {
+  a_bar: string | null;
+  margin_bps: number | null;
+  origin: 'event' | 'backfill';
+}
+
 export async function handleRecyclingSeries(
   req: Request,
   env: Env,
@@ -153,15 +167,26 @@ export async function handleRecyclingSeries(
     // days EARLIER than the event stream reaches, so a boundary computed
     // from the event table alone would put every backfilled day outside the
     // window and serve none of them — the union would be silently inert.
-    const head = await env.DB.prepare(
+    const headSql = (withBackfill: boolean) =>
       `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day FROM (
-         SELECT day_id FROM recycle_day_pool WHERE chain_id = ?1
+         SELECT day_id FROM recycle_day_pool WHERE chain_id = ?1` +
+      (withBackfill
+        ? `
          UNION ALL
-         SELECT day_id FROM recycle_day_backfill WHERE chain_id = ?1
-       )`,
-    )
+         SELECT day_id FROM recycle_day_backfill WHERE chain_id = ?1`
+        : '') +
+      `
+       )`;
+    const head = await env.DB.prepare(headSql(true))
       .bind(chainId)
-      .first<{ max_day: number | null; min_day: number | null }>();
+      .first<{ max_day: number | null; min_day: number | null }>()
+      .catch((err: unknown) => {
+        // Same pre-migration window as the merge below.
+        if (!/no such table/i.test(String(err))) throw err;
+        return env.DB.prepare(headSql(false))
+          .bind(chainId)
+          .first<{ max_day: number | null; min_day: number | null }>();
+      });
 
     const maxDay = head?.max_day ?? null;
     if (maxDay === null) {
@@ -198,67 +223,92 @@ export async function handleRecyclingSeries(
     const coverageFromDay = head?.min_day ?? maxDay;
     const cutoff = Math.max(coverageFromDay, maxDay - days + 1);
 
-    // Cumulative figures are LIFETIME, not window-scoped — a runway that
-    // moved when a caller changed `days` would be reporting the query, not
-    // the programme. Both reads return rows and the folding happens in
-    // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
-    // them would silently overflow SQLite's int64.
-    // Pre-cutover days, recomputed from the getter by the operator pass.
-    // Read alongside the event series; EVENT PRECEDENCE is applied below.
-    const backfillRows = await env.DB.prepare(
-      `SELECT day_id, schedule_floor, recycled_budget, fresh_drawdown,
-              absorbed_local, absorbed_mirror, armed
-         FROM recycle_day_backfill
-        WHERE chain_id = ? AND day_id >= ?`,
-    )
-      .bind(chainId, cutoff)
-      .all<{
-        day_id: number;
-        schedule_floor: string;
-        recycled_budget: string;
-        fresh_drawdown: string;
-        absorbed_local: string;
-        absorbed_mirror: string;
-        armed: number;
-      }>();
-
-    const reportedRows = await env.DB.prepare(
-      `SELECT source_chain_id, reported_cumulative
-         FROM recycle_chain_reported WHERE chain_id = ?`,
-    )
-      .bind(chainId)
-      .all<{ source_chain_id: number; reported_cumulative: string }>();
-
-    const [windowRows, lifetime] = await Promise.all([
+    // ── ONE merged view of the days, consumed by BOTH the lifetime fold
+    // and the windowed series.
+    //
+    // Three times in this change I added a source and updated only one of
+    // its readers: the coverage boundary, then the lifetime aggregates,
+    // then the restore converter. The first two are the same defect, so
+    // the merge happens ONCE here and every consumer reads its result —
+    // there is no longer a "the other place that also reads days" to
+    // forget. EVENT PRECEDENCE lives in this merge and nowhere else.
+    //
+    // Read lifetime-wide, not window-scoped: a cumulative that moved when
+    // a caller changed `days` would be reporting the query rather than the
+    // programme. The window is applied afterwards, to the merged result.
+    const [poolAll, backfillAll, reportedRows] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, stamped, schedule_floor, recycled_budget, a_bar,
                 margin_bps, fresh_drawdown, armed,
                 absorbed_local, absorbed_mirror
-           FROM recycle_day_pool
-          WHERE chain_id = ? AND day_id >= ?
-          ORDER BY day_id ASC`,
-      )
-        .bind(chainId, cutoff)
-        .all<PoolRow>(),
-      env.DB.prepare(
-        `SELECT stamped, armed, schedule_floor, recycled_budget,
-                fresh_drawdown, absorbed_local, absorbed_mirror
            FROM recycle_day_pool WHERE chain_id = ?`,
       )
         .bind(chainId)
-        .all<
-          Pick<
-            PoolRow,
-            | 'stamped'
-            | 'armed'
-            | 'schedule_floor'
-            | 'recycled_budget'
-            | 'fresh_drawdown'
-            | 'absorbed_local'
-            | 'absorbed_mirror'
-          >
-        >(),
+        .all<PoolRow>(),
+      // Tolerates the table not existing yet (Codex #1513 r1 P2). Every
+      // deploy script runs `wrangler deploy` BEFORE
+      // `wrangler d1 migrations apply`, so on the rollout that introduces
+      // 0047 the new Worker serves requests against a database that does
+      // not have this table for as long as the migration takes — and if
+      // the migration fails, indefinitely. An unconditional join would
+      // 500 the whole endpoint over an ADDITIVE change, which is a worse
+      // outcome than briefly serving the event-only series it served
+      // yesterday. Only "no such table" is swallowed; anything else is a
+      // real fault and propagates.
+      env.DB.prepare(
+        `SELECT day_id, stamped, schedule_floor, recycled_budget,
+                fresh_drawdown, armed, absorbed_local, absorbed_mirror
+           FROM recycle_day_backfill WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .all<Omit<PoolRow, 'a_bar' | 'margin_bps'>>()
+        .catch((err: unknown) => {
+          if (!/no such table/i.test(String(err))) throw err;
+          return { results: [] as Array<Omit<PoolRow, 'a_bar' | 'margin_bps'>> };
+        }),
+      env.DB.prepare(
+        `SELECT source_chain_id, reported_cumulative
+           FROM recycle_chain_reported WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .all<{ source_chain_id: number; reported_cumulative: string }>(),
     ]);
+
+    const merged = new Map<number, MergedDay>();
+    // Backfill first, event second: the event overwrites where both
+    // describe a day. It is immutable, while the backfill recomputes from
+    // `dayCapThreshold18`, which a second writer can overwrite for an
+    // already-finalized day on a demoted Diamond.
+    for (const b of backfillAll.results ?? []) {
+      merged.set(b.day_id, {
+        ...b,
+        // The getter returns neither, so a backfilled day genuinely does
+        // not know them. NULL, not 0 — a zero margin is a real, different
+        // thing, and this surface has been bitten by that ambiguity twice.
+        a_bar: null,
+        margin_bps: null,
+        origin: 'backfill',
+      });
+    }
+    for (const r of poolAll.results ?? []) {
+      // An UNSTAMPED event row must not displace a stamped backfill row:
+      // it carries absorption but no pool, and the backfill is what knows
+      // the pool for a pre-cutover day. Merge the absorption instead.
+      const existing = merged.get(r.day_id);
+      if (r.stamped !== 1 && existing?.origin === 'backfill') {
+        merged.set(r.day_id, {
+          ...existing,
+          absorbed_local: (
+            BigInt(existing.absorbed_local) + BigInt(r.absorbed_local)
+          ).toString(),
+          absorbed_mirror: (
+            BigInt(existing.absorbed_mirror) + BigInt(r.absorbed_mirror)
+          ).toString(),
+        });
+        continue;
+      }
+      merged.set(r.day_id, { ...r, origin: 'event' });
+    }
 
     let cumAbsorbed = 0n;
     let cumAbsorbedLocal = 0n;
@@ -266,7 +316,7 @@ export async function handleRecyclingSeries(
     let cumFreshDrawdown = 0n;
     let cumRecycledBudget = 0n;
     let anyStamped = false;
-    for (const r of lifetime.results ?? []) {
+    for (const r of merged.values()) {
       cumAbsorbedLocal += BigInt(r.absorbed_local);
       cumAbsorbedMirror += BigInt(r.absorbed_mirror);
       // The GLOBAL absorption total sums only FINALIZED days. An unstamped
@@ -289,8 +339,7 @@ export async function handleRecyclingSeries(
     }
 
     const daily = [];
-    const rowsByDay = new Map<number, PoolRow>();
-    for (const r of windowRows.results ?? []) rowsByDay.set(r.day_id, r);
+    const rowsByDay: Map<number, MergedDay> = merged;
 
     // Event precedence, enforced by READ ORDER rather than by write order.
     //
@@ -301,15 +350,6 @@ export async function handleRecyclingSeries(
     // event" a property of this lookup, which nothing can violate — a
     // single table with a source column would have made it a rule about
     // which write happened last.
-    // ONE place decides, not two. An earlier version also filtered
-    // event-covered days out of this map, which read as belt-and-braces and
-    // was in fact dead: the consult below is already gated on the day
-    // having no event stamp, so the filter could be deleted with every test
-    // still green. Two sites enforcing one rule is how a rule quietly
-    // stops being enforced anywhere.
-    const backfillByDay = new Map<number, (typeof backfillRows.results)[number]>();
-    for (const b of backfillRows.results ?? []) backfillByDay.set(b.day_id, b);
-
     // Dense series: emit EVERY day in the window so a consumer can tell a
     // quiet day from a missing bucket (the same convention RL-2 pins).
     for (let dayId = cutoff; dayId <= maxDay; dayId++) {
@@ -318,36 +358,6 @@ export async function handleRecyclingSeries(
       const absorbedMirror = BigInt(r?.absorbed_mirror ?? '0');
       const stamped = r?.stamped === 1;
       const armed = r?.armed === 1;
-
-      const bf = backfillByDay.get(dayId);
-      if (!stamped && bf) {
-        const bfFloor = BigInt(bf.schedule_floor);
-        const bfBudget = BigInt(bf.recycled_budget);
-        const bfArmed = bf.armed === 1;
-        const bfLocal = BigInt(bf.absorbed_local);
-        const bfMirror = BigInt(bf.absorbed_mirror);
-        daily.push({
-          dayId,
-          stamped: true,
-          armed: bfArmed,
-          estimate: !bfArmed,
-          origin: 'backfill',
-          scheduleFloor: bfFloor.toString(),
-          recycledBudget: bfBudget.toString(),
-          // The getter returns neither, so a backfilled day genuinely does
-          // not know them. NULL, not 0 — a zero margin is a real, different
-          // thing, and this surface has been bitten by that ambiguity twice.
-          aBar: null,
-          marginBps: null,
-          freshDrawdown: bf.fresh_drawdown,
-          netEmission: bfArmed ? bf.fresh_drawdown : null,
-          selfFundingRatio: ratio6(bfBudget, bfFloor + bfBudget),
-          absorbedLocal: bfLocal.toString(),
-          absorbedMirror: bfMirror.toString(),
-          absorbed: (bfLocal + bfMirror).toString(),
-        });
-        continue;
-      }
 
       if (!stamped) {
         daily.push({
@@ -386,11 +396,11 @@ export async function handleRecyclingSeries(
         // An unarmed day's pool figures are unreserved estimates. Shown,
         // but labelled, and with the derived emission withheld.
         estimate: !armed,
-        origin: 'event',
+        origin: r!.origin,
         scheduleFloor: scheduleFloor.toString(),
         recycledBudget: recycledBudget.toString(),
-        aBar: r!.a_bar,
-        marginBps: r!.margin_bps,
+        aBar: r!.a_bar ?? null,
+        marginBps: r!.margin_bps ?? null,
         freshDrawdown: freshDrawdown.toString(),
         netEmission: armed ? freshDrawdown.toString() : null,
         selfFundingRatio: ratio6(recycledBudget, dailyPool),
