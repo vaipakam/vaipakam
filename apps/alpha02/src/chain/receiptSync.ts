@@ -112,8 +112,11 @@ export const PATCHED_ROOTS: ReadonlySet<string> = new Set([
 /** ~2× Base/OP block time. The second re-read exists for public RPCs
  *  that serve the parent block for a few seconds after the receipt —
  *  by two block times the read layer has caught up everywhere we've
- *  measured (#RPC-diet live notes). */
-const SECOND_READ_DELAY_MS = 5_000;
+ *  measured (#RPC-diet live notes). Exported for flows that must hold
+ *  their controls LOCKED through this window (risk-access tier writes,
+ *  Codex #1517 r7 — re-enabling on the immediate refetch lets a click
+ *  against the same lagging RPC re-submit and restart a cooldown). */
+export const SECOND_READ_DELAY_MS = 5_000;
 
 const CHANNEL_NAME = 'vaipakam-receipt-sync-v1';
 const STORAGE_PING_KEY = 'vaipakam-receipt-sync-ping-v1';

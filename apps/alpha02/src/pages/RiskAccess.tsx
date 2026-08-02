@@ -33,6 +33,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useMode } from '../app/ModeContext';
 import { formatDateTime } from '../lib/format';
+import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
 import {
   RISK_TIER,
   chainNowOf,
@@ -78,14 +79,24 @@ export function RiskAccess() {
     setBusy(true);
     setError(null);
     setDone(null);
+    let wrote = false;
     try {
       setDone(await fn());
+      wrote = true;
       // AWAIT the refetch: the controls render from query data, so
       // dropping busy before fresh data lands re-enables a control
       // still showing the pre-write value — inviting a duplicate tx.
       await queryClient.invalidateQueries({ queryKey: ['riskAccess'] });
+      // …and hold busy THROUGH the lagging-RPC window (Codex #1517
+      // r7): a public RPC can serve the parent block to the immediate
+      // refetch, and a click in that window would pass the live
+      // revalidation against the same stale state and re-submit —
+      // restarting a cooldown and charging the user twice. Re-read
+      // once the receipt floor's own delayed pass has landed.
+      await new Promise((r) => setTimeout(r, SECOND_READ_DELAY_MS));
+      await queryClient.invalidateQueries({ queryKey: ['riskAccess'] });
     } catch (err) {
-      setError(captureTxError(err));
+      if (!wrote) setError(captureTxError(err));
     } finally {
       setBusy(false);
     }
