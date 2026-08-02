@@ -70,6 +70,7 @@ import {
   applyRewardLoopLedger,
   ensureRewardLoopBackfill,
 } from './rewardLoopLedger';
+import { applyRecycleDaySeries } from './recycleDaySeries';
 import {
   sweepCalendarNotifications,
   EMPTY_SWEEP,
@@ -804,6 +805,18 @@ export async function runChainIndexerForChain(
       }
     },
   );
+
+  // M5 (#1218 / #1349) — recycling transparency day series behind
+  // /metrics/recycling. Exactly-once via its own recycle_series_events
+  // dedup table.
+  //
+  // Takes no timestamps, deliberately: every day index comes out of the
+  // event payload, so this series has no counterpart to RL-2's
+  // sentinel-timestamp recovery above and cannot fail for want of a block
+  // time. The day it stores is the REWARD day the contracts key their own
+  // absorption on — NOT the UTC epoch day RL-2 pins — and the two are not
+  // comparable (see the 0045 migration header).
+  await applyRecycleDaySeries(allLogs, env, chainId);
 
   // #1222 M3 B2-d2 (P7) — commitment reconcile rediscovery: persist every
   // Base-side CommitmentRemitEligibilityReconciled(dayId, chainId) so the

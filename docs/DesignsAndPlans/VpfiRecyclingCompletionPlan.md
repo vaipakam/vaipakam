@@ -678,6 +678,49 @@ figure cannot drift; and a second test pins that the hoist did not drag the
 reservation with it, since an unarmed day silently consuming commitment
 headroom would be a far worse bug than the one being fixed.
 
+**The indexer consumer LANDED (#1349 M5, `apps/indexer`).** Migration 0045
+plus a `GovernorDayPoolStamped` / `VpfiRecycled` / `ChainRecycledReported`
+ingest and a `GET /metrics/recycling` read surface. Three decisions in it
+are load-bearing and should not be re-litigated:
+
+- **The series is keyed on the EVENT's reward day**, never on a
+  block-derived one. RL-2's `reward_loop_*` tables key on the UTC epoch
+  day — a deliberate, documented choice for that ratio, NOT an oversight
+  to be "fixed" — so the database now holds two day axes with different
+  origins AND different boundaries (`interactionLaunchTimestamp mod
+  86400` vs midnight). Joining or UNIONing them pairs unrelated buckets
+  and produces a plausible chart. The 0045 header states this; the read
+  surface publishes no calendar date at all, so it cannot become a second
+  authority on where a day begins.
+- **The canonical chain's own `ChainRecycledReported` is excluded from
+  the mirror term.** The event fires for every reporting chain including
+  the canonical chain reporting itself, while the contract folds it into
+  `dayMirrorRecycledCredit` only when `sourceChainId != block.chainid`.
+  Summing all accepted reports and adding the local series double-counts
+  the canonical chain in the FLATTERING direction. The two terms are
+  stored separately rather than pre-summed so the exclusion is visible at
+  rest, and a mutation that removes the filter is killed by a named test.
+- **Unarmed days are served as estimates with no `netEmission`, and are
+  excluded from the lifetime cumulative.** The per-day `armed` flag has
+  nowhere to live inside a running total, so an estimate folded into one
+  becomes indistinguishable from a commitment.
+
+**The pre-cutover backfill is NOT in that slice, and the restore
+classification is why.** `check-table-classification.mjs` requires every
+written table to declare its restore treatment, and the two classes get
+OPPOSITE handling: replay-derived tables are CLEARED before the block-zero
+replay, born-off-chain tables are IMPORTED from the archive. The event-fed
+tables are purely replayable. Backfilled rows are not — they come from
+`getRecycleDayMetrics`, whose `dayCapThreshold18` input a demotion can
+overwrite, so they must be preserved and never regenerated. A table cannot
+be half-cleared and the classification is per-table, so mixing the two
+would guarantee one class the wrong treatment during exactly the incident
+the classification exists for. The backfill therefore lands as its own
+born-off-chain table in its own slice — and "prefer the event where the
+two disagree" becomes read-time precedence rather than a write-order rule.
+**The operator ordering requirement above is unchanged by this**: backfill
+before any demotion or role migration.
+
 **One addition beyond §9, decided rather than asked (delegated call,
 recorded here).** M5 also publishes the unearmarked backing figure
 (`balanceOf − recycleBucket`). Every other figure on this surface is

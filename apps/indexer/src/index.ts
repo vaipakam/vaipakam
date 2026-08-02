@@ -99,6 +99,7 @@ import {
   handleOffersPreflight,
 } from './offerRoutes';
 import { handleLoopClosure } from './rewardRoutes';
+import { handleRecyclingSeries } from './recycleRoutes';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -295,6 +296,16 @@ export default {
     if (url.pathname === '/metrics/loop-closure') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleLoopClosure(req, resolved);
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ─── /metrics/recycling ─────────────────────────────────────
+    // M5 (#1218 / #1349) — the per-day recycling transparency series
+    // (pool composition, absorption, net emission) the public dashboard
+    // reads. Top-level for the same reason as the route above.
+    if (url.pathname === '/metrics/recycling') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') return handleRecyclingSeries(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 
