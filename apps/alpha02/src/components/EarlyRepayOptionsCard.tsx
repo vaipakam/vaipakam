@@ -58,9 +58,10 @@ export function EarlyRepayOptionsCard({
   pastDueHint: boolean;
   refinancePending: boolean;
   /** A lender-sale listing (live or ended-but-not-cleaned) holds the
-   *  preclose path on-chain (#1503 PR-A) — the close-early row must
-   *  say so instead of jumping to a flow that would revert. Repay
-   *  rows are never held by a listing. */
+   *  OFFSET path on-chain (#1503 PR-A: offsetWithNewOffer reverts
+   *  SaleListingActiveOnLoan) — the offset row must say so instead of
+   *  jumping to a hidden card. Repay and direct close-early are never
+   *  held by a listing. */
   saleListingHeld?: boolean;
   /** Carry-over refinance binds to the ORIGINAL borrower — a wallet
    *  that acquired the position on the secondary market never gets
@@ -100,7 +101,8 @@ export function EarlyRepayOptionsCard({
       title: o.closeEarly,
       desc: o.closeEarlyDesc,
       cost: closeCost,
-      unavailable: saleListingHeld ? o.closeEarlyHeldBySale : undefined,
+      // Deliberately NOT held by a sale listing (Codex #1511 r2):
+      // precloseDirect carries no listing guard on-chain.
       target: 'preclose-card',
     },
     {
@@ -116,7 +118,15 @@ export function EarlyRepayOptionsCard({
       title: o.offset,
       desc: o.offsetDesc,
       cost: o.offsetCost,
-      unavailable: pastDueHint ? copy.offset.onlyBeforeDue : undefined,
+      // The listing hold lands HERE (Codex #1511 r2):
+      // offsetWithNewOffer reverts SaleListingActiveOnLoan while a
+      // listing is linked — the offset card is hidden then, so the
+      // row must say why instead of jumping to nothing.
+      unavailable: saleListingHeld
+        ? o.offsetHeldBySale
+        : pastDueHint
+          ? copy.offset.onlyBeforeDue
+          : undefined,
       target: 'offset-card',
     },
     {

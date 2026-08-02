@@ -931,8 +931,8 @@ const copySource = {
       closeEarly: 'Close early (pay and settle now)',
       closeEarlyDesc:
         'The same total as repaying in full — this tool shows you the exact on-chain figure before you sign and settles everything in one step.',
-      closeEarlyHeldBySale:
-        'Held while the lender’s sale listing stands — repaying (fully or partially) stays open. See the listing notice above for when this frees up.',
+      offsetHeldBySale:
+        'Held while the lender’s sale listing stands — this exit posts an offer pinned to the loan, which can’t coexist with the listing. Repaying (fully or partially) and closing early stay open. See the listing notice above for when this frees up.',
       closeEarlyCostChecking:
         'Checking this loan’s interest mode to price this option…',
       closeEarlyCostFullTerm:
@@ -1451,11 +1451,11 @@ const copySource = {
   saleHold: {
     title: 'The lender listed this position for sale',
     liveBody:
-      'While the listing stands, closing this loan early and withdrawing collateral are held. Repaying — fully or partially — stays available throughout; a partial repayment shrinks the amount a buyer would take over. The listing ends on its own: at latest 30 days after it was created, or at the loan’s due date, whichever comes first (the lender can also cancel it sooner).',
+      'While the listing stands, two of your options are held: exiting via the offset path (it posts an offer pinned to this loan, which can’t coexist with the listing) and withdrawing collateral. Everything else stays open — repay in full, repay partially, or close the loan early; a partial repayment shrinks the amount a buyer would take over. The listing ends on its own: at latest 30 days after it was created, or at the loan’s due date, whichever comes first (the lender can also cancel it sooner).',
     liveEnds:
       'The moment the listing ends, you can free the held options yourself — a cleanup button will appear here.',
     clearableBody:
-      'The listing has ended but still holds your close-early and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold.',
+      'The listing has ended but still holds your offset and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold.',
     clearableAction: 'Free held options',
     confirmAction: 'Confirm — free held options',
     clearedNote:
@@ -1463,7 +1463,7 @@ const copySource = {
     workingDots: 'Freeing…',
     receipt: {
       youReceive:
-        'Nothing is paid to you — this only releases the hold on your close-early and collateral-withdrawal options.',
+        'Nothing is paid to you — this only releases the hold on your offset and collateral-withdrawal options.',
       youLock: 'Nothing.',
       youMayOwe: 'Only network gas for this one transaction.',
       youCanLose: 'Nothing — the cleanup moves no funds and touches no balances.',

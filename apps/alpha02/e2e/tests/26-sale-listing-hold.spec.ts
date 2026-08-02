@@ -85,7 +85,7 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
   const holdCard = page.getByTestId('sale-listing-hold-card');
   await expect(holdCard).toBeVisible({ timeout: 60_000 });
   await expect(
-    holdCard.getByText(/closing this loan early and withdrawing collateral are held/i),
+    holdCard.getByText(/two of your options are held/i),
   ).toBeVisible();
   await expect(page.getByTestId('free-held-options')).toHaveCount(0);
   const chooser = page

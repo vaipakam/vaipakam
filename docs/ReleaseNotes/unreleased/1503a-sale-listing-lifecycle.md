@@ -36,11 +36,13 @@ listing.
 Ending a listing without a sale — expiry or seller cancellation — starts
 a one-day quiet period before the same loan can be listed again. This is
 the borrower's action window: a live listing holds the borrower's
-preclose and collateral-withdrawal options, so back-to-back
-relisting must not be able to keep those options frozen indefinitely.
-(Partial repayment is never held — it stays available throughout a
-live listing, shrinking the outstanding amount, with a pending buyer
-simply re-signing for the smaller position.)
+offset close-out (the Preclose Option-3 lender-offer path) and
+collateral-withdrawal options, so back-to-back relisting must not be
+able to keep those options frozen indefinitely. (Repayment is never
+held — full repayment, partial repayment, and the direct early close
+all stay available throughout a live listing; a partial shrinks the
+outstanding amount, with a pending buyer simply re-signing for the
+smaller position.)
 
 App surfaces follow: the alpha02 listing form gains the window selector
 (with the expiry and cooldown explained, and window changes voiding any

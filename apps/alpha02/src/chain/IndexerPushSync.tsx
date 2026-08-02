@@ -238,6 +238,11 @@ export const STRETCHED_ROOTS: readonly string[] = [
   // `refetchType: 'active'` predicate keeps the cost page-bounded.
   'offer',
   'loan',
+  // Borrower listing-hold probe (#1511 r2) — tipAware-stretched on the
+  // detail page, so a returning tab must refetch it here or an expiry
+  // / cancel / cleanup that happened while hidden stays stale for up
+  // to the stretched interval.
+  'saleListingHold',
   'loanLive',
   'loanLiveStatus',
   'loanRisk',

@@ -364,16 +364,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // that cleanup is the SELLER's story (#1506), not this card's.
   const saleHold = useSaleListingHold(
     loanId,
-    Boolean(loan.data) &&
-      !loanIsRental &&
-      role === 'borrower' &&
-      loan.data?.status === 'active',
+    // `effectivelyActive`, not the raw indexed status (Codex #1511 r2):
+    // a cured fallback_pending row gets its borrower actions back from
+    // the live reconciliation before the indexer catches up — the hold
+    // notice and cleanup must come back with them.
+    Boolean(loan.data) && !loanIsRental && role === 'borrower' && effectivelyActive,
   );
   // Durable success flag — keeps the card (and its confirmation)
   // mounted after the post-teardown refetch flips the probe to
   // 'none' (Codex #1511 r1 P2). (`saleListingHeld` itself is derived
   // below, after the reconciled `row` exists.)
   const [saleHoldCleared, setSaleHoldCleared] = useState(false);
+  // …and un-latched the moment a NEW listing appears (Codex #1511 r2):
+  // a lender relist after the cooldown must show the fresh hold, not
+  // a stale "freed" confirmation. Reset ONLY on 'live' — a relist
+  // always starts live (bounded ≥ 1 h; the registered rails observe it
+  // well inside that), whereas 'clearable' also occurs in the moment
+  // between our own teardown and its refetch, where resetting would
+  // unmount the confirmation it exists to preserve.
+  useEffect(() => {
+    if (saleHold.data === 'live') setSaleHoldCleared(false);
+  }, [saleHold.data]);
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -1223,13 +1234,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function runPreclose() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
-    // A live/uncleaned lender-sale listing holds preclose on-chain
-    // (SaleListingActiveOnLoan) — fail plainly before the wallet
-    // prompt, mirroring the card banner (Codex #1511 r1 P1).
-    if (saleListingHeld) {
-      setError(copy.earlyRepay.options.closeEarlyHeldBySale);
-      return;
-    }
+    // NOTE deliberately NO sale-listing guard here (Codex #1511 r2):
+    // `precloseDirect` carries no `loanToSaleOfferId` check on-chain —
+    // the listing's hold is on the OFFSET path (`offsetWithNewOffer`
+    // reverts SaleListingActiveOnLoan) and collateral withdrawal,
+    // never the direct close.
     setPhase('pending');
     setError(null);
     try {
@@ -2039,17 +2048,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">{copy.preclose.graceNote}</span>
             </div>
           ) : null}
-          {saleListingHeld ? (
-            // The lender's sale listing holds preclose on-chain
-            // (SaleListingActiveOnLoan) — the chooser row, this card,
-            // and the submit path all say so instead of offering a
-            // flow that would revert (Codex #1511 r1 P1).
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">
-                {copy.earlyRepay.options.closeEarlyHeldBySale}
-              </span>
-            </div>
-          ) : offsetPend.pending ? (
+          {offsetPend.pending ? (
             // A live offset settles this loan when its offer is
             // accepted — closing another way first strands the
             // linked offer. Cancel the offset instead.

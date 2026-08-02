@@ -953,10 +953,11 @@ Its intended behaviour, as the test oracle for this surface:
   or at the loan's due date, whichever comes first — and that once a
   listing ends without a sale (expiry or cancellation) the same loan
   cannot be listed again for a day, a breathing space for the
-  borrower whose preclose and collateral-withdrawal options are held
-  while a listing stands (partial repayment is never held — it stays
-  available throughout, and a pending buyer re-signs for the smaller
-  position).
+  borrower whose offset close-out (its pinned lender offer cannot
+  coexist with the listing) and collateral-withdrawal options are held
+  while a listing stands (repayment is never held — full, partial, and
+  the direct early close all stay available, and a pending buyer
+  re-signs for the smaller position after a paydown).
   Changing the chosen window, like changing the rate, voids any
   acknowledgement already given and closes an open review.
   Before confirming, the review must disclose: the
@@ -1011,9 +1012,13 @@ Its intended behaviour, as the test oracle for this surface:
   to the loan's current outstanding amount, so a partial repayment
   simply shrinks the claim and a pending buyer re-signs for the
   smaller position — the buyer can never overpay for a shrunk claim).
-  What a listing does hold is the borrower's close-early and
+  What a listing does hold is the borrower's offset close-out (its
+  pinned lender offer cannot coexist with the listing) and
   collateral-withdrawal options, and the borrower-side surface must
-  say so (see the borrower listing-hold notice below). A terminal
+  say so (see the borrower listing-hold notice below). The direct
+  early close is never held — a borrower may settle the loan under a
+  live listing, after which the dangling listing is cleaned up
+  permissionlessly. A terminal
   loan state should show the seller a clear cancel-to-unlock path
   for any stale listing. The
   listing form is offered only on networks
@@ -1026,12 +1031,12 @@ Its intended behaviour, as the test oracle for this surface:
   who the listing lifecycle's action window exists for, so the notice
   is where that escape reaches them. While the listing is live it
   explains, honestly and without any action: which options are held
-  (closing early and withdrawing collateral), which stay open
-  (repaying fully or partially — with the note that a partial
-  repayment shrinks what a buyer would take over), and the structural
+  (the offset exit and withdrawing collateral), which stay open
+  (repaying fully or partially and closing early — with the note that
+  a partial repayment shrinks what a buyer would take over), and the structural
   bound on the hold (the listing ends on its own — at latest the
   maximum listing window after creation, sooner at the loan's due
-  date — or earlier if the lender cancels). The chooser's close-early
+  date — or earlier if the lender cancels). The chooser's offset
   entry is marked held with the same why instead of jumping to a flow
   that would fail. Once the listing has ended but the hold has not
   yet been cleaned up, the notice grows a one-click cleanup that

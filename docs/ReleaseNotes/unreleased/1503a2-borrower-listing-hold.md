@@ -3,17 +3,23 @@
 The listing lifecycle shipped in PR-A exists for the borrower — the
 mandatory expiry, the permissionless teardown, and the relist cooldown
 all bound how long a lender's sale listing can hold the borrower's
-close-early and collateral-withdrawal options. This change gives the
+offset close-out and collateral-withdrawal options. This change gives the
 borrower the surface where that protection actually reaches them. On
 their loan page, a listing on their loan now renders a hold notice:
-while the listing is live it explains which options are held, which
-stay open (repaying fully or partially — a partial repayment shrinks
+while the listing is live it explains which options are held (the
+offset exit and collateral withdrawal), which stay open (repaying
+fully, partially, or closing early — a partial repayment shrinks
 what a buyer would take over), and the structural bound on the hold;
 once the listing has ended, the same notice grows a one-click "Free
 held options" cleanup — the permissionless, pause-exempt teardown —
 and confirms the lender's one-day relist quiet period after it runs.
-The early-repayment chooser's close-early entry is marked held with
-the same explanation instead of jumping to a flow that would fail.
+The early-repayment chooser's offset entry is marked held with the
+same explanation instead of jumping to its hidden card. (The review
+rounds caught and corrected an inversion here: the on-chain hold is
+on the offset path — offsetWithNewOffer refuses a listed loan — and
+NOT on the direct early close, which carries no listing guard; the
+same correction is applied to the PR-A wording in the specs and the
+still-unassembled PR-A release fragment.)
 
 The state is judged from the chain alone, by simulating the exact
 cleanup transaction the button would send and classifying the outcome
@@ -32,8 +38,7 @@ The review rounds also removed the app's stale
 pre-acceptance-binding partial-repayment freeze: the partial-repay
 surface no longer blocks while a listing stands (the contracts never
 held it — a partial shrinks the claim and the pending buyer
-re-signs), the close-early flow itself is gated with the same held
-explanation as the chooser row (not just the chooser), the cleanup
+re-signs), the cleanup
 goes through the app-standard review receipt, and the freed
 confirmation survives the state refetch. A matching stale passage in
 the connected-app functional spec (which claimed the reverse hold

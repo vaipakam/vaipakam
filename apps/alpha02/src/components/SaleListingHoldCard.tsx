@@ -22,7 +22,7 @@
  * to `none` — the invalidation must not unmount the confirmation out
  * from under the user (Codex #1511 r1).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Hourglass } from 'lucide-react';
 import { copy } from '../content/copy';
@@ -48,6 +48,17 @@ export function SaleListingHoldCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
+
+  // A NEW listing outranks the old lifecycle's confirmation (Codex
+  // #1511 r2): a relist always starts 'live', so that state resets
+  // the latch. ('clearable' must NOT — it is also the state in the
+  // moment between our own teardown and its refetch.)
+  useEffect(() => {
+    if (cleared && state === 'live') {
+      setCleared(false);
+      setReviewing(false);
+    }
+  }, [cleared, state]);
 
   if (state !== 'live' && state !== 'clearable' && !cleared) return null;
 
