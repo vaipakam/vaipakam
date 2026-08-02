@@ -115,3 +115,17 @@ CREATE TABLE IF NOT EXISTS recycle_day_pool (
   absorbed_mirror TEXT NOT NULL DEFAULT '0',
   PRIMARY KEY (chain_id, day_id)
 );
+
+-- One-time backfill marker, per chain.
+--
+-- The chain scan shares ONE cursor across every domain handler, so on an
+-- existing deployment that cursor is already past every block this series
+-- cares about: wiring the ingest in would only ever see events from the
+-- next scan onward and would silently start the history at "whenever this
+-- shipped" (Codex #1507 r1 P1). The ingest therefore replays the three
+-- events out of `activity_events` once — the unified feed already holds
+-- every decoded log with its args — and records that it has done so here.
+CREATE TABLE IF NOT EXISTS recycle_series_state (
+  chain_id INTEGER NOT NULL PRIMARY KEY,
+  backfill_done INTEGER NOT NULL DEFAULT 0
+);

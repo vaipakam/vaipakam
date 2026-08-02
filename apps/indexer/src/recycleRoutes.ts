@@ -33,7 +33,25 @@
  *    withholds the derived figure rather than trusting every consumer to
  *    check a flag.
  *
- * 3. **No calendar dates.** Days are reported by their reward `dayId`
+ * 3. **The GLOBAL aggregate is published only for a finalized day.** A
+ *    day's cross-chain reports arrive one at a time and before the day is
+ *    stamped, so an unstamped day holds *some* mirrors' credits — summing
+ *    them yields a plausible partial figure wearing a global label. Both
+ *    components are always published; the sum is withheld until the day
+ *    is finalized. This is also what makes the endpoint correct on a
+ *    MIRROR deployment without asking which chain is canonical: a mirror
+ *    never stamps a day, so it never publishes a global figure, and it
+ *    keeps reporting the local absorption it genuinely observes. Deciding
+ *    by the deployment's current role instead would erase a demoted
+ *    chain's history — the mistake #1487 was corrected for.
+ *
+ * 4. **No days before coverage begins.** The dense window starts at the
+ *    first day actually observed, never at `today − days`. Synthesising
+ *    unstamped zero buckets in front of the first observation would make
+ *    "not indexed yet" indistinguishable from "quiet", which is the very
+ *    distinction the dense series exists to draw.
+ *
+ * 5. **No calendar dates.** Days are reported by their reward `dayId`
  *    only. Mapping those to dates needs `interactionLaunchTimestamp`, and
  *    embedding it here would make this endpoint a second authority on
  *    where day boundaries fall — the precise conflation the 0045 migration
@@ -99,10 +117,11 @@ export async function handleRecyclingSeries(
     // the series describes protocol days, and the newest one it knows
     // about is the newest one there is.
     const head = await env.DB.prepare(
-      `SELECT MAX(day_id) AS max_day FROM recycle_day_pool WHERE chain_id = ?`,
+      `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day
+         FROM recycle_day_pool WHERE chain_id = ?`,
     )
       .bind(chainId)
-      .first<{ max_day: number | null }>();
+      .first<{ max_day: number | null; min_day: number | null }>();
 
     const maxDay = head?.max_day ?? null;
     if (maxDay === null) {
@@ -112,16 +131,31 @@ export async function handleRecyclingSeries(
         fromDay: null,
         toDay: null,
         daily: [],
+        scope: 'empty',
+        coverageFromDay: null,
         cumulative: {
           absorbed: '0',
+          absorbedLocal: '0',
+          absorbedMirror: '0',
           freshDrawdown: '0',
           recycledBudget: '0',
           runwayExtensionDays: null,
+          // Present with the same shape as every non-empty response, so a
+          // dashboard's no-data state does not need a special case to tell
+          // "not self-funded" from "field absent" (Codex #1507 r1 P2).
+          selfFunded: false,
         },
       });
     }
 
-    const cutoff = Math.max(0, maxDay - days + 1);
+    // Clamp the window to where this consumer's observations actually
+    // begin (Codex #1507 r1 P1). `maxDay - days + 1` can precede the first
+    // event ever recorded — on a consumer deployed mid-programme it always
+    // does — and filling that gap with unstamped zero rows publishes
+    // "quiet" where the truth is "not indexed". `coverageFromDay` is
+    // reported so a consumer can see the boundary rather than infer it.
+    const coverageFromDay = head?.min_day ?? maxDay;
+    const cutoff = Math.max(coverageFromDay, maxDay - days + 1);
 
     // Cumulative figures are LIFETIME, not window-scoped — a runway that
     // moved when a caller changed `days` would be reporting the query, not
@@ -160,15 +194,28 @@ export async function handleRecyclingSeries(
     ]);
 
     let cumAbsorbed = 0n;
+    let cumAbsorbedLocal = 0n;
+    let cumAbsorbedMirror = 0n;
     let cumFreshDrawdown = 0n;
     let cumRecycledBudget = 0n;
+    let anyStamped = false;
     for (const r of lifetime.results ?? []) {
+      cumAbsorbedLocal += BigInt(r.absorbed_local);
+      cumAbsorbedMirror += BigInt(r.absorbed_mirror);
+      // The GLOBAL absorption total sums only FINALIZED days. An unstamped
+      // day holds whichever cross-chain reports have arrived so far, so
+      // folding it in would put a partial figure inside a total labelled
+      // global — and a lifetime total is exactly where a partial value
+      // stops being recognisable as one. The two components above are
+      // unconditional, so nothing observed is hidden.
+      if (r.stamped !== 1) continue;
+      anyStamped = true;
       cumAbsorbed += BigInt(r.absorbed_local) + BigInt(r.absorbed_mirror);
       // Only ARMED, stamped days contribute to the emission and budget
       // cumulatives — an unarmed day's figures are estimates nothing
       // reserved, and summing them would launder that straight into a
       // lifetime total where the per-day `estimate` flag cannot follow.
-      if (r.stamped === 1 && r.armed === 1) {
+      if (r.armed === 1) {
         cumFreshDrawdown += BigInt(r.fresh_drawdown);
         cumRecycledBudget += BigInt(r.recycled_budget);
       }
@@ -202,7 +249,12 @@ export async function handleRecyclingSeries(
           selfFundingRatio: null,
           absorbedLocal: absorbedLocal.toString(),
           absorbedMirror: absorbedMirror.toString(),
-          absorbed: (absorbedLocal + absorbedMirror).toString(),
+          // Withheld until the day is finalized: mirrors report one at a
+          // time, so this sum would be a partial figure under a global
+          // label. On a mirror deployment no day is ever stamped, which
+          // is why this endpoint needs no canonical-chain check.
+          absorbed: null,
+          preLaunchConflated: dayId === 0,
         });
         continue;
       }
@@ -229,6 +281,14 @@ export async function handleRecyclingSeries(
         absorbedLocal: absorbedLocal.toString(),
         absorbedMirror: absorbedMirror.toString(),
         absorbed: (absorbedLocal + absorbedMirror).toString(),
+        // Day 0's absorption is NOT day 0's absorption: while the emission
+        // schedule is inactive every credit is mapped to day 0, so this
+        // bucket is the sum of all pre-launch absorption AND the first
+        // scheduled day, inseparably (#1504). Flagged rather than silently
+        // charted — a consumer must exclude or relabel it. The contract
+        // fix that makes the figure correct by construction is its own
+        // change; this marker goes away with it.
+        preLaunchConflated: dayId === 0,
       });
     }
 
@@ -236,13 +296,24 @@ export async function handleRecyclingSeries(
     // `dailyPool`. Reported as null with `selfFunded: true` once the fresh
     // floor is zero across the window — the design's `∞ / self-funded`
     // terminal form, and NEVER a division by the zeroed floor.
+    //
+    // The trailing window is FIXED and read independently of `days`
+    // (Codex #1507 r1 P2). Deriving it from the display window made a
+    // lifetime metric move when a caller changed the range it asked to
+    // see — `days=1` computed the mean from a single day — so the same
+    // chain state answered differently depending on the question's shape.
+    // A cumulative that depends on the query is reporting the query.
     let trailingPoolSum = 0n;
     let trailingFloorSum = 0n;
     let trailingCount = 0n;
-    const trailingFrom = Math.max(cutoff, maxDay - RUNWAY_WINDOW_DAYS + 1);
-    for (let dayId = trailingFrom; dayId <= maxDay; dayId++) {
-      const r = rowsByDay.get(dayId);
-      if (!r || r.stamped !== 1 || r.armed !== 1) continue;
+    const trailingRows = await env.DB.prepare(
+      `SELECT schedule_floor, recycled_budget
+         FROM recycle_day_pool
+        WHERE chain_id = ? AND day_id >= ? AND stamped = 1 AND armed = 1`,
+    )
+      .bind(chainId, Math.max(0, maxDay - RUNWAY_WINDOW_DAYS + 1))
+      .all<{ schedule_floor: string; recycled_budget: string }>();
+    for (const r of trailingRows.results ?? []) {
       trailingPoolSum += BigInt(r.schedule_floor) + BigInt(r.recycled_budget);
       trailingFloorSum += BigInt(r.schedule_floor);
       trailingCount += 1n;
@@ -258,9 +329,17 @@ export async function handleRecyclingSeries(
       days,
       fromDay: cutoff,
       toDay: maxDay,
+      // Whether this deployment can answer the GLOBAL question at all.
+      // Derived from whether it has ever finalized a day — not from which
+      // chain currently holds the canonical role, so a demoted deployment
+      // keeps serving the days it did finalize.
+      scope: anyStamped ? 'global' : 'local-only',
+      coverageFromDay,
       daily,
       cumulative: {
         absorbed: cumAbsorbed.toString(),
+        absorbedLocal: cumAbsorbedLocal.toString(),
+        absorbedMirror: cumAbsorbedMirror.toString(),
         freshDrawdown: cumFreshDrawdown.toString(),
         recycledBudget: cumRecycledBudget.toString(),
         runwayExtensionDays,

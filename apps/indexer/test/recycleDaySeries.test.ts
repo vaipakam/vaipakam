@@ -89,6 +89,8 @@ async function readSeries(env: Env, days = 30) {
   return (await res.json()) as {
     fromDay: number | null;
     toDay: number | null;
+    scope: string;
+    coverageFromDay: number | null;
     daily: Array<Record<string, unknown>>;
     cumulative: Record<string, unknown>;
   };
@@ -130,6 +132,8 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
           forDayReported: 300n,
           dayCreditAccepted: 300n,
         }),
+        // Finalize the day, so the global aggregate is publishable at all.
+        stamped(4n),
       ],
       env,
       CHAIN,
@@ -141,6 +145,7 @@ describe('applyRecycleDaySeries — absorption attribution', () => {
     // 300, NOT 1000: the self-report is filtered.
     expect(d4.absorbedMirror).toBe('300');
     expect(d4.absorbed).toBe('1000');
+    expect(body.cumulative.absorbed).toBe('1000');
   });
 
   it('accumulates several mirrors and several credits into one day', async () => {
@@ -400,5 +405,195 @@ describe('handleRecyclingSeries — refusing to publish a wrong number', () => {
     expect(day(body, 1).freshDrawdown).toBe(huge.toString());
     expect(body.cumulative.absorbed).toBe(huge.toString());
     expect(body.cumulative.freshDrawdown).toBe(huge.toString());
+  });
+});
+
+describe('handleRecyclingSeries — scope, coverage and partial globals', () => {
+  it('withholds the GLOBAL aggregate until the day is finalized', async () => {
+    const { env } = makeHarness();
+    // One mirror has reported; others may not have. The components are
+    // real, the sum is not yet global.
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 10n, dayId: 3n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 3n,
+          cumulative: 5n,
+          forDayReported: 5n,
+          dayCreditAccepted: 5n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    const d3 = day(body, 3);
+    expect(d3.stamped).toBe(false);
+    expect(d3.absorbedLocal).toBe('10');
+    expect(d3.absorbedMirror).toBe('5');
+    expect(d3.absorbed).toBeNull();
+    // …and it stays out of the lifetime global total too, while both
+    // components remain visible there.
+    expect(body.cumulative.absorbed).toBe('0');
+    expect(body.cumulative.absorbedLocal).toBe('10');
+    expect(body.cumulative.absorbedMirror).toBe('5');
+  });
+
+  it('reports local-only scope for a deployment that never finalizes a day', async () => {
+    const { env } = makeHarness();
+    // A mirror: it observes its own credits and never stamps a day.
+    await applyRecycleDaySeries(
+      [log('VpfiRecycled', { source: 1, refId: 1n, amount: 60n, dayId: 2n })],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.scope).toBe('local-only');
+    expect(day(body, 2).absorbed).toBeNull();
+    expect(body.cumulative.absorbedLocal).toBe('60');
+  });
+
+  it('never synthesizes days before coverage begins', async () => {
+    const { env } = makeHarness();
+    // Consumer deployed mid-programme: the first thing it ever saw is
+    // day 300. A 30-day default window must not invent 271..299.
+    await applyRecycleDaySeries([stamped(300n), stamped(301n)], env, CHAIN);
+    const body = await readSeries(env, 30);
+    expect(body.coverageFromDay).toBe(300);
+    expect(body.fromDay).toBe(300);
+    expect(body.daily.map((d) => d.dayId)).toEqual([300, 301]);
+  });
+
+  it('keeps the runway window independent of the requested range', async () => {
+    const { env } = makeHarness();
+    // The days must DIFFER. An earlier version of this fixture used two
+    // identical days, which made the trailing mean the same at any window
+    // size — so it passed while the window was still coupled to `days`,
+    // and a mutation re-coupling them survived it.
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 4000n, recycledBudget: 0n }),
+        stamped(2n, { scheduleFloor: 1000n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 500n, dayId: 2n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const wide = await readSeries(env, 30);
+    const narrow = await readSeries(env, 1);
+    // Same chain state, different question shape — the lifetime metric
+    // must not move.
+    expect(narrow.cumulative.runwayExtensionDays).toBe(
+      wide.cumulative.runwayExtensionDays,
+    );
+    expect(narrow.cumulative.absorbed).toBe(wide.cumulative.absorbed);
+  });
+
+  it('flags day 0 as conflated with pre-launch absorption', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(0n),
+        stamped(1n),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 9n, dayId: 0n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(day(body, 0).preLaunchConflated).toBe(true);
+    expect(day(body, 1).preLaunchConflated).toBe(false);
+  });
+
+  it('rebuilds the series from activity_events when the cursor has passed', async () => {
+    const { h, env } = makeHarness();
+    // The shared scan cursor is already beyond these blocks, so the live
+    // path will never see them; only the one-time replay can.
+    const rows: Array<[number, number, string, string, string]> = [
+      [
+        10,
+        0,
+        '0xaa',
+        'GovernorDayPoolStamped',
+        JSON.stringify({
+          dayId: '7',
+          scheduleFloor: '100',
+          recycledBudget: '20',
+          aBar: '30',
+          marginBps: '40',
+          freshDrawdown: '90',
+          armed: true,
+        }),
+      ],
+      [
+        11,
+        1,
+        '0xbb',
+        'VpfiRecycled',
+        JSON.stringify({ source: 1, refId: '1', amount: '55', dayId: '7' }),
+      ],
+    ];
+    for (const [b, li, tx, kind, args] of rows) {
+      h.db
+        .prepare(
+          `INSERT INTO activity_events
+             (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(CHAIN, b, li, tx, kind, args, 1_700_000_000);
+    }
+
+    // A completely quiet scan — no logs at all. The backfill must still run.
+    await applyRecycleDaySeries([], env, CHAIN);
+
+    const d7 = day(await readSeries(env), 7);
+    expect(d7.stamped).toBe(true);
+    expect(d7.freshDrawdown).toBe('90');
+    expect(d7.absorbedLocal).toBe('55');
+  });
+
+  it('replays the feed ONCE and does not re-read it afterwards', async () => {
+    const { h, env } = makeHarness();
+    const insert = (b: number, amount: string, dayId: string) =>
+      h.db
+        .prepare(
+          `INSERT INTO activity_events
+             (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          CHAIN,
+          b,
+          0,
+          `0x${b.toString(16)}`,
+          'VpfiRecycled',
+          JSON.stringify({ source: 1, refId: '1', amount, dayId }),
+          1_700_000_000,
+        );
+
+    insert(10, '77', '4');
+    await applyRecycleDaySeries([], env, CHAIN);
+    expect(day(await readSeries(env), 4).absorbedLocal).toBe('77');
+
+    // A row appearing in the feed AFTER the replay has completed belongs
+    // to the live path, which has its own dedup. The replay must not go
+    // back for it. Asserting the amount is unchanged after a second call
+    // would prove nothing — the dedup table makes a repeated replay
+    // harmless either way, which is exactly why the earlier version of
+    // this test survived a mutation that removed the one-time guard.
+    insert(11, '5', '4');
+    await applyRecycleDaySeries([], env, CHAIN);
+    expect(day(await readSeries(env), 4).absorbedLocal).toBe('77');
+  });
+
+  it('keeps the empty response schema identical to a populated one', async () => {
+    const { env } = makeHarness();
+    const body = await readSeries(env);
+    expect(body.cumulative.selfFunded).toBe(false);
+    expect(body.cumulative.absorbedLocal).toBe('0');
+    expect(body.cumulative.absorbedMirror).toBe('0');
+    expect(body.coverageFromDay).toBeNull();
+    expect(body.scope).toBe('empty');
   });
 });

@@ -190,14 +190,95 @@ async function applyOne(
 }
 
 /**
+ * Rebuild the series from `activity_events`, once per chain.
+ *
+ * The chain scan shares ONE cursor across every domain handler, so on an
+ * existing deployment that cursor is already past every block this series
+ * cares about. Wiring the ingest in without this would start the history
+ * at "whenever this shipped" while looking complete — and the deferred
+ * pre-cutover getter backfill does not cover it, because these are days
+ * that DID announce themselves, just before anyone was listening
+ * (Codex #1507 r1 P1).
+ *
+ * `activity_events` is the unified feed of every decoded log, so the
+ * replay needs no chain access. It runs through the same `applyOne` as
+ * the live path, so the dedup table makes it idempotent and a partially
+ * completed replay simply resumes.
+ *
+ * The coverage boundary this produces is honest rather than assumed: it
+ * is wherever `activity_events` itself begins, and the read surface
+ * reports it rather than synthesising quiet days in front of it.
+ */
+export async function ensureRecycleSeriesBackfill(
+  env: Env,
+  chainId: number,
+): Promise<void> {
+  const state = await env.DB.prepare(
+    `SELECT backfill_done FROM recycle_series_state WHERE chain_id = ?`,
+  )
+    .bind(chainId)
+    .first<{ backfill_done: number }>();
+  if (state?.backfill_done) return;
+
+  const rows = await env.DB.prepare(
+    `SELECT block_number, log_index, tx_hash, kind, args_json
+       FROM activity_events
+      WHERE chain_id = ?
+        AND kind IN ('GovernorDayPoolStamped',
+                     'VpfiRecycled',
+                     'ChainRecycledReported')
+      ORDER BY block_number ASC, log_index ASC`,
+  )
+    .bind(chainId)
+    .all<{
+      block_number: number;
+      log_index: number;
+      tx_hash: string;
+      kind: string;
+      args_json: string;
+    }>();
+
+  for (const row of rows.results ?? []) {
+    let args: Record<string, unknown>;
+    try {
+      // serializeArgs coerces bigints to strings; argBig accepts both.
+      args = JSON.parse(row.args_json) as Record<string, unknown>;
+    } catch {
+      continue; // malformed row — skip rather than wedge the scan
+    }
+    await applyOne(env, chainId, {
+      eventName: row.kind,
+      args,
+      blockNumber: BigInt(row.block_number),
+      transactionHash: row.tx_hash,
+      logIndex: row.log_index,
+    });
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO recycle_series_state (chain_id, backfill_done)
+     VALUES (?, 1)
+     ON CONFLICT (chain_id) DO UPDATE SET backfill_done = 1`,
+  )
+    .bind(chainId)
+    .run();
+}
+
+/**
  * Ingest entry point — called from the chain scan with every decoded log.
  * Returns the number of events actually applied (fresh, non-replay).
+ *
+ * Runs the one-time backfill first, and does so unconditionally — a
+ * caught-up scan with no matching logs is exactly when a freshly deployed
+ * consumer needs it most.
  */
 export async function applyRecycleDaySeries(
   logs: RecycleSeriesLog[],
   env: Env,
   chainId: number,
 ): Promise<number> {
+  await ensureRecycleSeriesBackfill(env, chainId);
+
   let applied = 0;
   for (const log of logs) {
     if (!HANDLED.has(log.eventName)) continue;

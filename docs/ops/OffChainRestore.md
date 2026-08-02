@@ -1218,6 +1218,7 @@ DELETE FROM oracle_snapshot_state; \
 DELETE FROM liquidity_confidence; \
 DELETE FROM recycle_day_pool; \
 DELETE FROM recycle_series_events; \
+DELETE FROM recycle_series_state; \
 DELETE FROM indexer_cursor"
 ```
 
