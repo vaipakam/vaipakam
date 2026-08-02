@@ -694,22 +694,34 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // the buyer funded. UI-level protection (the contract's Tier-2
   // repay stays open by design); the contract-side close-out guard
   // for this window belongs to the #1503 PR-E slice.
-  // fallback_pending is included (Codex #1511 r11): that state's
-  // full-repay CURE is still a settlement of an open loan, so an
-  // accepted sale must pause it with the same explanation — otherwise
-  // the cure form renders open and the live pre-write gate blocks it
-  // confusingly late. (Add-collateral is untouched by this flag and
-  // stays available as the non-settling cure.)
+  // ACTIVE only — deliberately NOT fallback_pending. Round 11 widened
+  // this and the pre-merge review caught the deadlock: a sale
+  // completion requires an Active loan (_completeLoanSaleImpl reverts
+  // LoanNotActive), an accepted listing can be neither cancelled nor
+  // torn down, and nothing the borrower can do from a paused UI
+  // returns the loan to Active — while claimAsLender stays open to the
+  // counterparty throughout. The pause would be permanent, it would
+  // protect a completion that is already unreachable, and it would
+  // shut the borrower's last settlement door. The window is real only
+  // while the loan is Active; there it genuinely is momentary.
   const saleCompletionPending =
-    (row.status === 'active' || row.status === 'fallback_pending') &&
-    saleHold.data === 'accepted';
+    row.status === 'active' && saleHold.data === 'accepted';
+  // The same fact, stated instead of enforced: on a fallback_pending
+  // loan the borrower still needs to KNOW an accepted sale is linked
+  // (it changes what their choice costs), but must not be blocked by
+  // it. Renders as a warning inside the repay review, never a gate.
+  const saleAcceptedOnFallback =
+    row.status === 'fallback_pending' && saleHold.data === 'accepted';
   // Fail CLOSED while the accepted-sale question is unanswered (Codex
   // #1511 r5 P1): the settlement surfaces wait on the probe rather
   // than opening on its undefined initial state. False on the
   // pre-refresh Diamond (no probe exists there — pre-PR behaviour).
+  // Mirrors saleCompletionPending's scope: this flag pauses the same
+  // surfaces, so widening it to fallback_pending would reintroduce the
+  // deadlock above by a slower route (an unanswerable probe holding
+  // the cure shut indefinitely).
   const saleHoldResolving =
-    (row.status === 'active' || row.status === 'fallback_pending') &&
-    saleHold.resolving === true;
+    row.status === 'active' && saleHold.resolving === true;
   // The LIVE re-check every settlement write runs immediately before
   // sending (Codex #1511 r5 P1): the cached state can be a tip
   // interval old, and an acceptance landing inside that window must
@@ -731,7 +743,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loan.data.lenderTokenId,
         address ?? undefined,
       );
-      if (state === 'accepted') return copy.saleHold.completionPaused;
+      if (state === 'accepted') {
+        // Block ONLY while the loan is genuinely Active. A sale
+        // completion reverts LoanNotActive on anything else, so on a
+        // non-Active loan there is no completion left to strand — and
+        // blocking would trap the borrower permanently, since nothing
+        // they can reach from a blocked UI returns the loan to Active.
+        // Read live rather than trusting the reconciled row: this gate
+        // exists precisely because cached state can be stale.
+        const live = await readLoanLive(
+          publicClient,
+          walletChain.diamondAddress,
+          loanId,
+        );
+        return Number(live.status) === LOAN_STATUS_ACTIVE
+          ? copy.saleHold.completionPaused
+          : null;
+      }
       // An unrecognized decoded revert is as unanswered as an RPC
       // failure (Codex #1511 r8) — the hook fails closed on it, and
       // the write gate must match.
@@ -2759,6 +2787,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">
                     {copy.refinance.repayWarnPending}
+                  </span>
+                </div>
+              ) : null}
+              {action === 'repay' && saleAcceptedOnFallback && !isRental ? (
+                // Stated, not enforced: the linked purchase is already
+                // stranded by the fallback state, so this settlement
+                // is the borrower's to make — but it decides the
+                // purchase's fate, so say so before they sign.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    {copy.saleHold.acceptedOnFallback}
                   </span>
                 </div>
               ) : null}

@@ -1056,13 +1056,23 @@ Its intended behaviour, as the test oracle for this surface:
   the purchase permanently. The app must pause those paths for the
   duration and state the reason up front, rather than letting the
   attempt fail unexplained at the end; adding collateral stays
-  available throughout, since it strands nothing. The pause applies
-  equally to a loan whose fallback resolution is still pending, so
-  the full-repayment cure that state offers is paused with the same
-  explanation instead of being refused only at the final step. The
-  pause is honest about its own limits: it promises that the options
-  the loan's remaining term still allows come back once the sale
-  settles, not that every option returns.
+  available throughout, since it strands nothing. The pause is honest
+  about its own limits: it promises that the options the loan's
+  remaining term still allows come back once the sale settles, not
+  that every option returns.
+  The pause holds ONLY while the loan is running normally. A purchase
+  can only complete against a running loan, so once a loan has fallen
+  into fallback resolution the purchase is already stranded and there
+  is nothing left for a pause to protect — while the lender's own
+  claim stays available to them throughout. Pausing there would be
+  permanent, not momentary, and would close the borrower's last door.
+  So in that state the app states the situation instead of enforcing
+  it: the borrower is told a purchase is attached, that it cannot
+  complete until the loan is brought back to normal, and that settling
+  the loan instead ends the purchase with it — and then the borrower's
+  own choice is left open to them. The same rule binds the final
+  pre-send check: it may only refuse a settlement on a loan the chain
+  confirms is still running.
   Because a cached answer can be stale by the time a review screen is
   confirmed, every one of those settlement paths must re-ask the chain
   immediately before it sends, and an unanswered check must pause the

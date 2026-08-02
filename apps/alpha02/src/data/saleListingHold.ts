@@ -142,6 +142,63 @@ export function probeErrorName(err: unknown): string | null {
   return null;
 }
 
+/** Query state as this module consumes it — the three fields the gate
+ *  below actually reads, so it can be exercised without a QueryClient. */
+export type HoldQueryState<T> = {
+  data?: T;
+  isPending: boolean;
+  isError: boolean;
+};
+
+/** The fail-closed gate, split from the hook so the whole cut×probe
+ *  matrix is unit-testable (two separate P2s have come out of this
+ *  interaction — Codex #1511 r6/r11 and the pre-merge review).
+ *
+ *  Two outputs that must stay in lockstep:
+ *   - `data`     — what the surfaces RENDER. Undefined means "say
+ *                  nothing".
+ *   - `resolving`— whether the settlement surfaces must PAUSE.
+ *
+ *  The invariant: `data === undefined && !resolving` is permitted for
+ *  exactly two reasons — the hook is disabled, or the capability
+ *  answered a definite NO (a Diamond with no bounded-listing facet has
+ *  no hold and no accepted-sale window, so there is nothing to pause
+ *  for). Every OTHER route to an undefined `data` must pause. */
+export function computeHoldGate(input: {
+  enabled: boolean;
+  cut: HoldQueryState<boolean>;
+  probe: HoldQueryState<SaleListingHoldState>;
+}): { data: SaleListingHoldState | undefined; resolving: boolean } {
+  const { enabled, cut, probe } = input;
+  const capabilityPresent = cut.data === true;
+  // Never answered at all: pending, or errored with nothing cached.
+  // Scoped to `data === undefined` deliberately — a query that already
+  // answered FALSE keeps that answer through a failed re-ask, and
+  // pausing on it would strand every borrower on a pre-refresh
+  // deployment behind a transient RPC hiccup, repay included.
+  const capabilityUnanswered =
+    cut.data === undefined && (cut.isPending || cut.isError);
+  const resolving =
+    enabled &&
+    (capabilityUnanswered ||
+      (capabilityPresent &&
+        // A failed REVALIDATION of a positive capability masks the
+        // data below, so it has to pause too.
+        (cut.isError ||
+          probe.isPending ||
+          probe.isError ||
+          // An undecodable outcome on a CAPABLE Diamond is ambiguous.
+          probe.data === 'unknown')));
+  // `enabled` masks too: a disabled hook keeps both queries' cached
+  // data, and a surface that has been switched off must not keep
+  // reporting the last hold it saw.
+  const data =
+    enabled && capabilityPresent && !cut.isError && !probe.isError
+      ? probe.data
+      : undefined;
+  return { data, resolving };
+}
+
 export function useSaleListingHold(
   loanId: number,
   /** The loan's lender position token id — corroborates the
@@ -213,38 +270,16 @@ export function useSaleListingHold(
         address,
       ),
   });
-  // Fail-CLOSED signal for settlement surfaces (Codex #1511 r5 P1):
-  // while the capability read or the probe itself is still pending —
-  // or the probe errored — the accepted-sale question is UNANSWERED,
-  // and the repay-family flows must wait rather than fail open. A
-  // negative capability (pre-refresh Diamond) resolves to NOT
-  // resolving: no probe exists there, matching pre-PR behaviour.
-  const resolving =
-    enabled &&
-    (cut.isPending ||
-      // A FAILED capability read is as unanswered as a pending one
-      // (Codex #1511 r6 P1) — without this, exhausted retries would
-      // silently re-open every settlement surface. The interval
-      // retry above keeps re-asking; the live pre-write gate stays
-      // the final arbiter either way.
-      cut.isError ||
-      (cut.data === true &&
-        (probe.isPending ||
-          probe.isError ||
-          // An undecodable probe outcome on a CAPABLE Diamond is
-          // ambiguous — fail closed, same rationale.
-          probe.data === 'unknown')));
-  // A capability ROLLBACK must also silence any previously cached
-  // probe result (Codex #1511 r8): disabling the query keeps its old
-  // data, which would keep rendering a hold (or a teardown button)
-  // under legacy semantics. Mask unless the cut is positively present.
-  // An ERRORED refetch keeps its last-success data too (Codex #1511
-  // r11) — while either query is in error the answer is stale-behind-
-  // a-failure, so surface nothing and let `resolving` pause the
-  // settlement surfaces instead.
-  const data =
-    cut.data === true && !cut.isError && !probe.isError
-      ? probe.data
-      : undefined;
+  // Fail-CLOSED gate for the settlement surfaces — see computeHoldGate
+  // for the full rationale and the data/resolving invariant it keeps.
+  const { data, resolving } = computeHoldGate({
+    enabled,
+    cut: { data: cut.data, isPending: cut.isPending, isError: cut.isError },
+    probe: {
+      data: probe.data,
+      isPending: probe.isPending,
+      isError: probe.isError,
+    },
+  });
   return { ...probe, data, resolving };
 }

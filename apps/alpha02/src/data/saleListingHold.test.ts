@@ -11,7 +11,12 @@ import { describe, expect, it } from 'vitest';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
 import {
   classifyTeardownProbe,
+  computeHoldGate,
   probeErrorName,
+} from './saleListingHold';
+import type {
+  HoldQueryState,
+  SaleListingHoldState,
 } from './saleListingHold';
 
 describe('classifyTeardownProbe', () => {
@@ -101,5 +106,159 @@ describe('probeErrorName', () => {
     expect(probeErrorName(new Error('rpc timeout'))).toBeNull();
     expect(probeErrorName(new BaseError('opaque'))).toBeNull();
     expect(probeErrorName(undefined)).toBeNull();
+  });
+});
+
+/**
+ * The fail-closed gate. Two separate P2s have come out of the
+ * data/resolving interaction, so the whole cut×probe matrix is pinned
+ * here rather than reasoned about case by case.
+ *
+ * The invariant under test: `data === undefined && !resolving` — a
+ * surface that renders nothing AND stays open — is permitted for
+ * exactly two reasons, the hook being disabled and the capability
+ * answering a definite NO. Every other route to an undefined `data`
+ * must pause the settlement surfaces.
+ */
+describe('computeHoldGate', () => {
+  const pending = { isPending: true, isError: false };
+  const ok = { isPending: false, isError: false };
+  const errored = { isPending: false, isError: true };
+
+  it('disabled: says nothing and pauses nothing', () => {
+    expect(
+      computeHoldGate({
+        enabled: false,
+        cut: { ...ok, data: true },
+        probe: { ...ok, data: 'live' },
+      }),
+    ).toEqual({ data: undefined, resolving: false });
+  });
+
+  it('capability still pending: pauses, because the question is unanswered', () => {
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { ...pending },
+        probe: { ...pending },
+      }),
+    ).toEqual({ data: undefined, resolving: true });
+  });
+
+  it('capability errored with nothing cached: pauses (exhausted retries must not fail open)', () => {
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { ...errored },
+        probe: { ...pending },
+      }),
+    ).toEqual({ data: undefined, resolving: true });
+  });
+
+  it('capability answered NO: opens the surfaces — no facet, no hold to speak of', () => {
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { ...ok, data: false },
+        probe: { ...pending },
+      }),
+    ).toEqual({ data: undefined, resolving: false });
+  });
+
+  it('a failed RE-ASK of a known NO keeps it open — the answer did not change', () => {
+    // The regression this pins: an unconditional isError arm paused
+    // every borrower on the pre-refresh deployment (where NO is the
+    // normal answer) behind one transient RPC failure, repay included.
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { data: false, isPending: false, isError: true },
+        probe: { ...pending },
+      }),
+    ).toEqual({ data: undefined, resolving: false });
+  });
+
+  it('a failed REVALIDATION of a known YES masks the data and pauses', () => {
+    // Opposite direction: the capability may have rolled back, so the
+    // cached probe answer can no longer be trusted — and a masked
+    // answer must never leave the surfaces open.
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { data: true, isPending: false, isError: true },
+        probe: { ...ok, data: 'live' },
+      }),
+    ).toEqual({ data: undefined, resolving: true });
+  });
+
+  it('capable Diamond, probe still pending: pauses', () => {
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { ...ok, data: true },
+        probe: { ...pending },
+      }),
+    ).toEqual({ data: undefined, resolving: true });
+  });
+
+  it('capable Diamond, probe errored: masks its stale answer and pauses', () => {
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { ...ok, data: true },
+        probe: { data: 'none', isPending: false, isError: true },
+      }),
+    ).toEqual({ data: undefined, resolving: true });
+  });
+
+  it('capable Diamond, undecodable probe outcome: pauses rather than guess', () => {
+    expect(
+      computeHoldGate({
+        enabled: true,
+        cut: { ...ok, data: true },
+        probe: { ...ok, data: 'unknown' },
+      }),
+    ).toEqual({ data: 'unknown', resolving: true });
+  });
+
+  it('fully answered: reports the state and stops pausing', () => {
+    for (const state of ['none', 'live', 'clearable', 'accepted'] as const) {
+      expect(
+        computeHoldGate({
+          enabled: true,
+          cut: { ...ok, data: true },
+          probe: { ...ok, data: state },
+        }),
+      ).toEqual({ data: state, resolving: false });
+    }
+  });
+
+  it('never leaves a surface open on an answer it is not rendering', () => {
+    // The invariant itself, swept over every combination.
+    const cutStates: HoldQueryState<boolean>[] = [
+      { ...pending },
+      { ...errored },
+      { ...ok, data: true },
+      { ...ok, data: false },
+      { data: true, isPending: false, isError: true },
+      { data: false, isPending: false, isError: true },
+    ];
+    const probeStates: HoldQueryState<SaleListingHoldState>[] = [
+      { ...pending },
+      { ...errored },
+      { ...ok, data: 'none' as const },
+      { ...ok, data: 'live' as const },
+      { ...ok, data: 'unknown' as const },
+      { data: 'live' as const, isPending: false, isError: true },
+    ];
+    for (const cut of cutStates) {
+      for (const probe of probeStates) {
+        const gate = computeHoldGate({ enabled: true, cut, probe });
+        if (gate.data === undefined && !gate.resolving) {
+          // Only legitimate reason while enabled: a definite NO.
+          expect(cut.data).toBe(false);
+        }
+      }
+    }
   });
 });

@@ -29,12 +29,19 @@ or refinances in that window would terminalize or reshape the loan the
 purchase depends on, permanently stranding it. The app therefore
 pauses the borrower's settlement options for the duration, with the
 reason stated up front rather than surfacing as an unexplained
-failure, and keeps adding collateral available throughout. The pause
-covers a loan whose fallback resolution is still pending as well, so
-the full-repayment cure that state offers is paused with the same
-explanation instead of being refused only at the final step. This is
-app-level protection over a window the contracts still permit; the
-matching on-chain close-out guard belongs to the #1503 PR-E slice.
+failure, and keeps adding collateral available throughout.
+
+That pause deliberately stops at the edge of one state. A purchase can
+only complete against a running loan, so once a loan has fallen into
+fallback resolution the purchase is already stranded — a pause there
+would protect nothing, could never lift on its own, and would shut the
+borrower's last door while the lender's own claim stayed open to them.
+In that state the app explains rather than enforces: it says a purchase
+is attached, that it cannot finish until the loan is brought back to
+normal, and that settling instead ends the purchase too — and leaves
+the decision with the borrower. This is app-level protection over a
+window the contracts still permit; the matching on-chain close-out
+guard belongs to the #1503 PR-E slice.
 Every settlement path additionally re-asks the chain immediately
 before it sends, so an acceptance that lands while a review screen sits
 open cannot slip past a cached answer, and any unanswered check pauses

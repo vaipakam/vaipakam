@@ -1458,6 +1458,8 @@ const copySource = {
       'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). The buyer’s funds are already committed, so your repayment and exit options are briefly paused — repaying, closing, or changing the amount now would break the in-flight purchase. Once the sale settles, whichever options the loan’s remaining term still allows come back.',
     completionPaused:
       'Paused while an accepted sale of the lender’s position completes — the buyer’s funds are already committed, and settling or changing this loan now would break that in-flight purchase. This state normally lasts moments; once the sale settles, the options the loan’s remaining term still allows come back.',
+    acceptedOnFallback:
+      'A buyer accepted the lender’s sale listing, but that purchase cannot complete while this loan is awaiting its fallback resolution — so nothing here is being held up waiting for it, and your options stay open. Restoring enough collateral returns the loan to normal, after which the purchase can finish; settling the loan instead ends it, and the purchase ends with it.',
     checkFailed:
       'We couldn’t verify whether a sale of the lender’s position is mid-completion — nothing was sent. Try again in a moment.',
     clearableBody:
