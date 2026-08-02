@@ -24,6 +24,10 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+/** Whole-token amount as a wei string — i.e. a figure large enough to
+ *  actually render at the surface's four-decimal precision. */
+const tok = (n: number) => (BigInt(n) * 10n ** 18n).toString();
+
 const day = (over: Partial<RecyclingSeries['daily'][number]> = {}) => ({
   dayId: 1,
   stamped: true,
@@ -445,9 +449,9 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
       series({
         cumulative: {
           ...series().cumulative,
-          absorbed: '5',
-          absorbedLocal: '5',
-          absorbedMirror: '3', // an open day has already absorbed
+          absorbed: tok(5),
+          absorbedLocal: tok(5),
+          absorbedMirror: tok(3), // an open day has already absorbed
         },
       }),
     );
@@ -462,9 +466,30 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
       series({
         cumulative: {
           ...series().cumulative,
-          absorbed: '8',
+          absorbed: tok(8),
+          absorbedLocal: tok(5),
+          absorbedMirror: tok(3),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-absorbed');
+    expect(screen.queryByTestId('recycling-split-scope')).toBeNull();
+  });
+
+  it('does NOT claim a divergence too small to SEE', async () => {
+    // The note asserts something about the rendered figures, so a
+    // reader must be able to check it by looking. An excess below the
+    // display threshold leaves all three cells reading the same, and
+    // the note would then point at a discrepancy nothing on screen
+    // supports — the unconditional-caveat defect, one order down.
+    mockSeries(
+      series({
+        cumulative: {
+          ...series().cumulative,
+          absorbed: '5',
           absorbedLocal: '5',
-          absorbedMirror: '3',
+          absorbedMirror: '3', // 3 wei — invisible at four decimals
         },
       }),
     );
@@ -482,8 +507,8 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
         cumulative: {
           ...series().cumulative,
           absorbed: '0',
-          absorbedLocal: '5',
-          absorbedMirror: '3',
+          absorbedLocal: tok(5),
+          absorbedMirror: tok(3),
         },
       }),
     );

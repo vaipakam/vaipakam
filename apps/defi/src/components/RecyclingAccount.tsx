@@ -250,10 +250,18 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   // only finalized ones, so the parts can exceed the total but never fall
   // short — testing that exact direction is both the precise trigger for
   // the confusion this note prevents, and a check on that invariant.
+  //
+  // Compared at DISPLAYED precision, not raw wei. The note makes a claim
+  // about what is on screen ("the parts add up to more than the total
+  // here"), so a reader must be able to check it by looking. An excess
+  // below the display threshold is invisible in all three cells, and the
+  // note would then assert a discrepancy nothing shown can support —
+  // the same defect as the unconditional version, one order down.
+  const shown = (v: string) => BigInt(v) / MIN_DISPLAYABLE;
   const partsExceedCombined =
     globalScope &&
-    BigInt(cumulative.absorbedLocal) + BigInt(cumulative.absorbedMirror) >
-      BigInt(cumulative.absorbed);
+    shown(cumulative.absorbedLocal) + shown(cumulative.absorbedMirror) >
+      shown(cumulative.absorbed);
 
   return (
     <section className="recycling-account">
