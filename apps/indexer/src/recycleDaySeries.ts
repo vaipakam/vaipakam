@@ -38,6 +38,7 @@ export interface RecycleSeriesLog {
 const HANDLED = new Set([
   'GovernorDayPoolStamped',
   'VpfiRecycled',
+  'VpfiRecycledPreLaunch',
   'ChainRecycledReported',
 ]);
 
@@ -77,7 +78,13 @@ async function applyOne(
   log: RecycleSeriesLog,
 ): Promise<boolean> {
   const blockNumber = Number(log.blockNumber);
-  const dayId = Number(argBig(log.args.dayId));
+  // A pre-launch credit carries NO dayId — deliberately, so that a field
+  // that always reads zero cannot re-create the day-0 attribution (#1504).
+  // Recorded as -1 in the audit table so it can never be mistaken for day 0.
+  const dayId =
+    log.eventName === 'VpfiRecycledPreLaunch'
+      ? -1
+      : Number(argBig(log.args.dayId));
 
   // Exactly-once gate: overlapping scan ranges (webhook + sweep) must not
   // double-count an absorption credit.
@@ -151,6 +158,28 @@ async function applyOne(
         chainId,
         dayId,
       ),
+    ]);
+    return true;
+  }
+
+  // #1504 — absorption credited while the schedule was INACTIVE. It has no
+  // day, so it is kept as a single per-chain total rather than forced into
+  // one: filing it under day 0 is the defect the contracts just stopped
+  // committing. Published beside the series because it is what reconciles
+  // the bucket against the sum of the days.
+  if (log.eventName === 'VpfiRecycledPreLaunch') {
+    const amount = argBig(log.args.amount);
+    const row = await env.DB.prepare(
+      `SELECT absorbed FROM recycle_prelaunch WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ absorbed: string }>();
+    await env.DB.batch([
+      record,
+      env.DB.prepare(
+        `INSERT INTO recycle_prelaunch (chain_id, absorbed) VALUES (?, ?)
+         ON CONFLICT (chain_id) DO UPDATE SET absorbed = excluded.absorbed`,
+      ).bind(chainId, (big(row?.absorbed) + amount).toString()),
     ]);
     return true;
   }
@@ -248,6 +277,7 @@ export async function ensureRecycleSeriesBackfill(
       WHERE chain_id = ?
         AND kind IN ('GovernorDayPoolStamped',
                      'VpfiRecycled',
+                     'VpfiRecycledPreLaunch',
                      'ChainRecycledReported')
       ORDER BY block_number ASC, log_index ASC`,
   )

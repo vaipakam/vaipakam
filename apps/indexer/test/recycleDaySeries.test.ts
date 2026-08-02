@@ -490,20 +490,42 @@ describe('handleRecyclingSeries — scope, coverage and partial globals', () => 
     expect(narrow.cumulative.absorbed).toBe(wide.cumulative.absorbed);
   });
 
-  it('flags day 0 as conflated with pre-launch absorption', async () => {
+  it('files pre-launch absorption apart from the day series', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries(
       [
+        // No dayId at all — the contracts stopped naming one (#1504).
+        log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 900n }),
         stamped(0n),
-        stamped(1n),
-        log('VpfiRecycled', { source: 1, refId: 1n, amount: 9n, dayId: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 2n, amount: 7n, dayId: 0n }),
       ],
       env,
       CHAIN,
     );
     const body = await readSeries(env);
-    expect(day(body, 0).preLaunchConflated).toBe(true);
-    expect(day(body, 1).preLaunchConflated).toBe(false);
+    // Day 0 is the first SCHEDULED day and nothing else.
+    expect(day(body, 0).absorbedLocal).toBe('7');
+    // …and the pre-launch stock is published, not dropped — it is what
+    // reconciles the bucket against the sum of the days.
+    expect(body.cumulative.absorbedPreLaunch).toBe('900');
+  });
+
+  it('never lets a pre-launch credit reach a day bucket', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 5n })],
+      env,
+      CHAIN,
+    );
+    const rows = h.db
+      .prepare(`SELECT day_id FROM recycle_day_pool WHERE chain_id = ?`)
+      .all(CHAIN) as Array<{ day_id: number }>;
+    expect(rows).toHaveLength(0);
+    // Audited as -1, so it can never be mistaken for day 0 downstream.
+    const ev = h.db
+      .prepare(`SELECT day_id FROM recycle_series_events WHERE chain_id = ?`)
+      .all(CHAIN) as Array<{ day_id: number }>;
+    expect(ev[0].day_id).toBe(-1);
   });
 
   it('rebuilds the series from activity_events when the cursor has passed', async () => {

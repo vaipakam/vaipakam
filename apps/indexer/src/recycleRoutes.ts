@@ -145,6 +145,7 @@ export async function handleRecyclingSeries(
         coverageFromDay: null,
         cumulative: {
           absorbed: '0',
+          absorbedPreLaunch: '0',
           absorbedLocal: '0',
           absorbedMirror: '0',
           freshDrawdown: '0',
@@ -172,6 +173,13 @@ export async function handleRecyclingSeries(
     // the programme. Both reads return rows and the folding happens in
     // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
     // them would silently overflow SQLite's int64.
+    const preLaunchRow = await env.DB.prepare(
+      `SELECT absorbed FROM recycle_prelaunch WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ absorbed: string }>();
+    const preLaunch = preLaunchRow?.absorbed ?? '0';
+
     const [windowRows, lifetime] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, stamped, schedule_floor, recycled_budget, a_bar,
@@ -264,7 +272,6 @@ export async function handleRecyclingSeries(
           // label. On a mirror deployment no day is ever stamped, which
           // is why this endpoint needs no canonical-chain check.
           absorbed: null,
-          preLaunchConflated: dayId === 0,
         });
         continue;
       }
@@ -291,14 +298,7 @@ export async function handleRecyclingSeries(
         absorbedLocal: absorbedLocal.toString(),
         absorbedMirror: absorbedMirror.toString(),
         absorbed: (absorbedLocal + absorbedMirror).toString(),
-        // Day 0's absorption is NOT day 0's absorption: while the emission
-        // schedule is inactive every credit is mapped to day 0, so this
-        // bucket is the sum of all pre-launch absorption AND the first
-        // scheduled day, inseparably (#1504). Flagged rather than silently
-        // charted — a consumer must exclude or relabel it. The contract
-        // fix that makes the figure correct by construction is its own
-        // change; this marker goes away with it.
-        preLaunchConflated: dayId === 0,
+
       });
     }
 
@@ -365,6 +365,13 @@ export async function handleRecyclingSeries(
       daily,
       cumulative: {
         absorbed: cumAbsorbed.toString(),
+        // #1504 — absorption credited before the schedule started. It has no
+        // day, so it appears here and nowhere in `daily`. Day 0 used to
+        // carry it, which made that bucket the sum of an arbitrarily long
+        // pre-launch period and the first real day; the contracts now file
+        // it separately and so does this. It is the term that reconciles the
+        // recycle bucket against the sum of the day series.
+        absorbedPreLaunch: preLaunch,
         absorbedLocal: cumAbsorbedLocal.toString(),
         absorbedMirror: cumAbsorbedMirror.toString(),
         freshDrawdown: cumFreshDrawdown.toString(),
