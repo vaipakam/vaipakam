@@ -237,10 +237,13 @@ export default function LenderEarlyWithdrawal() {
               <TransferLockWarning mode="active" lock={lock} tokenId={loan.lenderTokenId} />
               <p className="action-desc" style={{ marginTop: 12 }}>
                 A sale offer is live for this loan. As soon as a new lender accepts it, the sale
-                finalizes atomically in the same transaction — no extra click needed. Until
-                acceptance the lender NFT cannot be transferred. To abort the flow, cancel the
-                linked sale offer from the Offer Book. The manual button below is only needed as
-                a recovery hook if auto-completion didn't run.
+                finalizes atomically in the same transaction — no extra click needed. Until the
+                sale completes or the listing ends, the lender NFT cannot be transferred. The
+                listing expires on its own 7 days after it was created (or at the loan's due
+                date, if sooner); an expired listing can no longer be accepted, and the NFT is
+                then released by cancelling it or by a cleanup transaction anyone may send. To
+                abort the flow, cancel the linked sale offer from the Offer Book. The manual
+                button below is only needed as a recovery hook if auto-completion didn't run.
               </p>
               <div className="action-row">
                 <button
@@ -272,6 +275,18 @@ export default function LenderEarlyWithdrawal() {
                 <span className="data-label">{t('common.remainingTerm')}</span>
                 <span className="data-value">{t('earlyWithdrawal.remainingTermInherits')}</span>
               </div>
+              <div className="data-row">
+                <span className="data-label">Listing window</span>
+                <span className="data-value">7 days (fixed on this page)</span>
+              </div>
+              <p className="action-desc" style={{ marginTop: 8 }}>
+                The listing expires on its own after 7 days — or at the loan's due
+                date, if that comes first — and can then no longer be accepted.
+                Expiry alone does not unlock your lender NFT: cancelling the listing
+                releases it in one step, and after expiry a cleanup transaction
+                anyone may send does the same. Ending a listing without a sale also
+                starts a one-day pause before this loan can be listed again.
+              </p>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"
