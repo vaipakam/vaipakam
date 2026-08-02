@@ -128,6 +128,11 @@ const EVENT_ABI: readonly AbiEvent[] = (() => {
 })();
 
 const SCAN_LOOKBACK_BLOCKS = 500n;
+
+/** #1416 — the maximum blocks one scan pass covers (the `scanTo`
+ *  budget below). Exported so the ingest DO's backlog-drain check and
+ *  the scan share one number. */
+export const SCAN_PASS_MAX_BLOCKS = SCAN_LOOKBACK_BLOCKS * 4n;
 const MAX_RANGE_PER_CALL = 5_000n;
 const DETAILS_REFRESH_BATCH = 50;
 
@@ -194,6 +199,11 @@ const LOAN_STATUS_TO_INDEXER_TERMINAL: Record<number, string> = {
  *  every chain we ship on with a comfortable margin. */
 const SAFE_FALLBACK_BUFFER = 32n;
 
+/** #1415 — how far the reported head may sit below the stored cursor
+ *  before the caught-up path logs a loud stale/mis-pointed-RPC
+ *  warning. Generously above any real safe-tag jitter. */
+const HEAD_BEHIND_CURSOR_WARN = 64n;
+
 export interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
@@ -245,6 +255,11 @@ export interface ChainIndexerResult {
    *  (see pushHints.ts). Optional so error/early-return paths stay
    *  untouched; an absent value broadcasts a coarse (hint-less) frame. */
   hints?: PushHints;
+  /** #1416 — the SAFE head this pass scanned against, so the ingest DO
+   *  can see a truncated backlog pass (scannedTo far below head) and
+   *  keep the drain self-driving instead of parking until the next
+   *  cron tick. Absent on paths that never learned the head. */
+  headBlock?: bigint;
   skipped?: string;
 }
 
@@ -539,6 +554,65 @@ async function sweepMarketSummaries(
 // both route through it). Unchanged behaviour: one cursor-derived,
 // safe-head-bounded scan that advances the cursor. `scannedTo` is the new
 // cursor, which the DO's catch-up loop compares against its target block.
+/** #1415 — RPC chain-identity assertion. A mis-pointed RPC secret
+ *  (wrong `network=` slug, swapped URLs) fails in the ONE shape that
+ *  produces zero signal: a different network whose head sits below our
+ *  cursor reads as "caught up" — no error, no log, no cursor movement
+ *  (the July 2026 outage's silent phase). Verify `eth_chainId` once
+ *  per isolate per (chainId, rpc) pair; a mismatch logs loudly and the
+ *  scan is skipped as a RETRYABLE failure so the caught-up check can
+ *  never mistake it for success. A transport failure is not an
+ *  identity VERDICT, but it is not license to proceed either (Codex
+ *  #1527 r1 P1): an unverified endpoint could be the mis-pointed one,
+ *  and a foreign chain whose head sits ABOVE our cursor would let the
+ *  pass read an empty foreign log range and advance the monotonic
+ *  cursor past real blocks — permanent, silent data loss. So a
+ *  transport failure aborts the pass as a retryable `rpc-error`; the
+ *  pair stays uncached and is re-probed next pass. Identity is a
+ *  PRECONDITION of cursor advancement, never assumed. */
+const verifiedRpcIdentity = new Set<string>();
+
+export type RpcIdentityVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'transport' }
+  | { ok: false; reason: 'mismatch'; reported: number };
+
+export async function verifyRpcChainIdentity(
+  client: { getChainId: () => Promise<number> },
+  chainId: number,
+  rpc: string,
+): Promise<RpcIdentityVerdict> {
+  const key = `${chainId}:${rpc}`;
+  if (verifiedRpcIdentity.has(key)) return { ok: true };
+  let reported: number;
+  try {
+    reported = await client.getChainId();
+  } catch {
+    return { ok: false, reason: 'transport' }; // no verdict — re-probe next pass
+  }
+  if (reported !== chainId) {
+    // Deliberately NO fragment of the RPC URL here — not even the host.
+    // Some providers put the generated credential in the HOSTNAME itself
+    // (Codex #1527 r1 P2), so any slice of the URL risks turning this
+    // diagnostic into a key leak. The expected chain id alone names the
+    // mis-pointed `RPC_*` secret unambiguously.
+    console.error(
+      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} — ` +
+        `mis-pointed RPC_* secret for this chain; skipping scan until it is fixed`,
+    );
+    return { ok: false, reason: 'mismatch', reported };
+  }
+  verifiedRpcIdentity.add(key);
+  return { ok: true };
+}
+
+/** The scan-skip kinds the ingest loop must treat as FAILURES (rewound
+ *  cursor, bounded retry) rather than success — shared with the DO so
+ *  a new failure kind can't silently read as "caught up" there. */
+export function isRetryableScanSkip(skipped: string | undefined): boolean {
+  return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
+}
+
 export async function runChainIndexerForChain(
   env: Env,
   chain: ChainConfig,
@@ -551,6 +625,33 @@ export async function runChainIndexerForChain(
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
   const client = createPublicClient({ transport: http(chain.rpc) });
+
+  // One-time activity_events backfills, run BEFORE every return out of
+  // this function — including the identity aborts just below (Codex
+  // #1527 r1 P2; #1507 r2 P1 established the rule for the caught-up
+  // return). Both replay only D1 history and touch no RPC, so an RPC
+  // outage or a mis-pointed secret is no reason to keep their metrics
+  // empty when the source data is already sitting in D1.
+  //
+  // One call site above every return is the load-bearing shape: I
+  // duplicated these per-path once and got it wrong (the recycling one
+  // sat inside a helper the quiet path never reached). The structural
+  // guard in oneTimeBackfillReachability.test.ts pins this ordering.
+  // Cheap after the first run — one flag SELECT each.
+  await ensureRewardLoopBackfill(env, chainId);
+  await ensureRecycleSeriesBackfill(env, chainId);
+
+  // #1415 — identity before any chain read: a wrong-network RPC must
+  // fail LOUDLY here, not silently as "caught up" below. A transport
+  // failure on the probe aborts too (retryable) — an UNVERIFIED
+  // endpoint must never advance the cursor (Codex #1527 r1 P1).
+  const identity = await verifyRpcChainIdentity(client, chainId, chain.rpc);
+  if (!identity.ok) {
+    return emptyResult(
+      identity.reason === 'mismatch' ? 'rpc-chain-mismatch' : 'rpc-error',
+    );
+  }
+
   // Use the safe-tag head, NOT latest. Caching events from the unsafe
   // tip would mean a 1- to 32-block reorg could remove a block whose
   // OfferAccepted / LoanInitiated we already wrote to D1, and the next
@@ -582,23 +683,19 @@ export async function runChainIndexerForChain(
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
   const scanFrom = lastBlock + 1n;
 
-  // One-time activity_events backfills, run BEFORE the caught-up branch
-  // below (Codex #1507 r2 P1). Both of these seed a projection from
-  // history the shared cursor has already passed, so both must run even
-  // when there is nothing to scan — a deploy landing on an already-caught-
-  // up chain would otherwise serve an empty metric until an unrelated
-  // future log happened to arrive.
-  //
-  // Placed here rather than duplicated into the quiet path and the scan
-  // path: I did exactly that and got it wrong, because the recycling one
-  // sat inside the ingest helper the quiet path never reaches. Two call
-  // sites that must be kept in sync is the defect; one call site above
-  // every return is the fix, and the next backfill added here inherits it.
-  // Cheap after the first run — one flag SELECT each.
-  await ensureRewardLoopBackfill(env, chainId);
-  await ensureRecycleSeriesBackfill(env, chainId);
-
   if (scanFrom > head) {
+    // #1415 second guard: a head MATERIALLY below our own cursor is
+    // never healthy on these chains (the safe-tag reorg horizon is far
+    // smaller) — likelier a lagging replica or a mis-pointed RPC that
+    // passed the identity probe. Loud once per pass; the pass still
+    // no-ops below (there is nothing safe to scan against that head).
+    if (lastBlock - head > HEAD_BEHIND_CURSOR_WARN) {
+      console.warn(
+        `[chainIndexer] chain ${chainId}: RPC head ${head} is ` +
+          `${lastBlock - head} blocks BELOW the stored cursor ${lastBlock} ` +
+          `— stale or mis-pointed RPC; treating as caught-up but flagging`,
+      );
+    }
     // Caught up — no new blocks. Still sweep market_summary (Codex
     // #1288 r4): a market whose only order expired purely BY CLOCK has
     // no on-chain event and no new block, so gating its removal on new
@@ -660,13 +757,14 @@ export async function runChainIndexerForChain(
         quietCal.inserted > 0
           ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
           : undefined,
+      headBlock: head,
       skipped: 'caught-up',
     };
   }
   const scanTo =
-    scanFrom + SCAN_LOOKBACK_BLOCKS * 4n > head
+    scanFrom + SCAN_PASS_MAX_BLOCKS > head
       ? head
-      : scanFrom + SCAN_LOOKBACK_BLOCKS * 4n;
+      : scanFrom + SCAN_PASS_MAX_BLOCKS;
 
   // Single chunked scan across the full event allow-list. Public RPCs
   // (Alchemy free tier, publicnode) reject ranges > 10k blocks, so we
@@ -731,6 +829,7 @@ export async function runChainIndexerForChain(
         loanStatusUpdates: 0,
         loanDetailRefreshes: 0,
         activityEvents: 0,
+        headBlock: head,
         skipped: 'rpc-error',
       };
     }
@@ -1007,6 +1106,7 @@ export async function runChainIndexerForChain(
   return {
     scannedFrom: scanFrom,
     scannedTo: scanTo,
+    headBlock: head,
     newOffers: offerStats.newOffers,
     statusUpdates: offerStats.statusUpdates,
     detailRefreshes,

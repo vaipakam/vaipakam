@@ -37,35 +37,44 @@ const SOURCE = readFileSync(
   'utf8',
 );
 
-/** Body of `runChainIndexerForChain` up to its FIRST `return`. */
+/** Body of `runChainIndexerForChain` up to its FIRST `return` of ANY
+ *  form. Codex #1527 r1 caught the original single-pattern version
+ *  (`return {` only) missing the `return emptyResult(...)` identity
+ *  aborts — a whole exit family the guard was blind to — so this now
+ *  cuts at the earliest match across every return shape the function
+ *  uses, and the guard-the-guard below rejects a prologue containing
+ *  ANY return statement. */
 function prologue(): string {
   const start = SOURCE.indexOf('export async function runChainIndexerForChain');
   expect(
     start,
     'runChainIndexerForChain not found — this guard has drifted from the source',
   ).toBeGreaterThan(-1);
-  const firstReturn = SOURCE.indexOf('\n    return {', start);
+  const returnAt = SOURCE.slice(start).search(/\n\s+return[ ;(]/);
   expect(
-    firstReturn,
-    'no early return found — if the caught-up path was restructured, ' +
+    returnAt,
+    'no early return found — if the exit paths were restructured, ' +
       'reconfirm this guard still asserts something',
-  ).toBeGreaterThan(start);
-  return SOURCE.slice(start, firstReturn);
+  ).toBeGreaterThan(-1);
+  return SOURCE.slice(start, start + returnAt);
 }
 
-describe('one-time backfills are reachable on the caught-up path', () => {
+describe('one-time backfills are reachable on every exit path', () => {
   for (const fn of ONE_TIME_BACKFILLS) {
     it(`${fn} is awaited before the first return`, () => {
       expect(prologue()).toContain(`await ${fn}(env, chainId)`);
     });
   }
 
-  it('the prologue really does precede the caught-up early return', () => {
+  it('the prologue really does precede the first early return', () => {
     // Guards the guard: if the slice above ever stopped ending at the
-    // quiet-path return, every assertion here would pass vacuously
-    // against the whole function.
+    // FIRST return, the assertions would pass vacuously against the
+    // whole function. The earliest exit today is the #1415 identity
+    // abort — the backfills must sit above even that (they replay only
+    // D1 data; an RPC problem is no reason to skip them).
     const p = prologue();
-    expect(p).toContain('if (scanFrom > head) {');
-    expect(p.match(/\n    return \{/)).toBeNull();
+    expect(p).toContain('verifyRpcChainIdentity(');
+    expect(p.match(/\n\s+return[ ;(]/)).toBeNull();
+    expect(p.match(/\n\s+return \{/)).toBeNull();
   });
 });
