@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  armSlowLaneAlarm,
   clearAttempts,
   rearmOrFinishAttempts,
   recordTrigger,
@@ -38,6 +39,10 @@ function fakeStorage(seed: Record<string, unknown> = {}) {
     },
     async setAlarm(t: number) {
       alarms.push(t);
+    },
+    async getAlarm() {
+      // Mirrors the DO's single alarm slot: the LAST set wins.
+      return alarms.length > 0 ? alarms[alarms.length - 1] : null;
     },
   };
   return { map, ops, alarms, storage };
@@ -174,5 +179,32 @@ describe('shouldRearmForBacklog (#1416 drain accelerator decision)', () => {
   it('a caught-up quiet pass (scannedTo at/above head) parks', () => {
     expect(shouldRearmForBacklog(5_000n, 5_000n, false)).toBe(false);
     expect(shouldRearmForBacklog(5_000n, 5_001n, false)).toBe(false); // head behind cursor
+  });
+});
+
+describe('armSlowLaneAlarm (#1416 arming, Codex #1527 r1: single slot keeps the EARLIER firing)', () => {
+  const NOW = 1_754_000_000_000;
+
+  it('arms the slow lane when the slot is empty', async () => {
+    const { alarms, storage } = fakeStorage();
+    await armSlowLaneAlarm(storage, NOW);
+    expect(alarms).toEqual([NOW + 30_000]);
+  });
+
+  it('PRESERVES an interleaved immediate webhook alarm instead of clobbering it', async () => {
+    const { alarms, storage } = fakeStorage();
+    // A webhook trigger raced in after the pass's final target read and
+    // armed an immediate alarm — the backlog re-arm must not push it out
+    // 30 seconds.
+    await storage.setAlarm(NOW);
+    await armSlowLaneAlarm(storage, NOW);
+    expect(alarms).toEqual([NOW]); // untouched — no second set
+  });
+
+  it('replaces a LATER-firing leftover alarm with the sooner slow-lane time', async () => {
+    const { alarms, storage } = fakeStorage();
+    await storage.setAlarm(NOW + 300_000); // e.g. a stale far-future arm
+    await armSlowLaneAlarm(storage, NOW);
+    expect(alarms[alarms.length - 1]).toBe(NOW + 30_000);
   });
 });

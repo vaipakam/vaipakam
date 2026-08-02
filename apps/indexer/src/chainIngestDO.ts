@@ -119,6 +119,26 @@ export async function clearAttempts(storage: LoopStateStorage): Promise<void> {
 /** LoopStateStorage plus the alarm slot — what the re-arm helper needs. */
 export interface AlarmStorage extends LoopStateStorage {
   setAlarm(scheduledTime: number): Promise<void>;
+  getAlarm(): Promise<number | null>;
+}
+
+/** #1416 backlog drain, alarm arming (Codex #1527 r1 P2). The DO has ONE
+ *  alarm slot, and a webhook trigger that interleaves after the running
+ *  pass's final `pendingTarget` read arms an IMMEDIATE alarm
+ *  (`setAlarm(Date.now())` in `fetch`). Overwriting that slot with the
+ *  30 s slow-lane time would silently degrade the webhook's
+ *  immediate-trigger contract to a slow-lane wait — so the slow-lane arm
+ *  keeps whichever firing time is EARLIER. `nowMs` injected for the
+ *  deterministic unit test. */
+export async function armSlowLaneAlarm(
+  storage: AlarmStorage,
+  nowMs: number,
+): Promise<void> {
+  const slowAt = nowMs + SLOW_ALARM_DELAY_MS;
+  const existing = await storage.getAlarm();
+  if (existing === null || existing > slowAt) {
+    await storage.setAlarm(slowAt);
+  }
 }
 
 /**
@@ -476,9 +496,12 @@ export class ChainIngestDO {
           // was progress, not failure) and self-drive the next pass on
           // the slow lane — a deep backlog drains in minutes/hours
           // instead of one chunk per 5-minute tick. One setAlarm row
-          // per draining pass, only while genuinely behind.
+          // per draining pass, only while genuinely behind. The arm
+          // keeps an EARLIER already-set alarm (a webhook trigger that
+          // interleaved after this pass's final target read) instead
+          // of clobbering it — see armSlowLaneAlarm.
           await this.clearLoopState();
-          await this.state.storage.setAlarm(Date.now() + SLOW_ALARM_DELAY_MS);
+          await armSlowLaneAlarm(this.state.storage, Date.now());
         } else {
           await this.clearLoopState(); // genuinely caught up
         }

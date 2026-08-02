@@ -561,37 +561,46 @@ async function sweepMarketSummaries(
  *  (the July 2026 outage's silent phase). Verify `eth_chainId` once
  *  per isolate per (chainId, rpc) pair; a mismatch logs loudly and the
  *  scan is skipped as a RETRYABLE failure so the caught-up check can
- *  never mistake it for success. A transport failure leaves the pair
- *  UNVERIFIED (re-probed next pass) and lets the pass proceed — the
- *  very next RPC call fails through the existing error handling. */
+ *  never mistake it for success. A transport failure is not an
+ *  identity VERDICT, but it is not license to proceed either (Codex
+ *  #1527 r1 P1): an unverified endpoint could be the mis-pointed one,
+ *  and a foreign chain whose head sits ABOVE our cursor would let the
+ *  pass read an empty foreign log range and advance the monotonic
+ *  cursor past real blocks — permanent, silent data loss. So a
+ *  transport failure aborts the pass as a retryable `rpc-error`; the
+ *  pair stays uncached and is re-probed next pass. Identity is a
+ *  PRECONDITION of cursor advancement, never assumed. */
 const verifiedRpcIdentity = new Set<string>();
+
+export type RpcIdentityVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'transport' }
+  | { ok: false; reason: 'mismatch'; reported: number };
 
 export async function verifyRpcChainIdentity(
   client: { getChainId: () => Promise<number> },
   chainId: number,
   rpc: string,
-): Promise<{ ok: boolean; reported?: number }> {
+): Promise<RpcIdentityVerdict> {
   const key = `${chainId}:${rpc}`;
   if (verifiedRpcIdentity.has(key)) return { ok: true };
   let reported: number;
   try {
     reported = await client.getChainId();
   } catch {
-    return { ok: true }; // transport failure — not an identity verdict
+    return { ok: false, reason: 'transport' }; // no verdict — re-probe next pass
   }
   if (reported !== chainId) {
-    // Never log the URL itself — provider URLs embed API keys.
-    let host = 'unparseable-rpc-url';
-    try {
-      host = new URL(rpc).host;
-    } catch {
-      /* keep the placeholder */
-    }
+    // Deliberately NO fragment of the RPC URL here — not even the host.
+    // Some providers put the generated credential in the HOSTNAME itself
+    // (Codex #1527 r1 P2), so any slice of the URL risks turning this
+    // diagnostic into a key leak. The expected chain id alone names the
+    // mis-pointed `RPC_*` secret unambiguously.
     console.error(
-      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} ` +
-        `(host ${host}) — mis-pointed RPC secret; skipping scan until it is fixed`,
+      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} — ` +
+        `mis-pointed RPC_* secret for this chain; skipping scan until it is fixed`,
     );
-    return { ok: false, reported };
+    return { ok: false, reason: 'mismatch', reported };
   }
   verifiedRpcIdentity.add(key);
   return { ok: true };
@@ -617,11 +626,30 @@ export async function runChainIndexerForChain(
 
   const client = createPublicClient({ transport: http(chain.rpc) });
 
-  // #1415 — identity before anything else: a wrong-network RPC must
-  // fail LOUDLY here, not silently as "caught up" below.
+  // One-time activity_events backfills, run BEFORE every return out of
+  // this function — including the identity aborts just below (Codex
+  // #1527 r1 P2; #1507 r2 P1 established the rule for the caught-up
+  // return). Both replay only D1 history and touch no RPC, so an RPC
+  // outage or a mis-pointed secret is no reason to keep their metrics
+  // empty when the source data is already sitting in D1.
+  //
+  // One call site above every return is the load-bearing shape: I
+  // duplicated these per-path once and got it wrong (the recycling one
+  // sat inside a helper the quiet path never reached). The structural
+  // guard in oneTimeBackfillReachability.test.ts pins this ordering.
+  // Cheap after the first run — one flag SELECT each.
+  await ensureRewardLoopBackfill(env, chainId);
+  await ensureRecycleSeriesBackfill(env, chainId);
+
+  // #1415 — identity before any chain read: a wrong-network RPC must
+  // fail LOUDLY here, not silently as "caught up" below. A transport
+  // failure on the probe aborts too (retryable) — an UNVERIFIED
+  // endpoint must never advance the cursor (Codex #1527 r1 P1).
   const identity = await verifyRpcChainIdentity(client, chainId, chain.rpc);
   if (!identity.ok) {
-    return emptyResult('rpc-chain-mismatch');
+    return emptyResult(
+      identity.reason === 'mismatch' ? 'rpc-chain-mismatch' : 'rpc-error',
+    );
   }
 
   // Use the safe-tag head, NOT latest. Caching events from the unsafe
@@ -654,22 +682,6 @@ export async function runChainIndexerForChain(
     .first<{ last_block: number }>();
   const lastBlock = cursorRow ? BigInt(cursorRow.last_block) : deployBlock - 1n;
   const scanFrom = lastBlock + 1n;
-
-  // One-time activity_events backfills, run BEFORE the caught-up branch
-  // below (Codex #1507 r2 P1). Both of these seed a projection from
-  // history the shared cursor has already passed, so both must run even
-  // when there is nothing to scan — a deploy landing on an already-caught-
-  // up chain would otherwise serve an empty metric until an unrelated
-  // future log happened to arrive.
-  //
-  // Placed here rather than duplicated into the quiet path and the scan
-  // path: I did exactly that and got it wrong, because the recycling one
-  // sat inside the ingest helper the quiet path never reaches. Two call
-  // sites that must be kept in sync is the defect; one call site above
-  // every return is the fix, and the next backfill added here inherits it.
-  // Cheap after the first run — one flag SELECT each.
-  await ensureRewardLoopBackfill(env, chainId);
-  await ensureRecycleSeriesBackfill(env, chainId);
 
   if (scanFrom > head) {
     // #1415 second guard: a head MATERIALLY below our own cursor is
