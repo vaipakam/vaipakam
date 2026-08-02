@@ -170,11 +170,17 @@ export default {
       // this comment claims, and with FIVE chains the index never moves
       // at all and four chains are captured never. Dividing by the
       // cadence restores a step of one in both modes.
-      const minute = Math.floor(controller.scheduledTime / 60_000);
+      // `shouldRunCronTick` FAILS OPEN on an undefined or non-finite
+      // scheduled time (manual invocation), so this must too. Deriving an
+      // ordinal from it unguarded produced NaN, `target` undefined, and a
+      // throw before any `waitUntil` was registered — turning a
+      // deliberate fail-open into a whole-tick outage.
+      const t = controller.scheduledTime;
+      const minute = Number.isFinite(t) ? Math.floor((t as number) / 60_000) : 0;
       const ordinal = doIngestEnabled(env)
         ? Math.floor(minute / DO_PATH_CADENCE_MINUTES)
         : minute;
-      const target = backingChains[ordinal % backingChains.length];
+      const target = backingChains[Math.abs(ordinal) % backingChains.length];
       ctx.waitUntil(
         captureBackingSnapshot(resolved, target.id).catch((err) => {
           // One chain's RPC blip must not wedge the tick.

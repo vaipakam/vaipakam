@@ -80,6 +80,7 @@ import {
 
 import type { Env } from './env';
 import { getChainConfigs } from './env';
+import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
 import { jsonResponse } from './offerRoutes';
 
 const DEFAULT_DAYS = 30;
@@ -237,17 +238,22 @@ export async function captureBackingSnapshot(
   // for, and can serve an obsolete verdict for the whole staleness window.
   // `chainIndexer` already avoids exactly this, with the same fallback for
   // RPCs that do not support the safe tag.
-  const [observedChainId, blockNumber] = await Promise.all([
+  const [observedChainId, head] = await Promise.all([
     client.getChainId(),
     (async () => {
       try {
-        return (await client.getBlock({ blockTag: 'safe' })).number;
+        const b = await client.getBlock({ blockTag: 'safe' });
+        return { number: b.number, timestamp: b.timestamp };
       } catch {
         const latest = await client.getBlockNumber();
-        return latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
+        const number =
+          latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
+        const b = await client.getBlock({ blockNumber: number });
+        return { number, timestamp: b.timestamp };
       }
     })(),
   ]);
+  const blockNumber = head.number;
   if (observedChainId !== chainId) {
     console.warn(
       `[recycling] RPC for chain ${chainId} reports ${observedChainId}; not storing backing`,
@@ -290,7 +296,18 @@ export async function captureBackingSnapshot(
        captured_at = excluded.captured_at,
        block_number = excluded.block_number`,
   )
-    .bind(chainId, JSON.stringify(payload), new Date().toISOString(), blockNumber.toString())
+    // `captured_at` is the BLOCK's time, never the Worker's clock. An RPC
+    // that is frozen but still answering returns an old `safe` head; with
+    // a wall-clock stamp every pass would make that stale reading fresh
+    // again, so a pre-shortfall "fully backed" state could be presented
+    // as minutes old indefinitely. Stamping from the chain means a frozen
+    // chain's snapshot ages out exactly as it should.
+    .bind(
+      chainId,
+      JSON.stringify(payload),
+      new Date(Number(head.timestamp) * 1000).toISOString(),
+      blockNumber.toString(),
+    )
     .run();
 }
 
@@ -304,14 +321,36 @@ export async function captureBackingSnapshot(
 /**
  * How old a stored snapshot may be before it is withheld.
  *
- * A capture that starts failing — RPC down, wrong chain — leaves the last
- * row untouched, and treating any existing row as good publishes an
- * arbitrarily old "fully backed" verdict while the copy beside it says
- * the figures lag by minutes. Generous enough to survive a few missed
- * turns at `len(chains) × 1min`, short enough that a wedged capture stops
- * being presented as an answer.
+ * DERIVED from the refresh cadence, not a fixed number. Captures are
+ * round-robin — one chain per executed tick — so a chain's own refresh
+ * interval is `chains × tick`. A fixed 30 minutes silently became
+ * UNSATISFIABLE past six chains on the DO path (7 × 5 = 35 > 30), which
+ * would have marked every healthy chain stale for five minutes of every
+ * cycle, and the bindings already support eleven.
+ *
+ * Two full cycles: one missed turn is a blip, not a wedged capture.
  */
-const SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
+const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
+
+function snapshotMaxAgeMs(env: Env): number {
+  let chains = 1;
+  try {
+    chains = Math.max(1, getChainConfigs(env).length);
+  } catch {
+    chains = 1;
+  }
+  // The FLAG only — the route's `Env` does not carry the DO binding that
+  // `doIngestEnabled` also checks. The asymmetry is safe in one direction
+  // and that is why it is acceptable: flag set but binding absent means
+  // ingest actually falls back to the 1-minute path, so the real refresh
+  // cadence is FASTER than assumed and this expiry is merely more
+  // generous than it needed to be. The reverse — assuming fast while the
+  // slow path runs — is what would mark healthy snapshots stale, and
+  // cannot happen here.
+  const tickMinutes =
+    env.CHAIN_INGEST_VIA_DO === 'true' ? DO_PATH_CADENCE_MINUTES : 1;
+  return Math.max(SNAPSHOT_MIN_MAX_AGE_MS, chains * tickMinutes * 2 * 60_000);
+}
 
 /** Mirrors `chainIndexer`'s buffer for RPCs without a `safe` tag. */
 const SAFE_FALLBACK_BUFFER = 32n;
@@ -325,7 +364,7 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
       .first<{ payload: string; captured_at: string; block_number: string }>();
     if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
     const age = Date.now() - Date.parse(row.captured_at);
-    if (!Number.isFinite(age) || age > SNAPSHOT_MAX_AGE_MS) {
+    if (!Number.isFinite(age) || age > snapshotMaxAgeMs(env)) {
       return BACKING_UNAVAILABLE('snapshot-stale');
     }
     return {
