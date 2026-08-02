@@ -931,6 +931,8 @@ const copySource = {
       closeEarly: 'Close early (pay and settle now)',
       closeEarlyDesc:
         'The same total as repaying in full — this tool shows you the exact on-chain figure before you sign and settles everything in one step.',
+      closeEarlyHeldBySale:
+        'Held while the lender’s sale listing stands — repaying (fully or partially) stays open. See the listing notice above for when this frees up.',
       closeEarlyCostChecking:
         'Checking this loan’s interest mode to price this option…',
       closeEarlyCostFullTerm:
@@ -1440,6 +1442,24 @@ const copySource = {
     checking: 'Checking whether this loan can be exited early…',
     checkFailed:
       'We couldn’t read this loan’s exit details right now — retrying.',
+  },
+
+  // Borrower-side view of a lender-sale listing on THEIR loan
+  // (#1503 PR-A follow-up): what a live listing holds, what stays
+  // open, and the permissionless cleanup that frees the held options
+  // once the listing has ended.
+  saleHold: {
+    title: 'The lender listed this position for sale',
+    liveBody:
+      'While the listing stands, closing this loan early and withdrawing collateral are held. Repaying — fully or partially — stays available throughout; a partial repayment shrinks the amount a buyer would take over. The listing ends on its own: at latest 30 days after it was created, or at the loan’s due date, whichever comes first (the lender can also cancel it sooner).',
+    liveEnds:
+      'The moment the listing ends, you can free the held options yourself — a cleanup button will appear here.',
+    clearableBody:
+      'The listing has ended but still holds your close-early and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold.',
+    clearableAction: 'Free held options',
+    clearedNote:
+      'Held options freed. The lender can’t list this loan again for a day — your action window.',
+    workingDots: 'Freeing…',
   },
 
   loanSale: {

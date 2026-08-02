@@ -1005,18 +1005,43 @@ Its intended behaviour, as the test oracle for this surface:
   though the listing card closes. When a listing ends off-page (a
   buyer accepted, or it was cancelled elsewhere), the page states
   that outcome once instead of letting the card silently vanish.
-  While a listing stands, the sell-into-offer exit is not offered,
-  and the borrower's partial-repayment surface is held off with an
-  explanation — the listing sells the claim at its frozen outstanding
-  amount, and a partial repayment under it would make the buyer
-  overpay for a smaller claim. Full repayment and close-early remain
-  open to the borrower, and a terminal loan state should show the
-  seller a clear cancel-to-unlock path for any stale listing. The
+  While a listing stands, the sell-into-offer exit is not offered.
+  The borrower's repayment surfaces are NOT held off — full and
+  partial repayment stay open throughout (a buyer's acceptance binds
+  to the loan's current outstanding amount, so a partial repayment
+  simply shrinks the claim and a pending buyer re-signs for the
+  smaller position — the buyer can never overpay for a shrunk claim).
+  What a listing does hold is the borrower's close-early and
+  collateral-withdrawal options, and the borrower-side surface must
+  say so (see the borrower listing-hold notice below). A terminal
+  loan state should show the seller a clear cancel-to-unlock path
+  for any stale listing. The
   listing form is offered only on networks
   where the protocol's listing entry point is known to work
   end-to-end; elsewhere it is withheld and replaced by a plain note
   pointing at the working instant exit. Every standing-surface rule
   above applies to any listing that exists either way.
+- On the BORROWER's own loan page, a lender-sale listing on their
+  loan is surfaced as a listing-hold notice — the borrower is exactly
+  who the listing lifecycle's action window exists for, so the notice
+  is where that escape reaches them. While the listing is live it
+  explains, honestly and without any action: which options are held
+  (closing early and withdrawing collateral), which stay open
+  (repaying fully or partially — with the note that a partial
+  repayment shrinks what a buyer would take over), and the structural
+  bound on the hold (the listing ends on its own — at latest the
+  maximum listing window after creation, sooner at the loan's due
+  date — or earlier if the lender cancels). The chooser's close-early
+  entry is marked held with the same why instead of jumping to a flow
+  that would fail. Once the listing has ended but the hold has not
+  yet been cleaned up, the notice grows a one-click cleanup that
+  anyone may send — available even while the protocol is paused —
+  which frees the held options immediately and reminds the borrower
+  that the lender cannot relist for the quiet period. The notice's
+  existence is judged from the chain alone (never a local marker or
+  an off-chain index), it appears for a listing made on any device,
+  and when the state cannot be judged the surface shows NOTHING
+  rather than a false hold or a cleanup that would fail.
   On the BUYER side, an offer tied to an already-running loan is
   reviewed by KIND. A position sale gets a real buy-a-running-loan
   review: it is introduced as buying the lender side of a named,

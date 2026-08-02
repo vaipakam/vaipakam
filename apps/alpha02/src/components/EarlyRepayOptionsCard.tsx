@@ -49,6 +49,7 @@ export function EarlyRepayOptionsCard({
   pastDueHint,
   refinancePending,
   refinanceEligible,
+  saleListingHeld,
 }: {
   isAdvanced: boolean;
   onSwitchToAdvanced: () => void;
@@ -56,6 +57,11 @@ export function EarlyRepayOptionsCard({
   useFullTermInterest: boolean | undefined;
   pastDueHint: boolean;
   refinancePending: boolean;
+  /** A lender-sale listing (live or ended-but-not-cleaned) holds the
+   *  preclose path on-chain (#1503 PR-A) — the close-early row must
+   *  say so instead of jumping to a flow that would revert. Repay
+   *  rows are never held by a listing. */
+  saleListingHeld?: boolean;
   /** Carry-over refinance binds to the ORIGINAL borrower — a wallet
    *  that acquired the position on the secondary market never gets
    *  the refinance card, so the chooser must say why instead of
@@ -94,6 +100,7 @@ export function EarlyRepayOptionsCard({
       title: o.closeEarly,
       desc: o.closeEarlyDesc,
       cost: closeCost,
+      unavailable: saleListingHeld ? o.closeEarlyHeldBySale : undefined,
       target: 'preclose-card',
     },
     {

@@ -62,6 +62,8 @@ import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
+import { SaleListingHoldCard } from '../components/SaleListingHoldCard';
+import { useSaleListingHold } from '../data/saleListingHold';
 import { LOCK_PRECLOSE_OFFSET, useOffsetPending } from '../data/offsetPending';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow';
@@ -350,6 +352,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     !loanIsRental && Boolean(loan.data) && role === 'lender',
   );
   const salePending = sale.state?.listed === true;
+
+  // Borrower-side view of the SAME lender-sale listing (#1503 PR-A
+  // follow-up): the teardown probe classifies whether a listing holds
+  // this loan's preclose/collateral-withdrawal options ('live'), can
+  // be freed right now ('clearable'), or isn't there ('none').
+  // Borrower viewers only — the lender has their own pending card.
+  const saleHold = useSaleListingHold(
+    loanId,
+    Boolean(loan.data) && !loanIsRental && role === 'borrower',
+  );
+  const saleListingHeld =
+    saleHold.data === 'live' || saleHold.data === 'clearable';
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -1683,6 +1697,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           any flow opens. Hidden while an offset is live (the pending
           card below owns the story then) and once grace is verifiably
           over (every borrower door is shut). */}
+      {/* Borrower-side listing-hold notice — rendered on the CHAIN's
+          say-so (the teardown probe), so a listing made by the lender
+          on any device shows here. Sits above the chooser: it is the
+          "why" for the chooser's held close-early row. */}
+      {role === 'borrower' && !closedThisSession && !isRental && saleListingHeld ? (
+        <SaleListingHoldCard loanId={loanId} state={saleHold.data!} />
+      ) : null}
+
       {role === 'borrower' &&
       row.status === 'active' &&
       !closedThisSession &&
@@ -1714,6 +1736,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           refinanceEligible={Boolean(
             address && address.toLowerCase() === row.borrower.toLowerCase(),
           )}
+          saleListingHeld={saleListingHeld}
         />
       ) : null}
 
