@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient,
+  encodeFunctionData,
   hashStruct,
   http as viemHttp,
   recoverTypedDataAddress,
@@ -1211,6 +1212,71 @@ async function handler(req, res) {
   }
 }
 
-http.createServer(handler).listen(PORT, '127.0.0.1', () => {
+/**
+ * Startup guard: does the FORKED chain actually speak the ABI this repo
+ * committed? (#1518)
+ *
+ * The fork is live Base Sepolia, but the ABIs come from this checkout.
+ * Any merged contract change that widens a read shape breaks every
+ * decode against that chain until someone deploys — and nothing in CI
+ * notices. That is not hypothetical: #1392 appended three fields to the
+ * Offer struct on 2026-07-21, correctly re-exported the ABIs in the same
+ * commit, and was never deployed to Base Sepolia. `getOffer` returned 39
+ * words while the ABI expected 42, `mapOffer` threw inside a
+ * `Promise.all`, the served offer book came back empty, and four specs
+ * failed for ~2 weeks with timeouts that named the offer BOOK and never
+ * the cause.
+ *
+ * So: probe the struct reads up front and say precisely what is wrong.
+ * A wrong answer here is an environment fact, not a test failure — the
+ * fix is a testnet deploy, and the operator should not have to infer
+ * that from `Position 1279 is out of bounds`.
+ *
+ * Deliberately a WARNING, not a hard exit. The tier still has value with
+ * a stale chain (the specs that never read the book pass), and turning a
+ * deploy lag into "no e2e at all" would trade one silent failure for a
+ * louder one. The banner is what was missing.
+ */
+async function assertAbiMatchesFork() {
+  // Static-head width the committed ABI expects, vs what the chain
+  // returns. Only fully-static structs can be checked this way, which
+  // is exactly the shape these paginated/detail reads have.
+  const probes = [
+    { fn: 'getOffer', args: [1n] },
+    { fn: 'getLoanDetails', args: [1n] },
+  ];
+  for (const { fn, args } of probes) {
+    const entry = DIAMOND_ABI_VIEM.find((e) => e.name === fn && e.type === 'function');
+    const components = entry?.outputs?.[0]?.components;
+    if (!components || components.some((c) => /\[\]$|^string$|^bytes$/.test(c.type))) {
+      continue; // dynamic member — width is not a fixed multiple of 32
+    }
+    try {
+      const data = await pub.call({
+        to: DIAMOND,
+        data: encodeFunctionData({ abi: DIAMOND_ABI_VIEM, functionName: fn, args }),
+      });
+      const words = ((data?.data?.length ?? 2) - 2) / 64;
+      if (words && words !== components.length) {
+        console.warn(
+          `[indexer-stub] ABI DRIFT — ${fn} on the forked chain returns ${words} ` +
+            `words, this checkout's ABI expects ${components.length}. The deployed ` +
+            `Base Sepolia Diamond is BEHIND the contracts in this repo, so every ` +
+            `${fn} decode will fail and the specs that need it will time out on ` +
+            `empty data. This is an environment problem, not a test bug: deploy ` +
+            `the facets (contracts/script/redeploy-testnet-inplace.sh) or point ` +
+            `the fork at a chain that matches. See #1518.`,
+        );
+      }
+    } catch (e) {
+      // A probe that cannot run at all is not worth failing startup for
+      // — the per-request paths still report their own errors.
+      console.warn(`[indexer-stub] ABI drift probe for ${fn} could not run:`, e?.shortMessage ?? e?.message ?? e);
+    }
+  }
+}
+
+http.createServer(handler).listen(PORT, '127.0.0.1', async () => {
+  await assertAbiMatchesFork();
   console.log(`[indexer-stub] serving fork-hydrated indexer on :${PORT}`);
 });
