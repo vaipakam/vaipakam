@@ -133,6 +133,27 @@ contract EarlyWithdrawalFacet is
     ///         its stored/economic identity unified, so it can't be safely sold
     ///         until the held VPFI is resolved. See LenderSaleVehicleRedesign.md D1.
     error SalePositionNotConsolidatable();
+    /// @notice Lender-sale lifecycle (design item 1 + borrower action window) —
+    ///         the seller-chosen listing window is outside the permitted
+    ///         [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] range, or,
+    ///         after clamping at the loan's maturity, shorter than the minimum
+    ///         (a loan too close to maturity cannot be listed at all — matching
+    ///         the Layer-1 rule that the sale rows go unavailable near
+    ///         maturity rather than advertising an unfillable exit).
+    error SaleListingWindowInvalid();
+    /// @notice Lender-sale lifecycle (borrower action window) — a previous
+    ///         listing on this loan ended without completing (cancel, expiry,
+    ///         or teardown) and the relist cooldown has not passed. Surfaces
+    ///         the timestamp at which listing re-opens so the frontend can say
+    ///         when instead of just "no".
+    error SaleRelistCooldownActive(uint64 availableAt);
+    // NOTE (#1503 PR-A, Codex #1505 r1): the live-maturity gate for a sale
+    // fill lives in `OfferAcceptFacet` (`SaleLoanPastMaturity`), enforced at
+    // ACCEPT time — before any buyer value moves. `_completeLoanSaleImpl`
+    // deliberately does NOT re-check maturity: completion finishes what
+    // acceptance already committed (buyer principal moved, temp vehicle loan
+    // live), and refusing there would strand a committed buyer on the
+    // documented manual-recovery path.
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -548,14 +569,29 @@ contract EarlyWithdrawalFacet is
      *      liam creates offer for his loan position; new lender accepts via OfferFacet.acceptOffer.
      *      Terms: Remaining duration, same assets/collateral. Links offer to loan via new mapping.
      *      Callable only by original lender. No event here (emitted on acceptance in OfferFacet).
+     *      Lifecycle (LenderEarlyWithdrawalUXDesign item 1 + borrower action
+     *      window): every listing carries a MANDATORY finite expiry. The
+     *      seller picks `listingSeconds` inside
+     *      [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS]; the
+     *      resulting `expiresAt` is additionally clamped at the loan's own
+     *      maturity so a listing can never be accepted inside the grace
+     *      window. There is no never-expires option. A loan whose previous
+     *      listing ended without completing is under a relist cooldown
+     *      (`SALE_RELIST_COOLDOWN_SECONDS`) so the borrower's re-unblocked
+     *      partial-repay / collateral-withdrawal paths get a real action
+     *      window before the freeze can be re-established.
      * @param loanId The loan ID to sell.
      * @param interestRateBps The sale interest rate (may differ from original).
      * @param creatorRiskAndTermsConsent Consent for illiquid assets (if applicable).
+     * @param listingSeconds Seller-chosen listing window in seconds; bounded
+     *        to [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] and
+     *        clamped at the loan's maturity.
      */
     function createLoanSaleOffer(
         uint256 loanId,
         uint256 interestRateBps,
-        bool creatorRiskAndTermsConsent
+        bool creatorRiskAndTermsConsent,
+        uint64 listingSeconds
     ) external nonReentrant whenNotPaused {
         // Tier-1 sanctions gate — creating a sale offer is a state-
         // creating action by msg.sender; sanctioned wallet blocked.
@@ -609,6 +645,17 @@ contract EarlyWithdrawalFacet is
         // mid-offset entangles two concurrent close-outs of the same loan. The
         // offset must be cancelled or completed first (it is short-lived).
         if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
+        // Borrower action window — a previous listing on this loan ended
+        // without completing (cancel / expiry / teardown). Chaining bounded
+        // listings back-to-back would recreate the indefinite borrower freeze
+        // the mandatory expiry exists to remove, with the seller front-running
+        // the borrower's unblocked transaction at every gap. Refuse to relist
+        // until the cooldown passes, surfacing WHEN so the frontend can say it.
+        {
+            uint64 cooldownUntil = s.saleRelistCooldownUntil[loanId];
+            if (block.timestamp < cooldownUntil)
+                revert SaleRelistCooldownActive(cooldownUntil);
+        }
 
         // #951 (redesign D1) — consolidate the lender position to its CURRENT
         // holder (the seller) BEFORE listing, re-anchoring both `loan.lender` and
@@ -637,6 +684,10 @@ contract EarlyWithdrawalFacet is
         if (elapsedDays >= loan.durationDays) revert InvalidSaleOffer();
         uint256 remainingDays = loan.durationDays - elapsedDays;
 
+        // Design item 1 — mandatory finite expiry, clamped at the loan's own
+        // maturity. Validated in its own frame (viaIR stack ceiling).
+        uint64 listingExpiresAt = _boundListingExpiry(loan, listingSeconds);
+
         // #951 (Codex #959) — native-lock the lender position NFT BEFORE the
         // cross-facet create hop, not after. Otherwise, if the seller is a
         // contract, a callback fired during offer creation could transfer the
@@ -664,7 +715,8 @@ contract EarlyWithdrawalFacet is
             seller,
             remainingDays,
             interestRateBps,
-            creatorRiskAndTermsConsent
+            creatorRiskAndTermsConsent,
+            listingExpiresAt
         );
         s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
@@ -689,7 +741,8 @@ contract EarlyWithdrawalFacet is
         address creator,
         uint256 remainingDays,
         uint256 interestRateBps,
-        bool creatorRiskAndTermsConsent
+        bool creatorRiskAndTermsConsent,
+        uint64 listingExpiresAt
     ) private returns (uint256 saleOfferId) {
         LibVaipakam.CreateOfferParams memory params = _buildSaleParams(
             loan,
@@ -697,6 +750,12 @@ contract EarlyWithdrawalFacet is
             interestRateBps,
             creatorRiskAndTermsConsent
         );
+        // Design item 1 — the mandatory bounded expiry rides the offer's own
+        // #195 GTT machinery: `isOfferExpired` gates every accept/match
+        // consumer, and the permissionless lazy-clear / teardown paths
+        // reclaim the listing (and release the borrower-side holds) once it
+        // passes. Never 0 (no GTC listings).
+        params.expiresAt = listingExpiresAt;
         // #951 — call the INTERNAL create entry, not the external `createOffer`.
         // `createLoanSaleOffer` already holds the diamond-shared `nonReentrant`
         // guard, and the external `createOffer` re-enters that same guard via the
@@ -768,6 +827,43 @@ contract EarlyWithdrawalFacet is
     }
 
     /**
+     * @dev Design item 1 — validates the seller-chosen listing window and
+     *      returns the bounded, maturity-clamped `expiresAt`. Own frame so
+     *      the maturity math doesn't deepen `createLoanSaleOffer`'s stack.
+     *
+     *      Rules:
+     *        1. `listingSeconds` must be inside
+     *           [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] — there
+     *           is no never-expires option and no sub-minimum flash listing.
+     *        2. The expiry is clamped at the loan's LIVE maturity
+     *           (`startTime + durationDays`), so a listing can never be
+     *           accepted inside the grace window: `isOfferExpired` treats
+     *           `now >= expiresAt` as expired, and stamping exactly the
+     *           maturity timestamp makes the listing die the second the loan
+     *           becomes overdue.
+     *        3. If clamping leaves less than the minimum window, the loan is
+     *           too close to maturity to list at all — refuse, matching the
+     *           Layer-1 rule that the sale rows go unavailable near maturity
+     *           instead of advertising an exit that cannot complete.
+     */
+    function _boundListingExpiry(
+        LibVaipakam.Loan storage loan,
+        uint64 listingSeconds
+    ) private view returns (uint64 expiresAt) {
+        if (
+            listingSeconds < LibVaipakam.MIN_SALE_LISTING_SECONDS ||
+            listingSeconds > LibVaipakam.MAX_SALE_LISTING_SECONDS
+        ) revert SaleListingWindowInvalid();
+        uint256 maturity = uint256(loan.startTime) +
+            uint256(loan.durationDays) * 1 days;
+        uint256 requested = block.timestamp + uint256(listingSeconds);
+        uint256 bounded = requested < maturity ? requested : maturity;
+        if (bounded < block.timestamp + LibVaipakam.MIN_SALE_LISTING_SECONDS)
+            revert SaleListingWindowInvalid();
+        expiresAt = uint64(bounded);
+    }
+
+    /**
      * @notice Step 2: Completes a loan sale after the borrower-style offer has been accepted.
      * @dev Normally invoked atomically from {OfferFacet.acceptOffer} in the
      *      same transaction as acceptance — users do NOT click a separate
@@ -821,7 +917,13 @@ contract EarlyWithdrawalFacet is
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
-
+        // Design item 1 — the live-maturity gate for a sale fill is enforced
+        // at ACCEPT time in OfferAcceptFacet (`SaleLoanPastMaturity`), before
+        // any buyer value moves. It is deliberately NOT re-checked here: on
+        // the atomic accept-then-complete path both run in one transaction
+        // (same timestamp, so a re-check could never differ), and on the
+        // manual-recovery path a re-check would permanently strand a buyer
+        // whose principal already moved at acceptance (Codex #1505 r1 P1).
         uint256 saleOfferId = s.loanToSaleOfferId[loanId];
         if (saleOfferId == 0) revert SaleNotLinked();
 

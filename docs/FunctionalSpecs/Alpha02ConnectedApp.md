@@ -947,9 +947,26 @@ Its intended behaviour, as the test oracle for this surface:
   time, re-reviewing on material drift. The protocol's cut comes out
   of the forfeited interest, never beyond the shown figure.
 - The lender can instead LIST the position for sale at a rate of
-  their choosing. Before confirming, the review must disclose: the
+  their choosing and for a listing window of their choosing, picked
+  from a small set of preset durations. The form must state that
+  every listing expires on its own — at the end of the chosen window
+  or at the loan's due date, whichever comes first — and that once a
+  listing ends without a sale (expiry or cancellation) the same loan
+  cannot be listed again for a day, a breathing space for the
+  borrower whose preclose and collateral-withdrawal options are held
+  while a listing stands (partial repayment is never held — it stays
+  available throughout, and a pending buyer re-signs for the smaller
+  position).
+  Changing the chosen window, like changing the rate, voids any
+  acknowledgement already given and closes an open review.
+  Before confirming, the review must disclose: the
   lender position NFT is locked for transfer until the sale
-  completes or the listing is cancelled; the settlement (the larger
+  completes or the listing ends — and honestly, not loosely: expiry
+  by itself stops the listing being buyable, while the lock is
+  released by cancelling or by a cleanup step that anyone may
+  trigger after expiry (even while the protocol is paused), and the
+  disclosure must say so rather than imply the lock vanishes at the
+  expiry moment; the settlement (the larger
   of interest accrued by acceptance or the rate difference for the
   remaining term — never both) is pulled from the seller's wallet
   inside the buyer's transaction, so listing sets a standing

@@ -151,6 +151,12 @@ export const BASIS_POINTS = 10_000n;
  *  not specific to any one flow. */
 export const CANCEL_COOLDOWN_SECONDS = 300n;
 
+/** Mirrors LibVaipakam.MIN_SALE_LISTING_SECONDS — a sale listing's
+ *  minimum window (1 hour). `_boundListingExpiry` clamps every window
+ *  at the loan's maturity and refuses a clamped window below this
+ *  minimum, so a loan within an hour of maturity cannot be listed. */
+export const MIN_SALE_LISTING_SECONDS = 3_600n;
+
 /** Seller economics of selling a lender position into a buy offer —
  *  one definition for the picker rows, the review receipt, and the
  *  submit re-check. Mirrors EarlyWithdrawalFacet's net settlement TO
