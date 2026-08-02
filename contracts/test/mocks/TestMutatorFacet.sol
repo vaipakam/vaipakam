@@ -713,6 +713,19 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycleBucket = amount;
     }
 
+    /// @notice #1504 test-only — drive a REAL {LibVpfiRecycle.credit},
+    ///         so a test can observe the live routing decision (day series
+    ///         vs pre-launch slot) rather than seeding either side. The
+    ///         whole point of #1504 is which branch a credit takes, so a
+    ///         test that seeded storage directly could not see the bug.
+    function creditRecycleRaw(
+        LibVpfiRecycle.RecycleSource source,
+        uint256 refId,
+        uint256 amount
+    ) external {
+        LibVpfiRecycle.credit(source, refId, amount);
+    }
+
     /// @notice Governor PR-3b test-only — see {setRecycleBucketRaw}.
     function setRecycledCreditedByDayRaw(uint256 dayId, uint256 amount) external {
         LibVaipakam.storageSlot().recycledCreditedByDay[dayId] = amount;

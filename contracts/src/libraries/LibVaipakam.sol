@@ -5193,9 +5193,33 @@ library LibVaipakam {
         /// @dev Day-bucketed credit totals feeding the trailing-window
         ///      absorption average `Ā[D]` cheaply at day finalization
         ///      (governor §3.1/§5). Key = the interaction-reward schedule day
-        ///      the credit landed in (day 0 collects pre-launch credits — the
-        ///      trailing window ages them out naturally once emissions start).
+        ///      the credit landed in. Day 0 means the FIRST SCHEDULED DAY and
+        ///      nothing else — pre-launch credits go to
+        ///      {recycledCreditedPreLaunch} below (#1504).
         mapping(uint256 => uint256) recycledCreditedByDay;
+        /// @dev Absorption credited while the emission schedule is INACTIVE,
+        ///      kept out of the day series entirely (#1504).
+        ///
+        ///      These credits are real and the tokens are in the bucket —
+        ///      `recycleBucket` and {recycleCreditedCumulative} count them
+        ///      exactly as before, so backing, availability and every
+        ///      cumulative are unchanged. What changes is attribution: they
+        ///      used to land in `recycledCreditedByDay[0]`, which made day 0
+        ///      the sum of an arbitrarily long pre-launch period AND the
+        ///      first scheduled day, inseparably.
+        ///
+        ///      Two things went wrong with that. The published per-day series
+        ///      showed a day-0 bucket that could dwarf every real day, and
+        ///      `Ā` — a trailing MEAN DAILY rate — folded it in for a full
+        ///      window at programme start, sizing the earliest coupled
+        ///      budgets off value no single day produced. A stock must not
+        ///      inflate a rate.
+        ///
+        ///      Deliberately NOT fed into the trailing fold: nothing is lost,
+        ///      because the value still backs the bucket and still raises
+        ///      availability, which is a separate clamp. It simply stops
+        ///      pretending to be a day's activity.
+        uint256 recycledCreditedPreLaunch;
         // ─── VPFI recycling governor PR-3b (#1217 §3.1) — day-pool stamps ───
         /// @dev Per-day governor stamp, written ONCE at day finalization
         ///      ({RewardAggregatorFacet._finalizeAndWrite}) — the #957/#1008

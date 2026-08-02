@@ -87,7 +87,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](148);
+        selectors = new bytes4[](149);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -105,6 +105,9 @@ contract HelperTest {
         // if the length was not bumped far enough the array access reverts
         // loudly rather than dropping a selector.
         uint256 n;
+        // #1504 — drive a REAL LibVpfiRecycle.credit so a test can observe
+        // the live routing decision rather than seeding either side.
+        selectors[n++] = TestMutatorFacet.creditRecycleRaw.selector;
         // #1448 r6 — pre-seed-fold relocated-custody shape.
         selectors[n++] =
             TestMutatorFacet.setRecycleCustodyRelocatedRaw.selector;
@@ -1927,7 +1930,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](20);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -1950,6 +1953,7 @@ contract HelperTest {
         // #1218 M5 — the recycling transparency series.
         selectors[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
         selectors[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
+        selectors[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
         return selectors;
     }
 
