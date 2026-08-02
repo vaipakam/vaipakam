@@ -122,6 +122,28 @@ interface PoolRow {
   absorbed_mirror: string;
 }
 
+/**
+ * A day as the rest of this handler sees it, whatever produced it.
+ *
+ * `a_bar` / `margin_bps` are nullable HERE and not on the event row: the
+ * event carries both, the getter behind a backfilled day returns neither.
+ * The merged shape has to admit that absence, or the merge would have to
+ * invent a zero — and a zero margin is a real, different thing.
+ */
+interface MergedDay extends Omit<PoolRow, 'a_bar' | 'margin_bps'> {
+  a_bar: string | null;
+  margin_bps: number | null;
+  origin: 'event' | 'backfill';
+  /**
+   * What the BACKFILL SNAPSHOT itself held for cross-chain absorption,
+   * kept separate from `absorbed_mirror` because the merge can raise that
+   * from a delayed report. Only the snapshot's own contribution is
+   * undecomposable; a credit that arrived by event is reconcilable per
+   * source (#1513 r6).
+   */
+  snapshot_mirror?: bigint;
+}
+
 export async function handleRecyclingSeries(
   req: Request,
   env: Env,
@@ -149,12 +171,30 @@ export async function handleRecyclingSeries(
       .first<{ absorbed: string }>();
     const preLaunch = preLaunchRow?.absorbed ?? '0';
 
-    const head = await env.DB.prepare(
-      `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day
-         FROM recycle_day_pool WHERE chain_id = ?`,
-    )
+    // Coverage spans BOTH sources. The backfill exists precisely to supply
+    // days EARLIER than the event stream reaches, so a boundary computed
+    // from the event table alone would put every backfilled day outside the
+    // window and serve none of them — the union would be silently inert.
+    const headSql = (withBackfill: boolean) =>
+      `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day FROM (
+         SELECT day_id FROM recycle_day_pool WHERE chain_id = ?1` +
+      (withBackfill
+        ? `
+         UNION ALL
+         SELECT day_id FROM recycle_day_backfill WHERE chain_id = ?1`
+        : '') +
+      `
+       )`;
+    const head = await env.DB.prepare(headSql(true))
       .bind(chainId)
-      .first<{ max_day: number | null; min_day: number | null }>();
+      .first<{ max_day: number | null; min_day: number | null }>()
+      .catch((err: unknown) => {
+        // Same pre-migration window as the merge below.
+        if (!/no such table/i.test(String(err))) throw err;
+        return env.DB.prepare(headSql(false))
+          .bind(chainId)
+          .first<{ max_day: number | null; min_day: number | null }>();
+      });
 
     const maxDay = head?.max_day ?? null;
     if (maxDay === null) {
@@ -174,6 +214,7 @@ export async function handleRecyclingSeries(
           freshDrawdown: '0',
           recycledBudget: '0',
           runwayExtensionDays: null,
+          runwayUnavailableReason: 'no-armed-finalized-days',
           // Present with the same shape as every non-empty response, so a
           // dashboard's no-data state does not need a special case to tell
           // "not self-funded" from "field absent" (Codex #1507 r1 P2).
@@ -191,48 +232,182 @@ export async function handleRecyclingSeries(
     const coverageFromDay = head?.min_day ?? maxDay;
     const cutoff = Math.max(coverageFromDay, maxDay - days + 1);
 
-    // Cumulative figures are LIFETIME, not window-scoped — a runway that
-    // moved when a caller changed `days` would be reporting the query, not
-    // the programme. Both reads return rows and the folding happens in
-    // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
-    // them would silently overflow SQLite's int64.
-    const reportedRows = await env.DB.prepare(
-      `SELECT source_chain_id, reported_cumulative
-         FROM recycle_chain_reported WHERE chain_id = ?`,
+    // Projection readiness is read FIRST, before the attribution rows
+    // (Codex #1513 r9). The rebuild writes the version LAST, so observing
+    // version 2 here guarantees the rows fetched afterwards are complete.
+    // Reading it after them inverts that: a concurrent first post-migration
+    // scan can populate everything and commit the version in between, so
+    // the request holds stale zeroes AND sees version 2 — publishing the
+    // exact inflated runway the gate exists to suppress.
+    const projectionState = await env.DB.prepare(
+      `SELECT projection_version FROM recycle_series_state WHERE chain_id = ?`,
     )
       .bind(chainId)
-      .all<{ source_chain_id: number; reported_cumulative: string }>();
+      .first<{ projection_version: number }>()
+      .catch(() => null);
 
-    const [windowRows, lifetime] = await Promise.all([
+    // ── ONE merged view of the days, consumed by BOTH the lifetime fold
+    // and the windowed series.
+    //
+    // Three times in this change I added a source and updated only one of
+    // its readers: the coverage boundary, then the lifetime aggregates,
+    // then the restore converter. The first two are the same defect, so
+    // the merge happens ONCE here and every consumer reads its result —
+    // there is no longer a "the other place that also reads days" to
+    // forget. EVENT PRECEDENCE lives in this merge and nowhere else.
+    //
+    // Read lifetime-wide, not window-scoped: a cumulative that moved when
+    // a caller changed `days` would be reporting the query rather than the
+    // programme. The window is applied afterwards, to the merged result.
+    const [poolAll, backfillAll, reportedRows] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, stamped, schedule_floor, recycled_budget, a_bar,
                 margin_bps, fresh_drawdown, armed,
                 absorbed_local, absorbed_mirror
-           FROM recycle_day_pool
-          WHERE chain_id = ? AND day_id >= ?
-          ORDER BY day_id ASC`,
-      )
-        .bind(chainId, cutoff)
-        .all<PoolRow>(),
-      env.DB.prepare(
-        `SELECT stamped, armed, schedule_floor, recycled_budget,
-                fresh_drawdown, absorbed_local, absorbed_mirror
            FROM recycle_day_pool WHERE chain_id = ?`,
       )
         .bind(chainId)
-        .all<
-          Pick<
-            PoolRow,
-            | 'stamped'
-            | 'armed'
-            | 'schedule_floor'
-            | 'recycled_budget'
-            | 'fresh_drawdown'
-            | 'absorbed_local'
-            | 'absorbed_mirror'
-          >
-        >(),
+        .all<PoolRow>(),
+      // Tolerates the table not existing yet (Codex #1513 r1 P2). Every
+      // deploy script runs `wrangler deploy` BEFORE
+      // `wrangler d1 migrations apply`, so on the rollout that introduces
+      // 0047 the new Worker serves requests against a database that does
+      // not have this table for as long as the migration takes — and if
+      // the migration fails, indefinitely. An unconditional join would
+      // 500 the whole endpoint over an ADDITIVE change, which is a worse
+      // outcome than briefly serving the event-only series it served
+      // yesterday. Only "no such table" is swallowed; anything else is a
+      // real fault and propagates.
+      env.DB.prepare(
+        `SELECT day_id, stamped, schedule_floor, recycled_budget,
+                fresh_drawdown, armed, absorbed_local, absorbed_mirror
+           FROM recycle_day_backfill WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .all<Omit<PoolRow, 'a_bar' | 'margin_bps'>>()
+        .catch((err: unknown) => {
+          if (!/no such table/i.test(String(err))) throw err;
+          return { results: [] as Array<Omit<PoolRow, 'a_bar' | 'margin_bps'>> };
+        }),
+      // Same rollout window as the backfill query below: every deploy
+      // script deploys the Worker BEFORE applying migrations, so pre-0047
+      // this table exists WITHOUT `attributed_cumulative` and an uncaught
+      // `no such column` rejects the whole `Promise.all` — a 500 for the
+      // length of the rollout, and indefinitely if the migration fails
+      // (Codex #1513 r5 P2). I made the sibling query tolerant and left
+      // this one, in the same expression.
+      env.DB.prepare(
+        `SELECT source_chain_id, reported_cumulative, attributed_cumulative
+           FROM recycle_chain_reported WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .all<{
+          source_chain_id: number;
+          reported_cumulative: string;
+          attributed_cumulative: string;
+        }>()
+        .catch((err: unknown) => {
+          if (!/no such (column|table)/i.test(String(err))) throw err;
+          return env.DB.prepare(
+            `SELECT source_chain_id, reported_cumulative
+               FROM recycle_chain_reported WHERE chain_id = ?`,
+          )
+            .bind(chainId)
+            .all<{ source_chain_id: number; reported_cumulative: string }>()
+            .then((r) => ({
+              // `attributionUnavailable`, NOT a zero. Substituting zero
+              // makes `mirrorUnreported` equal the ENTIRE fold, which is
+              // then added to the source's full reported cumulative — a
+              // knowingly double-counted runway published during the
+              // rollout (Codex #1513 r6). The runway is withheld instead.
+              attributionColumnMissing: true,
+              results: (r.results ?? []).map((x) => ({
+                ...x,
+                attributed_cumulative: '0',
+              })),
+            }))
+            .catch((e: unknown) => {
+              if (!/no such table/i.test(String(e))) throw e;
+              // A MISSING TABLE is not the 0047 rollout shape — that window
+              // has the table without one column. This is the table gone:
+              // data loss, or a partial restore. Treating it as "no reports
+              // exist" publishes a runway built only from the accepted day
+              // fold, silently omitting every mirror's reported-only
+              // lifetime stock (pre-launch, clamped credits). Mark it
+              // unavailable and withhold (Codex #1513 r7).
+              return {
+                attributionTableMissing: true,
+                results: [] as Array<{
+                  source_chain_id: number;
+                  reported_cumulative: string;
+                  attributed_cumulative: string;
+                }>,
+              };
+            });
+        }),
     ]);
+
+    const merged = new Map<number, MergedDay>();
+    // Backfill first, event second: the event overwrites where both
+    // describe a day. It is immutable, while the backfill recomputes from
+    // `dayCapThreshold18`, which a second writer can overwrite for an
+    // already-finalized day on a demoted Diamond.
+    for (const b of backfillAll.results ?? []) {
+      merged.set(b.day_id, {
+        ...b,
+        // The getter returns neither, so a backfilled day genuinely does
+        // not know them. NULL, not 0 — a zero margin is a real, different
+        // thing, and this surface has been bitten by that ambiguity twice.
+        a_bar: null,
+        margin_bps: null,
+        origin: 'backfill',
+        snapshot_mirror: BigInt(b.absorbed_mirror),
+      });
+    }
+    for (const r of poolAll.results ?? []) {
+      // An UNSTAMPED event row must not displace a stamped backfill row —
+      // it carries absorption but no pool, and the backfill is what knows
+      // the pool for a pre-cutover day. It must not be ADDED to it either
+      // (Codex #1513 r2 P1): the backfill's absorption comes from the LIVE
+      // on-chain accumulators, which already include every historical
+      // credit those same event rows folded. Summing them double-counts.
+      //
+      // The snapshot is authoritative and complete for a past day, not
+      // merely preferred: local credits always land on the CURRENT day, and
+      // the ingress refuses a mirror report for an already-finalized day —
+      // so no new absorption can arrive for a day the backfill has covered.
+      // My round-1 version merged the two, fixing a case that cannot occur
+      // and creating one that can.
+      const existing = merged.get(r.day_id);
+      if (r.stamped !== 1 && existing?.origin === 'backfill') {
+        // Component MAXIMA, never a sum, and unconditionally.
+        //
+        // Adding the two double-counts: the backfill snapshot reads the
+        // live on-chain accumulators, which already include every credit
+        // the event rows folded. That was this PR's r2 defect.
+        //
+        // On an UNSTAMPED day the snapshot can also be STALE — a delayed
+        // mirror report is still accepted for a day that never finalized,
+        // so the fold may carry more than the pinned capture saw (r4).
+        //
+        // On a stamped day the snapshot is provably complete (local credits
+        // land on the current day; a late report for a finalized day is
+        // refused at the ingress), so the fold cannot exceed it and the
+        // maximum simply returns the snapshot. Gating the maximum on
+        // `stamped` therefore distinguishes nothing any input can produce —
+        // a branch no test can kill is a guarantee in a comment, and this
+        // PR has already deleted one of those.
+        const maxOf = (a: string, b: string) =>
+          (BigInt(a) > BigInt(b) ? BigInt(a) : BigInt(b)).toString();
+        merged.set(r.day_id, {
+          ...existing,
+          absorbed_local: maxOf(existing.absorbed_local, r.absorbed_local),
+          absorbed_mirror: maxOf(existing.absorbed_mirror, r.absorbed_mirror),
+        });
+        continue;
+      }
+      merged.set(r.day_id, { ...r, origin: 'event' });
+    }
 
     let cumAbsorbed = 0n;
     let cumAbsorbedLocal = 0n;
@@ -240,7 +415,7 @@ export async function handleRecyclingSeries(
     let cumFreshDrawdown = 0n;
     let cumRecycledBudget = 0n;
     let anyStamped = false;
-    for (const r of lifetime.results ?? []) {
+    for (const r of merged.values()) {
       cumAbsorbedLocal += BigInt(r.absorbed_local);
       cumAbsorbedMirror += BigInt(r.absorbed_mirror);
       // The GLOBAL absorption total sums only FINALIZED days. An unstamped
@@ -263,9 +438,17 @@ export async function handleRecyclingSeries(
     }
 
     const daily = [];
-    const rowsByDay = new Map<number, PoolRow>();
-    for (const r of windowRows.results ?? []) rowsByDay.set(r.day_id, r);
+    const rowsByDay: Map<number, MergedDay> = merged;
 
+    // Event precedence, enforced by READ ORDER rather than by write order.
+    //
+    // Where the two sources disagree the event is the record: it is
+    // immutable, while the backfill recomputes from `dayCapThreshold18`,
+    // which a second writer can overwrite for an already-finalized day on a
+    // demoted Diamond. Keeping them in separate tables makes "prefer the
+    // event" a property of this lookup, which nothing can violate — a
+    // single table with a source column would have made it a rule about
+    // which write happened last.
     // Dense series: emit EVERY day in the window so a consumer can tell a
     // quiet day from a missing bucket (the same convention RL-2 pins).
     for (let dayId = cutoff; dayId <= maxDay; dayId++) {
@@ -281,6 +464,12 @@ export async function handleRecyclingSeries(
           stamped: false,
           armed: false,
           estimate: false,
+          // A real stored row keeps its provenance. Hardcoding null here
+          // made an absorption-only row — from either source — look
+          // identical to a synthetic dense-series gap, even though its
+          // absorption is published (Codex #1513 r7). `null` is reserved
+          // for a day with no stored row at all.
+          origin: r?.origin ?? null,
           scheduleFloor: null,
           recycledBudget: null,
           aBar: null,
@@ -311,10 +500,11 @@ export async function handleRecyclingSeries(
         // An unarmed day's pool figures are unreserved estimates. Shown,
         // but labelled, and with the derived emission withheld.
         estimate: !armed,
+        origin: r!.origin,
         scheduleFloor: scheduleFloor.toString(),
         recycledBudget: recycledBudget.toString(),
-        aBar: r!.a_bar,
-        marginBps: r!.margin_bps,
+        aBar: r!.a_bar ?? null,
+        marginBps: r!.margin_bps ?? null,
         freshDrawdown: freshDrawdown.toString(),
         netEmission: armed ? freshDrawdown.toString() : null,
         selfFundingRatio: ratio6(recycledBudget, dailyPool),
@@ -344,27 +534,24 @@ export async function handleRecyclingSeries(
     let trailingPoolSum = 0n;
     let trailingFloorSum = 0n;
     let trailingCount = 0n;
-    const anchorRow = await env.DB.prepare(
-      `SELECT MAX(day_id) AS anchor FROM recycle_day_pool
-        WHERE chain_id = ? AND stamped = 1 AND armed = 1`,
-    )
-      .bind(chainId)
-      .first<{ anchor: number | null }>();
-    const anchor = anchorRow?.anchor ?? null;
-    const trailingRows =
-      anchor === null
-        ? { results: [] as Array<{ schedule_floor: string; recycled_budget: string }> }
-        : await env.DB.prepare(
-            `SELECT schedule_floor, recycled_budget
-               FROM recycle_day_pool
-              WHERE chain_id = ? AND day_id >= ? AND day_id <= ?
-                AND stamped = 1 AND armed = 1`,
-          )
-            .bind(chainId, Math.max(0, anchor - RUNWAY_WINDOW_DAYS + 1), anchor)
-            .all<{ schedule_floor: string; recycled_budget: string }>();
-    for (const r of trailingRows.results ?? []) {
-      trailingPoolSum += BigInt(r.schedule_floor) + BigInt(r.recycled_budget);
-      trailingFloorSum += BigInt(r.schedule_floor);
+    // Read from the MERGED view, like everything else (Codex #1513 r2 P1).
+    // Round 1 claimed every consumer already did; this block still queried
+    // `recycle_day_pool` directly, so a window containing armed BACKFILLED
+    // days anchored short or returned null — and a backfill-only dataset
+    // had no window at all. Asserting the completeness of a fix is not the
+    // same as checking it, and I asserted.
+    const armedDays = [...merged.values()]
+      .filter((d) => d.stamped === 1 && d.armed === 1)
+      .map((d) => d.day_id);
+    const anchor = armedDays.length ? Math.max(...armedDays) : null;
+    const trailingFrom =
+      anchor === null ? 0 : Math.max(0, anchor - RUNWAY_WINDOW_DAYS + 1);
+    for (const d of merged.values()) {
+      if (anchor === null) break;
+      if (d.stamped !== 1 || d.armed !== 1) continue;
+      if (d.day_id < trailingFrom || d.day_id > anchor) continue;
+      trailingPoolSum += BigInt(d.schedule_floor) + BigInt(d.recycled_budget);
+      trailingFloorSum += BigInt(d.schedule_floor);
       trailingCount += 1n;
     }
     const selfFunded = trailingCount > 0n && trailingFloorSum === 0n;
@@ -384,14 +571,34 @@ export async function handleRecyclingSeries(
     // So each mirror contributes its own reported LIFETIME cumulative, which
     // counts every credit it ever took, and its accepted day credits are
     // excluded to avoid counting the same value twice.
-    let mirrorReported = 0n;
+    // PER SOURCE, then sum (Codex #1513 r4 P1). Taking the maximum of the
+    // two SUMS drops a backfill-only mirror whenever another mirror's
+    // reported cumulative dominates: mirror A reporting 500 with 100
+    // attributed, mirror B present only in the backfilled fold with 200,
+    // gives max(500, 300) = 500 when the real stock is at least 700.
+    //
+    // The merged fold only knows the mirror total per DAY, not per source
+    // — `dayMirrorRecycledCredit` is already summed on chain — so the
+    // reconciliation is: every reported source contributes its own
+    // reported figure, and whatever the fold saw ABOVE the attributed
+    // portion of those sources is the part no report accounts for.
     let selfReported = 0n;
+    let mirrorReported = 0n;
+    let mirrorAttributed = 0n;
     for (const r of reportedRows.results ?? []) {
       if (r.source_chain_id === chainId) {
         selfReported = BigInt(r.reported_cumulative);
         continue;
       }
+      // The reported figure, not a max against attribution. On chain,
+      // `accepted` is clamped by the source's remaining headroom, so
+      // `chainAttributedRecycled <= chainReportedRecycled` is a standing
+      // invariant and both figures come from the SAME event — attribution
+      // cannot outrun the report this consumer folded it from. A `max`
+      // here would be a branch no input can reach, and an unreachable
+      // guard reads as a guarantee while testing nothing.
       mirrorReported += BigInt(r.reported_cumulative);
+      mirrorAttributed += BigInt(r.attributed_cumulative);
     }
 
     // The LOCAL term prefers this chain's own self-report when there is one
@@ -407,11 +614,114 @@ export async function handleRecyclingSeries(
     // backwards because a report is a few blocks stale.
     const localFold = cumAbsorbedLocal + BigInt(preLaunch);
     const localTerm = selfReported > localFold ? selfReported : localFold;
-    const runwayNumerator = localTerm + mirrorReported;
+
+    // The MIRROR term takes the same max, for the same reason (Codex #1513
+    // r3 P1). Backfilled days recover mirror absorption from the getter,
+    // but `recycle_chain_reported` only has a row if a self-healing report
+    // happened to arrive within this consumer's coverage — so a
+    // backfill-only history has a real merged mirror fold and a zero
+    // reported total, and taking the reported figure alone drops every
+    // recovered credit. Applying the rule to one side and not the other
+    // was the same omission twice in one expression.
+    // ── The mirror term is REFUSED rather than estimated when a backfilled
+    // day contributes cross-chain absorption. Four consecutive review
+    // rounds found this figure wrong in a new way, and they were all one
+    // problem: the day series' mirror total is summed ACROSS MIRRORS on
+    // chain, so a backfilled day cannot be decomposed per source, and no
+    // arithmetic over aggregates recovers what the sources were.
+    //
+    //   r2: the fold left out this chain's own pre-launch stock.
+    //   r3: it left out every other chain's.
+    //   r4: max(Σ reported, Σ fold) drops a backfill-only mirror whenever
+    //       another mirror's reported figure dominates.
+    //   r5: max(snapshot, fold) is only valid when one source set CONTAINS
+    //       the other — a snapshot holding B's 200 and a fold holding C's
+    //       300 really total 500, and the maximum says 300.
+    //
+    // Each fix was locally right and the next case broke it, because the
+    // information needed is not in the data. So the endpoint does what it
+    // does everywhere else on this surface and REFUSES: a plausible wrong
+    // number is worse than an absent one, and every component it is built
+    // from is still published for anyone who wants to reason about it.
+    //
+    // Exactness is recoverable later — per-source per-day attribution, or
+    // pinning the snapshot block and treating later credits as a delta —
+    // but that is a change to what the backfill RECORDS, not to how this
+    // arithmetic is arranged. Tracked as its own card.
+    const mirrorFold = cumAbsorbedMirror;
+    // (3) Test what the SNAPSHOT contributed, not the merged row (Codex
+    // #1513 r6). An unstamped snapshot that captured zero mirror
+    // absorption, later joined by a delayed report, keeps
+    // `origin: 'backfill'` while carrying the EVENT's figure — which is
+    // fully reconcilable per source. Refusing there contradicts the narrow
+    // refusal this is supposed to be.
+    const backfilledMirror = [...merged.values()].some(
+      (d) => (d.snapshot_mirror ?? 0n) > 0n,
+    );
+    // Unavailable until the REBUILD has run, not merely until the column
+    // exists (Codex #1513 r8). Migration 0047 creates it defaulted to zero,
+    // so between the migration landing and the next scan every historical
+    // accepted credit reads as unattributed — the whole mirror fold is then
+    // added on top of the mirrors' full reported cumulatives and the runway
+    // inflates. The projection version is what says the rebuild finished.
+    //
+    // NARROW, like every other refusal here. A stale rebuild only matters
+    // if there is attribution to be stale about: with no reported rows and
+    // no mirror fold the mirror term is zero either way. A first draft of
+    // this gate withheld unconditionally and took three backfill-only
+    // tests down with it — the gate was measuring the rebuild rather than
+    // the risk.
+    const rebuildStale = (projectionState?.projection_version ?? 0) < 2;
+    // Only OBSERVED MIRROR ABSORPTION can be missing attribution (Codex
+    // #1513 r9). My r8 version also tripped on "any report row exists",
+    // which is true for a canonical self-report — whose accepted value is
+    // deliberately never attributed — and for a mirror report that
+    // accepted nothing. In both, `mirrorUnreported` is zero and the
+    // numerator is already exact, so withholding was pure loss. Narrowed
+    // twice now, in the same direction: the gate must measure the risk,
+    // not its surroundings.
+    const attributionAtStake = cumAbsorbedMirror > 0n;
+    // The missing-COLUMN case gets the SAME narrowing as the version gate
+    // (Codex #1513 r13). During the rollout a chain with only a canonical
+    // self-report — never attributed by design — or a mirror report that
+    // accepted nothing has `cumAbsorbedMirror === 0`, so attribution is
+    // unused and `mirrorTerm` is exactly `mirrorReported`. Withholding
+    // there was loss for the whole rollout, or forever if the migration
+    // fails. Third time in this PR I have narrowed one gate and left its
+    // sibling.
+    //
+    // The missing-TABLE case stays UNCONDITIONAL: that is data loss or a
+    // partial restore, not a rollout shape, and the reported cumulatives it
+    // would have supplied are gone rather than merely unattributed.
+    const columnMissing =
+      (reportedRows as { attributionColumnMissing?: boolean })
+        .attributionColumnMissing === true;
+    const tableMissing =
+      (reportedRows as { attributionTableMissing?: boolean })
+        .attributionTableMissing === true;
+    const attributionUnavailable =
+      tableMissing ||
+      ((columnMissing || rebuildStale) && attributionAtStake);
+    const mirrorUnreported =
+      mirrorFold > mirrorAttributed ? mirrorFold - mirrorAttributed : 0n;
+    const mirrorTerm = mirrorReported + mirrorUnreported;
+    const runwayNumerator = localTerm + mirrorTerm;
     const runwayExtensionDays =
-      trailingCount === 0n || selfFunded
+      trailingCount === 0n || selfFunded || backfilledMirror ||
+      attributionUnavailable
         ? null
         : ratio6(runwayNumerator * trailingCount, trailingPoolSum);
+    // Why it is null, so a consumer is not left guessing between "no data",
+    // "self-funded" and "cannot be computed honestly".
+    const runwayUnavailableReason = selfFunded
+      ? 'self-funded'
+      : trailingCount === 0n
+        ? 'no-armed-finalized-days'
+        : backfilledMirror
+          ? 'backfilled-mirror-absorption-not-decomposable'
+          : attributionUnavailable
+            ? 'attribution-column-unavailable'
+            : null;
 
     return jsonResponse({
       chainId,
@@ -439,6 +749,7 @@ export async function handleRecyclingSeries(
         freshDrawdown: cumFreshDrawdown.toString(),
         recycledBudget: cumRecycledBudget.toString(),
         runwayExtensionDays,
+        runwayUnavailableReason,
         selfFunded,
       },
     });

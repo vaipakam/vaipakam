@@ -1111,7 +1111,21 @@ For each table:
    **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
-   archives), `telegram_links`, `support_tickets`.
+   archives), `telegram_links`, `support_tickets`,
+   `recycle_day_backfill` (absent from pre-#1349-M5 archives).
+
+   > **`recycle_day_backfill` is the one recycling table that is restored
+   > rather than replayed**, and the distinction is load-bearing. Every
+   > other `recycle_*` table is a fold of chain logs, so §6's replay
+   > rebuilds it exactly — those are in the clear-before-replay command
+   > and must NOT be imported here. This one holds pre-cutover day figures
+   > recomputed from `getRecycleDayMetrics`, whose `dayCapThreshold18`
+   > input `setBroadcastDayCapThreshold` can overwrite for an
+   > already-finalized day on a demoted Diamond. After that, re-running
+   > the backfill yields DIFFERENT numbers and the original is
+   > unrecoverable — those days carry no widened event to fall back on.
+   > Restoring it is the only way to keep published history intact; a
+   > re-run is not a substitute.
 
    ```bash
    wrangler d1 execute vaipakam-archive --file=restore/d1/<table>.sql --remote

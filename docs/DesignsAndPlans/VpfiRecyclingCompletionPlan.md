@@ -732,8 +732,76 @@ Scope limit, stated because the natural claim overreaches: this cannot
 rewrite credits already taken. An in-place-upgraded chain keeps whatever
 its day-0 slot holds; on a fresh deploy day 0 is clean by construction.
 
-**The pre-cutover backfill is NOT in that slice, and the restore
-classification is why.** `check-table-classification.mjs` requires every
+**The pre-cutover SCHEMA + read surface landed (#1349 M5); the PASS is
+SPLIT OUT to #1523.** Migration 0047, the restore-converter registration and
+the read-side union ship together and are inert with zero rows — an empty
+table serves an empty pre-cutover history, which is truthful until a capture
+exists. The operator pass was written and reviewed across three rounds, then
+split: `ON CONFLICT DO NOTHING` (chosen to protect the intact-inputs
+capture) makes every capture immutable, so a reorged, stale or
+wrong-Diamond capture is permanent. `latest` → reorg hazard; `finalized` →
+a delayed mirror report records a LOWER total that cannot be repaired; an
+unverified `DIAMOND` succeeds emptily against a promoted replacement and
+blocks the right capture on the same keys. One root cause, three faces.
+#1523 designs versioned captures + an explicit promote instead. **Its
+unfixed carry-over: `ARCHIVE_READY` proves a backup ran BEFORE the pass, when
+the table was empty — a POST-APPLY backup must be required before demotion.**
+
+Decisions from the shipped half, not to re-litigate:
+
+- The table is **BORN-OFF-CHAIN** — archived and re-imported on restore,
+  and deliberately absent from §6's clear-before-replay command. Every
+  other `recycle_*` table is a chain-log fold that the replay rebuilds;
+  these rows are recomputed from `getRecycleDayMetrics`, whose
+  `dayCapThreshold18` input `setBroadcastDayCapThreshold` can overwrite for
+  an already-finalized day on a demoted Diamond. After that a re-run yields
+  DIFFERENT figures and the original is unrecoverable.
+- **Event precedence is READ-TIME**, not a write rule: separate tables mean
+  the preference is a property of the lookup, which nothing can violate.
+  A shared table with a `source` column would have made it a rule about
+  write order.
+- **Every row carries `armed`**, resolved once from
+  `getGovernorCommitState` and stamped on all of them. The pass FAILS
+  CLOSED if it cannot read that — bare figures are the one outcome it
+  exists to prevent. It honours the zero sentinel: `armedFromDay == 0`
+  means NEVER ARMED, and a bare `day >= armedFromDay` is forbidden.
+- `aBar` / `marginBps` are **NULL, not 0** — the getter does not return
+  them, and a zero margin is a real, different thing.
+- Operator-run rather than a Worker route: it needs chain reads and hand
+  sequencing against a demotion, and `apps/indexer` is deliberately
+  read-only and operator-key-free. It emits SQL and writes NOTHING on
+  failure — but that is NOT enough on its own, and an earlier revision of
+  this row said it was (Codex #1513 r7). A shell `>` TRUNCATES the target
+  before node starts, so a re-run that then fails destroys the previous
+  pre-demotion capture: the one artifact here that cannot be recreated.
+  **Use `OUT=<path>`**, which writes a sibling temp file and renames only
+  after a complete run. Stdout is for inspection and carries no such
+  guarantee. `ON CONFLICT DO
+  NOTHING` — the first capture, taken while the inputs were intact, is the
+  record.
+
+**TWO operator ordering requirements, and the second was missed until
+Codex #1513 r8:**
+
+1. Back-fill BEFORE any demotion or role migration (the getter's inputs).
+2. **Deploy `ops/offchain-data-archive` BEFORE running the pass**, and
+   confirm a nightly run has included `recycle_day_backfill`. No deploy
+   script deploys that Worker — `deploy-{mainnet,testnet,chain}.sh` deploy
+   the indexer and apply 0047 and stop — so following the canonical rollout
+   creates IRREPLACEABLE rows while the live nightly is still running a
+   table list that omits them. After a demotion makes regeneration
+   impossible, a D1 loss in that window loses the capture permanently.
+   The split-out pass (#1523) carries an `ARCHIVE_READY=1` acknowledgement
+   for this, because it cannot observe the answer and a silent default is
+   either an obstacle or a trap. **That acknowledgement is NOT sufficient
+   on its own** and #1523 must close the gap: it proves a backup ran BEFORE
+   the pass, when the table was still empty. Nothing yet requires a
+   POST-APPLY backup, and the archive Worker runs only on its nightly
+   03:17 UTC schedule — so a demotion inside that window leaves the rows
+   unregenerable with their only copy in D1.
+
+**(Historical note — why it was a separate slice, and the restore
+classification is why.)** `check-table-classification.mjs` requires every
 written table to declare its restore treatment, and the two classes get
 OPPOSITE handling: replay-derived tables are CLEARED before the block-zero
 replay, born-off-chain tables are IMPORTED from the archive. The event-fed
