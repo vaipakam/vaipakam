@@ -25,6 +25,15 @@ const MIN_DISPLAYABLE = 10n ** BigInt(18 - DISPLAY_FRAC_DIGITS);
 /** Wire amounts are unsigned integer decimal strings. Nothing else is one. */
 const WELL_FORMED_AMOUNT = /^\d+$/;
 
+/** The backing members this page actually RENDERS. The publish gate needs
+ *  every one of them, not a representative sample. */
+const BACKING_DISPLAYED = [
+  'platformRetained',
+  'vpfiBalance',
+  'bucket',
+  'unearmarked',
+] as const;
+
 /** Every field of the payload that is a token amount. */
 const AMOUNT_FIELDS = {
   cumulative: [
@@ -240,6 +249,16 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   }
 
   const { cumulative, daily, scope, coverageFromDay } = series;
+  // EVERY displayed member, not just the two I first checked. The
+  // validator accepts nulls (a withheld read is all-nulls by design), so a
+  // partial payload — retained present, balance null — passed the old gate
+  // and rendered the reserve with an empty balance cell beside it. That is
+  // the all-or-nothing rule failing on precisely the untrusted-payload
+  // path it exists to cover.
+  const backingPublishable = (b: RecyclingSeries['backing']): boolean =>
+    b.unavailableReason === null &&
+    BACKING_DISPLAYED.every((f) => b[f] !== null);
+
   // An indexer that predates the backing block serves no `backing` at all.
   // Treat that as the same refusal a failed read produces — the page must
   // degrade to "cannot say", never crash the analytics surface over a
@@ -255,6 +274,7 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
     unavailableReason: 'not-served-by-this-indexer',
     asOf: null,
   };
+  const backingShown = backingPublishable(backing);
   // Every amount arrives as an 18-decimal wei decimal string. Rendering it
   // verbatim shows a 20-digit integer for an ordinary figure.
   const amt = (v: string | null): string => {
@@ -383,7 +403,7 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
           "alongside the token balance actually held", so the page renders
           BOTH or NEITHER — a reserve on its own is the confident, checkable
           -looking number the requirement exists to prevent. */}
-      {backing.unavailableReason === null && backing.platformRetained !== null ? (
+      {backingShown ? (
         <dl className="recycling-backing" data-testid="recycling-backing">
           <div>
             <dt>{t('recycling.platformRetained')}</dt>
@@ -396,9 +416,34 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
             <dd data-testid="recycling-balance">{amt(backing.vpfiBalance)}</dd>
           </div>
           <div>
-            <dt>{t('recycling.unearmarked')}</dt>
+            <dt>{t('recycling.bucketLabel')}</dt>
+            <dd data-testid="recycling-bucket">{amt(backing.bucket)}</dd>
+          </div>
+          <div>
+            <dt>{t('recycling.outsideBucket')}</dt>
             <dd data-testid="recycling-unearmarked">
               {amt(backing.unearmarked)}
+            </dd>
+          </div>
+          {/* THE VERDICT, stated rather than left to be inferred.
+              `unearmarked` is `balance − bucket` FLOORED AT ZERO, so a
+              bucket that is exactly consumed and one that is SHORT both
+              render 0 — the lens documentation says so in as many words
+              and directs a reader to compare balance against bucket. A
+              page that shows only the floored value publishes the two
+              states identically, which is the one distinction this whole
+              block exists to make. */}
+          <div>
+            <dt>{t('recycling.backedLabel')}</dt>
+            <dd data-testid="recycling-backed">
+              {BigInt(backing.vpfiBalance!) >= BigInt(backing.bucket!)
+                ? t('recycling.backedYes')
+                : t('recycling.backedShort', {
+                    amount: formatUnitsPretty(
+                      BigInt(backing.bucket!) - BigInt(backing.vpfiBalance!),
+                      18,
+                    ),
+                  })}
             </dd>
           </div>
         </dl>

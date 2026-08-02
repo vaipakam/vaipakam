@@ -2106,7 +2106,11 @@
     "splitScopeNote": "The two figures above count every day on record, including days that have not closed yet. The combined total counts only days that have closed. That is why the parts add up to more than the total here — a difference in what each figure covers, not a discrepancy.",
     "platformRetained": "Retained by the platform",
     "vpfiBalance": "VPFI held by the platform",
-    "unearmarked": "Not earmarked for anyone",
-    "backingUnavailable": "The retained reserve is not shown: the platform could not read the tokens actually behind it ({{reason}}). It is published only alongside that balance, never on its own."
+    "backingUnavailable": "The retained reserve is not shown: the platform could not read the tokens actually behind it ({{reason}}). It is published only alongside that balance, never on its own.",
+    "outsideBucket": "Balance outside the recycled pool",
+    "bucketLabel": "Labelled as recycled runway",
+    "backedLabel": "Recycled pool fully backed?",
+    "backedYes": "Yes — the platform holds at least the pool it reports",
+    "backedShort": "No — the pool is short by {{amount}} VPFI"
   }
 }

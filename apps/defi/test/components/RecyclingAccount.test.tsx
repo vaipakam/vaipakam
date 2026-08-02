@@ -553,6 +553,7 @@ describe('RecyclingAccount — the reserve is never published alone', () => {
     // counter-derived, and a counter cannot notice the tokens have left.
     expect(screen.getByTestId('recycling-balance').textContent).toBe('100');
     expect(screen.getByTestId('recycling-unearmarked').textContent).toBe('60');
+    expect(screen.getByTestId('recycling-bucket').textContent).toBe('40');
   });
 
   it('withholds the reserve ENTIRELY when the chain could not be read', async () => {
@@ -600,5 +601,91 @@ describe('RecyclingAccount — the reserve is never published alone', () => {
     );
     render(<RecyclingAccount chainId={8453} />);
     await screen.findByText('recycling.unavailable');
+  });
+});
+
+describe('RecyclingAccount — a floored figure must not hide a shortfall', () => {
+  it('says the pool is SHORT when the balance is below the bucket', async () => {
+    // `unearmarked` is `balance − bucket` floored at zero, so a bucket
+    // exactly consumed and one in breach render identically. The lens
+    // documentation says the zero is ambiguous by construction and
+    // directs a reader to compare balance against bucket — so the page
+    // states the comparison rather than leaving it to be inferred.
+    mockSeries(
+      series({
+        backing: {
+          ...series().backing,
+          vpfiBalance: tok(95),
+          bucket: tok(100),
+          unearmarked: '0', // floored — looks identical to fully consumed
+          outstandingRecycled: tok(90),
+          keeperBudget: '0',
+          platformRetained: tok(10),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-backed').textContent).toContain(
+        'backedShort',
+      ),
+    );
+    // The shortfall is quantified, not merely flagged.
+    expect(screen.getByTestId('recycling-backed').textContent).toContain('5');
+  });
+
+  it('says the pool IS backed when the balance covers it', async () => {
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-backed').textContent).toContain(
+        'backedYes',
+      ),
+    );
+  });
+
+  it('does not distinguish exactly-consumed from short by the floored value alone', async () => {
+    // Both render `unearmarked` 0; only the verdict separates them.
+    mockSeries(
+      series({
+        backing: {
+          ...series().backing,
+          vpfiBalance: tok(100),
+          bucket: tok(100),
+          unearmarked: '0',
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-unearmarked').textContent).toBe('0'),
+    );
+    expect(screen.getByTestId('recycling-backed').textContent).toContain(
+      'backedYes',
+    );
+  });
+
+  it('withholds the WHOLE block when any displayed member is null', async () => {
+    // A partial payload — retained present, balance null — passed the
+    // earlier two-field gate and rendered the reserve with an empty
+    // balance cell, breaking all-or-nothing on the untrusted-payload path
+    // the validator exists to cover.
+    mockSeries(
+      series({
+        backing: { ...series().backing, vpfiBalance: null },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('withholds the block when the BUCKET is null, not just the balance', async () => {
+    // Same rule, other member — the gate must cover every displayed
+    // field rather than a representative sample.
+    mockSeries(series({ backing: { ...series().backing, bucket: null } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
   });
 });
