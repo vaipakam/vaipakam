@@ -15,6 +15,16 @@ this can never turn into a retry storm — and the extra bookkeeping is
 one alarm write per draining pass, only while genuinely behind. At the
 drain rate this enables, a week-long backlog converges in hours.
 
-The webhook-driven path (which already self-drives toward a known
-target block) is unchanged; this fixes specifically the disaster-
-recovery lane where no webhook tells the loop how far behind it is.
+The decision runs at the shared completion point of EVERY successful
+scan, however it was triggered. A webhook-driven scan already
+self-drives toward its known target block; what changes for it is the
+tail: where reaching the target used to park the loop uncondition-
+ally, a pass that met its target while still more than one full
+pass-budget behind the safe head now keeps draining on the same slow
+lane. The headline win is the disaster-recovery lane — where no
+webhook tells the loop how far behind it is — but operators should
+expect the loop to keep consuming its one-alarm-per-pass budget after
+ANY trigger while a genuine backlog remains, and to park only once
+within a pass-budget of the head. An immediate webhook trigger that
+arrives while a drain pass is finishing keeps its immediacy — the
+drain re-arm never overwrites an earlier-firing alarm.
