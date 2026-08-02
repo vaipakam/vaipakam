@@ -1219,6 +1219,68 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     expect(body.cumulative.absorbedLocal).toBe('40');
   });
 
+  it('reconciles mirror stock PER SOURCE, not by comparing sums', async () => {
+    const { h, env } = makeHarness();
+    // Mirror A: reports a lifetime 500, of which 100 was attributed.
+    // Mirror B: appears only in a backfilled day's mirror fold, 200.
+    // Real stock is at least 700; comparing the SUMS gives max(500, 300).
+    await applyRecycleDaySeries(
+      [
+        stamped(5n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 5n,
+          cumulative: 500n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at)
+         VALUES (?, 1, 1, '100', '0', '0', '0', '200', 1, 1, 1700000000)`,
+      )
+      .run(CHAIN);
+
+    // mean floor over days 1 and 5 = 100 -> numerator / 100
+    // numerator = 500 (mirror A, reported) + 200 (unreported fold) = 700
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(7);
+  });
+
+  it('takes the MAXIMUM when both sources are unstamped for a day', async () => {
+    const { h, env } = makeHarness();
+    // An unfinalized day is not protected by the finalized-day ingress
+    // rejection, so a delayed mirror report can land after the pinned
+    // snapshot. The snapshot saw 40; the event fold later saw 90.
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 2, 0, '0', '0', '0', '40', '0', 0, 0, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 90n, dayId: 2n }),
+        stamped(5n),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    // 90, not 40 (stale snapshot) and not 130 (double count).
+    expect(day(body, 2).absorbedLocal).toBe('90');
+    expect(body.cumulative.absorbedLocal).toBe('90');
+  });
+
   it('marks event-sourced days so a reader can tell the two apart', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries([stamped(2n)], env, CHAIN);

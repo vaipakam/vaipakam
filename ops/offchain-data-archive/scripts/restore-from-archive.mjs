@@ -845,8 +845,12 @@ export function invalidRecycleBackfillRowShapes(archive) {
       }
       for (const col of ['chain_id', 'day_id', 'armed_from_day', 'recorded_at']) {
         const v = row[col];
-        if (!Number.isInteger(v) || v < 0) {
-          push(`${col} ${JSON.stringify(v)} is not a non-negative integer`);
+        // SAFE integers: 2^53 passes `Number.isInteger` and satisfies
+        // `n + 1 === n`, so a restored `day_id` at that value makes the
+        // read route's dense `for (dayId <= maxDay; dayId++)` loop never
+        // terminate and hangs every request (Codex #1513 r4).
+        if (!Number.isSafeInteger(v) || v < 0) {
+          push(`${col} ${JSON.stringify(v)} is not a non-negative safe integer`);
         }
       }
       if (row.stamped !== 0 && row.stamped !== 1) {
@@ -864,6 +868,27 @@ export function invalidRecycleBackfillRowShapes(archive) {
           `an unfinalized day cannot be armed — the writer emits armed=0 for ` +
             `absorption-only rows, so this pair is not a shape it produces`,
         );
+      }
+      // `armed` must AGREE with the sentinel, not merely be a valid scalar
+      // (Codex #1513 r4). `armed_from_day = 0` means the governor was NEVER
+      // armed, so a stamped row claiming armed=1 under it restores figures
+      // nothing reserved and republishes them as committed emission. The
+      // writer derives one from the other; an archive where they disagree
+      // did not come from the writer.
+      if (
+        row.stamped === 1 &&
+        Number.isSafeInteger(row.day_id) &&
+        Number.isSafeInteger(row.armed_from_day)
+      ) {
+        const expected =
+          row.armed_from_day !== 0 && row.day_id >= row.armed_from_day ? 1 : 0;
+        if (row.armed !== expected) {
+          push(
+            `armed=${row.armed} contradicts armed_from_day=${row.armed_from_day} ` +
+              `for day ${row.day_id} (the writer derives armed=${expected}) — ` +
+              `restoring it would republish an estimate as committed emission`,
+          );
+        }
       }
     }
   }
@@ -1104,6 +1129,25 @@ export function main(argv) {
   }
 
   const archive = JSON.parse(readFileSync(positional[0], 'utf8'));
+  // Row-shape validation runs BEFORE either materialization (Codex #1513
+  // r4). Validating afterwards still exits non-zero and still prints no
+  // apply command, but the staging directory has already been overwritten
+  // with a batch built from the hostile archive — replacing a prior
+  // known-good staging output at the documented restore path. Refusing
+  // before anything is written keeps the failure non-destructive.
+  const badBackfill = invalidRecycleBackfillRowShapes(archive);
+  if (badBackfill.length > 0) {
+    for (const { table, row, problem } of badBackfill) {
+      console.error(`✗ ${table} row ${row}: ${problem}`);
+    }
+    fail(
+      `${badBackfill.length} recycle_day_backfill row(s) violate the writer's ` +
+        `column invariants — restoring them would either 500 the transparency ` +
+        `series or republish falsified history as the record. Pick a different ` +
+        `archive, or escalate: this can be evidence of pre-backup tampering`,
+    );
+  }
+
   const d1 = convertD1(archive, outDir, { lzDatabase });
   const r2 = materializeR2(archive, outDir);
 
@@ -1119,18 +1163,6 @@ export function main(argv) {
       `${badShapes.length} legal-hold row(s) violate the production writer's column invariants — ` +
         `the archive carries values the writer cannot produce. Pick a different archive, or ` +
         `escalate: this can be evidence of pre-backup tampering in D1`,
-    );
-  }
-  const badBackfill = invalidRecycleBackfillRowShapes(archive);
-  if (badBackfill.length > 0) {
-    for (const { table, row, problem } of badBackfill) {
-      console.error(`✗ ${table} row ${row}: ${problem}`);
-    }
-    fail(
-      `${badBackfill.length} recycle_day_backfill row(s) violate the writer's ` +
-        `column invariants — restoring them would either 500 the transparency ` +
-        `series or republish falsified history as the record. Pick a different ` +
-        `archive, or escalate: this can be evidence of pre-backup tampering`,
     );
   }
   // Cross-halves check: legal holds must not reference documents the

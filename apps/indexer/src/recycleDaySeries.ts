@@ -230,23 +230,33 @@ async function applyOne(
   // walk a monotonic figure backwards.
   const reported = argBig(log.args.cumulative);
   const prevReported = await env.DB.prepare(
-    `SELECT reported_cumulative FROM recycle_chain_reported
+    `SELECT reported_cumulative, attributed_cumulative
+       FROM recycle_chain_reported
       WHERE chain_id = ? AND source_chain_id = ?`,
   )
     .bind(chainId, sourceChainId)
-    .first<{ reported_cumulative: string }>();
+    .first<{ reported_cumulative: string; attributed_cumulative: string }>();
+  // ATTRIBUTED accumulates the accepted day credits for this source. The
+  // day series' mirror term is summed across mirrors on chain, so without
+  // this the per-source reconciliation in the read surface has nothing to
+  // subtract and a backfill-only mirror gets compared away (#1513 r4).
   const reportedWrite = env.DB.prepare(
     `INSERT INTO recycle_chain_reported
-       (chain_id, source_chain_id, reported_cumulative)
-     VALUES (?, ?, ?)
+       (chain_id, source_chain_id, reported_cumulative, attributed_cumulative)
+     VALUES (?, ?, ?, ?)
      ON CONFLICT (chain_id, source_chain_id)
-     DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+     DO UPDATE SET reported_cumulative = excluded.reported_cumulative,
+                   attributed_cumulative = excluded.attributed_cumulative`,
   ).bind(
     chainId,
     sourceChainId,
     (reported > big(prevReported?.reported_cumulative)
       ? reported
       : big(prevReported?.reported_cumulative)
+    ).toString(),
+    (
+      big(prevReported?.attributed_cumulative) +
+      (sourceChainId === chainId ? 0n : accepted)
     ).toString(),
   );
   if (sourceChainId === chainId || accepted === 0n) {
@@ -390,6 +400,7 @@ export async function ensureReportedCumulativeProjection(
     .all<{ args_json: string }>();
 
   const maxBySource = new Map<number, bigint>();
+  const attributedBySource = new Map<number, bigint>();
   for (const row of rows.results ?? []) {
     let args: Record<string, unknown>;
     try {
@@ -400,24 +411,41 @@ export async function ensureReportedCumulativeProjection(
     const src = Number(argBig(args.sourceChainId));
     const cum = argBig(args.cumulative);
     if (cum > (maxBySource.get(src) ?? 0n)) maxBySource.set(src, cum);
+    if (src !== chainId) {
+      attributedBySource.set(
+        src,
+        (attributedBySource.get(src) ?? 0n) + argBig(args.dayCreditAccepted),
+      );
+    }
   }
 
-  for (const [src, cum] of maxBySource) {
+  for (const src of new Set([...maxBySource.keys(), ...attributedBySource.keys()])) {
+    const cum = maxBySource.get(src) ?? 0n;
+    const attr = attributedBySource.get(src) ?? 0n;
     const prev = await env.DB.prepare(
-      `SELECT reported_cumulative FROM recycle_chain_reported
+      `SELECT reported_cumulative, attributed_cumulative
+         FROM recycle_chain_reported
         WHERE chain_id = ? AND source_chain_id = ?`,
     )
       .bind(chainId, src)
-      .first<{ reported_cumulative: string }>();
-    if (cum <= big(prev?.reported_cumulative)) continue;
+      .first<{ reported_cumulative: string; attributed_cumulative: string }>();
+    const nextCum = cum > big(prev?.reported_cumulative) ? cum : big(prev?.reported_cumulative);
+    const nextAttr = attr > big(prev?.attributed_cumulative) ? attr : big(prev?.attributed_cumulative);
+    if (
+      nextCum === big(prev?.reported_cumulative) &&
+      nextAttr === big(prev?.attributed_cumulative)
+    ) {
+      continue;
+    }
     await env.DB.prepare(
       `INSERT INTO recycle_chain_reported
-         (chain_id, source_chain_id, reported_cumulative)
-       VALUES (?, ?, ?)
+         (chain_id, source_chain_id, reported_cumulative, attributed_cumulative)
+       VALUES (?, ?, ?, ?)
        ON CONFLICT (chain_id, source_chain_id)
-       DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+       DO UPDATE SET reported_cumulative = excluded.reported_cumulative,
+                     attributed_cumulative = excluded.attributed_cumulative`,
     )
-      .bind(chainId, src, cum.toString())
+      .bind(chainId, src, nextCum.toString(), nextAttr.toString())
       .run();
   }
 

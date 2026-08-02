@@ -60,11 +60,30 @@ CREATE TABLE IF NOT EXISTS recycle_day_backfill (
   armed INTEGER NOT NULL,
   a_bar TEXT,
   margin_bps INTEGER,
-  -- Provenance of the run that produced the row: which commit's script,
-  -- and the `armedFromDay` it resolved. An operator comparing two
-  -- backfills after a role change needs to know they were taken against
-  -- different arming records.
+  -- Provenance of the run that produced the row. `armed_from_day` is the
+  -- sentinel it resolved; `generator_rev` identifies the computation.
+  -- These rows are non-reproducible and first-write-wins, so two captures
+  -- under the same sentinel would otherwise be indistinguishable even if a
+  -- revised script produced one of them (Codex #1513 r4).
   armed_from_day INTEGER NOT NULL,
   recorded_at INTEGER NOT NULL,
+  generator_rev TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (chain_id, day_id)
 );
+
+-- Per-source ATTRIBUTED cumulative, beside the reported one (#1513 r4).
+--
+-- The runway numerator needs the lifetime recycled stock across the mesh.
+-- Reported cumulatives come per source; the day series' mirror term is
+-- already summed across mirrors on chain (`dayMirrorRecycledCredit`), so a
+-- fold of it cannot be decomposed per source afterwards.
+--
+-- Taking `max(sum of reported, sum of fold)` looked right and is not: a
+-- mirror present only in the backfilled fold is dropped whenever another
+-- mirror's reported cumulative dominates the comparison. Recording what
+-- each source's reports were ATTRIBUTED lets the reconciliation happen per
+-- source — each contributes the larger of its reported and attributed
+-- figures — with whatever the fold saw beyond ALL attributed sources added
+-- as stock no report accounts for.
+ALTER TABLE recycle_chain_reported
+  ADD COLUMN attributed_cumulative TEXT NOT NULL DEFAULT '0';

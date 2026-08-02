@@ -267,11 +267,15 @@ export async function handleRecyclingSeries(
           return { results: [] as Array<Omit<PoolRow, 'a_bar' | 'margin_bps'>> };
         }),
       env.DB.prepare(
-        `SELECT source_chain_id, reported_cumulative
+        `SELECT source_chain_id, reported_cumulative, attributed_cumulative
            FROM recycle_chain_reported WHERE chain_id = ?`,
       )
         .bind(chainId)
-        .all<{ source_chain_id: number; reported_cumulative: string }>(),
+        .all<{
+          source_chain_id: number;
+          reported_cumulative: string;
+          attributed_cumulative: string;
+        }>(),
     ]);
 
     const merged = new Map<number, MergedDay>();
@@ -305,7 +309,33 @@ export async function handleRecyclingSeries(
       // My round-1 version merged the two, fixing a case that cannot occur
       // and creating one that can.
       const existing = merged.get(r.day_id);
-      if (r.stamped !== 1 && existing?.origin === 'backfill') continue;
+      if (r.stamped !== 1 && existing?.origin === 'backfill') {
+        // Component MAXIMA, never a sum, and unconditionally.
+        //
+        // Adding the two double-counts: the backfill snapshot reads the
+        // live on-chain accumulators, which already include every credit
+        // the event rows folded. That was this PR's r2 defect.
+        //
+        // On an UNSTAMPED day the snapshot can also be STALE — a delayed
+        // mirror report is still accepted for a day that never finalized,
+        // so the fold may carry more than the pinned capture saw (r4).
+        //
+        // On a stamped day the snapshot is provably complete (local credits
+        // land on the current day; a late report for a finalized day is
+        // refused at the ingress), so the fold cannot exceed it and the
+        // maximum simply returns the snapshot. Gating the maximum on
+        // `stamped` therefore distinguishes nothing any input can produce —
+        // a branch no test can kill is a guarantee in a comment, and this
+        // PR has already deleted one of those.
+        const maxOf = (a: string, b: string) =>
+          (BigInt(a) > BigInt(b) ? BigInt(a) : BigInt(b)).toString();
+        merged.set(r.day_id, {
+          ...existing,
+          absorbed_local: maxOf(existing.absorbed_local, r.absorbed_local),
+          absorbed_mirror: maxOf(existing.absorbed_mirror, r.absorbed_mirror),
+        });
+        continue;
+      }
       merged.set(r.day_id, { ...r, origin: 'event' });
     }
 
@@ -466,14 +496,34 @@ export async function handleRecyclingSeries(
     // So each mirror contributes its own reported LIFETIME cumulative, which
     // counts every credit it ever took, and its accepted day credits are
     // excluded to avoid counting the same value twice.
-    let mirrorReported = 0n;
+    // PER SOURCE, then sum (Codex #1513 r4 P1). Taking the maximum of the
+    // two SUMS drops a backfill-only mirror whenever another mirror's
+    // reported cumulative dominates: mirror A reporting 500 with 100
+    // attributed, mirror B present only in the backfilled fold with 200,
+    // gives max(500, 300) = 500 when the real stock is at least 700.
+    //
+    // The merged fold only knows the mirror total per DAY, not per source
+    // — `dayMirrorRecycledCredit` is already summed on chain — so the
+    // reconciliation is: every reported source contributes its own
+    // reported figure, and whatever the fold saw ABOVE the attributed
+    // portion of those sources is the part no report accounts for.
     let selfReported = 0n;
+    let mirrorReported = 0n;
+    let mirrorAttributed = 0n;
     for (const r of reportedRows.results ?? []) {
       if (r.source_chain_id === chainId) {
         selfReported = BigInt(r.reported_cumulative);
         continue;
       }
+      // The reported figure, not a max against attribution. On chain,
+      // `accepted` is clamped by the source's remaining headroom, so
+      // `chainAttributedRecycled <= chainReportedRecycled` is a standing
+      // invariant and both figures come from the SAME event — attribution
+      // cannot outrun the report this consumer folded it from. A `max`
+      // here would be a branch no input can reach, and an unreachable
+      // guard reads as a guarantee while testing nothing.
       mirrorReported += BigInt(r.reported_cumulative);
+      mirrorAttributed += BigInt(r.attributed_cumulative);
     }
 
     // The LOCAL term prefers this chain's own self-report when there is one
@@ -498,8 +548,14 @@ export async function handleRecyclingSeries(
     // reported total, and taking the reported figure alone drops every
     // recovered credit. Applying the rule to one side and not the other
     // was the same omission twice in one expression.
+    // Attributed-from-reporting-sources: the part of the merged mirror fold
+    // that the reported cumulatives above already account for. Anything the
+    // fold saw beyond it belongs to a source with no report in this
+    // consumer's coverage, and is added rather than compared away.
     const mirrorFold = cumAbsorbedMirror;
-    const mirrorTerm = mirrorReported > mirrorFold ? mirrorReported : mirrorFold;
+    const mirrorUnreported =
+      mirrorFold > mirrorAttributed ? mirrorFold - mirrorAttributed : 0n;
+    const mirrorTerm = mirrorReported + mirrorUnreported;
     const runwayNumerator = localTerm + mirrorTerm;
     const runwayExtensionDays =
       trailingCount === 0n || selfFunded
