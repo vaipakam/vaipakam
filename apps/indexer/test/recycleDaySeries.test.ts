@@ -1297,8 +1297,93 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
       CHAIN,
     );
     const body = await readSeries(env);
-    // 400 / 100 = 4 — served, not 500ed, with attribution defaulted to 0.
-    expect(body.cumulative.runwayExtensionDays).toBe(4);
+    // TWO properties, and r5 only had the first:
+    //   the endpoint SERVES (no 500) — that was the point of the fallback;
+    //   and it WITHHOLDS the runway, because without attribution the
+    //   unreported term equals the whole fold and gets added on top of the
+    //   source's full reported cumulative. Defaulting attribution to zero
+    //   publishes a knowingly double-counted figure (Codex #1513 r6).
+    expect(body.cumulative.absorbedMirror).toBe('0');
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'attribution-column-unavailable',
+    );
+    // …and the day series itself is unaffected by the missing column.
+    expect(day(body, 1).scheduleFloor).toBe('100');
+  });
+
+  it('does NOT refuse when a delayed report supplies a zero-mirror snapshot', async () => {
+    const { h, env } = makeHarness();
+    // The snapshot captured no cross-chain absorption; a delayed report
+    // arrived afterwards. The merge keeps origin='backfill' while carrying
+    // the EVENT's figure — which is fully reconcilable per source, so
+    // refusing here would contradict the narrow refusal (Codex #1513 r6).
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 1, 0, '0', '0', '0', '0', '0', 0, 1, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries(
+      [
+        stamped(2n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 300n,
+          forDayReported: 300n,
+          dayCreditAccepted: 300n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+    // 300 / 100 = 3
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+  });
+
+  it('keeps scanning when 0047 has not applied yet (write path)', async () => {
+    // The read path was made tolerant a round earlier; the rebuild and the
+    // live write were not, so a scan in the rollout window aborted before
+    // its cursor advanced — a stalled indexer, not a degraded metric.
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    h.db
+      .prepare(
+        `CREATE TABLE recycle_chain_reported (
+           chain_id INTEGER NOT NULL,
+           source_chain_id INTEGER NOT NULL,
+           reported_cumulative TEXT NOT NULL DEFAULT '0',
+           PRIMARY KEY (chain_id, source_chain_id))`,
+      )
+      .run();
+    const applied = await applyRecycleDaySeries(
+      [
+        stamped(1n),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 700n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    expect(applied).toBe(2);
+    const row = h.db
+      .prepare(
+        `SELECT reported_cumulative FROM recycle_chain_reported
+          WHERE chain_id = ? AND source_chain_id = ?`,
+      )
+      .get(CHAIN, MIRROR) as { reported_cumulative: string } | undefined;
+    expect(row?.reported_cumulative).toBe('700');
   });
 
   it('marks event-sourced days so a reader can tell the two apart', async () => {

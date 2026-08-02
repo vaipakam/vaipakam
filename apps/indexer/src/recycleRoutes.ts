@@ -134,6 +134,14 @@ interface MergedDay extends Omit<PoolRow, 'a_bar' | 'margin_bps'> {
   a_bar: string | null;
   margin_bps: number | null;
   origin: 'event' | 'backfill';
+  /**
+   * What the BACKFILL SNAPSHOT itself held for cross-chain absorption,
+   * kept separate from `absorbed_mirror` because the merge can raise that
+   * from a delayed report. Only the snapshot's own contribution is
+   * undecomposable; a credit that arrived by event is reconcilable per
+   * source (#1513 r6).
+   */
+  snapshot_mirror?: bigint;
 }
 
 export async function handleRecyclingSeries(
@@ -293,6 +301,12 @@ export async function handleRecyclingSeries(
             .bind(chainId)
             .all<{ source_chain_id: number; reported_cumulative: string }>()
             .then((r) => ({
+              // `attributionUnavailable`, NOT a zero. Substituting zero
+              // makes `mirrorUnreported` equal the ENTIRE fold, which is
+              // then added to the source's full reported cumulative — a
+              // knowingly double-counted runway published during the
+              // rollout (Codex #1513 r6). The runway is withheld instead.
+              attributionUnavailable: true,
               results: (r.results ?? []).map((x) => ({
                 ...x,
                 attributed_cumulative: '0',
@@ -325,6 +339,7 @@ export async function handleRecyclingSeries(
         a_bar: null,
         margin_bps: null,
         origin: 'backfill',
+        snapshot_mirror: BigInt(b.absorbed_mirror),
       });
     }
     for (const r of poolAll.results ?? []) {
@@ -607,15 +622,25 @@ export async function handleRecyclingSeries(
     // but that is a change to what the backfill RECORDS, not to how this
     // arithmetic is arranged. Tracked as its own card.
     const mirrorFold = cumAbsorbedMirror;
+    // (3) Test what the SNAPSHOT contributed, not the merged row (Codex
+    // #1513 r6). An unstamped snapshot that captured zero mirror
+    // absorption, later joined by a delayed report, keeps
+    // `origin: 'backfill'` while carrying the EVENT's figure — which is
+    // fully reconcilable per source. Refusing there contradicts the narrow
+    // refusal this is supposed to be.
     const backfilledMirror = [...merged.values()].some(
-      (d) => d.origin === 'backfill' && BigInt(d.absorbed_mirror) > 0n,
+      (d) => (d.snapshot_mirror ?? 0n) > 0n,
     );
+    const attributionUnavailable =
+      (reportedRows as { attributionUnavailable?: boolean })
+        .attributionUnavailable === true;
     const mirrorUnreported =
       mirrorFold > mirrorAttributed ? mirrorFold - mirrorAttributed : 0n;
     const mirrorTerm = mirrorReported + mirrorUnreported;
     const runwayNumerator = localTerm + mirrorTerm;
     const runwayExtensionDays =
-      trailingCount === 0n || selfFunded || backfilledMirror
+      trailingCount === 0n || selfFunded || backfilledMirror ||
+      attributionUnavailable
         ? null
         : ratio6(runwayNumerator * trailingCount, trailingPoolSum);
     // Why it is null, so a consumer is not left guessing between "no data",
@@ -626,7 +651,9 @@ export async function handleRecyclingSeries(
         ? 'no-armed-finalized-days'
         : backfilledMirror
           ? 'backfilled-mirror-absorption-not-decomposable'
-          : null;
+          : attributionUnavailable
+            ? 'attribution-column-unavailable'
+            : null;
 
     return jsonResponse({
       chainId,
