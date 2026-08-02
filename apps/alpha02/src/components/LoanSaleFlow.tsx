@@ -105,6 +105,12 @@ export function LoanSaleFlow({
   // offer (creatorRiskAndTermsConsent), so it must be a real tick,
   // voided whenever the reviewed terms change.
   const [consent, setConsent] = useState(false);
+  // Mandatory finite listing window (LenderEarlyWithdrawalUXDesign item 1):
+  // the seller picks a duration; there is no never-expires option. The
+  // contract bounds it to [1 hour, 30 days] and additionally clamps the
+  // resulting expiry at the loan's own maturity.
+  const [listingDays, setListingDays] = useState(7);
+  const listingSeconds = BigInt(listingDays) * 86400n;
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
@@ -125,11 +131,11 @@ export function LoanSaleFlow({
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
         functionName: 'createLoanSaleOffer',
-        args: [BigInt(row.loanId), rateBps, consent],
+        args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
       }),
       value: 0n,
     };
-  }, [walletChain, rateBps, rateValid, consent, row.loanId]);
+  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds]);
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -238,6 +244,7 @@ export function LoanSaleFlow({
         BigInt(row.loanId),
         rateBps,
         consent,
+        listingSeconds,
       ]);
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
@@ -295,7 +302,29 @@ export function LoanSaleFlow({
             aria-label={copy.loanSale.rateLabel}
           />
         </label>
+        <label className="field">
+          <span className="field-label">{copy.loanSale.windowLabel}</span>
+          <select
+            className="input"
+            value={listingDays}
+            onChange={(e) => {
+              setListingDays(Number(e.target.value));
+              setConsent(false); // consent covers what was reviewed
+              onCloseConfirm(); // edited terms void the open review
+            }}
+            aria-label={copy.loanSale.windowLabel}
+          >
+            {[1, 3, 7, 14, 30].map((d) => (
+              <option key={d} value={d}>
+                {copy.loanSale.windowOption(d)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+      <p className="field-hint" style={{ marginTop: 8 }}>
+        {copy.loanSale.windowNote}
+      </p>
       {rateBps !== null && BigInt(rateBps) > live.interestRateBps ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
           {copy.loanSale.sweetenNote}

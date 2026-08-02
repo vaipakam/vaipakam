@@ -237,6 +237,19 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             delete s.loanToSaleOfferId[lockedSaleLoanId];
             // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot to clear
             // (removed; the accept binds `>=` live collateral directly).
+            //
+            // Borrower action window — this cancel just ended a live listing
+            // without a completed sale, re-opening the borrower's
+            // partial-repay / collateral-withdrawal paths. Stamp the relist
+            // cooldown so the seller cannot immediately relist and front-run
+            // the borrower's unblocked transaction (chained bounded listings
+            // would otherwise recreate the indefinite freeze the mandatory
+            // expiry removes). Harmlessly stamped for a terminal loan too —
+            // the cooldown is only ever read at listing creation, which a
+            // terminal loan can't reach.
+            s.saleRelistCooldownUntil[lockedSaleLoanId] = uint64(
+                block.timestamp + LibVaipakam.SALE_RELIST_COOLDOWN_SECONDS
+            );
         }
 
         // #195 — refund destination is ALWAYS the creator's vault (and
@@ -536,8 +549,17 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     function teardownStaleSaleListing(uint256 loanId)
         external
         nonReentrant
-        whenNotPaused
     {
+        // Deliberately NOT `whenNotPaused` (design item 14): this cleanup
+        // moves no value — the sale vehicle escrows nothing at creation, so
+        // the unwind only releases the seller's own NFT lock, cancels their
+        // own dead offer, and re-opens the BORROWER's partial-repay /
+        // collateral-withdrawal paths. Pausing exists to stop value movement,
+        // not to strand third-party affordances: inheriting the pause here
+        // would let an incident that begins while an expired listing stands
+        // hold the borrower frozen until governance unpauses — reinstating
+        // exactly the indefinite freeze the mandatory expiry removes, at the
+        // moment the escape matters most.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 saleOfferId = s.loanToSaleOfferId[loanId];
         // No live listing, or a mid-completion (accepted) sale that settles via
@@ -545,18 +567,28 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (saleOfferId == 0 || s.offers[saleOfferId].accepted) {
             revert NoStaleSaleListing();
         }
-        // Only clean up once the loan can no longer be sold. Active is obviously
-        // live; FallbackPending can still cure back to Active (borrower
-        // addCollateral / full repay), so its listing stays until it truly
-        // terminates. Every other status is terminal — safe to tear down.
+        // Two teardown cases:
+        //   1. LIVE loan (Active, or FallbackPending which can still cure back
+        //      to Active) — teardown is permitted only once the listing's
+        //      MANDATORY expiry has passed (design item 1). Stamps the relist
+        //      cooldown so the borrower gets a real action window before the
+        //      seller can list again.
+        //   2. TERMINAL loan — the pre-existing stale-listing hygiene path:
+        //      the loan can never be sold, so the dangling listing is cleared
+        //      regardless of its expiry. No cooldown (a terminal loan cannot
+        //      relist).
         LibVaipakam.LoanStatus st = s.loans[loanId].status;
         if (
             st == LibVaipakam.LoanStatus.Active ||
             st == LibVaipakam.LoanStatus.FallbackPending
         ) {
-            revert SaleListingLoanStillLive();
+            if (!LibVaipakam.isOfferExpired(s.offers[saleOfferId])) {
+                revert SaleListingLoanStillLive();
+            }
+            LibSaleListing.teardownExpired(s, loanId);
+        } else {
+            LibSaleListing.teardownOnLoanExit(s, loanId);
         }
-        LibSaleListing.teardownOnLoanExit(s, loanId);
     }
 
     /**

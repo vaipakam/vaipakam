@@ -419,6 +419,25 @@ library LibVaipakam {
     // within a bounded grief window. The floor is implicit:
     // `expiresAt > block.timestamp` (also enforced at createOffer).
     uint256 constant MAX_OFFER_EXPIRY_HORIZON = 365 days;
+    // ── Lender-sale listing lifecycle (LenderEarlyWithdrawalUXDesign,
+    //    prerequisite items 1 + 14 + the borrower action window) ─────────
+    // A lender-sale listing freezes the BORROWER's partial-repay and
+    // collateral-withdrawal paths while it stands (PartialWithdrawalFacet /
+    // RepayFacet guards), so a listing may never be open-ended: the seller
+    // picks a duration inside [MIN, MAX], and the resulting expiry is
+    // additionally clamped at the loan's own maturity so a listing can
+    // never be filled inside the grace window (item 1).
+    uint256 constant MIN_SALE_LISTING_SECONDS = 1 hours;
+    uint256 constant MAX_SALE_LISTING_SECONDS = 30 days;
+    // After a listing ends WITHOUT completing (seller cancel, or expiry /
+    // stale teardown), the loan may not be re-listed until this cooldown
+    // passes. Without it, a seller (or their keeper) could chain bounded
+    // listings back-to-back and front-run the borrower's newly unblocked
+    // partial-repay / collateral-withdrawal transaction every time —
+    // recreating the indefinite freeze the mandatory expiry exists to
+    // remove. The cooldown guarantees the borrower a real action window
+    // between listings (design: "borrower action window").
+    uint256 constant SALE_RELIST_COOLDOWN_SECONDS = 1 days;
     // Loan duration cap defaults + bounds (Findings 00025).
     // ProjectDetailsREADME §2 mandates `1 ≤ durationDays ≤ 365` with
     // on-chain enforcement so external callers cannot bypass the
@@ -5908,6 +5927,18 @@ library LibVaipakam {
         // `recycleStrandedSeedBaselineCount` — the above, pinned when the
         //   ceremony starts, so the guard compares like for like.
         uint256 recycleStrandedSeedBaselineCount;
+        // ── Lender-sale listing lifecycle (appended slots) ────────────────
+        // `saleRelistCooldownUntil` — per-loan timestamp before which a new
+        //   lender-sale listing may not be created. Stamped whenever a live
+        //   listing ends WITHOUT completing (seller cancel, expiry teardown,
+        //   lazy-clear of an expired vehicle) to
+        //   `block.timestamp + SALE_RELIST_COOLDOWN_SECONDS`, giving the
+        //   borrower a guaranteed action window on their re-unblocked
+        //   partial-repay / collateral-withdrawal paths before the freeze can
+        //   be re-established. NOT stamped on completion (the position
+        //   changed hands; the new lender starts unencumbered) and never
+        //   read for terminal loans (they can't relist regardless).
+        mapping(uint256 => uint64) saleRelistCooldownUntil;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

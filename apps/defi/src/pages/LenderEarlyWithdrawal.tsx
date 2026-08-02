@@ -74,7 +74,15 @@ export default function LenderEarlyWithdrawal() {
     setStep('submitting');
     const s = beginStep({ ...ctxBase, flow: 'createLoanSaleOffer', step: 'submit-tx' });
     try {
-      const tx = await diamond.createLoanSaleOffer(loan.id, BigInt(bps), riskAndTermsConsent);
+      // Mandatory finite listing window (LenderEarlyWithdrawalUXDesign item
+      // 1): the contract requires a bounded expiry; this legacy surface pins
+      // the 7-day default (the alpha02 flow exposes the seller's choice).
+      const tx = await diamond.createLoanSaleOffer(
+        loan.id,
+        BigInt(bps),
+        riskAndTermsConsent,
+        BigInt(7 * 86400),
+      );
       setTxHash(tx.hash);
       await tx.wait();
       await reload();
