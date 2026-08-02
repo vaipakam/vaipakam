@@ -194,6 +194,11 @@ const LOAN_STATUS_TO_INDEXER_TERMINAL: Record<number, string> = {
  *  every chain we ship on with a comfortable margin. */
 const SAFE_FALLBACK_BUFFER = 32n;
 
+/** #1415 — how far the reported head may sit below the stored cursor
+ *  before the caught-up path logs a loud stale/mis-pointed-RPC
+ *  warning. Generously above any real safe-tag jitter. */
+const HEAD_BEHIND_CURSOR_WARN = 64n;
+
 export interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
@@ -539,6 +544,56 @@ async function sweepMarketSummaries(
 // both route through it). Unchanged behaviour: one cursor-derived,
 // safe-head-bounded scan that advances the cursor. `scannedTo` is the new
 // cursor, which the DO's catch-up loop compares against its target block.
+/** #1415 — RPC chain-identity assertion. A mis-pointed RPC secret
+ *  (wrong `network=` slug, swapped URLs) fails in the ONE shape that
+ *  produces zero signal: a different network whose head sits below our
+ *  cursor reads as "caught up" — no error, no log, no cursor movement
+ *  (the July 2026 outage's silent phase). Verify `eth_chainId` once
+ *  per isolate per (chainId, rpc) pair; a mismatch logs loudly and the
+ *  scan is skipped as a RETRYABLE failure so the caught-up check can
+ *  never mistake it for success. A transport failure leaves the pair
+ *  UNVERIFIED (re-probed next pass) and lets the pass proceed — the
+ *  very next RPC call fails through the existing error handling. */
+const verifiedRpcIdentity = new Set<string>();
+
+export async function verifyRpcChainIdentity(
+  client: { getChainId: () => Promise<number> },
+  chainId: number,
+  rpc: string,
+): Promise<{ ok: boolean; reported?: number }> {
+  const key = `${chainId}:${rpc}`;
+  if (verifiedRpcIdentity.has(key)) return { ok: true };
+  let reported: number;
+  try {
+    reported = await client.getChainId();
+  } catch {
+    return { ok: true }; // transport failure — not an identity verdict
+  }
+  if (reported !== chainId) {
+    // Never log the URL itself — provider URLs embed API keys.
+    let host = 'unparseable-rpc-url';
+    try {
+      host = new URL(rpc).host;
+    } catch {
+      /* keep the placeholder */
+    }
+    console.error(
+      `[chainIndexer] RPC for chain ${chainId} answered eth_chainId=${reported} ` +
+        `(host ${host}) — mis-pointed RPC secret; skipping scan until it is fixed`,
+    );
+    return { ok: false, reported };
+  }
+  verifiedRpcIdentity.add(key);
+  return { ok: true };
+}
+
+/** The scan-skip kinds the ingest loop must treat as FAILURES (rewound
+ *  cursor, bounded retry) rather than success — shared with the DO so
+ *  a new failure kind can't silently read as "caught up" there. */
+export function isRetryableScanSkip(skipped: string | undefined): boolean {
+  return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
+}
+
 export async function runChainIndexerForChain(
   env: Env,
   chain: ChainConfig,
@@ -551,6 +606,14 @@ export async function runChainIndexerForChain(
   const deployBlock = BigInt(getDeployBlock(chainId) ?? 0);
 
   const client = createPublicClient({ transport: http(chain.rpc) });
+
+  // #1415 — identity before anything else: a wrong-network RPC must
+  // fail LOUDLY here, not silently as "caught up" below.
+  const identity = await verifyRpcChainIdentity(client, chainId, chain.rpc);
+  if (!identity.ok) {
+    return emptyResult('rpc-chain-mismatch');
+  }
+
   // Use the safe-tag head, NOT latest. Caching events from the unsafe
   // tip would mean a 1- to 32-block reorg could remove a block whose
   // OfferAccepted / LoanInitiated we already wrote to D1, and the next
@@ -599,6 +662,18 @@ export async function runChainIndexerForChain(
   await ensureRecycleSeriesBackfill(env, chainId);
 
   if (scanFrom > head) {
+    // #1415 second guard: a head MATERIALLY below our own cursor is
+    // never healthy on these chains (the safe-tag reorg horizon is far
+    // smaller) — likelier a lagging replica or a mis-pointed RPC that
+    // passed the identity probe. Loud once per pass; the pass still
+    // no-ops below (there is nothing safe to scan against that head).
+    if (lastBlock - head > HEAD_BEHIND_CURSOR_WARN) {
+      console.warn(
+        `[chainIndexer] chain ${chainId}: RPC head ${head} is ` +
+          `${lastBlock - head} blocks BELOW the stored cursor ${lastBlock} ` +
+          `— stale or mis-pointed RPC; treating as caught-up but flagging`,
+      );
+    }
     // Caught up — no new blocks. Still sweep market_summary (Codex
     // #1288 r4): a market whose only order expired purely BY CLOCK has
     // no on-chain event and no new block, so gating its removal on new

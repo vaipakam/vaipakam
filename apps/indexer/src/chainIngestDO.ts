@@ -40,6 +40,7 @@
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import type { PushHints } from './pushHints';
 import {
+  isRetryableScanSkip,
   runChainIndexerForChain,
   type ChainIndexerResult,
 } from './chainIndexer';
@@ -415,7 +416,7 @@ export class ChainIngestDO {
         // below doesn't mistake a failed pass (whose `scannedTo` is usually
         // `>= target`, e.g. target 0 for a block-less webhook) for success and
         // drop the already-acked webhook's only retry until the next cron tick.
-        retryableFailure = result.skipped === 'rpc-error';
+        retryableFailure = isRetryableScanSkip(result.skipped);
         // #757 Phase B — broadcast the coarse invalidation keys to subscribed
         // clients AFTER the D1 write, so a connected dapp refetches the changed
         // slice within seconds instead of waiting for its next poll. If a PRIOR
@@ -587,7 +588,7 @@ export class ChainIngestDO {
     // the persisted `updated_at` stops advancing and the client sees the
     // stall instead of a fake-fresh rail. An `rpc-error` pass (or a
     // failed cursor read) sends no heartbeat at all.
-    if (result.skipped !== 'rpc-error') {
+    if (!isRetryableScanSkip(result.skipped)) {
       try {
         const row = await this.env.DB.prepare(
           `SELECT last_block, updated_at FROM indexer_cursor
