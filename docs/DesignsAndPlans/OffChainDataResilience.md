@@ -240,13 +240,25 @@ healthcheck in parallel — two independent `ctx.waitUntil` calls, no
 shared state, separate scoped B2 keys (write-only for backup,
 read-only for healthcheck). The healthcheck:
 
-- Lists the `manifests/<recent-date>/` prefix to discover the latest
-  archive (looks back 0..2 days to tolerate a single missed nightly).
+- Runs the same verification against **every** prefix family the backup
+  writes — daily, monthly and yearly (#1476). It originally examined
+  only the daily prefixes, which left the other two unverified by
+  anything while a green PASS implied otherwise.
+- Lists each family's newest period prefix to discover the latest
+  archive: `manifests/<recent-date>/` looking back 0..2 days (tolerating
+  a single missed nightly), `manifests-monthly/<recent-month>/` and
+  `manifests-yearly/<recent-year>/` looking back one period.
 - Fetches that manifest + the sibling archive at the matching nonce.
 - Verifies the archive's SHA-256 matches the manifest's stamp.
 - Decrypts the archive locally to confirm the key + ciphertext are
   intact.
-- Pages the operator on any failure via Telegram (`TG_OPS_CHAT_ID`).
+- Reports **one line per tier on every run**, pass or fail, so the
+  alert states what was actually examined instead of leaving a reader
+  to assume it covered everything.
+- Pages the operator on any failure via Telegram (`TG_OPS_CHAT_ID`). A
+  missing daily or monthly archive is a failure; a missing *yearly* one
+  is reported but not paged, since a deployment that has not yet lived
+  through a Jan 1 legitimately has none.
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare

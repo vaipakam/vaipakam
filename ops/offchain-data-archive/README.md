@@ -106,13 +106,13 @@ provenance gap tracked as **#1473**, which is what would actually close it. The
 floors in `lifecycle-policy.mjs` are a floor of usefulness, not a sufficiency
 argument, and its comments say so.
 
-The monthly floor is higher for a worse reason, stated plainly rather than
-buried: `healthcheck.ts` examines only `manifests/<recent dates>/`, so it never
-looks at the monthly prefixes and **a monthly overwrite is detected by nothing
-today**. A short window there could not be justified by detection at all, so it
-instead has to outlast the monthly write cadence. Extending the healthcheck to
-cover that tier is **#1476**; until it lands the monthly guarantee is genuinely
-weaker than the daily one.
+The monthly floor used to be higher for a worse reason: `healthcheck.ts`
+examined only `manifests/<recent dates>/`, so a monthly overwrite was detected
+by nothing and the window could not be justified by detection at all — it
+simply had to outlast the monthly write cadence. **#1476** closed that: the
+weekly run now verifies the newest monthly and yearly archive alongside the
+daily one, so every tier gets the same routine inspection and the monthly floor
+is now the same cycle-plus-slack figure as the daily one.
 
 Raising the daily ceiling at all means excluding support tickets from that tier,
 which means tickets have no backup — a product decision, tracked as **#1474**.
@@ -200,8 +200,10 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
      are not repeated in this README). The yearly prefixes get
      NO rule, which is what gives them indefinite retention — an earlier
      revision of this line said "six rules … yearly indefinite", which
-     described a rule that does not and should not exist. (Their being
-     unverified by the healthcheck is a separate gap, #1476.)
+     described a rule that does not and should not exist. (The healthcheck
+     verifies the newest yearly object since #1476, but treats its ABSENCE as
+     expected rather than pageable — a deployment that has not lived through a
+     Jan 1 legitimately has none.)
    - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
      writeFiles, bucket-scoped — NOT listFiles) for the nightly cron.
    - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +

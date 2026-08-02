@@ -20,10 +20,14 @@
  */
 
 import { decrypt, sha256Hex } from './crypto';
+import {
+  TIERS,
+  siblingArchiveKey,
+  type TierName,
+  type TierSpec,
+} from './tiers';
 import type { B2Config } from './b2';
 import type { Env } from './env';
-
-export type TierName = 'daily' | 'monthly' | 'yearly';
 
 export interface HealthOutcome {
   ok: boolean;
@@ -51,100 +55,6 @@ export interface HealthReport {
   tiers: TierOutcome[];
 }
 
-/**
- * The prefix families the backup writes, and how far back to look for
- * each. ONE table, iterated by both the verifier and the alert
- * formatter.
- *
- * This table is the fix for #1476, and its shape is the point. The
- * healthcheck used to hard-code the daily prefix, so the monthly and
- * yearly families — written by the same backup pass, on the same
- * credential, under the same threat model — were never examined by
- * anything. A green weekly PASS therefore asserted a coverage it did
- * not have, which is worse than no check: the retention policy's
- * monthly floor was then justified in `lifecycle-policy.mjs` with
- * "the detector will catch it", and there was no detector.
- *
- * Adding a fourth tier means adding a row here; there is no second
- * place to remember.
- */
-interface TierSpec {
-  tier: TierName;
-  manifestPrefix: string;
-  archivePrefix: string;
-  /** Period keys to try, newest first. */
-  periodKeys: (now: number) => string[];
-  /**
-   * Whether finding nothing at all should fail the run.
-   *
-   * Monthly: yes. An object is written on the 1st of every month, so
-   * two months of lookback finding nothing means the monthly write has
-   * stopped. A deployment younger than one month also trips this; that
-   * is a self-resolving false page and far cheaper than staying silent
-   * about a monthly write that has genuinely stopped.
-   *
-   * Yearly: no. An object is written on Jan 1 only, so a deployment
-   * that has not yet lived through one legitimately has none, and that
-   * is a normal state lasting up to a year — unpageable without crying
-   * wolf every week. It is still REPORTED on every run rather than
-   * omitted, so the absence is visible instead of implied.
-   */
-  absenceIsFailure: boolean;
-}
-
-/** `YYYY-MM-DD` for `n` days before `now` (UTC). */
-function dayKey(now: number, daysAgo: number): string {
-  return new Date(now - daysAgo * 86400_000).toISOString().slice(0, 10);
-}
-
-/** `YYYY-MM` for `n` months before `now` (UTC). */
-function monthKey(now: number, monthsAgo: number): string {
-  const d = new Date(now);
-  // Anchor to the 1st before stepping: `setUTCMonth` on the 31st of a
-  // month rolls into the following month when the target is shorter,
-  // so stepping back one month from Mar 31 would land on Mar 3.
-  d.setUTCDate(1);
-  d.setUTCMonth(d.getUTCMonth() - monthsAgo);
-  return d.toISOString().slice(0, 7);
-}
-
-/** `YYYY` for `n` years before `now` (UTC). */
-function yearKey(now: number, yearsAgo: number): string {
-  const d = new Date(now);
-  d.setUTCDate(1);
-  d.setUTCMonth(0);
-  d.setUTCFullYear(d.getUTCFullYear() - yearsAgo);
-  return d.toISOString().slice(0, 4);
-}
-
-export const TIERS: TierSpec[] = [
-  {
-    tier: 'daily',
-    manifestPrefix: 'manifests/',
-    archivePrefix: 'archives/',
-    // 0..2 tolerates a single missed nightly without paging.
-    periodKeys: (now) => [dayKey(now, 0), dayKey(now, 1), dayKey(now, 2)],
-    absenceIsFailure: true,
-  },
-  {
-    tier: 'monthly',
-    manifestPrefix: 'manifests-monthly/',
-    archivePrefix: 'archives-monthly/',
-    // Written on the 1st. The previous month covers a run early on the
-    // 1st itself, before that night's cron has fired.
-    periodKeys: (now) => [monthKey(now, 0), monthKey(now, 1)],
-    absenceIsFailure: true,
-  },
-  {
-    tier: 'yearly',
-    manifestPrefix: 'manifests-yearly/',
-    archivePrefix: 'archives-yearly/',
-    // Written on Jan 1. The previous year covers the whole of a year
-    // whose Jan 1 write has not happened yet.
-    periodKeys: (now) => [yearKey(now, 0), yearKey(now, 1)],
-    absenceIsFailure: false,
-  },
-];
 
 /** Memory ceiling on the healthcheck side — same constant as the
  *  backup path's MAX_ARCHIVE_BYTES. If an archive ever exceeds this,
@@ -332,18 +242,8 @@ export async function verifyTier(
     createdAt: string;
   };
 
-  // The archive's nonce + period come from the manifest's filename
-  // structure: `<manifestPrefix><period>/<nonce>.json` → the archive
-  // lives at `<archivePrefix><period>/<nonce>.bin`.
-  //
-  // Derived from the SPEC, never a hard-coded `manifests/` → `archives/`
-  // rewrite: that pattern does not match `manifests-monthly/`, so it
-  // would leave the prefix untouched and dereference a .bin under the
-  // MANIFEST prefix — a GET 404 reported as a missing archive, on a
-  // tier that was perfectly healthy.
-  const archiveKey =
-    spec.archivePrefix +
-    pickedManifest.key.slice(spec.manifestPrefix.length).replace(/\.json$/, '.bin');
+  // `<manifestPrefix><period>/<nonce>.json` → `<archivePrefix>…/<nonce>.bin`.
+  const archiveKey = siblingArchiveKey(spec, pickedManifest.key);
 
   // Pre-fetch size gate: refuse to OOM-page the Worker by trying to
   // pull a 500 MB archive into RAM. If we ever hit this, the

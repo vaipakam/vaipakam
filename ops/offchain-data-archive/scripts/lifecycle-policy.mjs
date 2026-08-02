@@ -118,8 +118,12 @@ export const DAILY_MAX_TOTAL_DAYS = 29;
 /** Published: monthly archives kept 12 months. */
 export const MONTHLY_MAX_TOTAL_DAYS = 365;
 /**
- * Recovery-window floors, PER TIER, because the two tiers have different
- * detectors — and the monthly tier has none at all (#1471 r6).
+ * Recovery-window floors, kept PER TIER because their CEILINGS differ and a
+ * future divergence should have somewhere to land. The two values are equal
+ * today and that is not a coincidence: since #1476 both tiers are inspected by
+ * the same weekly healthcheck, so the same derivation produces the same
+ * number. They were unequal while only the daily tier had a detector (#1471
+ * r6).
  *
  * Daily: 8 is the weekly healthcheck's cadence (Mon 09:00 UTC) plus a day.
  * Read that as the interval at which SOMETHING routinely looks at these
@@ -128,15 +132,24 @@ export const MONTHLY_MAX_TOTAL_DAYS = 365;
  * "the window outlives one full cycle of the only routine inspection there
  * is", which is the weakest defensible reading and the honest one.
  *
- * Monthly: `healthcheck.ts` NEVER looks at the monthly prefixes. So a monthly
- * overwrite is not detected by anything today, and a 9-day window could not be
- * justified by "the detector will catch it" — there is no detector. Until
- * #1476 extends the healthcheck, the window has to be long enough that the
- * next monthly cycle is still inside it, which is why the floor is 31 rather
- * than 8. That is a weaker guarantee, stated as such rather than dressed up.
+ * Monthly: the SAME derivation as daily, since #1476. `healthcheck.ts` now
+ * verifies the newest monthly archive + manifest on the same weekly run, so
+ * the monthly prefixes get the same routine inspection the daily ones do and
+ * the floor is the same cycle-plus-slack figure.
+ *
+ * Before #1476 the check examined only `manifests/<recent dates>/`, so a
+ * monthly overwrite was detected by nothing and the floor could not be
+ * justified by detection at all — it was 31 purely so the window outlasted
+ * the monthly write cadence. Note which way that argument ran: the weaker
+ * guarantee was ACKNOWLEDGED in this comment while the number quietly stood
+ * in for a detector that did not exist. The floor moved only once the
+ * detector it names actually existed, not before.
+ *
+ * Both floors remain floors of USEFULNESS, not sufficiency: neither tier's
+ * check can raise an alert for an authenticated forgery (#1473).
  */
 export const MIN_RECOVERY_DAYS_DAILY = 8;
-export const MIN_RECOVERY_DAYS_MONTHLY = 31;
+export const MIN_RECOVERY_DAYS_MONTHLY = 8;
 
 /**
  * Throws unless every declared rule is within its published ceiling.
@@ -188,9 +201,11 @@ export function assertPolicyCeilings(decl, fail) {
   // daily and monthly groups, so a rule accidentally declared for
   // `archives-yearly/` or `manifests-yearly/` was ignored here and forwarded
   // to B2 by both writers. That would silently start expiring the legal-audit
-  // durability tier, which is the one tier nothing else would notice: no
-  // healthcheck reads it (#1476) and no promise caps it, so there is no other
-  // signal.
+  // durability tier. The healthcheck does read these prefixes since #1476, but
+  // it verifies the newest object against its manifest — it cannot report that
+  // an object which should still exist has been aged out, and no promise caps
+  // this tier either. So a rule here still expires the tier with no other
+  // signal; reading it is not the same as noticing it shrink.
   // PREFIX MATCHING, NOT EQUALITY (#1471 r11). B2 applies a rule to every key
   // UNDER its prefix, so `archives-yearly/2025/` expires yearly objects just as
   // surely as `archives-yearly/` would — and an exact-membership test let it
@@ -204,8 +219,9 @@ export function assertPolicyCeilings(decl, fail) {
           `yearly prefixes must have NO rule — their indefinite retention is ` +
           `exactly that absence, and it exists for legal-audit durability. Any ` +
           `rule here starts expiring that tier, and nothing else would report ` +
-          `it: no healthcheck examines those prefixes (#1476) and no published ` +
-          `promise bounds them.`,
+          `it: the healthcheck verifies the newest object under those prefixes ` +
+          `(#1476) but cannot notice one that has been aged out, and no ` +
+          `published promise bounds them.`,
       );
     }
   }
@@ -336,10 +352,11 @@ export function assertPolicyCeilings(decl, fail) {
                 `single inspection cycle. Note it cannot raise an alert for an ` +
                 `authenticated forgery at all (#1473) — this floor buys a full ` +
                 `cycle of routine looking, not response time (#1469).`
-              : `There is NO detector for the monthly prefixes: healthcheck.ts ` +
-                `examines only \`manifests/<recent dates>/\`. So this window ` +
-                `cannot be justified by detection at all, and must at least ` +
-                `outlast the monthly write cadence (#1476).`),
+              : `The monthly prefixes get the same WEEKLY healthcheck as the ` +
+                `daily ones since #1476, so this floor is the same ` +
+                `cycle-plus-slack figure: under 8 days the window can close ` +
+                `inside a single inspection cycle. It cannot raise an alert ` +
+                `for an authenticated forgery either (#1473).`),
         );
       }
     }
