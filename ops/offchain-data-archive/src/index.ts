@@ -12,7 +12,7 @@
 import { importBackupKey } from './crypto';
 import { parseRegionFromEndpoint, type B2Config } from './b2';
 import { runNightlyBackup } from './backup';
-import { runHealthcheck } from './healthcheck';
+import { runHealthcheck, type TierOutcome } from './healthcheck';
 import type { Env } from './env';
 
 /** Two B2 configs — see env.ts for why the keys are split. */
@@ -333,36 +333,49 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
   }
 }
 
+/**
+ * One reported line per tier — ALWAYS, on pass as well as on failure.
+ *
+ * The alert enumerates what was actually examined rather than implying
+ * it. That is half of #1476: before it, the check only ever read the
+ * daily prefixes, but the message said "Weekly backup healthcheck
+ * PASS" with no scope, so a green run was read as "the backups are
+ * fine" when two of the three prefix families had never been looked at
+ * by anything. Extending the check without changing the message would
+ * have left the same false assurance for the next tier added.
+ */
+function tierLine(t: TierOutcome): string {
+  const mark = t.ok ? (t.absent ? '·' : '✓') : '✗';
+  const age =
+    t.archiveAgeHours !== undefined ? ` (${t.archiveAgeHours.toFixed(1)} h)` : '';
+  const key = t.archiveKey ? `\n      ${t.archiveKey}${age}` : '';
+  return `  ${mark} ${t.tier}: ${t.reason}${key}`;
+}
+
 async function handleHealthcheck(env: Env, cfg: B2Config): Promise<void> {
   try {
     const r = await runHealthcheck(env, cfg);
+    const lines = r.tiers.map(tierLine);
     if (r.ok) {
-      await tg(
-        env,
-        [
-          '✅ Weekly backup healthcheck PASS',
-          `  archive: ${r.archiveKey}`,
-          r.archiveAgeHours !== undefined
-            ? `  age: ${r.archiveAgeHours.toFixed(1)} h`
-            : '',
-          `  sha256: ${r.manifestSha?.slice(0, 16)}…`,
-          `  ${r.reason}`,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      );
+      await tg(env, ['✅ Weekly backup healthcheck PASS', ...lines].join('\n'));
     } else {
+      const failed = r.tiers.filter((t) => !t.ok);
       await tg(
         env,
         [
-          '🚨 Weekly backup healthcheck FAILED',
-          `  reason: ${r.reason}`,
-          r.archiveKey ? `  archive: ${r.archiveKey}` : '',
-          r.manifestSha ? `  manifest sha: ${r.manifestSha}` : '',
-          r.actualSha ? `  actual sha:   ${r.actualSha}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
+          `🚨 Weekly backup healthcheck FAILED (${failed.length}/${r.tiers.length} tiers)`,
+          ...lines,
+          // Only a hash divergence carries these, and only for the
+          // tier that diverged — printing them per tier keeps them
+          // attached to the object they describe.
+          ...failed
+            .filter((t) => t.manifestSha && t.actualSha)
+            .map(
+              (t) =>
+                `  ${t.tier} manifest sha: ${t.manifestSha}\n` +
+                `  ${t.tier} actual sha:   ${t.actualSha}`,
+            ),
+        ].join('\n'),
       );
     }
   } catch (err) {
