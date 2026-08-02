@@ -2114,6 +2114,6 @@
     "backedShort": "No — the pool is short by {{amount}} VPFI",
     "strandedLabel": "Released from the pool and never credited back",
     "asOfLabel": "These figures were read at",
-    "asOfValue": "{{at}} — the platform reads them on a schedule, so they lag the chain by a few minutes"
+    "asOfValue": "{{at}} — the platform reads these on a rotating schedule, so they trail the chain; the time shown is when they were read"
   }
 }

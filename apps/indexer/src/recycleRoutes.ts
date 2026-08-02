@@ -127,7 +127,11 @@ const RUNWAY_WINDOW_DAYS = 7;
  * transport errors embed the RPC URL and this repository's RPC URLs carry
  * provider API keys. Detail goes to the log; the caller gets a code.
  */
-type BackingReason = 'not-captured-yet' | 'read-failed' | 'snapshot-stale';
+type BackingReason =
+  | 'not-captured-yet'
+  | 'read-failed'
+  | 'snapshot-stale'
+  | 'chain-behind';
 
 interface BackingSnapshot {
   vpfiBalance: string | null;
@@ -214,6 +218,14 @@ export async function captureBackingSnapshot(
   env: Env,
   chainId: number,
 ): Promise<void> {
+  // Recorded WITH the row: the cadence that produced it.
+  const chainCount = (() => {
+    try {
+      return Math.max(1, getChainConfigs(env).length);
+    } catch {
+      return 1;
+    }
+  })();
   let chain;
   try {
     chain = getChainConfigs(env).find((c) => c.id === chainId);
@@ -289,24 +301,23 @@ export async function captureBackingSnapshot(
     releasedRemitStranded: composition[1].toString(),
   };
   await env.DB.prepare(
-    `INSERT INTO recycle_backing_snapshot (chain_id, payload, captured_at, block_number)
-     VALUES (?1, ?2, ?3, ?4)
+    `INSERT INTO recycle_backing_snapshot
+       (chain_id, payload, observed_at, block_time, block_number, chain_count)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      ON CONFLICT(chain_id) DO UPDATE SET
        payload = excluded.payload,
-       captured_at = excluded.captured_at,
-       block_number = excluded.block_number`,
+       observed_at = excluded.observed_at,
+       block_time = excluded.block_time,
+       block_number = excluded.block_number,
+       chain_count = excluded.chain_count`,
   )
-    // `captured_at` is the BLOCK's time, never the Worker's clock. An RPC
-    // that is frozen but still answering returns an old `safe` head; with
-    // a wall-clock stamp every pass would make that stale reading fresh
-    // again, so a pre-shortfall "fully backed" state could be presented
-    // as minutes old indefinitely. Stamping from the chain means a frozen
-    // chain's snapshot ages out exactly as it should.
     .bind(
       chainId,
       JSON.stringify(payload),
+      new Date().toISOString(),
       new Date(Number(head.timestamp) * 1000).toISOString(),
       blockNumber.toString(),
+      chainCount,
     )
     .run();
 }
@@ -332,13 +343,8 @@ export async function captureBackingSnapshot(
  */
 const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
 
-function snapshotMaxAgeMs(env: Env): number {
-  let chains = 1;
-  try {
-    chains = Math.max(1, getChainConfigs(env).length);
-  } catch {
-    chains = 1;
-  }
+function snapshotMaxAgeMs(env: Env, chainCount: number): number {
+  const chains = Math.max(1, chainCount);
   // The FLAG only — the route's `Env` does not carry the DO binding that
   // `doIngestEnabled` also checks. The asymmetry is safe in one direction
   // and that is why it is acceptable: flag set but binding absent means
@@ -355,17 +361,46 @@ function snapshotMaxAgeMs(env: Env): number {
 /** Mirrors `chainIndexer`'s buffer for RPCs without a `safe` tag. */
 const SAFE_FALLBACK_BUFFER = 32n;
 
+/**
+ * How far the safe head may trail the wall clock before the CHAIN, rather
+ * than the schedule, is treated as the problem.
+ *
+ * Finality lag plus the 32-block fallback is minutes on the chains in
+ * scope; an RPC frozen for half an hour is not lag.
+ */
+const MAX_BLOCK_LAG_MS = 30 * 60_000;
+
 async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
   try {
     const row = await env.DB.prepare(
-      `SELECT payload, captured_at, block_number FROM recycle_backing_snapshot WHERE chain_id = ?1`,
+      `SELECT payload, observed_at, block_time, block_number, chain_count
+         FROM recycle_backing_snapshot WHERE chain_id = ?1`,
     )
       .bind(chainId)
-      .first<{ payload: string; captured_at: string; block_number: string }>();
+      .first<{
+        payload: string;
+        observed_at: string;
+        block_time: string;
+        block_number: string;
+        chain_count: number;
+      }>();
     if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
-    const age = Date.now() - Date.parse(row.captured_at);
-    if (!Number.isFinite(age) || age > snapshotMaxAgeMs(env)) {
+
+    // Has the SCHEDULE kept up? Measured against observation time and the
+    // cadence THIS ROW was captured under — not the chain set readable on
+    // this request, which a transient secrets failure can shrink.
+    const observedAge = Date.now() - Date.parse(row.observed_at);
+    if (
+      !Number.isFinite(observedAge) ||
+      observedAge > snapshotMaxAgeMs(env, row.chain_count)
+    ) {
       return BACKING_UNAVAILABLE('snapshot-stale');
+    }
+    // Is the CHAIN still moving? A frozen RPC answers happily with an old
+    // head, and the schedule check cannot see that at all.
+    const blockLag = Date.parse(row.observed_at) - Date.parse(row.block_time);
+    if (!Number.isFinite(blockLag) || blockLag > MAX_BLOCK_LAG_MS) {
+      return BACKING_UNAVAILABLE('chain-behind');
     }
     return {
       ...(JSON.parse(row.payload) as Omit<
@@ -378,7 +413,10 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
       // that the series be reconstructible without trusting this indexer.
       blockNumber: row.block_number,
       unavailableReason: null,
-      asOf: row.captured_at,
+      // The BLOCK's time is what these figures describe, so it is what the
+      // surface shows — the observation time is bookkeeping about the
+      // schedule, not about the state being reported.
+      asOf: row.block_time,
     };
   } catch (err) {
     console.warn(`[recycling] backing snapshot read failed: ${String(err)}`);

@@ -31,9 +31,29 @@ CREATE TABLE IF NOT EXISTS recycle_backing_snapshot (
   -- columns would invite a partial row, and a partial backing block is exactly
   -- what the surface's all-or-nothing rule forbids.
   payload TEXT NOT NULL,
-  -- When the chain was actually read. Published as `asOf`; the surface renders
-  -- its age, so the reader judges the figure's currency rather than trusting it.
-  captured_at TEXT NOT NULL,
+  -- TWO clocks, kept apart because they answer different questions. Holding
+  -- one column for both made each answer wrong in a different way.
+  --
+  --   observed_at — wall clock when the capture ran. The only honest basis
+  --                 for "has the scheduled pass kept up?", since that is a
+  --                 question about the SCHEDULE.
+  --   block_time  — the safe block's own timestamp. The only honest basis
+  --                 for "is the chain still moving?", since a frozen RPC
+  --                 answers happily with an old head and a wall clock would
+  --                 renew that stale reading on every pass.
+  --
+  -- Stamping observation time from the block also silently charged the
+  -- expiry for the safe head's finality lag, so a snapshot could expire
+  -- before its own next scheduled turn.
+  observed_at TEXT NOT NULL,
+  block_time TEXT NOT NULL,
+  -- How many chains were configured WHEN THIS WAS CAPTURED. The refresh
+  -- cadence is `chains × tick`, and reading the count at request time
+  -- instead lets a transient secrets failure — which drops chains from the
+  -- readable set — shrink the expiry below the cadence that actually
+  -- produced the row, marking a healthy snapshot stale. The row carries the
+  -- cadence that made it.
+  chain_count INTEGER NOT NULL,
   -- The block the reads were pinned to. Both lens calls describe one moment,
   -- because they explain each other: read independently, a remittance release
   -- landing between them shows a depleted reserve with no stranded term to

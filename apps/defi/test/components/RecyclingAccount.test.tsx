@@ -803,4 +803,18 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
     await screen.findByTestId('recycling-backing-unavailable');
     expect(screen.queryByTestId('recycling-retained')).toBeNull();
   });
+
+  it('withholds the block when the CHAIN has stopped moving', async () => {
+    // A frozen RPC answers happily with an old head. The schedule check
+    // cannot see that at all — it only knows the capture pass ran — so
+    // the two conditions are reported separately.
+    mockSeries(series({ backing: { ...noBacking('chain-behind') } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('recycling-backing-unavailable').textContent,
+      ).toContain('chain-behind'),
+    );
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
 });
