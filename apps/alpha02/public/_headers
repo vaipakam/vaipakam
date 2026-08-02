@@ -87,6 +87,10 @@
   X-Robots-Tag: noindex
 /risk-access/*
   X-Robots-Tag: noindex
+/recover
+  X-Robots-Tag: noindex
+/recover/*
+  X-Robots-Tag: noindex
 /faucet
   X-Robots-Tag: noindex
 /faucet/*

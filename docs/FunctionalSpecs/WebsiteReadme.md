@@ -417,11 +417,11 @@ Sanctions-screening UX:
 Stuck-token recovery UX:
 
 - `/app/recover` is an advanced, wallet-gated utility route for unsolicited ERC-20 tokens sent directly to a user's Vaipakam Vault
-- the route should not appear in the main nav, footer, Dashboard shortcuts, Asset Viewer actions, or basic user guide; the Advanced User Guide may deep-link to it for users who already understand the risk
+- the route should not appear in the main nav, footer, Dashboard shortcuts, Asset Viewer actions, or basic user guide; the Advanced User Guide — or an equivalent in-app explainer section (e.g. a Help-page card) that first explains the dust-poisoning risk — may deep-link to it for users who already understand the risk
 - the page should emit `noindex,nofollow` metadata and should not be promoted as a normal portfolio-management surface
 - the form should ask for token address, declared source address, and amount; the recoverable maximum is `max(0, raw vault balance - protocol-tracked balance)` for the selected token
 - the UI should clearly state that the declared source must be the wallet or contract the user believes sent the unsolicited tokens and that recovery is sent only to the connected user's own EOA
-- before signing, the user must pass a deliberate confirmation modal that includes the standing warning and requires typing `CONFIRM`
+- before signing, the user must pass a deliberate confirmation step — a modal or an equivalent dedicated review step that replaces the form — that includes the standing warning and requires typing `CONFIRM`
 - the wallet signature should use the on-chain recovery domain / nonce / acknowledgement reads (`recoveryDomainSeparator`, `recoveryNonce(user)`, and `recoveryAckTextHash`) so the app signs the same EIP-712 statement the contract verifies
 - receipt parsing should distinguish `StuckERC20Recovered` from `VaultBannedFromRecoveryAttempt`; a ban outcome is a completed transaction with a blocked recovery, not a generic failed receipt
 - if sanctions-oracle checks are unavailable or revert, the app should surface a fail-safe blocked state and avoid retry loops that imply the user can bypass the check

@@ -5,6 +5,7 @@
  * docs stay on the marketing site; this page is deliberately small.
  */
 import { lazy, Suspense, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { supportMailto } from '../data/support';
 import { formatDate } from '../lib/format';
@@ -125,6 +126,17 @@ export function Help() {
         ) : (
           feeFallback
         )}
+        {/* T-054 — the stuck-token explainer, the ONLY in-app path to
+            /recover (the page is deliberately unlisted; reading this
+            first is the dust-poisoning safety gate). */}
+        <section id="stuck-tokens" className="card">
+          <h3>{copy.recover.helpSection.title}</h3>
+          <p style={{ marginTop: 0 }}>{copy.recover.helpSection.body1}</p>
+          <p>{copy.recover.helpSection.body2}</p>
+          <Link className="btn btn-secondary" to="/recover">
+            {copy.recover.helpSection.link}
+          </Link>
+        </section>
         {/* #1040 phase 1 — human escalation path. The in-app sender
             lives in the Support panel (it holds the health details a
             good report needs); this section points there and offers

@@ -133,6 +133,7 @@ const copySource = {
     activity: { title: 'Activity — Vaipakam' },
     settings: { title: 'Settings — Vaipakam' },
     riskAccess: { title: 'Risk access — Vaipakam' },
+    recover: { title: 'Recover stuck tokens — Vaipakam' },
     faucet: { title: 'Test assets — Vaipakam' },
     notFound: { title: 'Page not found — Vaipakam' },
   },
@@ -1320,6 +1321,85 @@ const copySource = {
     goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
     goneBody:
       'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+  },
+
+  // T-054 stuck-token recovery — deliberately UNLISTED (no nav or
+  // Settings entry; reachable only from the Help explainer below and a
+  // direct URL): a user dust-poisoned by a stranger must read WHY
+  // recovering unknown dust is dangerous before they can find the
+  // button — accidental recovery of sanctioned dust locks the feature
+  // for their vault. The literal CONFIRM the user types is a UI
+  // friction constant, not translatable copy (same rule as signing
+  // text).
+  recover: {
+    title: 'Recover stuck tokens',
+    lede:
+      'For tokens that were sent straight to your vault address outside the app. They aren’t part of any deal and never affect your balances — this flow returns them to your wallet after you declare where they came from.',
+    helpFirst:
+      'If you haven’t read the Help page’s explainer on stuck tokens yet, start there — recovering tokens you don’t recognise can lock this feature for your vault.',
+    wrongChain: 'Switch your wallet to a supported network to use recovery.',
+    // Fail-safe blocked state (spec: "if sanctions-oracle checks are
+    // unavailable the app should surface a fail-safe blocked state"):
+    // recovery HARD-REQUIRES the screening oracle on-chain
+    // (SanctionsOracleUnavailable) — with it unset, every attempt
+    // reverts, so don't let anyone sign into that.
+    unavailableTitle: 'Recovery isn’t available on this network yet',
+    unavailableBody:
+      'This flow depends on the screening service that decides a recovery’s outcome, and it isn’t configured on this network. Nothing can be recovered until it is — your tokens stay exactly where they are.',
+    checkingAvailability: 'Checking whether recovery is available here…',
+    formTitle: 'What arrived, and from where',
+    tokenLabel: 'Token contract address',
+    tokenMeta: tmpl('{{symbol}} · {{decimals}} decimals', ['symbol', 'decimals']),
+    maxRecoverable: tmpl('Recoverable surplus: {{amount}}', ['amount']),
+    tokenLookupFailed:
+      'We couldn’t read this token’s details — check the address and try again.',
+    sourceLabel: 'Sender address (a wallet you control)',
+    sourceHint:
+      'The address these tokens actually came from. Declaring it here asserts on-chain that it belongs to you or acted with your permission.',
+    amountLabel: 'Amount to recover',
+    overMax: 'That’s more than the recoverable surplus for this token.',
+    review: 'Review recovery',
+    warningTitle: 'Read this before recovering',
+    warnings: [
+      'If the sender you declare is on the sanctions list, recovery locks for your vault. The lock lifts only if that address is later removed from the sanctions oracle.',
+      'Recovered tokens can only go to YOUR connected wallet — no other recipient is possible.',
+      'If you did not send these tokens yourself, do not recover them. Unsolicited “dust” never affects your balances or deals — leaving it in place costs you nothing.',
+    ],
+    reviewTitle: 'Confirm your declaration',
+    reviewToken: 'Token',
+    reviewSource: 'Declared sender',
+    reviewAmount: 'Amount',
+    reviewWarnSanctions:
+      'Declaring a sanctions-listed sender locks recovery for your vault until that address leaves the oracle’s list — the same lock the protocol applies to any sanctioned address.',
+    reviewWarnOwnership:
+      'Signing asserts, as a typed wallet signature, that the declared sender is a wallet you control or that acted with your permission.',
+    confirmPrompt: 'Type CONFIRM to enable signing',
+    sign: 'Sign & recover',
+    submitting: 'Submitting…',
+    successTitle: 'Recovery complete',
+    successBody: tmpl('{{amount}} {{symbol}} returned to your wallet.', [
+      'amount',
+      'symbol',
+    ]),
+    viewTx: 'View the transaction',
+    bannedTitle: 'Recovery is locked for your vault',
+    bannedBody: tmpl(
+      'The sender you declared ({{source}}) is on the sanctions list, so recovery locked for your vault. Nothing moved — the tokens stayed where they were.',
+      ['source'],
+    ),
+    bannedAutoUnlock:
+      'The lock lifts automatically if that address is later removed from the sanctions oracle.',
+    errTitle: 'Recovery didn’t go through',
+    errOutcomeMissing:
+      'The transaction went through, but we couldn’t find the recovery outcome in it. Refresh the page to see the current state.',
+    helpSection: {
+      title: 'Tokens stuck in your vault?',
+      body1:
+        'Sometimes tokens land in a vault address outside the app — a mistaken direct transfer, or “dust” a stranger sent. They aren’t part of any deal and never affect your balances or positions.',
+      body2:
+        'If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: recovering unknown dust can lock the recovery feature for your vault if the sender turns out to be sanctions-listed — a trap known as dust poisoning.',
+      link: 'Open the recovery flow',
+    },
   },
 
   // #671/#728 progressive risk access — the self-sovereign /risk-access

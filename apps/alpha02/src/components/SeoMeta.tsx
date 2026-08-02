@@ -94,6 +94,7 @@ function metaForPath(rawPathname: string): RouteMeta {
   if (pathname === '/activity') return { ...seo.activity, index: false };
   if (pathname === '/settings') return { ...seo.settings, index: false };
   if (pathname === '/risk-access') return { ...seo.riskAccess, index: false };
+  if (pathname === '/recover') return { ...seo.recover, index: false };
   if (pathname === '/faucet') return { ...seo.faucet, index: false };
   return { ...seo.notFound, index: false };
 }

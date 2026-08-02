@@ -60,6 +60,9 @@ const Faucet = lazy(() =>
 const RiskAccess = lazy(() =>
   import('./pages/RiskAccess').then((m) => ({ default: m.RiskAccess })),
 );
+const Recover = lazy(() =>
+  import('./pages/Recover').then((m) => ({ default: m.Recover })),
+);
 const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
 const NotFound = lazy(() =>
   import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
@@ -85,6 +88,10 @@ export function App() {
         <Route path="/nft/:tokenId" element={<NftVerifier />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/risk-access" element={<RiskAccess />} />
+        {/* T-054 — deliberately UNLISTED (Help explainer deep link
+            only); see the page header for why discoverability is
+            gated. */}
+        <Route path="/recover" element={<Recover />} />
         <Route path="/faucet" element={<Faucet />} />
         <Route path="/help" element={<Help />} />
 
