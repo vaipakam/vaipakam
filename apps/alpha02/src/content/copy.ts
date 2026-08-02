@@ -132,6 +132,7 @@ const copySource = {
     vault: { title: 'My vault — Vaipakam' },
     activity: { title: 'Activity — Vaipakam' },
     settings: { title: 'Settings — Vaipakam' },
+    riskAccess: { title: 'Risk access — Vaipakam' },
     faucet: { title: 'Test assets — Vaipakam' },
     notFound: { title: 'Page not found — Vaipakam' },
   },
@@ -1312,6 +1313,94 @@ const copySource = {
     goneTitle: tmpl(`Token #{{id}} does not currently exist on this network`, ['id']),
     goneBody:
       'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+  },
+
+  // #671/#728 progressive risk access — the self-sovereign /risk-access
+  // page. Every vault starts at the safest level and only opts UP with
+  // explicit consent; wording stays plain-language (Basic-first) while
+  // keeping the contract semantics honest (cooldown, terms re-affirm,
+  // strict-mode linger).
+  riskAccess: {
+    title: 'Risk access',
+    lede:
+      'Choose how risky the assets in your deals are allowed to be. You start at the safest level, and nothing moves up unless you explicitly raise it here.',
+    unsupported:
+      'This network’s deployment doesn’t have the risk-access controls yet.',
+    wrongChain:
+      'Switch your wallet to a supported network to view and change your risk level.',
+    loading: 'Checking your current risk level…',
+    readFailed:
+      'We couldn’t read your current risk level, so the controls are hidden — changing it blind could restart a cooldown or pick the wrong level.',
+    partialReadWarning:
+      'Part of this page couldn’t be read just now, so a note below may be missing. Any change you make still applies normally.',
+    currentLevel: tmpl('Your active level: {{tier}}', ['tier']),
+    heldHigher: tmpl(
+      'You’ve chosen {{tier}}, but it isn’t active yet — see the note on that option below.',
+      ['tier'],
+    ),
+    enforcementOn:
+      'This choice is enforced on this network: offers you create or accept are checked against it.',
+    enforcementOff:
+      'Not enforced on this network yet — your choice is saved on-chain and starts applying the moment enforcement is switched on.',
+    enforcementUnknown:
+      'We couldn’t tell whether this choice is currently being enforced on this network.',
+    tierHeading: 'Your risk level',
+    tiers: {
+      blueChip: {
+        label: 'Blue-chip only',
+        hint: 'Safest. Only the most established, deepest-liquidity assets.',
+      },
+      broadLiquid: {
+        label: 'Broad liquid',
+        hint: 'Also allows mid-tier liquid assets. Deals stay protected by the collateral and loan-health checks.',
+      },
+      illiquid: {
+        label: 'Illiquid / custom',
+        hint: 'Also allows NFTs and assets without a reliable price. Each such pairing asks for its own one-time consent, and on a default the lender receives the asset itself rather than a sale.',
+      },
+    },
+    coolingNote:
+      'Chosen — becomes active once the safety cooldown finishes.',
+    staleNote:
+      'Not active: the protocol’s risk terms changed since you chose this. Confirm it again below to restore it.',
+    unknownHeldNote:
+      'Chosen, but not active yet — either a cooldown is still running or the risk terms changed. If it doesn’t activate, pick a lower level and then re-choose this one.',
+    reaffirm: 'Confirm my level again',
+    reaffirming: 'Confirming…',
+    directionNote:
+      'Moving down is instant. Moving up may wait out a short safety cooldown before it becomes active.',
+    raisedMsg:
+      'Level raised. If a safety cooldown is configured, it becomes active once the cooldown finishes.',
+    loweredMsg: 'Level updated.',
+    reaffirmedMsg:
+      'Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.',
+    strict: {
+      title: 'Strict mode',
+      blurb:
+        'Off by default. While on, every deal that involves a mid-tier asset (liquid, but not blue-chip) asks you for one extra, deliberate confirmation on top of your level above — you’ll see it when you create or accept such an offer.',
+      on: 'Strict mode is ON — click to turn off',
+      off: 'Strict mode is OFF — click to turn on',
+      updating: 'Updating…',
+      enabledMsg:
+        'Strict mode is on. Mid-tier deals now ask for a fresh confirmation when you create or accept the offer.',
+      disabledMsg:
+        'Strict mode is off. If a safety cooldown is configured, the extra confirmation keeps applying until it finishes.',
+      lingerNote:
+        'You turned this off recently — the extra confirmation keeps applying until the safety cooldown finishes.',
+      lingerUnknown:
+        'We couldn’t check the turn-off cooldown, so a recent turn-off may still be keeping the extra confirmation active.',
+      unreadable: 'We couldn’t read the strict-mode setting right now.',
+    },
+    // Advanced-mode detail line — raw protocol context for DEX-versed
+    // users; Basic mode never shows these numbers.
+    advancedDetail: tmpl(
+      'risk-terms version {{terms}} · your anchor {{anchor}} · raise cooldown ends {{until}}',
+      ['terms', 'anchor', 'until'],
+    ),
+    advancedNoCooldown: tmpl(
+      'risk-terms version {{terms}} · your anchor {{anchor}} · no cooldown pending',
+      ['terms', 'anchor'],
+    ),
   },
 
   keepers: {
@@ -3240,6 +3329,7 @@ const copySource = {
       vaultSub: 'Where your assets sit — totals, locked, and free',
       vpfiSub: 'Optional — reduce protocol fees by holding VPFI',
       activitySub: 'Everything your wallet has done on Vaipakam',
+      riskAccessSub: 'Choose how risky the assets in your deals may be',
       helpSub: 'Plain-language answers and build info',
     },
   },

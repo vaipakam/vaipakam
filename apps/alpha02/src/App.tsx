@@ -57,6 +57,9 @@ const NftVerifier = lazy(() =>
 const Faucet = lazy(() =>
   import('./pages/Faucet').then((m) => ({ default: m.Faucet })),
 );
+const RiskAccess = lazy(() =>
+  import('./pages/RiskAccess').then((m) => ({ default: m.RiskAccess })),
+);
 const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
 const NotFound = lazy(() =>
   import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
@@ -81,6 +84,7 @@ export function App() {
         <Route path="/nft" element={<NftVerifier />} />
         <Route path="/nft/:tokenId" element={<NftVerifier />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/risk-access" element={<RiskAccess />} />
         <Route path="/faucet" element={<Faucet />} />
         <Route path="/help" element={<Help />} />
 

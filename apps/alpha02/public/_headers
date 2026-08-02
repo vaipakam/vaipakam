@@ -83,6 +83,10 @@
   X-Robots-Tag: noindex
 /settings/*
   X-Robots-Tag: noindex
+/risk-access
+  X-Robots-Tag: noindex
+/risk-access/*
+  X-Robots-Tag: noindex
 /faucet
   X-Robots-Tag: noindex
 /faucet/*
