@@ -57,6 +57,7 @@ const AMOUNT_FIELDS = {
     'keeperBudget',
     'platformRetained',
     'releasedRemitStranded',
+    'blockNumber',
   ],
 } as const;
 
@@ -73,20 +74,33 @@ const AMOUNT_FIELDS = {
  * detected corruption into a confident false figure, which is the failure
  * this entire surface is built to avoid.
  */
-function amountsAreWellFormed(s: RecyclingSeries): boolean {
-  const ok = (v: unknown) =>
-    v === null || (typeof v === 'string' && WELL_FORMED_AMOUNT.test(v));
+const wellFormedAmount = (v: unknown) =>
+  v === null || (typeof v === 'string' && WELL_FORMED_AMOUNT.test(v));
+
+/**
+ * The D1-DERIVED series only. Backing is validated separately, on purpose.
+ *
+ * Folding backing into this check made one malformed backing amount mark
+ * the WHOLE account unavailable — hiding a perfectly good day series and
+ * cumulative totals. That is the opposite of the rule this component's
+ * own spec clause states: a surface that cannot trust an input refuses
+ * ITS OWN figures and no more. Backing is a separately captured payload,
+ * so its failures belong to its own block.
+ */
+function seriesAmountsAreWellFormed(s: RecyclingSeries): boolean {
   const cum = s.cumulative as unknown as Record<string, unknown>;
-  for (const f of AMOUNT_FIELDS.cumulative) if (!ok(cum[f])) return false;
+  for (const f of AMOUNT_FIELDS.cumulative) if (!wellFormedAmount(cum[f])) return false;
   for (const d of s.daily) {
     const row = d as unknown as Record<string, unknown>;
-    for (const f of AMOUNT_FIELDS.daily) if (!ok(row[f])) return false;
-  }
-  const backing = s.backing as unknown as Record<string, unknown> | undefined;
-  if (backing) {
-    for (const f of AMOUNT_FIELDS.backing) if (!ok(backing[f])) return false;
+    for (const f of AMOUNT_FIELDS.daily) if (!wellFormedAmount(row[f])) return false;
   }
   return true;
+}
+
+/** The backing block alone. A failure here withholds only that block. */
+function backingAmountsAreWellFormed(b: RecyclingSeries['backing']): boolean {
+  const rec = b as unknown as Record<string, unknown>;
+  return AMOUNT_FIELDS.backing.every((f) => wellFormedAmount(rec[f]));
 }
 
 /**
@@ -201,7 +215,7 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
           if (cancelled) return;
           // A null read is "we cannot say", not "nothing happened" — and
           // a malformed one is the same answer, reached differently.
-          if (!s || !amountsAreWellFormed(s)) {
+          if (!s || !seriesAmountsAreWellFormed(s)) {
             setState('unavailable');
             return;
           }
@@ -258,6 +272,8 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   // null among them is a partial payload, not a withheld one.
   const backingPublishable = (b: RecyclingSeries['backing']): boolean =>
     b.unavailableReason === null &&
+    // Malformed amounts withhold the BLOCK, not the account.
+    backingAmountsAreWellFormed(b) &&
     AMOUNT_FIELDS.backing.every(
       (f) => (b as unknown as Record<string, unknown>)[f] !== null,
     );

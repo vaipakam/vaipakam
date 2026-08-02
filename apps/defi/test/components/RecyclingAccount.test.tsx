@@ -64,6 +64,7 @@ const series = (over: Partial<RecyclingSeries> = {}): RecyclingSeries => ({
     keeperBudget: tok(5),
     platformRetained: tok(25),
     releasedRemitStranded: '0',
+    blockNumber: '12345678',
     unavailableReason: null,
     asOf: '2026-08-03T00:00:00.000Z',
   },
@@ -593,14 +594,27 @@ describe('RecyclingAccount — the reserve is never published alone', () => {
     expect(screen.getByTestId('recycling-absorbed-local')).toBeDefined();
   });
 
-  it('rejects a corrupt BACKING amount, like any other amount family', async () => {
-    // A new family of amounts that skipped the validator would render
-    // unvalidated — nothing else notices an omission from that list.
+  it('a corrupt BACKING amount withholds the BLOCK, not the account', async () => {
+    // Folding backing into the series validator made one bad backing
+    // value hide a perfectly good day series — the opposite of this
+    // surface's own rule that a distrusted input costs only its own
+    // figures.
     mockSeries(
       series({
         backing: { ...series().backing, platformRetained: 'not-a-number' },
       }),
     );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    // …and the D1-derived figures survive.
+    expect(screen.getByTestId('recycling-absorbed-local')).toBeDefined();
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('a corrupt DAILY amount still withholds the whole account', async () => {
+    // The series IS the account; a corrupt row there has nothing to fall
+    // back to.
+    mockSeries(series({ daily: [day({ dayId: 3, scheduleFloor: '1,2' })] }));
     render(<RecyclingAccount chainId={8453} />);
     await screen.findByText('recycling.unavailable');
   });

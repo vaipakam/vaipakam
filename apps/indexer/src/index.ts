@@ -148,19 +148,28 @@ export default {
     // chain is serviced each minute (not one per round-robin tick), and the DO
     // is the single serialized writer that the webhook also routes through.
     // Without the DO binding, fall back to the legacy inline round-robin scan.
-    // #1525 — capture the retained-reserve backing snapshot per chain.
-    // Deliberately on THIS path and not in the read route: a chain call
-    // inside a public HTTP handler couples an RPC round trip to a browser
-    // request, and every consequence of that coupling (staying inside the
-    // frontend's abort, coalescing concurrent AND sequential callers
-    // across isolates, giving each joiner its own deadline) has to be
-    // solved separately. Here the pass owns its own budget.
-    for (const chain of getChainConfigs(resolved)) {
+    // #1525 — capture the retained-reserve backing snapshot for ONE chain
+    // per tick, round-robin by scheduled minute.
+    //
+    // Not a fan-out over every chain: free-tier Workers cap at 50
+    // subrequests per invocation and `chainIndexer` reserves ~38 of them
+    // for a single-chain backfill (see its round-robin note). Four RPC
+    // calls per chain across four chains would sit in the same invocation
+    // as that scan and can exhaust the budget — recreating the dropped-
+    // event condition round-robin exists to prevent. The same constraint
+    // that shaped the ingest pass shapes this one.
+    //
+    // Per-chain cadence is therefore `len(chains) × 1min`, which the
+    // surface discloses as its capture time rather than implying live.
+    const backingChains = getChainConfigs(resolved);
+    if (backingChains.length > 0) {
+      const minute = Math.floor(controller.scheduledTime / 60_000);
+      const target = backingChains[minute % backingChains.length];
       ctx.waitUntil(
-        captureBackingSnapshot(resolved, chain.id).catch((err) => {
+        captureBackingSnapshot(resolved, target.id).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
-          console.error(`[indexer] backing snapshot failed for ${chain.id}:`, err);
+          console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
         }),
       );
     }

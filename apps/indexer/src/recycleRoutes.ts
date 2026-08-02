@@ -126,7 +126,7 @@ const RUNWAY_WINDOW_DAYS = 7;
  * transport errors embed the RPC URL and this repository's RPC URLs carry
  * provider API keys. Detail goes to the log; the caller gets a code.
  */
-type BackingReason = 'not-captured-yet' | 'read-failed';
+type BackingReason = 'not-captured-yet' | 'read-failed' | 'snapshot-stale';
 
 interface BackingSnapshot {
   vpfiBalance: string | null;
@@ -136,6 +136,9 @@ interface BackingSnapshot {
   paidOutRecycled: string | null;
   keeperBudget: string | null;
   platformRetained: string | null;
+  /** The block both pinned reads observed, so the figures are
+   *  reproducible by anyone once the chain has moved on. */
+  blockNumber: string | null;
   /**
    * Value that LEFT the bucket and is stranded in transport.
    *
@@ -160,6 +163,7 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   keeperBudget: null,
   platformRetained: null,
   releasedRemitStranded: null,
+  blockNumber: null,
   unavailableReason: reason,
   asOf: null,
 });
@@ -218,7 +222,10 @@ export async function captureBackingSnapshot(
   if (!chain?.rpc) return;
 
   const client = createPublicClient({
-    transport: http(chain.rpc, { timeout: 10_000, retryCount: 1 }),
+    // No retry: a retry doubles this capture's subrequest count inside an
+    // invocation whose budget the ingest pass already reserves most of.
+    // A missed capture is picked up on the chain's next turn.
+    transport: http(chain.rpc, { timeout: 10_000, retryCount: 0 }),
   });
   // Identity BEFORE trust: a secret pointed at the wrong network still
   // answers, and a fork or a matching deterministic address would store
@@ -280,19 +287,40 @@ export async function captureBackingSnapshot(
  * whose currency the reader can judge is a different object from one they
  * are asked to trust.
  */
+/**
+ * How old a stored snapshot may be before it is withheld.
+ *
+ * A capture that starts failing — RPC down, wrong chain — leaves the last
+ * row untouched, and treating any existing row as good publishes an
+ * arbitrarily old "fully backed" verdict while the copy beside it says
+ * the figures lag by minutes. Generous enough to survive a few missed
+ * turns at `len(chains) × 1min`, short enough that a wedged capture stops
+ * being presented as an answer.
+ */
+const SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
+
 async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
   try {
     const row = await env.DB.prepare(
-      `SELECT payload, captured_at FROM recycle_backing_snapshot WHERE chain_id = ?1`,
+      `SELECT payload, captured_at, block_number FROM recycle_backing_snapshot WHERE chain_id = ?1`,
     )
       .bind(chainId)
-      .first<{ payload: string; captured_at: string }>();
+      .first<{ payload: string; captured_at: string; block_number: string }>();
     if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
+    const age = Date.now() - Date.parse(row.captured_at);
+    if (!Number.isFinite(age) || age > SNAPSHOT_MAX_AGE_MS) {
+      return BACKING_UNAVAILABLE('snapshot-stale');
+    }
     return {
       ...(JSON.parse(row.payload) as Omit<
         BackingSnapshot,
-        'unavailableReason' | 'asOf'
+        'unavailableReason' | 'asOf' | 'blockNumber'
       >),
+      // The BLOCK, not just the time. A timestamp does not identify which
+      // state was read, so an independent reader could not reproduce these
+      // figures once the chain moved on — and the ratified requirement is
+      // that the series be reconstructible without trusting this indexer.
+      blockNumber: row.block_number,
       unavailableReason: null,
       asOf: row.captured_at,
     };

@@ -903,6 +903,9 @@ export interface RecyclingSeries {
     keeperBudget: string | null;
     /** `bucket − outstandingRecycled − keeperBudget`, floored at zero. */
     platformRetained: string | null;
+    /** The block both pinned reads observed, so an independent reader can
+     *  reproduce these figures once the chain has moved on. */
+    blockNumber: string | null;
     /** Value that left the bucket and is stranded in transport. Without
      *  it beside the reserve, a stranded remittance reads as a depleted
      *  platform reserve rather than as value in flight. */
