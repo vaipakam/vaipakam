@@ -2103,6 +2103,10 @@
     "drawnBounds": "What was drawn is what the day committed, not what was finally paid, and it can differ in both directions. It reads high near the lifetime issuance limit, where the amount finally transferred is trimmed below what was committed. It reads low for a day whose chain contribution was zeroed and later made good by an operator-sized disbursement, and for a cross-chain payment that was stranded and re-sent, because no commitment was recorded for that value. It is therefore not an upper bound, and anything built on it should expect both.",
     "colAbsorbedLocal": "Absorbed here",
     "colAbsorbedMirror": "Absorbed elsewhere",
-    "splitScopeNote": "The two figures above count every day on record, including days that have not closed yet. The combined total counts only days that have closed. That is why the parts add up to more than the total here — a difference in what each figure covers, not a discrepancy."
+    "splitScopeNote": "The two figures above count every day on record, including days that have not closed yet. The combined total counts only days that have closed. That is why the parts add up to more than the total here — a difference in what each figure covers, not a discrepancy.",
+    "platformRetained": "Retained by the platform",
+    "vpfiBalance": "VPFI held by the platform",
+    "unearmarked": "Not earmarked for anyone",
+    "backingUnavailable": "The retained reserve is not shown: the platform could not read the tokens actually behind it ({{reason}}). It is published only alongside that balance, never on its own."
   }
 }

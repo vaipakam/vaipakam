@@ -45,6 +45,18 @@ const AMOUNT_FIELDS = {
     'absorbedMirror',
     'absorbed',
   ],
+  // The live backing block. A new family of amounts that skipped this list
+  // would be rendered unvalidated — the validator walks what it is told
+  // about, and nothing else notices an omission.
+  backing: [
+    'vpfiBalance',
+    'bucket',
+    'unearmarked',
+    'outstandingRecycled',
+    'paidOutRecycled',
+    'keeperBudget',
+    'platformRetained',
+  ],
 } as const;
 
 /**
@@ -68,6 +80,10 @@ function amountsAreWellFormed(s: RecyclingSeries): boolean {
   for (const d of s.daily) {
     const row = d as unknown as Record<string, unknown>;
     for (const f of AMOUNT_FIELDS.daily) if (!ok(row[f])) return false;
+  }
+  const backing = s.backing as unknown as Record<string, unknown> | undefined;
+  if (backing) {
+    for (const f of AMOUNT_FIELDS.backing) if (!ok(backing[f])) return false;
   }
   return true;
 }
@@ -224,6 +240,21 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   }
 
   const { cumulative, daily, scope, coverageFromDay } = series;
+  // An indexer that predates the backing block serves no `backing` at all.
+  // Treat that as the same refusal a failed read produces — the page must
+  // degrade to "cannot say", never crash the analytics surface over a
+  // field that a rolling deploy legitimately has not shipped yet.
+  const backing = series.backing ?? {
+    vpfiBalance: null,
+    bucket: null,
+    unearmarked: null,
+    outstandingRecycled: null,
+    paidOutRecycled: null,
+    keeperBudget: null,
+    platformRetained: null,
+    unavailableReason: 'not-served-by-this-indexer',
+    asOf: null,
+  };
   // Every amount arrives as an 18-decimal wei decimal string. Rendering it
   // verbatim shows a 20-digit integer for an ordinary figure.
   const amt = (v: string | null): string => {
@@ -341,6 +372,43 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
       {partsExceedCombined && (
         <p className="muted" data-testid="recycling-split-scope">
           {t('recycling.splitScopeNote')}
+        </p>
+      )}
+
+      {/* THE RETAINED RESERVE, AND THE TOKENS BEHIND IT.
+          Published as a pair on purpose. Every other figure on this page
+          is counter-derived, and a counter cannot notice that the tokens
+          behind it have left; this is the one figure that can, and it is
+          worthless alone. The ratified requirement is the reserve
+          "alongside the token balance actually held", so the page renders
+          BOTH or NEITHER — a reserve on its own is the confident, checkable
+          -looking number the requirement exists to prevent. */}
+      {backing.unavailableReason === null && backing.platformRetained !== null ? (
+        <dl className="recycling-backing" data-testid="recycling-backing">
+          <div>
+            <dt>{t('recycling.platformRetained')}</dt>
+            <dd data-testid="recycling-retained">
+              {amt(backing.platformRetained)}
+            </dd>
+          </div>
+          <div>
+            <dt>{t('recycling.vpfiBalance')}</dt>
+            <dd data-testid="recycling-balance">{amt(backing.vpfiBalance)}</dd>
+          </div>
+          <div>
+            <dt>{t('recycling.unearmarked')}</dt>
+            <dd data-testid="recycling-unearmarked">
+              {amt(backing.unearmarked)}
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        // The REASON, never a dash: a dash reads as a zero reserve, which
+        // is the opposite claim to "we could not read the chain".
+        <p className="muted" data-testid="recycling-backing-unavailable">
+          {t('recycling.backingUnavailable', {
+            reason: backing.unavailableReason ?? 'unknown',
+          })}
         </p>
       )}
 

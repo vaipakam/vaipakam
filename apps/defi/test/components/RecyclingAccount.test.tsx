@@ -55,6 +55,17 @@ const series = (over: Partial<RecyclingSeries> = {}): RecyclingSeries => ({
   scope: 'global',
   coverageFromDay: 1,
   daily: [day()],
+  backing: {
+    vpfiBalance: tok(100),
+    bucket: tok(40),
+    unearmarked: tok(60),
+    outstandingRecycled: tok(10),
+    paidOutRecycled: tok(2),
+    keeperBudget: tok(5),
+    platformRetained: tok(25),
+    unavailableReason: null,
+    asOf: '2026-08-03T00:00:00.000Z',
+  },
   cumulative: {
     absorbed: '5',
     absorbedPreLaunch: '0',
@@ -516,5 +527,78 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
     await screen.findByTestId('recycling-scope-note');
     expect(screen.queryByTestId('recycling-absorbed')).toBeNull();
     expect(screen.queryByTestId('recycling-split-scope')).toBeNull();
+  });
+});
+
+describe('RecyclingAccount — the reserve is never published alone', () => {
+  const noBacking = (reason: string) => ({
+    vpfiBalance: null,
+    bucket: null,
+    unearmarked: null,
+    outstandingRecycled: null,
+    paidOutRecycled: null,
+    keeperBudget: null,
+    platformRetained: null,
+    unavailableReason: reason,
+    asOf: null,
+  });
+
+  it('publishes the retained reserve WITH the balance actually behind it', async () => {
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-retained').textContent).toBe('25'),
+    );
+    // The pair is the whole requirement: every other figure on this page is
+    // counter-derived, and a counter cannot notice the tokens have left.
+    expect(screen.getByTestId('recycling-balance').textContent).toBe('100');
+    expect(screen.getByTestId('recycling-unearmarked').textContent).toBe('60');
+  });
+
+  it('withholds the reserve ENTIRELY when the chain could not be read', async () => {
+    mockSeries(series({ backing: noBacking('read-failed: timeout') }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    // Not a zero, not a dash, and above all not the reserve on its own.
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+    expect(screen.queryByTestId('recycling-balance')).toBeNull();
+  });
+
+  it('states WHY the reserve is missing, since a dash reads as zero', async () => {
+    mockSeries(series({ backing: noBacking('no-rpc-endpoint-configured') }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('recycling-backing-unavailable').textContent,
+      ).toContain('no-rpc-endpoint-configured'),
+    );
+  });
+
+  it('degrades rather than crashing when an older indexer omits the block', async () => {
+    // A rolling deploy legitimately serves a response without `backing`.
+    // Destructuring it blind took the whole /analytics surface down.
+    const s = series();
+    delete (s as unknown as Record<string, unknown>).backing;
+    mockSeries(s);
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('recycling-backing-unavailable').textContent,
+      ).toContain('not-served-by-this-indexer'),
+    );
+    // …and the rest of the account still renders.
+    expect(screen.getByTestId('recycling-absorbed-local')).toBeDefined();
+  });
+
+  it('rejects a corrupt BACKING amount, like any other amount family', async () => {
+    // A new family of amounts that skipped the validator would render
+    // unvalidated — nothing else notices an omission from that list.
+    mockSeries(
+      series({
+        backing: { ...series().backing, platformRetained: 'not-a-number' },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByText('recycling.unavailable');
   });
 });

@@ -881,6 +881,31 @@ export interface RecyclingSeries {
     runwayUnavailableReason: string | null;
     selfFunded: boolean;
   };
+  /**
+   * The retained reserve and the balance actually behind it — read LIVE
+   * from the chain, and deliberately not inside `cumulative`.
+   *
+   * Every field in `cumulative` is derived from stored counters, and a
+   * counter cannot notice that the tokens behind it have left. This block
+   * is the only one that can, which is why it is separate: grouping them
+   * would invite a reader to trust both equally.
+   *
+   * Every field is null together when the live read failed, with
+   * `unavailableReason` saying why. Null here means "we could not read the
+   * chain", never "the reserve is zero" — opposite claims.
+   */
+  backing: {
+    vpfiBalance: string | null;
+    bucket: string | null;
+    unearmarked: string | null;
+    outstandingRecycled: string | null;
+    paidOutRecycled: string | null;
+    keeperBudget: string | null;
+    /** `bucket − outstandingRecycled − keeperBudget`, floored at zero. */
+    platformRetained: string | null;
+    unavailableReason: string | null;
+    asOf: string | null;
+  };
 }
 
 /**

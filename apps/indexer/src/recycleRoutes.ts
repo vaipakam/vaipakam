@@ -71,7 +71,11 @@
  * computed in BigInt. Reads are open-CORS like every other indexer read.
  */
 
+import { createPublicClient, http, type Address } from 'viem';
+import { InteractionRewardsLensFacetABI } from '@vaipakam/contracts/abis';
+
 import type { Env } from './env';
+import { getChainConfigs } from './env';
 import { jsonResponse } from './offerRoutes';
 
 const DEFAULT_DAYS = 30;
@@ -89,6 +93,108 @@ const MAX_DAYS = 365;
  * disagrees with the protocol's own is worse than no figure.
  */
 const RUNWAY_WINDOW_DAYS = 7;
+
+/**
+ * The retained-reserve figure, read LIVE from the chain.
+ *
+ * Every other figure this route serves comes from stored counters, and a
+ * counter cannot notice that the tokens behind it have left. The ratified
+ * requirement is therefore that the reserve is published ALONGSIDE the
+ * balance actually held, so a reader can tell whether the tokens backing
+ * the reported reserve exist at all — the difference between a healthy
+ * deployment and a corrupted one, and unreadable from D1 by construction.
+ *
+ * The read is live because there is no honest cached version of it: a
+ * stale balance is exactly the failure the figure exists to expose.
+ *
+ * WITHHELD, NEVER GUESSED. If the RPC read fails, every field is null and
+ * `unavailableReason` says why. It must not fall back to zeros (a zero
+ * reserve and an unreadable one are opposite claims) and must not be
+ * derived from the counters this route already holds — a counter-derived
+ * reserve with no balance beside it is precisely what the requirement
+ * exists to prevent. A failure here also must not fail the ROUTE: the
+ * day series is D1-derived and remains true regardless.
+ */
+interface BackingSnapshot {
+  vpfiBalance: string | null;
+  bucket: string | null;
+  unearmarked: string | null;
+  outstandingRecycled: string | null;
+  paidOutRecycled: string | null;
+  keeperBudget: string | null;
+  platformRetained: string | null;
+  unavailableReason: string | null;
+  asOf: string | null;
+}
+
+const BACKING_UNAVAILABLE = (reason: string): BackingSnapshot => ({
+  vpfiBalance: null,
+  bucket: null,
+  unearmarked: null,
+  outstandingRecycled: null,
+  paidOutRecycled: null,
+  keeperBudget: null,
+  platformRetained: null,
+  unavailableReason: reason,
+  asOf: null,
+});
+
+/**
+ * `platformRetained = bucket − outstandingRecycled − keeperBudget`, floored
+ * at zero (ratified; TokenomicsTechSpec + plan §M5).
+ *
+ * The keeper term is load-bearing and is why the two-term derivation from
+ * `getRecycleBucket` alone is wrong: once `recycleRegisterKeeperBps` is
+ * non-zero, each day's margin is earmarked into `recycleKeeperBudget` from
+ * INSIDE the bucket, so the bucket does not move and a reserve computed
+ * without it overstates for as long as the register runs.
+ *
+ * The floor is not cosmetic: the subtraction can legitimately go negative
+ * in the breached state #1460 describes, and a negative reserve rendered
+ * on a public page would be read as a display bug rather than as the
+ * shortfall it is. The balance published beside it is what makes that
+ * state visible instead.
+ */
+export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint): bigint {
+  const net = bucket - outstanding - keeper;
+  return net > 0n ? net : 0n;
+}
+
+async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
+  let chain;
+  try {
+    chain = getChainConfigs(env).find((c) => c.id === chainId);
+  } catch {
+    chain = undefined;
+  }
+  if (!chain) return BACKING_UNAVAILABLE('chain-not-configured');
+  if (!chain.rpc) return BACKING_UNAVAILABLE('no-rpc-endpoint-configured');
+
+  try {
+    const client = createPublicClient({ transport: http(chain.rpc) });
+    const snap = (await client.readContract({
+      address: chain.diamond as Address,
+      abi: InteractionRewardsLensFacetABI,
+      functionName: 'getRecycleBackingSnapshot',
+    })) as readonly [bigint, bigint, bigint, bigint, bigint, bigint];
+    const [vpfiBalance, bucket, unearmarked, outstanding, paidOut, keeper] = snap;
+    return {
+      vpfiBalance: vpfiBalance.toString(),
+      bucket: bucket.toString(),
+      unearmarked: unearmarked.toString(),
+      outstandingRecycled: outstanding.toString(),
+      paidOutRecycled: paidOut.toString(),
+      keeperBudget: keeper.toString(),
+      platformRetained: retainedFrom(bucket, outstanding, keeper).toString(),
+      unavailableReason: null,
+      asOf: new Date().toISOString(),
+    };
+  } catch (err) {
+    // The reason is published rather than swallowed: a reader must be able
+    // to tell "we could not read the chain" from "the reserve is zero".
+    return BACKING_UNAVAILABLE(`read-failed: ${String((err as Error).message ?? err).slice(0, 200)}`);
+  }
+}
 
 function parseChainId(raw: string | null): number | null {
   if (!raw) return null;
@@ -752,6 +858,10 @@ export async function handleRecyclingSeries(
         runwayUnavailableReason,
         selfFunded,
       },
+      // Live, and deliberately outside `cumulative`: every field there is
+      // counter-derived, and the whole point of this block is that it is
+      // not. Grouping them would invite a reader to trust both equally.
+      backing: await readBacking(env, chainId),
     });
   } catch (err) {
     return jsonResponse(
