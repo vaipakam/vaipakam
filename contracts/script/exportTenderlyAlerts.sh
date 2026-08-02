@@ -154,7 +154,6 @@ SKIPPED=()
 STAGE_DIR="$(mktemp -d "$OUT_DIR/.staging.XXXXXX")"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
-_PROV_STAGED=()
 for slug in "${CHAINS[@]}"; do
   TENDERLY_NETWORK=$(chain_to_tenderly "$slug")
   if [ -z "$TENDERLY_NETWORK" ]; then
@@ -175,7 +174,6 @@ for slug in "${CHAINS[@]}"; do
   fi
 
   OUT_FILE="$STAGE_DIR/alerts-$slug.yaml"
-  _PROV_STAGED+=("$slug")
 
   # Provenance header — operator can tell at a glance which monorepo
   # commit + Diamond address produced this expansion. Helps when
@@ -230,11 +228,24 @@ fi
 
 # Publish. Past this line the provenance is known-good, so the staged files
 # replace the live ones one atomic rename at a time.
-for slug in "${_PROV_STAGED[@]}"; do
-  mv -f "$STAGE_DIR/alerts-$slug.yaml" "$OUT_DIR/alerts-$slug.yaml"
-  echo "  ✓ $slug → ops/tenderly/generated/alerts-$slug.yaml"
+#
+# Driven by what is ACTUALLY on the stage, not by a list of what the loop
+# meant to put there (Codex #1495 r15 P2). A parallel array is a second
+# claim about the contents of a directory, and the two diverge: a slug
+# passed twice appended two entries for one file, so the second rename
+# found no source and `set -e` aborted the run HALFWAY THROUGH PUBLISHING
+# — the one outcome staging exists to prevent. Globbing cannot disagree
+# with the filesystem, and duplicates collapse on their own because the
+# generation loop simply overwrites its own staged file.
+shopt -s nullglob
+for staged in "$STAGE_DIR"/alerts-*.yaml; do
+  base="$(basename "$staged")"
+  slug="${base#alerts-}"; slug="${slug%.yaml}"
+  mv -f "$staged" "$OUT_DIR/$base"
+  echo "  ✓ $slug → ops/tenderly/generated/$base"
   EMITTED=$((EMITTED + 1))
 done
+shopt -u nullglob
 
 echo
 echo "Emitted $EMITTED file(s) into $OUT_DIR/"
