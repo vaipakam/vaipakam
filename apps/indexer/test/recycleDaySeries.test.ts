@@ -755,3 +755,79 @@ describe('applyRecycleDaySeries — the pre-cutover event shape', () => {
     expect(day(await readSeries(env), 2).freshDrawdown).toBe('42');
   });
 });
+
+describe('handleRecyclingSeries — pre-launch stock, honestly scoped', () => {
+  it('reports pre-launch absorption when there are NO day rows at all', async () => {
+    const { env } = makeHarness();
+    // The normal state before the schedule starts: credits exist, days do
+    // not. Reading the total after the empty-series branch would report
+    // zero for exactly the period the figure describes.
+    await applyRecycleDaySeries(
+      [log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 640n })],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.daily).toEqual([]);
+    expect(body.cumulative.absorbedPreLaunch).toBe('640');
+  });
+
+  it('warns on day 0 ONLY where the old mixture can exist', async () => {
+    // A chain upgraded in place: a day-0 credit arrives before this chain
+    // has ever emitted a pre-launch event, so it may be old pre-launch
+    // value the previous contracts filed under day 0.
+    const legacy = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 30n, dayId: 0n }),
+        stamped(0n),
+      ],
+      legacy.env,
+      CHAIN,
+    );
+    expect(day(await readSeries(legacy.env), 0).preLaunchConflated).toBe(true);
+
+    // A chain that has always had the split: the pre-launch event comes
+    // first, so every later day-0 credit is a genuine first-day credit.
+    const clean = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycledPreLaunch', { source: 1, refId: 1n, amount: 900n }),
+        log('VpfiRecycled', { source: 1, refId: 2n, amount: 30n, dayId: 0n }),
+        stamped(0n),
+      ],
+      clean.env,
+      CHAIN,
+    );
+    const body = await readSeries(clean.env);
+    expect(day(body, 0).preLaunchConflated).toBe(false);
+    expect(day(body, 0).absorbedLocal).toBe('30');
+    expect(body.cumulative.absorbedPreLaunch).toBe('900');
+  });
+
+  it('counts the pre-launch stock in the runway numerator', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const before = (await readSeries(env)).cumulative.runwayExtensionDays;
+    // 300 / 100 = 3
+    expect(before).toBe(3);
+
+    // The pre-launch stock is real recycled value in the bucket, so the
+    // LIFETIME numerator includes it. Keeping it out of the trailing rate
+    // says nothing about this total.
+    await applyRecycleDaySeries(
+      [log('VpfiRecycledPreLaunch', { source: 1, refId: 2n, amount: 200n })],
+      env,
+      CHAIN,
+    );
+    // (300 + 200) / 100 = 5
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(5);
+  });
+});

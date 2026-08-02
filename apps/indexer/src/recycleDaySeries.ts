@@ -177,8 +177,10 @@ async function applyOne(
     await env.DB.batch([
       record,
       env.DB.prepare(
-        `INSERT INTO recycle_prelaunch (chain_id, absorbed) VALUES (?, ?)
-         ON CONFLICT (chain_id) DO UPDATE SET absorbed = excluded.absorbed`,
+        `INSERT INTO recycle_prelaunch (chain_id, absorbed, split_seen)
+         VALUES (?, ?, 1)
+         ON CONFLICT (chain_id) DO UPDATE SET absorbed = excluded.absorbed,
+                                              split_seen = 1`,
       ).bind(chainId, (big(row?.absorbed) + amount).toString()),
     ]);
     return true;
@@ -192,14 +194,41 @@ async function applyOne(
     )
       .bind(chainId, dayId)
       .first<{ absorbed_local: string }>();
-    await env.DB.batch([
+    const writes = [
       record,
       ensureRow(env, chainId, dayId),
       env.DB.prepare(
         `UPDATE recycle_day_pool SET absorbed_local = ?
           WHERE chain_id = ? AND day_id = ?`,
       ).bind((big(row?.absorbed_local) + amount).toString(), chainId, dayId),
-    ]);
+    ];
+
+    // A day-0 credit seen BEFORE this chain ever emitted a pre-launch event
+    // is ambiguous: on a Diamond upgraded in place it may be pre-launch
+    // value the old contracts filed under day 0, and nothing can separate
+    // it afterwards. Counted so the read surface can warn for exactly the
+    // deployments where it is true, instead of declaring day 0 clean
+    // everywhere (Codex #1508 r2 P2).
+    if (dayId === 0) {
+      const st = await env.DB.prepare(
+        `SELECT split_seen, day0_legacy FROM recycle_prelaunch
+          WHERE chain_id = ?`,
+      )
+        .bind(chainId)
+        .first<{ split_seen: number; day0_legacy: string }>();
+      if (!st?.split_seen) {
+        writes.push(
+          env.DB.prepare(
+            `INSERT INTO recycle_prelaunch (chain_id, day0_legacy)
+             VALUES (?, ?)
+             ON CONFLICT (chain_id)
+             DO UPDATE SET day0_legacy = excluded.day0_legacy`,
+          ).bind(chainId, (big(st?.day0_legacy) + amount).toString()),
+        );
+      }
+    }
+
+    await env.DB.batch(writes);
     return true;
   }
 

@@ -126,6 +126,23 @@ export async function handleRecyclingSeries(
     // keeps this endpoint free of the launch timestamp (see the header):
     // the series describes protocol days, and the newest one it knows
     // about is the newest one there is.
+    // Read BEFORE the empty-series branch below (Codex #1508 r2 P2). A
+    // chain that has only ever taken pre-launch credits — the NORMAL state
+    // before the schedule starts — has no day rows at all, so reading this
+    // afterwards would report zero for exactly the period the figure exists
+    // to describe, until some unrelated scheduled event created the first
+    // day row.
+    const preLaunchRow = await env.DB.prepare(
+      `SELECT absorbed, day0_legacy FROM recycle_prelaunch WHERE chain_id = ?`,
+    )
+      .bind(chainId)
+      .first<{ absorbed: string; day0_legacy: string }>();
+    const preLaunch = preLaunchRow?.absorbed ?? '0';
+    // Day 0 may still hold pre-launch value on a Diamond upgraded in place:
+    // credits taken before the split are already inside it and no code
+    // change separates them. True only where it is true.
+    const dayZeroConflated = BigInt(preLaunchRow?.day0_legacy ?? '0') > 0n;
+
     const head = await env.DB.prepare(
       `SELECT MAX(day_id) AS max_day, MIN(day_id) AS min_day
          FROM recycle_day_pool WHERE chain_id = ?`,
@@ -145,7 +162,7 @@ export async function handleRecyclingSeries(
         coverageFromDay: null,
         cumulative: {
           absorbed: '0',
-          absorbedPreLaunch: '0',
+          absorbedPreLaunch: preLaunch,
           absorbedLocal: '0',
           absorbedMirror: '0',
           freshDrawdown: '0',
@@ -173,13 +190,6 @@ export async function handleRecyclingSeries(
     // the programme. Both reads return rows and the folding happens in
     // BigInt: these are 18-dec wei decimal strings, and a SQL `SUM` over
     // them would silently overflow SQLite's int64.
-    const preLaunchRow = await env.DB.prepare(
-      `SELECT absorbed FROM recycle_prelaunch WHERE chain_id = ?`,
-    )
-      .bind(chainId)
-      .first<{ absorbed: string }>();
-    const preLaunch = preLaunchRow?.absorbed ?? '0';
-
     const [windowRows, lifetime] = await Promise.all([
       env.DB.prepare(
         `SELECT day_id, stamped, schedule_floor, recycled_budget, a_bar,
@@ -272,6 +282,7 @@ export async function handleRecyclingSeries(
           // label. On a mirror deployment no day is ever stamped, which
           // is why this endpoint needs no canonical-chain check.
           absorbed: null,
+          preLaunchConflated: dayId === 0 && dayZeroConflated,
         });
         continue;
       }
@@ -298,7 +309,11 @@ export async function handleRecyclingSeries(
         absorbedLocal: absorbedLocal.toString(),
         absorbedMirror: absorbedMirror.toString(),
         absorbed: (absorbedLocal + absorbedMirror).toString(),
-
+        // Only where it is actually true. A chain that has always had the
+        // split files pre-launch value separately, so its day 0 is clean;
+        // a chain upgraded in place carries the old mixture forever and no
+        // code change can separate it (Codex #1508 r2 P2).
+        preLaunchConflated: dayId === 0 && dayZeroConflated,
       });
     }
 
@@ -346,10 +361,16 @@ export async function handleRecyclingSeries(
       trailingCount += 1n;
     }
     const selfFunded = trailingCount > 0n && trailingFloorSum === 0n;
+    // The numerator is the LIFETIME recycled stock, which genuinely includes
+    // pre-launch credits — they are in the bucket and in the on-chain
+    // recycled cumulative (Codex #1508 r2 P2). Keeping them out of `Ā` is a
+    // statement about a trailing RATE and says nothing about this total; I
+    // conflated the two and understated the runway.
+    const runwayNumerator = cumAbsorbed + BigInt(preLaunch);
     const runwayExtensionDays =
       trailingCount === 0n || selfFunded
         ? null
-        : ratio6(cumAbsorbed * trailingCount, trailingPoolSum);
+        : ratio6(runwayNumerator * trailingCount, trailingPoolSum);
 
     return jsonResponse({
       chainId,
