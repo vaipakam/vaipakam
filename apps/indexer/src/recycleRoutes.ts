@@ -489,7 +489,18 @@ export async function handleRecyclingSeries(
     // backwards because a report is a few blocks stale.
     const localFold = cumAbsorbedLocal + BigInt(preLaunch);
     const localTerm = selfReported > localFold ? selfReported : localFold;
-    const runwayNumerator = localTerm + mirrorReported;
+
+    // The MIRROR term takes the same max, for the same reason (Codex #1513
+    // r3 P1). Backfilled days recover mirror absorption from the getter,
+    // but `recycle_chain_reported` only has a row if a self-healing report
+    // happened to arrive within this consumer's coverage — so a
+    // backfill-only history has a real merged mirror fold and a zero
+    // reported total, and taking the reported figure alone drops every
+    // recovered credit. Applying the rule to one side and not the other
+    // was the same omission twice in one expression.
+    const mirrorFold = cumAbsorbedMirror;
+    const mirrorTerm = mirrorReported > mirrorFold ? mirrorReported : mirrorFold;
+    const runwayNumerator = localTerm + mirrorTerm;
     const runwayExtensionDays =
       trailingCount === 0n || selfFunded
         ? null

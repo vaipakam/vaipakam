@@ -1173,6 +1173,52 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     expect(body.cumulative.freshDrawdown).toBe('12');
   });
 
+  it('counts BACKFILLED mirror absorption in the runway numerator', async () => {
+    const { h, env } = makeHarness();
+    // A backfill-only history: the mirror credits were recovered from the
+    // getter, and no self-healing report ever arrived inside this
+    // consumer's coverage — so the per-source reported total is zero while
+    // the merged mirror fold is real. Taking the reported figure alone
+    // would drop every recovered credit.
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at)
+         VALUES (?, 1, 1, '100', '0', '0', '0', '900', 1, 0, 1700000000)`,
+      )
+      .run(CHAIN);
+    // 900 / 100 = 9
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(9);
+  });
+
+  it('keeps absorption-only backfilled days (unstamped, real credits)', async () => {
+    const { h, env } = makeHarness();
+    // The pass emits these for historical days that accrued absorption but
+    // were never finalized — for a day predating event coverage the getter
+    // is the only source for that attribution.
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at)
+         VALUES (?, 2, 0, '0', '0', '0', '40', '0', 0, 0, 1700000000)`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries([stamped(5n)], env, CHAIN);
+    const body = await readSeries(env);
+    const d2 = day(body, 2);
+    expect(d2.stamped).toBe(false);
+    expect(d2.absorbedLocal).toBe('40');
+    // Not finalized, so it has no pool and no global aggregate…
+    expect(d2.scheduleFloor).toBeNull();
+    expect(d2.absorbed).toBeNull();
+    // …but the component total still sees it.
+    expect(body.cumulative.absorbedLocal).toBe('40');
+  });
+
   it('marks event-sourced days so a reader can tell the two apart', async () => {
     const { env } = makeHarness();
     await applyRecycleDaySeries([stamped(2n)], env, CHAIN);

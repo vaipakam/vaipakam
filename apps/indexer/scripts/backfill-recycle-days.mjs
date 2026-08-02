@@ -28,9 +28,14 @@
  * runbook uses.
  *
  * Usage:
+ *   mkdir -p restore/d1
  *   RPC_URL=... DIAMOND=0x... CHAIN_ID=8453 \
  *     node apps/indexer/scripts/backfill-recycle-days.mjs --to <lastDay> \
  *     > restore/d1/recycle_day_backfill.sql
+ *
+ * (the `mkdir` is not decoration — the shell opens the redirect before
+ *  node starts, so a clean checkout fails with "No such file or directory"
+ *  and runs no backfill at all)
  *
  *   wrangler d1 execute vaipakam-archive \
  *     --file=restore/d1/recycle_day_backfill.sql --remote
@@ -100,8 +105,31 @@ if (!Number.isInteger(TO) || TO < FROM) {
 
 const client = createPublicClient({ transport: http(RPC_URL) });
 
+/**
+ * Every read is PINNED to one block.
+ *
+ * A serial scan against `latest` resolves each day at whatever block is
+ * current when it runs, so a demotion and its first broadcast landing
+ * mid-scan capture early days before `dayCapThreshold18` was overwritten
+ * and later days after (Codex #1513 r3 P2). The pass still succeeds, and
+ * `ON CONFLICT DO NOTHING` then preserves that mixed history as
+ * authoritative — a silently half-corrupted record is worse than a failed
+ * run, because nothing signals it.
+ *
+ * One block also makes the capture a coherent snapshot rather than a
+ * traversal: `armedFromDay` and every day's figures describe the same
+ * chain state.
+ */
+let PINNED_BLOCK;
+
 const read = (functionName, args = []) =>
-  client.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+  client.readContract({
+    address: DIAMOND,
+    abi: ABI,
+    functionName,
+    args,
+    blockNumber: PINNED_BLOCK,
+  });
 
 /**
  * Arming is resolved ONCE and stamped on every row.
@@ -146,6 +174,12 @@ async function main() {
     );
   }
 
+  try {
+    PINNED_BLOCK = await client.getBlockNumber();
+  } catch (err) {
+    die(`cannot read the head block (${err}); refusing to scan against a moving target`);
+  }
+
   let armedFromDay;
   try {
     [armedFromDay] = await read('getGovernorCommitState');
@@ -159,6 +193,7 @@ async function main() {
   const recordedAt = Math.floor(Date.now() / 1000);
   const rows = [];
   let skipped = 0;
+  let unstamped = 0;
 
   for (let day = FROM; day <= TO; day++) {
     let m;
@@ -168,10 +203,29 @@ async function main() {
       die(`day ${day}: ${err} — refusing to emit a partial backfill`);
     }
     const [stamped, floor, budget, drawdown, local, mirror] = m;
+
+    // An UNFINALIZED day can still carry absorption, and for a day that
+    // predates this indexer's event coverage the getter is the ONLY source
+    // for it (Codex #1513 r3 P2). Skipping those lost the attribution
+    // permanently — from the daily series and from the component totals.
+    // The row is emitted with `stamped = 0` and zeroed pool figures, which
+    // is what the read surface already means by "absorption, no pool";
+    // it does NOT invent a finalized day.
     if (!stamped) {
-      // No pool was ever recorded for this day, so there is nothing to
-      // preserve. Emitting a zero row would invent a finalized day.
-      skipped++;
+      if (local === 0n && mirror === 0n) {
+        skipped++;
+        continue;
+      }
+      rows.push(
+        `INSERT INTO recycle_day_backfill (chain_id, day_id, stamped, ` +
+          `schedule_floor, recycled_budget, fresh_drawdown, absorbed_local, ` +
+          `absorbed_mirror, armed, armed_from_day, recorded_at) VALUES (` +
+          `${CHAIN_ID}, ${day}, 0, '0', '0', '0', ` +
+          `${q(local)}, ${q(mirror)}, 0, ` +
+          `${armedFromDay}, ${recordedAt}) ` +
+          `ON CONFLICT (chain_id, day_id) DO NOTHING;`,
+      );
+      unstamped++;
       continue;
     }
     rows.push(
@@ -192,12 +246,14 @@ async function main() {
   // running this twice.
   console.log(`-- recycle_day_backfill: chain ${CHAIN_ID}, days ${FROM}..${TO}`);
   console.log(`-- armedFromDay=${armedFromDay} (0 = never armed)`);
-  console.log(`-- ${rows.length} finalized day(s); ${skipped} unstamped, skipped`);
+  console.log(`-- ${rows.length - unstamped} finalized, ${unstamped} absorption-only, ${skipped} empty`);
+  console.log(`-- pinned at block ${PINNED_BLOCK}`);
   for (const r of rows) console.log(r);
 
   console.error(
-    `backfill-recycle-days: ${rows.length} row(s), ${skipped} unstamped skipped, ` +
-      `armedFromDay=${armedFromDay}`,
+    `backfill-recycle-days: ${rows.length} row(s) ` +
+      `(${rows.length - unstamped} finalized, ${unstamped} absorption-only), ` +
+      `${skipped} empty, armedFromDay=${armedFromDay}, block=${PINNED_BLOCK}`,
   );
 }
 
