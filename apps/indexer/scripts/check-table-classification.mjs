@@ -309,23 +309,42 @@ const unclassified = [...writers.keys()]
 // The requirement it must NOT weaken: silence is still disallowed, because
 // an entry here is as explicit as a Worker write site.
 const EXTERNAL_WRITERS = {
-  recycle_day_backfill:
-    'apps/indexer/scripts/backfill-recycle-days.mjs — an OPERATOR-run pass. ' +
-    'It needs chain reads and must be sequenced by hand relative to a role ' +
-    'demotion, and the indexer Worker is deliberately read-only and ' +
-    'operator-key-free, so this is not a Worker write path.',
+  recycle_day_backfill: {
+    // No writer YET — the operator pass was split out of #1513 after three
+    // rounds of findings converged on one root cause (first-write-wins
+    // immutability makes a stale, reorged or wrong-Diamond capture
+    // unrepairable). The schema, the restore registration and the read
+    // surface are useful and inert without it: an empty table serves an
+    // empty pre-cutover history, which is the truthful state until a
+    // capture exists.
+    pending: '#1523',
+    why:
+      'operator-run pass, deferred: it needs chain reads and hand sequencing ' +
+      'against finality, the nightly backup and a role demotion, and the ' +
+      'indexer Worker is deliberately read-only and operator-key-free.',
+  },
 };
 
 const dead = Object.keys(CLASSIFICATION)
   .filter((t) => !writers.has(t) && !(t in EXTERNAL_WRITERS))
   .sort();
 
-// An EXTERNAL_WRITERS entry must name a script that exists, or the
-// declaration rots into a different kind of silence.
+// An EXTERNAL_WRITERS entry must resolve to something REAL: either a script
+// that exists, or an explicitly pending tracker. Anything else rots into a
+// different kind of silence — a declaration nobody can act on.
 const missingExternal = Object.entries(EXTERNAL_WRITERS)
-  .filter(([, why]) => {
-    const m = why.match(/^(\S+\.mjs)/);
-    return m ? !existsSync(join(REPO_ROOT, m[1])) : false;
+  .filter(([, decl]) => {
+    if (typeof decl === 'string') {
+      const m = decl.match(/^(\S+\.mjs)/);
+      return m ? !existsSync(join(REPO_ROOT, m[1])) : true;
+    }
+    if (decl && typeof decl === 'object') {
+      if (decl.script) return !existsSync(join(REPO_ROOT, decl.script));
+      // A pending writer must name a tracker AND a reason, so "nothing
+      // writes this yet" stays a decision rather than an oversight.
+      return !(/^#\d+$/.test(decl.pending ?? '') && (decl.why ?? '').length > 20);
+    }
+    return true;
   })
   .map(([t]) => t);
 
@@ -471,7 +490,7 @@ if (unconsumed.length > 0) {
 }
 if (missingExternal.length > 0) {
   failed = true;
-  console.error('✗ EXTERNAL_WRITERS names a script that does not exist:');
+  console.error('✗ EXTERNAL_WRITERS entry resolves to nothing real (needs an\n  existing script, or `pending: "#NNNN"` with a reason):');
   for (const t of missingExternal) console.error(`    ${t}`);
 }
 if (dead.length > 0) {

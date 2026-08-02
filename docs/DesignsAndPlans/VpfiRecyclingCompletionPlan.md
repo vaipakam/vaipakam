@@ -732,9 +732,22 @@ Scope limit, stated because the natural claim overreaches: this cannot
 rewrite credits already taken. An in-place-upgraded chain keeps whatever
 its day-0 slot holds; on a fresh deploy day 0 is clean by construction.
 
-**The pre-cutover backfill LANDED (#1349 M5).** Migration 0047 +
-`apps/indexer/scripts/backfill-recycle-days.mjs`. Decisions not to
-re-litigate:
+**The pre-cutover SCHEMA + read surface landed (#1349 M5); the PASS is
+SPLIT OUT to #1523.** Migration 0047, the restore-converter registration and
+the read-side union ship together and are inert with zero rows — an empty
+table serves an empty pre-cutover history, which is truthful until a capture
+exists. The operator pass was written and reviewed across three rounds, then
+split: `ON CONFLICT DO NOTHING` (chosen to protect the intact-inputs
+capture) makes every capture immutable, so a reorged, stale or
+wrong-Diamond capture is permanent. `latest` → reorg hazard; `finalized` →
+a delayed mirror report records a LOWER total that cannot be repaired; an
+unverified `DIAMOND` succeeds emptily against a promoted replacement and
+blocks the right capture on the same keys. One root cause, three faces.
+#1523 designs versioned captures + an explicit promote instead. **Its
+unfixed carry-over: `ARCHIVE_READY` proves a backup ran BEFORE the pass, when
+the table was empty — a POST-APPLY backup must be required before demotion.**
+
+Decisions from the shipped half, not to re-litigate:
 
 - The table is **BORN-OFF-CHAIN** — archived and re-imported on restore,
   and deliberately absent from §6's clear-before-replay command. Every
@@ -778,9 +791,14 @@ Codex #1513 r8:**
    creates IRREPLACEABLE rows while the live nightly is still running a
    table list that omits them. After a demotion makes regeneration
    impossible, a D1 loss in that window loses the capture permanently.
-   The pass now refuses without an explicit `ARCHIVE_READY=1`, because it
-   cannot observe the answer and a silent default is either an obstacle or
-   a trap.
+   The split-out pass (#1523) carries an `ARCHIVE_READY=1` acknowledgement
+   for this, because it cannot observe the answer and a silent default is
+   either an obstacle or a trap. **That acknowledgement is NOT sufficient
+   on its own** and #1523 must close the gap: it proves a backup ran BEFORE
+   the pass, when the table was still empty. Nothing yet requires a
+   POST-APPLY backup, and the archive Worker runs only on its nightly
+   03:17 UTC schedule — so a demotion inside that window leaves the rows
+   unregenerable with their only copy in D1.
 
 **(Historical note — why it was a separate slice, and the restore
 classification is why.)** `check-table-classification.mjs` requires every
