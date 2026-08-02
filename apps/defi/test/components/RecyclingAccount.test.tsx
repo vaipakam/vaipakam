@@ -792,4 +792,15 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
     await screen.findByTestId('recycling-backing-unavailable');
     expect(screen.queryByTestId('recycling-retained')).toBeNull();
   });
+
+  it('withholds the block when the snapshot cannot say WHEN it was taken', async () => {
+    // These figures are read on a schedule; the only thing making that
+    // honest is the reader being able to judge their currency. A snapshot
+    // with every amount but no capture time silently dropped the age row
+    // and published anyway.
+    mockSeries(series({ backing: { ...series().backing, asOf: null } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
 });

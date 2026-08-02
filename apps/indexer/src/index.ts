@@ -76,7 +76,7 @@ import {
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
 export { ChainIngestDO } from './chainIngestDO';
-import { shouldRunCronTick } from './cronRouting';
+import { DO_PATH_CADENCE_MINUTES, shouldRunCronTick } from './cronRouting';
 
 /**
  * #757 — is the DO ingest path active? Gated on BOTH the DO binding being
@@ -159,12 +159,22 @@ export default {
     // event condition round-robin exists to prevent. The same constraint
     // that shaped the ingest pass shapes this one.
     //
-    // Per-chain cadence is therefore `len(chains) × 1min`, which the
+    // Per-chain cadence is therefore `len(chains) × tick`, which the
     // surface discloses as its capture time rather than implying live.
     const backingChains = getChainConfigs(resolved);
     if (backingChains.length > 0) {
+      // The ordinal must advance by ONE PER EXECUTED TICK, not per
+      // minute. `shouldRunCronTick` skips 4 of every 5 minutes on the DO
+      // path, so a raw-minute index advances by 5 each time it runs: with
+      // three chains that is a 15-minute cadence rather than the three
+      // this comment claims, and with FIVE chains the index never moves
+      // at all and four chains are captured never. Dividing by the
+      // cadence restores a step of one in both modes.
       const minute = Math.floor(controller.scheduledTime / 60_000);
-      const target = backingChains[minute % backingChains.length];
+      const ordinal = doIngestEnabled(env)
+        ? Math.floor(minute / DO_PATH_CADENCE_MINUTES)
+        : minute;
+      const target = backingChains[ordinal % backingChains.length];
       ctx.waitUntil(
         captureBackingSnapshot(resolved, target.id).catch((err) => {
           // One chain's RPC blip must not wedge the tick.

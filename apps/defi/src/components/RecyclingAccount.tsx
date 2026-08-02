@@ -272,6 +272,14 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   // null among them is a partial payload, not a withheld one.
   const backingPublishable = (b: RecyclingSeries['backing']): boolean =>
     b.unavailableReason === null &&
+    // The capture time is part of the success tuple, not decoration.
+    // These figures are read on a schedule, and the ONLY thing making
+    // that honest is the reader being able to judge their currency — so
+    // a snapshot that cannot say when it was taken is not publishable.
+    // It is required here rather than in the amount family because it is
+    // a timestamp, and that family validates digit strings.
+    typeof b.asOf === 'string' &&
+    b.asOf.length > 0 &&
     // Malformed amounts withhold the BLOCK, not the account.
     backingAmountsAreWellFormed(b) &&
     AMOUNT_FIELDS.backing.every(

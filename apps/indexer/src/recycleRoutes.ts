@@ -230,9 +230,23 @@ export async function captureBackingSnapshot(
   // Identity BEFORE trust: a secret pointed at the wrong network still
   // answers, and a fork or a matching deterministic address would store
   // another chain's reserve under this chain's id.
+  // SAFE head, not `latest`. Pinning to the unsafe tip means a 1-32 block
+  // reorg leaves the stored amounts describing an ORPHANED block while the
+  // published block number now resolves to different canonical state — so
+  // the snapshot stops being reproducible by the reader it was published
+  // for, and can serve an obsolete verdict for the whole staleness window.
+  // `chainIndexer` already avoids exactly this, with the same fallback for
+  // RPCs that do not support the safe tag.
   const [observedChainId, blockNumber] = await Promise.all([
     client.getChainId(),
-    client.getBlockNumber(),
+    (async () => {
+      try {
+        return (await client.getBlock({ blockTag: 'safe' })).number;
+      } catch {
+        const latest = await client.getBlockNumber();
+        return latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
+      }
+    })(),
   ]);
   if (observedChainId !== chainId) {
     console.warn(
@@ -298,6 +312,9 @@ export async function captureBackingSnapshot(
  * being presented as an answer.
  */
 const SNAPSHOT_MAX_AGE_MS = 30 * 60_000;
+
+/** Mirrors `chainIndexer`'s buffer for RPCs without a `safe` tag. */
+const SAFE_FALLBACK_BUFFER = 32n;
 
 async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
   try {
