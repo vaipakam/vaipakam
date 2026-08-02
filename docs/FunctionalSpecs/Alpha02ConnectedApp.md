@@ -953,7 +953,10 @@ Its intended behaviour, as the test oracle for this surface:
   or at the loan's due date, whichever comes first — and that once a
   listing ends without a sale (expiry or cancellation) the same loan
   cannot be listed again for a day, a breathing space for the
-  borrower whose repayment options are held while a listing stands.
+  borrower whose preclose and collateral-withdrawal options are held
+  while a listing stands (partial repayment is never held — it stays
+  available throughout, and a pending buyer re-signs for the smaller
+  position).
   Changing the chosen window, like changing the rate, voids any
   acknowledgement already given and closes an open review.
   Before confirming, the review must disclose: the
