@@ -366,6 +366,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // teardown also succeeds (the seller-hygiene branch), but there are
   // no borrower options left to free and no cooldown is stamped —
   // that cleanup is the SELLER's story (#1506), not this card's.
+  // Contract-mirroring sale-eligibility (Codex #1511 r7):
+  // createLoanSaleOffer requires ERC-20 principal AND ERC-20
+  // collateral (SaleOfferCollateralMustBeERC20) — a loan outside that
+  // shape can never carry a listing, so it must not pay the probes or
+  // ever fail closed on them.
+  const saleEligible = !loanIsRental && !collateralIsNft;
   const saleHold = useSaleListingHold(
     loanId,
     loan.data?.lenderTokenId ?? '',
@@ -373,7 +379,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // a cured fallback_pending row gets its borrower actions back from
     // the live reconciliation before the indexer catches up — the hold
     // notice and cleanup must come back with them.
-    Boolean(loan.data) && !loanIsRental && role === 'borrower' && effectivelyActive,
+    Boolean(loan.data) && saleEligible && role === 'borrower' && effectivelyActive,
   );
   // Durable success flag — keeps the card (and its confirmation)
   // mounted after the post-teardown refetch flips the probe to
@@ -409,6 +415,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setSaleHoldDrained(false);
     }
   }, [saleHold.data, saleHoldCleared, saleHoldDrained]);
+  // A chain switch keeps this component mounted (its key is the loan
+  // id), so the latch must not carry one chain's success onto another
+  // chain's loan N (Codex #1511 r7).
+  useEffect(() => {
+    setSaleHoldCleared(false);
+    setSaleHoldDrained(false);
+  }, [readChain.chainId]);
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -667,6 +680,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const assertSaleSettlementSafe = useCallback(async (): Promise<
     string | null
   > => {
+    // A loan that can never be listed (non-ERC-20 principal or
+    // collateral) has nothing to probe (Codex #1511 r7).
+    if (!saleEligible) return null;
     if (!publicClient || !walletChain || !loan.data) {
       return copy.saleHold.checkFailed;
     }
@@ -682,7 +698,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     } catch {
       return copy.saleHold.checkFailed;
     }
-  }, [publicClient, walletChain, loan.data, loanId, address]);
+  }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
   const principal = principalMeta.data;
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
@@ -1848,6 +1864,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       {role === 'borrower' &&
       !closedThisSession &&
       !isRental &&
+      // The latched confirmation must not outlive the loan (Codex
+      // #1511 r7): once the reconciled status is terminal there is no
+      // action window to talk about.
+      row.status === 'active' &&
       (saleListingHeld || saleHoldCleared) ? (
         <SaleListingHoldCard
           loanId={loanId}
@@ -2340,7 +2360,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               busy={busy}
               setBusy={setBusy}
             />
-            {loanLive.data.saleLock !== LOCK_EARLY_WITHDRAWAL_SALE ? (
+            {loanLive.data.saleLock !== LOCK_EARLY_WITHDRAWAL_SALE &&
+            !saleListingHeld ? (
+              // Hidden when EITHER independent signal reports the sale
+              // lifecycle (Codex #1511 r7): the loanLive lock cache and
+              // the hold probe refresh on different rails, and the form
+              // must not render while either says the offset would
+              // revert.
               <OffsetFlow
                 key={`offset-${readChain.chainId}`}
                 row={row}

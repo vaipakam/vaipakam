@@ -165,14 +165,17 @@ export function useSaleListingHold(
     enabled: enabled && Boolean(readClient),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
-    // A NEGATIVE result retries on a deployment-scale interval (Codex
-    // #1511 r4): a tab opened before the facet refresh would
-    // otherwise never notice the capability arriving — a deploy
-    // doesn't reload existing tabs. Positive results never refetch.
+    // Capability answers age on deployment-scale cadences (Codex
+    // #1511 r4 + r7): a NEGATIVE (or errored) result re-asks every 10
+    // minutes so a tab opened before the facet refresh notices it
+    // arriving; a POSITIVE result re-validates hourly so a facet
+    // ROLLBACK can't leave the probe interpreting legacy semantics as
+    // bounded ones indefinitely. (A deploy doesn't reload open tabs
+    // in either direction.)
     refetchInterval: (query) =>
       query.state.data === false || query.state.status === 'error'
         ? 600_000
-        : false,
+        : 3_600_000,
     queryFn: async (): Promise<boolean> => {
       const facet = (await readClient!.readContract({
         address: readChain.diamondAddress,
