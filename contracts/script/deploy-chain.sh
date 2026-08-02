@@ -182,6 +182,36 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
+
+# ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
+# (#1490) The tree state recorded in the provenance stamp answers "which
+# source state was this output generated FROM". Testing it AFTER the script
+# has written its own output always reports dirty, because the output IS a
+# working-tree change — so the marker was set on every run and distinguished
+# nothing, least of all the case it exists for: an export taken from a tree
+# with real uncommitted contract edits, which is not reproducible from the
+# recorded commit.
+#
+# `git diff --quiet HEAD` (not bare `git diff`) so STAGED-but-uncommitted
+# edits count as dirty too; a bare `git diff` compares against the index and
+# reports a fully-staged change as clean.
+TREE_COMMIT_AT_START="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
+TREE_DIRTY_AT_START=""
+# Anchored at the REPO ROOT and excluding this script's OWN output
+# (Codex #1495 r5 P2). Two things were wrong before: a pathspec was
+# resolved relative to `-C` rather than the root, and — more
+# importantly — the snapshot counted this script's own uncommitted
+# output as source drift, so simply RE-RUNNING an export before
+# committing its result recreated the false-dirty stamp this change
+# exists to remove.
+# NO exclusion here, deliberately (Codex #1495 r6 P2). This reading is
+# taken before the deploy writes anything, so it has no output of its
+# own to discount — and `contracts/deployments` is an INPUT this script
+# consumes (preflight resolves the recorded token address from it), so
+# excluding it would hide a real uncommitted edit that changes the run.
+if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 # Stage 3 / Stage 4 source-tree split: SPAs and Workers each live under
 # `apps/<name>` with a wrangler.jsonc, and three Workers replace the
 # old monolithic `ops/hf-watcher`. Every Cloudflare deploy step in this
@@ -878,11 +908,34 @@ fi
 # sidecar fixes that — written fresh on every deploy completion.
 
 DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
-COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
-COMMIT_DIRTY=""
-if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then
-  COMMIT_DIRTY=" (dirty)"
+# Records the hash pinned WITH the opening snapshot, not a fresh read
+# (Codex #1495 r2 P2). A late `rev-parse` would name whatever HEAD is by
+# the time the deploy finishes, which is not necessarily the commit whose
+# source produced the bytecode this run just deployed.
+COMMIT_HASH="$TREE_COMMIT_AT_START"
+# #1495 r1 P2 — a deploy runs for many minutes and consumes source AFTER
+# the snapshot (forge build, forge script). The opening reading is
+# therefore not an immutable description of this run's inputs: a file
+# edited mid-run would otherwise stamp clean. Re-check the SOURCE paths
+# here and OR the result in.
+#
+# Scoped to source rather than the whole tree on purpose — by now the
+# deploy's OWN artifacts (addresses.json and friends) have legitimately
+# changed, and testing the whole tree at this point is precisely the
+# always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
+# clear it.
+
+  # HEAD can MOVE during a long deploy: an operator committing mid-run
+  # would otherwise leave the late stamp naming a NEW commit while the
+  # bytecode came from the old one. Only HEAD movement is checked here —
+  # mid-run INPUT drift is deliberately NOT detected (deferred to #1502),
+  # and an earlier version of this comment claimed a recheck that this
+  # revision removed.
+if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
+     != "$TREE_COMMIT_AT_START" ]; then
+  TREE_DIRTY_AT_START=" (dirty)"
 fi
+COMMIT_DIRTY="$TREE_DIRTY_AT_START"
 cat > "$DEPLOY_DIR/deployment_source.json" <<EOF
 {
   "chainSlug": "$CHAIN_SLUG",

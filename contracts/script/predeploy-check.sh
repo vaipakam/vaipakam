@@ -179,6 +179,155 @@ for s in "${DEPLOY_SH[@]}"; do
   fi
 done
 
+# 3d. Provenance-stamp ordering (#1490). Any script that writes a
+# `monorepoCommit` stamp must snapshot the working-tree state BEFORE it
+# writes its own output — otherwise the dirty marker is set on every run by
+# the script's own artifacts and distinguishes nothing, which is exactly the
+# state #1490 found: six of the seven stamping scripts, six always-dirty
+# stamps. (The seventh, `exportAbis.sh`, writes into a SIBLING checkout, so
+# its own output never dirtied the tree it tested — it was correct, and is
+# held to the same idiom only so no script here is a special case.)
+#
+# Checks the property DIRECTLY rather than by counting `git diff` calls. An
+# earlier revision grepped for the literal `git diff --quiet`, which matched
+# only the explanatory COMMENTS — every real call is spelled
+# `git -C "$SOMEWHERE" diff --quiet HEAD`, so the check was counting its own
+# prose and would have passed a late recomputation written the way the
+# scripts actually write it (Codex #1495 r1 P2). Counting was also the wrong
+# idea outright: `deploy-mainnet.sh` legitimately calls `git diff --quiet` a
+# second time to REFUSE a dirty mainnet deploy, which is a gate, not a stamp.
+#
+# So instead: find the variable actually interpolated into the stamp, and
+# require that it is assigned exactly once, from the snapshot, and that the
+# snapshot precedes the first write.
+#
+# COVERAGE LIMIT, stated rather than implied: "first write" is found by
+# looking for `forge inspect`, `python3 - `, `jq ` and `cat > "$`. A script
+# writing by some other means is checked for the idiom but NOT for ordering.
+# Widen the pattern rather than trusting silence.
+# Discovery keys on the SHAPE of the emission, never on the NAMES of the
+# interpolated variables (Codex #1495 r5 P2). Matching a variable containing
+# `DIRTY` meant an ordinary rename silently dropped a script from this list
+# while the non-empty check stayed green — so a rename bypassed every
+# predicate below without a single failure. Discovery finds the file; the
+# parser below validates the variables.
+STAMPING_SH=()
+while IFS= read -r f; do STAMPING_SH+=("$(basename "$f")"); done < <(
+  grep -rlE 'monorepoCommit"?:? "?\$' "$SCRIPT_DIR"/*.sh 2>/dev/null \
+    | grep -v '/predeploy-check\.sh$' | sort
+)
+if [ ${#STAMPING_SH[@]} -eq 0 ]; then
+  echo "  ✗ no provenance-stamping scripts matched — pattern drifted?" >&2
+  FAIL=1
+else
+  for s in "${STAMPING_SH[@]}"; do
+    f="$SCRIPT_DIR/$s"
+    # The dirty variable is the SECOND interpolation in the stamp value.
+    # EVERY emission, not just the first (Codex #1495 r7 P2).
+    # `exportSubgraphAbis.sh` already stamps twice — an ABI bundle and a
+    # per-chain manifest — so a `head -1` parser validated one pair and let a
+    # second, independently-assigned pair bypass every predicate. Scripts that
+    # stamp more than once are exactly where a refactor would introduce a late
+    # read, since the second emission is the one nobody remembers.
+    dirty_vars="$(sed -nE 's/.*monorepoCommit"?:? "?\$[A-Za-z_][A-Za-z0-9_]*\$([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$f" | sort -u)"
+    commit_vars="$(sed -nE 's/.*monorepoCommit"?:? "?\$([A-Za-z_][A-Za-z0-9_]*)\$[A-Za-z_][A-Za-z0-9_]*.*/\1/p' "$f" | sort -u)"
+    dirty_var="$(echo "$dirty_vars" | head -1)"
+    # The COMMIT half must be pinned with the snapshot too (Codex #1495 r3
+    # P2). Pairing an early dirty reading with a late `rev-parse` lets a
+    # commit landing in between attribute output to a commit that did not
+    # produce it — and that half went unchecked for a whole round because the
+    # guard only knew about the dirty half.
+    commit_var="$(echo "$commit_vars" | head -1)"
+    # Any emission whose variables are NOT the ones validated below is an
+    # unvalidated second stamp; reject rather than silently ignore it.
+    # Count emissions BEFORE parsing pairs (Codex #1495 r8 P2): an emission
+    # that drops its dirty interpolation matches neither regex, so it vanished
+    # from both sets and the remaining valid stamp kept everything looking
+    # green. A stamp with no dirty half is exactly the regression worth
+    # catching, and it was the one shape that could hide from the checker.
+    emissions="$(grep -cE 'monorepoCommit"?:? "?\$' "$f" || true)"
+    pairs="$(grep -cE 'monorepoCommit"?:? "?\$[A-Za-z_][A-Za-z0-9_]*\$[A-Za-z_]' "$f" || true)"
+    extra_pairs=0
+    [ "$emissions" -eq "$pairs" ] || extra_pairs=1
+    for v in $dirty_vars; do [ "$v" = "$dirty_var" ] || extra_pairs=1; done
+    for v in $commit_vars; do [ "$v" = "$commit_var" ] || extra_pairs=1; done
+    # Anchor on the ACTUAL git state read, not the empty initializer (Codex
+    # #1495 r2 P2). Anchoring on `TREE_DIRTY_AT_START=""` meant an edit that
+    # left the initializer early while moving the `git diff` conditional after
+    # the first write still passed — the same mistake as the guard this
+    # replaced, which anchored on a grep for prose instead of the command.
+    # `TREE_DIRTY_AT_START=" (dirty)"` sits INSIDE that conditional, so it
+    # moves with it.
+    snap_line="$(grep -n '^[[:space:]]*TREE_DIRTY_AT_START=" (dirty)"' "$f" | head -1 | cut -d: -f1)"
+    snap_init="$(grep -c '^TREE_DIRTY_AT_START=""' "$f" || true)"
+    # ANY reset to empty, at any indentation, anywhere (Codex #1495 r5 P2).
+    # Counting only the column-zero initializer let a later
+    # `if true; then TREE_DIRTY_AT_START=""; fi` clear a dirty run while every
+    # other predicate stayed green — a dirty tree stamped clean, the precise
+    # outcome this guard exists to prevent.
+    # Count EVERY assignment-to-empty anywhere in the file and require exactly
+    # one — the column-zero initializer. Anything else is a reset. A first
+    # attempt enumerated the shapes a reset might take (leading whitespace, or
+    # after a `;`) and missed `if true; then TREE_DIRTY_AT_START=""; fi`
+    # entirely, which is why this counts rather than pattern-matches: an
+    # enumeration of bad forms is only ever as good as the imagination behind
+    # it, whereas "exactly one, in the right place" has no gaps.
+    snap_empty_total="$(grep -cF 'TREE_DIRTY_AT_START=""' "$f" || true)"
+    # The COMMIT snapshot needs the same placement check as the dirty one
+    # (Codex #1495 r6 P2): verifying that the stamp derives from
+    # TREE_COMMIT_AT_START says nothing about WHERE that variable is
+    # populated, so moving its assignment late restored the very late-read
+    # this check exists to forbid.
+    commit_snap_line="$(grep -n '^TREE_COMMIT_AT_START=' "$f" | head -1 | cut -d: -f1)"
+    commit_snap_total="$(grep -oE '(^|[;[:space:]])TREE_COMMIT_AT_START=' "$f" | wc -l | tr -d ' ')"
+    first_write="$(grep -nE 'forge inspect|python3 - |jq |cat > "\$' "$f" \
+      | grep -v '^[0-9]*:#' | head -1 | cut -d: -f1)"
+    if [ "$extra_pairs" -ne 0 ]; then
+      echo "  ✗ $s — emits more than one provenance stamp with DIFFERENT variables; every emission must use the validated pair (#1490)" >&2
+      FAIL=1
+      continue
+    fi
+    if [ -z "$dirty_var" ]; then
+      echo "  ✗ $s — cannot identify the stamp's dirty variable (#1490)" >&2
+      FAIL=1
+      continue
+    fi
+    # Every assignment of that variable, anywhere in the file.
+    # Counted anywhere on the LINE, not just at line start (Codex #1495 r6 P2).
+    # A line-anchored count missed `if true; then DIRTY=""; fi`, so an inline
+    # reset forced the stamp clean with every predicate green. Same defect I
+    # had already fixed for the snapshot variable and not for these two —
+    # fixing one instance of a class and leaving its siblings, again.
+    assigns="$(grep -oE "(^|[;[:space:]])${dirty_var}=" "$f" | wc -l | tr -d ' ')"
+    commit_from_snap="$(grep -cE "^[[:space:]]*${commit_var}=\"\\\$TREE_COMMIT_AT_START\"" "$f" || true)"
+    # TOTAL assignments too, symmetric with the dirty variable (Codex #1495 r4
+    # P2). Checking only "is assigned from the snapshot once" let a LATE
+    # reassignment from `rev-parse` sit alongside it and pass — the same
+    # half-a-property blind spot that let the commit half through in r3.
+    commit_assigns="$(grep -oE "(^|[;[:space:]])${commit_var}=" "$f" | wc -l | tr -d ' ')"
+    from_snap="$(grep -cE "^[[:space:]]*${dirty_var}=\"\\\$TREE_DIRTY_AT_START\"" "$f" || true)"
+    if [ -z "$snap_line" ] || [ "$snap_init" -ne 1 ] || [ "$snap_empty_total" -ne 1 ]; then
+      echo "  ✗ $s — stamps monorepoCommit but has no TREE_DIRTY_AT_START snapshot (#1490)" >&2
+      FAIL=1
+    elif [ "$assigns" -ne 1 ] || [ "$from_snap" -ne 1 ]; then
+      echo "  ✗ $s — \$$dirty_var must be assigned exactly once, from the snapshot (found $assigns assignment(s), $from_snap from snapshot) (#1490)" >&2
+      FAIL=1
+    elif [ -z "$commit_snap_line" ] || [ "$commit_snap_total" -ne 1 ] \
+         || { [ -n "$first_write" ] && [ "$commit_snap_line" -gt "$first_write" ]; }; then
+      echo "  ✗ $s — TREE_COMMIT_AT_START must be assigned exactly once, before the first write (#1490)" >&2
+      FAIL=1
+    elif [ "$commit_from_snap" -ne 1 ] || [ "$commit_assigns" -ne 1 ]; then
+      echo "  ✗ $s — \$$commit_var must be pinned from \$TREE_COMMIT_AT_START, not re-read at stamp time (#1490)" >&2
+      FAIL=1
+    elif [ -n "$first_write" ] && [ "$snap_line" -gt "$first_write" ]; then
+      echo "  ✗ $s — the git state read at line $snap_line comes AFTER the first write at line $first_write (#1490)" >&2
+      FAIL=1
+    else
+      echo "  ✓ $s — stamp derives from a snapshot taken before the first write"
+    fi
+  done
+fi
+
 # 3d. Stale LayerZero deploy-residue guard. T-068 Phase 6.4 stripped the
 #     old LZ deploy variables when the cross-chain layer moved to CCIP.
 #     `lzEid` / `LayerZero` are deliberately NOT banned — the LZ endpoint

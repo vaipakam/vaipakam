@@ -40,11 +40,54 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
+
 DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
 SUBGRAPH_DIR="$REPO_ROOT/ops/subgraph"
 TEMPLATE="$SUBGRAPH_DIR/subgraph.yaml"
 ABI_DIR="$SUBGRAPH_DIR/abis"
 OUT_DIR="$SUBGRAPH_DIR/generated"
+
+# ── Provenance snapshot — after the OUTPUT PATHS are resolved, before any write ──
+# (#1490, and Codex #1495 r7 P2 for the placement.) The exclusion has to name
+# this run's ACTUAL output, so the snapshot cannot be taken before the output
+# directory is known: a hard-coded default silently excluded the wrong path
+# whenever an operator overrode it, counting the real output as source drift
+# and recreating the false-dirty stamp for exactly the people who customise.
+#
+# It still precedes every write — resolving a path is not writing to it — so
+# the ordering property #1490 is about is unaffected.
+#
+# Excludes ONLY what this script writes. NEVER the enclosing directory: doing
+# that also hides the tracked TEMPLATE that is consumed to produce the output,
+# which turns a real uncommitted edit into a clean reading (r6/r7 found that
+# same mistake in three separate scripts).
+_PROV_ROOT="$(cd "$REPO_ROOT" && pwd)"
+TREE_COMMIT_AT_START="$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
+TREE_DIRTY_AT_START=""
+# A path that did not start with the repo root is OUTSIDE the repository, and
+# an absolute path is not a valid repo pathspec — git exits 128, which this
+# negated call with discarded stderr would silently read as "dirty" forever
+# (Codex #1495 r8 P2). Nothing outside the repo can be working-tree drift, so
+# there is simply nothing to exclude in that case.
+_prov_excl() {
+  local abs="$1"
+  case "$abs" in
+    "$_PROV_ROOT"/*) printf '%s' ":(exclude)${abs#"$_PROV_ROOT"/}" ;;
+    *) : ;;
+  esac
+}
+# Built as an ARRAY so an omitted exclusion contributes NO argument
+# (Codex #1495 r9 P2). Filtering the VALUE was not enough: a quoted
+# command substitution that expands to nothing still passes an EMPTY
+# argument, git rejects it with "empty string is not a valid pathspec",
+# and this negated call with discarded stderr turned that into a
+# permanent "(dirty)" — reproduced end-to-end from a clean tree.
+_prov_paths=(.)
+_prov_e="$(_prov_excl "$ABI_DIR")"; [ -n "$_prov_e" ] && _prov_paths+=("$_prov_e")
+_prov_e="$(_prov_excl "$OUT_DIR")"; [ -n "$_prov_e" ] && _prov_paths+=("$_prov_e")
+if ! git -C "$_PROV_ROOT" diff --quiet HEAD -- "${_prov_paths[@]}" 2>/dev/null; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
 
 if [ ! -f "$TEMPLATE" ]; then
   echo "Error: $TEMPLATE not found." >&2
@@ -127,9 +170,20 @@ jq -s 'add' "$TMPDIR"/*.json > "$ABI_DIR/Diamond.json"
 # the operator (and the on-call investigating a misfired alert) can
 # trace exactly which contract source line corresponds to each event
 # signature here.
-COMMIT_HASH=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "?")
-COMMIT_DIRTY=""
-if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then COMMIT_DIRTY=" (dirty)"; fi
+# HEAD moved between the snapshot and the stamp — the pair would be
+# inconsistent, so say so rather than publish a confident wrong answer.
+if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+     != "$TREE_COMMIT_AT_START" ]; then
+  TREE_DIRTY_AT_START=" (dirty)"
+fi
+# Pinned WITH the snapshot, not re-read here (Codex #1495 r3 P2). A commit
+# landing between the snapshot and this line would otherwise pair a NEW hash
+# with the CLEAN state observed earlier, attributing output to a commit that
+# did not produce it. The window is small for an exporter and not zero, and
+# the deploy scripts already had to solve exactly this — one idiom, no
+# special cases.
+COMMIT_HASH="$TREE_COMMIT_AT_START"
+COMMIT_DIRTY="$TREE_DIRTY_AT_START"
 cat > "$ABI_DIR/_source.json" <<EOF
 {
   "monorepoCommit": "$COMMIT_HASH$COMMIT_DIRTY",
