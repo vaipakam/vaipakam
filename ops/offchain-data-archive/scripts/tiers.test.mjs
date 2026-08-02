@@ -24,6 +24,7 @@ import {
   periodOf,
   classifyListing,
   siblingArchiveKey,
+  validateBaseline,
 } from '../src/tiers.ts';
 
 const at = (iso) => Date.parse(iso);
@@ -255,6 +256,10 @@ test('total-family absence is pageable for daily/monthly, not for yearly', () =>
 describe_listing();
 function describe_listing() {
   const K = (p, period) => `${p}${period}/abc.json`;
+  /** The real sibling of `K` — `.bin`, not `.json`. The pairing check
+   *  compares actual keys now, so a fixture that pairs `.json` with
+   *  `.json` is not modelling a restorable backup. */
+  const KA = (p, period) => `${p}${period}/abc.bin`;
 
   test('a FAILED listing is a tier failure, never an empty tier', () => {
     // Continuing past a list error made an unreadable prefix
@@ -327,7 +332,7 @@ function describe_listing() {
       { ok: true, keys: [K('manifests-monthly/', '2026-02'), K('manifests-monthly/', '2026-03')] },
       at('2026-03-16T09:00:00Z'),
       { monthly: '2026-02' },
-      { ok: true, keys: [K('archives-monthly/', '2026-03')] },
+      { ok: true, keys: [KA('archives-monthly/', '2026-03')] },
     );
     assert.equal(v.done, true);
     assert.equal(v.ok, false);
@@ -356,7 +361,7 @@ function describe_listing() {
       { ok: true, keys: [K('manifests-yearly/', '2028')] },
       at('2028-06-01T09:00:00Z'),
       {},
-      { ok: true, keys: [K('archives-yearly/', '2028')] },
+      { ok: true, keys: [KA('archives-yearly/', '2028')] },
     );
     assert.equal(v.done, false);
     assert.match(v.degraded, /no declared first-yearly baseline/);
@@ -368,7 +373,7 @@ function describe_listing() {
       { ok: true, keys: [K('manifests-yearly/', '2028')] },
       at('2028-06-01T09:00:00Z'),
       { yearly: '2028' },
-      { ok: true, keys: [K('archives-yearly/', '2028')] },
+      { ok: true, keys: [KA('archives-yearly/', '2028')] },
     );
     assert.equal(v.done, false);
     assert.equal(v.degraded, undefined);
@@ -410,3 +415,114 @@ test('an empty AGEING tier reports a dead cron, not "never written"', () => {
   assert.equal(y.ok, true);
   assert.match(y.reason, /ever been written/);
 });
+
+test('a period must be a real calendar period, not merely the right width', () => {
+  // `9999-99` passes a width regex AND sorts above every genuine month, so
+  // it becomes `newestPeriod` — the tier would then fetch and parse an
+  // attacker-chosen manifest instead of the real newest backup. The shape
+  // check stopped the range explosion; it did not stop selection.
+  assert.equal(periodOf(tier('monthly'), 'manifests-monthly/9999-99/a.json'), null);
+  assert.equal(periodOf(tier('monthly'), 'manifests-monthly/2026-00/a.json'), null);
+  assert.equal(periodOf(tier('daily'), 'manifests/2026-02-30/a.json'), null);
+  assert.equal(periodOf(tier('daily'), 'manifests/2026-13-01/a.json'), null);
+  assert.equal(periodOf(tier('yearly'), 'manifests-yearly/1999/a.json'), null);
+  // …and real ones still pass.
+  assert.equal(periodOf(tier('daily'), 'manifests/2026-02-28/a.json'), '2026-02-28');
+  assert.equal(periodOf(tier('monthly'), 'manifests-monthly/2026-12/a.json'), '2026-12');
+});
+
+test('a FUTURE period cannot capture the newest slot', () => {
+  // A real-but-future period passes the calendar check, so the guard has
+  // to be against the clock, not the shape.
+  const v = classifyListing(
+    tier('monthly'),
+    {
+      ok: true,
+      keys: [
+        'manifests-monthly/2026-03/honest.json',
+        'manifests-monthly/2030-01/planted.json',
+      ],
+    },
+    at('2026-03-16T09:00:00Z'),
+    { monthly: '2026-03' },
+    {
+      ok: true,
+      keys: [
+        'archives-monthly/2026-03/honest.bin',
+        'archives-monthly/2030-01/planted.bin',
+      ],
+    },
+  );
+  assert.equal(v.done, false);
+  assert.equal(v.newestPeriod, '2026-03');
+});
+
+test('a manifest paired with a DIFFERENT nonce is not a restorable backup', () => {
+  // Reducing both sides to period labels says "this month has a manifest
+  // and this month has an archive" — satisfied by manifest/A beside
+  // archive/B, where neither restores with the other.
+  const v = classifyListing(
+    tier('monthly'),
+    { ok: true, keys: ['manifests-monthly/2026-03/A.json'] },
+    at('2026-03-16T09:00:00Z'),
+    { monthly: '2026-03' },
+    { ok: true, keys: ['archives-monthly/2026-03/B.bin'] },
+  );
+  assert.equal(v.done, true);
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /NO archive beside it/);
+});
+
+test('one superseded upload losing its pair is not a lost backup', () => {
+  // The period is still restorable through the other pair, so this must
+  // not page — the check is about losing a BACKUP, not a stray key.
+  const v = classifyListing(
+    tier('monthly'),
+    {
+      ok: true,
+      keys: ['manifests-monthly/2026-03/A.json', 'manifests-monthly/2026-03/B.json'],
+    },
+    at('2026-03-16T09:00:00Z'),
+    { monthly: '2026-03' },
+    { ok: true, keys: ['archives-monthly/2026-03/B.bin'] },
+  );
+  assert.equal(v.done, false);
+});
+
+test('an empty family with no baseline PASSES but discloses the degradation', () => {
+  // This is the state where deletion detection is most conspicuously
+  // unavailable, and it was the one path that returned a bare pass.
+  const v = classifyListing(
+    tier('yearly'),
+    { ok: true, keys: [] },
+    at('2026-06-01T09:00:00Z'),
+    {},
+    { ok: true, keys: [] },
+  );
+  assert.equal(v.done, true);
+  assert.equal(v.ok, true);
+  assert.match(v.degraded, /no declared first-yearly baseline/);
+});
+
+test('a mistyped baseline is REJECTED, not silently obeyed', () => {
+  // `2026-13` compares above every real month, so every retained month
+  // reads as predating the deployment and nothing is required — and being
+  // truthy, it also suppresses the degraded warning that would have said
+  // so. One digit turns the tier off and removes the notice.
+  const now = at('2026-06-01T09:00:00Z');
+  const bad = validateBaseline({ monthly: '2026-13' }, now);
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors[0], /not a valid monthly period/);
+
+  const future = validateBaseline({ yearly: '2999' }, now);
+  assert.equal(future.ok, false);
+  assert.match(future.errors[0], /in the future/);
+
+  const good = validateBaseline({ monthly: '2026-01', yearly: '2026' }, now);
+  assert.equal(good.ok, true);
+  assert.deepEqual(good.baseline, { monthly: '2026-01', yearly: '2026' });
+
+  // Unset stays legal — a fresh deployment has none to declare.
+  assert.deepEqual(validateBaseline({}, now), { ok: true, baseline: {} });
+});
+

@@ -140,13 +140,38 @@ const PERIOD_SHAPE: Record<TierName, RegExp> = {
   yearly: /^\d{4}$/,
 };
 
+/**
+ * Is this segment a real calendar period, not merely the right width?
+ *
+ * A width check alone accepts `9999-99`, which sorts above every genuine
+ * month — so it becomes `newestPeriod`, and the tier then fetches and
+ * parses an ATTACKER-CHOSEN manifest instead of the real newest backup.
+ * The shape check stopped the range explosion; it did not stop selection.
+ */
+function isRealPeriod(tier: TierName, seg: string): boolean {
+  if (!PERIOD_SHAPE[tier].test(seg)) return false;
+  if (tier === 'yearly') {
+    const y = Number(seg);
+    return y >= 2000 && y <= 2999;
+  }
+  const [y, m] = seg.split('-').map(Number);
+  if (y < 2000 || y > 2999) return false;
+  if (m < 1 || m > 12) return false;
+  if (tier === 'monthly') return true;
+  // Round-trip through Date: rejects Feb 30 and friends, which a
+  // range check on the day number alone accepts.
+  const iso = `${seg}T00:00:00.000Z`;
+  const parsed = new Date(iso);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === seg;
+}
+
 /** The period segment of a manifest key: `<prefix><period>/<nonce>.json`. */
 export function periodOf(spec: TierSpec, manifestKey: string): string | null {
   if (!manifestKey.startsWith(spec.manifestPrefix)) return null;
   const rest = manifestKey.slice(spec.manifestPrefix.length);
   if (!rest.includes('/')) return null;
   const seg = rest.split('/')[0];
-  return PERIOD_SHAPE[spec.tier].test(seg) ? seg : null;
+  return isRealPeriod(spec.tier, seg) ? seg : null;
 }
 
 /**
@@ -321,6 +346,26 @@ export interface TierVerdict {
  * distinction is the entire difference the ordering makes, and a test
  * asserts the reason text rather than just the verdict.
  */
+/**
+ * Why this tier's coverage is incomplete, if it is.
+ *
+ * Shared by the absence path and the healthy path. It was only on the
+ * healthy one, so the case where deletion detection is MOST obviously
+ * unavailable — an empty family with no declared baseline — returned a
+ * bare pass with no disclosure at all.
+ */
+function degradedReason(
+  spec: TierSpec,
+  baseline: ArchiveBaseline,
+): string | undefined {
+  if (spec.tier === 'daily') return undefined;
+  if (baseline[spec.tier as 'monthly' | 'yearly']) return undefined;
+  return (
+    `no declared first-${spec.tier} baseline — deletion of the oldest ` +
+    `periods is undetectable until one is set`
+  );
+}
+
 export function classifyListing(
   spec: TierSpec,
   listing: Listing,
@@ -339,9 +384,20 @@ export function classifyListing(
     };
   }
 
+  // A period AFTER the current one cannot have been written by the nightly
+  // cron, so it is either a clock fault or an upload chosen to sort above
+  // every genuine period and capture `newestPeriod`.
+  const currentPeriod =
+    spec.tier === 'daily'
+      ? dayKey(now, 0)
+      : spec.tier === 'monthly'
+        ? monthKey(now, 0)
+        : yearKey(now, 0);
   const present = [
     ...new Set(
-      listing.keys.map((k) => periodOf(spec, k)).filter((p): p is string => !!p),
+      listing.keys
+        .map((k) => periodOf(spec, k))
+        .filter((p): p is string => !!p && p <= currentPeriod),
     ),
   ].sort();
 
@@ -362,6 +418,7 @@ export function classifyListing(
       done: true,
       absent: true,
       ok: !spec.absenceIsFailure,
+      degraded: degradedReason(spec, baseline),
       reason:
         `no ${spec.tier} archive has ever been written — nothing verified ` +
         `for this tier (expected only until this deployment lives through ` +
@@ -385,12 +442,20 @@ export function classifyListing(
           `treated as a failure, NOT as an empty tier`,
       };
     }
-    const archivePeriods = new Set(
-      archiveKeys.keys
-        .map((k) => periodOf({ ...spec, manifestPrefix: spec.archivePrefix }, k))
+    // Compare ACTUAL KEYS, not period labels. Reducing both sides to
+    // periods says "this month has a manifest and this month has an
+    // archive" — which is satisfied by `manifest/A.json` beside
+    // `archive/B.bin`, where neither is restorable with the other.
+    const archiveSet = new Set(archiveKeys.keys);
+    // A period is orphaned only when NO manifest in it has its sibling —
+    // one superseded upload losing its pair is not a lost backup.
+    const pairedPeriods = new Set(
+      listing.keys
+        .filter((k) => archiveSet.has(siblingArchiveKey(spec, k)))
+        .map((k) => periodOf(spec, k))
         .filter((p): p is string => !!p),
     );
-    const orphaned = present.filter((p) => !archivePeriods.has(p));
+    const orphaned = present.filter((p) => !pairedPeriods.has(p));
     if (orphaned.length > 0) {
       return {
         done: true,
@@ -410,10 +475,46 @@ export function classifyListing(
     // Stated, not implied: without a declared baseline this tier cannot
     // report that its OLDEST periods were deleted, because its
     // expectations come from what survived.
-    degraded:
-      spec.tier !== 'daily' && !baseline[spec.tier as 'monthly' | 'yearly']
-        ? `no declared first-${spec.tier} baseline — deletion of the oldest ` +
-          `periods is undetectable until one is set`
-        : undefined,
+    degraded: degradedReason(spec, baseline),
   };
 }
+
+/**
+ * Reject an operator baseline that is not a real, non-future period.
+ *
+ * These are hand-set strings and a typo does not fail loudly — it fails
+ * SILENTLY AND IN THE WRONG DIRECTION. `ARCHIVE_FIRST_MONTHLY=2026-13`
+ * compares above every genuine month, so every retained month is treated
+ * as predating the deployment and nothing is required; and because the
+ * value is truthy, the degraded-coverage disclosure is suppressed too. A
+ * single mistyped digit turns the tier's checks off and removes the
+ * warning that would have said so.
+ */
+export function validateBaseline(
+  baseline: ArchiveBaseline,
+  now: number,
+): { ok: true; baseline: ArchiveBaseline } | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  const checked: ArchiveBaseline = {};
+  const specs: [keyof ArchiveBaseline, TierName, string][] = [
+    ['monthly', 'monthly', monthKey(now, 0)],
+    ['yearly', 'yearly', yearKey(now, 0)],
+  ];
+  for (const [key, tier, current] of specs) {
+    const v = baseline[key];
+    if (v === undefined || v === '') continue;
+    if (!isRealPeriod(tier, v)) {
+      errors.push(`ARCHIVE_FIRST_${key.toUpperCase()}="${v}" is not a valid ${tier} period`);
+      continue;
+    }
+    if (v > current) {
+      errors.push(
+        `ARCHIVE_FIRST_${key.toUpperCase()}="${v}" is in the future (now ${current})`,
+      );
+      continue;
+    }
+    checked[key] = v;
+  }
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, baseline: checked };
+}
+

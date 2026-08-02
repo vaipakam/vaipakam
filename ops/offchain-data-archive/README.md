@@ -127,13 +127,22 @@ state. While unset, the weekly report appends `COVERAGE DEGRADED` to that
 tier's line and says why — the absence of the guarantee is published
 rather than implied.
 
-The monthly floor used to be higher for a worse reason: `healthcheck.ts`
-examined only `manifests/<recent dates>/`, so a monthly overwrite was detected
-by nothing and the window could not be justified by detection at all — it
-simply had to outlast the monthly write cadence. **#1476** closed that: the
-weekly run now verifies the newest monthly and yearly archive alongside the
-daily one, so every tier gets the same routine inspection and the monthly floor
-is now the same cycle-plus-slack figure as the daily one.
+The monthly floor is higher than the daily one, and **#1476 did not change
+that** — deliberately, after trying to.
+
+Before #1476, `healthcheck.ts` examined only `manifests/<recent dates>/`, so a
+monthly overwrite was detected by nothing at all and the window could not be
+justified by detection in any form; it simply had to outlast the monthly write
+cadence. #1476 closed that gap: the weekly run now reads every prefix family.
+
+It did not earn a shorter window. The run verifies the NEWEST period of each
+family in full — hash, size, decryption — while every older period still inside
+retention gets a presence-and-pairing check, which an archive corrupted or
+overwritten in place passes unchanged. The floor's derivation is "the window
+outlives one full cycle of the routine inspection", and that only holds for the
+periods actually inspected in full. Rotating the full check across the retained
+months implies a floor near 78 days, not a shorter one. See the note above
+`MIN_RECOVERY_DAYS_MONTHLY` in `lifecycle-policy.mjs`.
 
 Raising the daily ceiling at all means excluding support tickets from that tier,
 which means tickets have no backup — a product decision, tracked as **#1474**.

@@ -25,6 +25,7 @@ import {
   classifyListing,
   periodOf,
   siblingArchiveKey,
+  validateBaseline,
   type ArchiveBaseline,
   type Listing,
   type TierName,
@@ -188,6 +189,55 @@ async function getObject(cfg: B2Config, key: string): Promise<Response> {
  * differences live entirely in the `TierSpec`, which is what stops a
  * tier from being covered "differently" and therefore not at all.
  */
+
+/** Long tiers exclude support tickets so a ticket's backup copies live
+ *  ONLY in the 30-day daily tier — a published deletion promise, not a
+ *  size optimisation. */
+const EXCLUDED_FROM_LONG_TIERS = ['support_tickets'];
+
+/**
+ * Does the decrypted payload actually belong in the period it was filed
+ * under, and in this tier?
+ *
+ * Returns a reason when it does not. The checks are cheap and both catch
+ * a copy-forward that every byte-level check passes.
+ */
+function archiveContentFault(
+  spec: TierSpec,
+  period: string,
+  plaintext: Uint8Array,
+  manifestCreatedAt: string,
+): string | null {
+  // The manifest travels WITH a copied archive, so its own timestamp is
+  // the copied one — filed under a period it does not belong to.
+  if (!manifestCreatedAt || !manifestCreatedAt.startsWith(period)) {
+    return (
+      `${spec.tier} archive filed under ${period} was created ` +
+      `${manifestCreatedAt || '(unstated)'} — stale or copied from another period`
+    );
+  }
+  if (spec.tier === 'daily') return null;
+  try {
+    const obj = JSON.parse(new TextDecoder().decode(plaintext)) as {
+      d1?: { archive?: { name?: string }[] };
+    };
+    const names = (obj.d1?.archive ?? []).map((t) => t?.name).filter(Boolean);
+    const forbidden = names.filter((n) =>
+      EXCLUDED_FROM_LONG_TIERS.includes(n as string),
+    );
+    if (forbidden.length > 0) {
+      return (
+        `${spec.tier} archive contains ${forbidden.join(', ')}, which the long ` +
+        `tiers exclude — a daily payload copied into a long-retention family ` +
+        `would retain them past their promised deletion`
+      );
+    }
+  } catch {
+    return `${spec.tier} archive decrypted but is not parseable as a backup payload`;
+  }
+  return null;
+}
+
 export async function verifyTier(
   env: Env,
   b2Cfg: B2Config,
@@ -313,13 +363,43 @@ export async function verifyTier(
 
   // Decryption probe — confirms the archive isn't merely well-
   // formed bytes but actually decrypts with the configured key.
+  //
+  // AND that it is the RIGHT backup. SHA, byte length and AES-GCM
+  // authentication all describe the BYTES; none of them says which backup
+  // those bytes are. A holder of the B2 read+write keys but NOT the AES
+  // key can copy a genuine old archive and its manifest into a currently
+  // required prefix and pass every one of those checks — hiding a failed
+  // cut behind stale data. Copying a DAILY payload into the indefinite
+  // yearly family is worse than stale: the long tiers deliberately
+  // exclude `support_tickets` so a ticket's backup copies live only in
+  // the 30-day tier, and that copy would retain them forever, breaching
+  // the published deletion promise.
+  let plaintext: Uint8Array;
   try {
-    await decrypt(env.encryptionKey, archiveBytes);
+    plaintext = new Uint8Array(await decrypt(env.encryptionKey, archiveBytes));
   } catch (err) {
     return {
       ...base,
       ok: false,
       reason: `archive decryption failed: ${(err as Error).message}`,
+      archiveKey,
+      manifestKey: pickedManifest.key,
+      manifestSha: manifestJson.archive.sha256,
+      actualSha,
+    };
+  }
+
+  const contentFault = archiveContentFault(
+    spec,
+    verdict.newestPeriod!,
+    plaintext,
+    manifestJson.createdAt,
+  );
+  if (contentFault) {
+    return {
+      ...base,
+      ok: false,
+      reason: contentFault,
       archiveKey,
       manifestKey: pickedManifest.key,
       manifestSha: manifestJson.archive.sha256,
@@ -357,10 +437,28 @@ export async function runHealthcheck(
   b2Cfg: B2Config,
   now: number = Date.now(),
 ): Promise<HealthReport> {
-  const baseline: ArchiveBaseline = {
-    monthly: env.ARCHIVE_FIRST_MONTHLY || undefined,
-    yearly: env.ARCHIVE_FIRST_YEARLY || undefined,
-  };
+  const checked = validateBaseline(
+    {
+      monthly: env.ARCHIVE_FIRST_MONTHLY || undefined,
+      yearly: env.ARCHIVE_FIRST_YEARLY || undefined,
+    },
+    now,
+  );
+  if (!checked.ok) {
+    // FAIL LOUDLY rather than run with a baseline that silently disables
+    // the checks it is supposed to enable. A mistyped value is
+    // indistinguishable from a correct one at every later step.
+    return {
+      ok: false,
+      tiers: TIERS.map((spec) => ({
+        tier: spec.tier,
+        absent: false,
+        ok: false,
+        reason: `archive baseline misconfigured: ${checked.errors.join('; ')}`,
+      })),
+    };
+  }
+  const baseline = checked.baseline;
   const tiers: TierOutcome[] = [];
   for (const spec of TIERS) {
     try {

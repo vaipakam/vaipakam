@@ -6,7 +6,11 @@ The nightly backup writes three families of archive: a daily one, a monthly one 
 
 It also propagated. The retention policy sets a floor on how long a superseded archive stays recoverable, and that floor is derived from how often something routinely looks at these objects. For the monthly family there was nothing to derive it from, so the floor was set to a longer, weaker figure chosen only to outlast the monthly write cadence — and the reasoning was recorded honestly as such. A number stood in for a detector that did not exist.
 
-The healthcheck now runs the same verification against all three families, and the monthly floor drops to the same value as the daily one, because the same weekly inspection now genuinely covers it. That change was made only once the detector it names actually existed.
+The healthcheck now runs the same verification against all three families.
+
+**The retention floor did not change, and the reason is worth stating.** Having built the detector, the obvious next step was to shorten the monthly recovery window on the grounds that something now watches those archives weekly. It does — but only in part. The check verifies the *newest* archive of each family completely: hash, size, and a real decryption. Every older archive still inside its retention gets a cheaper check that it is present and correctly paired. An archive that is silently corrupted or overwritten in place keeps both of those properties, so it passes.
+
+The floor's whole justification is that the recovery window outlives one full round of whatever routinely inspects these files. That holds for the objects inspected in full and not for the rest, so shortening the window would have rested on a detector that does not watch them — the same substitution of a number for a detector that this change set out to remove, made again one level down. Rotating the full check across the older archives was considered and is worse: it would put each one under inspection roughly every eleven weeks, implying a *longer* floor than today's, not a shorter one.
 
 Two smaller decisions worth stating:
 

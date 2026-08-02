@@ -118,12 +118,11 @@ export const DAILY_MAX_TOTAL_DAYS = 29;
 /** Published: monthly archives kept 12 months. */
 export const MONTHLY_MAX_TOTAL_DAYS = 365;
 /**
- * Recovery-window floors, kept PER TIER because their CEILINGS differ and a
- * future divergence should have somewhere to land. The two values are equal
- * today and that is not a coincidence: since #1476 both tiers are inspected by
- * the same weekly healthcheck, so the same derivation produces the same
- * number. They were unequal while only the daily tier had a detector (#1471
- * r6).
+ * Recovery-window floors, PER TIER, because the tiers are not inspected the
+ * same way. Both are now READ by the weekly healthcheck (#1476), but only the
+ * newest period of each family is verified in full — which is enough to
+ * derive the daily floor, whose newest period turns over every night, and is
+ * NOT enough to derive the monthly one. See the monthly note below.
  *
  * Daily: 8 is the weekly healthcheck's cadence (Mon 09:00 UTC) plus a day.
  * Read that as the interval at which SOMETHING routinely looks at these
@@ -132,10 +131,27 @@ export const MONTHLY_MAX_TOTAL_DAYS = 365;
  * "the window outlives one full cycle of the only routine inspection there
  * is", which is the weakest defensible reading and the honest one.
  *
- * Monthly: the SAME derivation as daily, since #1476. `healthcheck.ts` now
- * verifies the newest monthly archive + manifest on the same weekly run, so
- * the monthly prefixes get the same routine inspection the daily ones do and
- * the floor is the same cycle-plus-slack figure.
+ * Monthly: STAYS 31, and #1476 did not change it. I lowered it to 8 on the
+ * reasoning that the healthcheck now covers the monthly prefixes, and review
+ * showed that reasoning does not reach far enough. The check FULLY verifies
+ * (hash, size, decrypt) only the NEWEST period of each family; every other
+ * retained month gets a presence-and-pairing check. An overwrite or a
+ * corruption of an older month leaves both keys in place, so it passes those
+ * checks silently, and the genuine superseded version can reach its deletion
+ * date with no alert ever raised.
+ *
+ * The floor's derivation is "the window outlives one full cycle of the only
+ * routine inspection there is". That holds only for objects the cycle
+ * actually inspects in full. For the older retained months it does not, so
+ * an 8-day window there would have been justified by a detector that does
+ * not watch them — the same substitution of a number for a detector this
+ * comment previously called out, made again one level down.
+ *
+ * Rotating full verification across the retained months was considered and
+ * is worse: with ~10 months and one extra object per weekly run, each month
+ * is verified about every 11 weeks, so the honest floor would be ~78 days,
+ * not 8. Verifying all of them every run is not affordable inside the
+ * Worker's memory and CPU budget.
  *
  * Before #1476 the check examined only `manifests/<recent dates>/`, so a
  * monthly overwrite was detected by nothing and the floor could not be
@@ -149,7 +165,7 @@ export const MONTHLY_MAX_TOTAL_DAYS = 365;
  * check can raise an alert for an authenticated forgery (#1473).
  */
 export const MIN_RECOVERY_DAYS_DAILY = 8;
-export const MIN_RECOVERY_DAYS_MONTHLY = 8;
+export const MIN_RECOVERY_DAYS_MONTHLY = 31;
 
 /**
  * Throws unless every declared rule is within its published ceiling.

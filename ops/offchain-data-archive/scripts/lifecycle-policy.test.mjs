@@ -41,13 +41,19 @@ test('the committed declaration satisfies both floors and ceilings', () => {
   assert.doesNotThrow(() => assertPolicyCeilings(declared, fail));
 });
 
-test('the monthly floor is the daily floor, and both are the weekly cycle + slack', () => {
+test('the monthly floor is NOT lowered to the daily one', () => {
   assert.equal(MIN_RECOVERY_DAYS_DAILY, 8);
-  assert.equal(MIN_RECOVERY_DAYS_MONTHLY, 8);
-  // Equal because the same detector now covers both tiers. If a future change
-  // removes monthly coverage from the healthcheck, this equality is the thing
-  // that has to be revisited — not silently kept.
-  assert.equal(MIN_RECOVERY_DAYS_MONTHLY, MIN_RECOVERY_DAYS_DAILY);
+  // 31, deliberately. The healthcheck now READS the monthly prefixes, but
+  // fully verifies only the NEWEST period of each family; older retained
+  // months get presence-and-pairing only, and an overwrite leaves both keys
+  // in place. An 8-day window there would rest on a detector that does not
+  // watch those objects.
+  assert.equal(MIN_RECOVERY_DAYS_MONTHLY, 31);
+  assert.ok(
+    MIN_RECOVERY_DAYS_MONTHLY > MIN_RECOVERY_DAYS_DAILY,
+    'the monthly floor may not be lowered to the daily one while only the ' +
+      'newest monthly period is fully verified',
+  );
 });
 
 test('a recovery window under the floor is rejected, per tier', () => {
@@ -57,8 +63,10 @@ test('a recovery window under the floor is rejected, per tier', () => {
     assert.ok(rule, `${prefix} missing from the declaration`);
     // One day under the floor — the boundary, not an obviously silly value.
     const total = rule.daysFromUploadingToHiding + rule.daysFromHidingToDeleting;
-    rule.daysFromHidingToDeleting = 7;
-    rule.daysFromUploadingToHiding = total - 7; // hold the ceiling constant
+    const floor =
+      prefix === 'archives/' ? MIN_RECOVERY_DAYS_DAILY : MIN_RECOVERY_DAYS_MONTHLY;
+    rule.daysFromHidingToDeleting = floor - 1;
+    rule.daysFromUploadingToHiding = total - (floor - 1); // hold the ceiling constant
     assert.throws(
       () => assertPolicyCeilings(bad, fail),
       /floor/i,
@@ -71,11 +79,17 @@ test('exactly the floor is accepted — the bound is inclusive', () => {
   // An off-by-one here would silently forbid the very value the comment
   // derives, and the next operator would raise the number to make it pass.
   const ok = structuredClone(declared);
-  for (const prefix of ['archives/', 'archives-monthly/']) {
+  // Each tier at ITS OWN floor — they differ, and using one number for both
+  // is what the previous version of this test did.
+  const floors = {
+    'archives/': MIN_RECOVERY_DAYS_DAILY,
+    'archives-monthly/': MIN_RECOVERY_DAYS_MONTHLY,
+  };
+  for (const [prefix, floor] of Object.entries(floors)) {
     const rule = ok.rules.find((r) => r.fileNamePrefix === prefix);
     const total = rule.daysFromUploadingToHiding + rule.daysFromHidingToDeleting;
-    rule.daysFromHidingToDeleting = 8;
-    rule.daysFromUploadingToHiding = total - 8;
+    rule.daysFromHidingToDeleting = floor;
+    rule.daysFromUploadingToHiding = total - floor;
   }
   // The manifest siblings keep their declared values, so this also confirms
   // the two prefixes in a tier are validated independently.
