@@ -468,6 +468,19 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
                   })}
             </dd>
           </div>
+          {/* THE AGE, RENDERED. The snapshot is captured on a schedule,
+              so it is minutes old by construction — and I had justified
+              serving a non-live figure by saying its age was "published",
+              when it was published only into the JSON. A disclosure the
+              reader cannot see is not one. */}
+          {backing.asOf !== null && (
+            <div>
+              <dt>{t('recycling.asOfLabel')}</dt>
+              <dd data-testid="recycling-asof">
+                {t('recycling.asOfValue', { at: backing.asOf })}
+              </dd>
+            </div>
+          )}
         </dl>
       ) : (
         // The REASON, never a dash: a dash reads as a zero reserve, which

@@ -28,3 +28,11 @@ One figure needed its name changed after a closer look at what the underlying co
 
 The two chain reads behind this section are also pinned to a single block. They exist to explain each other — the second is what stops released value looking like a depleted reserve — and read independently, a release landing between them produces exactly the misleading pair the second read was added to prevent.
 
+**A note on how this is read from the chain, because the first design was wrong in an instructive way.**
+
+The reserve and the balance behind it were originally read from the chain *while answering each request for the page*. That sounds like the freshest possible answer and it is, but it couples a blockchain round trip to a browser request — and every consequence of that coupling then has to be solved separately: the read has to finish before the browser gives up, or it takes the rest of the page down with it; simultaneous *and* consecutive visitors have to be prevented from each spending a call against the same quota the platform's own indexing depends on; that prevention has to work across the many isolated instances serving the page; and each visitor waiting on a shared read needs their own time limit. Each of those was fixed, and each fix produced the next problem.
+
+None of them exist if answering the page does no network work at all. The platform already reads the chain on a schedule, so the reserve is captured there and the page serves what was stored.
+
+The cost is that the figures lag the chain by minutes rather than seconds, and **the page now shows when they were read**. That last part was the part I had wrong: I justified serving a not-quite-live figure on the grounds that its age was published, when it was only present in the underlying data and never shown to anyone. A disclosure a reader cannot see is not a disclosure. For a question like *do the tokens behind this reserve exist*, a reading a few minutes old answers it perfectly well — but only if the reader can tell how old it is.
+

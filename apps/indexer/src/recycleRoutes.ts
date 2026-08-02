@@ -119,6 +119,15 @@ const RUNWAY_WINDOW_DAYS = 7;
  * exists to prevent. A failure here also must not fail the ROUTE: the
  * day series is D1-derived and remains true regardless.
  */
+/**
+ * FIXED reason codes, never underlying error text.
+ *
+ * A public, open-CORS body must not carry an operator's error detail:
+ * transport errors embed the RPC URL and this repository's RPC URLs carry
+ * provider API keys. Detail goes to the log; the caller gets a code.
+ */
+type BackingReason = 'not-captured-yet' | 'read-failed';
+
 interface BackingSnapshot {
   vpfiBalance: string | null;
   bucket: string | null;
@@ -142,46 +151,6 @@ interface BackingSnapshot {
   asOf: string | null;
 }
 
-/**
- * The browser aborts the whole `/metrics/recycling` request at 4s, so an
- * unbounded read here does not fail gracefully — it takes the D1-derived
- * day series down with it, which is the containment this block claims to
- * have. viem's default is a 10s timeout WITH retries, comfortably past
- * that, so the bound has to be set explicitly and retries disabled.
- */
-const BACKING_RPC_TIMEOUT_MS = 2500;
-
-/**
- * The browser aborts this endpoint at 4s. The backing read is the LAST
- * thing the handler does, so a fixed timeout is measured from the wrong
- * moment: the D1 queries and the lifetime folds run first, and if they
- * take 1.5s the fixed 2.5s still lands past the abort — taking the day
- * series down with a read that was supposed to fail in isolation.
- *
- * The bound is therefore a DEADLINE from the handler's start, with a
- * margin so the response can still be serialised and sent.
- */
-const ENDPOINT_DEADLINE_MS = 3400;
-/** Below this there is no point starting an RPC round trip at all. */
-const MIN_USEFUL_RPC_MS = 300;
-
-/**
- * FIXED reason codes. Never the underlying error text.
- *
- * viem's transport errors embed the RPC URL, and this repository's RPC
- * URLs carry provider API keys in the path or query string. Echoing the
- * first N characters of an error into a public, open-CORS response body
- * publishes an operator credential to every caller for the duration of an
- * outage or a rate-limit response — the outage being exactly when it
- * fires. Detail goes to the log; the caller gets a code.
- */
-type BackingReason =
-  | 'deadline-exceeded'
-  | 'chain-not-configured'
-  | 'no-rpc-endpoint-configured'
-  | 'rpc-wrong-chain'
-  | 'read-failed';
-
 const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   vpfiBalance: null,
   bucket: null,
@@ -199,320 +168,136 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
  * `platformRetained = bucket − outstandingRecycled − keeperBudget`, floored
  * at zero (ratified; TokenomicsTechSpec + plan §M5).
  *
- * The keeper term is load-bearing and is why the two-term derivation from
- * `getRecycleBucket` alone is wrong: once `recycleRegisterKeeperBps` is
- * non-zero, each day's margin is earmarked into `recycleKeeperBudget` from
- * INSIDE the bucket, so the bucket does not move and a reserve computed
- * without it overstates for as long as the register runs.
+ * The keeper term is why deriving from `getRecycleBucket` alone is wrong:
+ * once `recycleRegisterKeeperBps` is non-zero, each day's margin is
+ * earmarked into `recycleKeeperBudget` from INSIDE the bucket, so the
+ * bucket does not move and a reserve computed without it overstates for as
+ * long as the register runs.
  *
- * The floor is not cosmetic: the subtraction can legitimately go negative
- * in the breached state #1460 describes, and a negative reserve rendered
- * on a public page would be read as a display bug rather than as the
- * shortfall it is. The balance published beside it is what makes that
- * state visible instead.
+ * The floor is not cosmetic: the subtraction goes negative in the breached
+ * state, and a negative reserve on a public page reads as a display bug
+ * rather than as the shortfall it is. The balance published beside it is
+ * what makes that state visible instead.
  */
 export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint): bigint {
   const net = bucket - outstanding - keeper;
   return net > 0n ? net : 0n;
 }
 
-/**
- * Concurrent reads for the same chain share ONE upstream call.
- *
- * `/metrics/recycling` is unauthenticated and open-CORS, so without this
- * every request spends an operator RPC call against the same provider
- * quota the indexer's own scanning depends on — a caller varying `days`
- * could exhaust it and take ingestion down with the dashboard.
- *
- * Deliberately single-flight rather than a cache: the entry is dropped as
- * soon as it settles, so no caller is ever served a balance read before
- * their request began. A stale balance is precisely the failure this
- * figure exists to expose, so caching it would defeat the point while
- * looking like a safe optimisation.
- */
-const backingInFlight = new Map<number, Promise<BackingSnapshot>>();
 
 /**
- * The last completed read per chain, kept for a BOUNDED window.
- *
- * Single-flight alone bounds concurrency, not request COUNT: sequential
- * or staggered callers each launched a fresh `getChainId` + `readContract`
- * against the operator quota the indexer's own scanning shares, so a
- * public endpoint could still exhaust it.
- *
- * This is a deliberate reversal of the "never cache" position I took last
- * round, and the reasoning is the disclosure. What that position actually
- * protects is a reader being shown a stale balance WITHOUT KNOWING — and
- * `asOf` is published in the response, so the age is visible rather than
- * concealed. A bounded, disclosed staleness is a different thing from a
- * hidden one, and it is the only version that also bounds the cost.
+ * The browser aborts the whole `/metrics/recycling` request at 4s, so an
+ * unbounded read here does not fail gracefully — it takes the D1-derived
+ * day series down with it, which is the containment this block claims to
+ * have. viem's default is a 10s timeout WITH retries, comfortably past
+ * that, so the bound has to be set explicitly and retries disabled.
  */
-/** Is this a chain the protocol is deployed on at all? Distinguishes a
- *  missing RPC secret from an unknown chain, which `getChainConfigs`
- *  alone cannot: it drops both. */
-function isKnownChainId(chainId: number): boolean {
-  try {
-    return getDeployment(chainId) !== undefined;
-  } catch {
-    return false;
-  }
-}
-
-const BACKING_MAX_AGE_MS = 10_000;
-/**
- * A FAILED read is held only briefly — long enough that a fast sequential
- * failure storm cannot spend one upstream call each, short enough that a
- * recovered RPC is picked up on the next tick rather than after the full
- * success window.
- */
-const BACKING_FAILURE_MAX_AGE_MS = 2_000;
+const BACKING_RPC_TIMEOUT_MS = 2500;
 
 /**
- * How long a SUCCESSFUL snapshot is still served while a refresh runs.
+ * Capture the backing snapshot from the chain. Called on the SCHEDULED
+ * path only — never from a request.
  *
- * Without this, every TTL expiry is a thundering herd: requests spread
- * across isolates all miss the cache in the same instant, consult
- * separate isolate-local in-flight maps, and each launch the full RPC
- * batch. Serving the previous value while ONE refresh proceeds removes
- * the herd at expiry entirely, and the staleness is bounded and
- * published — `asOf` carries the age, so a reader sees it.
- *
- * RESIDUAL, stated rather than papered over: this does not give
- * cross-isolate single-flight on a COLD cache, where there is nothing to
- * serve. True global single-flight needs a coordination point (a Durable
- * Object), which is disproportionate for a dashboard read; the cold-start
- * fan-out is bounded by the number of isolates handling the burst, is
- * transient, and repeats only after a full eviction.
+ * Everything the request path used to need for this — a deadline inside
+ * the browser's abort, request coalescing, a cross-isolate cache, a
+ * per-joiner budget — existed solely because a chain call sat inside a
+ * public HTTP handler. None of it is needed here: the scheduled pass has
+ * its own budget, runs once a minute, and is already where chain reads
+ * are accounted for.
  */
-const BACKING_STALE_MAX_AGE_MS = 60_000;
-
-/**
- * Colo-wide, not isolate-local.
- *
- * The `Map` this replaces bounded calls only within ONE isolate, so
- * requests distributed across isolates each missed it and spent the
- * shared operator RPC quota — the amplification bound was real but far
- * smaller than it looked. `caches.default` is shared across the colo, so
- * the bound holds against the traffic pattern a public endpoint actually
- * sees.
- *
- * The CLIENT response stays `no-store`; this is a server-side read cache
- * whose age is published as `asOf`, never a browser-cacheable answer.
- */
-const BACKING_CACHE_ORIGIN = 'https://recycling-backing.internal';
-
-/** `caches.default` is a Workers extension the DOM `CacheStorage` type
- *  does not declare. Narrowed here rather than cast at each use. */
-function coloCache(): Cache | null {
-  if (typeof caches === 'undefined') return null;
-  const d = (caches as unknown as { default?: Cache }).default;
-  return d ?? null;
-}
-
-async function cachedBacking(
+export async function captureBackingSnapshot(
+  env: Env,
   chainId: number,
-): Promise<{ snap: BackingSnapshot; ageMs: number } | null> {
-  const cache = coloCache();
-  if (!cache) return null;
-  try {
-    const hit = await cache.match(`${BACKING_CACHE_ORIGIN}/${chainId}`);
-    if (!hit) return null;
-    const snap = (await hit.json()) as BackingSnapshot;
-    // Age from the snapshot's OWN stamp, not from the cache entry: the
-    // stamp is what the response publishes, so freshness and the age a
-    // reader sees are necessarily the same number.
-    const ageMs = snap.asOf ? Date.now() - Date.parse(snap.asOf) : Infinity;
-    return { snap, ageMs };
-  } catch {
-    return null;
-  }
-}
-
-async function putCachedBacking(
-  chainId: number,
-  snap: BackingSnapshot,
 ): Promise<void> {
-  const cache = coloCache();
-  if (!cache) return;
-  // A success is RETAINED past its freshness window so it can be served
-  // stale while a refresh runs; a failure is not — there is no value in
-  // serving an old error, and a recovered RPC should be picked up at once.
-  const ttl = snap.unavailableReason === null
-    ? BACKING_STALE_MAX_AGE_MS
-    : BACKING_FAILURE_MAX_AGE_MS;
-  try {
-    await cache.put(
-      `${BACKING_CACHE_ORIGIN}/${chainId}`,
-      new Response(JSON.stringify(snap), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': `max-age=${Math.ceil(ttl / 1000)}`,
-        },
-      }),
-    );
-  } catch {
-    // A cache write failing must never fail the read it was optimising.
-  }
-}
-
-/**
- * ONE deadline across every phase of the read.
- *
- * viem applies its transport timeout PER REQUEST, and block-pinning
- * introduced a second sequential phase — so `getChainId`/`getBlockNumber`
- * could take the full budget and the contract reads take it again,
- * doubling past the frontend's abort. That is the earlier timeout defect
- * reintroduced by the later pinning fix. Racing the whole sequence
- * against a single timer bounds the TOTAL regardless of how many phases
- * a future change adds.
- */
-function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    work,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms`)), ms),
-    ),
-  ]);
-}
-
-async function readBacking(
-  env: Env,
-  chainId: number,
-  deadlineAt: number,
-): Promise<BackingSnapshot> {
-  const budget = deadlineAt - Date.now();
-  const cached = await cachedBacking(chainId);
-  if (cached && cached.ageMs < BACKING_MAX_AGE_MS) return cached.snap;
-
-  const existing = backingInFlight.get(chainId);
-  if (existing) {
-    // Joining an in-flight read does NOT inherit its deadline. An earlier
-    // caller that spent most of its budget in D1 could otherwise wait on a
-    // read a later, faster caller had just started, and blow past its own
-    // deadline — the abort this whole bound exists to stay inside.
-    if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
-    return withDeadline(existing, budget, 'joined backing read').catch(() =>
-      BACKING_UNAVAILABLE('deadline-exceeded'),
-    );
-  }
-
-  // A STALE success is served immediately while the refresh runs, so a
-  // TTL expiry never makes callers wait on the RPC together.
-  if (cached && cached.ageMs < BACKING_STALE_MAX_AGE_MS) {
-    void startBackingRefresh(env, chainId, BACKING_RPC_TIMEOUT_MS);
-    return cached.snap;
-  }
-
-  if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
-  return startBackingRefresh(env, chainId, Math.min(budget, BACKING_RPC_TIMEOUT_MS));
-}
-
-/** Start (or join) the single upstream read for a chain. */
-function startBackingRefresh(
-  env: Env,
-  chainId: number,
-  totalMs: number,
-): Promise<BackingSnapshot> {
-  const existing = backingInFlight.get(chainId);
-  if (existing) return existing;
-  const p = withDeadline(
-    readBackingUncoalesced(env, chainId, totalMs),
-    totalMs,
-    'backing read',
-  )
-    .catch(() => BACKING_UNAVAILABLE('deadline-exceeded'))
-    .then(async (snap) => {
-      await putCachedBacking(chainId, snap);
-      return snap;
-    })
-    .finally(() => {
-      backingInFlight.delete(chainId);
-    });
-  backingInFlight.set(chainId, p);
-  return p;
-}
-
-async function readBackingUncoalesced(
-  env: Env,
-  chainId: number,
-  timeoutMs: number,
-): Promise<BackingSnapshot> {
   let chain;
   try {
     chain = getChainConfigs(env).find((c) => c.id === chainId);
   } catch {
     chain = undefined;
   }
-  if (!chain) {
-    // `getChainConfigs` DROPS any chain whose RPC secret is absent, so a
-    // supported deployment with a missing or unreadable secret arrived
-    // here indistinguishable from one that was never configured — and the
-    // operator was pointed at the wrong problem during exactly the
-    // configuration failure the other code exists to name. Separate them
-    // by asking whether the deployment is known at all.
-    return BACKING_UNAVAILABLE(
-      isKnownChainId(chainId) ? 'no-rpc-endpoint-configured' : 'chain-not-configured',
-    );
-  }
-  if (!chain.rpc) return BACKING_UNAVAILABLE('no-rpc-endpoint-configured');
+  if (!chain?.rpc) return;
 
+  const client = createPublicClient({
+    transport: http(chain.rpc, { timeout: 10_000, retryCount: 1 }),
+  });
+  // Identity BEFORE trust: a secret pointed at the wrong network still
+  // answers, and a fork or a matching deterministic address would store
+  // another chain's reserve under this chain's id.
+  const [observedChainId, blockNumber] = await Promise.all([
+    client.getChainId(),
+    client.getBlockNumber(),
+  ]);
+  if (observedChainId !== chainId) {
+    console.warn(
+      `[recycling] RPC for chain ${chainId} reports ${observedChainId}; not storing backing`,
+    );
+    return;
+  }
+  // PINNED TO ONE BLOCK. These two reads explain each other — the second
+  // is what stops a released remittance rendering as a depleted reserve —
+  // so they have to describe the same moment.
+  const [snap, composition] = await Promise.all([
+    client.readContract({
+      address: chain.diamond as Address,
+      abi: InteractionRewardsLensFacetABI,
+      functionName: 'getRecycleBackingSnapshot',
+      blockNumber,
+    }) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>,
+    client.readContract({
+      address: chain.diamond as Address,
+      abi: RewardAggregatorFacetABI,
+      functionName: 'getRecycleCompositionPosition',
+      blockNumber,
+    }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
+  ]);
+  const [vpfiBalance, bucket, unearmarked, outstanding, paidOut, keeper] = snap;
+  const payload = {
+    vpfiBalance: vpfiBalance.toString(),
+    bucket: bucket.toString(),
+    unearmarked: unearmarked.toString(),
+    outstandingRecycled: outstanding.toString(),
+    paidOutRecycled: paidOut.toString(),
+    keeperBudget: keeper.toString(),
+    platformRetained: retainedFrom(bucket, outstanding, keeper).toString(),
+    releasedRemitStranded: composition[1].toString(),
+  };
+  await env.DB.prepare(
+    `INSERT INTO recycle_backing_snapshot (chain_id, payload, captured_at, block_number)
+     VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(chain_id) DO UPDATE SET
+       payload = excluded.payload,
+       captured_at = excluded.captured_at,
+       block_number = excluded.block_number`,
+  )
+    .bind(chainId, JSON.stringify(payload), new Date().toISOString(), blockNumber.toString())
+    .run();
+}
+
+/**
+ * Serve the stored snapshot. NO network I/O.
+ *
+ * `asOf` is the capture time, and the surface renders its age — a figure
+ * whose currency the reader can judge is a different object from one they
+ * are asked to trust.
+ */
+async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
   try {
-    const client = createPublicClient({
-      transport: http(chain.rpc, { timeout: timeoutMs, retryCount: 0 }),
-    });
-    // Identity BEFORE trust. A secret pointed at the wrong network still
-    // answers: if that endpoint is a fork, or carries compatible code at
-    // the same deterministic address, the read succeeds and we would
-    // publish another chain's reserve under this chain's id — a wrong
-    // figure presented with full confidence, which is worse than none.
-    // PINNED TO ONE BLOCK. These two reads explain each other: the second
-    // is what stops a released remittance rendering as a depleted
-    // reserve. Read at `latest` independently, a release landing between
-    // them yields the post-release `outstandingCommitRecycled` beside the
-    // pre-release stranded counter — a reserve floored to zero with no
-    // explanation, which is precisely the false-depletion state the
-    // second read was added to prevent. Two reads that explain each other
-    // have to describe the same moment.
-    const [observedChainId, blockNumber] = await Promise.all([
-      client.getChainId(),
-      client.getBlockNumber(),
-    ]);
-    const [snap, composition] = await Promise.all([
-      client.readContract({
-        address: chain.diamond as Address,
-        abi: InteractionRewardsLensFacetABI,
-        functionName: 'getRecycleBackingSnapshot',
-        blockNumber,
-      }) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>,
-      client.readContract({
-        address: chain.diamond as Address,
-        abi: RewardAggregatorFacetABI,
-        functionName: 'getRecycleCompositionPosition',
-        blockNumber,
-      }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
-    ]);
-    if (observedChainId !== chainId) {
-      console.warn(
-        `[recycling] RPC for chain ${chainId} reports ${observedChainId}; withholding backing`,
-      );
-      return BACKING_UNAVAILABLE('rpc-wrong-chain');
-    }
-    const [vpfiBalance, bucket, unearmarked, outstanding, paidOut, keeper] = snap;
+    const row = await env.DB.prepare(
+      `SELECT payload, captured_at FROM recycle_backing_snapshot WHERE chain_id = ?1`,
+    )
+      .bind(chainId)
+      .first<{ payload: string; captured_at: string }>();
+    if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
     return {
-      vpfiBalance: vpfiBalance.toString(),
-      bucket: bucket.toString(),
-      unearmarked: unearmarked.toString(),
-      outstandingRecycled: outstanding.toString(),
-      paidOutRecycled: paidOut.toString(),
-      keeperBudget: keeper.toString(),
-      platformRetained: retainedFrom(bucket, outstanding, keeper).toString(),
-      releasedRemitStranded: composition[1].toString(),
+      ...(JSON.parse(row.payload) as Omit<
+        BackingSnapshot,
+        'unavailableReason' | 'asOf'
+      >),
       unavailableReason: null,
-      asOf: new Date().toISOString(),
+      asOf: row.captured_at,
     };
   } catch (err) {
-    // Logged, not published — see BackingReason.
-    console.warn(`[recycling] backing read failed: ${String(err)}`);
+    console.warn(`[recycling] backing snapshot read failed: ${String(err)}`);
     return BACKING_UNAVAILABLE('read-failed');
   }
 }
@@ -588,10 +373,6 @@ export async function handleRecyclingSeries(
   req: Request,
   env: Env,
 ): Promise<Response> {
-  // Stamped at ENTRY: the backing read is the last thing this handler
-  // does, so its bound has to be measured from here, not from the moment
-  // it starts.
-  const deadlineAt = Date.now() + ENDPOINT_DEADLINE_MS;
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   const days = parseDays(url.searchParams.get('days'));
@@ -670,7 +451,7 @@ export async function handleRecyclingSeries(
         // makes a current indexer indistinguishable from one too old to
         // serve it — so the page withheld a readable reserve until an
         // unrelated day row happened to appear.
-        backing: await readBacking(env, chainId, deadlineAt),
+        backing: await readBacking(env, chainId),
       });
     }
 
@@ -1206,7 +987,7 @@ export async function handleRecyclingSeries(
       // Live, and deliberately outside `cumulative`: every field there is
       // counter-derived, and the whole point of this block is that it is
       // not. Grouping them would invite a reader to trust both equally.
-      backing: await readBacking(env, chainId, deadlineAt),
+      backing: await readBacking(env, chainId),
     });
   } catch (err) {
     return liveJsonResponse(

@@ -531,8 +531,7 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
   });
 });
 
-describe('RecyclingAccount — the reserve is never published alone', () => {
-  const noBacking = (reason: string) => ({
+const noBacking = (reason: string) => ({
     vpfiBalance: null,
     bucket: null,
     unearmarked: null,
@@ -541,10 +540,11 @@ describe('RecyclingAccount — the reserve is never published alone', () => {
     keeperBudget: null,
     platformRetained: null,
     releasedRemitStranded: null,
-    unavailableReason: reason,
-    asOf: null,
-  });
+  unavailableReason: reason,
+  asOf: null,
+});
 
+describe('RecyclingAccount — the reserve is never published alone', () => {
   it('publishes the retained reserve WITH the balance actually behind it', async () => {
     mockSeries(series());
     render(<RecyclingAccount chainId={8453} />);
@@ -750,6 +750,29 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
       series({
         backing: { ...series().backing, releasedRemitStranded: null },
       }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('RENDERS the capture time, since the figures are not live', async () => {
+    // The snapshot is captured on a schedule, so it is minutes old by
+    // construction. I had justified serving a non-live figure by saying
+    // its age was "published" — it was published into the JSON only, and
+    // a disclosure the reader cannot see is not one.
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-asof').textContent).toContain(
+        '2026-08-03T00:00:00.000Z',
+      ),
+    );
+  });
+
+  it('withholds the whole block when no snapshot has been captured yet', async () => {
+    mockSeries(
+      series({ backing: { ...noBacking('not-captured-yet') } }),
     );
     render(<RecyclingAccount chainId={8453} />);
     await screen.findByTestId('recycling-backing-unavailable');
