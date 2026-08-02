@@ -240,6 +240,54 @@ describe('RecyclingAccount — M5 content requirements', () => {
     expect(screen.getByTestId('absorbed-local-11').textContent).toBe('2');
   });
 
+  it('WITHHOLDS the mirror component until the day closes', async () => {
+    // Another reward chain reports a day only once its own clock has
+    // passed it, so before finalization this cell is structurally absent.
+    // r2 published it: a rendered 0 under "Absorbed on other reward
+    // chains" states that no other chain absorbed anything, which is the
+    // one thing this deployment cannot know yet.
+    mockSeries(
+      series({
+        daily: [
+          day({
+            dayId: 12,
+            stamped: false,
+            absorbed: null,
+            absorbedLocal: (2n * 10n ** 18n).toString(),
+            absorbedMirror: '0',
+          }),
+        ],
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('absorbed-mirror-12')).toBeDefined(),
+    );
+    expect(screen.getByTestId('absorbed-mirror-12').textContent).toBe('');
+    // …while the local term stays live, which is the asymmetry itself.
+    expect(screen.getByTestId('absorbed-local-12').textContent).toBe('2');
+  });
+
+  it('shows the mirror component once the day HAS closed', async () => {
+    // The withholding above must be about finalization, not a blanket
+    // hiding of the column.
+    mockSeries(
+      series({
+        daily: [
+          day({
+            dayId: 13,
+            stamped: true,
+            absorbedMirror: (9n * 10n ** 18n).toString(),
+          }),
+        ],
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('absorbed-mirror-13').textContent).toBe('9'),
+    );
+  });
+
   it('marks a recomputed day as reconstructed, not recorded', async () => {
     mockSeries(series({ daily: [day({ dayId: 4, origin: 'backfill' })] }));
     render(<RecyclingAccount chainId={8453} />);
@@ -292,13 +340,60 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
     });
   });
 
-  it('explains why the split can exceed the combined total', async () => {
+  it('explains the difference WHEN the parts exceed the combined total', async () => {
     // The endpoint folds EVERY row into the components and only FINALIZED
     // rows into the combined total, so during live operation the two
     // legitimately disagree. Adjacency without that note invites a reader
     // to treat the difference as an error.
-    mockSeries(series());
+    mockSeries(
+      series({
+        cumulative: {
+          ...series().cumulative,
+          absorbed: '5',
+          absorbedLocal: '5',
+          absorbedMirror: '3', // an open day has already absorbed
+        },
+      }),
+    );
     render(<RecyclingAccount chainId={8453} />);
     await screen.findByTestId('recycling-split-scope');
+  });
+
+  it('does NOT claim a divergence when the figures agree', async () => {
+    // A standing caveat explaining a difference that is not on screen
+    // teaches a reader to distrust the figures that are.
+    mockSeries(
+      series({
+        cumulative: {
+          ...series().cumulative,
+          absorbed: '8',
+          absorbedLocal: '5',
+          absorbedMirror: '3',
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-absorbed');
+    expect(screen.queryByTestId('recycling-split-scope')).toBeNull();
+  });
+
+  it('does NOT explain a combined total it is not showing', async () => {
+    // Under local-only scope the combined total is deliberately withheld,
+    // so a note describing how to reconcile with it describes nothing.
+    mockSeries(
+      series({
+        scope: 'local-only',
+        cumulative: {
+          ...series().cumulative,
+          absorbed: '0',
+          absorbedLocal: '5',
+          absorbedMirror: '3',
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-scope-note');
+    expect(screen.queryByTestId('recycling-absorbed')).toBeNull();
+    expect(screen.queryByTestId('recycling-split-scope')).toBeNull();
   });
 });

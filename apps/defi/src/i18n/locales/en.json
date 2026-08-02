@@ -2102,6 +2102,6 @@
     "drawnBounds": "What was drawn is what the day committed, not what was finally paid, and it can differ in both directions. It reads high near the lifetime issuance limit, where the amount finally transferred is trimmed below what was committed. It reads low for a day whose chain contribution was zeroed and later made good by an operator-sized disbursement, and for a cross-chain payment that was stranded and re-sent, because no commitment was recorded for that value. It is therefore not an upper bound, and anything built on it should expect both.",
     "colAbsorbedLocal": "Absorbed here",
     "colAbsorbedMirror": "Absorbed elsewhere",
-    "splitScopeNote": "The two figures above count every recorded day, including one still in progress. The combined total counts only days that have closed, so the two will not add up while a day is open — that is the difference in what each covers, not a discrepancy."
+    "splitScopeNote": "The two figures above count every day on record, including days that have not closed yet. The combined total counts only days that have closed. That is why the parts add up to more than the total here — a difference in what each figure covers, not a discrepancy."
   }
 }

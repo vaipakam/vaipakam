@@ -14,6 +14,50 @@ const WINDOW_DAYS = 30;
 const REFRESH_MS = 60_000;
 
 /**
+ * What a day's absorption may STATE — decided once, for every cell.
+ *
+ * The wire format and this surface have different obligations, and that
+ * asymmetry is the whole reason this function exists. The endpoint
+ * publishes both components unconditionally and lets a machine consumer
+ * read `stamped` to know what they mean. A human reading a table cannot:
+ * to them a rendered `0` under "Absorbed on other reward chains" is a
+ * statement that no other chain absorbed anything. So the qualifier has
+ * to survive into the presented form rather than remain a flag a reader
+ * is trusted to check.
+ *
+ * Ratified intent (TokenomicsTechSpec, day-series surface rules): the
+ * platform's OWN absorption is live from the moment it happens, INCLUDING
+ * for the day in progress; absorption on other reward chains is *not*
+ * live and cannot be, because a chain reports a day only once its own
+ * clock has passed that day. Before finalization a mirror `0` therefore
+ * means "no report yet", never "nothing was absorbed".
+ *
+ * Why a function and not three inline `d.stamped` tests: two consecutive
+ * review rounds put a wrong figure in a DIFFERENT one of these three
+ * cells — r1 hid the components that ARE live, r2 published the one that
+ * is NOT — because each cell re-decided the rule at its own JSX site.
+ * Deciding once means a fourth absorption cell has to come here and be
+ * classified, instead of quietly picking whichever neighbour it sat next
+ * to.
+ */
+function disclosableAbsorption(d: RecyclingDay): {
+  local: string | null;
+  mirror: string | null;
+  combined: string | null;
+} {
+  return {
+    // Live. This is why an unfinalized row is listed at all.
+    local: d.absorbedLocal,
+    // Structurally incomplete until the day closes — withheld, not zeroed.
+    mirror: d.stamped ? d.absorbedMirror : null,
+    // The endpoint already withholds the sum on an open day: adding up
+    // whichever reports happened to arrive would wear a global label it
+    // has not earned. Passed through so all three live in one place.
+    combined: d.absorbed,
+  };
+}
+
+/**
  * M5 (#1218 / #1349) — the recycling programme's own account, in public.
  *
  * ── COPY GATE (RL-6 / VPFITokenomicsRedesignResearch.md §A.4) ──────────
@@ -106,6 +150,23 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   const amt = (v: string | null): string =>
     v === null ? '' : formatUnitsPretty(BigInt(v), 18);
   const globalScope = scope === 'global';
+  // The reconciliation note is shown exactly when the figures ON SCREEN
+  // actually disagree — not as a standing caveat.
+  //
+  // Rendering it unconditionally made two claims that are routinely false:
+  // it explains a combined total that is not displayed at all under
+  // `local-only` / `empty` scope, and it asserts a day is currently open
+  // even when every recorded day has closed. A caveat that describes an
+  // absent figure teaches a reader to distrust the ones that are present.
+  //
+  // The components fold EVERY recorded day and the combined total folds
+  // only finalized ones, so the parts can exceed the total but never fall
+  // short — testing that exact direction is both the precise trigger for
+  // the confusion this note prevents, and a check on that invariant.
+  const partsExceedCombined =
+    globalScope &&
+    BigInt(cumulative.absorbedLocal) + BigInt(cumulative.absorbedMirror) >
+      BigInt(cumulative.absorbed);
 
   return (
     <section className="recycling-account">
@@ -182,9 +243,11 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
         </div>
       </dl>
 
-      <p className="muted" data-testid="recycling-split-scope">
-        {t('recycling.splitScopeNote')}
-      </p>
+      {partsExceedCombined && (
+        <p className="muted" data-testid="recycling-split-scope">
+          {t('recycling.splitScopeNote')}
+        </p>
+      )}
 
       {coverageFromDay !== null && (
         <p className="muted" data-testid="recycling-coverage">
@@ -244,20 +307,18 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
               </td>
               {/* Empty, not zero: an unarmed day committed nothing. */}
               <td data-testid={`drawn-${d.dayId}`}>{amt(d.netEmission)}</td>
-              {/* The COMPONENTS are always real and always shown — this is
-                  the whole reason an unfinalized day is listed at all. r1
-                  listed the row for its live absorption and then rendered
-                  only the combined figure, which is null on exactly those
-                  rows, so the absorption stayed invisible. */}
+              {/* All three decided in `disclosableAbsorption`, never here:
+                  the local term is live, the mirror term cannot be, and
+                  the sum waits for both. */}
               <td data-testid={`absorbed-local-${d.dayId}`}>
-                {amt(d.absorbedLocal)}
+                {amt(disclosableAbsorption(d).local)}
               </td>
               <td data-testid={`absorbed-mirror-${d.dayId}`}>
-                {amt(d.absorbedMirror)}
+                {amt(disclosableAbsorption(d).mirror)}
               </td>
-              {/* The COMBINED figure only once finalized: before that it is
-                  whichever cross-chain reports happen to have arrived. */}
-              <td data-testid={`absorbed-${d.dayId}`}>{amt(d.absorbed)}</td>
+              <td data-testid={`absorbed-${d.dayId}`}>
+                {amt(disclosableAbsorption(d).combined)}
+              </td>
             </tr>
           ))}
         </tbody>
