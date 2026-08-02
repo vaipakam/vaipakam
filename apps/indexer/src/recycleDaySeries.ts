@@ -352,6 +352,85 @@ export async function ensureRecycleSeriesBackfill(
 }
 
 /**
+ * Current projection version. BUMP THIS when a new derived table is added,
+ * so databases that already completed the activity_events replay rebuild it.
+ *
+ * 1 — `recycle_chain_reported` (per-source lifetime cumulative).
+ */
+const PROJECTION_VERSION = 1;
+
+/**
+ * Rebuild the per-source lifetime cumulative from `activity_events`.
+ *
+ * Separate from {ensureRecycleSeriesBackfill} on purpose. That replay is
+ * gated by the exactly-once dedup table, so on a database that has already
+ * run it every relevant event is marked seen and a re-run applies nothing —
+ * which is right for the day series and wrong for a projection introduced
+ * afterwards (Codex #1508 r5 P2). Folding the source rows directly sidesteps
+ * the gate, and a MAX fold is idempotent by construction, so this needs no
+ * exactly-once machinery of its own.
+ */
+export async function ensureReportedCumulativeProjection(
+  env: Env,
+  chainId: number,
+): Promise<void> {
+  const state = await env.DB.prepare(
+    `SELECT projection_version FROM recycle_series_state WHERE chain_id = ?`,
+  )
+    .bind(chainId)
+    .first<{ projection_version: number }>();
+  if ((state?.projection_version ?? 0) >= PROJECTION_VERSION) return;
+
+  const rows = await env.DB.prepare(
+    `SELECT args_json FROM activity_events
+      WHERE chain_id = ? AND kind = 'ChainRecycledReported'
+      ORDER BY block_number ASC, log_index ASC`,
+  )
+    .bind(chainId)
+    .all<{ args_json: string }>();
+
+  const maxBySource = new Map<number, bigint>();
+  for (const row of rows.results ?? []) {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(row.args_json) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const src = Number(argBig(args.sourceChainId));
+    const cum = argBig(args.cumulative);
+    if (cum > (maxBySource.get(src) ?? 0n)) maxBySource.set(src, cum);
+  }
+
+  for (const [src, cum] of maxBySource) {
+    const prev = await env.DB.prepare(
+      `SELECT reported_cumulative FROM recycle_chain_reported
+        WHERE chain_id = ? AND source_chain_id = ?`,
+    )
+      .bind(chainId, src)
+      .first<{ reported_cumulative: string }>();
+    if (cum <= big(prev?.reported_cumulative)) continue;
+    await env.DB.prepare(
+      `INSERT INTO recycle_chain_reported
+         (chain_id, source_chain_id, reported_cumulative)
+       VALUES (?, ?, ?)
+       ON CONFLICT (chain_id, source_chain_id)
+       DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+    )
+      .bind(chainId, src, cum.toString())
+      .run();
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO recycle_series_state (chain_id, projection_version)
+     VALUES (?, ?)
+     ON CONFLICT (chain_id) DO UPDATE SET projection_version = excluded.projection_version`,
+  )
+    .bind(chainId, PROJECTION_VERSION)
+    .run();
+}
+
+/**
  * Ingest entry point — called from the chain scan with every decoded log.
  * Returns the number of events actually applied (fresh, non-replay).
  *
@@ -365,6 +444,7 @@ export async function applyRecycleDaySeries(
   chainId: number,
 ): Promise<number> {
   await ensureRecycleSeriesBackfill(env, chainId);
+  await ensureReportedCumulativeProjection(env, chainId);
 
   let applied = 0;
   for (const log of logs) {

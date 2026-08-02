@@ -9,6 +9,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -196,15 +197,47 @@ contract NotificationFeeTest is SetupTest {
     {
         _scaffoldLoan(1);
 
+        // The schedule must be RUNNING for the day-attributed event, and
+        // this fixture does not start it by default — so say so explicitly
+        // rather than relying on whatever state setUp happens to leave
+        // (#1504). Before that change both branches emitted the same event
+        // and the distinction did not exist; now it does, and an implicit
+        // fixture would silently test the other one.
+        InteractionRewardsFacet(address(diamond))
+            .setInteractionLaunchTimestamp(block.timestamp);
+
         // Match indexed source + indexed refId (loanId); leave the data
         // (amount, dayId) unchecked — the bucket-delta assertions above
-        // pin the amount, and dayId depends on schedule state.
+        // pin the amount.
         vm.expectEmit(true, true, false, false, address(diamond));
         emit LibVpfiRecycle.VpfiRecycled(
             uint8(LibVpfiRecycle.RecycleSource.NotificationFee),
             1,
             EXPECTED_VPFI_AMOUNT,
             0
+        );
+
+        vm.prank(billerBot);
+        LoanFacet(address(diamond)).markNotifBilled(1, true);
+    }
+
+    /**
+     * The same bill BEFORE the schedule starts announces itself as
+     * pre-launch (#1504).
+     *
+     * Not a hypothetical branch: the notification fee is the first live
+     * non-forfeit absorption class and is ungated by arming, so a
+     * deployment can bill fees for an arbitrary period before day 0 exists.
+     * That is precisely the value that used to be filed under day 0.
+     */
+    function test_markNotifBilled_PreLaunch_EmitsPreLaunchEvent() public {
+        _scaffoldLoan(1);
+
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit LibVpfiRecycle.VpfiRecycledPreLaunch(
+            uint8(LibVpfiRecycle.RecycleSource.NotificationFee),
+            1,
+            EXPECTED_VPFI_AMOUNT
         );
 
         vm.prank(billerBot);

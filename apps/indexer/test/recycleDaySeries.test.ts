@@ -899,3 +899,100 @@ describe('handleRecyclingSeries — a mesh runway counts every chain in full', (
     expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(4);
   });
 });
+
+describe('handleRecyclingSeries — coverage-bounded folds vs self-healing reports', () => {
+  it("uses this chain's own self-report when it exceeds the observed fold", async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 50n, dayId: 1n }),
+        // This consumer started indexing mid-programme, so its fold sees 50.
+        // The chain says it has absorbed 800 in its lifetime.
+        log('ChainRecycledReported', {
+          sourceChainId: CHAIN,
+          dayId: 1n,
+          cumulative: 800n,
+          forDayReported: 50n,
+          dayCreditAccepted: 50n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // 800 / 100 = 8, not 50/100.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(8);
+  });
+
+  it('never goes backwards when the self-report lags observed credits', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: CHAIN,
+          dayId: 1n,
+          cumulative: 200n,
+          forDayReported: 0n,
+          dayCreditAccepted: 0n,
+        }),
+        // Credits observed AFTER the report was sent.
+        log('VpfiRecycled', { source: 1, refId: 9n, amount: 700n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    // The fold (700) exceeds the stale self-report (200); take the larger.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(7);
+  });
+
+  it('rebuilds the per-source projection on a database that already backfilled', async () => {
+    const { h, env } = makeHarness();
+    // Simulate 0045's replay having completed before this projection existed:
+    // the event is in the feed AND already marked seen by the dedup table.
+    h.db
+      .prepare(
+        `INSERT INTO activity_events
+           (chain_id, block_number, log_index, tx_hash, kind, args_json, block_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        CHAIN,
+        10,
+        0,
+        '0xaa',
+        'ChainRecycledReported',
+        JSON.stringify({
+          sourceChainId: MIRROR,
+          dayId: '1',
+          cumulative: '900',
+          forDayReported: '0',
+          dayCreditAccepted: '0',
+        }),
+        1_700_000_000,
+      );
+    h.db
+      .prepare(
+        `INSERT INTO recycle_series_events
+           (chain_id, block_number, log_index, tx_hash, kind, day_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(CHAIN, 10, 0, '0xaa', 'ChainRecycledReported', 1);
+    h.db
+      .prepare(
+        `INSERT INTO recycle_series_state (chain_id, backfill_done)
+         VALUES (?, 1)`,
+      )
+      .run(CHAIN);
+
+    // The ingest replay is gated by the dedup row, so ONLY a projection
+    // rebuild can populate the new table here.
+    await applyRecycleDaySeries(
+      [stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n })],
+      env,
+      CHAIN,
+    );
+    // 900 / 100 = 9 — the mirror is not omitted.
+    expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(9);
+  });
+});

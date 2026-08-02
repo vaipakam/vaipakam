@@ -62,3 +62,21 @@ CREATE TABLE IF NOT EXISTS recycle_chain_reported (
   reported_cumulative TEXT NOT NULL DEFAULT '0',
   PRIMARY KEY (chain_id, source_chain_id)
 );
+
+-- Projection version, so a NEW projection added later is rebuilt on databases
+-- that already finished 0045's replay.
+--
+-- `recycle_series_state.backfill_done` is a one-way flag: once the
+-- activity_events replay has run, it never runs again, and the exactly-once
+-- dedup table makes a re-run a no-op anyway. That is correct for the day
+-- series and WRONG for a projection introduced afterwards — an existing
+-- database would create `recycle_chain_reported` empty and never populate it,
+-- so the runway would omit every mirror until it happened to report again,
+-- and a mirror that has gone quiet would be omitted permanently
+-- (Codex #1508 r5 P2).
+--
+-- Rebuilding from `activity_events` rather than replaying the ingest, because
+-- the ingest is gated by the dedup rows those events already have. A MAX fold
+-- over the source data is idempotent by construction, so this needs no
+-- exactly-once machinery of its own.
+ALTER TABLE recycle_series_state ADD COLUMN projection_version INTEGER NOT NULL DEFAULT 0;

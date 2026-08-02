@@ -385,12 +385,29 @@ export async function handleRecyclingSeries(
     // counts every credit it ever took, and its accepted day credits are
     // excluded to avoid counting the same value twice.
     let mirrorReported = 0n;
+    let selfReported = 0n;
     for (const r of reportedRows.results ?? []) {
-      if (r.source_chain_id === chainId) continue; // local side, counted below
+      if (r.source_chain_id === chainId) {
+        selfReported = BigInt(r.reported_cumulative);
+        continue;
+      }
       mirrorReported += BigInt(r.reported_cumulative);
     }
-    const runwayNumerator =
-      cumAbsorbedLocal + BigInt(preLaunch) + mirrorReported;
+
+    // The LOCAL term prefers this chain's own self-report when there is one
+    // (Codex #1508 r5 P2). The event fold is bounded by this consumer's own
+    // coverage — `coverageFromDay` exists precisely because indexing can
+    // begin mid-programme — so credits taken before it started watching are
+    // missing from it forever. The self-report carries the chain's
+    // self-healing `recycleCreditedCumulative`, which counts every credit it
+    // ever took, pre-launch included.
+    //
+    // MAX rather than a straight substitution: a self-report can lag the
+    // newest locally observed credits, and a lifetime figure must never go
+    // backwards because a report is a few blocks stale.
+    const localFold = cumAbsorbedLocal + BigInt(preLaunch);
+    const localTerm = selfReported > localFold ? selfReported : localFold;
+    const runwayNumerator = localTerm + mirrorReported;
     const runwayExtensionDays =
       trailingCount === 0n || selfFunded
         ? null
