@@ -128,6 +128,11 @@ const EVENT_ABI: readonly AbiEvent[] = (() => {
 })();
 
 const SCAN_LOOKBACK_BLOCKS = 500n;
+
+/** #1416 — the maximum blocks one scan pass covers (the `scanTo`
+ *  budget below). Exported so the ingest DO's backlog-drain check and
+ *  the scan share one number. */
+export const SCAN_PASS_MAX_BLOCKS = SCAN_LOOKBACK_BLOCKS * 4n;
 const MAX_RANGE_PER_CALL = 5_000n;
 const DETAILS_REFRESH_BATCH = 50;
 
@@ -250,6 +255,11 @@ export interface ChainIndexerResult {
    *  (see pushHints.ts). Optional so error/early-return paths stay
    *  untouched; an absent value broadcasts a coarse (hint-less) frame. */
   hints?: PushHints;
+  /** #1416 — the SAFE head this pass scanned against, so the ingest DO
+   *  can see a truncated backlog pass (scannedTo far below head) and
+   *  keep the drain self-driving instead of parking until the next
+   *  cron tick. Absent on paths that never learned the head. */
+  headBlock?: bigint;
   skipped?: string;
 }
 
@@ -735,13 +745,14 @@ export async function runChainIndexerForChain(
         quietCal.inserted > 0
           ? mergeHintLoanIds(emptyHints(), quietCal.loanIds)
           : undefined,
+      headBlock: head,
       skipped: 'caught-up',
     };
   }
   const scanTo =
-    scanFrom + SCAN_LOOKBACK_BLOCKS * 4n > head
+    scanFrom + SCAN_PASS_MAX_BLOCKS > head
       ? head
-      : scanFrom + SCAN_LOOKBACK_BLOCKS * 4n;
+      : scanFrom + SCAN_PASS_MAX_BLOCKS;
 
   // Single chunked scan across the full event allow-list. Public RPCs
   // (Alchemy free tier, publicnode) reject ranges > 10k blocks, so we
@@ -806,6 +817,7 @@ export async function runChainIndexerForChain(
         loanStatusUpdates: 0,
         loanDetailRefreshes: 0,
         activityEvents: 0,
+        headBlock: head,
         skipped: 'rpc-error',
       };
     }
@@ -1082,6 +1094,7 @@ export async function runChainIndexerForChain(
   return {
     scannedFrom: scanFrom,
     scannedTo: scanTo,
+    headBlock: head,
     newOffers: offerStats.newOffers,
     statusUpdates: offerStats.statusUpdates,
     detailRefreshes,

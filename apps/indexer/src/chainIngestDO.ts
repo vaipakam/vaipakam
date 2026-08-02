@@ -40,6 +40,7 @@
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import type { PushHints } from './pushHints';
 import {
+  SCAN_PASS_MAX_BLOCKS,
   isRetryableScanSkip,
   runChainIndexerForChain,
   type ChainIndexerResult,
@@ -130,6 +131,25 @@ export interface AlarmStorage extends LoopStateStorage {
  * resets `attempts` (recordTrigger) and restores the fast lane.
  * Exported for the unit test; `nowMs` injected for determinism.
  */
+/** #1416 — backlog drain accelerator, the DECISION. A successful pass
+ *  that stopped more than one full pass-budget short of the safe head
+ *  is a truncated BACKLOG pass: parking it until the next 5-min cron
+ *  tick drains a deep backlog at ~one chunk per tick (the July 2026
+ *  recovery measured Arb Sepolia at a ~week to converge). Keep the
+ *  loop self-driving on the SLOW lane instead. Only SUCCESSFUL passes
+ *  qualify — failures keep the bounded fast/slow retry budget, so an
+ *  erroring chain can never storm through this path. */
+export function shouldRearmForBacklog(
+  headBlock: bigint | undefined,
+  scannedTo: bigint | null,
+  retryableFailure: boolean,
+): boolean {
+  if (retryableFailure || headBlock === undefined || scannedTo === null) {
+    return false;
+  }
+  return headBlock - scannedTo > SCAN_PASS_MAX_BLOCKS;
+}
+
 export async function rearmOrFinishAttempts(
   storage: AlarmStorage,
   attempts: number,
@@ -399,6 +419,7 @@ export class ChainIngestDO {
       const attempts = (await this.state.storage.get<number>('attempts')) ?? 0;
 
       let scannedTo: bigint | null = null;
+      let headBlock: bigint | undefined;
       let retryableFailure = false;
       try {
         const resolved = await resolveEnv(this.env);
@@ -410,6 +431,7 @@ export class ChainIngestDO {
         }
         const result = await runChainIndexerForChain(resolved, chain);
         scannedTo = result.scannedTo;
+        headBlock = result.headBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
         // `scannedTo` rewound to the previous cursor instead of throwing
         // (Codex #764 round 5). Treat it as retryable so the caught-up check
@@ -447,7 +469,19 @@ export class ChainIngestDO {
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
       if (!retryableFailure && scannedTo !== null && scannedTo >= target) {
-        await this.clearLoopState(); // genuinely caught up
+        if (shouldRearmForBacklog(headBlock, scannedTo, retryableFailure)) {
+          // #1416 — truncated backlog pass: the cron target (0 for a
+          // plain tick) is met, but the safe head is still more than a
+          // full pass-budget away. Clear the RETRY budget (this pass
+          // was progress, not failure) and self-drive the next pass on
+          // the slow lane — a deep backlog drains in minutes/hours
+          // instead of one chunk per 5-minute tick. One setAlarm row
+          // per draining pass, only while genuinely behind.
+          await this.clearLoopState();
+          await this.state.storage.setAlarm(Date.now() + SLOW_ALARM_DELAY_MS);
+        } else {
+          await this.clearLoopState(); // genuinely caught up
+        }
       } else {
         await this.rearmOrFinish(attempts); // more work, or retry a soft failure
       }
