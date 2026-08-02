@@ -10,14 +10,17 @@
  *    the listing is live, so no button is shown for a transaction
  *    that would revert.
  *
- *  - `clearable`: the listing has ended (expired, legacy GTC, or the
- *    loan reached a terminal state) but the hold persists until the
- *    one-time permissionless cleanup runs. One button sends
- *    `teardownStaleSaleListing(loanId)` — deliberately available
- *    even while the protocol is paused (the entry moves no value).
+ *  - `clearable`: the listing has ended but the hold persists until
+ *    the one-time permissionless cleanup runs. Clicking the action
+ *    opens the app-standard six-row review receipt (the write-flow
+ *    rule every surface follows — Codex #1511 r1), and confirming
+ *    sends `teardownStaleSaleListing(loanId)` — deliberately
+ *    available even while the protocol is paused (moves no value).
  *
- * The borrower is exactly who the PR-A action window exists for, so
- * this card is the surface where that escape actually reaches them.
+ * The success confirmation is DURABLE: `onCleared` lifts the state to
+ * the page, which keeps this card mounted after the probe refetches
+ * to `none` — the invalidation must not unmount the confirmation out
+ * from under the user (Codex #1511 r1).
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -25,17 +28,23 @@ import { Hourglass } from 'lucide-react';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useDiamondWrite } from '../contracts/diamond';
+import { ConfirmReceipt } from './ConfirmReceipt';
 import type { SaleListingHoldState } from '../data/saleListingHold';
 
 export function SaleListingHoldCard({
   loanId,
   state,
+  onCleared,
 }: {
   loanId: number;
   state: SaleListingHoldState;
+  /** Lifts the durable success flag to the page — the page keeps the
+   *  card mounted on it after the probe refetches to `none`. */
+  onCleared: () => void;
 }) {
   const { write, ready } = useDiamondWrite();
   const queryClient = useQueryClient();
+  const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
@@ -48,6 +57,7 @@ export function SaleListingHoldCard({
     try {
       await write('teardownStaleSaleListing', [BigInt(loanId)]);
       setCleared(true);
+      onCleared();
       void queryClient.invalidateQueries({
         queryKey: ['saleListingHold'],
       });
@@ -83,15 +93,35 @@ export function SaleListingHoldCard({
               {error}
             </div>
           ) : null}
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => void freeOptions()}
-            disabled={busy || !ready}
-            data-testid="free-held-options"
-          >
-            {busy ? copy.saleHold.workingDots : copy.saleHold.clearableAction}
-          </button>
+          {!reviewing ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => setReviewing(true)}
+              disabled={busy || !ready}
+              data-testid="free-held-options"
+            >
+              {copy.saleHold.clearableAction}
+            </button>
+          ) : (
+            <div style={{ marginTop: 8 }}>
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel={copy.saleHold.confirmAction}
+                onBack={() => setReviewing(false)}
+                onConfirm={() => void freeOptions()}
+                disabled={!ready}
+                data={{
+                  youReceive: copy.saleHold.receipt.youReceive,
+                  youLock: copy.saleHold.receipt.youLock,
+                  youMayOwe: copy.saleHold.receipt.youMayOwe,
+                  youCanLose: copy.saleHold.receipt.youCanLose,
+                  fees: copy.saleHold.receipt.fees,
+                  whenThisEnds: copy.saleHold.receipt.whenThisEnds,
+                }}
+              />
+            </div>
+          )}
         </>
       )}
     </section>

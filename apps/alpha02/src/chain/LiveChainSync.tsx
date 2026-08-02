@@ -63,6 +63,12 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   'vaultAssets',
   'loanSalePending',
   'refinancePending',
+  // Borrower-side listing-hold probe (#1511): the cleanup button's
+  // appearance (expiry) and disappearance (cleanup from another
+  // tab/actor) are both driven by chain state with no own-wallet
+  // action, so the tip rail must carry it — tipAware stretches its
+  // interval on WS deploys on exactly this promise.
+  'saleListingHold',
   'standingApprovals',
   'keeperConfig',
   // #1131/#1145 round-5 — the crossable band's chain reads (previewMatch
@@ -112,6 +118,8 @@ const TIP_KEYS: ReadonlySet<string> = new Set([
   // Pending-card accept gates.
   'loanSalePending',
   'refinancePending',
+  // Borrower listing-hold card action gate (#1511) — see LIVE_KEYS.
+  'saleListingHold',
   // Past-due/grace banner terms (Codex #1228 r1 P3): tipAware-
   // stretched on PositionDetails, so the tip nudge must cover a keeper
   // extension restamping the terms.

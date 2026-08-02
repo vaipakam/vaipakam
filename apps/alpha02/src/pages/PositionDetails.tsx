@@ -358,12 +358,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // this loan's preclose/collateral-withdrawal options ('live'), can
   // be freed right now ('clearable'), or isn't there ('none').
   // Borrower viewers only — the lender has their own pending card.
+  // Gated to OPEN loans (Codex #1511 r1 P2): on a terminal loan the
+  // teardown also succeeds (the seller-hygiene branch), but there are
+  // no borrower options left to free and no cooldown is stamped —
+  // that cleanup is the SELLER's story (#1506), not this card's.
   const saleHold = useSaleListingHold(
     loanId,
-    Boolean(loan.data) && !loanIsRental && role === 'borrower',
+    Boolean(loan.data) &&
+      !loanIsRental &&
+      role === 'borrower' &&
+      loan.data?.status === 'active',
   );
-  const saleListingHeld =
-    saleHold.data === 'live' || saleHold.data === 'clearable';
+  // Durable success flag — keeps the card (and its confirmation)
+  // mounted after the post-teardown refetch flips the probe to
+  // 'none' (Codex #1511 r1 P2). (`saleListingHeld` itself is derived
+  // below, after the reconciled `row` exists.)
+  const [saleHoldCleared, setSaleHoldCleared] = useState(false);
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -589,6 +599,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : loan.data;
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
+  // Judged on the RECONCILED status (live override folded in): a loan
+  // the chain already knows is terminal must not show the hold card
+  // even while the indexed row lags (Codex #1511 r1 P2).
+  const saleListingHeld =
+    row.status === 'active' &&
+    (saleHold.data === 'live' || saleHold.data === 'clearable');
   const principal = principalMeta.data;
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
@@ -1061,24 +1077,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock, saleLock, borrowerLock] = await Promise.all([
+      const [live, latestBlock, borrowerLock] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
         publicClient.getBlock({ blockTag: 'latest' }),
-        // A live sale listing freezes the sale price at the CURRENT
-        // principal — a partial repay under it would make the next
-        // buyer overpay for a smaller claim. This read failing THROWS
-        // (fail closed): unknown lock state must not wave a partial
-        // through.
-        publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(row.lenderTokenId)],
-          })
-          .then((v) => Number(v)),
+        // (The lender NFT's sale-listing lock is deliberately NOT read
+        // here any more — Codex #1511 r1 P1: repayPartial has no
+        // listing hold on-chain and the buyer's acceptance re-binds to
+        // the shrunk principal, so a listing never blocks a partial.)
         // Codex #1500 r4 P1 — the BORROWER position's lock, read live
         // here rather than trusted from the render-time offsetPending
         // branch. `repayPartial` has NO offset guard on chain, so a
@@ -1118,10 +1125,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(copy.errors.pastGrace);
         return;
       }
-      if (saleLock === LOCK_EARLY_WITHDRAWAL_SALE) {
-        setError(copy.loanSale.partialBlockedByListing);
-        return;
-      }
+      // NOTE deliberately NO sale-listing guard here (Codex #1511 r1
+      // P1): repayPartial carries no listing hold on-chain, and the
+      // buyer's acceptance binds to the loan's CURRENT principal — a
+      // partial repayment during a listing shrinks the claim and the
+      // pending buyer simply re-signs. The pre-binding UI block that
+      // lived here contradicted both.
       if (borrowerLock === LOCK_PRECLOSE_OFFSET) {
         setError(copy.offset.blockedOtherPaths);
         return;
@@ -1214,6 +1223,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function runPreclose() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    // A live/uncleaned lender-sale listing holds preclose on-chain
+    // (SaleListingActiveOnLoan) — fail plainly before the wallet
+    // prompt, mirroring the card banner (Codex #1511 r1 P1).
+    if (saleListingHeld) {
+      setError(copy.earlyRepay.options.closeEarlyHeldBySale);
+      return;
+    }
     setPhase('pending');
     setError(null);
     try {
@@ -1701,8 +1717,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           say-so (the teardown probe), so a listing made by the lender
           on any device shows here. Sits above the chooser: it is the
           "why" for the chooser's held close-early row. */}
-      {role === 'borrower' && !closedThisSession && !isRental && saleListingHeld ? (
-        <SaleListingHoldCard loanId={loanId} state={saleHold.data!} />
+      {role === 'borrower' &&
+      !closedThisSession &&
+      !isRental &&
+      (saleListingHeld || saleHoldCleared) ? (
+        <SaleListingHoldCard
+          loanId={loanId}
+          state={saleHold.data ?? 'unknown'}
+          onCleared={() => setSaleHoldCleared(true)}
+        />
       ) : null}
 
       {role === 'borrower' &&
@@ -1877,18 +1900,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.refinance.partialBlockedByPending}
               </span>
             </div>
-          ) : loanLive.data?.saleLock === LOCK_EARLY_WITHDRAWAL_SALE ? (
-            // Same freeze from the LENDER's side: a live sale listing
-            // charges buyers the current outstanding amount, so a
-            // partial under it would mislead the buyer. (Best-effort
-            // render copy — the submit path re-checks the lock live
-            // and fails closed.)
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">
-                {copy.loanSale.partialBlockedByListing}
-              </span>
-            </div>
           ) : (
+          // NOTE deliberately NO sale-listing branch here (Codex #1511
+          // r1 P1): a listing never holds partial repayment — the
+          // buyer's acceptance binds to the CURRENT principal and
+          // re-signs after a paydown, so the pre-binding "would
+          // mislead the buyer" freeze that lived here was stale.
           <>
           <div className="cluster">
             <input
@@ -2022,7 +2039,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">{copy.preclose.graceNote}</span>
             </div>
           ) : null}
-          {offsetPend.pending ? (
+          {saleListingHeld ? (
+            // The lender's sale listing holds preclose on-chain
+            // (SaleListingActiveOnLoan) — the chooser row, this card,
+            // and the submit path all say so instead of offering a
+            // flow that would revert (Codex #1511 r1 P1).
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.earlyRepay.options.closeEarlyHeldBySale}
+              </span>
+            </div>
+          ) : offsetPend.pending ? (
             // A live offset settles this loan when its offer is
             // accepted — closing another way first strands the
             // linked offer. Cancel the offset instead.

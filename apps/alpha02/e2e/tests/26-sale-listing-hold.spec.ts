@@ -104,7 +104,12 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
   await page.reload({ waitUntil: 'domcontentloaded' });
   const freeBtn = page.getByTestId('free-held-options');
   await expect(freeBtn).toBeVisible({ timeout: 60_000 });
+  // App-standard write flow: the action opens the six-row review
+  // receipt first; confirming sends the teardown.
   await freeBtn.click();
+  await page
+    .getByRole('button', { name: /confirm — free held options/i })
+    .click();
   await expect(
     page.getByText(/held options freed/i),
   ).toBeVisible({ timeout: 120_000 });

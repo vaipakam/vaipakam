@@ -28,12 +28,30 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { BaseError, ContractFunctionRevertedError } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  toFunctionSelector,
+  zeroAddress,
+} from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
 
 export type SaleListingHoldState = 'none' | 'live' | 'clearable' | 'unknown';
+
+/** The PR-A bounded-listing selector — the positive facet-version
+ *  signal. The PRE-refresh Diamond routes the same one-argument
+ *  teardown selector but with the OLD semantics (terminal-loans-only,
+ *  pause-gated, no expiry admission), and it shares error names with
+ *  the new facet — so a raw probe against it would misclassify a
+ *  legacy GTC listing as boundedly `live` (Codex #1511 r1 P1). Only a
+ *  Diamond that routes the 4-arg `createLoanSaleOffer` carries the
+ *  lifecycle this surface describes; anything else stays `unknown`
+ *  (render nothing). */
+const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
+  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
+);
 
 /** Pure classifier for the teardown probe outcome — split from the
  *  hook so the mapping is unit-testable without a chain. */
@@ -76,6 +94,15 @@ export function useSaleListingHold(loanId: number, enabled: boolean) {
     // floor refreshes it immediately after the borrower's own writes.
     refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<SaleListingHoldState> => {
+      // Version gate BEFORE interpretation — same loupe probe the
+      // fork spec self-arms on. Cheap, and cached with the query.
+      const facet = (await readClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'facetAddress',
+        args: [BOUNDED_LISTING_SELECTOR],
+      })) as `0x${string}`;
+      if (facet === zeroAddress) return 'unknown';
       try {
         await readClient!.simulateContract({
           address: readChain.diamondAddress,

@@ -23,10 +23,21 @@ renders nothing rather than a false hold or a doomed button. The
 committed fork spec drives the full lifecycle (live hold → expiry →
 cleanup → on-chain link severed) and arms itself automatically once
 the PR-A facet refresh reaches the live testnet Diamond; until then
-it self-skips on a loupe probe. Also corrected a stale passage in the
-connected-app functional spec that predated the acceptance-binding
-design and claimed the reverse hold set (partial repayment held,
-close-early open).
+it self-skips on a loupe probe — the same positive facet-version
+signal the in-app probe requires before classifying, so the
+pre-refresh Diamond (whose older teardown shares error names with the
+new one) renders nothing rather than a wrong hold.
+
+The review rounds also removed the app's stale
+pre-acceptance-binding partial-repayment freeze: the partial-repay
+surface no longer blocks while a listing stands (the contracts never
+held it — a partial shrinks the claim and the pending buyer
+re-signs), the close-early flow itself is gated with the same held
+explanation as the chooser row (not just the chooser), the cleanup
+goes through the app-standard review receipt, and the freed
+confirmation survives the state refetch. A matching stale passage in
+the connected-app functional spec (which claimed the reverse hold
+set) was corrected the same way.
 
 Part of the #1503 series; the lender-side pending-card teardown
 surface remains tracked as #1506.

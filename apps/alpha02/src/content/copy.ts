@@ -1457,9 +1457,20 @@ const copySource = {
     clearableBody:
       'The listing has ended but still holds your close-early and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold.',
     clearableAction: 'Free held options',
+    confirmAction: 'Confirm — free held options',
     clearedNote:
       'Held options freed. The lender can’t list this loan again for a day — your action window.',
     workingDots: 'Freeing…',
+    receipt: {
+      youReceive:
+        'Nothing is paid to you — this only releases the hold on your close-early and collateral-withdrawal options.',
+      youLock: 'Nothing.',
+      youMayOwe: 'Only network gas for this one transaction.',
+      youCanLose: 'Nothing — the cleanup moves no funds and touches no balances.',
+      fees: 'None.',
+      whenThisEnds:
+        'Immediately when the transaction confirms — the options are freed and the lender can’t relist this loan for a day.',
+    },
   },
 
   loanSale: {
@@ -1533,8 +1544,6 @@ const copySource = {
     // form is feature-gated off until the contract fix lands.
     listingUnavailable:
       'Listing your position at your own price isn’t available yet — the on-chain step it needs is being fixed. The instant exit above works: it sells into a matching open offer right away.',
-    partialBlockedByListing:
-      'The lender has this position listed for sale at its current outstanding amount. Partial repayment is paused while the listing stands — it would change that amount and mislead a buyer. You can still repay in full or close early at any time.',
   },
 
   positions: {
