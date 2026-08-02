@@ -23,7 +23,7 @@ import { decrypt, sha256Hex } from './crypto';
 import {
   TIERS,
   classifyListing,
-  periodOf,
+  newestVerifiableManifest,
   siblingArchiveKey,
   validateBaseline,
   type ArchiveBaseline,
@@ -66,6 +66,9 @@ export interface HealthReport {
  *  the check aborts before OOM-ing the Worker; the alert text steers
  *  the operator to the streaming follow-up. */
 const MAX_HEALTHCHECK_BYTES = 100_000_000;
+
+/** A manifest is a few hundred bytes; anything near this is hostile. */
+const MAX_MANIFEST_BYTES = 256_000;
 
 interface S3ListEntry {
   key: string;
@@ -199,41 +202,47 @@ const EXCLUDED_FROM_LONG_TIERS = ['support_tickets'];
  * Does the decrypted payload actually belong in the period it was filed
  * under, and in this tier?
  *
- * Returns a reason when it does not. The checks are cheap and both catch
- * a copy-forward that every byte-level check passes.
+ * The timestamp is read from the DECRYPTED PLAINTEXT, never from the
+ * manifest. The manifest is unencrypted and writable with the very B2
+ * credential used to plant a copied archive, so a holder of it can
+ * republish a manifest carrying the original SHA and length with
+ * `createdAt` rewritten to the target period — and every byte-level
+ * check, including AES-GCM, still passes. Only the plaintext's own
+ * `createdAt` is covered by the authentication tag, so only that copy
+ * says anything an attacker without the AES key cannot say.
+ *
+ * Parsed for EVERY tier, including daily: returning early for daily left
+ * the cheapest tier the one place a substituted payload went unexamined.
  */
 function archiveContentFault(
   spec: TierSpec,
   period: string,
   plaintext: Uint8Array,
-  manifestCreatedAt: string,
 ): string | null {
-  // The manifest travels WITH a copied archive, so its own timestamp is
-  // the copied one — filed under a period it does not belong to.
-  if (!manifestCreatedAt || !manifestCreatedAt.startsWith(period)) {
+  let obj: { createdAt?: string; d1?: { archive?: { name?: string }[] } };
+  try {
+    obj = JSON.parse(new TextDecoder().decode(plaintext));
+  } catch {
+    return `${spec.tier} archive decrypted but is not parseable as a backup payload`;
+  }
+  const createdAt = obj.createdAt;
+  if (!createdAt || !createdAt.startsWith(period)) {
     return (
       `${spec.tier} archive filed under ${period} was created ` +
-      `${manifestCreatedAt || '(unstated)'} — stale or copied from another period`
+      `${createdAt || '(unstated)'} — stale or copied from another period`
     );
   }
   if (spec.tier === 'daily') return null;
-  try {
-    const obj = JSON.parse(new TextDecoder().decode(plaintext)) as {
-      d1?: { archive?: { name?: string }[] };
-    };
-    const names = (obj.d1?.archive ?? []).map((t) => t?.name).filter(Boolean);
-    const forbidden = names.filter((n) =>
-      EXCLUDED_FROM_LONG_TIERS.includes(n as string),
+  const names = (obj.d1?.archive ?? []).map((t) => t?.name).filter(Boolean);
+  const forbidden = names.filter((n) =>
+    EXCLUDED_FROM_LONG_TIERS.includes(n as string),
+  );
+  if (forbidden.length > 0) {
+    return (
+      `${spec.tier} archive contains ${forbidden.join(', ')}, which the long ` +
+      `tiers exclude — a daily payload copied into a long-retention family ` +
+      `would retain them past their promised deletion`
     );
-    if (forbidden.length > 0) {
-      return (
-        `${spec.tier} archive contains ${forbidden.join(', ')}, which the long ` +
-        `tiers exclude — a daily payload copied into a long-retention family ` +
-        `would retain them past their promised deletion`
-      );
-    }
-  } catch {
-    return `${spec.tier} archive decrypted but is not parseable as a backup payload`;
   }
   return null;
 }
@@ -287,15 +296,39 @@ export async function verifyTier(
   // required period above; full verification is bounded to ONE object so
   // the Worker's memory and CPU budget cannot grow with the archive's
   // age. That boundary is deliberate and is this tier's coverage limit.
-  const inNewest = listedEntries.filter(
-    (e) => periodOf(spec, e.key) === verdict.newestPeriod,
+  const survivingArchives = new Set(
+    archiveListing.ok ? archiveListing.keys : [],
   );
-  // Newest by LastModified — covers the "uploaded twice by an attacker"
-  // case where an honest and a malicious manifest share a period. Picking
-  // newest forces the attacker to land an upload AFTER our last honest
-  // run; the embedded SHA check then catches the divergence.
-  inNewest.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
-  const pickedManifest = inNewest[0];
+  const pickedManifest = newestVerifiableManifest(
+    spec,
+    listedEntries,
+    survivingArchives,
+    verdict.newestPeriod!,
+  );
+  if (!pickedManifest) {
+    return {
+      ...base,
+      ok: false,
+      reason: `${spec.tier} period ${verdict.newestPeriod} has no manifest with a surviving archive`,
+    };
+  }
+
+  // A manifest is a few hundred bytes. Refuse to buffer and parse an
+  // object that is not: the write credential can upload a very large JSON
+  // under the genuine current period, and `Response.json()` on it exhausts
+  // the isolate before any verdict or alert is produced — on Monday the
+  // same isolate is running the nightly backup.
+  if (pickedManifest.size > MAX_MANIFEST_BYTES) {
+    return {
+      ...base,
+      ok: false,
+      reason:
+        `${spec.tier} manifest ${pickedManifest.key} is ` +
+        `${pickedManifest.size} bytes, over MAX_MANIFEST_BYTES ` +
+        `(${MAX_MANIFEST_BYTES}) — refusing to parse it`,
+      manifestKey: pickedManifest.key,
+    };
+  }
 
   // Fetch the manifest JSON.
   const manifestRes = await getObject(b2Cfg, pickedManifest.key).catch((err) => {
@@ -389,12 +422,7 @@ export async function verifyTier(
     };
   }
 
-  const contentFault = archiveContentFault(
-    spec,
-    verdict.newestPeriod!,
-    plaintext,
-    manifestJson.createdAt,
-  );
+  const contentFault = archiveContentFault(spec, verdict.newestPeriod!, plaintext);
   if (contentFault) {
     return {
       ...base,

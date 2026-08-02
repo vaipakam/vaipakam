@@ -368,11 +368,16 @@ export function assertPolicyCeilings(decl, fail) {
                 `single inspection cycle. Note it cannot raise an alert for an ` +
                 `authenticated forgery at all (#1473) — this floor buys a full ` +
                 `cycle of routine looking, not response time (#1469).`
-              : `The monthly prefixes get the same WEEKLY healthcheck as the ` +
-                `daily ones since #1476, so this floor is the same ` +
-                `cycle-plus-slack figure: under 8 days the window can close ` +
-                `inside a single inspection cycle. It cannot raise an alert ` +
-                `for an authenticated forgery either (#1473).`),
+              : `The monthly floor is HIGHER than the daily one on purpose. ` +
+                `Since #1476 the weekly healthcheck reads these prefixes, but ` +
+                `it fully verifies only the NEWEST period; every older month ` +
+                `still inside retention gets a presence-and-pairing check, ` +
+                `which an in-place overwrite or corruption passes unchanged. ` +
+                `So nothing routinely inspects those objects in full, and the ` +
+                `window has to outlast the monthly write cadence rather than ` +
+                `an inspection cycle. Lowering it toward the daily figure was ` +
+                `tried and reverted for exactly this reason. It cannot raise ` +
+                `an alert for an authenticated forgery either (#1473).`),
         );
       }
     }

@@ -518,3 +518,34 @@ export function validateBaseline(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, baseline: checked };
 }
 
+/**
+ * The manifest to verify in full: newest in `period` whose archive still
+ * exists.
+ *
+ * The surviving-archive filter is the point. `classifyListing`
+ * deliberately tolerates one superseded manifest losing its pair, because
+ * the period remains restorable through the other — and selecting the
+ * newest of ALL manifests then picked that orphan and paged on its
+ * missing sibling, failing on exactly the state declared benign one
+ * function earlier. Two rules about the same tolerance, in two places,
+ * disagreeing; this is the one place now.
+ */
+export function newestVerifiableManifest<
+  T extends { key: string; lastModified: string },
+>(
+  spec: TierSpec,
+  entries: T[],
+  archiveKeys: Set<string>,
+  period: string,
+): T | null {
+  const candidates = entries
+    .filter((e) => periodOf(spec, e.key) === period)
+    .filter((e) => archiveKeys.has(siblingArchiveKey(spec, e.key)));
+  if (candidates.length === 0) return null;
+  // Newest by LastModified — covers the "uploaded twice by an attacker"
+  // case where an honest and a malicious manifest share a period.
+  return candidates.slice().sort((a, b) =>
+    b.lastModified.localeCompare(a.lastModified),
+  )[0];
+}
+
