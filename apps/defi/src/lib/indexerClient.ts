@@ -903,6 +903,10 @@ export interface RecyclingSeries {
     keeperBudget: string | null;
     /** `bucket − outstandingRecycled − keeperBudget`, floored at zero. */
     platformRetained: string | null;
+    /** Value that left the bucket and is stranded in transport. Without
+     *  it beside the reserve, a stranded remittance reads as a depleted
+     *  platform reserve rather than as value in flight. */
+    releasedRemitStranded: string | null;
     unavailableReason: string | null;
     asOf: string | null;
   };

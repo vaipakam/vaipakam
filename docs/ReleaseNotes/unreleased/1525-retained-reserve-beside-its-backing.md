@@ -6,7 +6,7 @@ The reason is the difference between this number and every other number on the p
 
 So the reserve is published **beside the token balance actually held**, and the two travel together or not at all. If the platform cannot read the live balance, it does not fall back to the counter-derived half — it publishes neither, and says why. A reserve on its own is exactly the confident, checkable-*looking* number this requirement exists to prevent.
 
-Three figures now appear: what the platform has retained, the VPFI it actually holds, and how much of that holding is earmarked for nobody. The third is what makes the first checkable.
+Several figures now appear together: what the platform has retained, the VPFI it actually holds, how much of that holding is labelled as recycled runway, how much sits outside that label, and a plain answer to whether the recycled pool is fully backed — with the size of any shortfall. The balance is what makes the reserve checkable; the plain answer is there because the numbers alone cannot distinguish a pool that has been exactly spent down from one that is short.
 
 **Two details that are easy to get subtly wrong, and were:**
 

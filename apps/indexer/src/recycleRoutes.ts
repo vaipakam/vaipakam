@@ -72,7 +72,11 @@
  */
 
 import { createPublicClient, http, type Address } from 'viem';
-import { InteractionRewardsLensFacetABI } from '@vaipakam/contracts/abis';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import {
+  InteractionRewardsLensFacetABI,
+  RewardAggregatorFacetABI,
+} from '@vaipakam/contracts/abis';
 
 import type { Env } from './env';
 import { getChainConfigs } from './env';
@@ -123,6 +127,17 @@ interface BackingSnapshot {
   paidOutRecycled: string | null;
   keeperBudget: string | null;
   platformRetained: string | null;
+  /**
+   * Value that LEFT the bucket and is stranded in transport.
+   *
+   * `restoreReleasedRemit` puts the commitment back into
+   * `outstandingCommitRecycled` WITHOUT re-crediting `recycleBucket`, so
+   * `platformRetained` falls by that amount and can floor to zero while
+   * the value is neither lost nor spent — merely in flight. Without this
+   * term beside it, a stranded remittance renders as a depleted platform
+   * reserve, which the lens natspec warns about in as many words.
+   */
+  releasedRemitStranded: string | null;
   unavailableReason: BackingReason | null;
   asOf: string | null;
 }
@@ -137,6 +152,20 @@ interface BackingSnapshot {
 const BACKING_RPC_TIMEOUT_MS = 2500;
 
 /**
+ * The browser aborts this endpoint at 4s. The backing read is the LAST
+ * thing the handler does, so a fixed timeout is measured from the wrong
+ * moment: the D1 queries and the lifetime folds run first, and if they
+ * take 1.5s the fixed 2.5s still lands past the abort — taking the day
+ * series down with a read that was supposed to fail in isolation.
+ *
+ * The bound is therefore a DEADLINE from the handler's start, with a
+ * margin so the response can still be serialised and sent.
+ */
+const ENDPOINT_DEADLINE_MS = 3400;
+/** Below this there is no point starting an RPC round trip at all. */
+const MIN_USEFUL_RPC_MS = 300;
+
+/**
  * FIXED reason codes. Never the underlying error text.
  *
  * viem's transport errors embed the RPC URL, and this repository's RPC
@@ -147,6 +176,7 @@ const BACKING_RPC_TIMEOUT_MS = 2500;
  * fires. Detail goes to the log; the caller gets a code.
  */
 type BackingReason =
+  | 'deadline-exceeded'
   | 'chain-not-configured'
   | 'no-rpc-endpoint-configured'
   | 'rpc-wrong-chain'
@@ -160,6 +190,7 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   paidOutRecycled: null,
   keeperBudget: null,
   platformRetained: null,
+  releasedRemitStranded: null,
   unavailableReason: reason,
   asOf: null,
 });
@@ -201,12 +232,58 @@ export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint
  */
 const backingInFlight = new Map<number, Promise<BackingSnapshot>>();
 
-async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
+/**
+ * The last completed read per chain, kept for a BOUNDED window.
+ *
+ * Single-flight alone bounds concurrency, not request COUNT: sequential
+ * or staggered callers each launched a fresh `getChainId` + `readContract`
+ * against the operator quota the indexer's own scanning shares, so a
+ * public endpoint could still exhaust it.
+ *
+ * This is a deliberate reversal of the "never cache" position I took last
+ * round, and the reasoning is the disclosure. What that position actually
+ * protects is a reader being shown a stale balance WITHOUT KNOWING — and
+ * `asOf` is published in the response, so the age is visible rather than
+ * concealed. A bounded, disclosed staleness is a different thing from a
+ * hidden one, and it is the only version that also bounds the cost.
+ */
+/** Is this a chain the protocol is deployed on at all? Distinguishes a
+ *  missing RPC secret from an unknown chain, which `getChainConfigs`
+ *  alone cannot: it drops both. */
+function isKnownChainId(chainId: number): boolean {
+  try {
+    return getDeployment(chainId) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+const BACKING_MAX_AGE_MS = 10_000;
+const backingLast = new Map<number, { at: number; snap: BackingSnapshot }>();
+
+async function readBacking(
+  env: Env,
+  chainId: number,
+  deadlineAt: number,
+): Promise<BackingSnapshot> {
+  const fresh = backingLast.get(chainId);
+  if (fresh && Date.now() - fresh.at < BACKING_MAX_AGE_MS) return fresh.snap;
   const existing = backingInFlight.get(chainId);
   if (existing) return existing;
-  const p = readBackingUncoalesced(env, chainId).finally(() => {
-    backingInFlight.delete(chainId);
-  });
+  const budget = deadlineAt - Date.now();
+  if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
+  const p = readBackingUncoalesced(env, chainId, Math.min(budget, BACKING_RPC_TIMEOUT_MS))
+    .then((snap) => {
+      // Only a SUCCESSFUL read is worth reusing; a failure must be retried
+      // by the next caller rather than pinned for the whole window.
+      if (snap.unavailableReason === null) {
+        backingLast.set(chainId, { at: Date.now(), snap });
+      }
+      return snap;
+    })
+    .finally(() => {
+      backingInFlight.delete(chainId);
+    });
   backingInFlight.set(chainId, p);
   return p;
 }
@@ -214,6 +291,7 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
 async function readBackingUncoalesced(
   env: Env,
   chainId: number,
+  timeoutMs: number,
 ): Promise<BackingSnapshot> {
   let chain;
   try {
@@ -221,28 +299,40 @@ async function readBackingUncoalesced(
   } catch {
     chain = undefined;
   }
-  if (!chain) return BACKING_UNAVAILABLE('chain-not-configured');
+  if (!chain) {
+    // `getChainConfigs` DROPS any chain whose RPC secret is absent, so a
+    // supported deployment with a missing or unreadable secret arrived
+    // here indistinguishable from one that was never configured — and the
+    // operator was pointed at the wrong problem during exactly the
+    // configuration failure the other code exists to name. Separate them
+    // by asking whether the deployment is known at all.
+    return BACKING_UNAVAILABLE(
+      isKnownChainId(chainId) ? 'no-rpc-endpoint-configured' : 'chain-not-configured',
+    );
+  }
   if (!chain.rpc) return BACKING_UNAVAILABLE('no-rpc-endpoint-configured');
 
   try {
     const client = createPublicClient({
-      transport: http(chain.rpc, {
-        timeout: BACKING_RPC_TIMEOUT_MS,
-        retryCount: 0,
-      }),
+      transport: http(chain.rpc, { timeout: timeoutMs, retryCount: 0 }),
     });
     // Identity BEFORE trust. A secret pointed at the wrong network still
     // answers: if that endpoint is a fork, or carries compatible code at
     // the same deterministic address, the read succeeds and we would
     // publish another chain's reserve under this chain's id — a wrong
     // figure presented with full confidence, which is worse than none.
-    const [observedChainId, snap] = await Promise.all([
+    const [observedChainId, snap, composition] = await Promise.all([
       client.getChainId(),
       client.readContract({
         address: chain.diamond as Address,
         abi: InteractionRewardsLensFacetABI,
         functionName: 'getRecycleBackingSnapshot',
       }) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>,
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: RewardAggregatorFacetABI,
+        functionName: 'getRecycleCompositionPosition',
+      }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
     ]);
     if (observedChainId !== chainId) {
       console.warn(
@@ -259,6 +349,7 @@ async function readBackingUncoalesced(
       paidOutRecycled: paidOut.toString(),
       keeperBudget: keeper.toString(),
       platformRetained: retainedFrom(bucket, outstanding, keeper).toString(),
+      releasedRemitStranded: composition[1].toString(),
       unavailableReason: null,
       asOf: new Date().toISOString(),
     };
@@ -340,6 +431,10 @@ export async function handleRecyclingSeries(
   req: Request,
   env: Env,
 ): Promise<Response> {
+  // Stamped at ENTRY: the backing read is the last thing this handler
+  // does, so its bound has to be measured from here, not from the moment
+  // it starts.
+  const deadlineAt = Date.now() + ENDPOINT_DEADLINE_MS;
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   const days = parseDays(url.searchParams.get('days'));
@@ -418,7 +513,7 @@ export async function handleRecyclingSeries(
         // makes a current indexer indistinguishable from one too old to
         // serve it — so the page withheld a readable reserve until an
         // unrelated day row happened to appear.
-        backing: await readBacking(env, chainId),
+        backing: await readBacking(env, chainId, deadlineAt),
       });
     }
 
@@ -954,7 +1049,7 @@ export async function handleRecyclingSeries(
       // Live, and deliberately outside `cumulative`: every field there is
       // counter-derived, and the whole point of this block is that it is
       // not. Grouping them would invite a reader to trust both equally.
-      backing: await readBacking(env, chainId),
+      backing: await readBacking(env, chainId, deadlineAt),
     });
   } catch (err) {
     return liveJsonResponse(

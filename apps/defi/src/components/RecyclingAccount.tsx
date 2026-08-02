@@ -65,6 +65,7 @@ const AMOUNT_FIELDS = {
     'paidOutRecycled',
     'keeperBudget',
     'platformRetained',
+    'releasedRemitStranded',
   ],
 } as const;
 
@@ -433,15 +434,34 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
               page that shows only the floored value publishes the two
               states identically, which is the one distinction this whole
               block exists to make. */}
+          {/* Only when non-zero: a permanent "stranded: 0" row is a
+              caveat whose condition is absent, which this surface's own
+              rule forbids. */}
+          {backing.releasedRemitStranded !== null &&
+            BigInt(backing.releasedRemitStranded) > 0n && (
+              <div>
+                <dt>{t('recycling.strandedLabel')}</dt>
+                <dd data-testid="recycling-stranded">
+                  {amt(backing.releasedRemitStranded)}
+                </dd>
+              </div>
+            )}
           <div>
             <dt>{t('recycling.backedLabel')}</dt>
             <dd data-testid="recycling-backed">
               {BigInt(backing.vpfiBalance!) >= BigInt(backing.bucket!)
                 ? t('recycling.backedYes')
                 : t('recycling.backedShort', {
-                    amount: formatUnitsPretty(
-                      BigInt(backing.bucket!) - BigInt(backing.vpfiBalance!),
-                      18,
+                    // Through `amt`, not the raw formatter. A shortfall
+                    // under 0.0001 truncates to "short by 0 VPFI" — a
+                    // FALSE quantified claim, and worse than the bare
+                    // verdict it decorates. The below-threshold handling
+                    // already existed two functions up; this new call
+                    // site simply did not go through it.
+                    amount: amt(
+                      (
+                        BigInt(backing.bucket!) - BigInt(backing.vpfiBalance!)
+                      ).toString(),
                     ),
                   })}
             </dd>

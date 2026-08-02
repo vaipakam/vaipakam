@@ -63,6 +63,7 @@ const series = (over: Partial<RecyclingSeries> = {}): RecyclingSeries => ({
     paidOutRecycled: tok(2),
     keeperBudget: tok(5),
     platformRetained: tok(25),
+    releasedRemitStranded: '0',
     unavailableReason: null,
     asOf: '2026-08-03T00:00:00.000Z',
   },
@@ -539,6 +540,7 @@ describe('RecyclingAccount — the reserve is never published alone', () => {
     paidOutRecycled: null,
     keeperBudget: null,
     platformRetained: null,
+    releasedRemitStranded: null,
     unavailableReason: reason,
     asOf: null,
   });
@@ -687,5 +689,55 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
     render(<RecyclingAccount chainId={8453} />);
     await screen.findByTestId('recycling-backing-unavailable');
     expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('never claims a shortfall of ZERO for a real shortfall', async () => {
+    // A gap under 0.0001 truncates to "short by 0 VPFI" — a false
+    // quantified claim, and worse than the bare verdict it decorates.
+    mockSeries(
+      series({
+        backing: {
+          ...series().backing,
+          vpfiBalance: (100n * 10n ** 18n).toString(),
+          bucket: (100n * 10n ** 18n + 3n).toString(), // 3 wei short
+          unearmarked: '0',
+          outstandingRecycled: '0',
+          keeperBudget: '0',
+          platformRetained: (100n * 10n ** 18n + 3n).toString(),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-backed').textContent).toContain(
+        'backedShort',
+      ),
+    );
+    const text = screen.getByTestId('recycling-backed').textContent!;
+    expect(text).toContain('recycling.belowThreshold');
+    expect(text).not.toMatch(/short by 0\b/);
+  });
+
+  it('publishes stranded value so it does not read as a depleted reserve', async () => {
+    // `restoreReleasedRemit` returns the commitment WITHOUT re-crediting
+    // the bucket, so the reserve falls — and can floor to zero — while
+    // the value is neither lost nor spent, merely in flight.
+    mockSeries(
+      series({
+        backing: { ...series().backing, releasedRemitStranded: tok(7) },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-stranded').textContent).toBe('7'),
+    );
+  });
+
+  it('omits the stranded row entirely when there is none', async () => {
+    // A permanent "stranded: 0" is a caveat whose condition is absent.
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backed');
+    expect(screen.queryByTestId('recycling-stranded')).toBeNull();
   });
 });
