@@ -230,6 +230,55 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
+    /// @dev #1522 — the conditional setter: expectations matching the live
+    ///      raw tier + anchor apply exactly like the unconditional setter;
+    ///      either expectation moving underneath reverts RiskTierStateMoved
+    ///      with the CURRENT values (the client's refetch cue) and changes
+    ///      nothing.
+    function test_checkedSetTier_appliesWhileExpectationsHold() public {
+        RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        vm.prank(lender);
+        rf.setVaultRiskTierChecked(BROAD, BLUECHIP, 0);
+        assertEq(rf.getVaultRiskTier(lender), BROAD, "raw tier");
+        assertEq(rf.getEffectiveRiskTier(lender), BROAD, "effective tier");
+        assertEq(rf.getVaultRiskTierVersion(lender), 0, "anchor re-stamped live");
+    }
+
+    function test_checkedSetTier_rawTierMovedReverts() public {
+        RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        // A concurrent client's raise lands first…
+        vm.prank(lender);
+        rf.setVaultRiskTier(BROAD);
+        // …then this client's write, still expecting BLUECHIP, must NOT
+        // re-apply (the unconditional setter here would restart the cooldown).
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTierStateMoved.selector, BROAD, uint64(0)
+            )
+        );
+        rf.setVaultRiskTierChecked(BROAD, BLUECHIP, 0);
+    }
+
+    function test_checkedSetTier_anchorMovedReverts() public {
+        RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        vm.prank(lender);
+        rf.setVaultRiskTier(BROAD); // anchor stamped at version 0
+        _bumpRiskTerms(keccak256("rt-1522")); // bump -> live version 1, anchor stays 0
+        // Client observed the POST-BUMP state wrongly (expects anchor 1):
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTierStateMoved.selector, BROAD, uint64(0)
+            )
+        );
+        rf.setVaultRiskTierChecked(BROAD, BROAD, 1);
+        // Correct expectations (anchor 0) re-affirm and re-stamp to 1.
+        vm.prank(lender);
+        rf.setVaultRiskTierChecked(BROAD, BROAD, 0);
+        assertEq(rf.getVaultRiskTierVersion(lender), 1, "anchor re-stamped");
+    }
+
     function test_directSetTier_revertsOnInvalidLevel() public {
         vm.prank(lender);
         vm.expectRevert(

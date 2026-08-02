@@ -948,6 +948,29 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setVaultRiskTierChecked",
+    "inputs": [
+      {
+        "name": "level",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "expectedRawTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "expectedAnchorVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "IlliquidPairConsentSet",
     "inputs": [
@@ -1209,5 +1232,21 @@
     "type": "error",
     "name": "RiskTermsRevealMismatch",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskTierStateMoved",
+    "inputs": [
+      {
+        "name": "currentTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "currentAnchorVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   }
 ]

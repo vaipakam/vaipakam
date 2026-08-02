@@ -83,6 +83,11 @@ contract RiskAccessFacet is DiamondAccessControl {
     /// @notice The revealed terms hash was already published once (#730) — each
     ///         hash is single-use, so rolling terms A→B→A can't revive a stale ack.
     error RiskTermsHashAlreadyUsed();
+    /// @notice #1522 — {setVaultRiskTierChecked}'s expectations no longer match
+    ///         the vault's live state: another write landed between the
+    ///         client's reads and this transaction. Nothing was changed; the
+    ///         client refetches and re-presents.
+    error RiskTierStateMoved(uint8 currentTier, uint64 currentAnchorVersion);
 
     // ─── User-facing setters: direct (msg.sender == vault) ───────────────────
 
@@ -90,6 +95,31 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         is subject to the opt-up cooldown; lowering it takes effect
     ///         immediately.
     function setVaultRiskTier(uint8 level) external {
+        _applyTier(msg.sender, level);
+    }
+
+    /// @notice #1522 — conditional variant of {setVaultRiskTier}: applies
+    ///         `level` ONLY while the caller's raw tier and tier-anchor version
+    ///         still equal the expectations the client observed, reverting
+    ///         {RiskTierStateMoved} otherwise. Closes the multi-client TOCTOU
+    ///         the unconditional setter leaves open: two devices racing the
+    ///         same raise both pass their pre-write reads, and the second
+    ///         write's {_applyTier} re-raises a now-held-but-cooling tier —
+    ///         RESTARTING its cooldown and charging for a redundant
+    ///         transaction. The wallet-confirmation window is unbounded, so no
+    ///         client-side revalidation can be atomic with the write; this
+    ///         makes the observed-state assumption part of the transaction.
+    function setVaultRiskTierChecked(
+        uint8 level,
+        uint8 expectedRawTier,
+        uint64 expectedAnchorVersion
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint8 cur = uint8(s.userRiskAccess[msg.sender]);
+        uint64 anchor = s.riskTierVersionAt[msg.sender];
+        if (cur != expectedRawTier || anchor != expectedAnchorVersion) {
+            revert RiskTierStateMoved(cur, anchor);
+        }
         _applyTier(msg.sender, level);
     }
 
