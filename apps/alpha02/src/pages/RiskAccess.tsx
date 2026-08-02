@@ -33,6 +33,7 @@ import { useDiamondWrite } from '../contracts/diamond';
 import { useMode } from '../app/ModeContext';
 import {
   RISK_TIER,
+  chainNowOf,
   classifyHeldTier,
   strictLingerActive,
   useRiskAccess,
@@ -256,13 +257,15 @@ export function RiskAccess() {
                     not "cooldown pending" — only a FUTURE one is
                     (Codex #1517 r1). A FAILED unlock read is its own
                     state — claiming "no cooldown" over it would
-                    contradict a cooling tier note above (r2). */}
+                    contradict a cooling tier note above (r2). "Future"
+                    is judged against CHAIN time, not the device clock
+                    (r3) — the contract compares block.timestamp. */}
                 {!s.tierUnlockKnown
                   ? copy.riskAccess.advancedCooldownUnknown(
                       String(s.termsVersion),
                       String(s.tierAnchorVersion),
                     )
-                  : s.tierUnlockAt > BigInt(Math.floor(Date.now() / 1000))
+                  : s.tierUnlockAt > BigInt(Math.floor(chainNowOf(s, Date.now())))
                     ? copy.riskAccess.advancedDetail(
                         String(s.termsVersion),
                         String(s.tierAnchorVersion),
@@ -325,7 +328,10 @@ export function RiskAccess() {
               )}
               {!s.strictMode ? (
                 s.strictModeUntilKnown ? (
-                  strictLingerActive(s, Math.floor(Date.now() / 1000)) ? (
+                  // Chain-time anchor, not the device clock (r3) — the
+                  // contract's effective-strict check compares the
+                  // linger expiry with block.timestamp.
+                  strictLingerActive(s, Math.floor(chainNowOf(s, Date.now()))) ? (
                     <p className="muted" style={{ margin: 0 }}>
                       {copy.riskAccess.strict.lingerNote}
                     </p>

@@ -7,7 +7,7 @@
  * comparison via a coerced zero.
  */
 import { describe, expect, it } from 'vitest';
-import { classifyHeldTier, strictLingerActive } from './riskAccess';
+import { chainNowOf, classifyHeldTier, strictLingerActive } from './riskAccess';
 
 const base = {
   effectiveTier: 0,
@@ -89,5 +89,20 @@ describe('strictLingerActive', () => {
         NOW,
       ),
     ).toBe(false);
+  });
+});
+
+describe('chainNowOf (chain-time anchor — Codex #1517 r3)', () => {
+  it('advances the pinned block timestamp by device-measured elapsed time, ignoring absolute clock skew', () => {
+    // Device clock 1h AHEAD of chain time at fetch: absolute skew must
+    // not leak — only elapsed-since-fetch does.
+    const s = { chainNowSec: 1_000n, fetchedAtMs: 5_000_000 };
+    expect(chainNowOf(s, 5_000_000)).toBe(1_000); // at fetch = block time
+    expect(chainNowOf(s, 5_030_000)).toBe(1_030); // +30s later
+  });
+
+  it('a device clock that jumps BACKWARD never rewinds chain time', () => {
+    const s = { chainNowSec: 1_000n, fetchedAtMs: 5_000_000 };
+    expect(chainNowOf(s, 4_000_000)).toBe(1_000);
   });
 });

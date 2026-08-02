@@ -11,8 +11,10 @@ that deals with unpriced assets settle in-kind on a default.
 
 The page is honest about enforcement: on the current network the
 protocol's enforcement switch is off, so it says the choice is saved
-on-chain and will start applying the moment enforcement turns on —
-never implying it is already being enforced.
+on-chain and that whatever level is ACTIVE at the time is what applies
+once enforcement turns on — a saved higher choice that is still
+cooling down, or that a risk-terms change re-locked, does not spring
+into force just because enforcement was enabled.
 
 The trust rules the main app's version earned through review carry
 over: the level controls never render over a failed read (choosing a

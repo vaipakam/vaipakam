@@ -71,6 +71,24 @@ export interface RiskAccessSnapshot {
   /** The version the vault's tier opt-in is anchored to. */
   tierAnchorVersion: bigint;
   tierAnchorKnown: boolean;
+  /** CHAIN time (the pinned block's timestamp) — time comparisons
+   *  against contract state (cooldown future/past, strict linger) must
+   *  use this, never the device clock (Codex #1517 r3; same lesson as
+   *  the Permit2 chain-time deadline). */
+  chainNowSec: bigint;
+  /** Device-clock ms when the snapshot was fetched — lets the UI
+   *  advance `chainNowSec` locally between refetches. */
+  fetchedAtMs: number;
+}
+
+/** Chain-anchored "now" (unix seconds): the pinned block's timestamp
+ *  advanced by the device-measured time since the fetch. Device clock
+ *  skew cancels out — only its RATE matters across ≤60s. */
+export function chainNowOf(
+  s: Pick<RiskAccessSnapshot, 'chainNowSec' | 'fetchedAtMs'>,
+  deviceNowMs: number,
+): number {
+  return Number(s.chainNowSec) + Math.max(0, (deviceNowMs - s.fetchedAtMs) / 1000);
 }
 
 /** How a SELECTED (raw) tier relates to the effective one — drives the
@@ -138,15 +156,28 @@ export function useRiskAccess() {
     refetchInterval: 60_000,
     queryFn: async (): Promise<RiskAccessSnapshot> => {
       const diamond = walletChain!.diamondAddress;
+      // Pin EVERY read to one block (Codex #1517 r3): the probe read
+      // resolves before the batch starts, so without the pin a
+      // governance terms bump mining in between yields an incoherent
+      // snapshot — old (higher) effective tier beside the new terms
+      // version — which classifyHeldTier would read as "effective"
+      // and withhold the re-affirm the vault actually needs. The
+      // block's timestamp doubles as the chain-time anchor for the
+      // cooldown / linger comparisons.
+      const block = await publicClient!.getBlock();
+      const fetchedAtMs = Date.now();
       const read = <T,>(functionName: string, args?: readonly unknown[]) =>
         publicClient!.readContract({
           address: diamond,
           abi: DIAMOND_ABI_VIEM,
           functionName,
           args: args as unknown[],
+          blockNumber: block.number,
         }) as Promise<T>;
 
       const unsupported: RiskAccessSnapshot = {
+        chainNowSec: block.timestamp,
+        fetchedAtMs,
         supported: false,
         criticalReadFailed: false,
         effectiveTier: 0,
@@ -209,6 +240,8 @@ export function useRiskAccess() {
         ]);
 
       return {
+        chainNowSec: block.timestamp,
+        fetchedAtMs,
         supported: true,
         criticalReadFailed: critical,
         effectiveTier,
