@@ -916,11 +916,19 @@ export function invalidRecycleBackfillRowShapes(archive) {
       // head query's MIN(day_id), so an invented early one drags the
       // coverage boundary back and makes the API publish synthetic quiet
       // buckets for days it never observed (Codex #1513 r8).
-      if (
-        row.stamped === 0 &&
-        String(row.absorbed_local) === '0' &&
-        String(row.absorbed_mirror) === '0'
-      ) {
+      // VALUES, not strings (Codex #1513 r12). `absorbed_local: "00"` passes
+      // the decimal and uint256 checks and is numerically zero, but a string
+      // comparison called the row non-empty — so it restored, moved
+      // MIN(day_id) backward, and made the API publish quiet buckets for
+      // days it never observed. Guarded so a malformed amount (already
+      // pushed above) cannot throw here.
+      const amountVal = (v) =>
+        typeof v === 'string' && UNSIGNED_DECIMAL.test(v) && v.length <= MAX_AMOUNT_DIGITS
+          ? BigInt(v)
+          : null;
+      const localVal = amountVal(row.absorbed_local);
+      const mirrorVal = amountVal(row.absorbed_mirror);
+      if (row.stamped === 0 && localVal === 0n && mirrorVal === 0n) {
         push(
           `an unfinalized row with no absorption is not a shape the writer ` +
             `emits (it skips those) — restored, it would drag coverage back ` +
@@ -931,6 +939,27 @@ export function invalidRecycleBackfillRowShapes(archive) {
         push(
           `an unfinalized day cannot be armed — the writer emits armed=0 for ` +
             `absorption-only rows, so this pair is not a shape it produces`,
+        );
+      }
+      // CROSS-FIELD: the drawdown cannot exceed the schedule floor (Codex
+      // #1513 r12). The getter computes it from `scheduleFloor / 2` on each
+      // side, so `schedule_floor: "0"` with `fresh_drawdown: "1"` is a shape
+      // it cannot produce — yet each field passes its own check, and the
+      // read route publishes the restored value as committed `netEmission`.
+      // Validating fields independently is not validating the row.
+      const floorVal = amountVal(row.schedule_floor);
+      const drawVal = amountVal(row.fresh_drawdown);
+      if (
+        row.stamped === 1 &&
+        floorVal !== null &&
+        drawVal !== null &&
+        drawVal > floorVal
+      ) {
+        push(
+          `fresh_drawdown ${row.fresh_drawdown} exceeds schedule_floor ` +
+            `${row.schedule_floor} — the getter derives the drawdown from the ` +
+            `floor, so it cannot produce this, and the route would publish it ` +
+            `as committed net emission`,
         );
       }
       // `armed` must AGREE with the sentinel, not merely be a valid scalar

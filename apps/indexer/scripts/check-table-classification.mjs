@@ -316,29 +316,34 @@ const unclassified = [...writers.keys()]
  * in the repo mentions it.
  */
 function docsCite(num) {
-  const roots = [join(REPO_ROOT, 'docs', 'DesignsAndPlans'), join(REPO_ROOT, 'docs', 'ReleaseNotes')];
+  // WHOLE TOKEN, not substring (Codex #1513 r12). `.includes('#152')`
+  // matches a checked-in `#1523`, so a truncated-but-numeric tracker stayed
+  // exempt from the dead-entry check while nothing cited it. My r11 fix
+  // replaced a shape test with a different shape test.
+  const token = new RegExp(`${num.replace('#', '#')}(?![0-9])`);
+  const roots = [
+    join(REPO_ROOT, 'docs', 'DesignsAndPlans'),
+    join(REPO_ROOT, 'docs', 'ReleaseNotes'),
+  ];
   const stack = [...roots];
   while (stack.length > 0) {
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync(dir);
+      // `withFileTypes` gives the kind WITHOUT a second stat call, so there
+      // is no check-then-use window for the path to change underneath
+      // (CodeQL file-system race on the previous statSync/readFileSync pair).
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const e of entries) {
-      const full = join(dir, e);
-      let st;
-      try {
-        st = statSync(full);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
         stack.push(full);
-      } else if (e.endsWith('.md')) {
+      } else if (e.isFile() && e.name.endsWith('.md')) {
         try {
-          if (readFileSync(full, 'utf8').includes(num)) return true;
+          if (token.test(readFileSync(full, 'utf8'))) return true;
         } catch {
           /* unreadable file is not a citation */
         }
