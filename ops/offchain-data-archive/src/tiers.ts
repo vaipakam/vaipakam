@@ -23,23 +23,22 @@ export interface TierSpec {
   tier: TierName;
   manifestPrefix: string;
   archivePrefix: string;
-  /** Period keys to try, newest first. */
-  periodKeys: (now: number) => string[];
   /**
-   * Whether finding nothing at all should fail the run.
+   * Which periods MUST be present, given what actually is and the clock.
    *
-   * Monthly: yes. An object is written on the 1st of every month, so two
-   * months of lookback finding nothing means the monthly write has
-   * stopped. A deployment younger than one month also trips this; that
-   * is a self-resolving false page, and far cheaper than staying silent
-   * about a monthly write that has genuinely stopped.
+   * This replaced a fixed "look back N periods" lookback, which could not
+   * distinguish a period that never arrived from one that has aged out —
+   * so a failed monthly cut was masked by the previous month for the rest
+   * of that month, and then never reported again once the next cut
+   * succeeded. A permanent archive gap behind green weekly reports.
+   */
+  missingRequired: (present: string[], now: number) => string[];
+  /**
+   * Whether finding NOTHING AT ALL under the family should fail the run.
    *
-   * Yearly: no. An object is written on Jan 1 only, so a deployment that
-   * has not lived through one legitimately has none — a normal state
-   * lasting up to a year, which cannot be paged weekly without training
-   * the operator to ignore the alert. It is still REPORTED on every run
-   * rather than omitted, so the absence stays visible instead of being
-   * implied by a bare PASS.
+   * This is only about a family that has never been written. Once one has,
+   * `missingRequired` governs — an established family that disappears is a
+   * failure for every tier, including yearly.
    */
   absenceIsFailure: boolean;
 }
@@ -54,9 +53,7 @@ export function dayKey(now: number, daysAgo: number): string {
  *
  * Anchored to the 1st before stepping. `setUTCMonth` clamps by rolling
  * FORWARD when the target month is shorter, so stepping back one month
- * from the 31st of March would land in March again (Feb 31 → Mar 3) and
- * the lookback would check the same month twice — silently halving the
- * window on exactly the dates a monthly write is most likely missed.
+ * from the 31st of March would land in March again (Feb 31 -> Mar 3).
  */
 export function monthKey(now: number, monthsAgo: number): string {
   const d = new Date(now);
@@ -65,8 +62,7 @@ export function monthKey(now: number, monthsAgo: number): string {
   return d.toISOString().slice(0, 7);
 }
 
-/** `YYYY` for `n` years before `now` (UTC). Anchored for the same reason
- *  as `monthKey` — Feb 29 stepped back a year is not a date. */
+/** `YYYY` for `n` years before `now` (UTC). Anchored for the same reason. */
 export function yearKey(now: number, yearsAgo: number): string {
   const d = new Date(now);
   d.setUTCDate(1);
@@ -75,31 +71,79 @@ export function yearKey(now: number, yearsAgo: number): string {
   return d.toISOString().slice(0, 4);
 }
 
+/** The period segment of a manifest key: `<prefix><period>/<nonce>.json`. */
+export function periodOf(spec: TierSpec, manifestKey: string): string | null {
+  if (!manifestKey.startsWith(spec.manifestPrefix)) return null;
+  const rest = manifestKey.slice(spec.manifestPrefix.length);
+  const seg = rest.split('/')[0];
+  return seg.length > 0 && rest.includes('/') ? seg : null;
+}
+
+/** Every `YYYY` from `from` to `to` inclusive. */
+function yearRange(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let y = Number(from); y <= Number(to); y++) out.push(String(y));
+  return out;
+}
+
 export const TIERS: TierSpec[] = [
   {
     tier: 'daily',
     manifestPrefix: 'manifests/',
     archivePrefix: 'archives/',
-    // 0..2 tolerates a single missed nightly without paging.
-    periodKeys: (now) => [dayKey(now, 0), dayKey(now, 1), dayKey(now, 2)],
+    // A single missed nightly must not page, so the requirement is that
+    // SOME night in the last three landed. Older days are not required:
+    // the daily tier ages out by design, so their absence is expected.
+    missingRequired: (present, now) => {
+      const recent = [dayKey(now, 0), dayKey(now, 1), dayKey(now, 2)];
+      return recent.some((d) => present.includes(d)) ? [] : recent;
+    },
     absenceIsFailure: true,
   },
   {
     tier: 'monthly',
     manifestPrefix: 'manifests-monthly/',
     archivePrefix: 'archives-monthly/',
-    // Written on the 1st. The previous month covers a run early on the
-    // 1st itself, before that night's cron has fired.
-    periodKeys: (now) => [monthKey(now, 0), monthKey(now, 1)],
+    // The PREVIOUS month is REQUIRED, not a fallback. Treating it as a
+    // fallback is what let a failed cut hide: in the month it failed the
+    // previous month satisfied the check, and from the next month on
+    // nothing looked at it again.
+    //
+    // The current month is required too, except on the 1st itself, which
+    // is the only moment the cron may genuinely not have run yet — that
+    // race is the entire reason a fallback existed.
+    missingRequired: (present, now) => {
+      const req = [monthKey(now, 1)];
+      if (new Date(now).getUTCDate() !== 1) req.push(monthKey(now, 0));
+      return req.filter((m) => !present.includes(m));
+    },
     absenceIsFailure: true,
   },
   {
     tier: 'yearly',
     manifestPrefix: 'manifests-yearly/',
     archivePrefix: 'archives-yearly/',
-    // Written on Jan 1. The previous year covers the whole of a year
-    // whose Jan 1 write has not happened yet.
-    periodKeys: (now) => [yearKey(now, 0), yearKey(now, 1)],
+    // NOTHING ages out here — the yearly prefixes carry no lifecycle rule,
+    // and that absence IS the indefinite retention the legal-audit tier
+    // depends on. So every year from the first one written onward must
+    // still be present, and a gap anywhere in that range is a failure.
+    //
+    // A blanket "yearly absence is fine" exemption made an admin deletion
+    // or a lifecycle rule drifting onto these prefixes indistinguishable
+    // from a young deployment, permanently. The exemption is only for a
+    // family that has never been written at all.
+    missingRequired: (present, now) => {
+      if (present.length === 0) return [];
+      const earliest = present.slice().sort()[0];
+      const req = yearRange(earliest, yearKey(now, 1));
+      // The current year is required once its Jan 1 has passed; on Jan 1
+      // itself the cron may not have run.
+      const d = new Date(now);
+      if (!(d.getUTCMonth() === 0 && d.getUTCDate() === 1)) {
+        req.push(yearKey(now, 0));
+      }
+      return req.filter((y) => !present.includes(y));
+    },
     absenceIsFailure: false,
   },
 ];
@@ -126,4 +170,94 @@ export function siblingArchiveKey(spec: TierSpec, manifestKey: string): string {
     spec.archivePrefix +
     manifestKey.slice(spec.manifestPrefix.length).replace(/\.json$/, '.bin')
   );
+}
+
+/** What a prefix listing produced. A failure is NOT an empty listing. */
+export type Listing =
+  | { ok: true; keys: string[] }
+  | { ok: false; error: string };
+
+export interface TierVerdict {
+  /** True when the tier is already decided and no object need be fetched. */
+  done: boolean;
+  ok?: boolean;
+  absent?: boolean;
+  reason?: string;
+  /** Set when `done` is false: the period to verify in full. */
+  newestPeriod?: string;
+  present?: string[];
+}
+
+/**
+ * Decide a tier from its listing alone, before any object is fetched.
+ *
+ * Pure and in this module deliberately: the three ways a tier is decided
+ * without fetching anything — the listing failed, a required period is
+ * gone, or the family was never written — are exactly the three that were
+ * wrong, and keeping them here is what makes them testable at all.
+ *
+ * Order is load-bearing, in two different ways.
+ *
+ * A failed listing is decided FIRST because treating it as an empty one
+ * made an unreadable prefix indistinguishable from an absent family —
+ * which on the yearly tier, whose absence is excused, produced a green
+ * PASS over an S3 outage.
+ *
+ * Missing-required is decided BEFORE absence because of what the absence
+ * message CLAIMS. "Never written" is only knowable for a tier nothing
+ * deletes — the yearly one. The daily and monthly tiers age out, so an
+ * empty listing there is far more likely to mean the cron stopped than
+ * that it never ran, and asserting the latter would send an operator
+ * looking for a deployment problem instead of a dead cron. Both orders
+ * FAIL those tiers; only this one says something true about why. That
+ * distinction is the entire difference the ordering makes, and a test
+ * asserts the reason text rather than just the verdict.
+ */
+export function classifyListing(
+  spec: TierSpec,
+  listing: Listing,
+  now: number,
+): TierVerdict {
+  if (!listing.ok) {
+    return {
+      done: true,
+      ok: false,
+      absent: false,
+      reason:
+        `could not list ${spec.manifestPrefix}: ${listing.error} — ` +
+        `treated as a failure, NOT as an empty tier`,
+    };
+  }
+
+  const present = [
+    ...new Set(
+      listing.keys.map((k) => periodOf(spec, k)).filter((p): p is string => !!p),
+    ),
+  ].sort();
+
+  const missing = spec.missingRequired(present, now);
+  if (missing.length > 0) {
+    return {
+      done: true,
+      ok: false,
+      absent: present.length === 0,
+      reason:
+        `${spec.tier} archive missing for ${missing.join(', ')} ` +
+        `(present: ${present.length === 0 ? 'none' : present.join(', ')})`,
+    };
+  }
+
+  if (present.length === 0) {
+    return {
+      done: true,
+      absent: true,
+      ok: !spec.absenceIsFailure,
+      reason:
+        `no ${spec.tier} archive has ever been written — nothing verified ` +
+        `for this tier (expected only until this deployment lives through ` +
+        `its first ${spec.tier === 'yearly' ? 'Jan 1' : 'cycle'})`,
+    };
+  }
+
+  return { done: false, newestPeriod: present[present.length - 1], present };
 }

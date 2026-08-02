@@ -22,7 +22,10 @@
 import { decrypt, sha256Hex } from './crypto';
 import {
   TIERS,
+  classifyListing,
+  periodOf,
   siblingArchiveKey,
+  type Listing,
   type TierName,
   type TierSpec,
 } from './tiers';
@@ -191,44 +194,44 @@ export async function verifyTier(
   now: number = Date.now(),
 ): Promise<TierOutcome> {
   const base = { tier: spec.tier, absent: false };
-  let pickedManifest: S3ListEntry | undefined;
-  const periods = spec.periodKeys(now);
+  let listedEntries: S3ListEntry[] = [];
 
-  for (const period of periods) {
-    const prefix = `${spec.manifestPrefix}${period}/`;
-    let entries: S3ListEntry[];
-    try {
-      entries = await listPrefix(b2Cfg, prefix);
-    } catch (err) {
-      // A list failure on the newest period might be transient — fall
-      // through to the older one rather than reporting an absence.
-      console.warn(`[healthcheck] list ${prefix} failed: ${(err as Error).message}`);
-      continue;
-    }
-    if (entries.length === 0) continue;
-    // Newest by LastModified — covers the "uploaded twice by an
-    // attacker" case where both an honest + a malicious manifest
-    // exist for the same period. Picking newest forces the attacker
-    // to land an upload AFTER our last honest run; the embedded
-    // SHA check then catches the divergence.
-    entries.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
-    pickedManifest = entries[0];
-    break;
+  // ONE listing of the family root, not a walk of guessed period prefixes.
+  // The verdict logic lives in `tiers.ts` so it is unit-testable — the
+  // three no-fetch outcomes (list failed / a required period is gone /
+  // never written) are precisely the three that were wrong.
+  let listing: Listing;
+  try {
+    const entries = await listPrefix(b2Cfg, spec.manifestPrefix);
+    listing = { ok: true, keys: entries.map((e) => e.key) };
+    listedEntries = entries;
+  } catch (err) {
+    listing = { ok: false, error: (err as Error).message };
   }
 
-  if (!pickedManifest) {
-    const where = `${spec.manifestPrefix}{${periods.join(',')}}/`;
+  const verdict = classifyListing(spec, listing, now);
+  if (verdict.done) {
     return {
       ...base,
-      absent: true,
-      ok: !spec.absenceIsFailure,
-      reason: spec.absenceIsFailure
-        ? `no ${spec.tier} manifest under ${where} — that tier's writes have ` +
-          `stopped (or this deployment is younger than one ${spec.tier} cycle)`
-        : `no ${spec.tier} archive written yet (expected until this deployment ` +
-          `lives through a Jan 1) — nothing verified for this tier`,
+      ok: verdict.ok!,
+      absent: verdict.absent ?? false,
+      reason: verdict.reason!,
     };
   }
+
+  // Verify the NEWEST period in full. Presence is asserted for every
+  // required period above; full verification is bounded to ONE object so
+  // the Worker's memory and CPU budget cannot grow with the archive's
+  // age. That boundary is deliberate and is this tier's coverage limit.
+  const inNewest = listedEntries.filter(
+    (e) => periodOf(spec, e.key) === verdict.newestPeriod,
+  );
+  // Newest by LastModified — covers the "uploaded twice by an attacker"
+  // case where an honest and a malicious manifest share a period. Picking
+  // newest forces the attacker to land an upload AFTER our last honest
+  // run; the embedded SHA check then catches the divergence.
+  inNewest.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+  const pickedManifest = inNewest[0];
 
   // Fetch the manifest JSON.
   const manifestRes = await getObject(b2Cfg, pickedManifest.key).catch((err) => {
