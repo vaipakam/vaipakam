@@ -807,7 +807,7 @@
         },
         "illiquid": {
           "label": "Illiquid / custom",
-          "hint": "Also allows NFTs and assets without a reliable price. Each such pairing asks for its own one-time consent, and on a default the lender receives the asset itself rather than a sale."
+          "hint": "Also allows NFTs and assets without a reliable price — on a default the lender receives the asset itself rather than a sale. Accepting such a deal collects your consent in the accept flow; creating one needs a separate standing consent this app can’t record yet, so those creations stay unavailable here while enforcement is on."
         }
       },
       "coolingNote": "Chosen — becomes active once the safety cooldown finishes.",
@@ -821,11 +821,10 @@
       "reaffirmedMsg": "Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.",
       "strict": {
         "title": "Strict mode",
-        "blurb": "Off by default. While on, every deal that involves a mid-tier asset (liquid, but not blue-chip) asks you for one extra, deliberate confirmation on top of your level above — you’ll see it when you create or accept such an offer.",
+        "blurb": "An opt-in that makes every deal involving a mid-tier asset (liquid, but not blue-chip) require one extra, deliberate per-deal confirmation on top of your level above.",
         "on": "Strict mode is ON — click to turn off",
-        "off": "Strict mode is OFF — click to turn on",
+        "offLocked": "Strict mode is OFF. Turning it on isn’t offered here yet: while on, every mid-tier deal needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.",
         "updating": "Updating…",
-        "enabledMsg": "Strict mode is on. Mid-tier deals now ask for a fresh confirmation when you create or accept the offer.",
         "disabledMsg": "Strict mode is off. If a safety cooldown is configured, the extra confirmation keeps applying until it finishes.",
         "lingerNote": "You turned this off recently — the extra confirmation keeps applying until the safety cooldown finishes.",
         "lingerUnknown": "We couldn’t check the turn-off cooldown, so a recent turn-off may still be keeping the extra confirmation active.",

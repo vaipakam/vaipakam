@@ -251,7 +251,12 @@ export function RiskAccess() {
 
             {isAdvanced && s.termsVersionKnown && s.tierAnchorKnown ? (
               <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                {s.tierUnlockKnown && s.tierUnlockAt > 0n
+                {/* The contract stamps the unlock timestamp on EVERY
+                    tier write (lowers included), so a nonzero value is
+                    not "cooldown pending" — only a FUTURE one is
+                    (Codex #1517 r1). */}
+                {s.tierUnlockKnown &&
+                s.tierUnlockAt > BigInt(Math.floor(Date.now() / 1000))
                   ? copy.riskAccess.advancedDetail(
                       String(s.termsVersion),
                       String(s.tierAnchorVersion),
@@ -278,26 +283,36 @@ export function RiskAccess() {
             <p className="muted">{copy.riskAccess.strict.unreadable}</p>
           ) : (
             <div className="stack" style={{ gap: 8 }}>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={s.strictMode}
-                className={`btn ${s.strictMode ? 'btn-primary' : 'btn-secondary'}`}
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    await write('setRiskStrictMode', [!s.strictMode]);
-                  }, s.strictMode
-                    ? copy.riskAccess.strict.disabledMsg
-                    : copy.riskAccess.strict.enabledMsg)
-                }
-              >
-                {busy
-                  ? copy.riskAccess.strict.updating
-                  : s.strictMode
-                    ? copy.riskAccess.strict.on
-                    : copy.riskAccess.strict.off}
-              </button>
+              {/* ENABLE is deliberately not offered (Codex #1517 r1):
+                  the per-deal mid-tier acknowledgement strict mode
+                  demands has no collection surface in this app yet —
+                  the accept flow hard-blocks on it — so an enable here
+                  would lock the user out of their own mid-tier deals
+                  once enforcement is on. DISABLE stays available: it is
+                  risk-decreasing and the recovery path for a vault that
+                  enabled strict mode elsewhere. */}
+              {s.strictMode ? (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      await write('setRiskStrictMode', [false]);
+                    }, copy.riskAccess.strict.disabledMsg)
+                  }
+                >
+                  {busy
+                    ? copy.riskAccess.strict.updating
+                    : copy.riskAccess.strict.on}
+                </button>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>
+                  {copy.riskAccess.strict.offLocked}
+                </p>
+              )}
               {!s.strictMode ? (
                 s.strictModeUntilKnown ? (
                   strictLingerActive(s, Math.floor(Date.now() / 1000)) ? (

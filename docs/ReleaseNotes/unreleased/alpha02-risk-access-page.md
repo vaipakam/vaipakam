@@ -21,11 +21,15 @@ active level is labelled as "cooling down" versus "risk terms changed —
 confirm again" only when the supporting on-chain reads are trustworthy,
 and the one-click re-confirm is offered only in the terms-changed case.
 Strict mode — an opt-in that adds one extra deliberate confirmation to
-every mid-tier deal — has its toggle here too, including the note that
-a recent turn-off keeps the extra confirmation in force through the
-safety cooldown.
+every mid-tier deal — is shown here too, with one honest limit: this
+app can't collect that extra confirmation yet, so turning strict mode
+ON is not offered (it would lock the user out of their own mid-tier
+deals once enforcement is on). Turning it OFF always works here — the
+recovery path for anyone who enabled it in the main app — including
+the note that a recent turn-off keeps the extra confirmation in force
+through the safety cooldown.
 
 The page ships with unit tests for the state classification and an
 automated end-to-end test that drives the real contract on a forked
-network: raising the level, lowering it back, and round-tripping the
-strict-mode toggle.
+network: raising the level, lowering it back, and disabling strict
+mode from a vault that had it enabled.

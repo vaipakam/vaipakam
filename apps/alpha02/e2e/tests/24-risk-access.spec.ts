@@ -8,10 +8,14 @@
  *  choice is being applied); (3) raising the level submits a real
  *  `setVaultRiskTier` write and the page re-renders the raised choice
  *  (effective or cooling, per the chain's cooldown config); (4)
- *  lowering is immediate; (5) the strict-mode toggle round-trips.
+ *  lowering is immediate; (5) strict mode: ENABLE is honestly withheld
+ *  (this app can't collect the per-deal acknowledgement it demands —
+ *  Codex #1517 r1), while DISABLE — the recovery lever for a vault
+ *  that enabled it elsewhere — works via a real write.
  */
 import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
+import { DIAMOND, DIAMOND_ABI_VIEM, forkChain, pub, walletFor } from '../lib/chain';
 
 test('risk level renders true chain state, raises with consent, lowers immediately', async ({
   launchWallet,
@@ -47,27 +51,50 @@ test('risk level renders true chain state, raises with consent, lowers immediate
   await expect(blueChip).toContainText('✓');
 });
 
-test('strict mode toggles on and off through real writes', async ({
+test('strict mode: enable is honestly withheld, disable works against real chain state', async ({
   launchWallet,
 }) => {
-  const { page } = await launchWallet('borrower');
+  const { page, account } = await launchWallet('borrower');
   await page.goto('/risk-access', { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
 
-  const toggle = page.getByRole('switch', { name: /strict mode/i });
-  await expect(toggle).toBeVisible({ timeout: 30_000 });
-  const wasOn = (await toggle.getAttribute('aria-checked')) === 'true';
-
-  await toggle.click();
+  // OFF state: the app deliberately does NOT offer enabling (it has no
+  // surface to collect the per-deal mid-tier acknowledgement strict
+  // mode demands — enabling here would lock the user out of their own
+  // mid-tier accepts once enforcement is on). The honest note renders
+  // instead of a switch.
   await expect(
-    page.getByText(wasOn ? /strict mode is off\./i : /strict mode is on\./i),
-  ).toBeVisible({ timeout: 60_000 });
-  await expect(toggle).toHaveAttribute('aria-checked', String(!wasOn));
+    page.getByText(/turning it on isn’t offered here yet/i),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('switch')).toHaveCount(0);
 
-  // Restore the starting state so the wallet's later specs (and
-  // re-runs against a shared fork) see the same posture.
+  // Seed strict mode ON directly on-chain (as a vault that enabled it
+  // from the reference app would arrive here), then assert the page
+  // renders the ON state and the DISABLE path — the recovery lever —
+  // works through a real write.
+  const wallet = walletFor(account);
+  const hash = await wallet.writeContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'setRiskStrictMode',
+    args: [true],
+    chain: forkChain,
+    account,
+  });
+  await pub.waitForTransactionReceipt({ hash });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  const toggle = page.getByRole('switch', { name: /strict mode is on/i });
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
   await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-checked', String(wasOn), {
+  await expect(page.getByText(/strict mode is off\./i)).toBeVisible({
     timeout: 60_000,
   });
+  // Back to the withheld-enable posture (leaves the wallet clean for
+  // later specs too).
+  await expect(
+    page.getByText(/turning it on isn’t offered here yet/i),
+  ).toBeVisible({ timeout: 30_000 });
 });

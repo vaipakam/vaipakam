@@ -59,6 +59,12 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // write that settles the loan) must flip the hold card promptly in
   // every tab.
   'saleListingHold',
+  // Risk-access page (#671/#728 port, Codex #1517 r1): tier / strict
+  // writes need the delayed second read — a lagging public RPC can
+  // serve the pre-write snapshot to the immediate refetch, and a user
+  // re-clicking the apparently-unchanged tier would RESTART its
+  // cooldown. Own-wallet state, cheap, active-only.
+  'riskAccess',
   // Codex #1228 r1 — desk views: the flows' surface-specific desk
   // invalidations are LOCAL to the acting tab, so the cross-tab floor
   // must carry them or a second tab on Rate Desk misses an own fill

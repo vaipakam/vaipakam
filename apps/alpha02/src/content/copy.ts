@@ -1356,7 +1356,12 @@ const copySource = {
       },
       illiquid: {
         label: 'Illiquid / custom',
-        hint: 'Also allows NFTs and assets without a reliable price. Each such pairing asks for its own one-time consent, and on a default the lender receives the asset itself rather than a sale.',
+        // Honest about this app's limits (Codex #1517 r1): accepting
+        // an illiquid deal is covered by the acceptance consent you
+        // sign in the accept flow, but CREATING one needs a standing
+        // per-pair consent this app can't record yet — don't promise
+        // "each pairing asks", the create flow here won't.
+        hint: 'Also allows NFTs and assets without a reliable price — on a default the lender receives the asset itself rather than a sale. Accepting such a deal collects your consent in the accept flow; creating one needs a separate standing consent this app can’t record yet, so those creations stay unavailable here while enforcement is on.',
       },
     },
     coolingNote:
@@ -1377,12 +1382,17 @@ const copySource = {
     strict: {
       title: 'Strict mode',
       blurb:
-        'Off by default. While on, every deal that involves a mid-tier asset (liquid, but not blue-chip) asks you for one extra, deliberate confirmation on top of your level above — you’ll see it when you create or accept such an offer.',
+        'An opt-in that makes every deal involving a mid-tier asset (liquid, but not blue-chip) require one extra, deliberate per-deal confirmation on top of your level above.',
       on: 'Strict mode is ON — click to turn off',
-      off: 'Strict mode is OFF — click to turn on',
+      // Enabling is deliberately NOT offered here (Codex #1517 r1):
+      // strict mode demands a fresh per-deal acknowledgement this app
+      // can't collect yet, so switching it on from here would lock the
+      // user out of their own mid-tier accepts once enforcement is on.
+      // Turning it OFF is always offered (risk-decreasing, and the
+      // recovery path for a vault that enabled strict mode elsewhere).
+      offLocked:
+        'Strict mode is OFF. Turning it on isn’t offered here yet: while on, every mid-tier deal needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.',
       updating: 'Updating…',
-      enabledMsg:
-        'Strict mode is on. Mid-tier deals now ask for a fresh confirmation when you create or accept the offer.',
       disabledMsg:
         'Strict mode is off. If a safety cooldown is configured, the extra confirmation keeps applying until it finishes.',
       lingerNote:
