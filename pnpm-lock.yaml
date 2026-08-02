@@ -103,7 +103,7 @@ importers:
         version: link:../../packages/ui
       connectkit:
         specifier: ^1.9.2
-        version: 1.9.2(@babel/core@7.29.0)(@tanstack/react-query@5.100.9(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3))
+        version: 1.9.2(@babel/core@7.29.0)(@tanstack/react-query@5.100.9(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76))
       lucide-react:
         specifier: ^1.8.0
         version: 1.14.0(react@19.2.6)
@@ -118,10 +118,10 @@ importers:
         version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       viem:
         specifier: ^2.48.4
-        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       wagmi:
         specifier: ^2.19.5
-        version: 2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3)
+        version: 2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76)
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.33.1
@@ -197,7 +197,7 @@ importers:
         version: link:../../packages/lib
       connectkit:
         specifier: ^1.9.2
-        version: 1.9.2(@babel/core@7.29.0)(@tanstack/react-query@5.100.9(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76))
+        version: 1.9.2(@babel/core@7.29.0)(@tanstack/react-query@5.100.9(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react-is@19.2.6)(react@19.2.6)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3))
       i18next:
         specifier: ^26.0.8
         version: 26.0.10(typescript@6.0.3)
@@ -224,14 +224,17 @@ importers:
         version: 7.15.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       viem:
         specifier: ^2.48.4
-        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+        version: 2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3)
       wagmi:
         specifier: ^2.19.5
-        version: 2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76)
+        version: 2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(bufferutil@4.1.0)(immer@10.2.0)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3)
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.15.0
         version: 1.36.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))(workerd@1.20260507.1)(wrangler@4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      '@eslint/js':
+        specifier: ^9.39.4
+        version: 9.39.4
       '@playwright/test':
         specifier: ^1.49.0
         version: 1.61.1
@@ -247,12 +250,27 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.1
         version: 6.0.1(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))
+      eslint:
+        specifier: ^9.39.4
+        version: 9.39.4
+      eslint-plugin-react-hooks:
+        specifier: ^7.0.1
+        version: 7.1.1(eslint@9.39.4)
+      eslint-plugin-react-refresh:
+        specifier: ^0.5.2
+        version: 0.5.2(eslint@9.39.4)
+      globals:
+        specifier: ^17.4.0
+        version: 17.6.0
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
       typescript:
         specifier: ~6.0.2
         version: 6.0.3
+      typescript-eslint:
+        specifier: ^8.58.0
+        version: 8.59.2(eslint@9.39.4)(typescript@6.0.3)
       vite:
         specifier: ^8.0.9
         version: 8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0)
@@ -7458,7 +7476,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.5(@types/node@24.12.2)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0))
+      vitest: 4.1.5(@types/node@22.19.18)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))
 
   '@vitest/expect@4.1.5':
     dependencies:
