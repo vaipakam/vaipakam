@@ -268,6 +268,25 @@ const BACKING_MAX_AGE_MS = 10_000;
 const BACKING_FAILURE_MAX_AGE_MS = 2_000;
 
 /**
+ * How long a SUCCESSFUL snapshot is still served while a refresh runs.
+ *
+ * Without this, every TTL expiry is a thundering herd: requests spread
+ * across isolates all miss the cache in the same instant, consult
+ * separate isolate-local in-flight maps, and each launch the full RPC
+ * batch. Serving the previous value while ONE refresh proceeds removes
+ * the herd at expiry entirely, and the staleness is bounded and
+ * published — `asOf` carries the age, so a reader sees it.
+ *
+ * RESIDUAL, stated rather than papered over: this does not give
+ * cross-isolate single-flight on a COLD cache, where there is nothing to
+ * serve. True global single-flight needs a coordination point (a Durable
+ * Object), which is disproportionate for a dashboard read; the cold-start
+ * fan-out is bounded by the number of isolates handling the burst, is
+ * transient, and repeats only after a full eviction.
+ */
+const BACKING_STALE_MAX_AGE_MS = 60_000;
+
+/**
  * Colo-wide, not isolate-local.
  *
  * The `Map` this replaces bounded calls only within ONE isolate, so
@@ -290,12 +309,20 @@ function coloCache(): Cache | null {
   return d ?? null;
 }
 
-async function cachedBacking(chainId: number): Promise<BackingSnapshot | null> {
+async function cachedBacking(
+  chainId: number,
+): Promise<{ snap: BackingSnapshot; ageMs: number } | null> {
   const cache = coloCache();
   if (!cache) return null;
   try {
     const hit = await cache.match(`${BACKING_CACHE_ORIGIN}/${chainId}`);
-    return hit ? ((await hit.json()) as BackingSnapshot) : null;
+    if (!hit) return null;
+    const snap = (await hit.json()) as BackingSnapshot;
+    // Age from the snapshot's OWN stamp, not from the cache entry: the
+    // stamp is what the response publishes, so freshness and the age a
+    // reader sees are necessarily the same number.
+    const ageMs = snap.asOf ? Date.now() - Date.parse(snap.asOf) : Infinity;
+    return { snap, ageMs };
   } catch {
     return null;
   }
@@ -307,8 +334,11 @@ async function putCachedBacking(
 ): Promise<void> {
   const cache = coloCache();
   if (!cache) return;
+  // A success is RETAINED past its freshness window so it can be served
+  // stale while a refresh runs; a failure is not — there is no value in
+  // serving an old error, and a recovered RPC should be picked up at once.
   const ttl = snap.unavailableReason === null
-    ? BACKING_MAX_AGE_MS
+    ? BACKING_STALE_MAX_AGE_MS
     : BACKING_FAILURE_MAX_AGE_MS;
   try {
     await cache.put(
@@ -350,16 +380,44 @@ async function readBacking(
   chainId: number,
   deadlineAt: number,
 ): Promise<BackingSnapshot> {
+  const budget = deadlineAt - Date.now();
   const cached = await cachedBacking(chainId);
-  if (cached) return cached;
+  if (cached && cached.ageMs < BACKING_MAX_AGE_MS) return cached.snap;
+
+  const existing = backingInFlight.get(chainId);
+  if (existing) {
+    // Joining an in-flight read does NOT inherit its deadline. An earlier
+    // caller that spent most of its budget in D1 could otherwise wait on a
+    // read a later, faster caller had just started, and blow past its own
+    // deadline — the abort this whole bound exists to stay inside.
+    if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
+    return withDeadline(existing, budget, 'joined backing read').catch(() =>
+      BACKING_UNAVAILABLE('deadline-exceeded'),
+    );
+  }
+
+  // A STALE success is served immediately while the refresh runs, so a
+  // TTL expiry never makes callers wait on the RPC together.
+  if (cached && cached.ageMs < BACKING_STALE_MAX_AGE_MS) {
+    void startBackingRefresh(env, chainId, BACKING_RPC_TIMEOUT_MS);
+    return cached.snap;
+  }
+
+  if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
+  return startBackingRefresh(env, chainId, Math.min(budget, BACKING_RPC_TIMEOUT_MS));
+}
+
+/** Start (or join) the single upstream read for a chain. */
+function startBackingRefresh(
+  env: Env,
+  chainId: number,
+  totalMs: number,
+): Promise<BackingSnapshot> {
   const existing = backingInFlight.get(chainId);
   if (existing) return existing;
-  const budget = deadlineAt - Date.now();
-  if (budget < MIN_USEFUL_RPC_MS) return BACKING_UNAVAILABLE('deadline-exceeded');
-  const total = Math.min(budget, BACKING_RPC_TIMEOUT_MS);
   const p = withDeadline(
-    readBackingUncoalesced(env, chainId, total),
-    total,
+    readBackingUncoalesced(env, chainId, totalMs),
+    totalMs,
     'backing read',
   )
     .catch(() => BACKING_UNAVAILABLE('deadline-exceeded'))
