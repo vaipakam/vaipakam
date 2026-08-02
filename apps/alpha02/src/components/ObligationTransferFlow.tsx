@@ -441,6 +441,14 @@ export function ObligationTransferFlow({
           amount: liveCost.total + pad,
         });
       }
+      // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
+      if (preSubmitBlock) {
+        const blockedLate = await preSubmitBlock();
+        if (blockedLate) {
+          setError(blockedLate);
+          return;
+        }
+      }
       await write('transferObligationViaOffer', [
         BigInt(row.loanId),
         BigInt(picked.offerId),

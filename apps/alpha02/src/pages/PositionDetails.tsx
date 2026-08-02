@@ -409,6 +409,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setSaleHoldDrained(true);
     } else if (
       saleHold.data === 'live' ||
+      // 'accepted' resets regardless of the drain marker (Codex #1511
+      // r10): our own teardown can never produce it, so it always
+      // signals a NEW lifecycle — and its warning must outrank the
+      // old confirmation.
+      saleHold.data === 'accepted' ||
       (saleHold.data === 'clearable' && saleHoldDrained)
     ) {
       setSaleHoldCleared(false);
@@ -1027,6 +1032,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           });
         }
         setPhase('submitting');
+        // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
+        // the reads/approval steps above — a buyer acceptance can land
+        // during them. Re-check immediately before the protocol write;
+        // the on-chain close-out guard that fully closes the signing
+        // race is the #1503 PR-E slice.
+        {
+          const blockedLate = await assertSaleSettlementSafe();
+          if (blockedLate) {
+            setPhase(null);
+            setError(blockedLate);
+            return;
+          }
+        }
         await write('repayLoan', [BigInt(row.loanId)]);
         setClosedThisSession(true);
         setDoneMessage(
@@ -1352,6 +1370,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         amount: required,
       });
       setPhase('submitting');
+      // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
+      // the reads/approval steps above — a buyer acceptance can land
+      // during them. Re-check immediately before the protocol write;
+      // the on-chain close-out guard that fully closes the signing
+      // race is the #1503 PR-E slice.
+      {
+        const blockedLate = await assertSaleSettlementSafe();
+        if (blockedLate) {
+          setPhase(null);
+          setError(blockedLate);
+          return;
+        }
+      }
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage(copy.positions.details.done.partialRepaid);
       setPartialInput('');
@@ -1472,6 +1503,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         amount: due,
       });
       setPhase('submitting');
+      // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
+      // the reads/approval steps above — a buyer acceptance can land
+      // during them. Re-check immediately before the protocol write;
+      // the on-chain close-out guard that fully closes the signing
+      // race is the #1503 PR-E slice.
+      {
+        const blockedLate = await assertSaleSettlementSafe();
+        if (blockedLate) {
+          setPhase(null);
+          setError(blockedLate);
+          return;
+        }
+      }
       await write('precloseDirect', [BigInt(row.loanId)]);
       setClosedThisSession(true);
       setDoneMessage(copy.preclose.done);
@@ -1897,7 +1941,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
           busy={busy}
           setBusy={setBusy}
-          onCleared={() => setSaleHoldCleared(true)}
+          onCleared={() => {
+            // Latch only if the loan is STILL Active post-mining
+            // (Codex #1511 r10): a terminal transition between the
+            // render-time read and the receipt means the teardown took
+            // the seller-hygiene branch — no cooldown was stamped, so
+            // the action-window confirmation would be false. Left
+            // unlatched, the card simply unmounts on the refetch.
+            void (async () => {
+              try {
+                if (!publicClient || !walletChain) return;
+                const live = await readLoanLive(
+                  publicClient,
+                  walletChain.diamondAddress,
+                  row.loanId,
+                );
+                if (Number(live.status) === LOAN_STATUS_ACTIVE) {
+                  setSaleHoldCleared(true);
+                }
+              } catch {
+                // Unverifiable → stay unlatched (fail closed).
+              }
+            })();
+          }}
         />
       ) : null}
 

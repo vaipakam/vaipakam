@@ -423,6 +423,14 @@ export function RefinanceFlow({
         // (and the bound the approval above was computed against).
         expiresAt: requestExpiry,
       });
+      // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
+      if (preSubmitBlock) {
+        const blockedLate = await preSubmitBlock();
+        if (blockedLate) {
+          setError(blockedLate);
+          return;
+        }
+      }
       const { receipt } = await write('createOffer', [payload]);
       const created = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
