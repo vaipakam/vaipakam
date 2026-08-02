@@ -124,6 +124,12 @@ export function useSaleListingHold(
     enabled: enabled && Boolean(readClient),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+    // A NEGATIVE result retries on a deployment-scale interval (Codex
+    // #1511 r4): a tab opened before the facet refresh would
+    // otherwise never notice the capability arriving — a deploy
+    // doesn't reload existing tabs. Positive results never refetch.
+    refetchInterval: (query) =>
+      query.state.data === false ? 600_000 : false,
     queryFn: async (): Promise<boolean> => {
       const facet = (await readClient!.readContract({
         address: readChain.diamondAddress,

@@ -1455,7 +1455,9 @@ const copySource = {
     liveEnds:
       'If the listing expires without a sale, a cleanup button appears here to free the held options; if the lender cancels the listing, the hold simply ends on its own — no cleanup needed.',
     acceptedBody:
-      'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). Your offset and collateral-withdrawal options stay held until the sale completes. Repaying — fully, partially, or closing early — stays open.',
+      'A buyer accepted the lender’s sale listing and its completion is pending (it normally settles inside the buyer’s own transaction; a stuck one has a recovery completion on the lender side). The buyer’s funds are already committed, so your repayment and exit options are briefly paused — repaying, closing, or changing the amount now would break the in-flight purchase. Everything returns the moment the sale settles.',
+    completionPaused:
+      'Paused while an accepted sale of the lender’s position completes — the buyer’s funds are already committed, and settling or changing this loan now would break that in-flight purchase. This state normally lasts moments; your options return when the sale settles.',
     clearableBody:
       'The listing has ended but still holds your offset and collateral-withdrawal options until a one-time cleanup runs. Anyone can send it — including you, right now, even while the protocol is paused. It moves no funds; it only releases the hold. (The cleanup releases the hold itself — whichever held option the loan’s remaining term still allows becomes usable again; an offset needs at least a day of term left.)',
     clearableAction: 'Free held options',
