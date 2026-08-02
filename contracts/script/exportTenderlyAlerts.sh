@@ -140,7 +140,21 @@ GENERATED_AT=$(date +%Y-%m-%dT%H:%M:%S%z)
 EMITTED=0
 SKIPPED=()
 
-_PROV_WROTE=()
+# Manifests are STAGED, never written straight to their live paths
+# (Codex #1495 r14 P2). Three rounds tried to make the abort path clean up
+# correctly and each was still destructive, because the run had already
+# overwritten live files by the time it could know it was allowed to. The
+# fix is to stop creating the mess: nothing touches `generated/` until the
+# HEAD check has passed, so a failed run leaves the previous manifests
+# exactly as it found them and there is nothing to undo.
+#
+# The stage lives INSIDE $OUT_DIR so the publish step is a same-filesystem
+# rename (atomic per file), and so the dirty-tree probe's existing
+# $OUT_DIR exclusion already covers it.
+STAGE_DIR="$(mktemp -d "$OUT_DIR/.staging.XXXXXX")"
+trap 'rm -rf "$STAGE_DIR"' EXIT
+
+_PROV_STAGED=()
 for slug in "${CHAINS[@]}"; do
   TENDERLY_NETWORK=$(chain_to_tenderly "$slug")
   if [ -z "$TENDERLY_NETWORK" ]; then
@@ -160,10 +174,8 @@ for slug in "${CHAINS[@]}"; do
     continue
   fi
 
-  OUT_FILE="$OUT_DIR/alerts-$slug.yaml"
-  # Track what THIS run emits, so a later abort can remove exactly that
-  # and nothing else (Codex #1495 r12 P2).
-  _PROV_WROTE+=("$OUT_FILE")
+  OUT_FILE="$STAGE_DIR/alerts-$slug.yaml"
+  _PROV_STAGED+=("$slug")
 
   # Provenance header — operator can tell at a glance which monorepo
   # commit + Diamond address produced this expansion. Helps when
@@ -192,13 +204,11 @@ for slug in "${CHAINS[@]}"; do
         "$TEMPLATE" >> "$OUT_FILE"
   fi
 
-  echo "  ✓ $slug → ops/tenderly/generated/alerts-$slug.yaml"
-  EMITTED=$((EMITTED + 1))
 done
 
 # HEAD must not have moved across the whole generation (Codex #1495 r9/r10).
-# Checked ONCE here, after every template and address read, and it ABORTS
-# rather than annotating.
+# Checked ONCE here, after every template and address read, and BEFORE any
+# generated file reaches its live path.
 #
 # Two earlier attempts were worse. Before the loop it checked the one moment
 # nothing could have changed. Per-iteration it gave `COMMIT_DIRTY` a second
@@ -206,33 +216,25 @@ done
 # failed unconditionally on a clean checkout — and it STILL ran before each
 # iteration's template read, leaving the race it was added for.
 #
-# Failing is also the right answer rather than a cheaper one: manifests are
-# written during the loop, so by the time movement is detectable some are
-# already on disk. A per-file marker would make some truthful and others not;
-# an abort makes the whole run repeatable, which is what a provenance record
-# is for.
+# Failing is the right answer rather than annotating: a manifest carrying a
+# commit that no longer describes its inputs is worse than no new manifest,
+# and the run is trivially repeatable from a stable checkout.
 if [ "$(git -C "$_PROV_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
      != "$TREE_COMMIT_AT_START" ]; then
   echo "Error: HEAD moved during generation (started $TREE_COMMIT_AT_START)." >&2
   echo "The generated manifests would carry a commit that no longer describes" >&2
   echo "the inputs they were built from. Re-run from a stable checkout." >&2
-  # REMOVE what this run produced (Codex #1495 r11 P2). Aborting alone is not
-  # enough: the manifests are written DURING the loop, so by the time the
-  # movement is detectable they are already on disk — and the documented apply
-  # step consumes `generated/*.yaml` by glob, so a failed export would leave
-  # stale files carrying the old hash beside possibly-new inputs, ready to be
-  # applied by the next person who runs the apply step. A failed run must
-  # leave nothing behind to pick up.
-  # ONLY the files this run wrote (Codex #1495 r12 P2). The previous
-  # version globbed `alerts-*.yaml`, which on a single-chain invocation
-  # — `exportTenderlyAlerts.sh base-sepolia` — would have deleted every
-  # OTHER chain's perfectly valid manifest, turning a provenance abort
-  # into unrelated config loss. A cleanup that removes more than the run
-  # created is worse than no cleanup.
-  [ ${#_PROV_WROTE[@]} -gt 0 ] && rm -f "${_PROV_WROTE[@]}"
-  echo "Removed the manifests this run had written." >&2
+  echo "Nothing was published — the previous manifests are untouched." >&2
   exit 1
 fi
+
+# Publish. Past this line the provenance is known-good, so the staged files
+# replace the live ones one atomic rename at a time.
+for slug in "${_PROV_STAGED[@]}"; do
+  mv -f "$STAGE_DIR/alerts-$slug.yaml" "$OUT_DIR/alerts-$slug.yaml"
+  echo "  ✓ $slug → ops/tenderly/generated/alerts-$slug.yaml"
+  EMITTED=$((EMITTED + 1))
+done
 
 echo
 echo "Emitted $EMITTED file(s) into $OUT_DIR/"
