@@ -320,7 +320,7 @@ export async function handleRecyclingSeries(
               // then added to the source's full reported cumulative — a
               // knowingly double-counted runway published during the
               // rollout (Codex #1513 r6). The runway is withheld instead.
-              attributionUnavailable: true,
+              attributionColumnMissing: true,
               results: (r.results ?? []).map((x) => ({
                 ...x,
                 attributed_cumulative: '0',
@@ -336,7 +336,7 @@ export async function handleRecyclingSeries(
               // lifetime stock (pre-launch, clamped credits). Mark it
               // unavailable and withhold (Codex #1513 r7).
               return {
-                attributionUnavailable: true,
+                attributionTableMissing: true,
                 results: [] as Array<{
                   source_chain_id: number;
                   reported_cumulative: string;
@@ -681,10 +681,27 @@ export async function handleRecyclingSeries(
     // twice now, in the same direction: the gate must measure the risk,
     // not its surroundings.
     const attributionAtStake = cumAbsorbedMirror > 0n;
+    // The missing-COLUMN case gets the SAME narrowing as the version gate
+    // (Codex #1513 r13). During the rollout a chain with only a canonical
+    // self-report — never attributed by design — or a mirror report that
+    // accepted nothing has `cumAbsorbedMirror === 0`, so attribution is
+    // unused and `mirrorTerm` is exactly `mirrorReported`. Withholding
+    // there was loss for the whole rollout, or forever if the migration
+    // fails. Third time in this PR I have narrowed one gate and left its
+    // sibling.
+    //
+    // The missing-TABLE case stays UNCONDITIONAL: that is data loss or a
+    // partial restore, not a rollout shape, and the reported cumulatives it
+    // would have supplied are gone rather than merely unattributed.
+    const columnMissing =
+      (reportedRows as { attributionColumnMissing?: boolean })
+        .attributionColumnMissing === true;
+    const tableMissing =
+      (reportedRows as { attributionTableMissing?: boolean })
+        .attributionTableMissing === true;
     const attributionUnavailable =
-      (reportedRows as { attributionUnavailable?: boolean })
-        .attributionUnavailable === true ||
-      (rebuildStale && attributionAtStake);
+      tableMissing ||
+      ((columnMissing || rebuildStale) && attributionAtStake);
     const mirrorUnreported =
       mirrorFold > mirrorAttributed ? mirrorFold - mirrorAttributed : 0n;
     const mirrorTerm = mirrorReported + mirrorUnreported;

@@ -1291,8 +1291,20 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
          VALUES (?, ?, '400')`,
       )
       .run(CHAIN, MIRROR);
+    // Mirror absorption is what makes attribution matter — without it the
+    // rollout window is served exactly (see the sibling test). This fixture
+    // deliberately has some, so the missing column DOES withhold.
     await applyRecycleDaySeries(
-      [stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n })],
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 400n,
+          forDayReported: 120n,
+          dayCreditAccepted: 120n,
+        }),
+      ],
       env,
       CHAIN,
     );
@@ -1303,7 +1315,7 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     //   unreported term equals the whole fold and gets added on top of the
     //   source's full reported cumulative. Defaulting attribution to zero
     //   publishes a knowingly double-counted figure (Codex #1513 r6).
-    expect(body.cumulative.absorbedMirror).toBe('0');
+    expect(body.cumulative.absorbedMirror).toBe('120');
     expect(body.cumulative.runwayExtensionDays).toBeNull();
     expect(body.cumulative.runwayUnavailableReason).toBe(
       'attribution-column-unavailable',
@@ -1485,6 +1497,38 @@ describe('handleRecyclingSeries — pre-cutover backfill', () => {
     expect(body.cumulative.absorbedMirror).toBe('0');
     // 500 / 100 = 5 — served, because nothing about it could be stale.
     expect(body.cumulative.runwayExtensionDays).toBe(5);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+  });
+
+  it('serves the runway during the rollout when NO mirror absorption exists', async () => {
+    // Pre-0047 the column is missing, but a chain whose only report is its
+    // own self-report has `cumAbsorbedMirror === 0` — attribution is unused
+    // and the numerator is exact. Withholding there was loss for the whole
+    // rollout, or forever if the migration failed (Codex #1513 r13).
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_day_backfill`).run();
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    h.db
+      .prepare(
+        `CREATE TABLE recycle_chain_reported (
+           chain_id INTEGER NOT NULL,
+           source_chain_id INTEGER NOT NULL,
+           reported_cumulative TEXT NOT NULL DEFAULT '0',
+           PRIMARY KEY (chain_id, source_chain_id))`,
+      )
+      .run();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 400n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.cumulative.absorbedMirror).toBe('0');
+    // 400 / 100 = 4 — served, because nothing about it could be stale.
+    expect(body.cumulative.runwayExtensionDays).toBe(4);
     expect(body.cumulative.runwayUnavailableReason).toBeNull();
   });
 

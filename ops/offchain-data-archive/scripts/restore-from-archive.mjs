@@ -812,6 +812,16 @@ const UNSIGNED_DECIMAL = /^[0-9]+$/;
 /** The contract getter behind these figures returns `uint256`. */
 const UINT256_MAX = (1n << 256n) - 1n;
 /**
+ * The POOL fields are narrower than that. `DayPoolStamp.scheduleFloor` and
+ * `.recycledBudget` are `uint128` on chain (`LibVaipakam.sol`), so anything
+ * from 2^128 up cannot have come from the getter — it would restore and then
+ * be published, and fed into the trailing-pool and runway arithmetic
+ * (Codex #1513 r13). The absorption counters really are uint256 mappings, so
+ * they keep the wider bound.
+ */
+const UINT128_MAX = (1n << 128n) - 1n;
+const UINT128_FIELDS = new Set(['schedule_floor', 'recycled_budget']);
+/**
  * Digits accepted before we stop parsing at all. `uint256` maxes out at 78
  * decimal digits, so anything longer cannot be a real figure — and refusing
  * on LENGTH first means a hostile archive cannot make us build a
@@ -833,6 +843,8 @@ const MAX_AMOUNT_DIGITS = 78;
  */
 export function invalidRecycleBackfillRowShapes(archive) {
   const invalid = [];
+  // One arming sentinel per chain, across the whole capture.
+  const sentinelByChain = new Map();
   for (const table of archive?.d1?.archive ?? []) {
     if (table?.name !== 'recycle_day_backfill') continue;
     for (const [i, row] of (table.rows ?? []).entries()) {
@@ -858,12 +870,16 @@ export function invalidRecycleBackfillRowShapes(archive) {
               `${MAX_AMOUNT_DIGITS}, so this cannot be a figure the getter ` +
               `produced, and parsing it would be the attack rather than the check`,
           );
-        } else if (BigInt(v) > UINT256_MAX) {
-          push(
-            `${col} ${v} exceeds uint256 — the contract getter behind this ` +
-              `figure cannot return it, so restoring it would publish ` +
-              `impossible history`,
-          );
+        } else {
+          const max = UINT128_FIELDS.has(col) ? UINT128_MAX : UINT256_MAX;
+          if (BigInt(v) > max) {
+            push(
+              `${col} ${v} exceeds ${UINT128_FIELDS.has(col) ? 'uint128' : 'uint256'} ` +
+                `— the contract storage behind this figure cannot hold it, so ` +
+                `restoring it would publish impossible history and feed the ` +
+                `runway arithmetic`,
+            );
+          }
         }
       }
       for (const col of ['chain_id', 'day_id', 'armed_from_day', 'recorded_at']) {
@@ -940,6 +956,23 @@ export function invalidRecycleBackfillRowShapes(archive) {
           `an unfinalized day cannot be armed — the writer emits armed=0 for ` +
             `absorption-only rows, so this pair is not a shape it produces`,
         );
+      }
+      // CROSS-ROW, recorded per chain and checked after the loop: the pass
+      // resolves `armed_from_day` ONCE per capture, so every row it emits
+      // for a chain carries the same sentinel. A spliced archive can mix
+      // two — each row internally consistent, the set impossible — and the
+      // read route trusts the per-row `armed` flag (Codex #1513 r13).
+      if (Number.isSafeInteger(row.chain_id) && Number.isSafeInteger(row.armed_from_day)) {
+        const seen = sentinelByChain.get(row.chain_id);
+        if (seen === undefined) {
+          sentinelByChain.set(row.chain_id, row.armed_from_day);
+        } else if (seen !== row.armed_from_day) {
+          push(
+            `armed_from_day ${row.armed_from_day} disagrees with ${seen} seen ` +
+              `earlier for chain ${row.chain_id} — one capture resolves ONE ` +
+              `sentinel, so a mixture is spliced rather than emitted`,
+          );
+        }
       }
       // CROSS-FIELD: the drawdown cannot exceed the schedule floor (Codex
       // #1513 r12). The getter computes it from `scheduleFloor / 2` on each

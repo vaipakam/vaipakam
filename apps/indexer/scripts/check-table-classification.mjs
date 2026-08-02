@@ -320,7 +320,10 @@ function docsCite(num) {
   // matches a checked-in `#1523`, so a truncated-but-numeric tracker stayed
   // exempt from the dead-entry check while nothing cited it. My r11 fix
   // replaced a shape test with a different shape test.
-  const token = new RegExp(`${num.replace('#', '#')}(?![0-9])`);
+  // Escape for regex, then forbid a trailing digit so `#152` cannot match
+  // a cited `#1523`. (The previous `replace('#','#')` was a no-op —
+  // CodeQL was right to flag it as substring-replaced-with-itself.)
+  const token = new RegExp(`${num.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`);
   const roots = [
     join(REPO_ROOT, 'docs', 'DesignsAndPlans'),
     join(REPO_ROOT, 'docs', 'ReleaseNotes'),
