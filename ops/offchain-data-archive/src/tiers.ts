@@ -184,6 +184,24 @@ export function periodOf(spec: TierSpec, manifestKey: string): string | null {
  * invocation shared with the nightly backup. Two independent guards for
  * one failure is proportionate when the failure takes the backup with it.
  */
+/**
+ * Cap a period list before it reaches an alert.
+ *
+ * The write credential can create manifest keys for thousands of valid
+ * historical dates with no sibling archive, and every one would land in
+ * the reason string. Telegram rejects or truncates past 4096 characters
+ * (`ops/mesh-watcher/src/telegram.ts` enforces the same limit), so an
+ * unbounded list does not merely read badly — it is how the alert about
+ * the very upload that caused it fails to arrive.
+ */
+export const MAX_LISTED_PERIODS = 12;
+
+export function summarisePeriods(periods: string[]): string {
+  if (periods.length <= MAX_LISTED_PERIODS) return periods.join(', ');
+  const shown = periods.slice(0, MAX_LISTED_PERIODS).join(', ');
+  return `${shown} (+${periods.length - MAX_LISTED_PERIODS} more)`;
+}
+
 const MAX_YEAR_SPAN = 200;
 
 function yearRange(from: string, to: string): string[] {
@@ -227,12 +245,17 @@ export const TIERS: TierSpec[] = [
     // race is the entire reason a fallback existed.
     missingRequired: (present, now, baseline) => {
       // Every month still inside retention, not just the last two.
+      // The floor of the required range. A DECLARED baseline is the real
+      // answer; with none, fall back to the earliest month actually
+      // present, because demanding every month of the retention window
+      // from a deployment younger than it reports FAILED where the
+      // documented result is COVERAGE DEGRADED — turning the optional
+      // setting into a required one and burying the notice that says so.
+      const floor = baseline.monthly ?? present.slice().sort()[0];
       const req: string[] = [];
       for (let back = MONTHLY_RETAINED_MONTHS; back >= 1; back--) {
         const m = monthKey(now, back);
-        // Never require a month that predates the deployment's own first
-        // cut — it was legitimately never written.
-        if (baseline.monthly && m < baseline.monthly) continue;
+        if (floor && m < floor) continue;
         req.push(m);
       }
       // The current month too, except on the 1st itself: that is the only
@@ -240,7 +263,7 @@ export const TIERS: TierSpec[] = [
       // entire reason a fallback ever existed.
       if (new Date(now).getUTCDate() !== 1) {
         const cur = monthKey(now, 0);
-        if (!baseline.monthly || cur >= baseline.monthly) req.push(cur);
+        if (!floor || cur >= floor) req.push(cur);
       }
       return req.filter((m) => !present.includes(m));
     },
@@ -408,8 +431,8 @@ export function classifyListing(
       ok: false,
       absent: present.length === 0,
       reason:
-        `${spec.tier} archive missing for ${missing.join(', ')} ` +
-        `(present: ${present.length === 0 ? 'none' : present.join(', ')})`,
+        `${spec.tier} archive missing for ${summarisePeriods(missing)} ` +
+        `(present: ${present.length === 0 ? 'none' : summarisePeriods(present)})`,
     };
   }
 
@@ -463,7 +486,7 @@ export function classifyListing(
         absent: false,
         reason:
           `${spec.tier} manifest with NO archive beside it for ` +
-          `${orphaned.join(', ')} — the backup it describes is gone`,
+          `${summarisePeriods(orphaned)} — the backup it describes is gone`,
       };
     }
   }
@@ -493,8 +516,13 @@ export function classifyListing(
 export function validateBaseline(
   baseline: ArchiveBaseline,
   now: number,
-): { ok: true; baseline: ArchiveBaseline } | { ok: false; errors: string[] } {
+):
+  | { ok: true; baseline: ArchiveBaseline; byTier: Record<string, string> }
+  | { ok: false; baseline: ArchiveBaseline; byTier: Record<string, string>; errors: string[] } {
   const errors: string[] = [];
+  // Attributed PER TIER, so a bad monthly value cannot take the daily and
+  // yearly checks down with it.
+  const byTier: Record<string, string> = {};
   const checked: ArchiveBaseline = {};
   const specs: [keyof ArchiveBaseline, TierName, string][] = [
     ['monthly', 'monthly', monthKey(now, 0)],
@@ -504,18 +532,22 @@ export function validateBaseline(
     const v = baseline[key];
     if (v === undefined || v === '') continue;
     if (!isRealPeriod(tier, v)) {
-      errors.push(`ARCHIVE_FIRST_${key.toUpperCase()}="${v}" is not a valid ${tier} period`);
+      const msg = `ARCHIVE_FIRST_${key.toUpperCase()}="${v}" is not a valid ${tier} period`;
+      errors.push(msg);
+      byTier[tier] = msg;
       continue;
     }
     if (v > current) {
-      errors.push(
-        `ARCHIVE_FIRST_${key.toUpperCase()}="${v}" is in the future (now ${current})`,
-      );
+      const msg = `ARCHIVE_FIRST_${key.toUpperCase()}="${v}" is in the future (now ${current})`;
+      errors.push(msg);
+      byTier[tier] = msg;
       continue;
     }
     checked[key] = v;
   }
-  return errors.length > 0 ? { ok: false, errors } : { ok: true, baseline: checked };
+  return errors.length > 0
+    ? { ok: false, baseline: checked, byTier, errors }
+    : { ok: true, baseline: checked, byTier };
 }
 
 /**

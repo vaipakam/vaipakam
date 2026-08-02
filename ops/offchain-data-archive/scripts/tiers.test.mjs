@@ -25,6 +25,8 @@ import {
   classifyListing,
   newestVerifiableManifest,
   siblingArchiveKey,
+  summarisePeriods,
+  MAX_LISTED_PERIODS,
   validateBaseline,
 } from '../src/tiers.ts';
 
@@ -524,7 +526,7 @@ test('a mistyped baseline is REJECTED, not silently obeyed', () => {
   assert.deepEqual(good.baseline, { monthly: '2026-01', yearly: '2026' });
 
   // Unset stays legal — a fresh deployment has none to declare.
-  assert.deepEqual(validateBaseline({}, now), { ok: true, baseline: {} });
+  assert.deepEqual(validateBaseline({}, now), { ok: true, baseline: {}, byTier: {} });
 });
 
 test('the newest-period candidate must have a SURVIVING archive', () => {
@@ -566,3 +568,65 @@ test('a period whose manifests have NO surviving archive selects nothing', () =>
     null,
   );
 });
+
+test('an alert list is capped so the alert can actually be delivered', () => {
+  // The write credential can create manifest keys for thousands of valid
+  // historical dates. Unbounded, the reason string blows past Telegram's
+  // 4096 characters — so the alert about the very upload that caused it
+  // is the one that fails to arrive.
+  const many = Array.from({ length: 500 }, (_, i) => `2020-${String((i % 12) + 1).padStart(2, '0')}`);
+  const out = summarisePeriods(many);
+  assert.ok(out.length < 500, `summary still ${out.length} chars`);
+  assert.match(out, /\(\+488 more\)$/);
+  // A short list is untouched — the cap must not obscure a real answer.
+  assert.equal(summarisePeriods(['2026-01', '2026-02']), '2026-01, 2026-02');
+  assert.equal(
+    summarisePeriods(Array.from({ length: MAX_LISTED_PERIODS }, () => 'x')).includes('more'),
+    false,
+  );
+});
+
+test('a reason string stays deliverable even with thousands of gaps', () => {
+  const many = Array.from({ length: 4000 }, (_, i) =>
+    `2000-${String((i % 12) + 1).padStart(2, '0')}`,
+  );
+  const v = classifyListing(
+    tier('monthly'),
+    { ok: true, keys: many.map((m) => `manifests-monthly/${m}/a.json`) },
+    at('2026-03-16T09:00:00Z'),
+    { monthly: '2026-01' },
+    { ok: true, keys: [] },
+  );
+  assert.equal(v.ok, false);
+  assert.ok(v.reason.length < 4096, `reason is ${v.reason.length} chars`);
+});
+
+test('an UNCONFIGURED monthly baseline does not demand pre-deployment months', () => {
+  // Without a declared baseline the checker demanded every month of the
+  // retention window, so a deployment younger than that reported FAILED
+  // where the documented result is COVERAGE DEGRADED — turning the
+  // optional setting into a required one.
+  const now = at('2026-06-16T09:00:00Z');
+  assert.deepEqual(
+    tier('monthly').missingRequired(['2026-05', '2026-06'], now, {}),
+    [],
+  );
+  // …and it still catches a gap ABOVE that floor.
+  assert.deepEqual(
+    tier('monthly').missingRequired(['2026-03', '2026-06'], now, {}),
+    ['2026-04', '2026-05'],
+  );
+});
+
+test('a bad baseline is attributed to ITS tier, not to all of them', () => {
+  // Failing all three performed no storage checks at all, so a typo in
+  // one optional variable suppressed verification of two unrelated
+  // families for the whole week.
+  const bad = validateBaseline({ monthly: '2026-13', yearly: '2026' }, at('2026-06-01T09:00:00Z'));
+  assert.equal(bad.ok, false);
+  assert.ok(bad.byTier.monthly, 'monthly should carry the error');
+  assert.equal(bad.byTier.yearly, undefined, 'yearly must be unaffected');
+  // The valid half survives for the tiers that can still use it.
+  assert.equal(bad.baseline.yearly, '2026');
+});
+

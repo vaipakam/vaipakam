@@ -70,6 +70,23 @@ const MAX_HEALTHCHECK_BYTES = 100_000_000;
 /** A manifest is a few hundred bytes; anything near this is hostile. */
 const MAX_MANIFEST_BYTES = 256_000;
 
+/**
+ * Above this, the archive's CONTENT is not parsed.
+ *
+ * `MAX_HEALTHCHECK_BYTES` (100 MB) bounds what is fetched and decrypted;
+ * it does not bound what parsing costs. `TextDecoder` plus `JSON.parse`
+ * materialise a decoded string AND a full object graph while both the
+ * ciphertext and the plaintext are still resident, so a legitimate
+ * archive well under the fetch ceiling can still exhaust the documented
+ * 128 MB isolate — and an OOM is not a failed check, it is no check and
+ * no alert, in the invocation that also runs the nightly backup.
+ *
+ * Above the ceiling the hash, length and decryption still run; only the
+ * content check is skipped, and the tier SAYS so rather than reporting a
+ * verification it did not perform.
+ */
+const MAX_CONTENT_CHECK_BYTES = 8_000_000;
+
 interface S3ListEntry {
   key: string;
   lastModified: string;
@@ -422,7 +439,10 @@ export async function verifyTier(
     };
   }
 
-  const contentFault = archiveContentFault(spec, verdict.newestPeriod!, plaintext);
+  const contentTooLarge = plaintext.byteLength > MAX_CONTENT_CHECK_BYTES;
+  const contentFault = contentTooLarge
+    ? null
+    : archiveContentFault(spec, verdict.newestPeriod!, plaintext);
   if (contentFault) {
     return {
       ...base,
@@ -443,6 +463,11 @@ export async function verifyTier(
     ok: true,
     reason:
       'manifest + archive paired, SHA matches, decrypts cleanly' +
+      (contentTooLarge
+        ? ` — CONTENT NOT VERIFIED: payload is ${plaintext.byteLength} bytes, ` +
+          `over MAX_CONTENT_CHECK_BYTES (${MAX_CONTENT_CHECK_BYTES}); a copied ` +
+          `or wrong-tier payload would not be detected`
+        : '') +
       (degraded ? ` — COVERAGE DEGRADED: ${degraded}` : ''),
     archiveKey,
     manifestKey: pickedManifest.key,
@@ -472,23 +497,26 @@ export async function runHealthcheck(
     },
     now,
   );
-  if (!checked.ok) {
-    // FAIL LOUDLY rather than run with a baseline that silently disables
-    // the checks it is supposed to enable. A mistyped value is
-    // indistinguishable from a correct one at every later step.
-    return {
-      ok: false,
-      tiers: TIERS.map((spec) => ({
+  // A malformed baseline fails ONLY the tier it belongs to. Returning
+  // fabricated failures for all three performed no storage checks at all,
+  // so a typo in ARCHIVE_FIRST_MONTHLY suppressed daily and yearly
+  // verification for the whole week — simultaneous loss in those
+  // unrelated families would have gone undiscovered behind an alert
+  // about a typo.
+  const baselineErrors = checked.ok ? {} : checked.byTier;
+  const baseline = checked.ok ? checked.baseline : checked.baseline;
+  const tiers: TierOutcome[] = [];
+  for (const spec of TIERS) {
+    const bad = baselineErrors[spec.tier as 'monthly' | 'yearly'];
+    if (bad) {
+      tiers.push({
         tier: spec.tier,
         absent: false,
         ok: false,
-        reason: `archive baseline misconfigured: ${checked.errors.join('; ')}`,
-      })),
-    };
-  }
-  const baseline = checked.baseline;
-  const tiers: TierOutcome[] = [];
-  for (const spec of TIERS) {
+        reason: `archive baseline misconfigured: ${bad}`,
+      });
+      continue;
+    }
     try {
       tiers.push(await verifyTier(env, b2Cfg, spec, now, baseline));
     } catch (err) {

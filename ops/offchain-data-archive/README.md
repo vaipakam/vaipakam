@@ -123,9 +123,14 @@ reported missing and the tier passes. A detector whose expectations come
 from the survivors cannot report a deletion.
 
 They are optional because a fresh deployment genuinely has no baseline to
-state. While unset, the weekly report appends `COVERAGE DEGRADED` to that
-tier's line and says why — the absence of the guarantee is published
-rather than implied.
+state. While unset, the tier falls back to the earliest archive it can still
+see — enough to catch a gap ABOVE that point, blind to a deletion below it —
+and the weekly report appends `COVERAGE DEGRADED` to that tier's line saying
+so. The absence of the guarantee is published rather than implied.
+
+A malformed value fails **only its own tier**: a typo in
+`ARCHIVE_FIRST_MONTHLY` must not suppress the daily and yearly checks for the
+week, or an alert about a typo hides a simultaneous loss elsewhere.
 
 The monthly floor is higher than the daily one, and **#1476 did not change
 that** — deliberately, after trying to.
