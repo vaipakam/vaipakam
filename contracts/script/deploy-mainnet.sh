@@ -750,6 +750,28 @@ EOF
     echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
   fi
 
+  # LAST point at which stopping is free (Codex #1495 r13 P1). Everything
+  # below this line is irreversible on mainnet, so the HEAD check belongs
+  # HERE — before the first broadcast — not after it.
+  #
+  # This is where the strict treatment is actually strict: refusing now costs
+  # an operator a re-run. Refusing after [2]-[4] would cost a chain with live
+  # contracts and no local record, which is why the post-broadcast path
+  # records instead.
+  if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
+       != "$TREE_COMMIT_AT_START" ]; then
+    cat >&2 <<EOF
+Refusing to broadcast: HEAD moved between this script starting and the
+first deploy transaction.
+  started at: $TREE_COMMIT_AT_START
+  now at:     $(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')
+Mainnet requires commit-to-bytecode equivalence for incident forensics, and
+the artifacts built earlier in this run came from the starting commit.
+Nothing has been broadcast — re-run from a stable checkout.
+EOF
+    exit 1
+  fi
+
   echo
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
@@ -818,25 +840,35 @@ EOF
   # always-dirty bug #1490 fixed. This can only ever ADD dirtiness, never
   # clear it.
 
-  # HEAD moving mid-deploy is a hard STOP on mainnet, not an annotation
-  # (Codex #1495 r8 P2). This script already refuses to START from a dirty
-  # tree, on the stated grounds that incident forensics require
-  # commit-to-bytecode equivalence; completing a phase whose recorded commit
-  # no longer describes the deployed bytecode breaks that same invariant, and
-  # marking it "(dirty)" while proceeding would record the ambiguity rather
-  # than prevent it. Testnet keeps the softer treatment because a rehearsal
-  # can simply be re-run.
+  # HEAD moved mid-deploy: RECORD it, do not exit (Codex #1495 r13 P1).
+  #
+  # An earlier revision aborted here. That was wrong at THIS point in the
+  # script, and wrong in the most damaging way available: by now the
+  # contracts at [2]-[4] have LANDED ON MAINNET and are irreversible, while
+  # `deployment_source.json`, the `phase-contracts.done` marker and the
+  # 48-hour Admin-EOA handover clock are all still unwritten. Exiting here
+  # leaves a chain with live contracts and no local record of them — the
+  # normal retry is refused by the existing-Diamond gate, the only remaining
+  # route is the destructive `--fresh` path, and crucially the handover
+  # deadline never starts, so the window in which an EOA holds the Diamond
+  # is untracked.
+  #
+  # The rule this violated: never exit between an irreversible external
+  # effect and the record that it happened. The stamp exists precisely to
+  # carry this ambiguity, so carry it — loudly.
   if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
        != "$TREE_COMMIT_AT_START" ]; then
+    TREE_DIRTY_AT_START=" (dirty)"
     cat >&2 <<EOF
-Refusing to record this mainnet phase: HEAD moved during the deploy.
+
+WARNING: HEAD moved during this mainnet deploy.
   started at: $TREE_COMMIT_AT_START
   now at:     $(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')
-The deployed bytecode was built from the starting commit, so the recorded
-commit would no longer describe what is on chain. Re-run from a stable
-checkout.
+The contracts are already on chain and are recorded below against the
+STARTING commit, marked "(dirty)" because that commit no longer matches
+the tree. Treat this deploy as not reproducible from the recorded hash and
+reconcile before handover.
 EOF
-    exit 1
   fi
   COMMIT_DIRTY="$TREE_DIRTY_AT_START"
   DIAMOND_NOW=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
