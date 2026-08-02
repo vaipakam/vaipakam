@@ -835,3 +835,66 @@ export async function postPrepayMatchSource(
     clearTimeout(timer);
   }
 }
+
+// ─── M5 (#1218 / #1349) — recycling transparency series ────────────────
+
+/** One day of the recycling account, as `/metrics/recycling` serves it. */
+export interface RecyclingDay {
+  dayId: number;
+  stamped: boolean;
+  armed: boolean;
+  /** The day's figures are a schedule, not a commitment. Honour it. */
+  estimate: boolean;
+  origin: 'event' | 'backfill' | null;
+  scheduleFloor: string | null;
+  recycledBudget: string | null;
+  aBar: string | null;
+  marginBps: number | null;
+  freshDrawdown: string | null;
+  /** Only present for an armed, finalized day. Never derive it locally. */
+  netEmission: string | null;
+  selfFundingRatio: number | null;
+  absorbedLocal: string;
+  absorbedMirror: string;
+  /** Global only once the day is finalized; `null` while partial. */
+  absorbed: string | null;
+}
+
+export interface RecyclingSeries {
+  chainId: number;
+  days: number;
+  fromDay: number | null;
+  toDay: number | null;
+  /** `local-only` means this deployment has finalized no day itself. */
+  scope: 'global' | 'local-only' | 'empty';
+  coverageFromDay: number | null;
+  daily: RecyclingDay[];
+  cumulative: {
+    absorbed: string;
+    absorbedPreLaunch: string;
+    absorbedLocal: string;
+    absorbedMirror: string;
+    freshDrawdown: string;
+    recycledBudget: string;
+    runwayExtensionDays: number | null;
+    /** Why the runway is absent, when it is. Render the reason, not a dash. */
+    runwayUnavailableReason: string | null;
+    selfFunded: boolean;
+  };
+}
+
+/**
+ * The per-day recycling account.
+ *
+ * Returns `null` when no indexer origin is configured or the read fails —
+ * the caller renders nothing rather than substituting zeros, which on this
+ * surface would be indistinguishable from a real quiet period.
+ */
+export function fetchRecyclingSeries(
+  chainId: number,
+  days = 30,
+): Promise<RecyclingSeries | null> {
+  return getJson<RecyclingSeries>(
+    `/metrics/recycling?chainId=${chainId}&days=${days}`,
+  );
+}
