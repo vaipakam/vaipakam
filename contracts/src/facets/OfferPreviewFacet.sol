@@ -163,6 +163,26 @@ contract OfferPreviewFacet {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferExpired;
             return preview;
         }
+        // #1503 PR-A (Codex #1505 r2 + r3 ordering) — mirror `_acceptOffer`'s
+        // live-maturity gate for a sale vehicle at ITS position: immediately
+        // after the expiry gate, BEFORE sanctions / pause / consent / KYC.
+        // First-failure parity is the point of this chain — a legacy GTC
+        // vehicle past maturity that also trips a later check must preview
+        // the classifier the transaction will actually revert with.
+        // `Active` persists through the grace window, and a pre-upgrade GTC
+        // vehicle (`expiresAt == 0`) never trips the expiry gate above.
+        if (_saleLoanId != 0) {
+            LibVaipakam.Loan storage _saleLoanM = s.loans[_saleLoanId];
+            if (
+                block.timestamp >=
+                uint256(_saleLoanM.startTime) +
+                    uint256(_saleLoanM.durationDays) * 1 days
+            ) {
+                preview.errorCode =
+                    OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;
+                return preview;
+            }
+        }
         if (LibVaipakam.isSanctionedAddress(acceptor)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedAcceptor;
             return preview;
@@ -244,21 +264,9 @@ contract OfferPreviewFacet {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
                 return preview;
             }
-            // #1503 PR-A (Codex #1505 r2) — mirror the accept path's
-            // live-maturity gate: `Active` persists through the grace window,
-            // and a pre-upgrade GTC vehicle (`expiresAt == 0`) never trips
-            // the `OfferExpired` classifier above, so without this predicate
-            // the preview would return `None` for an acceptance that
-            // deterministically reverts `SaleLoanPastMaturity`.
-            if (
-                block.timestamp >=
-                uint256(_saleLoan.startTime) +
-                    uint256(_saleLoan.durationDays) * 1 days
-            ) {
-                preview.errorCode =
-                    OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;
-                return preview;
-            }
+            // (The live-maturity classifier sits EARLIER in this chain —
+            // right after the expiry gate, mirroring `_acceptOffer`'s
+            // ordering; Codex #1505 r3.)
             if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;

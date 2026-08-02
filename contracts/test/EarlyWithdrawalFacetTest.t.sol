@@ -3432,6 +3432,24 @@ contract EarlyWithdrawalFacetTest is Test {
             uint8(OfferAcceptFacet.AcceptError.SaleLoanPastMaturity),
             "preview mirrors the accept path's live-maturity refusal"
         );
+
+        // Ordering parity (Codex #1505 r3): the maturity classifier sits
+        // where `_acceptOffer` checks it — right after expiry, BEFORE
+        // sanctions / pause / consent / KYC. A sanctioned buyer previewing
+        // the same past-maturity vehicle must still see the maturity
+        // classifier (the revert the transaction would actually produce),
+        // not the later sanctions one.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        address flaggedBuyer = makeAddr("flaggedMaturityBuyer");
+        m.setFlagged(flaggedBuyer, true);
+        OfferAcceptFacet.AcceptPreview memory pf =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, flaggedBuyer);
+        assertEq(
+            uint8(pf.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanPastMaturity),
+            "maturity classifier outranks later checks, mirroring _acceptOffer"
+        );
     }
 
     /// @dev Codex #1505 r2 P2 — the teardown must emit the CANONICAL

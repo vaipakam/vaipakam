@@ -249,6 +249,36 @@ export function LoanSaleFlow({
       });
       approvalGranted = approvalTx !== null;
       approvalToken = liveLoan.principalAsset;
+      // Codex #1505 r3 — the approval can take blocks to mine, so a loan
+      // that sat just above the minimum window at the preflight can slip
+      // under it by the time the approval receipt lands. Recheck chain time
+      // AFTER ensureAllowance: bail (and unwind a just-granted approval)
+      // instead of sending a listing `_boundListingExpiry` is now
+      // guaranteed to reject.
+      if (approvalGranted) {
+        const postApproval = await publicClient.getBlock({
+          blockTag: 'latest',
+        });
+        if (
+          maturityTs - postApproval.timestamp <
+          MIN_SALE_LISTING_SECONDS
+        ) {
+          try {
+            await revokeAllowance({
+              publicClient,
+              walletClient,
+              token: liveLoan.principalAsset,
+              owner: address,
+              spender: walletChain.diamondAddress,
+            });
+          } catch {
+            // The too-close error below stays the surfaced failure; the
+            // wallet's approvals view is the remedy for a stuck revoke.
+          }
+          setError(copy.errors.saleListingTooCloseToMaturity);
+          return;
+        }
+      }
       const { receipt } = await write('createLoanSaleOffer', [
         BigInt(row.loanId),
         rateBps,
