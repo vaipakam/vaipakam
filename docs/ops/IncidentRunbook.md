@@ -219,7 +219,11 @@ remit it with the manual §2b procedure — it will not be picked up otherwise.
 
 **To disable in an incident** (e.g. a misconfigured lane, or to hand back to
 manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
-running) or `KEEPER_ENABLED=false` (stops all keeper actions), then redeploy the
+running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
+`runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
+keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
+#1466). To stop everything, empty the Worker's cron list
+(`"triggers": { "crons": [] }`). Then redeploy the
 Worker. The pass is idempotent and bounds its receipt waits, so stopping it never
 strands funds — any in-flight day simply re-evaluates on the next armed tick or
 via the manual procedure above.

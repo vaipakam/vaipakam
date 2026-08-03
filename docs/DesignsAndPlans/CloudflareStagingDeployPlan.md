@@ -182,7 +182,7 @@ Stage 3 PR5.
 | 4 | Operator | `wrangler secret put` for the missing secrets per §4.3 + §4.4 (BLOCKAID, ZEROEX, ONEINCH on keeper, etc.) |
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
-| 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (alert-only, no autonomous liquidation). |
+| 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — empty the cron list if the window must be write-free (#1466). |
 | 8 | Operator | Flip `KEEPER_ENABLED=true` on `vaipakam-keeper` after the validation window. |
 | 9 | Both | Run for N days observing for divergence vs prod. |
 | 10 | Both | If green: bind `vaipakam.com` + `www.vaipakam.com` to `vaipakam-labs` (replacing the older `vaipakam` Worker); decommission `vaipakam-hf-watcher` + unbind `api.vaipakam.com`. |

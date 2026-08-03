@@ -83,12 +83,22 @@ the kill-switch is not a way to stop the keeper spending gas entirely.**
 pass runs from `scheduled()`. Removing its cron trigger stops all of them,
 snapshot included, with nothing to restore afterwards but the trigger:
 
-```bash
-npx wrangler triggers deploy --cwd apps/keeper   # after clearing "triggers"
-                                                 # in wrangler.jsonc
+Set the trigger list **empty** — not absent. An absent `triggers` object
+sends no schedule update at all and silently leaves the existing cron
+running, which is the failure this paragraph exists to prevent:
+
+```jsonc
+"triggers": { "crons": [] }
 ```
 
-Confirm with `npx wrangler tail vaipakam-keeper` that no tick arrives.
+then `npx wrangler deploy` (or `wrangler triggers deploy`) from
+`apps/keeper`.
+
+**Confirm it, do not assume it** — the readback must be trigger-aware, since
+a mistyped or wrongly-nested key leaves the committed cron in place. Check
+the Worker's *Settings → Trigger Events* pane or query its schedules
+directly; `wrangler tail` showing no tick only tells you none has fired
+*yet*. Same hazard and same remedy as `OffChainRestore.md` §1 step 3.
 
 **Do not reach for the signing key to achieve this.** `KEEPER_PRIVATE_KEY`
 is bound via `secrets_store_secrets`, so `wrangler secret put` /
