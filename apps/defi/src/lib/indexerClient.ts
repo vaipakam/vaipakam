@@ -882,8 +882,14 @@ export interface RecyclingSeries {
     selfFunded: boolean;
   };
   /**
-   * The retained reserve and the balance actually behind it — read LIVE
-   * from the chain, and deliberately not inside `cumulative`.
+   * The retained reserve and the balance actually behind it — a SCHEDULED
+   * reading of chain state, deliberately not inside `cumulative`.
+   *
+   * Not live: the platform captures it on a rotation and serves what was
+   * stored, so it trails the chain. `asOf` is the timestamp of the block
+   * these figures describe, and a consumer displaying them is expected to
+   * show it — an undisclosed age is what makes a stale figure
+   * indistinguishable from a current one.
    *
    * Every field in `cumulative` is derived from stored counters, and a
    * counter cannot notice that the tokens behind it have left. This block

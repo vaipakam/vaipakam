@@ -57,6 +57,7 @@ import {
   readSecret,
   getChainConfigs,
   type WorkerEnv,
+  type Env,
   type SecretBinding,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
@@ -315,6 +316,22 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
+    // ─── /metrics/recycling ─────────────────────────────────────
+    // Dispatched BEFORE `resolveEnv` deliberately. The handler performs no
+    // network I/O — that was the whole point of moving the chain read to
+    // the scheduled pass — but awaiting the Secrets Store fan-out below
+    // would reintroduce exactly the failure the recut removed: a degraded
+    // secrets binding could push the response past the browser's abort and
+    // discard a valid D1 series. It needs D1, the ingest flag and the
+    // deployment artifact; none of those come from Secrets Store.
+    if (url.pathname === '/metrics/recycling') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') {
+        return handleRecyclingSeries(req, env as unknown as Env);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -338,16 +355,6 @@ export default {
     if (url.pathname === '/metrics/loop-closure') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleLoopClosure(req, resolved);
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /metrics/recycling ─────────────────────────────────────
-    // M5 (#1218 / #1349) — the per-day recycling transparency series
-    // (pool composition, absorption, net emission) the public dashboard
-    // reads. Top-level for the same reason as the route above.
-    if (url.pathname === '/metrics/recycling') {
-      if (req.method === 'OPTIONS') return handleOffersPreflight();
-      if (req.method === 'GET') return handleRecyclingSeries(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 

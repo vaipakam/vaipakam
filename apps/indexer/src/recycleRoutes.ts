@@ -131,7 +131,8 @@ type BackingReason =
   | 'not-captured-yet'
   | 'read-failed'
   | 'snapshot-stale'
-  | 'chain-behind';
+  | 'chain-behind'
+  | 'snapshot-other-deployment';
 
 interface BackingSnapshot {
   vpfiBalance: string | null;
@@ -201,8 +202,6 @@ export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint
  * have. viem's default is a 10s timeout WITH retries, comfortably past
  * that, so the bound has to be set explicitly and retries disabled.
  */
-const BACKING_RPC_TIMEOUT_MS = 2500;
-
 /**
  * Capture the backing snapshot from the chain. Called on the SCHEDULED
  * path only — never from a request.
@@ -231,6 +230,17 @@ export async function captureBackingSnapshot(
       return 1;
     }
   })();
+  // The EFFECTIVE tick, decided where both inputs are visible. The route
+  // sees only the flag, and I previously argued the resulting asymmetry
+  // was safe in one direction — it is not. Flag true with the binding
+  // ABSENT is a supported state in which ingest runs the 1-minute legacy
+  // schedule while the route assumes 5, so a stopped capture would be
+  // accepted for up to 110 minutes against an effective bound of 30. The
+  // row carries the answer instead of each side guessing.
+  const tickMinutes =
+    env.CHAIN_INGEST_VIA_DO === 'true' && !!(env as { CHAIN_INGEST_DO?: unknown }).CHAIN_INGEST_DO
+      ? DO_PATH_CADENCE_MINUTES
+      : 1;
   let chain;
   try {
     chain = getChainConfigs(env).find((c) => c.id === chainId);
@@ -307,22 +317,38 @@ export async function captureBackingSnapshot(
   };
   await env.DB.prepare(
     `INSERT INTO recycle_backing_snapshot
-       (chain_id, payload, observed_at, block_time, block_number, chain_count)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       (chain_id, payload, diamond, observed_at, block_time, block_number,
+        chain_count, tick_minutes)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
      ON CONFLICT(chain_id) DO UPDATE SET
        payload = excluded.payload,
+       diamond = excluded.diamond,
        observed_at = excluded.observed_at,
        block_time = excluded.block_time,
        block_number = excluded.block_number,
-       chain_count = excluded.chain_count`,
+       chain_count = excluded.chain_count,
+       tick_minutes = excluded.tick_minutes
+     WHERE
+       -- NEVER GO BACKWARDS. A load-balanced RPC can serve an older safe
+       -- head, and two captures can complete out of order; an
+       -- unconditional upsert then replaces a newer reading with an older
+       -- one AND refreshes observed_at, so the regression passes every
+       -- freshness check and the dashboard silently moves back to a
+       -- previous verdict. A different Diamond is not a regression — it
+       -- is a new subject, and must always win.
+       recycle_backing_snapshot.diamond != excluded.diamond
+       OR CAST(excluded.block_number AS INTEGER)
+          >= CAST(recycle_backing_snapshot.block_number AS INTEGER)`,
   )
     .bind(
       chainId,
       JSON.stringify(payload),
+      chain.diamond,
       new Date().toISOString(),
       new Date(Number(head.timestamp) * 1000).toISOString(),
       blockNumber.toString(),
       chainCount,
+      tickMinutes,
     )
     .run();
 }
@@ -346,23 +372,6 @@ export async function captureBackingSnapshot(
  *
  * Two full cycles: one missed turn is a blip, not a wedged capture.
  */
-const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
-
-function snapshotMaxAgeMs(env: Env, chainCount: number): number {
-  const chains = Math.max(1, chainCount);
-  // The FLAG only — the route's `Env` does not carry the DO binding that
-  // `doIngestEnabled` also checks. The asymmetry is safe in one direction
-  // and that is why it is acceptable: flag set but binding absent means
-  // ingest actually falls back to the 1-minute path, so the real refresh
-  // cadence is FASTER than assumed and this expiry is merely more
-  // generous than it needed to be. The reverse — assuming fast while the
-  // slow path runs — is what would mark healthy snapshots stale, and
-  // cannot happen here.
-  const tickMinutes =
-    env.CHAIN_INGEST_VIA_DO === 'true' ? DO_PATH_CADENCE_MINUTES : 1;
-  return Math.max(SNAPSHOT_MIN_MAX_AGE_MS, chains * tickMinutes * 2 * 60_000);
-}
-
 /** Mirrors `chainIndexer`'s buffer for RPCs without a `safe` tag. */
 const SAFE_FALLBACK_BUFFER = 32n;
 
@@ -375,52 +384,113 @@ const SAFE_FALLBACK_BUFFER = 32n;
  */
 const MAX_BLOCK_LAG_MS = 30 * 60_000;
 
+const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
+
+function snapshotMaxAgeMs(chainCount: number, tickMinutes: number): number {
+  const chains = Math.max(1, chainCount);
+  const tick = Math.max(1, tickMinutes);
+  return Math.max(SNAPSHOT_MIN_MAX_AGE_MS, chains * tick * 2 * 60_000);
+}
+
+/** Every amount the stored payload must carry. A row missing one, or
+ *  carrying a non-decimal, is not a partial answer — it is not an answer. */
+const STORED_PAYLOAD_FIELDS = [
+  'vpfiBalance',
+  'bucket',
+  'unearmarked',
+  'outstandingRecycled',
+  'paidOutRecycled',
+  'keeperBudget',
+  'platformRetained',
+  'releasedRemitStranded',
+] as const;
+
+const DECIMAL_STRING = /^\d+$/;
+
+/**
+ * Is the stored payload EXACTLY what a backing block requires?
+ *
+ * The frontend gate protects the dashboard; it does nothing for any other
+ * consumer of this API. Syntactically valid JSON — `{}`, or a field of the
+ * wrong type — would otherwise be spread into the response with
+ * `unavailableReason: null`, so a consumer honouring the all-or-nothing
+ * contract would publish a partial block believing it complete. The
+ * contract has to hold at the boundary that states it.
+ */
+export function storedPayloadIsComplete(v: unknown): v is Record<string, string> {
+  if (typeof v !== 'object' || v === null) return false;
+  const rec = v as Record<string, unknown>;
+  return STORED_PAYLOAD_FIELDS.every(
+    (f) => typeof rec[f] === 'string' && DECIMAL_STRING.test(rec[f] as string),
+  );
+}
+
 async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
   try {
     const row = await env.DB.prepare(
-      `SELECT payload, observed_at, block_time, block_number, chain_count
+      `SELECT payload, diamond, observed_at, block_time, block_number,
+              chain_count, tick_minutes
          FROM recycle_backing_snapshot WHERE chain_id = ?1`,
     )
       .bind(chainId)
       .first<{
         payload: string;
+        diamond: string;
         observed_at: string;
         block_time: string;
         block_number: string;
         chain_count: number;
+        tick_minutes: number;
       }>();
     if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
 
-    // Has the SCHEDULE kept up? Measured against observation time and the
-    // cadence THIS ROW was captured under — not the chain set readable on
-    // this request, which a transient secrets failure can shrink.
+    // WHOSE figures are these? A `--fresh` redeploy puts a new Diamond on
+    // the same chain, and `chain_id` alone would keep serving the old
+    // one's balances as current — a fully backed predecessor masking an
+    // empty successor, with nothing to indicate it. A block number cannot
+    // fix that: it says WHEN, never WHOSE.
+    // From the DEPLOYMENT artifact, not `getChainConfigs` — the latter
+    // filters by RPC secret availability, and this route must not depend
+    // on secrets at all (see the dispatch note in index.ts).
+    const current = getDeployment(chainId);
+    if (!current || current.diamond.toLowerCase() !== row.diamond.toLowerCase()) {
+      return BACKING_UNAVAILABLE('snapshot-other-deployment');
+    }
+
+    // Has the SCHEDULE kept up? Against the cadence THIS ROW was captured
+    // under, not one recomputed now from state an unrelated failure can
+    // change.
     const observedAge = Date.now() - Date.parse(row.observed_at);
     if (
       !Number.isFinite(observedAge) ||
-      observedAge > snapshotMaxAgeMs(env, row.chain_count)
+      observedAge > snapshotMaxAgeMs(row.chain_count, row.tick_minutes)
     ) {
       return BACKING_UNAVAILABLE('snapshot-stale');
     }
-    // Is the CHAIN still moving? A frozen RPC answers happily with an old
-    // head, and the schedule check cannot see that at all.
+    // Is the CHAIN still moving? The schedule check cannot see that: it
+    // only knows the capture pass ran.
     const blockLag = Date.parse(row.observed_at) - Date.parse(row.block_time);
     if (!Number.isFinite(blockLag) || blockLag > MAX_BLOCK_LAG_MS) {
       return BACKING_UNAVAILABLE('chain-behind');
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.payload);
+    } catch {
+      return BACKING_UNAVAILABLE('read-failed');
+    }
+    if (!storedPayloadIsComplete(parsed)) return BACKING_UNAVAILABLE('read-failed');
+
     return {
-      ...(JSON.parse(row.payload) as Omit<
+      ...(parsed as unknown as Omit<
         BackingSnapshot,
         'unavailableReason' | 'asOf' | 'blockNumber'
       >),
-      // The BLOCK, not just the time. A timestamp does not identify which
-      // state was read, so an independent reader could not reproduce these
-      // figures once the chain moved on — and the ratified requirement is
-      // that the series be reconstructible without trusting this indexer.
       blockNumber: row.block_number,
       unavailableReason: null,
-      // The BLOCK's time is what these figures describe, so it is what the
-      // surface shows — the observation time is bookkeeping about the
-      // schedule, not about the state being reported.
+      // The BLOCK's time — what these figures describe. `observed_at` is
+      // bookkeeping about the schedule, and post-dates the block.
       asOf: row.block_time,
     };
   } catch (err) {

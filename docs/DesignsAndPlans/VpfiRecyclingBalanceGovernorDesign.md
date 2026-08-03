@@ -701,9 +701,15 @@ sits at the single canonical point (Base finalization):
 Per day, on the transparency dashboard: `absorbed[D]` (global credit total),
 `recycledBudget[D]`, `scheduleFloor[D]`, `freshDrawdown[D]`,
 `selfFundingRatio[D] = recycledBudget/dailyPool`, cumulative
-`platformRetained = bucketBalance − Σ outstandingCommit_recycled` (raw bucket
-growth would overstate the reserve by counting committed-but-unclaimed user
-liabilities — Codex r3), and `runwayExtensionDays` (cumulative recycled ÷
+`platformRetained = bucketBalance − Σ outstandingCommit_recycled −
+recycleKeeperBudget`, floored at zero (raw bucket growth would overstate the
+reserve by counting committed-but-unclaimed user liabilities — Codex r3 — and
+the KEEPER term was missing from this formula until #1525: once
+`recycleRegisterKeeperBps` is non-zero, `_applyRecycleRegister` earmarks part
+of each day's margin from INSIDE the bucket, so the bucket does not move and a
+two-term derivation overstates for as long as the register runs. The floor
+matters because the subtraction genuinely goes negative in a shortfall, and a
+negative reserve reads as a display fault rather than as the shortfall it is), and `runwayExtensionDays` (cumulative recycled ÷
 trailing-W mean of `dailyPool`, reported as `∞ / self-funded` once the fresh
 floor is zero — never a division by the zeroed floor — Codex r3). `netEmission[D]` from the prior design maps
 to `freshDrawdown[D]`.

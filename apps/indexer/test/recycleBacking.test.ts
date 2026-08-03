@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { retainedFrom } from '../src/recycleRoutes';
+import { retainedFrom, storedPayloadIsComplete } from '../src/recycleRoutes';
 
 const T = (n: bigint) => n * 10n ** 18n;
 
@@ -43,5 +43,43 @@ describe('retainedFrom', () => {
 
   it('is exact at wei scale — no float path', () => {
     expect(retainedFrom(10n ** 30n + 3n, 1n, 1n)).toBe(10n ** 30n + 1n);
+  });
+});
+
+describe('storedPayloadIsComplete', () => {
+  const good = {
+    vpfiBalance: '100', bucket: '40', unearmarked: '60',
+    outstandingRecycled: '10', paidOutRecycled: '2', keeperBudget: '5',
+    platformRetained: '25', releasedRemitStranded: '0',
+  };
+
+  it('accepts a complete payload', () => {
+    expect(storedPayloadIsComplete(good)).toBe(true);
+  });
+
+  it('rejects syntactically valid but empty JSON', () => {
+    // `{}` parses fine and would previously have been spread into the
+    // response with `unavailableReason: null`, so any consumer honouring
+    // the all-or-nothing contract would publish an empty block believing
+    // it complete. The frontend gate protects the dashboard and nothing
+    // else; the contract has to hold where it is stated.
+    expect(storedPayloadIsComplete({})).toBe(false);
+    expect(storedPayloadIsComplete(null)).toBe(false);
+    expect(storedPayloadIsComplete('nope')).toBe(false);
+  });
+
+  it('rejects a payload missing ANY single member', () => {
+    for (const k of Object.keys(good)) {
+      const partial: Record<string, string> = { ...good };
+      delete partial[k];
+      expect(storedPayloadIsComplete(partial), `missing ${k}`).toBe(false);
+    }
+  });
+
+  it('rejects wrong types and non-decimal strings', () => {
+    expect(storedPayloadIsComplete({ ...good, bucket: 40 })).toBe(false);
+    expect(storedPayloadIsComplete({ ...good, bucket: '4,0' })).toBe(false);
+    expect(storedPayloadIsComplete({ ...good, bucket: '' })).toBe(false);
+    expect(storedPayloadIsComplete({ ...good, bucket: '-1' })).toBe(false);
   });
 });
