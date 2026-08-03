@@ -132,8 +132,27 @@ pnpm --filter @vaipakam/agent exec wrangler deploy
 cd ops/offchain-data-warm && npx wrangler deploy
 ```
 
-Do this in the same sitting as the merge. Until it is done, agent is reading
-and writing the old database while the other two use the new one.
+Do this in the same sitting as the merge. Until it is done, **agent reads and
+writes the old database while the other two use the new one** — and that
+split is user-visible, independently of the no-migration decision.
+
+A threshold set, a Telegram link made, or a support ticket filed in that
+window lands in the database about to be deleted. The user sees it succeed;
+it then vanishes. "We are not migrating data" covers rows that a redeploy
+obsoletes — it does not cover a write the user watched succeed minutes ago.
+
+Two ways to close it, and the choice is the operator's:
+
+- **Shortest window.** Have the `wrangler deploy` for agent ready to run
+  before merging, and run it the moment the merge lands. The exposure is the
+  couple of minutes it takes.
+- **No window.** Put agent's mutating routes behind a `503` for the interval
+  (unbind the route, or deploy a rejecting build), then restore them after
+  the redeploy. A user who is told "try again shortly" has lost nothing; one
+  whose ticket silently disappeared has.
+
+Pre-live, the first is defensible. Say which was chosen rather than leaving
+it to whoever executes.
 
 ### Step 3 — confirm from behaviour, not configuration
 
