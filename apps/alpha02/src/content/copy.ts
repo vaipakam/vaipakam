@@ -1441,6 +1441,16 @@ const copySource = {
       'Sent {{amount}} {{symbol}} back to your wallet — fee-on-transfer tokens may deliver slightly less.',
       ['amount', 'symbol'],
     ),
+    // The outcome the network recorded names a DIFFERENT token from the
+    // one this attempt looked up (Codex #1547 r10) — the shape a
+    // wholesale wallet replacement can produce. We hold no decimals or
+    // symbol for that token, so the honest statement is the raw amount
+    // plus the address, never this attempt's formatting applied to
+    // someone else's numbers.
+    successBodyUnknownToken: tmpl(
+      'Sent {{amount}} of the token at {{token}} back to your wallet. That isn’t the token this page looked up — your wallet appears to have replaced the transaction — so the amount is shown in the token’s smallest units. Open the transaction to see the full detail.',
+      ['amount', 'token'],
+    ),
     viewTx: 'View the transaction',
     bannedTitle: 'Recovery is locked for your vault',
     bannedBody: tmpl(
@@ -1456,9 +1466,18 @@ const copySource = {
     // already have completed, and signing again would double-submit.
     // The card is terminal: transaction link + start over, never
     // sign-again.
+    //
+    // The body must not contradict the card it sits on (Codex #1547
+    // r10). This variant is a CONFIRMED receipt: the record has already
+    // been cleared and Start over is rendered right below, so the old
+    // "do not sign again / refresh the page" wording told the user the
+    // opposite of what the card offers. Starting over here is
+    // deliberately permitted — the transaction's fate is settled — so
+    // the copy sends the user to the transaction first and then frames
+    // the action honestly as a SEPARATE new recovery.
     unknownOutcomeTitle: 'Transaction confirmed — outcome unknown',
     unknownOutcomeBody:
-      'The transaction went through, but we couldn’t read the recovery outcome from it. Do not sign again — the recovery may already have completed. Open the transaction link to see what happened, then refresh the page.',
+      'The transaction went through, but we couldn’t read from it what the recovery actually did. Open the transaction to see what happened before deciding anything. Starting over below does not repeat or undo it — it begins a completely separate recovery, and it can only move what is still sitting in your vault.',
     // Broadcast-but-unconfirmed variant (Codex #1547 r4): the wallet
     // returned a transaction hash but the confirmation couldn't be
     // read (RPC drop, wallet disconnect mid-wait). The tx may still
@@ -1471,15 +1490,22 @@ const copySource = {
     // recover a second time.
     unknownOutcomePendingBody:
       'The transaction was submitted, but we couldn’t read its confirmation — it may still complete in the background. Do not sign again: check it again below once it has had a moment to settle, or open the transaction link to see what happened.',
-    // HASHLESS variant (Codex #1547 r8): you signed, the app asked your
-    // wallet to send it, and the wallet never came back with an answer
-    // — so we have no transaction reference at all. That is NOT the
-    // same as "it wasn't sent": a send whose reply was lost is still
-    // out there. Treated as pending until the network can say
+    // HASHLESS variant (Codex #1547 r8): the app asked the wallet to
+    // authorise and send the recovery and the wallet never came back
+    // with an answer — so we have no transaction reference at all. That
+    // is NOT the same as "it wasn't sent": a send whose reply was lost
+    // is still out there. Treated as pending until the network can say
     // otherwise, and it must not re-arm the sign button.
+    //
+    // Deliberately does NOT assert that the user signed (Codex #1547
+    // r10): the attempt is now reserved BEFORE the wallet prompt opens,
+    // so a hashless record can also belong to a prompt that was closed
+    // with the tab. Both readings are covered by describing what the
+    // app knows — it asked, nothing came back — instead of claiming a
+    // signature it cannot see.
     unknownOutcomeSignedTitle: 'We don’t know whether this was sent',
     unknownOutcomeSignedBody:
-      'You signed the declaration and your wallet was asked to send the recovery, but it never confirmed back — so we can’t tell whether it went out. Do not sign again: check below in a moment and we’ll read the network directly. Your wallet’s own activity list is the other place to look.',
+      'Your wallet was asked to authorise and send this recovery, and it never confirmed back — so we can’t tell whether anything went out. Don’t start another one: check below in a moment and we’ll read the network directly. Your wallet’s own activity list is the other place to look.',
     // The pending/terminal cards normally link the transaction; on the
     // hashless variant there is nothing to link to, so say so rather
     // than render a dead link.

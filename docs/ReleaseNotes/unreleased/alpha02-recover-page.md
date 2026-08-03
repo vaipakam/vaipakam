@@ -182,11 +182,69 @@ signature go ahead, but a check that simply didn't answer is reported as
 a retryable problem with the retry route open, rather than as a verdict
 that recovery will never work on this network.
 
+The page now reserves its place before it asks the wallet for anything.
+The record of an outstanding recovery is written the moment the page has
+finished its checks and is about to open the signature prompt, not after
+the signature comes back. Two tabs on the same wallet could previously
+both look, both find nothing, and both go ahead — and because the two
+attempts share the same approval counter, whichever finished second
+could wipe the record protecting the other one's live transaction. Each
+attempt now carries its own identity, so a tab can only ever clear or
+update the record it created itself; a second tab that arrives while one
+is outstanding is shown that attempt instead of being allowed to sign.
+If the signature is declined or never happens, the reservation is
+released immediately — nothing was authorised, so nothing needs
+protecting — and the same release happens if the connected account or
+network changes while the prompt is open, so an abandoned prompt can no
+longer leave a wallet locked out of recovery over a transaction that was
+never sent.
+
+Results are now read from what the network actually recorded rather than
+from what the user submitted. When a wallet replaces a transaction, the
+one that mines can carry a different amount or a different declared
+sender, and the page used to describe the original submission next to a
+link showing something else. The amount, the token and the declared
+sender on every result card now come from the event the transaction
+emitted, falling back to the submitted details only for what the event
+does not carry. If the result names a token the page has no details for
+— possible only after a wholesale replacement — it says so plainly and
+states the amount in that token's smallest units beside its address,
+instead of dressing it up in another token's decimals.
+
+The "confirmed, but we couldn't read what it did" card no longer
+contradicts itself. It used to tell the user not to sign again and to
+refresh the page, while offering a "start over" button directly beneath
+and having already released the record. It now sends the user to the
+transaction to see what happened and describes the button honestly: it
+starts a completely separate recovery, limited to whatever is still in
+the vault. The genuinely locked card — the one for a submission that has
+not confirmed — keeps its "don't sign again" wording, because there the
+warning is true.
+
+Reading a token's details is now honest about failure. The page treats a
+token that simply does not publish its decimal format as usable, taking
+amounts in raw units, but it used to reach that conclusion from any
+failed read at all — so a momentary network problem could make an
+ordinary token look like it had no decimal format, and a user who typed
+"1" would have signed for the smallest possible fraction of a token.
+Only the token itself declining to answer counts now; a network failure
+reports that the token's details couldn't be read and asks the user to
+try again, which is the one outcome that cannot mislead them about what
+they are signing.
+
+Finally, the "an attempt was processed" verdict is written back only
+while the page still holds the same attempt it started with, matching
+the care already taken over every other write to that record, so it can
+never convert another tab's outstanding recovery into a lock belonging
+to an older one.
+
 An automated end-to-end test drives the real contract on a forked
 network: dust is minted straight into a vault, the Help explainer's
 link is followed, and the recovery round-trips with the tokens
 verified back in the wallet — after which a reload has to show a clean
-form, proving a completed recovery leaves nothing behind to come back.
-A second test seeds a remembered "an attempt was processed" verdict and
-confirms it survives a reload, refuses to offer a plain start-over, and
-only releases after both steps of the acknowledgement.
+form, proving a completed recovery leaves nothing behind to come back
+(which now also proves the reservation taken before the signature is
+released again by a successful recovery). A second test seeds a
+remembered "an attempt was processed" verdict and confirms it survives a
+reload, refuses to offer a plain start-over, and only releases after
+both steps of the acknowledgement.

@@ -195,6 +195,23 @@ interface PendingRecoveryRecord {
    *  hashless record skips every by-hash probe and adjudicates from the
    *  on-chain recovery counter and the signed deadline alone. */
   txHash: Hex | null;
+  /** Unique per ATTEMPT (Codex #1547 r10) — the reservation's identity.
+   *
+   *  The signed recovery NONCE cannot play that role: two tabs racing
+   *  the same wallet read the SAME nonce, so a nonce-matched clear from
+   *  the losing attempt would delete the winner's record — the only
+   *  durable lock over its live transaction. This id is minted per
+   *  signAndSubmit call, written with the reservation BEFORE the
+   *  signature prompt, and every later clear/update matches on it.
+   *
+   *  OPTIONAL on read: a record written by a pre-r10 build has none and
+   *  still reconciles under the legacy hash/nonce rule. */
+  attemptId?: string;
+  /** The ERC-20 the attempt named (Codex #1547 r10). Carried so a
+   *  terminal card built from a REHYDRATED record can tell whether the
+   *  outcome event it decoded describes the same token — a replaced
+   *  transaction may not. OPTIONAL for the same legacy-record reason. */
+  token?: string;
   declaredSource: string;
   /** Base units, decimal string — JSON carries no bigint. */
   amount: string;
@@ -226,6 +243,36 @@ interface PendingRecoveryRecord {
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const DIGITS = /^\d+$/;
 
+/** Upper bound on a stored attempt id — it is only ever compared for
+ *  equality, but a hand-edited storage value must not be unbounded. */
+const MAX_ATTEMPT_ID_LENGTH = 64;
+
+/**
+ * A fresh per-attempt identity (Codex #1547 r10).
+ *
+ * `crypto.randomUUID` is the normal source; it is absent on insecure
+ * origins in some browsers, so fall back to random bytes and finally to
+ * a time+Math.random string. Uniqueness is all that matters here — the
+ * id is a local reservation token, never a secret and never on-chain —
+ * so the weakest fallback is still fit for purpose.
+ */
+function newAttemptId(): string {
+  try {
+    const c = globalThis.crypto;
+    if (typeof c?.randomUUID === 'function') return c.randomUUID();
+    if (typeof c?.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      c.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch {
+    // Fall through to the last-resort id below.
+  }
+  return `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
 /** Parse + VALIDATE a stored record. Anything malformed (hand-edited
  *  storage, a shape from an older build) reads as absent — a bad
  *  record must never become a rendered card or a bigint conversion
@@ -246,6 +293,23 @@ function readPendingRecovery(
     if (
       r.txHash !== null &&
       (typeof r.txHash !== 'string' || !HEX32.test(r.txHash))
+    ) {
+      return null;
+    }
+    // Both r10 fields are OPTIONAL (a pre-r10 record carries neither)
+    // but must be well-formed when present — a malformed one reads as a
+    // malformed record, never as a silently-dropped identity.
+    if (
+      r.attemptId !== undefined &&
+      (typeof r.attemptId !== 'string' ||
+        r.attemptId === '' ||
+        r.attemptId.length > MAX_ATTEMPT_ID_LENGTH)
+    ) {
+      return null;
+    }
+    if (
+      r.token !== undefined &&
+      (typeof r.token !== 'string' || !isAddress(r.token))
     ) {
       return null;
     }
@@ -277,6 +341,8 @@ function readPendingRecovery(
     if (r.settled !== undefined && r.settled !== 'executed') return null;
     return {
       txHash: r.txHash === null ? null : (r.txHash as Hex),
+      ...(r.attemptId === undefined ? {} : { attemptId: r.attemptId }),
+      ...(r.token === undefined ? {} : { token: r.token }),
       declaredSource: r.declaredSource,
       amount: r.amount,
       symbol: r.symbol,
@@ -321,26 +387,40 @@ function clearPendingRecoveryIfMatches(
   account: string,
   txHash: Hex | null,
   recoveryNonce?: string,
+  attemptId?: string,
 ): void {
   const stored = readPendingRecovery(chainId, account);
   if (stored === null) return;
-  if (!pendingRecoveryMatches(stored, txHash, recoveryNonce)) return;
+  if (!pendingRecoveryMatches(stored, txHash, recoveryNonce, attemptId)) return;
   pendingRecoveryStore.write(chainId, account.toLowerCase(), null);
 }
 
 /**
- * The ONE identity rule both conditional writers use: is the record
+ * The ONE identity rule every conditional writer uses: is the record
  * currently in storage the same attempt the caller is settling?
  *
- * By transaction hash when the caller knows one; by the signed recovery
- * nonce against a still-HASHLESS record otherwise (the signed-but-
- * unacknowledged shape, which has no hash to compare).
+ * ATTEMPT ID FIRST (Codex #1547 r10). When both sides carry one, it is
+ * the whole answer — nothing else may widen or narrow it. The legacy
+ * rule below is not an adequate identity: two tabs racing the same
+ * wallet read the SAME recovery nonce, so a nonce match let one tab's
+ * settled (or rejected) attempt delete the OTHER tab's record while its
+ * transaction was still live.
+ *
+ * LEGACY fallback, used only when either side has no id (a record
+ * written by a pre-r10 build, which must still reconcile rather than be
+ * stranded): by transaction hash when the caller knows one; by the
+ * signed recovery nonce against a still-HASHLESS record otherwise (the
+ * signed-but-unacknowledged shape, which has no hash to compare).
  */
 function pendingRecoveryMatches(
   stored: PendingRecoveryRecord,
   txHash: Hex | null,
   recoveryNonce?: string,
+  attemptId?: string,
 ): boolean {
+  if (stored.attemptId !== undefined && attemptId !== undefined) {
+    return stored.attemptId === attemptId;
+  }
   return txHash !== null
     ? stored.txHash !== null &&
         stored.txHash.toLowerCase() === txHash.toLowerCase()
@@ -372,14 +452,51 @@ function updatePendingRecoveryHashIfMatches(
   matchHash: Hex | null,
   recoveryNonce: string,
   nextHash: Hex,
+  attemptId?: string,
 ): boolean {
   const stored = readPendingRecovery(chainId, account);
   if (stored === null) return true;
-  if (!pendingRecoveryMatches(stored, matchHash, recoveryNonce)) return true;
+  if (!pendingRecoveryMatches(stored, matchHash, recoveryNonce, attemptId)) {
+    return true;
+  }
   // Spread the STORED record, not the caller's copy — it is this
   // attempt by the check above, and anything a concurrent writer added
   // to it survives the hash upgrade.
   return writePendingRecovery(chainId, account, { ...stored, txHash: nextHash });
+}
+
+/**
+ * Persist a REPLACEMENT record for an attempt only while storage still
+ * holds that same attempt (Codex #1547 r10).
+ *
+ * The receipt-less "executed" lock used an unconditional write, which
+ * could stamp its verdict over a NEWER record another tab wrote for the
+ * same wallet — silently converting that tab's live pending attempt
+ * into a terminal lock keyed to an older submission, and handing its
+ * later identity-matched clear the power to delete it.
+ *
+ * A record that is ABSENT counts as not-ours too: it was cleared by
+ * whoever settled or acknowledged it, and resurrecting it here would
+ * re-impose a lock the user has already been released from. The local
+ * step state still shows the verdict to THIS tab either way.
+ *
+ * Returns FALSE only when a MATCHING record could not be written
+ * (storage refused) — the degraded state the caller surfaces.
+ */
+function writePendingRecoveryIfMatches(
+  chainId: number,
+  account: string,
+  matchHash: Hex | null,
+  recoveryNonce: string,
+  attemptId: string | undefined,
+  record: PendingRecoveryRecord,
+): boolean {
+  const stored = readPendingRecovery(chainId, account);
+  if (stored === null) return true;
+  if (!pendingRecoveryMatches(stored, matchHash, recoveryNonce, attemptId)) {
+    return true;
+  }
+  return writePendingRecovery(chainId, account, record);
 }
 
 /**
@@ -441,6 +558,68 @@ function isUserRejectedTransaction(err: unknown): boolean {
   return false;
 }
 
+/** viem error names that mean the call REACHED the node and the
+ *  contract had no answer to give — a revert, or a reply carrying no
+ *  data at all (the shape a missing optional ERC-20 method, or a
+ *  non-contract address, produces). */
+const CONTRACT_ABSENCE_ERROR_NAMES = new Set([
+  'ContractFunctionRevertedError',
+  'ContractFunctionZeroDataError',
+  'AbiDecodingZeroDataError',
+]);
+
+/** viem error names that mean the request never got a usable answer out
+ *  of the node — the transport itself failed. */
+const TRANSPORT_ERROR_NAMES = new Set([
+  'HttpRequestError',
+  'TimeoutError',
+  'SocketClosedError',
+  'WebSocketRequestError',
+]);
+
+/**
+ * Did the CONTRACT decline to answer, as opposed to the network failing
+ * to ask it (Codex #1547 r10)?
+ *
+ * `symbol()` / `decimals()` are optional in ERC-20, and a token that
+ * lacks them stays recoverable by treating amounts as raw base units.
+ * But the previous catch classified ANY failure that way, so a passing
+ * RPC error made an ordinary 18-decimal token parse as 0 decimals —
+ * a user who typed `1` would then sign for ONE BASE UNIT. That is a
+ * silent, fund-shaped wrong answer, so only a contract-level absence
+ * may take the raw-units branch; everything else must fail the lookup.
+ *
+ * Detection mirrors `isTransactionNotFound` / `isUserRejectedTransaction`:
+ * viem's stable error `name` walked down the cause chain, never
+ * `instanceof`, because a pnpm workspace can resolve more than one
+ * physical copy of viem. Transport names are checked first, so a
+ * transport failure nested under a contract-shaped wrapper can never
+ * read as an absence.
+ *
+ * Deliberately CONSERVATIVE: an error matching neither set is not an
+ * absence. Failing the lookup only costs the user a retry ("we couldn't
+ * read this token's details"); guessing 0 decimals costs them funds.
+ * The one known imprecision is a node that answers a transient failure
+ * with JSON-RPC code -32603 plus a message — viem builds a
+ * `ContractFunctionRevertedError` from that, and we would read it as an
+ * absence. It is the same classification viem's own contract layer
+ * makes, and it still requires the node to have answered.
+ */
+function isContractLevelAbsence(err: unknown): boolean {
+  let sawAbsence = false;
+  let node: unknown = err;
+  for (let depth = 0; node != null && depth < 8; depth += 1) {
+    if (typeof node !== 'object') break;
+    const o = node as { name?: unknown; cause?: unknown };
+    if (typeof o.name === 'string') {
+      if (TRANSPORT_ERROR_NAMES.has(o.name)) return false;
+      if (CONTRACT_ABSENCE_ERROR_NAMES.has(o.name)) sawAbsence = true;
+    }
+    node = o.cause;
+  }
+  return sawAbsence;
+}
+
 /** Display cap for an attacker-controlled token symbol. */
 const MAX_SYMBOL_LENGTH = 20;
 
@@ -487,6 +666,15 @@ interface TokenLookup {
  * after the form inputs behind it may have been cleared.
  */
 interface SubmittedContext {
+  /** This attempt's reservation identity (Codex #1547 r10) — what every
+   *  clear/update matches on. Absent only for a pre-r10 record. */
+  attemptId?: string;
+  /** The ERC-20 the attempt named (Codex #1547 r10) — compared against
+   *  the token a decoded outcome event reports, so a card built from a
+   *  REPLACED transaction can't silently borrow this attempt's symbol
+   *  and decimals for a different token. Absent only for a pre-r10
+   *  record. */
+  token?: string;
   declaredSource: string;
   amount: bigint;
   symbol: string;
@@ -511,7 +699,18 @@ type Step =
    *  review controls stay rendered but locked (Codex #1547 r1). */
   | { kind: 'signing' }
   | { kind: 'submitting' }
-  | { kind: 'success'; txHash: Hex; amount: bigint; symbol: string; decimals: number }
+  /** `unknownToken` (Codex #1547 r10): the outcome event named a token
+   *  this flow has no metadata for — the honest rendering is the raw
+   *  base-unit amount next to that token's address, never this
+   *  attempt's symbol/decimals applied to someone else's amount. */
+  | {
+      kind: 'success';
+      txHash: Hex;
+      amount: bigint;
+      symbol: string;
+      decimals: number;
+      unknownToken?: string;
+    }
   | { kind: 'banned'; txHash: Hex; declaredSource: string }
   /** TERMINAL (Codex #1547 r3): the tx receipt was a success but no
    *  outcome event decoded — the recovery may already have completed,
@@ -567,6 +766,8 @@ type Step =
  */
 function stepFromRecord(stored: PendingRecoveryRecord): Step {
   const ctx: SubmittedContext = {
+    ...(stored.attemptId === undefined ? {} : { attemptId: stored.attemptId }),
+    ...(stored.token === undefined ? {} : { token: stored.token }),
     declaredSource: stored.declaredSource,
     amount: BigInt(stored.amount),
     symbol: stored.symbol,
@@ -595,10 +796,29 @@ function stepFromRecord(stored: PendingRecoveryRecord): Step {
  * path (the ban-state writes must persist), so the outcome lives in
  * the logs, not in the receipt status.
  */
+interface DecodedRecoveryOutcome {
+  kind: 'recovered' | 'banned';
+  /** The event's OWN arguments (Codex #1547 r10), each present only
+   *  when that event carries it — the admin-triggered
+   *  `StuckERC20Recovered` overload has no `declaredSource`, and a
+   *  future shape may carry neither. */
+  token?: string;
+  amount?: bigint;
+  declaredSource?: string;
+}
+
+/** Read one field off a decoded event's args without asserting a shape
+ *  the ABI union doesn't guarantee. */
+function eventArg(args: unknown, name: string): unknown {
+  return typeof args === 'object' && args !== null
+    ? (args as Record<string, unknown>)[name]
+    : undefined;
+}
+
 function decodeRecoveryOutcome(
   logs: readonly { address: string; data: Hex; topics: readonly Hex[] }[],
   diamond: string,
-): 'recovered' | 'banned' | null {
+): DecodedRecoveryOutcome | null {
   for (const log of logs) {
     if (log.address.toLowerCase() !== diamond.toLowerCase()) continue;
     try {
@@ -607,13 +827,93 @@ function decodeRecoveryOutcome(
         data: log.data,
         topics: log.topics as [Hex, ...Hex[]],
       });
-      if (decoded.eventName === 'StuckERC20Recovered') return 'recovered';
-      if (decoded.eventName === 'VaultBannedFromRecoveryAttempt') return 'banned';
+      const kind =
+        decoded.eventName === 'StuckERC20Recovered'
+          ? ('recovered' as const)
+          : decoded.eventName === 'VaultBannedFromRecoveryAttempt'
+            ? ('banned' as const)
+            : null;
+      if (kind === null) continue;
+      // The ARGS travel with the verdict (Codex #1547 r10). Discarding
+      // them meant a card for a REPLACED transaction was built from the
+      // original submission — the wrong amount and the wrong declared
+      // source, next to an explorer link showing different values.
+      const token = eventArg(decoded.args, 'token');
+      const amount = eventArg(decoded.args, 'amount');
+      const declaredSource = eventArg(decoded.args, 'declaredSource');
+      return {
+        kind,
+        ...(typeof token === 'string' && isAddress(token) ? { token } : {}),
+        ...(typeof amount === 'bigint' ? { amount } : {}),
+        ...(typeof declaredSource === 'string' && isAddress(declaredSource)
+          ? { declaredSource }
+          : {}),
+      };
     } catch {
       // Some other event on the diamond — skip.
     }
   }
   return null;
+}
+
+/**
+ * Build the terminal card for a decoded outcome, preferring the EVENT's
+ * own values over the submission context (Codex #1547 r10).
+ *
+ * `ctx` describes what the user SUBMITTED; the event describes what
+ * actually happened. When a wallet replaces a transaction those can
+ * differ, and the old code rendered the submission — reporting the
+ * original amount and symbol next to an explorer link showing other
+ * values, or naming the original declared source on a ban the mined
+ * transaction had declared differently.
+ *
+ * Token identity is checked, not assumed: an event naming a token this
+ * attempt didn't reference gets the raw-base-unit rendering with its
+ * own address, because this flow's symbol/decimals describe a different
+ * contract. A pre-r10 record carries no token to compare, so it keeps
+ * the best-effort context rendering.
+ *
+ * Returns NULL when neither source can supply what the card needs —
+ * the caller falls back to the outcome-unknown card.
+ */
+function outcomeStepFrom(
+  decoded: DecodedRecoveryOutcome,
+  txHash: Hex,
+  ctx: SubmittedContext | undefined,
+): Step | null {
+  if (decoded.kind === 'banned') {
+    const declaredSource = decoded.declaredSource ?? ctx?.declaredSource;
+    return declaredSource === undefined
+      ? null
+      : { kind: 'banned', txHash, declaredSource };
+  }
+  const amount = decoded.amount ?? ctx?.amount;
+  if (amount === undefined) return null;
+  const sameToken =
+    decoded.token === undefined ||
+    ctx?.token === undefined ||
+    decoded.token.toLowerCase() === ctx.token.toLowerCase();
+  if (!sameToken || ctx === undefined) {
+    // No trustworthy metadata for the token the event names — say so
+    // rather than dress its amount in another token's decimals.
+    return decoded.token === undefined
+      ? null
+      : {
+          kind: 'success',
+          txHash,
+          amount,
+          symbol: shortAddress(decoded.token),
+          decimals: 0,
+          unknownToken: decoded.token,
+        };
+  }
+  return {
+    kind: 'success',
+    txHash,
+    amount,
+    symbol: ctx.symbol,
+    decimals: ctx.decimals,
+  };
 }
 
 export function Recover() {
@@ -905,6 +1205,19 @@ export function Recover() {
         // recoverable — decimals missing → raw base units; symbol
         // missing → shortened address. The vault/balance reads are the
         // load-bearing ones and still fail the whole lookup.
+        //
+        // ONLY a contract-level absence takes those branches (Codex
+        // #1547 r10). Catching every failure meant a passing RPC error
+        // read as "this token has no decimals", so an ordinary
+        // 18-decimal token parsed at 0 decimals and a user who typed
+        // `1` signed for a single base unit. A transport failure now
+        // RE-THROWS into the outer catch, which is the existing
+        // lookup-failed path — an honest "we couldn't read this token's
+        // details" the user can retry out of.
+        const absentOrRethrow = (err: unknown): null => {
+          if (isContractLevelAbsence(err)) return null;
+          throw err;
+        };
         const [symRes, decRes, vault] = await Promise.all([
           publicClient
             .readContract({
@@ -913,7 +1226,7 @@ export function Recover() {
               functionName: 'symbol',
               blockNumber,
             })
-            .catch(() => null),
+            .catch(absentOrRethrow),
           publicClient
             .readContract({
               address: token,
@@ -921,7 +1234,7 @@ export function Recover() {
               functionName: 'decimals',
               blockNumber,
             })
-            .catch(() => null),
+            .catch(absentOrRethrow),
           publicClient.readContract({
             address: walletChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
@@ -995,6 +1308,10 @@ export function Recover() {
     // can never permanently jam submission.
     if (inFlightRef.current === gen) return;
     inFlightRef.current = gen;
+    // THIS attempt's reservation identity (Codex #1547 r10) — minted
+    // before anything is written, and the only thing every later
+    // clear/update on the persisted record matches against.
+    const attemptId = newAttemptId();
     // Set once writeContract RETURNS a hash (Codex #1547 r4): from that
     // moment the tx is broadcast and may mine even if the receipt wait
     // (or anything after it) throws — the catch below must not bounce
@@ -1242,13 +1559,22 @@ export function Recover() {
         return;
       }
 
-      // (f) LAST-MOMENT re-read of the persisted record (Codex #1547
-      // r8) — the safety-critical half of the cross-tab guard. Another
-      // tab (or this one, before a reload) may have signed and sent a
-      // recovery for this same wallet while this flow was walking
-      // through its checks. Signing a second declaration over that is
-      // the double recovery the whole pending machinery exists to
-      // prevent, so refuse and show the attempt that already exists.
+      // (f) CLAIM the reservation — re-read, then WRITE — BEFORE the
+      // wallet prompt opens (Codex #1547 r10, tightening r8).
+      //
+      // r8 only READ here and wrote the record after the signature came
+      // back. Two tabs could therefore both pass this read, and the
+      // slower signature then wrote its record over the faster one's;
+      // because both attempts share the same recovery nonce, the loser's
+      // later rejection deleted the WINNER's record by nonce match — the
+      // only durable lock over a transaction that was already live.
+      //
+      // So the record is the reservation: claimed hashless before the
+      // prompt, stamped with this attempt's own id, and released again
+      // if the signature never happens. Everything the record needs is
+      // already known (the signed nonce and deadline were read above),
+      // and the read→write gap is now a couple of synchronous
+      // statements rather than a wallet round-trip.
       const alreadyPending = readPendingRecovery(walletChain.chainId, address);
       if (alreadyPending !== null) {
         if (genRef.current !== gen) return;
@@ -1256,44 +1582,10 @@ export function Recover() {
         setError(copy.recover.errAttemptInFlight);
         return;
       }
-
-      const signature = await walletClient.signTypedData({
-        account: address,
-        domain,
-        types: RECOVERY_TYPES,
-        primaryType: 'RecoveryAcknowledgment',
-        message: {
-          user: address,
-          token,
-          declaredSource,
-          amount,
-          nonce,
-          deadline,
-          ackTextHash,
-        },
-      });
-
-      submittedCtx = {
-        declaredSource,
-        amount,
-        symbol: snapshot.symbol,
-        decimals: snapshot.decimals,
-        recoveryNonce: nonce,
-        deadline,
-      };
-      // PERSIST BEFORE THE SEND (Codex #1547 r8) — not after it.
-      //
-      // `writeContract` handing the transaction to the wallet and the
-      // wallet's JSON-RPC reply reaching us are two different events. A
-      // dropped reply (wallet closed, extension reloaded, mobile deep
-      // link lost) rejects the await with NO hash while the transaction
-      // is already in the mempool — and the old shape read that as
-      // "pre-broadcast", bouncing back to an armed review card over a
-      // recovery that may be mining. So the uncertain attempt is
-      // recorded first, WITHOUT a hash; the hash is filled in below
-      // once the wallet actually returns one.
       const persistedRecord: PendingRecoveryRecord = {
         txHash: null,
+        attemptId,
+        token,
         declaredSource,
         amount: amount.toString(),
         symbol: snapshot.symbol,
@@ -1304,30 +1596,79 @@ export function Recover() {
         // once chain time is past it.
         deadline: deadline.toString(),
       };
-      // Written under the identity that signed it (not the current
-      // one), and deliberately NOT generation-guarded: the signature is
-      // real regardless of who is connected by the time this line runs.
-      // A REFUSED write is surfaced, never swallowed (Codex #1547 r8).
+      // Written under the identity being signed for (not whoever is
+      // connected by the time a later line runs). A REFUSED write is
+      // surfaced, never swallowed (Codex #1547 r8) — it does not block
+      // the recovery, it warns that a reload will lose the record.
       if (!writePendingRecovery(walletChain.chainId, address, persistedRecord)) {
         if (genRef.current === gen) setPersistFailed(true);
       }
-      // From here a rejection is NOT provably pre-broadcast (with the
-      // one exception the catch handles — an explicit wallet rejection
-      // of the TRANSACTION, Codex #1547 r9).
-      attemptSigned = true;
+      // Every later clear/update matches on this attempt's ID, so a
+      // record another tab wrote is untouchable from here.
       const forgetPending = (hash: Hex | null) =>
         clearPendingRecoveryIfMatches(
           walletChain.chainId,
           address,
           hash,
           nonce.toString(),
+          attemptId,
         );
       // Exposed to the catch (Codex #1547 r9) so the explicit-rejection
-      // branch can drop THIS attempt's record — identity-matched, so a
-      // newer record another tab wrote is never touched.
+      // branch can drop THIS attempt's record.
       forgetSignedAttempt = forgetPending;
 
-      if (genRef.current !== gen) return; // Codex #1547 r3
+      let signature: Hex;
+      try {
+        signature = await walletClient.signTypedData({
+          account: address,
+          domain,
+          types: RECOVERY_TYPES,
+          primaryType: 'RecoveryAcknowledgment',
+          message: {
+            user: address,
+            token,
+            declaredSource,
+            amount,
+            nonce,
+            deadline,
+            ackTextHash,
+          },
+        });
+      } catch (err) {
+        // The signature never happened, so nothing can execute — the
+        // reservation must not outlive it (Codex #1547 r10), or a
+        // declined prompt would lock this wallet out of recovery until
+        // the deadline it never signed. Identity-matched like every
+        // other clear.
+        forgetPending(null);
+        throw err;
+      }
+
+      // Identity check BEFORE anything is broadcast (Codex #1547 r10).
+      // If the account or chain changed while the prompt was open, the
+      // reset effect bumped genRef; nothing has gone out (writeContract
+      // hasn't run), so release the reservation and fall silent instead
+      // of leaving the old identity locked until its deadline.
+      if (genRef.current !== gen) {
+        forgetPending(null);
+        return;
+      }
+
+      submittedCtx = {
+        attemptId,
+        token,
+        declaredSource,
+        amount,
+        symbol: snapshot.symbol,
+        decimals: snapshot.decimals,
+        recoveryNonce: nonce,
+        deadline,
+      };
+      // From here a rejection is NOT provably pre-broadcast (with the
+      // one exception the catch handles — an explicit wallet rejection
+      // of the TRANSACTION, Codex #1547 r9).
+      attemptSigned = true;
+
       setStep({ kind: 'submitting' });
       const txHash = await walletClient.writeContract({
         address: diamond,
@@ -1341,11 +1682,11 @@ export function Recover() {
       // Upgrade the hashless record now that the wallet named the
       // transaction — the by-hash probes become available again.
       //
-      // CONDITIONAL (Codex #1547 r9): only while the stored record is
-      // still THIS attempt — same signed nonce, still hashless. A wallet
-      // that answered late may be returning into a world where another
-      // tab already reconciled this attempt and recorded a NEW one; that
-      // record must survive untouched.
+      // CONDITIONAL (Codex #1547 r9, id-matched in r10): only while the
+      // stored record is still THIS attempt. A wallet that answered late
+      // may be returning into a world where another tab already
+      // reconciled this attempt and recorded a NEW one; that record must
+      // survive untouched.
       if (
         !updatePendingRecoveryHashIfMatches(
           walletChain.chainId,
@@ -1353,6 +1694,7 @@ export function Recover() {
           null, // match the hashless record this attempt persisted
           nonce.toString(),
           txHash,
+          attemptId,
         )
       ) {
         if (genRef.current === gen) setPersistFailed(true);
@@ -1393,6 +1735,7 @@ export function Recover() {
               persistedHash,
               nonce.toString(),
               event.transaction.hash,
+              attemptId,
             )
           ) {
             if (genRef.current === gen) setPersistFailed(true);
@@ -1424,18 +1767,14 @@ export function Recover() {
       // The contract deliberately does NOT revert on the sanctioned-
       // source path — read the outcome from the emitted event.
       const decodedOutcome = decodeRecoveryOutcome(receipt.logs, diamond);
+      // Built from the EVENT's own arguments where it carries them
+      // (Codex #1547 r10) — this receipt may belong to a transaction the
+      // wallet replaced, whose amount and declared source need not be
+      // the ones submitted here. `submittedCtx` is only the fallback.
       const outcome: Step | null =
-        decodedOutcome === 'recovered'
-          ? {
-              kind: 'success',
-              txHash: minedHash,
-              amount,
-              symbol: snapshot.symbol,
-              decimals: snapshot.decimals,
-            }
-          : decodedOutcome === 'banned'
-            ? { kind: 'banned', txHash: minedHash, declaredSource }
-            : null;
+        decodedOutcome === null
+          ? null
+          : outcomeStepFrom(decodedOutcome, minedHash, submittedCtx ?? undefined);
       // The receipt was READ, so this transaction's fate is settled
       // whichever branch runs below — drop the persisted record
       // (Codex #1547 r6) so a later mount doesn't rehydrate a pending
@@ -1588,6 +1927,7 @@ export function Recover() {
         account,
         txHash,
         ctx?.recoveryNonce.toString(),
+        ctx?.attemptId,
       );
     reconcileRef.current = gen;
     setReconcileClaim(gen);
@@ -1636,7 +1976,7 @@ export function Recover() {
       // transaction. Only the STEP commit is identity-bound.
       publishReceiptInvalidation(
         queryClient,
-        decoded === 'banned' ? ['sanctions'] : [],
+        decoded?.kind === 'banned' ? ['sanctions'] : [],
       );
       forgetPending();
       if (genRef.current !== gen) return;
@@ -1664,22 +2004,18 @@ export function Recover() {
         setError(copy.recover.errTxReverted);
         return;
       }
-      if (decoded === 'recovered' && ctx) {
-        setStep({
-          kind: 'success',
-          txHash: minedHash,
-          amount: ctx.amount,
-          symbol: ctx.symbol,
-          decimals: ctx.decimals,
-        });
-        return;
-      }
-      if (decoded === 'banned' && ctx) {
-        setStep({
-          kind: 'banned',
-          txHash: minedHash,
-          declaredSource: ctx.declaredSource,
-        });
+      // The EVENT's own values lead (Codex #1547 r10). This card is the
+      // one most likely to describe a REPLACED transaction — the whole
+      // reason the reconcile exists — so building it from the original
+      // submission would state the amount and the declared source the
+      // user submitted next to an explorer link showing others. The
+      // stored context is the fallback for what the event doesn't carry,
+      // and an event that names a token the record doesn't know is
+      // rendered in that token's own terms instead of this one's.
+      const outcome =
+        decoded === null ? null : outcomeStepFrom(decoded, minedHash, ctx);
+      if (outcome) {
+        setStep(outcome);
         return;
       }
       // Receipt read but no outcome event decoded — the NON-pending
@@ -1795,18 +2131,35 @@ export function Recover() {
       // reload clears is not a lock. Keyed to the identity that
       // broadcast it, so the write happens regardless of who is
       // connected now.
-      const locked = writePendingRecovery(chainId, account, {
+      //
+      // CONDITIONAL (Codex #1547 r10), by the same rule the hash
+      // upgrades use: only while storage still holds THIS attempt. The
+      // unconditional write could stamp this verdict over a newer record
+      // another tab wrote — turning that tab's live pending attempt into
+      // a lock keyed to an older submission. When it doesn't match,
+      // nothing is written; the local step below still shows the verdict
+      // to this tab.
+      const locked = writePendingRecoveryIfMatches(
+        chainId,
+        account,
         txHash,
-        declaredSource: ctx.declaredSource,
-        amount: ctx.amount.toString(),
-        symbol: ctx.symbol,
-        decimals: ctx.decimals,
-        recoveryNonce: ctx.recoveryNonce.toString(),
-        ...(ctx.deadline === undefined
-          ? {}
-          : { deadline: ctx.deadline.toString() }),
-        settled: 'executed',
-      });
+        ctx.recoveryNonce.toString(),
+        ctx.attemptId,
+        {
+          txHash,
+          ...(ctx.attemptId === undefined ? {} : { attemptId: ctx.attemptId }),
+          ...(ctx.token === undefined ? {} : { token: ctx.token }),
+          declaredSource: ctx.declaredSource,
+          amount: ctx.amount.toString(),
+          symbol: ctx.symbol,
+          decimals: ctx.decimals,
+          recoveryNonce: ctx.recoveryNonce.toString(),
+          ...(ctx.deadline === undefined
+            ? {}
+            : { deadline: ctx.deadline.toString() }),
+          settled: 'executed',
+        },
+      );
       // A lock this browser refused to store is a lock a reload clears
       // (Codex #1547 r8) — say so rather than imply it survives.
       if (!locked && genRef.current === gen) setPersistFailed(true);
@@ -1915,6 +2268,7 @@ export function Recover() {
         address,
         step.txHash,
         step.ctx?.recoveryNonce.toString(),
+        step.ctx?.attemptId,
       );
     }
     setTokenInput('');
@@ -1966,11 +2320,23 @@ export function Recover() {
             {/* exactAmountString, not formatTokenAmount (Codex #1547
                 r3): the display formatter rounds to ~4 significant
                 digits — the receipt must state the EXACT amount that
-                was recovered. */}
-            {copy.recover.successBody(
-              exactAmountString(step.amount, step.decimals),
-              step.symbol,
-            )}
+                was recovered.
+
+                `unknownToken` (Codex #1547 r10): the event named a
+                token this flow has no metadata for (the shape a
+                wholesale wallet replacement can produce), so the amount
+                is stated in that token's raw base units next to its
+                address rather than dressed in another token's decimals
+                and symbol. */}
+            {step.unknownToken
+              ? copy.recover.successBodyUnknownToken(
+                  exactAmountString(step.amount, 0),
+                  step.unknownToken,
+                )
+              : copy.recover.successBody(
+                  exactAmountString(step.amount, step.decimals),
+                  step.symbol,
+                )}
             <br />
             <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
               {copy.recover.viewTx}
