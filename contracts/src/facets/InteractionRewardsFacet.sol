@@ -185,10 +185,17 @@ contract InteractionRewardsFacet is
         // (Codex #1317 r9). Cap fresh to the smaller of the pool cap and
         // the backing room; both shrink by the same credited amount, so a
         // single running minimum tracks them.
-        uint256 backingRoom = IERC20(s.vpfiToken).balanceOf(address(this));
-        backingRoom = backingRoom > s.recycleBucket
-            ? backingRoom - s.recycleBucket
-            : 0;
+        //
+        // #1498 — the un-earmarked figure comes from
+        // {LibVpfiRecycle.backingPosition}, the ONE definition the bucket's
+        // owning library exports, rather than being recomputed here. BOTH
+        // enforcement sites — this sweep cap and the claim-time reject —
+        // inlined `balanceOf − recycleBucket` instead of calling the
+        // definition, and the comments stating its limits then drifted
+        // apart. Duplicated arithmetic is the drift class. The zero-token
+        // case cannot reach the helper's own revert — this function's
+        // {VPFITokenNotSet} guard has already rejected it.
+        (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
         if (backingRoom < headroom) headroom = backingRoom;
         uint256 freshTotal;
         uint256 recycledTotal;

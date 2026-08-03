@@ -266,6 +266,174 @@ library LibVpfiRecycle {
      *         reading facet's own natspec had already been corrected for —
      *         the same claim, un-swept, one file away.
      *
+     *         **#1498 — THIS IS THE ONE DEFINITION. Do not inline
+     *         `balanceOf − recycleBucket` at a call site.** The TWO
+     *         enforcement sites — {RewardClaimFacet}, which REJECTS an
+     *         under-backed claim, and {InteractionRewardsFacet}, which CAPS
+     *         the RL-3 expiry sweep — each inlined the arithmetic instead of
+     *         calling this function, which already defined it. This function
+     *         enforces nothing itself; it is the definition, additionally
+     *         exposed as a transparency reader through
+     *         {InteractionRewardsLensFacet.getRecycleBackingSnapshot}.
+     *         (An earlier revision called all three "enforcement points",
+     *         which overstated the protected write surface — Codex #1555 r2.)
+     *         The inflow asserts in {credit} / {creditCustodyRelocated} are a
+     *         related but differently-shaped check: they compare against
+     *         `bucket + amount` and need `amount` for the revert payload.
+     *
+     *         The arithmetic agreed across those copies and the prose
+     *         describing its limits did not, which is how #1498 came to
+     *         specify a custody aggregate. Taking the three claimants in
+     *         turn:
+     *
+     *         • `recycleBucket` — SUBTRACTED. Recycled backing has to survive
+     *           a fresh payout; that is the whole of #1460's condition.
+     *         • `unclaimedRewardBudget` — deliberately NOT subtracted. It is
+     *           precisely the source a reward claim is entitled to spend, so
+     *           netting it would refuse claims their own funding. Its
+     *           presence in the invariant says the Diamond must HOLD it, not
+     *           that a reward payout may not draw on it.
+     *         • `userLifCustody` — NOT subtracted, and whether that is SAFE
+     *           depends on the deployment. The checkable fact, stated over
+     *           the CUSTODY STORAGE rather than over the identifier: **every
+     *           surviving write to `borrowerLifRebate[...].vpfiHeld` in
+     *           `src/` assigns zero.** (Scoped this way deliberately — the
+     *           earlier "no non-zero assignment to `vpfiHeld` anywhere in
+     *           `src/`" disagreed with a literal source sweep, because
+     *           `MetricsFacet` copies the slot into a memory summary
+     *           (`s.vpfiHeld = r.vpfiHeld`) where it can be non-zero for a
+     *           grandfathered loan. That read changes no custody and does not
+     *           touch the conclusion — but a "checkable fact" that fails when
+     *           checked is worse than none. Codex #1555 r2.)
+     *           Those zeroing writes are the drains inside
+     *           {LibVPFIDiscount.settleBorrowerLifProper} /
+     *           {LibVPFIDiscount.forfeitBorrowerLif}, which return early at
+     *           `held == 0` — so the ~15 terminal paths calling them
+     *           (preclose, refinance, prepay, swap-to-repay, repay, every
+     *           default / liquidation route) are custody no-ops.
+     *           {LibVPFIDiscount.tryApplyBorrowerLif} is the PRODUCER of the
+     *           amount, not a writer — it moves the VPFI and returns
+     *           `vpfiDeducted`, and its own natspec makes recording it the
+     *           caller's job. The write was that caller, in
+     *           `OfferAcceptFacet`, and #1352 removed it; the producer now
+     *           has no caller at all. (An earlier revision of this comment
+     *           called the producer "the only writer" — a false
+     *           code-reachability claim at the exact point used to justify
+     *           omitting the aggregate. Codex #1555 r1.)
+     *
+     *         **The invariant's three classes are NOT the whole list, and
+     *         that is the real lesson here.** Owners of this one balance keep
+     *         being found: the list has grown in every round it was treated
+     *         as complete. No round count either — that was stale within two
+     *         rounds of being written, in the very comment explaining why
+     *         hard-coded totals drift (Codex #1555 r13). **Only the first is
+     *         subtracted:**
+     *
+     *           1. `recycleBucket` — SUBTRACTED (see the body).
+     *           2. borrower-LIF rebate custody — grandfathered loans only;
+     *              zero on a deployment originated from this source.
+     *           3. Full-tariff `C*` — covered, it credits the bucket.
+     *           4. `treasuryBalances[vpfi]` — {LibFacet.recordTreasuryAccrual}
+     *              on a Diamond-as-treasury deployment. **NOT subtracted.**
+     *           5. `rewardEmissionsBudget` — {LibTreasuryBuyback._routePriority}
+     *              step 1, credited ahead of the keeper budget once the
+     *              buyback targets are enabled. Read-only thereafter (nothing
+     *              decrements it), so a reward payout can spend the tokens
+     *              behind it while the published counter stands still.
+     *              **NOT subtracted.**
+     *           6. `keeperRewardBudget` — the same routing function, step 2.
+     *              **NOT subtracted.**
+     *           7. `intentCommits[loanId].custodialCollateral` — a live
+     *              swap-to-repay intent on a VPFI-collateral loan pulls the
+     *              WHOLE collateral into the Diamond and returns it on
+     *              cancel ({SwapToRepayIntentFacet}). **NOT subtracted.**
+     *           8. liquidation `fallbackSnapshot` custody — an exhausted
+     *              swap try-list leaves the full VPFI collateral on the
+     *              Diamond ({RiskFacet._fullCollateralTransferFallback}).
+     *              **NOT subtracted.**
+     *
+     *           9. funded payroll streams — {PayrollFacet.fundPayrollStream}
+     *              DEBITS `treasuryBalances[asset]` and increments
+     *              `stream.funded` **without moving tokens out**, and
+     *              `createPayrollStream` permits `asset == vpfiToken`. So the
+     *              VPFI sits here owed to a stream while the treasury counter
+     *              that used to cover it has already been reduced.
+     *              **NOT subtracted.** Note this one would have escaped the
+     *              reverted treasury subtraction TOO — funding a stream moves
+     *              the earmark out of `treasuryBalances` — which is a second,
+     *              independent reason that subtraction was not a fix.
+     *
+     *          10. VPFI buyback allocations —
+     *              {TreasuryFacet.creditBuybackBudget} accepts
+     *              `token == vpfiToken` unless `buybackNoConvert` is set,
+     *              debits `treasuryBalances[vpfi]` and credits
+     *              `baseBuybackBudget[vpfi]` / `buybackBudget[vpfi]`. Same
+     *              shape as 9 — the earmark moves OUT of `treasuryBalances`
+     *              while the tokens stay here. **NOT subtracted.**
+     *
+     *         **THIS TABLE IS NOT AN AUDIT AND MUST NOT BE READ AS ONE.**
+     *         It lists what ADVERSARIAL REVIEW HAPPENED TO FIND across
+     *         successive rounds of one PR — it grew in every round it was
+     *         called complete, and its most recent entries were found only
+     *         because a reviewer went looking in surfaces nobody had thought
+     *         to check (payroll streams, buyback allocations). Do NOT infer that an owner absent
+     *         from this list does not exist. **A systematic audit of every
+     *         VPFI custody surface is #1498's job**, and its finding will be
+     *         that the enumeration approach cannot be completed — which is
+     *         why the remedy is the delivered-funding bound, not a longer
+     *         table. Entries here are illustrative evidence for that
+     *         conclusion, nothing more.
+     *
+     *         **7 and 8 are USER COLLATERAL, not protocol ledgers.** A reward
+     *         payout drawing on them spends a BORROWER's collateral — a
+     *         different severity from over-drawing an operational budget, and
+     *         the reason #1498 is no longer an accounting-tidiness item.
+     *
+     *         **This list is not claimed to be complete, and treating it as
+     *         complete is the failure mode.** Entry 5 was found in the round
+     *         AFTER a sweep that presented entries 1-4 (then 1-5) as swept —
+     *         twice. Each round I have declared the enumeration finished, and
+     *         each round it has grown.
+     *
+     *         4, 5 and 6 are KNOWN-UNRESERVED. An r3 revision did subtract 4 and
+     *         it was REVERTED in r4 — the body records why. (This paragraph
+     *         still said "it is now subtracted" after that revert, and said
+     *         "two rounds, two claimants" after the count reached five. Both
+     *         are corrected here; reverting a change is itself a sweep, and
+     *         treating it as a single edit is what left them. Codex #1555 r7.)
+     *
+     *         A list that grows in every round it is declared finished is what
+     *         says the enumeration is the wrong instrument: a payout bounded
+     *         by BALANCE must know every owner of that balance, forever, and
+     *         a missed one is silent. The durable fix is to bound payout by
+     *         funding DELIVERED FOR REWARDS instead, which needs no list —
+     *         tracked on
+     *         #1498, shared root with #1434 prerequisite 1. Anyone adding a
+     *         new VPFI custody class must land THAT BOUND — not another
+     *         subtraction here. (An earlier revision offered the two as
+     *         alternatives, which contradicted the "do NOT add a sixth
+     *         subtraction" instruction below and would have re-created the
+     *         claim-versus-expiry divergence that forced the treasury
+     *         subtraction to be reverted. Codex #1555 r6.)
+     *
+     *         So on a deployment ORIGINATED from this source the borrower-LIF
+     *         term is zero. `unearmarked` is exact only to the extent this
+     *         list is complete. On a Diamond **UPGRADED** from
+     *         a pre-#1352 deployment it is NOT: custody against loans open at
+     *         the upgrade sits inside this figure, a reward claim or the RL-3
+     *         sweep can spend or relabel it, and the borrower's later
+     *         settlement then reverts or leaves them unpaid. **That exposure
+     *         is real and is NOT closed here — #1498 stays open for it.** Its
+     *         root is shared with #1434 prerequisite 1: reward payout is
+     *         bounded by un-earmarked BALANCE rather than by funding
+     *         DELIVERED FOR REWARDS, and only the delivered bound fixes both.
+     *         Re-wiring the producer re-opens it on a fresh deployment too;
+     *         the guard there is `testAcceptOfferWithVPFIDiscountApplied`,
+     *         which stakes the borrower to tier 1, clears the history gate,
+     *         opts into consent and asserts `dBorrower == 1000` BEFORE
+     *         asserting no custody is taken — so it fails on re-wiring rather
+     *         than passing vacuously on an unmet precondition.
+     *
      *         `unearmarked` is exactly the quantity #1460's third condition
      *         turns on — the defect needs a non-zero bucket AND a
      *         scheduled-only claim AND this figure below the scheduled
@@ -293,6 +461,21 @@ library LibVpfiRecycle {
      *         balance available to fresh/scheduled payout without eating
      *         recycle backing. Zero means fully consumed OR in breach; read
      *         it with `vpfiBalance` and `bucket` to tell those apart.
+     *
+     *         **This is an UPPER BOUND on genuinely free tokens, on every
+     *         deployment.** Other owners of this balance are known and
+     *         unsubtracted — see the table above for which, and the body for
+     *         why enumerating them was abandoned and what replaces it
+     *         (#1498). Do not read a healthy value here as "these tokens are
+     *         free to pay out".
+     *
+     *         **No count is given here deliberately.** This sentence has
+     *         carried a stale number in three consecutive review rounds —
+     *         it said four while the table said five, then six, then eight.
+     *         A count is a claim that goes out of date every time the list
+     *         grows, and this list has grown in every round it was declared
+     *         complete. The table is the single place that enumerates; every
+     *         other reference points at it rather than restating its size.
      */
     function backingPosition(LibVaipakam.Storage storage s)
         internal
@@ -309,6 +492,41 @@ library LibVpfiRecycle {
         if (token == address(0)) revert RecycleBackingTokenUnset();
         vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
+        // #1555 r4 — this subtracts the BUCKET ONLY, and that is now a
+        // DELIBERATE stopping point rather than an oversight. An r3 revision
+        // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
+        // full, because the reasoning is the useful part:
+        //
+        // Review kept surfacing further owners of this one balance. The list
+        // is in the natspec above and is NOT duplicated or counted here — an
+        // earlier revision kept a second copy and a total, and both went
+        // stale within a round. Read the table.
+        //
+        // Some of those owners are USER COLLATERAL rather than protocol
+        // ledgers — a live swap-to-repay intent's custody, and liquidation
+        // fallback custody. A reward payout drawing on those spends a
+        // BORROWER's collateral, which is a different severity from
+        // over-drawing an operational budget.
+        //
+        // Each round produced another and the rate did not fall. A bound of
+        // the form "balance minus the owners we remembered to list" cannot be
+        // made sound: completeness is unverifiable and a miss is SILENT.
+        //
+        // Worse, patching it compounds. The r3 treasury subtraction
+        // immediately diverged this from the RL-3 expiry predicates
+        // (`sweepExpiredEntry` / `_entryExecutableNow`), which still test
+        // `balanceOf >= fundingNeed` — so horizon clocks accrued while claims
+        // reverted and an entry could expire without ever having an
+        // executable notice window. A fix that manufactures a new defect is
+        // the signal to stop patching (#1499 tracks that divergence).
+        //
+        // So the remaining claimants stay KNOWN-UNRESERVED and are recorded
+        // as such rather than half-fixed. #1498 carries the durable remedy:
+        // bound a reward payout by funding DELIVERED FOR REWARDS, which needs
+        // no enumeration and closes every owner at once — the same bound
+        // #1434 prerequisite 1 needs for the cross-chain axis.
+        //
+        // Do NOT add a sixth subtraction here. Land that bound.
         unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
     }
 

@@ -9,7 +9,15 @@
 
 import { describe, expect, it, beforeAll } from 'vitest';
 import i18n from 'i18next';
-import { submitErrorText } from './errors';
+import {
+  BaseError,
+  ContractFunctionExecutionError,
+  ContractFunctionZeroDataError,
+  HttpRequestError,
+  IntegerOutOfRangeError,
+  TimeoutError,
+} from 'viem';
+import { isContractAnswered, submitErrorText } from './errors';
 
 // A revert carrying only the decoded error NAME (no selector bytes) — the
 // decoder keys it by the name, which is what the locale bundle mirrors.
@@ -39,5 +47,131 @@ describe('submitErrorText — localized contract errors', () => {
 
     await i18n.changeLanguage('en');
     expect(submitErrorText(MAX_LENDING_REVERT)).toMatch(/collateral is too low/i);
+  });
+});
+
+/**
+ * `isContractAnswered` is the discriminator every OPTIONAL read uses to
+ * decide whether its fallback is safe (Codex #1547 r15/r16) — the
+ * stuck-token recovery form's `symbol()` / `decimals()` reads today.
+ *
+ * The two directions are asymmetric on purpose and BOTH are load-bearing:
+ *  - a legacy `bytes32` symbol (MKR and friends) fails to DECODE something
+ *    the node answered, and must read as "metadata unavailable" so the
+ *    token stays recoverable behind the short-address fallback;
+ *  - anything the node did NOT answer must not, because reading it as
+ *    "this token has no decimals" once let an 18-decimal token parse as
+ *    raw base units — a user typing `1` would sign for one base unit.
+ *
+ * The POSITIVE shape (recognise a contract answer, default unreadable)
+ * is itself load-bearing: r15 used a denylist of transport names and
+ * that silently re-opened the r10 bug, because viem also reports
+ * node-side failures as RpcRequestError / InternalRpcError /
+ * LimitExceededRpcError / ResourceUnavailableRpcError. The unknown-name
+ * case below pins the safe default.
+ *
+ * Built from REAL viem errors rather than hand-shaped objects, so the
+ * name list is pinned against the library it classifies.
+ */
+describe('isContractAnswered — optional-read fallback discriminator', () => {
+  const execError = (cause: BaseError) =>
+    new ContractFunctionExecutionError(cause, {
+      abi: [],
+      functionName: 'symbol',
+    });
+
+  it('accepts a bytes32 symbol() — the decoder failed, not the node', () => {
+    const decodeFailure = new IntegerOutOfRangeError({
+      max: '1',
+      min: '0',
+      signed: false,
+      size: 32,
+      value: '2',
+    });
+    expect(isContractAnswered(execError(decodeFailure))).toBe(true);
+  });
+
+  it('accepts decoder failures by pattern, including names no list had', () => {
+    // r15 missed IntegerOutOfRangeError; r16's explicit list then missed
+    // PositionOutOfBoundsError (a zero-word dynamic-string offset). The
+    // pattern covers the family rather than chasing names one round at a
+    // time — that enumeration was provably incomplete twice.
+    for (const name of [
+      'PositionOutOfBoundsError',
+      'SliceOffsetOutOfBoundsError',
+      'AbiDecodingDataSizeTooSmallError',
+      'AbiDecodingZeroDataError',
+      'IntegerOutOfRangeError',
+      'InvalidBytesBooleanError',
+      'SizeOverflowError',
+    ]) {
+      expect(
+        isContractAnswered({
+          name: 'ContractFunctionExecutionError',
+          cause: { name },
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it('accepts the contract-level absences (revert / zero data)', () => {
+    expect(
+      isContractAnswered(
+        execError(new ContractFunctionZeroDataError({ functionName: 'symbol' })),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a transport failure however deeply it is wrapped', () => {
+    const http = new HttpRequestError({ url: 'https://rpc.example', details: 'boom' });
+    expect(isContractAnswered(http)).toBe(false);
+    expect(isContractAnswered(execError(http))).toBe(false);
+    // The shape a real read produces: contract -> call -> transport.
+    expect(
+      isContractAnswered({
+        name: 'ContractFunctionExecutionError',
+        cause: { name: 'CallExecutionError', cause: http },
+      }),
+    ).toBe(false);
+    expect(
+      isContractAnswered(new TimeoutError({ body: {}, url: 'https://rpc.example' })),
+    ).toBe(false);
+  });
+
+  it('rejects node-side JSON-RPC failures — the r16 regression', () => {
+    // A rate limit / unavailable resource / internal node error is NOT a
+    // contract answer; the r15 denylist let all of these through.
+    for (const name of [
+      'RpcRequestError',
+      'InternalRpcError',
+      'LimitExceededRpcError',
+      'ResourceUnavailableRpcError',
+    ]) {
+      expect(
+        isContractAnswered({
+          name: 'ContractFunctionExecutionError',
+          cause: { name: 'CallExecutionError', cause: { name } },
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('defaults to unreadable for anything it does not recognise', () => {
+    // The safe default: an unknown failure is NOT license to take a
+    // metadata fallback.
+    expect(isContractAnswered(new Error('reverted'))).toBe(false);
+    expect(isContractAnswered({ name: 'SomeFutureViemError' })).toBe(false);
+    expect(isContractAnswered(null)).toBe(false);
+    expect(isContractAnswered(undefined)).toBe(false);
+    expect(isContractAnswered('HttpRequestError')).toBe(false);
+  });
+
+  it('a node failure vetoes even when a contract-shaped name is also present', () => {
+    expect(
+      isContractAnswered({
+        name: 'ContractFunctionZeroDataError',
+        cause: { name: 'LimitExceededRpcError' },
+      }),
+    ).toBe(false);
   });
 });

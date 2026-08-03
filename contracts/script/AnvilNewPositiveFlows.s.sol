@@ -1318,26 +1318,37 @@ contract AnvilNewPositiveFlows is Script {
     ///           vault (Tier-2: 15% rebate band) via
     ///           `depositVPFIToVault`, then opts in via
     ///           `setVPFIDiscountConsent(true)`.
-    ///        4. Lender + borrower take a normal loan. `_acceptOffer`
-    ///           calls `LibVPFIDiscount.tryApplyBorrowerLif` which
-    ///           deducts the 0.1% LIF in VPFI from the borrower's
-    ///           vault into Diamond custody (recorded on
-    ///           `borrowerLifRebate[loanId].vpfiHeld`).
-    ///        5. Borrower repays. `settleBorrowerLifProper` splits
-    ///           `vpfiHeld` time-weighted: rebate to borrower,
-    ///           treasury share to treasury.
-    ///        6. `claimAsBorrower` pays out the rebate atomically.
+    ///        4. Lender + borrower take a normal loan. Under the
+    ///           **HoldOnly** model (#1352) the borrower's hold-tier
+    ///           discount is applied DIRECTLY to the lending-asset LIF
+    ///           at acceptance: no VPFI leaves the borrower's vault and
+    ///           NO custody is taken, so `vpfiHeld` stays 0.
+    ///        5. Borrower repays. `settleBorrowerLifProper` still runs
+    ///           on every proper-close path, but returns immediately at
+    ///           `held == 0` — it is a no-op for a HoldOnly loan.
+    ///        6. `claimAsBorrower` therefore pays no VPFI rebate; there
+    ///           is no rebate slot to pay.
     ///
-    ///      End-state assertions: borrower's VPFI wallet balance is
-    ///      higher post-claim than after the deposit (some VPFI came
-    ///      back as rebate); the discount-applied flag fired.
+    ///      **Required assertion: `vpfiHeld == 0` after acceptance** — the
+    ///      observable end state of a HoldOnly loan. It is NOT a guard
+    ///      against reconnecting the peg-custody path; see the long note at
+    ///      the assertion for why three attempts to make it one failed and
+    ///      where that guard actually lives.
     ///
-    ///      If the discount-quote conversion silently fails (wrong
-    ///      mock rate, missing oracle), the path falls through to the
-    ///      normal-LIF (lending-asset fee) flow — the loan still
-    ///      settles. The scenario asserts the loan settled cleanly
-    ///      either way; explicit "rebate received" verification is
-    ///      best-effort (logged, not required).
+    ///      #1555 r2 — this natspec previously described acceptance as
+    ///      calling `tryApplyBorrowerLif`, moving VPFI into custody and
+    ///      paying a rebate at close. That path was retired by #1352 and
+    ///      the producer has had no caller since. Because the scenario's
+    ///      only hard requirement was "the loan settled" and the rebate
+    ///      check was explicitly best-effort, it kept PASSING while
+    ///      exercising none of what it advertised — and taught every
+    ///      reader the inverse of the current behaviour. The tier setup
+    ///      in steps 1-3 is kept as it was, but it does NOT establish the
+    ///      full preconditions the retired path required (this drive never
+    ///      sets `isCanonicalVpfiChain`, so the mirror-tier cache is empty
+    ///      and the effective tier reads zero) — so the assertion below
+    ///      pins the observable HoldOnly end state and is NOT a guard
+    ///      against reconnection. See the note at the assertion.
     // ─── VPFI-config snapshot fields (set in N10, restored after N14) ───
     //
     // N10 + N13 + N14 form a single VPFI-discount + deposit sequence
@@ -1395,8 +1406,57 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
 
-        // Step 4: take a loan. Tier-2 borrower with consent enabled
-        // and liquid lending asset triggers tryApplyBorrowerLif.
+        // #1555 r3 — CLEAR THE MIN-HISTORY GATE FIRST. `effectiveTierAndBps`
+        // returns tier 0 until the default three-day staking window elapses,
+        // and the retired `tryApplyBorrowerLif` took its eligibility from
+        // that gated tier. Accepting immediately after the deposit would
+        // therefore leave the borrower ineligible, so the no-custody
+        // assertion below would have held whether or not the path were
+        // reconnected — vacuous, exactly what the previous revision claimed
+        // it had fixed. The focused unit test warps four days for the same
+        // reason; this drive must too.
+        vm.warp(block.timestamp + 4 days);
+
+        // #1555 r4 — READ THIS BEFORE CALLING THE CHECK BELOW A GUARD.
+        //
+        // I have now claimed three times that N10's `vpfiHeld == 0` assertion
+        // is non-vacuous, and been wrong three times. The claim is therefore
+        // WITHDRAWN rather than made a fourth time, and what the assertion
+        // actually establishes is stated instead.
+        //
+        // Round 2: added the assertion, ignoring that tier is gated.
+        // Round 3: added the four-day warp, ignoring that
+        //   `getVPFIDiscountTier` returns the RAW vault-balance tier and
+        //   bypasses the effective history/cache gates the retired
+        //   `quote()` path actually consulted.
+        // Round 4: `anvil-bootstrap.sh` never sets `isCanonicalVpfiChain`
+        //   and N10 only calls `setVPFIToken`, so the mirror-tier cache is
+        //   empty and a reconnected `tryApplyBorrowerLif` would return
+        //   `(false, 0)` regardless — leaving `vpfiHeld == 0` for the wrong
+        //   reason.
+        //
+        // So: this asserts the OBSERVABLE END STATE (no custody receipt on a
+        // HoldOnly loan), which is worth pinning and is true. It is NOT a
+        // guard against reconnecting the peg-custody path — that guard is
+        // `testAcceptOfferWithVPFIDiscountApplied`, which runs against a
+        // fully-configured diamond. Making it one here requires configuring
+        // the canonical/cache state this drive does not set up, and asserting
+        // `getEffectiveDiscount` or the full borrower quote rather than the
+        // raw tier.
+        (, , uint256 dBorrowerN10) = VPFIDiscountFacet(diamond)
+            .getVPFIDiscountTier(borrower);
+        console.log(
+            "Raw vault-balance tier bps (NOT the effective gate):",
+            dBorrowerN10
+        );
+
+        // Step 4: take a loan. The borrower holds a tier-worthy vault balance
+        // with consent enabled on a liquid lending asset. That is NOT the
+        // full set of preconditions the retired peg-custody path required —
+        // this drive never configures `isCanonicalVpfiChain`, so the
+        // mirror-tier cache stays empty and the effective tier reads zero
+        // regardless. Stated so nobody reads the setup as establishing more
+        // than it does (#1555 r6).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -1407,16 +1467,35 @@ contract AnvilNewPositiveFlows is Script {
         weth.approve(diamond, COLLATERAL_AMOUNT);
         uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t9, _sig9);
         vm.stopBroadcast();
-        console.log("Loan initiated under VPFI discount path:", loanId);
+        console.log("Loan initiated under HoldOnly borrower LIF:", loanId);
 
-        // Step 5: repay → settleBorrowerLifProper splits the held VPFI
-        // into rebate + treasury share.
+        // The scenario's required check: a HoldOnly loan takes no VPFI
+        // custody, so the rebate receipt must be empty on both fields.
+        //
+        // #1555 r6 — this is an OBSERVABLE END-STATE check and nothing more.
+        // An earlier revision said it "fails loudly if the retired
+        // peg-custody origination path is re-wired"; that was the same
+        // overclaim withdrawn in the note above and it survived there.
+        // Re-wiring would NOT fail this on the fresh-Anvil path, because the
+        // empty mirror-tier cache leaves the retired path returning
+        // `(false, 0)` anyway. The re-wiring guard is
+        // `testAcceptOfferWithVPFIDiscountApplied`.
+        {
+            (uint256 rebateAmt_, uint256 vpfiHeld_) =
+                ClaimFacet(diamond).getBorrowerLifRebate(loanId);
+            require(vpfiHeld_ == 0, "N10: HoldOnly loan must take NO VPFI custody");
+            require(rebateAmt_ == 0, "N10: HoldOnly loan must have no rebate slot");
+        }
+        console.log("Asserted: no VPFI custody taken (vpfiHeld == 0)");
+
+        // Step 5: repay. settleBorrowerLifProper still runs on the proper
+        // -close path but is a no-op here, returning at `held == 0`.
         vm.startBroadcast(borrowerKey);
         uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
         usdc.approve(diamond, repayAmt + 100e6);
         RepayFacet(diamond).repayLoan(loanId);
         vm.stopBroadcast();
-        console.log("Loan repaid; settleBorrowerLifProper split rebate vs treasury");
+        console.log("Loan repaid; settleBorrowerLifProper was a no-op (held == 0)");
 
         // Step 6: claim borrower → rebate atomically delivered.
         uint256 vpfiBalBefore = vpfi.balanceOf(borrower);
@@ -1424,10 +1503,16 @@ contract AnvilNewPositiveFlows is Script {
         uint256 vpfiBalAfter = vpfi.balanceOf(borrower);
         console.log("VPFI wallet pre-claim:", vpfiBalBefore);
         console.log("VPFI wallet post-claim:", vpfiBalAfter);
-        // Rebate-received check is best-effort: depending on whether
-        // the LIF→VPFI quote succeeded, vpfiHeld may be 0 (fall-
-        // through path) and rebateAmount = 0. Either way the loan
-        // settled — that's the assertion we make.
+        // #1555 r2 — no rebate is expected: HoldOnly took no custody, so
+        // there is nothing for `claimAsBorrower` to pay back in VPFI. The
+        // wallet figures above are logged for the operator, not asserted
+        // against. The custody assertion that carries this scenario is the
+        // `vpfiHeld == 0` require at acceptance; this one confirms the loan
+        // reached a terminal state through the no-op settlement path.
+        //
+        // The previous comment described this as "best-effort depending on
+        // whether the LIF→VPFI quote succeeded" — a fall-through that has
+        // not been reachable since #1352 retired the path it fell back from.
         LibVaipakam.Loan memory loanAfter = LoanFacet(diamond).getLoanDetails(loanId);
         require(
             loanAfter.status != LibVaipakam.LoanStatus.Active,
@@ -1609,9 +1694,12 @@ contract AnvilNewPositiveFlows is Script {
     ///      6 decimals). The test therefore (a) reads USDC treasury
     ///      balance pre and post a fresh loan-and-repay and asserts
     ///      it's non-decreasing (the counter is monotonic on positive
-    ///      paths), and (b) reads VPFI treasury balance — which DOES
-    ///      grow when N10's settleBorrowerLifProper runs because the
-    ///      LIF amount is fixed (not duration-weighted). Real treasury
+    ///      paths), and (b) reads VPFI treasury balance as a CALL-SURFACE
+    ///      check only. #1555 r3 — this used to claim the VPFI counter
+    ///      "DOES grow when N10's settleBorrowerLifProper runs"; that has
+    ///      been false since #1352 retired the peg-custody path, so N10
+    ///      holds nothing to forward and no current positive flow in this
+    ///      drive accrues VPFI treasury revenue. Real treasury
     ///      growth on duration-bearing fees is exercised by
     ///      TreasuryFacetTest.t.sol unit tests where vm.warp can move
     ///      simulation time.
@@ -1650,14 +1738,33 @@ contract AnvilNewPositiveFlows is Script {
             "N20: USDC treasury must be non-decreasing"
         );
 
-        // VPFI treasury surface: N10 ran settleBorrowerLifProper which
-        // forwards the treasury share of the held LIF to treasury, so
-        // the VPFI counter should be > 0 by the time we reach N20.
+        // VPFI treasury surface — CALL-SURFACE ONLY, and now honestly
+        // labelled as such (#1555 r3).
+        //
+        // This block used to say N10's `settleBorrowerLifProper` forwards the
+        // treasury share of held LIF, so the VPFI counter "should be > 0 by
+        // the time we reach N20". That has been false since #1352 retired the
+        // peg-custody path: N10 takes no custody, so its settlement is a
+        // no-op and forwards nothing. The check underneath was
+        // `vpfiTreasuryAtEntry >= 0` — tautological for a uint256 — so the
+        // scenario reported the treasury-accrual case as passing while
+        // exercising no VPFI accrual at all, and kept teaching operators that
+        // the retired flow had run.
+        //
+        // Deliberately NOT replaced with a manufactured accrual: no current
+        // positive flow in this drive produces VPFI treasury revenue (the
+        // Full tariff credits the recycle bucket, not treasury). Asserting
+        // reachability and saying so is honest; inventing a source to make an
+        // assertion look strong would be the same failure in a new costume.
+        // Real VPFI treasury accrual is covered by TreasuryFacetTest.
         require(
-            vpfiTreasuryAtEntry >= 0, // tautological — assertion is just on the call surface
+            vpfiTreasuryAtEntry >= 0, // tautological BY DESIGN — see above
             "N20: VPFI treasury balance call should not revert"
         );
-        console.log("VPFI treasury at N20 entry:", vpfiTreasuryAtEntry);
+        console.log(
+            "VPFI treasury at N20 entry (no current flow accrues it):",
+            vpfiTreasuryAtEntry
+        );
 
         console.log(">>> N20 PASSED <<<");
     }
