@@ -46,13 +46,14 @@ Three post-submission cases are handled with the same care as the rest
 of the flow. If the wallet replaces the transaction, the page follows the
 replacement, so every result and every block-explorer link names the
 transaction that actually went through — and it now pays attention to
-what kind of replacement it was. A cancellation, or a replacement
-carrying different instructions, that goes through without recovering
-anything is reported as exactly that: nothing was recovered. A plain fee
-bump is not the same thing — it re-sends the very same instructions at a
-higher price, so it is still the recovery, and a result the page can't
-read off it is reported as an unknown outcome rather than as a recovery
-that never happened. If the transaction was sent but its confirmation could not
+what kind of replacement it was. Only a cancellation — the wallet
+deliberately voiding the transaction — is reported as the definite
+"nothing was recovered". Every other replacement is reported as an
+outcome to be checked rather than as a recovery that never happened: a
+plain fee bump re-sends the very same instructions at a higher price, so
+it is still the recovery, and a replacement carrying different
+instructions could equally be a second recovery for another token. If the
+transaction was sent but its confirmation could not
 be read, the page no longer offers a plain "start over" that would
 throw the transaction away: it offers a "check the transaction again"
 action instead, because a transaction that quietly went through would
@@ -124,7 +125,26 @@ that submission instead; a tab sitting on the form also picks up a
 submission the other tab records, so both show the same state. And when
 a submission is resolved and forgotten, only that submission is
 forgotten — a newer one recorded in the meantime survives, instead of
-being quietly wiped along with it.
+being quietly wiped along with it. The same rule now covers updates, not
+just forgetting: a wallet that takes a long time to answer can come back
+after the other tab has already settled that attempt and started a new
+one, and its late answer no longer overwrites the newer record — which
+would have left the newer recovery unprotected the moment the older one
+finished.
+
+Turning a wallet's transaction prompt down is now treated as what it is.
+Declining the transaction itself proves nothing was sent, so the page
+returns to the review card with the usual "you rejected it" message and
+forgets the attempt, instead of holding the flow on the unresolved-
+submission card until the signed approval expires half an hour later.
+Failures that only *look* like a refusal — a wallet that goes quiet, a
+lost connection — still get the cautious pending treatment, because those
+genuinely can hide a transaction already on its way.
+
+The form also refuses the all-zero address. It reads as a valid address
+to a simple format check, but it belongs to no one, so declaring it as
+the sender you control was never a meaningful statement to sign; both
+address fields now say so and stop the flow there.
 
 If the browser refuses to store that record at all — private browsing,
 storage switched off, storage full — the page now says so on the card

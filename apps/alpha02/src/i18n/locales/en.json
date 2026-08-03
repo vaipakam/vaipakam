@@ -805,6 +805,7 @@
       "tokenMeta": "{{symbol}} · {{decimals}} decimals",
       "maxRecoverable": "Recoverable surplus: {{amount}}",
       "tokenLookupFailed": "We couldn’t read this token’s details — check the address and try again.",
+      "errZeroAddress": "That’s the all-zero address (0x0000…0000) — it belongs to no one and can’t be used here. Enter the real address.",
       "sourceLabel": "Sender address (a wallet you control)",
       "sourceHint": "The address these tokens actually came from. Declaring it here asserts on-chain that it belongs to you or acted with your permission.",
       "amountLabel": "Amount to recover",

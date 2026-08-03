@@ -42,6 +42,7 @@ import {
   stringToBytes,
   decodeEventLog,
   TransactionNotFoundError,
+  UserRejectedRequestError,
   type Hex,
   type PublicClient,
 } from 'viem';
@@ -54,7 +55,7 @@ import {
   assertWalletNotSanctionedLive,
   useSanctionsCheck,
 } from '../data/sanctions';
-import { captureTxError } from '../lib/errors';
+import { captureTxError, isUserRejection } from '../lib/errors';
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, shortAddress } from '../lib/format';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
@@ -323,15 +324,62 @@ function clearPendingRecoveryIfMatches(
 ): void {
   const stored = readPendingRecovery(chainId, account);
   if (stored === null) return;
-  const matches =
-    txHash !== null
-      ? stored.txHash !== null &&
-        stored.txHash.toLowerCase() === txHash.toLowerCase()
-      : stored.txHash === null &&
-        recoveryNonce !== undefined &&
-        stored.recoveryNonce === recoveryNonce;
-  if (!matches) return;
+  if (!pendingRecoveryMatches(stored, txHash, recoveryNonce)) return;
   pendingRecoveryStore.write(chainId, account.toLowerCase(), null);
+}
+
+/**
+ * The ONE identity rule both conditional writers use: is the record
+ * currently in storage the same attempt the caller is settling?
+ *
+ * By transaction hash when the caller knows one; by the signed recovery
+ * nonce against a still-HASHLESS record otherwise (the signed-but-
+ * unacknowledged shape, which has no hash to compare).
+ */
+function pendingRecoveryMatches(
+  stored: PendingRecoveryRecord,
+  txHash: Hex | null,
+  recoveryNonce?: string,
+): boolean {
+  return txHash !== null
+    ? stored.txHash !== null &&
+        stored.txHash.toLowerCase() === txHash.toLowerCase()
+    : stored.txHash === null &&
+      recoveryNonce !== undefined &&
+      stored.recoveryNonce === recoveryNonce;
+}
+
+/**
+ * Re-point the stored record at a new transaction hash ONLY when the
+ * record still belongs to THIS attempt (Codex #1547 r9).
+ *
+ * The unconditional write this replaces could clobber a NEWER record
+ * another tab wrote: a wallet that answers late (the send was handed
+ * over, the reply took minutes) can return its hash after the other tab
+ * already reconciled this attempt, acknowledged it and started a fresh
+ * recovery — and the write would then stamp the OLD attempt's hash onto
+ * the new record, whose lock the later conditional clear would delete
+ * as if it were ours. Matching first leaves the newer record alone; this
+ * attempt's own outcome handling runs off local state either way.
+ *
+ * Returns FALSE only when a MATCHING record could not be written
+ * (storage refused) — the degraded state the caller surfaces. A
+ * non-matching record is a deliberate no-op, not a persistence failure.
+ */
+function updatePendingRecoveryHashIfMatches(
+  chainId: number,
+  account: string,
+  matchHash: Hex | null,
+  recoveryNonce: string,
+  nextHash: Hex,
+): boolean {
+  const stored = readPendingRecovery(chainId, account);
+  if (stored === null) return true;
+  if (!pendingRecoveryMatches(stored, matchHash, recoveryNonce)) return true;
+  // Spread the STORED record, not the caller's copy — it is this
+  // attempt by the check above, and anything a concurrent writer added
+  // to it survives the hash upgrade.
+  return writePendingRecovery(chainId, account, { ...stored, txHash: nextHash });
 }
 
 /**
@@ -353,6 +401,44 @@ function isTransactionNotFound(err: unknown): boolean {
     err !== null &&
     (err as { name?: unknown }).name === 'TransactionNotFoundError'
   );
+}
+
+/**
+ * Did the user EXPLICITLY reject the transaction in the wallet (Codex
+ * #1547 r9)?
+ *
+ * This is the one post-signature failure that positively proves nothing
+ * was broadcast: the wallet asked, the user said no, the send was never
+ * made. Every other failure after the signature is ambiguous (a lost
+ * JSON-RPC reply over a transaction already in the mempool), which is
+ * why the signed-attempt marker exists at all — but treating a flat
+ * rejection as ambiguous locks the flow behind a pending card until the
+ * 30-minute deadline expires, over a transaction that does not exist.
+ *
+ * The signature alone cannot execute anything: `recoverStuckERC20`
+ * requires the recovered signer to EQUAL msg.sender, so nobody else can
+ * relay it. Clearing the record on this branch is safe.
+ *
+ * Detection mirrors `isTransactionNotFound`'s name-fallback discipline:
+ * `instanceof` alone is unreliable when the pnpm workspace resolves more
+ * than one physical copy of viem (the wallet client's errors may come
+ * from a different copy than this module's import), so the viem error
+ * `name` and the EIP-1193 `code` 4001 are checked down the cause chain
+ * too. `isUserRejection` covers the viem-BaseError `walk` path; the loop
+ * below covers the plain nested shapes an injected provider produces.
+ */
+function isUserRejectedTransaction(err: unknown): boolean {
+  if (err instanceof UserRejectedRequestError) return true;
+  if (isUserRejection(err)) return true;
+  let node: unknown = err;
+  for (let depth = 0; node != null && depth < 6; depth += 1) {
+    if (typeof node !== 'object') break;
+    const o = node as { name?: unknown; code?: unknown; cause?: unknown };
+    if (o.name === 'UserRejectedRequestError') return true;
+    if (o.code === 4001) return true;
+    node = o.cause;
+  }
+  return false;
 }
 
 /** Display cap for an attacker-controlled token symbol. */
@@ -751,8 +837,16 @@ export function Recover() {
   const [lookup, setLookup] = useState<TokenLookup | null>(null);
   const [lookupFailed, setLookupFailed] = useState(false);
 
-  const validToken = isAddress(tokenInput);
-  const validSource = isAddress(sourceInput);
+  // NON-ZERO is part of "valid" here (Codex #1547 r9): `isAddress`
+  // accepts 0x0000…0000, so without this the user could reach review
+  // and SIGN an ownership declaration ("this address is mine, or acted
+  // with my permission") over the zero address — an address nobody
+  // controls, and the burn/uninitialised sentinel besides. The token
+  // side gets the same guard: the zero address is not an ERC-20.
+  const isZeroAddressInput = (value: string) =>
+    isAddress(value) && value.toLowerCase() === ZERO_ADDRESS;
+  const validToken = isAddress(tokenInput) && !isZeroAddressInput(tokenInput);
+  const validSource = isAddress(sourceInput) && !isZeroAddressInput(sourceInput);
 
   // The lookup only counts when it describes the CURRENT input — a
   // stale object for a previously-entered token must gate nothing.
@@ -912,6 +1006,11 @@ export function Recover() {
     // so the catch must land on the pending card, hash or no hash.
     // Cleared again only by a definitively-read reverted receipt.
     let attemptSigned = false;
+    // Identity-matched clear for THIS attempt's persisted record, made
+    // available to the catch (Codex #1547 r9). Assigned the moment the
+    // record exists; the explicit-rejection branch is its only caller
+    // outside the try.
+    let forgetSignedAttempt: ((hash: Hex | null) => void) | null = null;
     // What a terminal card needs beyond the receipt (Codex #1547 r5) —
     // captured alongside the hash so the pending card can hand it to
     // the reconcile action.
@@ -938,6 +1037,16 @@ export function Recover() {
       const token = snapshot.token as `0x${string}`;
       const declaredSource = sourceInput as `0x${string}`;
       const amount = amountWei;
+
+      // Mirror of the form gate (Codex #1547 r9) — never sign an
+      // ownership declaration naming the zero address, whatever route
+      // reached this call.
+      if (
+        declaredSource.toLowerCase() === ZERO_ADDRESS ||
+        token.toLowerCase() === ZERO_ADDRESS
+      ) {
+        throw new Error(copy.recover.errZeroAddress);
+      }
 
       // Lock the review controls for the whole pre-sign-check + wallet
       // prompt window (Codex #1547 r1) — every abort path below
@@ -1202,7 +1311,9 @@ export function Recover() {
       if (!writePendingRecovery(walletChain.chainId, address, persistedRecord)) {
         if (genRef.current === gen) setPersistFailed(true);
       }
-      // From here a rejection is NOT provably pre-broadcast.
+      // From here a rejection is NOT provably pre-broadcast (with the
+      // one exception the catch handles — an explicit wallet rejection
+      // of the TRANSACTION, Codex #1547 r9).
       attemptSigned = true;
       const forgetPending = (hash: Hex | null) =>
         clearPendingRecoveryIfMatches(
@@ -1211,6 +1322,10 @@ export function Recover() {
           hash,
           nonce.toString(),
         );
+      // Exposed to the catch (Codex #1547 r9) so the explicit-rejection
+      // branch can drop THIS attempt's record — identity-matched, so a
+      // newer record another tab wrote is never touched.
+      forgetSignedAttempt = forgetPending;
 
       if (genRef.current !== gen) return; // Codex #1547 r3
       setStep({ kind: 'submitting' });
@@ -1225,11 +1340,20 @@ export function Recover() {
       submittedTxHash = txHash; // broadcast — no return-to-review past here (Codex #1547 r4)
       // Upgrade the hashless record now that the wallet named the
       // transaction — the by-hash probes become available again.
+      //
+      // CONDITIONAL (Codex #1547 r9): only while the stored record is
+      // still THIS attempt — same signed nonce, still hashless. A wallet
+      // that answered late may be returning into a world where another
+      // tab already reconciled this attempt and recorded a NEW one; that
+      // record must survive untouched.
       if (
-        !writePendingRecovery(walletChain.chainId, address, {
-          ...persistedRecord,
+        !updatePendingRecoveryHashIfMatches(
+          walletChain.chainId,
+          address,
+          null, // match the hashless record this attempt persisted
+          nonce.toString(),
           txHash,
-        })
+        )
       ) {
         if (genRef.current === gen) setPersistFailed(true);
       }
@@ -1250,17 +1374,26 @@ export function Recover() {
           // 'replaced' only says destination/value/input DIFFER, which
           // a second recovery with other parameters also satisfies.
           replacement.reason = event.reason;
+          // The hash the record currently carries — matched against
+          // storage below BEFORE the marker moves on.
+          const persistedHash = submittedTxHash;
           // Keep the post-broadcast marker on the hash that is actually
           // live, so a later throw parks the pending card on it.
           submittedTxHash = event.transaction.hash;
           // Re-point the PERSISTED record at the live hash too (Codex
           // #1547 r6) — a receipt lookup after a reload then resolves
           // directly instead of falling back to the nonce comparison.
+          // Identity-matched like every other write on this path (Codex
+          // #1547 r9): a record another tab has since replaced is left
+          // alone rather than stamped with this attempt's hash.
           if (
-            !writePendingRecovery(walletChain.chainId, address, {
-              ...persistedRecord,
-              txHash: event.transaction.hash,
-            })
+            !updatePendingRecoveryHashIfMatches(
+              walletChain.chainId,
+              address,
+              persistedHash,
+              nonce.toString(),
+              event.transaction.hash,
+            )
           ) {
             if (genRef.current === gen) setPersistFailed(true);
           }
@@ -1370,6 +1503,28 @@ export function Recover() {
       // The invalidation publishes even for a stale generation (same
       // rule as the decoded outcomes); only the step commit is
       // identity-bound.
+      //
+      // ONE exception (Codex #1547 r9): the user EXPLICITLY rejected the
+      // transaction in the wallet. That is a positive fact — the send
+      // was never made — and treating it as ambiguous stranded the flow
+      // on a pending card until the signed 30-minute deadline expired,
+      // over a transaction that does not exist. The signature alone
+      // can't execute anything (`recoverStuckERC20` requires the
+      // recovered signer to equal msg.sender, so nobody can relay it),
+      // so drop this attempt's record — identity-matched, never a newer
+      // one — and go back to review with the normal rejection message.
+      // Ambiguous transport failures keep the pending treatment below.
+      if (
+        submittedTxHash === null &&
+        attemptSigned &&
+        isUserRejectedTransaction(err)
+      ) {
+        forgetSignedAttempt?.(null);
+        if (genRef.current !== gen) return; // Codex #1547 r3
+        setStep({ kind: 'review' });
+        setError(captureTxError(err));
+        return;
+      }
       if (submittedTxHash !== null || attemptSigned) {
         publishReceiptInvalidation(queryClient);
         if (genRef.current !== gen) return;
@@ -2228,7 +2383,11 @@ export function Recover() {
                 spellCheck={false}
                 autoComplete="off"
               />
-              {lookupFailed ? (
+              {isZeroAddressInput(tokenInput) ? (
+                <p className="muted" style={{ margin: '4px 0 0' }}>
+                  {copy.recover.errZeroAddress}
+                </p>
+              ) : lookupFailed ? (
                 <p className="muted" style={{ margin: '4px 0 0' }}>
                   {copy.recover.tokenLookupFailed}
                 </p>
@@ -2261,7 +2420,9 @@ export function Recover() {
                 autoComplete="off"
               />
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                {copy.recover.sourceHint}
+                {isZeroAddressInput(sourceInput)
+                  ? copy.recover.errZeroAddress
+                  : copy.recover.sourceHint}
               </p>
             </div>
             <div className="field" style={{ margin: 0 }}>

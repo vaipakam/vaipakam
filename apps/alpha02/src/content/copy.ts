@@ -1374,6 +1374,12 @@ const copySource = {
     maxRecoverable: tmpl('Recoverable surplus: {{amount}}', ['amount']),
     tokenLookupFailed:
       'We couldn’t read this token’s details — check the address and try again.',
+    // The zero address passes a plain address check but is nobody's
+    // wallet (Codex #1547 r9) — it is the burn / "not set" sentinel, and
+    // declaring it would have the user sign an ownership statement about
+    // an address no one controls.
+    errZeroAddress:
+      'That’s the all-zero address (0x0000…0000) — it belongs to no one and can’t be used here. Enter the real address.',
     sourceLabel: 'Sender address (a wallet you control)',
     sourceHint:
       'The address these tokens actually came from. Declaring it here asserts on-chain that it belongs to you or acted with your permission.',
