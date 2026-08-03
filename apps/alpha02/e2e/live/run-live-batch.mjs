@@ -10,6 +10,13 @@
  *
  * Scripts are independent processes: one failure doesn't stop the
  * batch, and the runner exits non-zero if ANY script failed.
+ *
+ * Three verdicts, not two. Exit 2 from a script means BLOCKED — it ran
+ * but could not verify anything (a precondition the live chain didn't
+ * offer, a missing credential). That is reported distinctly from FAIL
+ * because the remedy is different: a FAIL is a regression to fix, a
+ * BLOCKED is a review that still needs running. Both keep the batch
+ * exit non-zero, so neither can be mistaken for a clean release gate.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -30,11 +37,22 @@ for (const script of scripts) {
     stdio: 'inherit',
     env: process.env,
   });
-  results.push({ script, ok: res.status === 0 });
+  results.push({
+    script,
+    verdict: res.status === 0 ? 'PASS' : res.status === 2 ? 'BLOCKED' : 'FAIL',
+  });
 }
 
 console.log('\n━━━ live batch summary ━━━');
 for (const r of results) {
-  console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.script}`);
+  console.log(`${r.verdict.padEnd(7)}  ${r.script}`);
 }
-process.exit(results.every((r) => r.ok) ? 0 : 1);
+const blocked = results.filter((r) => r.verdict === 'BLOCKED');
+if (blocked.length) {
+  console.log(
+    `\n${blocked.length} drive(s) BLOCKED — ran but verified nothing, so these` +
+      ` surfaces are still unreviewed:\n` +
+      blocked.map((r) => `  ${r.script}`).join('\n'),
+  );
+}
+process.exit(results.every((r) => r.verdict === 'PASS') ? 0 : 1);

@@ -39,8 +39,15 @@
  *   OBSERVE_ADDRESS=0x… node live-position-observe.mjs
  *   SITE_URL=https://<preview>.workers.dev node live-position-observe.mjs
  *
- * Exits non-zero if any observed route crashes or the chooser is missing
- * from an active loan, so a batch run cannot report a regression green.
+ * Exit codes — a batch run must never read a drive that verified nothing
+ * as a pass:
+ *   0  observed and clean
+ *   1  a regression: a route crashed, or the chooser is missing from an
+ *      active loan
+ *   2  BLOCKED — could not observe (no active loans on chain, or the
+ *      requested address holds none). Nothing was verified, so this is
+ *      deliberately not 0: `run-live-batch.mjs` would otherwise print
+ *      PASS for a drive that made no assertions at all.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -80,9 +87,18 @@ if (!deployment) throw new Error(`no deployment for chain ${CHAIN_ID}`);
 const DIAMOND = deployment.diamond;
 const DIAMOND_ABI_VIEM = loadDiamondAbi();
 
-/** Signing/sending is not merely denied — there is no key. These are
- *  named so an attempt is reported loudly rather than silently erroring
- *  somewhere inside the app. */
+/** Signing/sending is not merely denied — there is no key, so none of
+ *  these could succeed anyway. They are named so an attempt is REPORTED
+ *  loudly instead of erroring obscurely somewhere inside the app: a
+ *  regression that starts asking for a signature mid-review is exactly
+ *  the thing a live drive should surface, and a nameless failure deep in
+ *  a wallet library reads as flakiness.
+ *
+ *  The EIP-5792 batch methods are listed even though the app does not
+ *  use them today. Unlisted, they would fall through to the RPC forward
+ *  below and fail there as unknown methods — the drive would stay
+ *  correct but go quiet about an attempted send, which is the one
+ *  outcome this list exists to prevent. */
 const FORBIDDEN = new Set([
   'eth_sendTransaction',
   'eth_sendRawTransaction',
@@ -90,8 +106,11 @@ const FORBIDDEN = new Set([
   'eth_sign',
   'personal_sign',
   'eth_signTypedData',
+  'eth_signTypedData_v1',
   'eth_signTypedData_v3',
   'eth_signTypedData_v4',
+  'wallet_sendCalls',
+  'wallet_sendTransaction',
 ]);
 
 const pub = createPublicClient({ transport: http(RPC) });
@@ -108,8 +127,8 @@ const activeCount = await pub.readContract({
 });
 console.log(`active    ${activeCount} loan(s) on chain`);
 if (activeCount === 0n) {
-  console.log('\nNo active loans on chain — nothing to observe. Not a failure.');
-  process.exit(0);
+  console.log('\nBLOCKED: no active loans on chain — nothing to observe, nothing verified.');
+  process.exit(2);
 }
 
 const ids = await pub.readContract({
@@ -145,8 +164,10 @@ if (!observed) {
 const mine = loans.filter((l) => l.borrower.toLowerCase() === observed.toLowerCase());
 console.log(`observing ${observed} (watch-only, no key) — ${mine.length} active loan(s) as borrower`);
 if (mine.length === 0) {
-  console.error(`\nFAIL: ${observed} holds no active loans as borrower — nothing to observe.`);
-  process.exit(1);
+  console.error(
+    `\nBLOCKED: ${observed} holds no active loans as borrower — nothing verified.`,
+  );
+  process.exit(2);
 }
 
 // -------------------------------------------------------------- browser
