@@ -248,3 +248,36 @@ released again by a successful recovery). A second test seeds a
 remembered "an attempt was processed" verdict and confirms it survives a
 reload, refuses to offer a plain start-over, and only releases after
 both steps of the acknowledgement.
+
+Only one tab can now start a recovery for a wallet. Two tabs open on
+the same wallet could previously both look for an outstanding attempt,
+both find none, and both go on to sign and send — the safeguards that
+followed kept each tab from wiping the other's record, but nothing
+actually picked a single winner. The page now takes the reservation
+under a lock the browser shares across every tab of the site, so
+exactly one tab may claim a wallet; a tab that finds the lock already
+taken is told an attempt is already in flight, the same answer it gets
+when it finds an existing attempt, and it does not sign. The lock is
+held only for the instant it takes to record the reservation, never
+across the wallet prompt, so a prompt left open cannot freeze another
+tab. On browsers that do not offer such a lock, the page writes its
+reservation and then reads it back before signing: a tab that finds
+someone else's attempt there stops without signing.
+
+The check that decides whether a wallet can use recovery at all now
+answers for the wallet that is connected right now. It reads whether
+the connected account is an ordinary wallet or a smart-contract wallet
+(the latter cannot use recovery at all, because of how the signature is
+authorised on-chain). Switching from an ordinary wallet to a
+smart-contract one used to leave the previous answer on screen while
+the new one was still being read, so the form could briefly appear for
+an account that can never use it. The answer is now tied to the account
+and network it was read for and counts only while those still match;
+otherwise the page shows its ordinary "checking" line until the fresh
+answer arrives.
+
+The Advanced User Guide's own recovery instructions now link somewhere
+that exists. Their first step pointed at a path that is not a page on
+the guide's site, so a reader who followed the app's link out to the
+guide had no way back into the flow. Every language edition of the
+guide now links to the recovery page's real address on the app site.

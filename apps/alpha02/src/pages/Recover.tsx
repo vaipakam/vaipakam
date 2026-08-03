@@ -500,6 +500,90 @@ function writePendingRecoveryIfMatches(
 }
 
 /**
+ * The outcome of trying to CLAIM the reservation for one identity.
+ *
+ * `claimed: false` with an `existing` record means another attempt is
+ * already reserved (render its card); with `existing: null` it means
+ * another TAB is claiming the very same identity right now — the same
+ * verdict, observed an instant earlier, before its record was written.
+ */
+type ReservationClaim =
+  | { claimed: true; persisted: boolean }
+  | { claimed: false; existing: PendingRecoveryRecord | null };
+
+/**
+ * Claim the reservation under a REAL cross-tab mutex (Codex #1547 r11).
+ *
+ * Read-then-write is a check-then-act over storage that every tab of
+ * the origin shares: two tabs can both read "no record", both write
+ * their own attempt id, and both go on to sign and broadcast. r10's
+ * per-attempt id stopped the loser from CLEARING the winner's record,
+ * but it never ELECTED a single claimant — it only made the collision
+ * survivable after the fact.
+ *
+ * The Web Locks API is the browser's own cross-tab mutex: one holder
+ * per lock name across every tab of the origin, with the lock released
+ * automatically when the holding tab dies. The lock is held across the
+ * read+write ONLY — never across the wallet prompt. A lock held over an
+ * open prompt would wedge every other tab behind a dialogue the user
+ * may leave sitting for minutes; the persisted record is what guards
+ * the rest of the flow.
+ *
+ * `ifAvailable: true` means "run the callback, or hand me `null`
+ * immediately if somebody else holds it" — no queueing. A held lock IS
+ * another tab claiming this identity, so that answer is treated exactly
+ * like finding an existing record: abort as in-flight.
+ */
+async function claimPendingRecovery(
+  chainId: number,
+  account: string,
+  record: PendingRecoveryRecord,
+): Promise<ReservationClaim> {
+  const readThenWrite = (): ReservationClaim => {
+    const existing = readPendingRecovery(chainId, account);
+    if (existing !== null) return { claimed: false, existing };
+    return {
+      claimed: true,
+      persisted: writePendingRecovery(chainId, account, record),
+    };
+  };
+
+  const lockManager: LockManager | undefined =
+    typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (lockManager === undefined) {
+    // FALLBACK for browsers without Web Locks (older Safari, some
+    // embedded webviews): read-then-write, then VERIFY by re-reading —
+    // a tab that lost the race sees the winner's attempt id and aborts
+    // WITHOUT signing.
+    //
+    // Residual narrowness, stated plainly: verification shrinks the
+    // window from "read → write → wallet prompt" to "write → re-read",
+    // two synchronous statements. Two tabs whose writes land on either
+    // side of the other's verify (T1 write, T1 verify, T2 write, T2
+    // verify) can still both believe they won. There is no way to close
+    // that without a mutex; every browser that ships one takes the
+    // branch above, and the per-attempt id keeps the outcome survivable
+    // either way.
+    const claim = readThenWrite();
+    if (!claim.claimed) return claim;
+    const stored = readPendingRecovery(chainId, account);
+    if (stored === null || stored.attemptId !== record.attemptId) {
+      return { claimed: false, existing: stored };
+    }
+    return claim;
+  }
+
+  const outcome = await lockManager.request(
+    // Per IDENTITY, not per page: two tabs on different wallets or
+    // different chains are not racing each other and must not block.
+    `alpha02.recoverClaim.${chainId}.${account.toLowerCase()}`,
+    { ifAvailable: true },
+    (lock) => (lock === null ? null : readThenWrite()),
+  );
+  return outcome ?? { claimed: false, existing: null };
+}
+
+/**
  * Is this the node POSITIVELY answering "I don't have that
  * transaction" (Codex #1547 r7), as opposed to any other read failure?
  *
@@ -1095,15 +1179,36 @@ export function Recover() {
   // Fails OPEN (Codex #1547 r6): a failed code read must not lock a
   // real EOA out of recovery. The pre-sign path still surfaces the
   // contract-side revert for the case this probe missed.
-  const [accountKind, setAccountKind] = useState<
-    'probing' | 'eoa' | 'contract'
-  >('probing');
+  //
+  // The verdict is TAGGED with the identity it was read for (Codex
+  // #1547 r11) and only counts while that tag still matches the
+  // connected wallet. Untagged state left the PREVIOUS account's
+  // verdict on screen while the new account's probe was in flight, so
+  // switching an EOA → Safe rendered the recovery form under the old
+  // 'eoa' answer until the slower probe answered. A stale tag reads as
+  // 'probing', which is what the availability card already covers.
+  const [accountProbe, setAccountProbe] = useState<{
+    address: string;
+    chainId: number | undefined;
+    kind: 'eoa' | 'contract';
+  } | null>(null);
+  const accountKind: 'probing' | 'eoa' | 'contract' =
+    accountProbe !== null &&
+    address !== undefined &&
+    accountProbe.address === address &&
+    accountProbe.chainId === walletChain?.chainId
+      ? accountProbe.kind
+      : 'probing';
   useEffect(() => {
     if (!publicClient || !address) {
-      setAccountKind('probing');
+      setAccountProbe(null);
       return;
     }
+    const probedChainId = walletChain?.chainId;
     let cancelled = false;
+    const record = (kind: 'eoa' | 'contract') => {
+      if (!cancelled) setAccountProbe({ address, chainId: probedChainId, kind });
+    };
     (async () => {
       try {
         const code = await publicClient.getCode({ address });
@@ -1120,17 +1225,15 @@ export function Recover() {
         // smart-account-upgraded EOA out of recovery. Only NON-
         // delegated code is a true contract account.
         const delegatedEoa = raw.startsWith('0xef0100');
-        if (!cancelled) {
-          setAccountKind(hasCode && !delegatedEoa ? 'contract' : 'eoa');
-        }
+        record(hasCode && !delegatedEoa ? 'contract' : 'eoa');
       } catch {
-        if (!cancelled) setAccountKind('eoa'); // fail OPEN
+        record('eoa'); // fail OPEN
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [publicClient, address]);
+  }, [publicClient, address, walletChain?.chainId]);
 
   // Live token meta + the unsolicited-surplus cap for the entered
   // token: surplus = max(0, balanceOf(vault) − protocol-tracked).
@@ -1575,13 +1678,12 @@ export function Recover() {
       // already known (the signed nonce and deadline were read above),
       // and the read→write gap is now a couple of synchronous
       // statements rather than a wallet round-trip.
-      const alreadyPending = readPendingRecovery(walletChain.chainId, address);
-      if (alreadyPending !== null) {
-        if (genRef.current !== gen) return;
-        setStep(stepFromRecord(alreadyPending));
-        setError(copy.recover.errAttemptInFlight);
-        return;
-      }
+      //
+      // r11 makes the claim ATOMIC. Shrinking the read→write gap was
+      // not the same as closing it: two tabs could still both read "no
+      // record", both write their own id, and both sign and broadcast.
+      // `claimPendingRecovery` holds a cross-tab mutex across that pair,
+      // so exactly one tab may claim an identity — see its doc comment.
       const persistedRecord: PendingRecoveryRecord = {
         txHash: null,
         attemptId,
@@ -1596,13 +1698,32 @@ export function Recover() {
         // once chain time is past it.
         deadline: deadline.toString(),
       };
-      // Written under the identity being signed for (not whoever is
-      // connected by the time a later line runs). A REFUSED write is
-      // surfaced, never swallowed (Codex #1547 r8) — it does not block
-      // the recovery, it warns that a reload will lose the record.
-      if (!writePendingRecovery(walletChain.chainId, address, persistedRecord)) {
-        if (genRef.current === gen) setPersistFailed(true);
+      // Claimed under the identity being signed for (not whoever is
+      // connected by the time a later line runs).
+      const claim = await claimPendingRecovery(
+        walletChain.chainId,
+        address,
+        persistedRecord,
+      );
+      if (!claim.claimed) {
+        if (genRef.current !== gen) return;
+        // A record we can read describes the in-flight attempt, so show
+        // its card; a lock held with no record yet (the other tab is
+        // between its read and its write) has nothing to render, so fall
+        // back to review. Same message either way — one attempt at a
+        // time per wallet is the rule being enforced.
+        if (claim.existing !== null) {
+          setStep(stepFromRecord(claim.existing));
+          setError(copy.recover.errAttemptInFlight);
+        } else {
+          abortToReview(copy.recover.errAttemptInFlight);
+        }
+        return;
       }
+      // A REFUSED write is surfaced, never swallowed (Codex #1547 r8) —
+      // it does not block the recovery, it warns that a reload will lose
+      // the record.
+      if (!claim.persisted && genRef.current === gen) setPersistFailed(true);
       // Every later clear/update matches on this attempt's ID, so a
       // record another tab wrote is untouchable from here.
       const forgetPending = (hash: Hex | null) =>
