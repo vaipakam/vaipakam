@@ -1397,6 +1397,11 @@ const copySource = {
     // must equal the on-chain RECOVERY_ACK_TEXT_HASH, so it must never
     // be translated or reworded (see RECOVERY_ACK_TEXT in Recover.tsx).
     ackTextIntro: 'You are signing this exact declaration:',
+    // The declaration asserts the user has read the Advanced User
+    // Guide's stuck-token section — so the review card (and the Help
+    // explainer) must LINK it (Codex #1547 r5). Named exactly as the
+    // signed text calls it so the two are unmistakably the same thing.
+    guideLinkLabel: 'Read the Advanced User Guide section on stuck-token recovery',
     confirmPrompt: 'Type CONFIRM to enable signing',
     sign: 'Sign & recover',
     // Distinct busy label for the pre-sign checks + wallet-signature
@@ -1436,8 +1441,26 @@ const copySource = {
     // mine, so this must NOT claim it "went through" — and must not
     // bounce the user back to a re-armed sign button either.
     unknownOutcomePendingTitle: 'Transaction submitted — result unconfirmed',
+    // Points at the reconcile button rather than "refresh the page"
+    // (Codex #1547 r5): a page refresh would DISCARD the transaction
+    // hash, and a fresh attempt over an already-mined recovery would
+    // recover a second time.
     unknownOutcomePendingBody:
-      'The transaction was submitted, but we couldn’t read its confirmation — it may still complete in the background. Do not sign again yet: open the transaction link to check what happened, and refresh the page before retrying.',
+      'The transaction was submitted, but we couldn’t read its confirmation — it may still complete in the background. Do not sign again: check it again below once it has had a moment to settle, or open the transaction link to see what happened.',
+    // The pending card's ONLY way forward (Codex #1547 r5) — re-reads
+    // the receipt for the stored hash. A plain "start over" here would
+    // throw the hash away while the transaction may still be mining.
+    reconcile: 'Check the transaction again',
+    reconciling: 'Checking…',
+    reconcileStillPending:
+      'Still no confirmation for this transaction — it may not have been mined yet. Wait a moment and check again, or open the transaction link to follow it on the block explorer. Do not start a new recovery until this one resolves.',
+    // Wallet-replacement outcome (Codex #1547 r5): the wallet replaced
+    // (sped up / cancelled) the original transaction and the one that
+    // actually mined carries no recovery event — so NOTHING was
+    // recovered. Must not read as "the recovery may have completed".
+    replacedTitle: 'Your wallet replaced the transaction',
+    replacedCancelledBody:
+      'Your wallet replaced this recovery with a different transaction — a speed-up or a cancel — and the transaction that actually went through did not perform any recovery. Nothing was recovered and your tokens stayed where they were. You can start over below.',
     startOver: 'Start over',
     // Pre-sign abort reasons (Codex #1547 r1) — each one blocks BEFORE
     // the wallet signature so the user never signs against stale or

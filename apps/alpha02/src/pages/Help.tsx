@@ -8,6 +8,7 @@ import { lazy, Suspense, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { supportMailto } from '../data/support';
+import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { formatDate } from '../lib/format';
 import { useActiveChain } from '../chain/useActiveChain';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -133,6 +134,18 @@ export function Help() {
           <h3>{copy.recover.helpSection.title}</h3>
           <p style={{ marginTop: 0 }}>{copy.recover.helpSection.body1}</p>
           <p>{copy.recover.helpSection.body2}</p>
+          {/* The full guide section the recovery declaration makes the
+              user attest they have read (Codex #1547 r5) — surfaced
+              alongside the explainer, not only on the review card. */}
+          <p>
+            <a
+              href={ADVANCED_USER_GUIDE_STUCK_TOKENS_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              {copy.recover.guideLinkLabel}
+            </a>
+          </p>
           <Link className="btn btn-secondary" to="/recover">
             {copy.recover.helpSection.link}
           </Link>

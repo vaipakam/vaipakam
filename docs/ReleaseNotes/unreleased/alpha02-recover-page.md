@@ -37,6 +37,25 @@ screening service, and on a network where that service isn't
 configured yet the page says recovery isn't available — instead of
 letting anyone sign a transaction that could only fail.
 
+The declaration a user signs states they have read the Advanced User
+Guide's section on stuck-token recovery, so the review card — and the
+Help explainer — now link straight to that section rather than leaving
+the reader to find it.
+
+Three post-submission cases are handled with the same care as the rest
+of the flow. If the wallet replaces the transaction (a speed-up or a
+cancel), the page follows the replacement, so every result and every
+block-explorer link names the transaction that actually went through;
+and if that replacement performed no recovery, the page says exactly
+that — nothing was recovered — rather than leaving the outcome
+ambiguous. If the transaction was sent but its confirmation could not
+be read, the page no longer offers a plain "start over" that would
+throw the transaction away: it offers a "check the transaction again"
+action instead, because a transaction that quietly went through would
+let a second, unintended recovery be signed on a fresh form. Only once
+the result can actually be read does the page move on to the matching
+result and let a new recovery begin.
+
 An automated end-to-end test drives the real contract on a forked
 network: dust is minted straight into a vault, the Help explainer's
 link is followed, and the recovery round-trips with the tokens

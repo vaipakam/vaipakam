@@ -172,6 +172,14 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
 
   await page.getByRole('button', { name: /review recovery/i }).click();
 
+  // The signed declaration asserts the user has read the Advanced User
+  // Guide's stuck-token section, so the review card must LINK it
+  // (Codex #1547 r5) — an attestation to unreachable reading material
+  // is not a real acknowledgement.
+  await expect(
+    page.getByRole('link', { name: /advanced user guide/i }),
+  ).toHaveAttribute('href', /\/help\/advanced#stuck-recovery/);
+
   // The typed-CONFIRM friction: sign stays disabled until the literal
   // is typed.
   const sign = page.getByRole('button', { name: /sign & recover/i });

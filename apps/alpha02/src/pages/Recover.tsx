@@ -54,6 +54,7 @@ import {
   useSanctionsCheck,
 } from '../data/sanctions';
 import { captureTxError } from '../lib/errors';
+import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, shortAddress } from '../lib/format';
 
 /** EIP-712 shape — must match VaultFactoryFacet's RECOVERY_TYPEHASH
@@ -199,6 +200,19 @@ interface TokenLookup {
   surplus: bigint;
 }
 
+/**
+ * Everything a terminal outcome card needs that the RECEIPT alone
+ * can't supply (Codex #1547 r5). Carried on the pending step so the
+ * reconcile action can render a full success/banned card later, long
+ * after the form inputs behind it may have been cleared.
+ */
+interface SubmittedContext {
+  declaredSource: string;
+  amount: bigint;
+  symbol: string;
+  decimals: number;
+}
+
 type Step =
   | { kind: 'form' }
   | { kind: 'review' }
@@ -214,8 +228,50 @@ type Step =
    *  `pending` (Codex #1547 r4): the tx was BROADCAST but its receipt
    *  couldn't be read (RPC drop, wallet disconnect mid-wait) — it may
    *  still mine, so the same terminal card renders with a body that
-   *  says "submitted but unconfirmed" instead of "confirmed". */
-  | { kind: 'unknownOutcome'; txHash: Hex; pending?: boolean };
+   *  says "submitted but unconfirmed" instead of "confirmed".
+   *  `replaced` (Codex #1547 r5): the wallet replaced the original tx
+   *  (speed-up / cancel) and the tx that actually mined carries no
+   *  recovery event — nothing was recovered, which is a DIFFERENT
+   *  statement from "the outcome couldn't be read".
+   *  `ctx` (Codex #1547 r5): only the `pending` variant carries it —
+   *  the reconcile action needs it to build a success/banned card. */
+  | {
+      kind: 'unknownOutcome';
+      txHash: Hex;
+      pending?: boolean;
+      replaced?: boolean;
+      ctx?: SubmittedContext;
+    };
+
+/**
+ * The outcome event a mined receipt carries, or null when none of the
+ * two recovery outcomes is present. Shared by the submit path and the
+ * reconcile action (Codex #1547 r5) so both adjudicate identically.
+ *
+ * The contract deliberately does NOT revert on the sanctioned-source
+ * path (the ban-state writes must persist), so the outcome lives in
+ * the logs, not in the receipt status.
+ */
+function decodeRecoveryOutcome(
+  logs: readonly { address: string; data: Hex; topics: readonly Hex[] }[],
+  diamond: string,
+): 'recovered' | 'banned' | null {
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== diamond.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({
+        abi: DIAMOND_ABI_VIEM,
+        data: log.data,
+        topics: log.topics as [Hex, ...Hex[]],
+      });
+      if (decoded.eventName === 'StuckERC20Recovered') return 'recovered';
+      if (decoded.eventName === 'VaultBannedFromRecoveryAttempt') return 'banned';
+    } catch {
+      // Some other event on the diamond — skip.
+    }
+  }
+  return null;
+}
 
 export function Recover() {
   const { address, onSupportedChain, walletChain } = useActiveChain();
@@ -230,6 +286,12 @@ export function Recover() {
   const [confirmInput, setConfirmInput] = useState('');
   const [step, setStep] = useState<Step>({ kind: 'form' });
   const [error, setError] = useState<string | null>(null);
+  // Reconcile state for the PENDING terminal card (Codex #1547 r5).
+  // Its failure line is SEPARATE from `error` on purpose: the shared
+  // error banner is titled "Recovery didn't go through", which would
+  // misdescribe a transaction that simply hasn't been mined yet.
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
   // Generation-KEYED in-flight mutex (Codex #1547 r4): stores the
   // identity generation of the running signAndSubmit, or null when
   // idle. Keying by generation (instead of a boolean) means the reset
@@ -259,6 +321,7 @@ export function Recover() {
     setConfirmInput('');
     setStep({ kind: 'form' });
     setError(null);
+    setReconcileError(null);
   }, [address, walletChain?.chainId]);
 
   // Fail-safe availability probe: `recoverStuckERC20` HARD-REQUIRES
@@ -451,6 +514,15 @@ export function Recover() {
     // (or anything after it) throws — the catch below must not bounce
     // back to review with the sign button re-armed.
     let submittedTxHash: Hex | null = null;
+    // What a terminal card needs beyond the receipt (Codex #1547 r5) —
+    // captured alongside the hash so the pending card can hand it to
+    // the reconcile action.
+    let submittedCtx: SubmittedContext | null = null;
+    // Did the wallet replace the submitted tx while we waited (Codex
+    // #1547 r5)? A one-field OBJECT, not a `let` — a value assigned
+    // only inside a callback reads as never-reassigned to TypeScript's
+    // control-flow analysis at the later comparison.
+    const replaced = { happened: false };
     setError(null);
     try {
       if (!walletClient || !publicClient || !address || !walletChain) {
@@ -639,9 +711,34 @@ export function Recover() {
         account: address,
       });
       submittedTxHash = txHash; // broadcast — no return-to-review past here (Codex #1547 r4)
+      submittedCtx = {
+        declaredSource,
+        amount,
+        symbol: snapshot.symbol,
+        decimals: snapshot.decimals,
+      };
+      // Wallet REPLACEMENTS are followed, not lost (Codex #1547 r5): a
+      // speed-up / cancel from the wallet mines a DIFFERENT hash under
+      // the same nonce. Without `onReplaced` the wait would give up on
+      // the original hash and every outcome card + explorer link would
+      // point at a transaction that never mined.
       const receipt = await publicClient.waitForTransactionReceipt({
         hash: txHash,
+        onReplaced: (replacement) => {
+          // Every reason counts here — 'repriced', 'cancelled' and
+          // 'replaced' all mean the hash the user was shown is not the
+          // one that mines.
+          replaced.happened = true;
+          // Keep the post-broadcast marker on the hash that is actually
+          // live, so a later throw parks the pending card on it.
+          submittedTxHash = replacement.transaction.hash;
+        },
       });
+      // From here on the RECEIPT's hash is the authority (Codex #1547
+      // r5) — it equals `txHash` in the normal case and the
+      // replacement's hash when the wallet sped it up or cancelled it.
+      const minedHash = receipt.transactionHash;
+      submittedTxHash = minedHash;
       // waitForTransactionReceipt resolves on REVERTED receipts too
       // (Codex #1547 r1) — decoding events out of one would misread
       // "no event" as a missing outcome. Fail loud first. The receipt
@@ -656,33 +753,19 @@ export function Recover() {
 
       // The contract deliberately does NOT revert on the sanctioned-
       // source path — read the outcome from the emitted event.
-      let outcome: Step | null = null;
-      for (const log of receipt.logs) {
-        if (log.address.toLowerCase() !== diamond.toLowerCase()) continue;
-        try {
-          const decoded = decodeEventLog({
-            abi: DIAMOND_ABI_VIEM,
-            data: log.data,
-            topics: log.topics,
-          });
-          if (decoded.eventName === 'StuckERC20Recovered') {
-            outcome = {
+      const decodedOutcome = decodeRecoveryOutcome(receipt.logs, diamond);
+      const outcome: Step | null =
+        decodedOutcome === 'recovered'
+          ? {
               kind: 'success',
-              txHash,
+              txHash: minedHash,
               amount,
               symbol: snapshot.symbol,
               decimals: snapshot.decimals,
-            };
-            break;
-          }
-          if (decoded.eventName === 'VaultBannedFromRecoveryAttempt') {
-            outcome = { kind: 'banned', txHash, declaredSource };
-            break;
-          }
-        } catch {
-          // Some other event on the diamond — skip.
-        }
-      }
+            }
+          : decodedOutcome === 'banned'
+            ? { kind: 'banned', txHash: minedHash, declaredSource }
+            : null;
       if (outcome) {
         // Own-receipt floor (Codex #1547 r1): a recovery moves vault
         // balances (and a ban flips sanctions-derived state) — push the
@@ -708,7 +791,16 @@ export function Recover() {
         // step with the tx link and no sign-again path.
         publishReceiptInvalidation(queryClient);
         if (genRef.current !== gen) return;
-        setStep({ kind: 'unknownOutcome', txHash });
+        // A REPLACED transaction with no recovery event is not an
+        // unreadable outcome (Codex #1547 r5) — it is a definite
+        // "nothing was recovered": the wallet's speed-up / cancel took
+        // the nonce and whatever mined did something else. Say that,
+        // and link the transaction that actually mined.
+        setStep({
+          kind: 'unknownOutcome',
+          txHash: minedHash,
+          replaced: replaced.happened,
+        });
       }
     } catch (err) {
       // Post-broadcast failure (Codex #1547 r4): writeContract already
@@ -723,7 +815,15 @@ export function Recover() {
       if (submittedTxHash !== null) {
         publishReceiptInvalidation(queryClient);
         if (genRef.current !== gen) return;
-        setStep({ kind: 'unknownOutcome', txHash: submittedTxHash, pending: true });
+        // Carry the submitted context (Codex #1547 r5) so the pending
+        // card's reconcile action can render a full success/banned
+        // card once the receipt becomes readable.
+        setStep({
+          kind: 'unknownOutcome',
+          txHash: submittedTxHash,
+          pending: true,
+          ctx: submittedCtx ?? undefined,
+        });
         return;
       }
       // Pre-broadcast errors (checks, signature, submission rejection,
@@ -736,6 +836,89 @@ export function Recover() {
       // an identity reset a new flow may hold the mutex under the new
       // generation — this old closure must not clear it.
       if (inFlightRef.current === gen) inFlightRef.current = null;
+    }
+  }
+
+  /**
+   * The PENDING card's only way forward (Codex #1547 r5).
+   *
+   * A plain "Start over" here would DISCARD the broadcast hash while
+   * the transaction may still be mining — and a fresh attempt would
+   * read the (already incremented) recovery nonce and the remaining
+   * surplus, letting the user recover a SECOND time without ever
+   * intending to. So the pending card re-reads the receipt for the
+   * stored hash instead: only once the receipt resolves — with any
+   * outcome — does a fresh-form action become available.
+   */
+  async function reconcilePending(txHash: Hex, ctx?: SubmittedContext) {
+    if (reconciling) return;
+    if (!publicClient || !walletChain) {
+      setReconcileError(copy.errors.walletConnectFirst);
+      return;
+    }
+    // Identity generation, same discipline as signAndSubmit (Codex
+    // #1547 r3): an account/chain change mid-read must not commit a
+    // step belonging to the previous identity.
+    const gen = genRef.current;
+    const diamond = walletChain.diamondAddress;
+    setReconciling(true);
+    setReconcileError(null);
+    try {
+      // getTransactionReceipt, NOT waitForTransactionReceipt: this is a
+      // user-driven "check now", so an unmined transaction must answer
+      // immediately (it throws receipt-not-found) rather than hold the
+      // button in a long poll.
+      const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+      const decoded =
+        receipt.status === 'success'
+          ? decodeRecoveryOutcome(receipt.logs, diamond)
+          : null;
+      // The receipt was read, so on-chain state is settled either way —
+      // invalidate regardless of who is connected now (same rule the
+      // submit path uses); only the STEP commit is identity-bound.
+      publishReceiptInvalidation(
+        queryClient,
+        decoded === 'banned' ? ['sanctions'] : [],
+      );
+      if (genRef.current !== gen) return;
+      const minedHash = receipt.transactionHash;
+      if (receipt.status !== 'success') {
+        // Definitive: the transaction mined and REVERTED — nothing
+        // moved and the on-chain recovery nonce is untouched, so a
+        // retry is safe. Same landing the submit path gives a reverted
+        // receipt: back to review with the reason.
+        setStep({ kind: 'review' });
+        setError(copy.recover.errTxReverted);
+        return;
+      }
+      if (decoded === 'recovered' && ctx) {
+        setStep({
+          kind: 'success',
+          txHash: minedHash,
+          amount: ctx.amount,
+          symbol: ctx.symbol,
+          decimals: ctx.decimals,
+        });
+        return;
+      }
+      if (decoded === 'banned' && ctx) {
+        setStep({
+          kind: 'banned',
+          txHash: minedHash,
+          declaredSource: ctx.declaredSource,
+        });
+        return;
+      }
+      // Receipt read but no outcome event decoded — the NON-pending
+      // unknown-outcome card, which does offer a fresh start because
+      // the transaction's fate is now settled.
+      setStep({ kind: 'unknownOutcome', txHash: minedHash });
+    } catch {
+      // Still unreadable — stay exactly where we are, hash intact.
+      if (genRef.current !== gen) return;
+      setReconcileError(copy.recover.reconcileStillPending);
+    } finally {
+      setReconciling(false);
     }
   }
 
@@ -815,47 +998,87 @@ export function Recover() {
         // TERMINAL unknown-outcome card (Codex #1547 r3): success
         // receipt, no decodable outcome event. Never returns to review
         // — the recovery may already have completed, and re-arming the
-        // sign button here invites a double submit. The only ways out
-        // are the tx link and a fresh start. The `pending` variant
-        // (Codex #1547 r4) covers a BROADCAST tx whose confirmation
-        // couldn't be read — same terminal card, honest wording.
+        // sign button here invites a double submit. The `pending`
+        // variant (Codex #1547 r4) covers a BROADCAST tx whose
+        // confirmation couldn't be read; the `replaced` variant (Codex
+        // #1547 r5) covers a wallet speed-up / cancel whose mined tx
+        // carries no recovery event — a definite "nothing happened".
         <div className="banner banner-warn" role="alert">
           <TriangleAlert aria-hidden />
           <span className="banner-body">
             <strong>
               {step.pending
                 ? copy.recover.unknownOutcomePendingTitle
-                : copy.recover.unknownOutcomeTitle}
+                : step.replaced
+                  ? copy.recover.replacedTitle
+                  : copy.recover.unknownOutcomeTitle}
             </strong>
             <br />
-            {/* Body picked by the `pending` flag (Codex #1547 r4): a
+            {/* Body picked by the variant (Codex #1547 r4 / r5): a
                 broadcast-but-unconfirmed tx must not be described as
-                "went through". */}
+                "went through", and a replaced-then-mined tx that
+                carries no recovery event must not be described as
+                "the recovery may already have completed". */}
             {step.pending
               ? copy.recover.unknownOutcomePendingBody
-              : copy.recover.unknownOutcomeBody}
+              : step.replaced
+                ? copy.recover.replacedCancelledBody
+                : copy.recover.unknownOutcomeBody}
             <br />
+            {/* Always the hash that actually MINED (Codex #1547 r5) —
+                for a replaced transaction that is the replacement, not
+                the original the wallet dropped. */}
             <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
               {copy.recover.viewTx}
             </a>
             <br />
-            <button
-              type="button"
-              className="btn btn-secondary"
-              style={{ marginTop: 8 }}
-              onClick={() => {
-                // Fresh form, nothing carried over — same reset shape
-                // as the account/chain effect.
-                setTokenInput('');
-                setSourceInput('');
-                setAmountInput('');
-                setConfirmInput('');
-                setError(null);
-                setStep({ kind: 'form' });
-              }}
-            >
-              {copy.recover.startOver}
-            </button>
+            {step.pending ? (
+              // NO plain "start over" on the pending variant (Codex
+              // #1547 r5): the transaction may have mined, and a fresh
+              // flow would read the incremented nonce + the remaining
+              // surplus and allow a SECOND unintended recovery. The
+              // only action is re-reading this transaction's receipt;
+              // a resolved receipt (any outcome) is what unlocks a
+              // fresh form, by landing on another card.
+              <>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ marginTop: 8 }}
+                  disabled={reconciling}
+                  onClick={() => void reconcilePending(step.txHash, step.ctx)}
+                >
+                  {reconciling
+                    ? copy.recover.reconciling
+                    : copy.recover.reconcile}
+                </button>
+                {reconcileError ? (
+                  <>
+                    <br />
+                    {reconcileError}
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ marginTop: 8 }}
+                onClick={() => {
+                  // Fresh form, nothing carried over — same reset shape
+                  // as the account/chain effect.
+                  setTokenInput('');
+                  setSourceInput('');
+                  setAmountInput('');
+                  setConfirmInput('');
+                  setError(null);
+                  setReconcileError(null);
+                  setStep({ kind: 'form' });
+                }}
+              >
+                {copy.recover.startOver}
+              </button>
+            )}
           </span>
         </div>
       ) : oracleReady === null ? (
@@ -976,6 +1199,21 @@ export function Recover() {
             >
               {RECOVERY_ACK_TEXT}
             </blockquote>
+            {/* The declaration asserts the user has READ the Advanced
+                User Guide section on stuck-token recovery — so link it
+                right here (Codex #1547 r5). Attesting to having read
+                something the app never surfaced is not a real
+                acknowledgement. New tab: a same-tab navigation would
+                destroy the reviewed form state mid-flow. */}
+            <p className="muted" style={{ margin: 0 }}>
+              <a
+                href={ADVANCED_USER_GUIDE_STUCK_TOKENS_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                {copy.recover.guideLinkLabel}
+              </a>
+            </p>
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="recover-confirm">{copy.recover.confirmPrompt}</label>
               <input
