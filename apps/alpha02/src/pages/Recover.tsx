@@ -2289,6 +2289,20 @@ export function Recover() {
       setStep({ kind: 'unknownOutcome', txHash, receiptless: 'executed', ctx });
       return;
     }
+    if (liveNonce < ctx.recoveryNonce) {
+      // UNREADABLE, not "unchanged" (Codex #1547 r12). The recovery
+      // counter is monotonic — the contract only ever increments it —
+      // so a value BELOW the one this attempt was signed against cannot
+      // describe the chain. It is proof of a bad read (a lagging or
+      // load-balanced RPC serving stale state), not evidence about the
+      // attempt. Falling through would let the branch below conclude
+      // 'never processed' once the deadline passed and the hash read
+      // absent, forgetting the record and permitting a second recovery
+      // on the strength of an inconsistent read. Stay pending instead
+      // and keep the record: a later, consistent read decides.
+      setReconcileError(copy.recover.reconcileStillPending);
+      return;
+    }
     // Counter untouched: no recovery has run under this signature YET.
     // Establish where the transaction actually is before saying
     // anything stronger. THREE outcomes, kept apart on purpose:

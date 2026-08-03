@@ -11,12 +11,15 @@
  *  read from the `StuckERC20Recovered` event, with the tokens landing
  *  in the connected wallet.
  *
- *  Also pinned: the FAIL-SAFE blocked state — the retail deploy ships
- *  with the sanctions oracle unset and recovery hard-requires it
- *  (SanctionsOracleUnavailable), so the page must present recovery as
- *  unavailable rather than offer a doomed form. The spec then installs
- *  a benign always-false oracle (anvil_setCode + admin impersonation)
- *  and drives the real success path. The BANNED outcome stays
+ *  Also pinned: the FAIL-SAFE blocked state — recovery hard-requires a
+ *  sanctions oracle (SanctionsOracleUnavailable), so with none
+ *  configured the page must present recovery as unavailable rather than
+ *  offer a doomed form. The spec CREATES that state by zeroing the
+ *  oracle itself (Codex #1547 r12) rather than depending on the fork's
+ *  deployment shipping it unset — a configured-oracle fork would
+ *  correctly render the form. The spec then installs a benign
+ *  always-false oracle (anvil_setCode + admin impersonation) and drives
+ *  the real success path. The BANNED outcome stays
  *  untestable here (it needs a sanctions-LISTING oracle, which would
  *  poison every other spec's Tier-1 writes if left set) — its
  *  rendering is a copy branch of the same event-decode switch this
@@ -90,6 +93,17 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
     functionName: 'getSanctionsOracle',
   })) as Address;
   try {
+  // CREATE the unset-oracle state instead of assuming the fork is in it
+  // (Codex #1547 r12). The blocked-state assertion below is strict, and
+  // a retail deploy is REQUIRED to configure a sanctions oracle
+  // post-deploy — so a fork of a configured deployment would correctly
+  // render the form and fail an unconditional assertion. Zero it
+  // explicitly through the same admin-impersonation path that installs
+  // the benign mock later; the finally restores the exact snapshot
+  // above either way.
+  await setSanctionsOracle(
+    '0x0000000000000000000000000000000000000000' as Address,
+  );
 
   // Ensure the borrower HAS a vault (fork state inherits one from the
   // live testnet history, but a freshly redeployed diamond wouldn't).
@@ -146,9 +160,9 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
   await page.getByRole('link', { name: /open the recovery flow/i }).click();
   await expect(page).toHaveURL(/\/recover$/);
 
-  // FAIL-SAFE blocked state first: the retail deploy ships with the
-  // sanctions oracle unset, and recovery hard-requires it — the page
-  // must say so instead of offering a doomed form.
+  // FAIL-SAFE blocked state: recovery hard-requires a sanctions oracle,
+  // so with none configured the page must say so instead of offering a
+  // doomed form. That state was CREATED above, not assumed.
   await expect(
     page.getByText(/recovery isn’t available on this network yet/i),
   ).toBeVisible({ timeout: 30_000 });

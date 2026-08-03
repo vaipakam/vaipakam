@@ -82,7 +82,14 @@ which point that transaction can never be accepted again. Until both are
 true the page keeps the transaction pending and tells the user roughly
 how long until it can give a definite answer — a momentary network
 problem no longer reads as "it's gone", which would have handed back a
-blank form over a recovery still waiting in the queue.
+blank form over a recovery still waiting in the queue. A count that comes
+back BELOW the one the attempt was authorised against is now treated as a
+reading the page could not trust rather than as "nothing has happened":
+that count only ever goes up, so a lower answer describes a stale or
+inconsistent reply from the network, not the account. The attempt stays
+pending in that case and the remembered record is kept, instead of the
+page eventually declaring the recovery never ran and handing back a fresh
+form on the strength of a bad read.
 
 The "an attempt was processed" verdict is now a lasting lock rather than
 a notice that vanishes on the next page view. That attempt may have moved
@@ -192,12 +199,16 @@ could wipe the record protecting the other one's live transaction. Each
 attempt now carries its own identity, so a tab can only ever clear or
 update the record it created itself; a second tab that arrives while one
 is outstanding is shown that attempt instead of being allowed to sign.
-If the signature is declined or never happens, the reservation is
+If the wallet comes back with a declined signature, the reservation is
 released immediately — nothing was authorised, so nothing needs
-protecting — and the same release happens if the connected account or
-network changes while the prompt is open, so an abandoned prompt can no
-longer leave a wallet locked out of recovery over a transaction that was
-never sent.
+protecting — and the same release happens when the prompt returns to
+find the connected account or network has changed in the meantime, since
+nothing was sent under the identity that made the claim. A prompt that
+is simply abandoned — never answered, or left open when the tab is
+closed — keeps its reservation until the ordinary re-check resolves it
+at the deadline. That is deliberate: with no answer from the wallet
+there is no way to know that nothing was signed, and holding the place
+of an attempt that might be live is the safer of the two mistakes.
 
 Results are now read from what the network actually recorded rather than
 from what the user submitted. When a wallet replaces a transaction, the
