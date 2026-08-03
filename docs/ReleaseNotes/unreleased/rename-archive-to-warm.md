@@ -22,7 +22,13 @@ The **shared database cannot be renamed either** — the platform offers no way 
 
 That turned out to be cheap here, and the reason is worth recording rather than assuming next time: almost everything the database holds is rebuilt from chain history on demand, so it does not need moving at all. What genuinely could not be recreated came to six rows — a couple of notification settings and a handful of test support tickets — which were copied across and checked to match. The rest is left for the indexer to rebuild from the beginning of chain history, which is precisely what the restore procedure already prescribes for that class of table.
 
-The **Worker** is created fresh under the new name, and the old one must then be deleted — not merely stopped. It holds a scheduled slot from a limited pool, and the account has no spare, so leaving it in place blocks the replacement from running on schedule.
+The **Worker** is created fresh under the new name, and the old one is then deleted — not merely stopped, because a stopped Worker still holds its scheduled slot from a limited pool.
+
+There is one spare slot, so the replacement can be created before the old one goes. (An earlier draft of this note said the pool was full and the two could not coexist; counting the live triggers showed four of five in use, the fifth being held for a service that is not yet deployed. It is worth borrowing during the switch and is free again afterwards.)
+
+**Do not delete the old Worker until the new one has actually run.** A fresh Worker inherits none of the old one's configuration — not the encryption key, not the storage credentials, not the alert channel — and it refuses to run at all until every one of them is set, by design. So the order is: create it, configure it, watch a scheduled run complete and its alert arrive, and only then retire the old one. Deleting first leaves no working backup at all, and the gap would not announce itself.
+
+The encryption key deserves its own line. It must be generated locally and kept somewhere outside the hosting provider, because the entire point of it is that losing the provider does not lose the ability to read the backups. A key that exists only as a provider secret is not a backup key; it is a second copy of the same single point of failure.
 
 There is one visible consequence in the meantime, and it is expected rather than a fault. The hosting provider builds the Worker automatically from a path recorded on its side, and that path is the old directory — so from the moment the rename lands, that build fails. It does not disturb the running service, which keeps operating from its last successful build; it only means the automated check for the old Worker reports red until the provider-side project is pointed at the new location or replaced. Anyone reading a red check there should not go looking for a defect in the change.
 

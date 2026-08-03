@@ -150,12 +150,18 @@
   // surviving objects is circular: delete the oldest and the inferred
   // baseline advances past it, so the deleted period stops being required.
   //
-  // Discover the values with `node scripts/find-archive-baselines.mjs`.
-  // ARCHIVE_FIRST_YEARLY is deliberately absent: no yearly archive exists
-  // yet (this deployment has not lived through a Jan 1), and while unset
-  // the weekly report says COVERAGE DEGRADED for that tier rather than
-  // implying a guarantee it does not have.
-  "vars": {
-    "ARCHIVE_FIRST_MONTHLY": "2026-06",
-  },
+  // BOTH ARE DELIBERATELY UNSET. The archive→warm rename created a NEW,
+  // EMPTY bucket rather than migrating the old one, so this deployment has
+  // written no monthly or yearly cut yet. `ARCHIVE_FIRST_MONTHLY="2026-06"`
+  // was committed here while it still described the OLD bucket — against
+  // the new one it would mark every month from 2026-06 as required and the
+  // monthly tier would report FAILED rather than the honest "young bucket,
+  // coverage degraded".
+  //
+  // Set each one once its first cut exists — the 1st of a month for
+  // monthly, Jan 1 for yearly — using:
+  //     cd ops/offchain-data-warm && npm run archive:baselines
+  // While unset, the weekly report says COVERAGE DEGRADED for that tier,
+  // which is the truthful state for a bucket with nothing older to lose.
+  "vars": {},
 }
