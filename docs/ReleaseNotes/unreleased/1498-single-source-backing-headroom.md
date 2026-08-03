@@ -37,16 +37,27 @@ on, so subtracting it would refuse claims their own money. Its place in the
 underlying rule says the platform must be *holding* it, not that a payout may
 not touch it. That distinction was implicit before and is now stated.
 
-### The two ways the retired category could come back
+### One half of this is fixed; the other is now stated plainly as open
 
-Both are real rather than theoretical, so both are named:
+The above holds for a platform deployed **fresh** under current rules. A
+platform **upgraded from an older one** is a different matter, and review
+was right to press on it: it can still be holding that VPFI against loans
+open at the time of the upgrade. Those tokens sit inside the figure, so a
+reward payout can spend them — and the borrower's settlement, when it
+eventually comes, is short. It either fails outright or leaves them unpaid.
 
-A platform **upgraded from an older deployment** can still be holding this
-VPFI against loans that were already open at the time of the upgrade. For
-those, the figure remains an over-estimate of what is free.
+**That gap is not closed here, and the item tracking it stays open.** What
+changed is the diagnosis. It is not really a missing subtraction; it is the
+same root as the outstanding cross-chain reward work — payouts are limited by
+what the platform *happens to hold spare*, rather than by what was *delivered
+to fund rewards*. A running total of held custody would patch one symptom.
+Bounding payouts by delivered funding removes both, and that is where the
+item now points.
 
-And the collection routine still exists, unused. **Re-connecting it** would
-start taking that VPFI again. An existing test is what stands in the way: it
-funds a borrower, opens a loan, and asserts that nothing is taken into
-custody. Reconnecting the routine fails that test — which is the point of
-keeping it.
+Separately, the collection routine still exists, unused. **Re-connecting it**
+would reintroduce the gap on a fresh platform too. An existing test stands in
+the way: it funds a borrower, brings them to a qualifying tier, opts them
+into the discount, confirms that tier is actually in effect, and only then
+asserts nothing is taken into custody. Checking the setup *before* the
+conclusion is what makes it a real guard rather than one that would pass
+whether or not the routine were live.

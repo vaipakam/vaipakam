@@ -876,16 +876,19 @@ GovernanceRunbook gains a recycling section, executed in order:
    `balanceOf >= recycleBucket` across a **paying** claim — the assertion
    whose absence let this survive. The imprecision this row used to record —
    per-loan borrower-LIF custody sharing the balance with no running total —
-   was **corrected by #1498**, which found there is nothing to subtract:
-   #1352 retired the peg-custody origination path and its collector has no
-   caller, so no loan opened under current rules takes custody and the
-   headroom is EXACT on a deployment built from this source. It reverts to an
-   upper bound only on a Diamond upgraded from a pre-#1352 deployment (custody
-   against loans open at the upgrade) or if that collector is re-wired. #1498
-   also collapsed the three inlined copies of the headroom arithmetic into the
-   one definition the owning library exports — the copies agreed on the
-   arithmetic and had drifted on the prose, which is what produced the stale
-   claim in the first place.
+   was **split in two by #1555**. On a deployment ORIGINATED from current
+   source there is nothing to subtract: #1352 retired the peg-custody
+   origination path, no non-zero `vpfiHeld` assignment survives in `src/`, and
+   the headroom is EXACT. On a Diamond **UPGRADED** from a pre-#1352
+   deployment it is not — custody against loans open at the upgrade is
+   spendable as reward and the borrower's later settlement then reverts or
+   leaves them unpaid. **#1498 stays OPEN for that half**, re-pointed: its
+   root is shared with #1434 prerequisite 1 (payout bounded by un-earmarked
+   BALANCE rather than by funding DELIVERED FOR REWARDS), and the delivered
+   bound closes both. #1555 landed the other half — collapsing the three
+   inlined copies of the headroom arithmetic into the one definition the
+   owning library exports, since the copies agreed on the arithmetic and had
+   drifted on the prose, which is what produced the stale claim.
    **The `BACKING --> ARM` edge in §4 stays** — it is discharged, not
    deleted; arming still requires this closed.
    *The forensic account below is retained as the historical record of the

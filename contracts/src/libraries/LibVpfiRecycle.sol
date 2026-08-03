@@ -280,29 +280,41 @@ library LibVpfiRecycle {
      *           netting it would refuse claims their own funding. Its
      *           presence in the invariant says the Diamond must HOLD it, not
      *           that a reward payout may not draw on it.
-     *         • `userLifCustody` — NOTHING TO SUBTRACT on a deployment built
-     *           from this source. #1352 retired the peg-custody origination
-     *           path, and {LibVPFIDiscount.tryApplyBorrowerLif} — the only
-     *           writer of a non-zero `vpfiHeld` — has NO caller anywhere in
-     *           `src/`. Every surviving write is the `= 0` drain inside
-     *           {LibVPFIDiscount.settleBorrowerLifProper} /
-     *           {LibVPFIDiscount.forfeitBorrowerLif}, both of which return
-     *           early at `held == 0`, so the ~15 terminal paths that call
-     *           them (preclose, refinance, prepay, swap-to-repay, repay, and
-     *           every default / liquidation route) are no-ops for custody.
-     *           Pinned by `testAcceptOfferWithVPFIDiscountApplied`, which
-     *           funds a borrower vault, originates, and asserts the Diamond
-     *           takes none.
+     *         • `userLifCustody` — NOT subtracted, and whether that is SAFE
+     *           depends on the deployment. The checkable fact is that **no
+     *           non-zero assignment to `vpfiHeld` survives anywhere in
+     *           `src/`**: the three remaining writes are all `= 0`, the
+     *           drains inside {LibVPFIDiscount.settleBorrowerLifProper} /
+     *           {LibVPFIDiscount.forfeitBorrowerLif}, which return early at
+     *           `held == 0` — so the ~15 terminal paths calling them
+     *           (preclose, refinance, prepay, swap-to-repay, repay, every
+     *           default / liquidation route) are custody no-ops.
+     *           {LibVPFIDiscount.tryApplyBorrowerLif} is the PRODUCER of the
+     *           amount, not a writer — it moves the VPFI and returns
+     *           `vpfiDeducted`, and its own natspec makes recording it the
+     *           caller's job. The write was that caller, in
+     *           `OfferAcceptFacet`, and #1352 removed it; the producer now
+     *           has no caller at all. (An earlier revision of this comment
+     *           called the producer "the only writer" — a false
+     *           code-reachability claim at the exact point used to justify
+     *           omitting the aggregate. Codex #1555 r1.)
      *
-     *         TWO conditions re-open it, and both are real rather than
-     *         hypothetical: a Diamond UPGRADED from a pre-#1352 deployment
-     *         still holds custody against loans that were open at the
-     *         upgrade, and re-wiring `tryApplyBorrowerLif` would start taking
-     *         it again. Under either, `unearmarked` reverts to an UPPER BOUND
-     *         on genuinely free tokens and the global custody aggregate
-     *         #1498 describes becomes necessary. The guard against the second
-     *         is that test: it fails the moment origination takes custody
-     *         again.
+     *         So on a deployment ORIGINATED from this source the term is
+     *         zero and `unearmarked` is exact. On a Diamond **UPGRADED** from
+     *         a pre-#1352 deployment it is NOT: custody against loans open at
+     *         the upgrade sits inside this figure, a reward claim or the RL-3
+     *         sweep can spend or relabel it, and the borrower's later
+     *         settlement then reverts or leaves them unpaid. **That exposure
+     *         is real and is NOT closed here — #1498 stays open for it.** Its
+     *         root is shared with #1434 prerequisite 1: reward payout is
+     *         bounded by un-earmarked BALANCE rather than by funding
+     *         DELIVERED FOR REWARDS, and only the delivered bound fixes both.
+     *         Re-wiring the producer re-opens it on a fresh deployment too;
+     *         the guard there is `testAcceptOfferWithVPFIDiscountApplied`,
+     *         which stakes the borrower to tier 1, clears the history gate,
+     *         opts into consent and asserts `dBorrower == 1000` BEFORE
+     *         asserting no custody is taken — so it fails on re-wiring rather
+     *         than passing vacuously on an unmet precondition.
      *
      *         `unearmarked` is exactly the quantity #1460's third condition
      *         turns on — the defect needs a non-zero bucket AND a
