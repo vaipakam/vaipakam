@@ -34,7 +34,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, isKeeperEnabled } from './keeper';
+import { buildKeeperContext, passIsArmed } from './keeper';
 import {
   getRemitAckScanState,
   putRemitAckScanState,
@@ -68,14 +68,8 @@ interface RemitReservationView {
   dayIds: readonly bigint[];
 }
 
-function flagOn(env: Env, key: string): boolean {
-  const v = (env as unknown as Record<string, string | undefined>)[key];
-  return v === 'true' || v === '1';
-}
-
 export async function runRemitAck(env: Env): Promise<void> {
-  if (!isKeeperEnabled(env)) return;
-  if (!flagOn(env, 'REWARD_REMIT_ENABLED')) return;
+  if (!passIsArmed(env, 'remitAck', 'REWARD_REMIT_ENABLED')) return;
 
   for (const chain of getChainConfigs(env)) {
     try {

@@ -22,10 +22,10 @@ import {
   createWalletClient,
   type Address,
 } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
 
 import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
+import { resolveKeeperAccount } from './keeper';
 
 const CAPTURE_ABI = [
   {
@@ -103,13 +103,20 @@ async function captureForChain(env: Env, chain: ChainConfig): Promise<void> {
   const assets = await fetchTrackedAssets(env, chain.id);
   if (assets.length === 0) return;
 
-  let pk = env.KEEPER_PRIVATE_KEY.trim();
-  if (!pk.startsWith('0x')) pk = `0x${pk}`;
-  if (pk.length !== 66) {
-    console.error('[dailyOracle] KEEPER_PRIVATE_KEY malformed length');
+  // Through the shared resolver, not a local copy (#1540 r6). This was the
+  // THIRD implementation of "normalise and check the key", and the only one
+  // that built the account OUTSIDE a try — so a right-length hex value that
+  // is not a valid scalar threw here, and `index.ts` logged the error.
+  // Viem's message for that case contains the rejected scalar as a decimal
+  // integer, from which the key is recoverable: a key-disclosure path into
+  // the ops log, directly under a guarantee the operator docs had just made
+  // that key material never appears there.
+  const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
+  if ('problem' in resolved) {
+    console.error(`[dailyOracle] KEEPER_PRIVATE_KEY ${resolved.problem}`);
     return;
   }
-  const account = privateKeyToAccount(pk as `0x${string}`);
+  const { account } = resolved;
   const wallet = createWalletClient({ account, transport: http(chain.rpc) });
   const publicClient = createPublicClient({ transport: http(chain.rpc) });
 

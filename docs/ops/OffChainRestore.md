@@ -1534,18 +1534,22 @@ caught at the cheapest stage.
    > `--keep-vars` discipline — is a real question, and it is #1465's, not a
    > decision to take mid-restore.
 
-4. **Read the deployed variable values back.** Do not infer the flags took
-   from a quiet `wrangler tail`: `runRewardBudgetRemit`, `runRemitAck` and
-   `runCommitmentReport` all `return` silently at their flag guards, and a
-   correctly-armed pass is *also* silent when there is no pending work or
-   the chain is inapplicable. Silence therefore means "off" and "armed with
-   nothing to do" equally, and the restore can complete with remittance or
-   commitment reporting still dark. A typo reads as false and is
-   indistinguishable from deliberately-off — the same invisible failure the
-   uncommitted flags caused in the first place.
+4. **Confirm the flags from a tick — and note what the settings readback
+   can and cannot tell you.**
 
-   The authoritative check is the deployed settings, which list the
-   variables actually in effect:
+   > This step used to say the opposite, and the reversal is the point.
+   > Until #1475 the three reward passes returned silently at their flag
+   > guards, so a quiet tail meant "off" and "armed with nothing to do"
+   > equally, and a typo was indistinguishable from deliberately-off. That
+   > is fixed: every gated pass now emits exactly one line per tick naming
+   > its state, so **the tick is the authoritative check** — see the
+   > `wrangler tail` step below.
+
+   The settings readback below remains useful, but for a narrower purpose
+   than an earlier revision claimed: these flags are `secret_text`, so the
+   API returns each binding's NAME and TYPE and never its value. It tells
+   you a binding exists and is a secret. It cannot tell you whether it says
+   `true`, `ture`, or `True` — only the tick does that.
 
    ```bash
    read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
@@ -1561,41 +1565,150 @@ caught at the cheapest stage.
    says, which is not enough.** `wrangler secret put` accepts whatever is
    typed at the prompt: `ture`, `True`, a trailing space, a pasted newline.
    Every one of those creates a perfectly healthy-looking `secret_text`
-   binding that `isKeeperEnabled()` evaluates as **false**. The guards then
-   return silently — that is the documented behaviour two paragraphs down —
-   so neither this check nor a quiet log tail can tell a typo from a
-   deliberate "off", and the restore completes with signing duties dark.
+   binding that `isKeeperEnabled()` evaluates as **false**.
 
    A presence check cannot close this; only the running Worker can say how
-   it resolved the value. After the keeper's schedule is restored above,
-   confirm from the pass itself:
+   it resolved the value — and since #1475 it does, on every tick. (Before
+   that the guards returned silently and a quiet tail could not separate a
+   typo from a deliberate "off"; if you remember that, it is the thing that
+   changed.) After the keeper's schedule is restored above, confirm from the
+   pass itself:
 
    ```bash
    ( cd apps/keeper && wrangler tail --format pretty ) &
    # Wait for one tick.
    ```
 
-   **This works for `KEEPER_ENABLED` and NOT for the two reward flags** — a
-   distinction worth stating, because an earlier version of this step claimed
-   it covered all three:
+   **One tick now resolves all three flags** (#1475). Every *gated* pass emits
+   exactly one line per tick, whichever way its gate goes, and the skip line
+   names each binding that stopped it:
 
-   - `KEEPER_ENABLED`: `runAutoLifecycle` logs
-     `autoLifecycle skipped: keeper disabled` on the false branch, so a tick
-     distinguishes armed from mis-typed. If you see that line, the flag is
-     present and wrong — re-enter it with
-     `wrangler secret put KEEPER_ENABLED` and watch another tick.
-   - `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED`: **not observable this
-     way.** `runRewardBudgetRemit`, `runRemitAck` and `runCommitmentReport`
-     each `return` at their flag guard with no log at all, so an armed pass
-     with nothing to do and a pass reading its flag as false produce
-     byte-identical output — silence. Nothing outside the Worker can tell
-     them apart. Closing that is #1475 (a pass-start line per pass); until it
-     lands, treat these two as **write-only**: re-enter the value rather than
-     verifying it, and take the first successful remittance or commitment
-     report as the confirmation.
+   - Armed and running: `[keeper] <pass> start`.
+   - Stopped: `[keeper] <pass> skipped: <BINDING> <what is wrong>`, one clause
+     per blocker, separated by `; `. For example:
 
-   Do not conclude the restore is complete until a tick has been observed
-   doing work for every flag where that is possible.
+     ```
+     [keeper] rewardBudgetRemit start
+     [keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED wrong case — these flags require lowercase `true`
+     [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
+     ```
+
+   **No value is ever printed — only the form of the state**: `unset`,
+   `empty`, `off (explicitly disabled)`, `wrong case`,
+   `has surrounding whitespace`, or `unrecognised (N chars)`. The signing
+   key adds `malformed (N chars, expected 66)`, `malformed (not
+   hexadecimal)` and `malformed (not a valid signing key)` — see below.
+
+   Note `off (explicitly disabled)` in that list. Setting a flag to `false`
+   is the documented way to disable a pass, so it is reported as a state
+   rather than as a fault — during a deliberate shutdown you should not be
+   reading a line that suggests you mistyped something. That is deliberate. These are `secret_text`
+   bindings, and the case this diagnostic exists for is the value being
+   *wrong* — which is exactly how a pasted credential arrives. Echoing it
+   would copy that credential into the Worker logs at the moment the binding's
+   no-readback protection matters most. The character count still tells you
+   whether you are looking at a four-letter typo or something long that does
+   not belong there.
+
+   `KEEPER_PRIVATE_KEY` is reported as present, absent, or **malformed** —
+   never echoed. Malformed is the one to expect during a restore: a key that
+   is present but unusable used to satisfy the gate, so every pass announced
+   `start` and then produced nothing. The three forms are
+   `malformed (N chars, expected 66)`, `malformed (not hexadecimal)`, and
+   `malformed (not a valid signing key)` — that last one is a value of the
+   right length and alphabet that is still not a scalar on the curve, which
+   only attempting to build the account can determine.
+
+   **Every blocker appears on the one line.** If three bindings are wrong, one
+   line names all three — you are never fixing one and waiting a tick to
+   discover the next.
+
+   The six gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+   `rewardBudgetRemit`, `remitAck` and `commitmentReport`. `watcher`,
+   `dailyOracleSnapshot` and `preGraceWatcher` have no binding of their own,
+   and `liquidityConfidence` always runs and consults the gate only to decide
+   whether to submit — **absent lines from those four are normal**, not a
+   failed tick.
+
+   If you see a `skipped:` line, the named binding is the one to re-enter —
+   but **the two kinds of binding take different commands**, and using the
+   wrong one leaves the pass disarmed while appearing to succeed:
+
+   | binding | how it is bound | command |
+   |---|---|---|
+   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
+   | `KEEPER_PRIVATE_KEY` — **missing** | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
+   | `KEEPER_PRIVATE_KEY` — **present but malformed** | same store, entry already exists | list to get its id, then `wrangler secrets-store secret update <STORE_ID> --secret-id <ID> --scopes workers --remote` |
+
+   **`create` and `update` are not interchangeable, and the diagnostic tells
+   you which you need.** `create` makes a secret *within a store* under a new
+   name; it cannot replace an entry that already exists. So the newly-added
+   `KEEPER_PRIVATE_KEY malformed (…)` line — which by definition means the
+   entry IS there — is precisely the case `create` fails on. Get the id
+   first:
+
+   ```bash
+   wrangler secrets-store secret list <STORE_ID> --remote --per-page 100
+   ```
+
+   `--per-page` defaults to **10** and this store holds more than twenty
+   names, so without it `KEEPER_PRIVATE_KEY` may simply not be on the page
+   you get back — and the repair stalls looking for an id that is there. The
+   Deployment and Incident runbooks use `--per-page 100` for the same reason.
+
+   Then update it:
+
+   ```bash
+   wrangler secrets-store secret update <STORE_ID> --secret-id <ID> \
+     --scopes workers --remote
+   ```
+
+   **Answer YES when it asks whether to update the secret value.** That
+   prompt defaults to **no**, and because the command also carries
+   `--scopes workers` it will exit successfully having changed only the
+   scopes — reporting success while leaving the malformed key exactly as it
+   was, and every signing pass disarmed. Accepting the defaults here is the
+   failure mode, not the safe path.
+
+   A `KEEPER_PRIVATE_KEY unset` line is the `create` case instead.
+
+   **`--config` is not optional here.** Without it, `wrangler secret put`
+   applies to the Worker named in whatever Wrangler config is active — and
+   from the repository root that is `wrangler.jsonc`, which names
+   **`vaipakam-alpha`**, not the keeper. The `( cd apps/keeper && … )` above
+   runs in a subshell, so it does not change your working directory. The
+   command would report success while the keeper's flags stayed exactly as
+   they were, which is the worst possible outcome for a step whose purpose
+   is to fix them.
+
+   `wrangler secret put` creates a secret **for a Worker**;
+   `wrangler secrets-store secret create` creates one **within a store**.
+   `--scopes workers` is required by wrangler, and `--remote` defaults to
+   `false` — without it the secret is written to local persistence and the
+   deployed Worker never sees it. This is the same form §1 step 6 uses; note
+   that neither command takes the value as an argument, so it is prompted for
+   and never enters shell history.
+   Running the former for `KEEPER_PRIVATE_KEY` does not populate the store
+   entry the Worker actually reads — it creates a second, conflicting
+   binding of the same name, and every signing pass stays disarmed.
+
+   A `KEEPER_PRIVATE_KEY unset` line therefore has two possible causes worth
+   telling apart before acting: the store entry is genuinely missing, or the
+   binding resolved to nothing this tick because the store lookup failed. If
+   the entry exists in the store, treat it as the latter and watch a second
+   tick before re-creating anything.
+
+   Watch another tick after any change to confirm.
+
+   > Earlier versions of this step said first that a tick verified all three
+   > flags (it did not), and then that the two reward flags were **write-only**
+   > and could only be confirmed by waiting for a successful remittance. Both
+   > are now obsolete. If you are reading a stale copy, prefer this one.
+
+   Do not conclude the restore is complete until one tick has produced a
+   line from **each of the six gated passes**, and every line reads the way
+   you intended. The other four emit nothing by design — waiting for them
+   would be waiting forever.
 
    Confirm each flag you intended is present and, where the value is
    visible, reads what you meant.
@@ -1605,11 +1718,15 @@ caught at the cheapest stage.
    | | accepts | rejects |
    |---|---|---|
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
-   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` (`flagOn`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
-   So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is
-   silently off. Use lowercase `true` for all three and the asymmetry
-   never bites.
+   So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
+   **off but reported**, not silently so. That is the whole point of the
+   diagnostic above: the tick says `REWARD_REMIT_ENABLED wrong case — these
+   flags require lowercase \`true\``, naming the asymmetry rather than
+   leaving you to deduce it. (It WAS silent until #1475; if you are working
+   from memory of the old behaviour, that is the change.) Use lowercase
+   `true` for all three and the asymmetry never arises.
 
    Note the second half of the `KEEPER_ENABLED` row: the settings readback
    shows *variables*, and `isKeeperEnabled` also requires the

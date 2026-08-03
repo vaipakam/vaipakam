@@ -60,6 +60,67 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 
+### Confirming a flag actually took (#1475)
+
+Secrets cannot be read back — the API and dashboard return names only. So
+every **gated** pass emits exactly one line per tick, whichever way its gate
+goes, and one `wrangler tail` cycle resolves all of them:
+
+```
+[keeper] rewardBudgetRemit start
+[keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED wrong case — these flags require lowercase `true`
+[keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
+```
+
+The six gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+`rewardBudgetRemit`, `remitAck` and `commitmentReport`. The others
+(`watcher`, `dailyOracleSnapshot`, `preGraceWatcher`) have no on/off binding
+of their own and so have nothing to report; `liquidityConfidence` always runs
+and consults the keeper gate only to decide whether to submit. **Absent lines
+from those four are normal** — do not read them as a failed tick.
+
+Properties worth knowing:
+
+**Every applicable blocker appears on the one line**, as in the third example.
+Reporting only the first would mean fixing one binding, waiting a tick, and
+discovering the next.
+
+**The value itself is never printed** — only the form of the state
+(`unset`, `empty`, `off (explicitly disabled)`, `wrong case`,
+`has surrounding whitespace`, `unrecognised (N chars)`). Note the third:
+setting a flag to `false` is the documented way to disable a pass, so it
+reads as a deliberate state rather than as a fault — during an intentional
+shutdown you should not be shown a line implying you mistyped something.
+These are `secret_text` bindings, and the case this
+diagnostic exists for is the value being wrong, which is exactly how a pasted
+credential arrives; echoing it would write that credential into the logs and
+defeat the no-readback protection precisely when it matters. The character
+count still distinguishes a four-letter typo from a pasted key.
+
+`KEEPER_PRIVATE_KEY` is reported as present, absent, or **malformed** — never
+echoed. Malformed matters: a key that is present but unusable (wrong length,
+not hexadecimal, or not a valid scalar on the curve) used to satisfy the gate, so every pass logged `start` and
+then produced nothing when the key was rejected per chain. Reporting the
+healthy state for a broken key is the worst direction to be wrong in, and it
+would let the restore procedure sign off while nothing could sign.
+
+The check IS the account construction, not a re-implementation of it — so
+anything the signer would reject is reported by the gate, and the two cannot
+drift. A syntax-only check let 32 valid-looking hex bytes through that are
+not scalars on the curve (zero, or at/above the group order).
+
+That is also why **every** key construction in this Worker goes through the
+one resolver, and a test fails if a second call site appears. It is not
+tidiness: `dailyOracleSnapshot` used to build the account itself, outside a
+`try`, so an invalid scalar threw and the scheduled handler logged the
+error — and viem's message for that case contains the rejected scalar, from
+which the key is recoverable. The "never echoed" guarantee above is only
+true while that remains the single construction site.
+
+Note the second example: `KEEPER_ENABLED` accepts `True`, the two reward flags
+do not. Use lowercase `true` everywhere and the asymmetry never arises; if it
+already has, the log now says so instead of the pass simply staying dark.
+
 ### D1 — shared `vaipakam-archive` (staging)
 
 The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-archive`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/agent`.

@@ -41,7 +41,10 @@
  * via the existing matcher path when a borrower has posted a
  * refinance-tagged offer and a compatible lender offer exists.
  *
- * Gating: `isKeeperEnabled` only — same as the matcher / liquidator.
+ * Gating: the keeper-level gate only (no pass flag of its own) — same as the
+ * matcher / liquidator. Goes through `passIsArmed`, so the skip line now names
+ * which of `KEEPER_ENABLED` / `KEEPER_PRIVATE_KEY` stopped it instead of the
+ * older ambiguous "keeper disabled" (#1475).
  */
 
 import {
@@ -58,7 +61,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, isKeeperEnabled } from './keeper';
+import { buildKeeperContext, passIsArmed } from './keeper';
 
 const ADMIN_ABI: Abi = AdminFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
@@ -92,10 +95,7 @@ interface ExtendCaps {
 }
 
 export async function runAutoLifecycle(env: Env): Promise<void> {
-  if (!isKeeperEnabled(env)) {
-    console.log('[keeper] autoLifecycle skipped: keeper disabled');
-    return;
-  }
+  if (!passIsArmed(env, 'autoLifecycle')) return;
   const chains = getChainConfigs(env);
   for (const chain of chains) {
     try {

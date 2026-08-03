@@ -48,7 +48,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, isKeeperEnabled, type KeeperContext } from './keeper';
+import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 import {
   getCommitmentScanState,
   getOpenReconciledDays,
@@ -92,11 +92,6 @@ type RewardEntryView = {
   perDayNumeraire18: bigint;
 };
 
-function flagOn(env: Env, key: string): boolean {
-  const v = (env as unknown as Record<string, string | undefined>)[key];
-  return v === 'true' || v === '1';
-}
-
 function readNumber(env: Env, key: string, fallback: number): number {
   const raw = (env as unknown as Record<string, string | undefined>)[key];
   if (!raw) return fallback;
@@ -105,8 +100,7 @@ function readNumber(env: Env, key: string, fallback: number): number {
 }
 
 export async function runCommitmentReport(env: Env): Promise<void> {
-  if (!isKeeperEnabled(env)) return;
-  if (!flagOn(env, 'REWARD_COMMIT_ENABLED')) return;
+  if (!passIsArmed(env, 'commitmentReport', 'REWARD_COMMIT_ENABLED')) return;
 
   for (const chain of getChainConfigs(env)) {
     try {

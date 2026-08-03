@@ -30,7 +30,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AdminFacetABI,
   FlashLoanLiquidatorABI,
@@ -731,11 +731,210 @@ export async function maybeAutonomousLiquidate(
   }
 }
 
+/**
+ * Env keys that arm an individual periodic pass, on top of `KEEPER_ENABLED`.
+ *
+ * A union rather than `string` on purpose. The call sites this replaces each
+ * reached their flag through
+ * `(env as unknown as Record<string, string | undefined>)[key]` — a cast to
+ * reach a field `Env` already declares. That cast bought nothing and cost
+ * the compiler's help: a mistyped key compiled cleanly and read `undefined`
+ * forever, leaving the pass permanently dark. Which is the same failure this
+ * module's logging exists to expose, one layer down.
+ */
+export type PassArmingFlag = 'REWARD_REMIT_ENABLED' | 'REWARD_COMMIT_ENABLED';
+
+/**
+ * Describe a rejected flag value WITHOUT echoing it.
+ *
+ * An earlier version printed the raw value quoted, which reads as harmless
+ * for a boolean-ish binding and is not. `KEEPER_ENABLED` is `secret_text` on
+ * the live Worker, and the whole reason this diagnostic exists is the case
+ * where the value is NOT what was intended — a paste error is exactly how a
+ * credential ends up in the wrong binding. Echoing it would write that
+ * credential into the Worker logs, defeating the binding's no-readback
+ * protection precisely in the scenario the diagnostic handles.
+ *
+ * So the classification is bounded: it names the FORM of the mistake, never
+ * the content. Every failure mode #1475 set out to expose survives —
+ * surrounding whitespace, wrong case, and a value that is simply not either
+ * accepted spelling — and the character count distinguishes a four-letter
+ * typo from a pasted key without disclosing which.
+ *
+ * `caseInsensitive` because the two gates genuinely differ: `KEEPER_ENABLED`
+ * accepts `True`, the pass flags do not. Reporting "wrong case" for a value
+ * the caller would have accepted would send an operator chasing a non-fault.
+ */
+function describeFlagValue(
+  raw: string | undefined,
+  caseInsensitive: boolean,
+): string {
+  if (raw === undefined) return 'unset';
+  if (raw === '') return 'empty';
+  const accepts = (s: string): boolean => {
+    const c = caseInsensitive ? s.toLowerCase() : s;
+    return c === 'true' || c === '1';
+  };
+  const trimmed = raw.trim();
+
+  // `false` is the DOCUMENTED way to disable the keeper (README: "Master
+  // kill-switch; set to `false`"), so reporting it as `unrecognised (5
+  // chars)` told an operator their deliberate shutdown looked like a typo —
+  // during a shutdown or restore, which is exactly when a spurious
+  // configuration warning is most expensive. An explicitly-off value is a
+  // state, not a mistake, and the line should say so.
+  //
+  // Recognised case-insensitively on BOTH gates even though the pass flags
+  // arm case-sensitively. This function only LABELS; it never arms, and the
+  // caller has already decided the value is not accepted. `False` means the
+  // same thing its author intended whichever flag it sits on.
+  if (['false', '0'].includes(trimmed.toLowerCase())) {
+    return trimmed === raw
+      ? 'off (explicitly disabled)'
+      : 'off (explicitly disabled), with surrounding whitespace';
+  }
+  if (trimmed !== raw) {
+    return accepts(trimmed)
+      ? 'has surrounding whitespace (otherwise correct — re-enter without it)'
+      : `has surrounding whitespace and is unrecognised (${raw.length} chars)`;
+  }
+  if (!caseInsensitive && accepts(trimmed.toLowerCase())) {
+    return 'wrong case — these flags require lowercase `true`';
+  }
+  return `unrecognised (${raw.length} chars)`;
+}
+
+/** `0x` + 32 bytes, hex-encoded. */
+const KEEPER_KEY_CHARS = 66;
+
+/**
+ * Resolve the signing key to an account, or say — in bounded terms — why it
+ * cannot be one.
+ *
+ * ONE implementation, used by both the gate and the consumer (#1540 r4/r5),
+ * because two implementations of "is this key usable" is exactly how a pass
+ * comes to announce `start` and then do nothing. `passIsArmed` originally
+ * asked only whether the binding was non-empty; a syntax check replaced that
+ * and still admitted 32 hex bytes that are not valid scalars — zero, or at
+ * or above the secp256k1 order — which `privateKeyToAccount` rejects when
+ * each pass builds its context, long after the line claiming it was armed.
+ *
+ * So the check IS the construction. Anything viem refuses is reported here
+ * rather than re-derived: restating secp256k1's bounds in a second place
+ * would recreate the divergence this exists to remove, and would go stale
+ * the moment viem's validation changed.
+ *
+ * Cost is one key derivation per gated pass per tick. That is cheap, and
+ * being certain the gate and the signer agree is worth more than saving it.
+ *
+ * The reason never quotes the value. An unusable key is still a key, and
+ * this goes to the same log as everything else.
+ */
+export function resolveKeeperAccount(
+  raw: string,
+): { account: PrivateKeyAccount } | { problem: string } {
+  const trimmed = raw.trim();
+  const pk = trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
+  if (pk.length !== KEEPER_KEY_CHARS) {
+    return {
+      problem: `malformed (${pk.length} chars, expected ${KEEPER_KEY_CHARS})`,
+    };
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+    return { problem: 'malformed (not hexadecimal)' };
+  }
+  try {
+    return { account: privateKeyToAccount(pk as `0x${string}`) };
+  } catch {
+    // Right length, right alphabet, still not a key — zero, or at/above the
+    // curve order. Deliberately not echoing the error: viem's message can
+    // include the value.
+    return { problem: 'malformed (not a valid signing key)' };
+  }
+}
+
+/**
+ * EVERY keeper-level reason the pass cannot run — not just the first.
+ *
+ * Two independent causes hide behind `isKeeperEnabled`: the flag being off,
+ * and the signing key being absent. Both are unreadable, so an operator who
+ * cannot tell them apart cannot tell which to fix. And they are reported
+ * together rather than in sequence: stopping at the first would mean fixing
+ * one binding and waiting a tick to discover the next, which is not what
+ * "one cycle settles every switch" promises.
+ */
+function keeperBlockers(env: Env): string[] {
+  const blockers: string[] = [];
+  const enabled = env.KEEPER_ENABLED;
+  if (enabled === undefined || !['true', '1'].includes(enabled.toLowerCase())) {
+    blockers.push(`KEEPER_ENABLED ${describeFlagValue(enabled, true)}`);
+  }
+  if (!env.KEEPER_PRIVATE_KEY) {
+    blockers.push('KEEPER_PRIVATE_KEY unset');
+  } else {
+    const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
+    if ('problem' in resolved) {
+      blockers.push(`KEEPER_PRIVATE_KEY ${resolved.problem}`);
+    }
+  }
+  return blockers;
+}
+
+/**
+ * Unchanged in behaviour — delegates so the boolean and the reasons cannot
+ * drift apart. A future cause added to one is a cause in the other.
+ */
 export function isKeeperEnabled(env: Env): boolean {
-  if (!env.KEEPER_ENABLED) return false;
-  const v = env.KEEPER_ENABLED.toLowerCase();
-  if (v !== 'true' && v !== '1') return false;
-  return !!env.KEEPER_PRIVATE_KEY;
+  return keeperBlockers(env).length === 0;
+}
+
+/**
+ * Gate a periodic pass, and say so — exactly one line per pass per tick,
+ * whichever way it goes.
+ *
+ * WHY (#1475). A pass whose arming flag read false and a pass that ran and
+ * found nothing to do used to produce byte-identical output: silence. The
+ * arming flags are `secret_text` bindings, so their values cannot be read
+ * back from the API or the dashboard either. Between the two there was no
+ * way at all to confirm a flag was set correctly — not by readback, not by
+ * observation — and a typo (`ture`, a trailing newline) left the pass dark
+ * and looking perfectly healthy. For reward remittance and commitment
+ * reporting that is the worst case, because a silent stall looks exactly
+ * like a quiet period.
+ *
+ * The skip line names the specific binding that stopped the pass and the FORM
+ * of the mistake — never the value itself, for the reason given on
+ * `describeFlagValue`. `KEEPER_PRIVATE_KEY` is reported only as present or
+ * absent.
+ *
+ * ALL applicable blockers appear on the one line. Reporting only the first
+ * would mean an operator fixes one binding, waits a tick, and discovers the
+ * next — which is not what a single-cycle diagnosis is worth having for.
+ *
+ * One `wrangler tail` cycle resolves every gate on every gated pass.
+ */
+export function passIsArmed(
+  env: Env,
+  pass: string,
+  flag?: PassArmingFlag,
+): boolean {
+  const blockers = keeperBlockers(env);
+  if (flag !== undefined) {
+    // Deliberately NOT lowercased, matching the behaviour this replaces.
+    // `KEEPER_ENABLED` accepts `True`; these flags do not. Making them agree
+    // would arm a fund-moving pass on a deploy that currently has it off, so
+    // the asymmetry is surfaced in the log rather than silently resolved.
+    const raw = env[flag];
+    if (raw !== 'true' && raw !== '1') {
+      blockers.push(`${flag} ${describeFlagValue(raw, false)}`);
+    }
+  }
+  if (blockers.length > 0) {
+    console.log(`[keeper] ${pass} skipped: ${blockers.join('; ')}`);
+    return false;
+  }
+  console.log(`[keeper] ${pass} start`);
+  return true;
 }
 
 export function buildKeeperContext(
@@ -744,13 +943,14 @@ export function buildKeeperContext(
   publicClient: PublicClient,
 ): KeeperContext | null {
   if (!env.KEEPER_PRIVATE_KEY) return null;
-  let pk = env.KEEPER_PRIVATE_KEY.trim();
-  if (!pk.startsWith('0x')) pk = `0x${pk}`;
-  if (pk.length !== 66) {
-    console.error('[keeper] KEEPER_PRIVATE_KEY malformed length');
+  // The same call the gate makes, so a key that logged `start` cannot be
+  // rejected here, and one rejected here cannot have logged `start`.
+  const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
+  if ('problem' in resolved) {
+    console.error(`[keeper] KEEPER_PRIVATE_KEY ${resolved.problem}`);
     return null;
   }
-  const account = privateKeyToAccount(pk as `0x${string}`);
+  const { account } = resolved;
   const wallet = createWalletClient({
     account,
     transport: http(chain.rpc),
