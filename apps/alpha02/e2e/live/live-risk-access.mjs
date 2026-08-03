@@ -94,6 +94,11 @@ async function assertSelectionMatchesChain(context) {
   check(`${context}: selected radio matches chain raw tier`, ok);
 }
 
+// EVERYTHING after launch runs under the cleanup boundary (Codex
+// #1539 r5): a throw during strict normalization, navigation, connect
+// or the read-path assertions must still restore the wallet and close
+// the context — not leave the manual driver stuck.
+try {
 // Persistent-wallet normalization BEFORE the page loads (Codex #1539
 // r4): a prior strict-mode run must not poison the OFF-posture
 // assertions. Chain-confirmed direct write, exactly like the fork
@@ -130,11 +135,6 @@ check('strict card withheld-enable posture', /isn’t offered here yet/i.test(bo
 check('no strict switch while OFF', (await page.getByRole('switch').count()) === 0);
 await assertSelectionMatchesChain('pre-write');
 
-// Mutation phase runs under try/finally (Codex #1539 r2): whatever
-// throws mid-flight, the persistent production wallet is restored to
-// Blue-chip (chain-confirmed, direct-write fallback) and the browser
-// context is closed.
-try {
 // 2. Normalize to Blue-chip FIRST (rerunnable after an aborted run;
 // also guarantees the next step is genuinely a raise).
 if (Number(await rawTierOf()) !== 0) {

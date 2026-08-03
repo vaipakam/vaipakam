@@ -59,6 +59,14 @@ import type { TokenMeta } from '../contracts/erc20';
  *  costing at most one whole day of term near a day boundary. */
 const OFFSET_MATURITY_MARGIN_SECONDS = 600n;
 
+/** What the pre-write re-judges demand on top of the contract's own
+ *  bound: only enough for the submit→mine gap. The 600s reserve above
+ *  is SIZING headroom, meant to be CONSUMED by review + wallet
+ *  confirmation — re-requiring the full reserve at submit time would
+ *  reject a default with hundreds of seconds of valid contract
+ *  headroom left (Codex #1539 r5). */
+const OFFSET_SUBMIT_BUFFER_SECONDS = 60n;
+
 export function OffsetFlow({
   row,
   live,
@@ -305,7 +313,7 @@ export function OffsetFlow({
       if (
         latestBlock.timestamp +
           BigInt(durationDays) * 86_400n +
-          OFFSET_MATURITY_MARGIN_SECONDS >
+          OFFSET_SUBMIT_BUFFER_SECONDS >
         loanEndTimeOf(liveLoan)
       ) {
         setError(copy.offset.onlyBeforeDue);
@@ -368,7 +376,7 @@ export function OffsetFlow({
       if (
         blockAtWrite.timestamp +
           BigInt(durationDays) * 86_400n +
-          OFFSET_MATURITY_MARGIN_SECONDS >
+          OFFSET_SUBMIT_BUFFER_SECONDS >
         loanEndTimeOf(liveLoan)
       ) {
         setError(copy.offset.onlyBeforeDue);
