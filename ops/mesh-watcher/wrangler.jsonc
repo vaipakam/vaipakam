@@ -53,7 +53,7 @@
   //                      workers.dev URL is public, so the endpoint is
   //                      fail-CLOSED. `openssl rand -hex 32`.
   //   TG_OPS_BOT_TOKEN — the OPS-internal Telegram bot, shared with
-  //                      ops/offchain-data-archive. DELIBERATELY NOT
+  //                      ops/offchain-data-warm. DELIBERATELY NOT
   //                      `TG_BOT_TOKEN`, which is the user-facing bot
   //                      apps/keeper + apps/agent post with. See
   //                      CLAUDE.md, "Two Telegram bots".

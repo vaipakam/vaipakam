@@ -10,9 +10,10 @@
     "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",
     "check-notification-coverage": "node scripts/check-notification-coverage.mjs",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs && node scripts/check-migration-prefixes.mjs && node scripts/check-table-classification.mjs",
+    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs && node scripts/check-migration-prefixes.mjs && node scripts/check-table-classification.mjs && node scripts/check-d1-name-consistency.mjs",
     "test": "vitest run",
-    "check-migration-prefixes": "node scripts/check-migration-prefixes.mjs"
+    "check-migration-prefixes": "node scripts/check-migration-prefixes.mjs",
+    "check-d1-name-consistency": "node scripts/check-d1-name-consistency.mjs"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",

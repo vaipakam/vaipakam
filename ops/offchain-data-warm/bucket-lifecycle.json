@@ -37,7 +37,7 @@
     "Verify against live with `npm run bucket:lifecycle:print`; check for drift with",
     "`npm run bucket:lifecycle:check`."
   ],
-  "bucket": "vaipakam-offchain-data-archive",
+  "bucket": "vaipakam-offchain-data-warm",
   "rules": [
     {
       "fileNamePrefix": "archives/",

@@ -15,6 +15,17 @@ import { runNightlyBackup } from './backup';
 import { runHealthcheck, type TierOutcome } from './healthcheck';
 import type { Env } from './env';
 
+/**
+ * This Worker's deployed name, mirroring `wrangler.jsonc`'s `name`.
+ *
+ * Needed because the preflight alert fires BEFORE any config is resolved,
+ * so there is no bucket to name — and during the archive→warm handoff two
+ * Workers share the schedule and the ops bot, making an unattributed alert
+ * unactionable. `identity.test.ts` asserts this equals the wrangler config,
+ * so the two cannot drift apart silently.
+ */
+const WORKER_NAME = 'vaipakam-offchain-data-warm';
+
 /** Two B2 configs — see env.ts for why the keys are split. */
 function b2WriteConfig(env: Env): B2Config {
   return {
@@ -115,8 +126,8 @@ function assertRequiredEnv(env: Env): void {
     throw new Error(
       `MISSING ENV: ${missing.join(', ')}. ` +
       `Set each via \`wrangler secret put <NAME>\` against the ` +
-      `vaipakam-offchain-data-archive Worker. See ` +
-      `ops/offchain-data-archive/README.md §Setup for the full list ` +
+      `vaipakam-offchain-data-warm Worker. See ` +
+      `ops/offchain-data-warm/README.md §Setup for the full list ` +
       `+ values to paste.`,
     );
   }
@@ -187,7 +198,18 @@ export default {
       // Note: we haven't booted the encryption key yet, but the
       // error path doesn't need it — only the tg() call which
       // reads TG_OPS_BOT_TOKEN + TG_OPS_CHAT_ID directly from env.
-      ctx.waitUntil(tg(env, `🚨 Worker preflight FAILED:\n${msg}`));
+      // Identity on THIS alert especially (#1537 r8). Preflight failure —
+      // a missing B2 or encryption secret — is the likeliest way the
+      // replacement Worker fails during the archive→warm handoff, and in
+      // that window two Workers share the schedule AND the ops bot. An
+      // unattributed "preflight FAILED" cannot tell the operator which
+      // deployment is broken. `cfg.bucket` is unavailable here (an unset
+      // bucket is one of the things being reported), so the Worker name is
+      // the identity that always resolves; `WORKER_NAME` is pinned to
+      // wrangler.jsonc by a test so it cannot drift.
+      ctx.waitUntil(
+        tg(env, `🚨 ${WORKER_NAME} preflight FAILED:\n${msg}`),
+      );
       throw err;
     }
 
@@ -230,7 +252,7 @@ export default {
    *  Always returns 404 with an honest description of why. */
   async fetch(): Promise<Response> {
     return new Response(
-      'vaipakam-offchain-data-archive is a cron-driven Worker. No HTTP surface.',
+      'vaipakam-offchain-data-warm is a cron-driven Worker. No HTTP surface.',
       { status: 404 },
     );
   },
@@ -269,6 +291,15 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
       env,
       [
         '✅ Nightly off-chain backup succeeded',
+        // WHICH bucket, on every alert (#1537 r7). During the archive→warm
+        // switchover two Workers share the 03:17 schedule AND the same ops
+        // bot, so an unattributed success line could come from either — and
+        // the retirement step treats that line as proof the replacement
+        // works before deleting the old Worker. Reading the old one's alert
+        // as the new one's would delete the only functioning backup.
+        // The bucket is the honest discriminator: each Worker writes its
+        // own, and it is what an operator actually needs to know.
+        `  bucket: ${cfg.bucket}`,
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
@@ -326,7 +357,7 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
     }
   } catch (err) {
     const msg = (err as Error).message;
-    await tg(env, `🚨 Nightly backup FAILED: ${msg}`);
+    await tg(env, `🚨 Nightly backup FAILED (bucket: ${cfg.bucket}): ${msg}`);
     // Re-throw so Worker's invocation log shows the failure too
     // (operator-visible via `wrangler tail`).
     throw err;
