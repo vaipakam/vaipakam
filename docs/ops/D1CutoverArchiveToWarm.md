@@ -50,13 +50,57 @@ those are real, export that one table before starting:
 ```bash
 cd apps/indexer
 npx wrangler d1 export vaipakam-archive --remote --no-schema \
-  --table support_tickets --output ./tickets.sql -y
+  --table support_tickets --output ~/vaipakam-tickets.sql -y
+chmod 600 ~/vaipakam-tickets.sql
 ```
 
-That file contains message bodies and any email addresses in them — treat it
-as personal data, keep it only as long as needed, and `shred -u` it after.
+**Outside the repository, deliberately.** An earlier revision wrote it to
+`./tickets.sql` from `apps/indexer/` — a path no `.gitignore` rule covers, at
+whatever permissions the process happened to use. A `git add -A` would have
+committed support-ticket message bodies and email addresses. It contains
+personal data: `chmod 600`, keep it only as long as needed, `shred -u` after.
 
-## 2. The cutover
+## 2. Sequencing against the contract redeploy
+
+**"Starts empty and captures new data only" is only true if the redeploy and
+the artifact update land FIRST.**
+
+`chainIndexer.ts:673-684` resolves a missing cursor to `deployBlock - 1` and
+begins scanning from there. So if the bindings move while the artifacts still
+name the current contracts, the freshly-deployed indexer replays **the
+existing deployment** into the new database — exactly the data the owner
+decided not to migrate, arriving by the back door and mixed with nothing to
+distinguish it.
+
+Two orders work, and one does not:
+
+| order | result |
+|---|---|
+| redeploy contracts → update `deployments.json` → cutover | new database holds only new-contract data ✅ |
+| cutover → redeploy → update artifacts | old-contract replay, then a second replay; the first is junk that must be cleared ✅ but wasteful |
+| cutover while artifacts still point at the old contracts, and leave it | old-contract data accumulates indefinitely ❌ |
+
+**Prefer the first.** If the cutover must happen before the redeploy, plan to
+clear the new database again afterwards, and say so at the time rather than
+discovering a mixed dataset later.
+
+## 3. The cutover
+
+### Step 0 — clear the target
+
+It is **not** empty. `vaipakam-warm` still holds the six rows hand-copied
+during #1537's preparation — `user_thresholds` 1, `notify_state` 1,
+`support_tickets` 4 (verified 2026-08-03). An earlier revision of this plan
+had a clearing step; the no-migration rewrite removed it, which would have
+left those stale rows to be adopted as live state.
+
+```bash
+cd apps/indexer
+npx wrangler d1 execute "$TARGET_DB" --remote --command \
+  "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;"
+```
+
+Then confirm every table is empty — not just those three.
 
 ### Step 1 — one PR, all four bindings
 
@@ -97,32 +141,81 @@ and writing the old database while the other two use the new one.
 happily shows an older successful deploy after a failed one. Confirm each
 Worker is actually on the new database:
 
-- indexer — new rows appearing in `activity_events` / `offers`;
-- keeper — a tick logged, no D1 errors in `wrangler tail`;
-- agent — a request served that reads or writes D1;
-- backup Worker — a nightly run completing.
+**The probe must distinguish the databases.** An earlier revision listed
+checks that all pass against the OLD binding too — a keeper tick logs cleanly
+either way, an agent request reads a schema-valid database either way, and
+the backup Worker completes into whichever `B2_BUCKET` it holds. Those prove
+the Worker is alive, not where it is pointed.
 
-## 3. Delete the old database
-
-- [ ] All four Workers confirmed on the new database, from behaviour.
-- [ ] One nightly backup completed against the new database, its alert naming
-      the new bucket.
-- [ ] `support_tickets` exported if wanted (§1), or consciously abandoned.
+Use checks that can only be true of the new database. Since the target starts
+empty, its emptiness is the discriminator:
 
 ```bash
-npx wrangler d1 delete vaipakam-archive     # irreversible
+cd apps/indexer
+# Before restoring traffic: the new database has zero rows in these.
+npx wrangler d1 execute "$TARGET_DB" --remote --command \
+  "SELECT (SELECT COUNT(*) FROM offers) o, (SELECT COUNT(*) FROM activity_events) a"
 ```
+
+- **indexer** — after its first tick, `indexer_cursor` gains a row in
+  `$TARGET_DB` and `offers`/`activity_events` begin filling *there*. Confirm
+  the row count in the TARGET rose, not that the indexer merely ran.
+- **keeper** — a write it owns (`liquidity_confidence`, `hf_band_state`)
+  appears in `$TARGET_DB`.
+- **agent** — perform one threshold write through the API, then read it back
+  from `$TARGET_DB` directly. If it landed in the source instead, its manual
+  deploy did not take.
+- **backup Worker** — its next nightly must be verified by content, not
+  completion: the manifest's table list should reflect the new database's
+  (near-empty) state, not the old one's ~1,100 rows.
 
 ## 4. Rollback
 
-Revert the binding PR; indexer and keeper auto-deploy back, agent and the
-backup Worker need the same manual deploys as step 2. The old database is
-untouched throughout — nothing writes to it after the switch and nothing
-deletes from it until §3 — so rollback is clean right up to that command.
+**Free until the Workers start writing to the target.** Until then the source
+is untouched and current: revert the binding PR, redeploy `apps/agent` and
+`ops/offchain-data-warm` by hand, done.
 
-After deletion there is no rollback. That is the line.
+**After that it is not free, and this plan does not offer a clean one.**
+New support tickets, thresholds, signed offers, notification state and
+cursors exist only in the target. Reverting points every Worker back at a
+source that is missing them, and the exports are plain `INSERT`s that collide
+with the source's surviving rows — so a reverse import is not a one-liner
+either.
 
-## 5. Note for whoever executes this
+If rollback is needed after that point, treat it as its own cutover with the
+same care as the forward one. The honest planning assumption is: **once the
+Workers write to the new database, forward is the only direction.**
+
+## 5. Deleting the source
+
+Order matters here, and this plan does not own all of it:
+
+- [ ] **The old backup Worker is retired first (#1551).** It binds the source
+      as `DB_ARCHIVE`. Deleting the database while that Worker is still
+      scheduled leaves a live cron pointed at a database that no longer
+      exists — a nightly failure with a confusing cause.
+- [ ] All four Workers confirmed on the target by a **discriminating** probe.
+- [ ] One nightly backup completed against the target, verified by content.
+- [ ] `support_tickets` exported (§1) or consciously abandoned.
+- [ ] **The discard list re-validated on the day.** The row counts in §1 are
+      from 2026-08-03 and the database is live. `diag_legal_holds` and its
+      audit trail are classified born-off-chain and irrecoverable — they are
+      empty today, and a legal hold recorded between now and execution would
+      not be. Re-run the count before deleting; do not trust this table.
+
+```bash
+SOURCE_DB=vaipakam-archive
+npx wrangler d1 delete "$SOURCE_DB"     # irreversible
+```
+
+> **Why a variable.** Once the bindings move, `check-d1-name-consistency` — a
+> required check — treats `vaipakam-archive` as a database no binding uses,
+> and it scans `wrangler d1 delete`. A literal name here fails CI on the very
+> PR that retires it. The guard is right: a `d1` command naming an unbound
+> database is the partial-cutover signature, so the plan parameterises rather
+> than being exempted from its own check.
+
+## 6. Note for whoever executes this
 
 Migrations `0043`–`0048` were applied to `vaipakam-archive` on 2026-08-03
 (43 → 49), which fixed the M5 backing block that had been dark in production.
