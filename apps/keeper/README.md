@@ -91,23 +91,20 @@ running, which is the failure this paragraph exists to prevent:
 "triggers": { "crons": [] }
 ```
 
-then, from `apps/keeper`:
+then remove the trigger **from the dashboard** — *Settings → Trigger Events*.
 
-```bash
-npx wrangler deploy --keep-vars
-```
+**Do not reach for `wrangler deploy` to do this.** Without `--keep-vars` it
+deletes every var before applying the config's. *With* `--keep-vars` it stops
+deleting vars the config omits — but it still **applies the ones the config
+declares**, and this config commits `"TG_BOT_USERNAME": ""`. A value filled
+in through the dashboard is overwritten either way. An earlier revision of
+this section recommended `--keep-vars` as the fix; it is not one.
 
-**`--keep-vars` matters.** Without it wrangler "will delete all vars before
-setting those found in the Wrangler configuration", and this config commits
-`"TG_BOT_USERNAME": ""` — a value the comment beside it says is filled in
-after provisioning. A plain `deploy` during an incident would therefore wipe
-whatever is live. (It is empty live today, so the hazard is latent rather
-than active — but an emergency stop is the wrong moment to discover it.)
+`wrangler triggers deploy` is not the answer either — experimental, and
+scoped to the `wrangler versions upload` flow.
 
-`wrangler triggers deploy` is not the alternative it looks like: it is marked
-experimental and applies to the `wrangler versions upload` flow. If you would
-rather not deploy at all, remove the cron from the dashboard —
-*Settings → Trigger Events* — which touches nothing else.
+The dashboard change touches the schedule and nothing else, which is what an
+emergency stop needs.
 
 **Confirm it, do not assume it** — the readback must be trigger-aware, since
 a mistyped or wrongly-nested key leaves the committed cron in place. Check

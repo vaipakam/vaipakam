@@ -236,8 +236,10 @@ load-bearing in an incident and neither is obvious:
 - an empty schedules response is the control plane accepting the change, not
   the ticks having stopped — Cloudflare documents **up to 15 minutes** of
   propagation, and this Worker runs every minute, so roughly a dozen further
-  ticks can still sign. Confirm from the keeper EOA's nonce, not the
-  dashboard. The pass is idempotent and bounds its receipt waits, so stopping it never
+  ticks can still sign. **The confirmation is the absence of ticks after the window**, not
+  before it. A stationary nonce is corroboration only — it is per-chain,
+  and a RUNNING keeper has one anyway outside the snapshot window with no
+  eligible work. The pass is idempotent and bounds its receipt waits, so stopping it never
 strands funds — any in-flight day simply re-evaluates on the next armed tick or
 via the manual procedure above.
 
