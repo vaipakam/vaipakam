@@ -46,8 +46,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "vaipakam-warm",
-      "database_id": "e5e927cf-56c3-42c7-9820-179a235cc84f",
+      "database_name": "vaipakam-archive",
+      "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
     },
   ],
 

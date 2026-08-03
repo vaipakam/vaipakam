@@ -273,7 +273,7 @@ arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
 all bind to **one shared D1 database** — `vaipakam-warm`
-(database_id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging**
+(database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging**
 database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
 §3 for the staging-vs-primary split). The schema is **owned by
@@ -286,7 +286,7 @@ read and write a subset of the shared tables via the same binding
 **Rule**: every schema change — even for a table only `keeper` or
 `agent` writes — lands as a new file under
 `apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
-`wrangler d1 migrations apply vaipakam-warm --remote` from inside
+`wrangler d1 migrations apply vaipakam-archive --remote` from inside
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
 directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.

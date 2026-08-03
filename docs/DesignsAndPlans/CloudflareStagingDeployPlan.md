@@ -61,7 +61,7 @@ Operator has provisioned (verified via Cloudflare API
 D1 databases:
 
 - `vaipakam-alerts-db` (`50850eab-…`) — **PRODUCTION D1, untouched**
-- `vaipakam-warm`   (`e5e927cf-…`) — staging D1 for the new
+- `vaipakam-archive`   (`3cffebf5-…`) — staging D1 for the new
   Workers. Migrations not yet applied (one-time step).
 
 Pre-existing primary infra (untouched until staging is proven):
@@ -177,8 +177,8 @@ Stage 3 PR5.
 | Step | Owner | What happens |
 |---|---|---|
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
-| 2 | Author | Patch wrangler.jsonc with `vaipakam-warm` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
-| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote` (one-time schema apply) |
+| 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
+| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
 | 4 | Operator | `wrangler secret put` for the missing secrets per §4.3 + §4.4 (BLOCKAID, ZEROEX, ONEINCH on keeper, etc.) |
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |

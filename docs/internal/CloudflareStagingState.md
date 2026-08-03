@@ -9,7 +9,7 @@
 
 | Database | ID | Region | Schema owner | Other binders |
 |---|---|---|---|---|
-| `vaipakam-warm` | `e5e927cf-56c3-42c7-9820-179a235cc84f` | APAC | `apps/indexer` (canonical `migrations/`) | `apps/keeper`, `apps/agent` |
+| `vaipakam-archive` | `3cffebf5-b652-4da7-953c-9e1d143ad2fe` | APAC | `apps/indexer` (canonical `migrations/`) | `apps/keeper`, `apps/agent` |
 
 **Topology**: single shared D1, owned by indexer. The keeper and agent
 Workers bind to the same `database_id`; they intentionally have no
@@ -21,7 +21,7 @@ source survey, distinguishing writes from reads):
 - **agent writes**: `user_thresholds`, `notify_state`, `telegram_links`, `loans`, `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`.
 - **agent reads-only**: (none — every table the agent reads, it also writes.)
 
-Apply schema changes with `wrangler d1 migrations apply vaipakam-warm
+Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 --remote` from inside `apps/indexer/`.
 
 ## Workers (all currently serving placeholder 503)
