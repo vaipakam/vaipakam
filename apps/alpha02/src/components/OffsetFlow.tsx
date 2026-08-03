@@ -48,6 +48,10 @@ import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
+import {
+  OFFSET_MATURITY_MARGIN_SEC,
+  offsetMaxDurationDays,
+} from '../lib/offsetTerms';
 
 export function OffsetFlow({
   row,
@@ -92,19 +96,33 @@ export function OffsetFlow({
     () => String(Number(live.interestRateBps) / 100),
   );
   // The replacement term must END no later than the original maturity
-  // (seconds-precise on-chain; whole days here rounds DOWN, so the
-  // default always fits) AND within the protocol's live offer-duration
-  // ceiling — governance can lower that below the remaining term, and
-  // createOffer rejects a longer duration (Codex #1500 r4). The form
-  // uses the tighter of the two; submit re-reads the ceiling live.
+  // AND within the protocol's live offer-duration ceiling — governance
+  // can lower that below the remaining term, and createOffer rejects a
+  // longer duration (Codex #1500 r4). The form uses the tighter of the
+  // two; submit re-reads the ceiling live.
+  //
+  // The maturity half needs a MARGIN, and rounding down is not one
+  // (#1535). PrecloseFacet compares seconds against a loan that
+  // re-originates at MINE time, while this bound is computed at READ
+  // time: `block.timestamp + durationDays·1d > startTime +
+  // durationDays·1d` reverts. Flooring to whole days looks like it
+  // leaves slack, and usually does — but when the remaining term is an
+  // exact multiple of a day (a loan opened moments ago, which is
+  // precisely when someone reaches for an offset) it floors to the
+  // loan's OWN duration and leaves none at all. Every second between
+  // quoting and mining then puts it over, so the offered maximum
+  // reverts with a message about lender-favourability that reads like
+  // the terms were unfair rather than one second too long.
+  //
+  // Subtracting the margin before flooring fixes the offered maximum,
+  // the validity test and the pre-submit re-check together, since all
+  // three read this value.
   const fees = useProtocolFees();
-  const maxDurationDays = (() => {
-    const end = loanEndTimeOf(live);
-    const remaining = end > chainNow ? (end - chainNow) / 86_400n : 0n;
-    if (!fees.ready) return remaining;
-    const cap = BigInt(fees.maxOfferDurationDays);
-    return remaining < cap ? remaining : cap;
-  })();
+  const maxDurationDays = offsetMaxDurationDays(
+    loanEndTimeOf(live),
+    chainNow,
+    fees.ready ? BigInt(fees.maxOfferDurationDays) : undefined,
+  );
   const [durationInput, setDurationInput] = useState(() =>
     String(maxDurationDays),
   );
@@ -273,10 +291,13 @@ export function OffsetFlow({
         return;
       }
       // Re-judge the term bound by LIVE chain time — the reviewed
-      // duration can stop fitting while the receipt sits open.
+      // duration can stop fitting while the receipt sits open. Carries
+      // the same margin as the offered maximum (#1535): this reads the
+      // LATEST block, but the transaction mines in a later one, so a
+      // check that only just passes here still reverts on chain.
       if (
         latestBlock.timestamp + BigInt(durationDays) * 86_400n >
-        loanEndTimeOf(liveLoan)
+        loanEndTimeOf(liveLoan) - OFFSET_MATURITY_MARGIN_SEC
       ) {
         setError(copy.offset.onlyBeforeDue);
         return;
