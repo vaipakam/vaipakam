@@ -99,10 +99,15 @@ count still distinguishes a four-letter typo from a pasted key.
 
 `KEEPER_PRIVATE_KEY` is reported as present, absent, or **malformed** — never
 echoed. Malformed matters: a key that is present but unusable (wrong length,
-not hexadecimal) used to satisfy the gate, so every pass logged `start` and
+not hexadecimal, or not a valid scalar on the curve) used to satisfy the gate, so every pass logged `start` and
 then produced nothing when the key was rejected per chain. Reporting the
 healthy state for a broken key is the worst direction to be wrong in, and it
 would let the restore procedure sign off while nothing could sign.
+
+The check IS the account construction, not a re-implementation of it — so
+anything the signer would reject is reported by the gate, and the two cannot
+drift. A syntax-only check let 32 valid-looking hex bytes through that are
+not scalars on the curve (zero, or at/above the group order).
 
 Note the second example: `KEEPER_ENABLED` accepts `True`, the two reward flags
 do not. Use lowercase `true` everywhere and the asymmetry never arises; if it

@@ -30,7 +30,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   AdminFacetABI,
   FlashLoanLiquidatorABI,
@@ -808,27 +808,49 @@ function describeFlagValue(
 const KEEPER_KEY_CHARS = 66;
 
 /**
- * The signing key as `buildKeeperContext` will read it, or a bounded
- * description of why it is unusable.
+ * Resolve the signing key to an account, or say — in bounded terms — why it
+ * cannot be one.
  *
- * Shared so the gate and the consumer cannot disagree (#1540 r4). Before
- * this, `passIsArmed` only asked whether the binding was non-empty, so a
- * malformed key logged `start` on all six gated passes and then produced
- * nothing — `buildKeeperContext` rejects it per chain, well after the line
- * claiming the pass was armed. That defeats a one-tick diagnosis in the
- * worst way: it reports the healthy state for an unusable key, and the
- * runbook's completion check would pass with every signing path disarmed.
+ * ONE implementation, used by both the gate and the consumer (#1540 r4/r5),
+ * because two implementations of "is this key usable" is exactly how a pass
+ * comes to announce `start` and then do nothing. `passIsArmed` originally
+ * asked only whether the binding was non-empty; a syntax check replaced that
+ * and still admitted 32 hex bytes that are not valid scalars — zero, or at
+ * or above the secp256k1 order — which `privateKeyToAccount` rejects when
+ * each pass builds its context, long after the line claiming it was armed.
  *
- * The reason never quotes the value. A wrong-length or non-hex key is still
- * a key, and this runs on the same channel as everything else.
+ * So the check IS the construction. Anything viem refuses is reported here
+ * rather than re-derived: restating secp256k1's bounds in a second place
+ * would recreate the divergence this exists to remove, and would go stale
+ * the moment viem's validation changed.
+ *
+ * Cost is one key derivation per gated pass per tick. That is cheap, and
+ * being certain the gate and the signer agree is worth more than saving it.
+ *
+ * The reason never quotes the value. An unusable key is still a key, and
+ * this goes to the same log as everything else.
  */
-function keeperKeyProblem(raw: string): string | null {
-  const pk = raw.trim().startsWith('0x') ? raw.trim() : `0x${raw.trim()}`;
+function resolveKeeperAccount(
+  raw: string,
+): { account: PrivateKeyAccount } | { problem: string } {
+  const trimmed = raw.trim();
+  const pk = trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
   if (pk.length !== KEEPER_KEY_CHARS) {
-    return `malformed (${pk.length} chars, expected ${KEEPER_KEY_CHARS})`;
+    return {
+      problem: `malformed (${pk.length} chars, expected ${KEEPER_KEY_CHARS})`,
+    };
   }
-  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) return 'malformed (not hexadecimal)';
-  return null;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+    return { problem: 'malformed (not hexadecimal)' };
+  }
+  try {
+    return { account: privateKeyToAccount(pk as `0x${string}`) };
+  } catch {
+    // Right length, right alphabet, still not a key — zero, or at/above the
+    // curve order. Deliberately not echoing the error: viem's message can
+    // include the value.
+    return { problem: 'malformed (not a valid signing key)' };
+  }
 }
 
 /**
@@ -850,8 +872,10 @@ function keeperBlockers(env: Env): string[] {
   if (!env.KEEPER_PRIVATE_KEY) {
     blockers.push('KEEPER_PRIVATE_KEY unset');
   } else {
-    const problem = keeperKeyProblem(env.KEEPER_PRIVATE_KEY);
-    if (problem !== null) blockers.push(`KEEPER_PRIVATE_KEY ${problem}`);
+    const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
+    if ('problem' in resolved) {
+      blockers.push(`KEEPER_PRIVATE_KEY ${resolved.problem}`);
+    }
   }
   return blockers;
 }
@@ -919,17 +943,14 @@ export function buildKeeperContext(
   publicClient: PublicClient,
 ): KeeperContext | null {
   if (!env.KEEPER_PRIVATE_KEY) return null;
-  const raw = env.KEEPER_PRIVATE_KEY.trim();
-  const pk = raw.startsWith('0x') ? raw : `0x${raw}`;
-  // Same rule the pass gate reports on, so a key that logged `start` cannot
-  // be rejected here — and vice versa. The hex check also stops a 66-char
-  // non-hex value throwing out of `privateKeyToAccount`.
-  const problem = keeperKeyProblem(env.KEEPER_PRIVATE_KEY);
-  if (problem !== null) {
-    console.error(`[keeper] KEEPER_PRIVATE_KEY ${problem}`);
+  // The same call the gate makes, so a key that logged `start` cannot be
+  // rejected here, and one rejected here cannot have logged `start`.
+  const resolved = resolveKeeperAccount(env.KEEPER_PRIVATE_KEY);
+  if ('problem' in resolved) {
+    console.error(`[keeper] KEEPER_PRIVATE_KEY ${resolved.problem}`);
     return null;
   }
-  const account = privateKeyToAccount(pk as `0x${string}`);
+  const { account } = resolved;
   const wallet = createWalletClient({
     account,
     transport: http(chain.rpc),

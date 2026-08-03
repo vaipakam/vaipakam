@@ -179,6 +179,11 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
       ['0xabc', 'malformed (5 chars, expected 66)'],
       ['a'.repeat(63), 'malformed (65 chars, expected 66)'],
       ['0x' + 'z'.repeat(64), 'malformed (not hexadecimal)'],
+      // Right length, right alphabet, still not a scalar on the curve —
+      // zero and values at/above the secp256k1 order. A syntax-only check
+      // passed these and the pass then announced `start` before viem threw.
+      ['0x' + '0'.repeat(64), 'malformed (not a valid signing key)'],
+      ['0x' + 'f'.repeat(64), 'malformed (not a valid signing key)'],
     ];
     for (const [key, expected] of cases) {
       lines = [];

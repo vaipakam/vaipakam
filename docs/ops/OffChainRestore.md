@@ -1565,14 +1565,14 @@ caught at the cheapest stage.
    says, which is not enough.** `wrangler secret put` accepts whatever is
    typed at the prompt: `ture`, `True`, a trailing space, a pasted newline.
    Every one of those creates a perfectly healthy-looking `secret_text`
-   binding that `isKeeperEnabled()` evaluates as **false**. The guards then
-   return silently — that is the documented behaviour two paragraphs down —
-   so neither this check nor a quiet log tail can tell a typo from a
-   deliberate "off", and the restore completes with signing duties dark.
+   binding that `isKeeperEnabled()` evaluates as **false**.
 
    A presence check cannot close this; only the running Worker can say how
-   it resolved the value. After the keeper's schedule is restored above,
-   confirm from the pass itself:
+   it resolved the value — and since #1475 it does, on every tick. (Before
+   that the guards returned silently and a quiet tail could not separate a
+   typo from a deliberate "off"; if you remember that, it is the thing that
+   changed.) After the keeper's schedule is restored above, confirm from the
+   pass itself:
 
    ```bash
    ( cd apps/keeper && wrangler tail --format pretty ) &
@@ -1595,7 +1595,9 @@ caught at the cheapest stage.
 
    **No value is ever printed — only the form of the state**: `unset`,
    `empty`, `off (explicitly disabled)`, `wrong case`,
-   `has surrounding whitespace`, or `unrecognised (N chars)`.
+   `has surrounding whitespace`, or `unrecognised (N chars)`. The signing
+   key adds `malformed (N chars, expected 66)`, `malformed (not
+   hexadecimal)` and `malformed (not a valid signing key)` — see below.
 
    Note `off (explicitly disabled)` in that list. Setting a flag to `false`
    is the documented way to disable a pass, so it is reported as a state
@@ -1606,8 +1608,16 @@ caught at the cheapest stage.
    would copy that credential into the Worker logs at the moment the binding's
    no-readback protection matters most. The character count still tells you
    whether you are looking at a four-letter typo or something long that does
-   not belong there. `KEEPER_PRIVATE_KEY` is reported only as present or
-   absent.
+   not belong there.
+
+   `KEEPER_PRIVATE_KEY` is reported as present, absent, or **malformed** —
+   never echoed. Malformed is the one to expect during a restore: a key that
+   is present but unusable used to satisfy the gate, so every pass announced
+   `start` and then produced nothing. The three forms are
+   `malformed (N chars, expected 66)`, `malformed (not hexadecimal)`, and
+   `malformed (not a valid signing key)` — that last one is a value of the
+   right length and alphabet that is still not a scalar on the curve, which
+   only attempting to build the account can determine.
 
    **Every blocker appears on the one line.** If three bindings are wrong, one
    line names all three — you are never fixing one and waiting a tick to
@@ -1627,7 +1637,21 @@ caught at the cheapest stage.
    | binding | how it is bound | command |
    |---|---|---|
    | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
-   | `KEEPER_PRIVATE_KEY` | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
+   | `KEEPER_PRIVATE_KEY` — **missing** | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
+   | `KEEPER_PRIVATE_KEY` — **present but malformed** | same store, entry already exists | list to get its id, then `wrangler secrets-store secret update <STORE_ID> --secret-id <ID> --scopes workers --remote` |
+
+   **`create` and `update` are not interchangeable, and the diagnostic tells
+   you which you need.** `create` makes a secret *within a store* under a new
+   name; it cannot replace an entry that already exists. So the newly-added
+   `KEEPER_PRIVATE_KEY malformed (…)` line — which by definition means the
+   entry IS there — is precisely the case `create` fails on. Get the id
+   first:
+
+   ```bash
+   wrangler secrets-store secret list <STORE_ID> --remote
+   ```
+
+   then `update` it. A `KEEPER_PRIVATE_KEY unset` line is the `create` case.
 
    **`--config` is not optional here.** Without it, `wrangler secret put`
    applies to the Worker named in whatever Wrangler config is active — and

@@ -12,8 +12,10 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  * there are two env shapes:
  *
  *   - `WorkerEnv` — the RAW Cloudflare bindings the Worker handler
- *     receives. The secret fields are Secrets Store bindings; the
- *     non-secret config fields are plain strings.
+ *     receives. Store-backed fields are Secrets Store bindings; every
+ *     other field arrives as a plain string. "Plain string" describes
+ *     the DELIVERY, not the sensitivity: per-Worker `secret_text`
+ *     bindings arrive that way too.
  *   - `Env` — the RESOLVED env passed to every downstream function:
  *     every field is a plain string, exactly as before T-078.
  *
@@ -23,9 +25,19 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  * "resolve at the boundary" containment pattern from
  * `SecretsStoreMigration.md` §6.
  *
- * Non-secret config (`TG_BOT_USERNAME`, `FRONTEND_ORIGIN`,
- * `KEEPER_ENABLED`, the `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` knobs)
- * stays a plain `var` — NOT migrated to the Secrets Store.
+ * Config that is NOT migrated to the Secrets Store (`TG_BOT_USERNAME`,
+ * `FRONTEND_ORIGIN`, `KEEPER_ENABLED`, `REWARD_*_ENABLED`, the `LIQ_*` /
+ * `SPLIT_*` / `PARTIAL_LIQ_*` knobs) needs no `.get()` resolution and is
+ * typed as a plain string either way.
+ *
+ * "Needs no resolution" is NOT the same as "is a plain var", and an earlier
+ * version of this comment conflated them. `KEEPER_ENABLED` and the two
+ * `REWARD_*_ENABLED` flags are per-Worker `secret_text` on the live
+ * deployment — set with `wrangler secret put`, and their VALUES cannot be
+ * read back from the API or dashboard. That unreadability is the whole
+ * reason each gated pass reports how it resolved them (#1475). Do not move
+ * them into a committed `vars` block on the strength of this paragraph;
+ * the restore runbook explains why that changes the deployment semantics.
  *
  * Diamond addresses come from `@vaipakam/contracts/deployments`.
  */
@@ -34,10 +46,15 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 export type SecretBinding = { get(): Promise<string> };
 
 /**
- * `DB` + the non-secret config knobs — identical shape in both
- * `WorkerEnv` and `Env` (these are plain `var`s, not secrets, so
- * they need no resolution). Kept in one place so the knob docs
- * aren't duplicated across the two env interfaces.
+ * `DB` + the config knobs that arrive as plain strings — identical shape in
+ * both `WorkerEnv` and `Env`, because none of them needs `.get()`
+ * resolution. Kept in one place so the knob docs aren't duplicated across
+ * the two env interfaces.
+ *
+ * Not all of these are non-secret: `KEEPER_ENABLED` and the
+ * `REWARD_*_ENABLED` flags are `secret_text` bindings on the live Worker.
+ * They appear here because a `secret_text` binding is delivered as a
+ * string, not because their values are public — see the module comment.
  */
 interface BaseEnv {
   DB: D1Database;
