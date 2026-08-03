@@ -49,10 +49,16 @@ those are real, export that one table before starting:
 
 ```bash
 cd apps/indexer
-npx wrangler d1 export vaipakam-archive --remote --no-schema \
-  --table support_tickets --output ~/vaipakam-tickets.sql -y
-chmod 600 ~/vaipakam-tickets.sql
+install -m 700 -d ~/vaipakam-cutover        # private directory FIRST
+(cd apps/indexer && npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
+  --table support_tickets --output ~/vaipakam-cutover/tickets.sql -y)
+chmod 600 ~/vaipakam-cutover/tickets.sql
 ```
+
+**The directory is created private before wrangler writes.** Wrangler creates
+the output with default permissions, so a `chmod` afterwards leaves a window
+in which the plaintext is world-readable on a shared machine. Restricting the
+containing directory first closes it; the file `chmod` is belt-and-braces.
 
 **Outside the repository, deliberately.** An earlier revision wrote it to
 `./tickets.sql` from `apps/indexer/` — a path no `.gitignore` rule covers, at
@@ -81,7 +87,27 @@ Two orders work, and one does not:
 | cutover while artifacts still point at the old contracts, and leave it | old-contract data accumulates indefinitely ❌ |
 
 **Chosen 2026-08-03: the first** — redeploy contracts, update
-`deployments.json`, then cut over. If circumstances force the cutover first,
+`deployments.json`, then cut over.
+
+**With one gap that must be closed deliberately.** Publishing the new
+artifacts is itself a merge, so it auto-deploys the indexer — which is still
+bound to the source. From that moment until the binding PR lands, the
+indexer indexes the NEW contracts into the OLD database, and
+`POST /signed-offers` accepts user orders into a database about to be
+deleted.
+
+Two ways to close it, and both are acceptable:
+
+- **Land the artifact update and the binding change in the SAME PR.** There
+  is no window at all, and the guard still enforces that all four bindings
+  move together. Preferred.
+- **Keep them separate and accept a short window**, using the same
+  shortest-window discipline as the agent deploy: have the binding PR ready
+  to merge the moment the artifact PR lands.
+
+What is not acceptable is publishing artifacts and getting to the binding
+change later — that is the state where user-submitted orders accumulate
+somewhere they will not survive. If circumstances force the cutover first,
 plan to clear the new database again afterwards and say so at the time,
 rather than discovering a mixed dataset later.
 
@@ -95,13 +121,45 @@ during #1537's preparation — `user_thresholds` 1, `notify_state` 1,
 had a clearing step; the no-migration rewrite removed it, which would have
 left those stale rows to be adopted as live state.
 
+Set both names once, at the top of the shell you will use for the whole
+procedure — every block below assumes them, and an earlier revision assigned
+only `SOURCE_DB`, leaving the first copy-paste to fail on a missing
+positional:
+
 ```bash
-cd apps/indexer
-npx wrangler d1 execute "$TARGET_DB" --remote --command \
-  "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;"
+cd /path/to/vaipakam            # repo root; each block cd's from here
+SOURCE_DB=vaipakam-archive      # being retired
+TARGET_DB=vaipakam-warm         # being cut over to
 ```
 
-Then confirm every table is empty — not just those three.
+```bash
+(cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
+  "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;")
+```
+
+Every block is wrapped in a subshell so the working directory does not leak
+between steps — a later `cd ops/offchain-data-warm` after an unwrapped
+`cd apps/indexer` resolves to a path that does not exist, and the backup
+Worker silently never gets deployed.
+
+**Then confirm the domain tables are empty.** Not *every* table: `d1_migrations`
+necessarily holds 49 rows — that is what "prepared through `0048`" means — and
+`sqlite_sequence` may hold rows too. An earlier revision asked for a state the
+target cannot be in, which leaves an operator either blocked or deleting
+bookkeeping they need.
+
+### Step 0b — re-apply migrations if any landed since
+
+The target was prepared through `0048`. **Neither changing a binding nor
+`wrangler deploy` applies D1 migrations** — that is a separate command, and
+on the deploy path it runs as its own phase. If any migration merged between
+preparation and execution, the Workers will come up against a database
+missing its schema.
+
+```bash
+(cd apps/indexer && npx wrangler d1 migrations apply "$TARGET_DB" --remote)
+(cd apps/indexer && npx wrangler d1 migrations list "$TARGET_DB" --remote)   # expect none pending
+```
 
 ### Step 1 — one PR, all four bindings
 
@@ -182,8 +240,14 @@ npx wrangler d1 execute "$TARGET_DB" --remote --command \
 - **indexer** — after its first tick, `indexer_cursor` gains a row in
   `$TARGET_DB` and `offers`/`activity_events` begin filling *there*. Confirm
   the row count in the TARGET rose, not that the indexer merely ran.
-- **keeper** — a write it owns (`liquidity_confidence`, `hf_band_state`)
-  appears in `$TARGET_DB`.
+- **keeper** — a write it owns appears in `$TARGET_DB`. Choose the table by
+  what is actually true at the time: immediately after a fresh contract
+  deployment `liquidity_confidence` may legitimately stay empty
+  (`runLiquidityConfidence` returns before its upsert when there are no
+  active collateral assets) and `hf_band_state` needs a loan to band. If
+  neither can be provoked, fall back to the tick's own log line — the
+  `[keeper] <pass> start` / `skipped:` output added in #1540 confirms which
+  database the Worker resolved, without needing a row to appear.
 - **agent** — perform one threshold write through the API, then read it back
   from `$TARGET_DB` directly. If it landed in the source instead, its manual
   deploy did not take.
