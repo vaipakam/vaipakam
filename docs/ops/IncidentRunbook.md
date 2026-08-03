@@ -222,8 +222,15 @@ manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
 running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
-#1466). That flag is a per-Worker `secret_text`, so `wrangler secret put`
-then a redeploy is the right shape for it.
+#1466). That flag is a per-Worker `secret_text`, so `wrangler secret put` is
+the right tool for it — but **if you follow it with `wrangler deploy`, that
+deploy applies the committed `"TG_BOT_USERNAME": ""` over whatever is live**,
+with or without `--keep-vars`. Same hazard as the cron path, and it was
+documented there while this path was left exposed.
+
+Setting the value in the dashboard avoids the deploy entirely. If you do
+deploy, restore `TG_BOT_USERNAME` afterwards and confirm it — do not assume
+the flag change was the only thing that landed.
 
 **To stop everything, including the snapshot**, empty the Worker's cron list
 (`"triggers": { "crons": [] }`) and follow the full procedure in

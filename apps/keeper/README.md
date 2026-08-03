@@ -84,8 +84,13 @@ pass runs from `scheduled()`. Removing its cron trigger stops all of them,
 snapshot included, with nothing to restore afterwards but the trigger:
 
 **Remove the trigger from the dashboard** — *Settings → Trigger Events*.
-That is the whole of the emergency action: it takes effect immediately and
-touches nothing else.
+That is the whole of the emergency action, and it touches nothing else.
+
+**It is not instant, though.** The control plane accepts the change
+immediately; the schedule stops firing everywhere only after propagation —
+see the window below, during which this Worker can still sign. An earlier
+revision said "takes effect immediately", which in an incident is precisely
+the wrong thing to believe.
 
 Editing `wrangler.jsonc` does **not** stop anything by itself, and an earlier
 revision of this section told you to do both, which is incoherent — the file
