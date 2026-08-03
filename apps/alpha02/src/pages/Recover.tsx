@@ -56,6 +56,7 @@ import {
 import { captureTxError } from '../lib/errors';
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, shortAddress } from '../lib/format';
+import { makePendingMarkerStore } from '../lib/pendingMarker';
 
 /** EIP-712 shape — must match VaultFactoryFacet's RECOVERY_TYPEHASH
  *  exactly, or the recovered signer won't equal msg.sender and the
@@ -161,6 +162,105 @@ async function probeSanctionsOracle(
   return true;
 }
 
+/** How many times the availability probe re-tries itself after an
+ *  unreadable answer before it waits for the user (Codex #1547 r6) —
+ *  bounded so a hard-down RPC can't spin. */
+const ORACLE_PROBE_AUTO_RETRIES = 3;
+const ORACLE_PROBE_RETRY_MS = 4_000;
+
+/**
+ * Device-local record of a BROADCAST recovery (Codex #1547 r6).
+ *
+ * The pending card is the ONLY safe landing for a transaction whose
+ * receipt couldn't be read — but it lived in React state alone, so an
+ * account switch, a network switch, or a plain reload erased the hash
+ * and dropped the user back on a blank form over a recovery that may
+ * still be mining. That is exactly the double-recovery the pending
+ * card exists to prevent.
+ *
+ * The record is keyed per (chain, account) by the shared pending-marker
+ * store, so another identity can never see it; the identity reset now
+ * HIDES it rather than discarding it, and a rehydrate on the way back
+ * in restores the pending card.
+ */
+const pendingRecoveryStore = makePendingMarkerStore('alpha02.recoverPending');
+
+interface PendingRecoveryRecord {
+  txHash: Hex;
+  declaredSource: string;
+  /** Base units, decimal string — JSON carries no bigint. */
+  amount: string;
+  symbol: string;
+  decimals: number;
+  /** The per-user recovery nonce the SIGNATURE committed to. The
+   *  reconcile path compares it against the live on-chain counter to
+   *  adjudicate a transaction whose receipt it cannot read. */
+  recoveryNonce: string;
+}
+
+const HEX32 = /^0x[0-9a-fA-F]{64}$/;
+const DIGITS = /^\d+$/;
+
+/** Parse + VALIDATE a stored record. Anything malformed (hand-edited
+ *  storage, a shape from an older build) reads as absent — a bad
+ *  record must never become a rendered card or a bigint conversion
+ *  that throws during render. */
+function readPendingRecovery(
+  chainId: number,
+  account: string,
+): PendingRecoveryRecord | null {
+  const raw = pendingRecoveryStore.read(chainId, account.toLowerCase());
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const r = parsed as Record<string, unknown>;
+    if (typeof r.txHash !== 'string' || !HEX32.test(r.txHash)) return null;
+    if (typeof r.declaredSource !== 'string' || !isAddress(r.declaredSource)) {
+      return null;
+    }
+    if (typeof r.amount !== 'string' || !DIGITS.test(r.amount)) return null;
+    if (typeof r.symbol !== 'string') return null;
+    if (
+      typeof r.decimals !== 'number' ||
+      !Number.isInteger(r.decimals) ||
+      r.decimals < 0 ||
+      r.decimals > 255
+    ) {
+      return null;
+    }
+    if (typeof r.recoveryNonce !== 'string' || !DIGITS.test(r.recoveryNonce)) {
+      return null;
+    }
+    return {
+      txHash: r.txHash as Hex,
+      declaredSource: r.declaredSource,
+      amount: r.amount,
+      symbol: r.symbol,
+      decimals: r.decimals,
+      recoveryNonce: r.recoveryNonce,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingRecovery(
+  chainId: number,
+  account: string,
+  record: PendingRecoveryRecord,
+): void {
+  pendingRecoveryStore.write(
+    chainId,
+    account.toLowerCase(),
+    JSON.stringify(record),
+  );
+}
+
+function clearPendingRecovery(chainId: number, account: string): void {
+  pendingRecoveryStore.write(chainId, account.toLowerCase(), null);
+}
+
 /** Display cap for an attacker-controlled token symbol. */
 const MAX_SYMBOL_LENGTH = 20;
 
@@ -211,6 +311,10 @@ interface SubmittedContext {
   amount: bigint;
   symbol: string;
   decimals: number;
+  /** The recovery nonce the SIGNATURE committed to (Codex #1547 r6) —
+   *  the reconcile path's fallback authority when the receipt for the
+   *  stored hash can't be found (a replaced transaction never has one). */
+  recoveryNonce: bigint;
 }
 
 type Step =
@@ -234,12 +338,20 @@ type Step =
    *  recovery event — nothing was recovered, which is a DIFFERENT
    *  statement from "the outcome couldn't be read".
    *  `ctx` (Codex #1547 r5): only the `pending` variant carries it —
-   *  the reconcile action needs it to build a success/banned card. */
+   *  the reconcile action needs it to build a success/banned card, and
+   *  its signed nonce is what lets the reconcile adjudicate a
+   *  receipt-less transaction.
+   *  `receiptless` (Codex #1547 r6): the reconcile could not find a
+   *  receipt for the stored hash (the hallmark of a wallet
+   *  replacement) and adjudicated from the on-chain recovery counter
+   *  instead — 'executed' (counter moved: the attempt WAS processed)
+   *  or 'never' (counter unmoved: it was not). */
   | {
       kind: 'unknownOutcome';
       txHash: Hex;
       pending?: boolean;
       replaced?: boolean;
+      receiptless?: 'executed' | 'never';
       ctx?: SubmittedContext;
     };
 
@@ -308,20 +420,54 @@ export function Recover() {
   // that was already in flight from writing after the reset ran.
   const genRef = useRef(0);
 
+  // Bounded auto-retry budget for the availability probe (Codex #1547
+  // r6) — a ref, so consuming it never re-renders; reset by the
+  // identity effect below and by the manual Retry button.
+  const oracleAutoRetriesRef = useRef(0);
+  // Bumping this re-runs the availability probe (auto-retry / Retry).
+  const [oracleAttempt, setOracleAttempt] = useState(0);
+
   // Full reset to the initial state whenever the connected account OR
   // chain changes (Codex #1547 r2): a terminal success/banned card,
   // its explorer link, and every typed input belong to the PREVIOUS
   // account/chain — another account (or the same one on another
   // network) must never see that outcome or a wrong-chain tx link.
+  //
+  // The BROADCAST-recovery record is the one thing the reset does not
+  // discard (Codex #1547 r6): it is stored per (chain, account), so
+  // switching away merely hides it, and switching back — or reloading
+  // the page — REHYDRATES the pending card instead of presenting a
+  // blank form over a transaction that may still be mining.
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
     setTokenInput('');
     setSourceInput('');
     setAmountInput('');
     setConfirmInput('');
-    setStep({ kind: 'form' });
     setError(null);
     setReconcileError(null);
+    oracleAutoRetriesRef.current = 0;
+    const chainId = walletChain?.chainId;
+    const stored =
+      address && chainId !== undefined
+        ? readPendingRecovery(chainId, address)
+        : null;
+    setStep(
+      stored === null
+        ? { kind: 'form' }
+        : {
+            kind: 'unknownOutcome',
+            txHash: stored.txHash,
+            pending: true,
+            ctx: {
+              declaredSource: stored.declaredSource,
+              amount: BigInt(stored.amount),
+              symbol: stored.symbol,
+              decimals: stored.decimals,
+              recoveryNonce: BigInt(stored.recoveryNonce),
+            },
+          },
+    );
   }, [address, walletChain?.chainId]);
 
   // Fail-safe availability probe: `recoverStuckERC20` HARD-REQUIRES
@@ -330,29 +476,85 @@ export function Recover() {
   // declared source). Never let the user sign into that: with the
   // oracle unset, unanswerable, OR the probe failing, the flow renders
   // a blocked state instead of the form (per the WebsiteReadme
-  // recovery spec). null = probing.
-  const [oracleReady, setOracleReady] = useState<boolean | null>(null);
+  // recovery spec).
+  //
+  // FOUR states, not a boolean (Codex #1547 r6): a probe that THREW is
+  // a different fact from a confirmed-zero oracle address. Both fail
+  // closed, but 'unset' is a permanent property of the network while
+  // 'unreachable' is a passing read failure the user can retry out of
+  // — collapsing them told a user on a flaky RPC that recovery would
+  // never work here, with a page reload as the only way back.
+  const [oracleState, setOracleState] = useState<
+    'probing' | 'ready' | 'unset' | 'unreachable'
+  >('probing');
   useEffect(() => {
     if (!publicClient || !walletChain) {
-      setOracleReady(null);
+      setOracleState('probing');
       return;
     }
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    setOracleState('probing');
     (async () => {
       try {
         const ready = await probeSanctionsOracle(
           publicClient,
           walletChain.diamondAddress,
         );
-        if (!cancelled) setOracleReady(ready);
+        if (!cancelled) setOracleState(ready ? 'ready' : 'unset');
       } catch {
-        if (!cancelled) setOracleReady(false); // fail-safe: blocked
+        if (cancelled) return;
+        setOracleState('unreachable'); // fail-safe: blocked, but retryable
+        if (oracleAutoRetriesRef.current < ORACLE_PROBE_AUTO_RETRIES) {
+          oracleAutoRetriesRef.current += 1;
+          retryTimer = setTimeout(
+            () => setOracleAttempt((n) => n + 1),
+            ORACLE_PROBE_RETRY_MS,
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+    };
+  }, [publicClient, walletChain, oracleAttempt]);
+
+  // Contract-account gate (Codex #1547 r6): `recoverStuckERC20`
+  // authorises with ECDSA.recover and requires the recovered signer to
+  // EQUAL msg.sender, so a smart-contract account (Safe & co.) can
+  // never satisfy it — its "signature" is a contract-side validation
+  // the facet doesn't consult. Block before the form instead of
+  // walking the user through CONFIRM, a signature and a transaction
+  // that can only revert.
+  //
+  // Fails OPEN (Codex #1547 r6): a failed code read must not lock a
+  // real EOA out of recovery. The pre-sign path still surfaces the
+  // contract-side revert for the case this probe missed.
+  const [accountKind, setAccountKind] = useState<
+    'probing' | 'eoa' | 'contract'
+  >('probing');
+  useEffect(() => {
+    if (!publicClient || !address) {
+      setAccountKind('probing');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const code = await publicClient.getCode({ address });
+        // viem answers `undefined` for an account with no code; some
+        // nodes answer the empty-bytes literal instead.
+        const isContract = code !== undefined && code !== '0x' && code !== '0x0';
+        if (!cancelled) setAccountKind(isContract ? 'contract' : 'eoa');
+      } catch {
+        if (!cancelled) setAccountKind('eoa'); // fail OPEN
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [publicClient, walletChain]);
+  }, [publicClient, address]);
 
   // Live token meta + the unsolicited-surplus cap for the entered
   // token: surplus = max(0, balanceOf(vault) − protocol-tracked).
@@ -716,7 +918,24 @@ export function Recover() {
         amount,
         symbol: snapshot.symbol,
         decimals: snapshot.decimals,
+        recoveryNonce: nonce,
       };
+      // PERSIST the broadcast the moment it exists (Codex #1547 r6) —
+      // before any await that could be interrupted by a reload, an
+      // account switch, or a closed tab. Written under the identity
+      // that broadcast it (not the current one), and deliberately NOT
+      // generation-guarded: the transaction is real regardless of who
+      // is connected by the time this line runs.
+      writePendingRecovery(walletChain.chainId, address, {
+        txHash,
+        declaredSource,
+        amount: amount.toString(),
+        symbol: snapshot.symbol,
+        decimals: snapshot.decimals,
+        recoveryNonce: nonce.toString(),
+      });
+      const forgetPending = () =>
+        clearPendingRecovery(walletChain.chainId, address);
       // Wallet REPLACEMENTS are followed, not lost (Codex #1547 r5): a
       // speed-up / cancel from the wallet mines a DIFFERENT hash under
       // the same nonce. Without `onReplaced` the wait would give up on
@@ -732,6 +951,17 @@ export function Recover() {
           // Keep the post-broadcast marker on the hash that is actually
           // live, so a later throw parks the pending card on it.
           submittedTxHash = replacement.transaction.hash;
+          // Re-point the PERSISTED record at the live hash too (Codex
+          // #1547 r6) — a receipt lookup after a reload then resolves
+          // directly instead of falling back to the nonce comparison.
+          writePendingRecovery(walletChain.chainId, address, {
+            txHash: replacement.transaction.hash,
+            declaredSource,
+            amount: amount.toString(),
+            symbol: snapshot.symbol,
+            decimals: snapshot.decimals,
+            recoveryNonce: nonce.toString(),
+          });
         },
       });
       // From here on the RECEIPT's hash is the authority (Codex #1547
@@ -748,6 +978,7 @@ export function Recover() {
       // error (Codex #1547 r4).
       if (receipt.status !== 'success') {
         submittedTxHash = null;
+        forgetPending(); // settled: nothing to rehydrate (Codex #1547 r6)
         throw new Error(copy.recover.errTxReverted);
       }
 
@@ -766,6 +997,13 @@ export function Recover() {
           : decodedOutcome === 'banned'
             ? { kind: 'banned', txHash: minedHash, declaredSource }
             : null;
+      // The receipt was READ, so this transaction's fate is settled
+      // whichever branch runs below — drop the persisted record
+      // (Codex #1547 r6) so a later mount doesn't rehydrate a pending
+      // card over an outcome the user has already been shown. In
+      // particular the fork spec's happy path must leave nothing
+      // behind for the next run.
+      forgetPending();
       if (outcome) {
         // Own-receipt floor (Codex #1547 r1): a recovery moves vault
         // balances (and a ban flips sanctions-derived state) — push the
@@ -852,7 +1090,7 @@ export function Recover() {
    */
   async function reconcilePending(txHash: Hex, ctx?: SubmittedContext) {
     if (reconciling) return;
-    if (!publicClient || !walletChain) {
+    if (!publicClient || !walletChain || !address) {
       setReconcileError(copy.errors.walletConnectFirst);
       return;
     }
@@ -861,6 +1099,9 @@ export function Recover() {
     // step belonging to the previous identity.
     const gen = genRef.current;
     const diamond = walletChain.diamondAddress;
+    const chainId = walletChain.chainId;
+    const account = address;
+    const forgetPending = () => clearPendingRecovery(chainId, account);
     setReconciling(true);
     setReconcileError(null);
     try {
@@ -868,18 +1109,40 @@ export function Recover() {
       // user-driven "check now", so an unmined transaction must answer
       // immediately (it throws receipt-not-found) rather than hold the
       // button in a long poll.
-      const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+      //
+      // A MISSING receipt is not an error here (Codex #1547 r6): an
+      // exact-hash lookup can NEVER resolve for a transaction the
+      // wallet replaced, so this card would otherwise be a permanent
+      // dead end — "check again" forever, with no way to a fresh form.
+      // Fall through to the nonce adjudication below instead. Any
+      // reason for the miss is treated the same, because the counter
+      // read that follows is authoritative regardless of why the
+      // receipt was unreadable.
+      const receipt = await publicClient
+        .getTransactionReceipt({ hash: txHash })
+        .catch(() => null);
+      if (receipt === null) {
+        await reconcileWithoutReceipt(txHash, ctx, {
+          gen,
+          account,
+          forgetPending,
+        });
+        return;
+      }
       const decoded =
         receipt.status === 'success'
           ? decodeRecoveryOutcome(receipt.logs, diamond)
           : null;
       // The receipt was read, so on-chain state is settled either way —
       // invalidate regardless of who is connected now (same rule the
-      // submit path uses); only the STEP commit is identity-bound.
+      // submit path uses), and drop the persisted record (Codex #1547
+      // r6) so no later mount rehydrates a pending card over a settled
+      // transaction. Only the STEP commit is identity-bound.
       publishReceiptInvalidation(
         queryClient,
         decoded === 'banned' ? ['sanctions'] : [],
       );
+      forgetPending();
       if (genRef.current !== gen) return;
       const minedHash = receipt.transactionHash;
       if (receipt.status !== 'success') {
@@ -920,6 +1183,98 @@ export function Recover() {
     } finally {
       setReconciling(false);
     }
+  }
+
+  /**
+   * Adjudicate a broadcast recovery whose RECEIPT cannot be read
+   * (Codex #1547 r6) — the permanent state of any transaction the
+   * wallet replaced, since an exact-hash lookup will never find the
+   * replacement.
+   *
+   * The authority is the account's own on-chain recovery counter,
+   * which `recoverStuckERC20` increments EXACTLY ONCE per processed
+   * attempt — on the successful path AND on the sanctioned-source ban
+   * path (VaultFactoryFacet.sol ~892/908), and never on a revert. So:
+   *
+   *   live > signed  → the attempt (or its replacement) was processed.
+   *                    Terminal, no fresh form from a claim we can't
+   *                    verify by receipt — and the copy must own that
+   *                    it can't say WHICH of the two outcomes it was.
+   *   live == signed → nothing consumed that nonce, so nothing was
+   *                    recovered and starting over is safe: the
+   *                    signature is bound to the nonce, so even a
+   *                    straggler mining later can only be the ONE
+   *                    recovery that goes through.
+   *   read failed    → decide nothing; stay pending.
+   *
+   * The account-nonce refinement (comparing the sender's transaction
+   * count against the submitted transaction's own nonce) is
+   * deliberately skipped: it would need a `getTransaction` round-trip
+   * at broadcast time, and it cannot change either verdict above — the
+   * recovery counter already answers "did a recovery happen".
+   */
+  async function reconcileWithoutReceipt(
+    txHash: Hex,
+    ctx: SubmittedContext | undefined,
+    scope: { gen: number; account: `0x${string}`; forgetPending: () => void },
+  ) {
+    const { gen, account, forgetPending } = scope;
+    if (!publicClient || !walletChain) {
+      setReconcileError(copy.recover.reconcileStillPending);
+      return;
+    }
+    if (!ctx) {
+      // No signed nonce to compare against (a record from before this
+      // context was carried) — nothing can be concluded, so hold the
+      // pending card rather than guess at a fund-moving outcome.
+      setReconcileError(copy.recover.reconcileStillPending);
+      return;
+    }
+    // A throw here propagates to reconcilePending's catch, which keeps
+    // the card pending with the "still no confirmation" line — the
+    // correct answer for an unreadable chain.
+    const liveNonce = (await publicClient.readContract({
+      address: walletChain.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'recoveryNonce',
+      args: [account],
+    })) as bigint;
+    if (liveNonce > ctx.recoveryNonce) {
+      // A recovery WAS processed. Balances moved on the success arm and
+      // sanctions-derived state moved on the ban arm — and we can't
+      // tell which — so publish the union, exactly as the banned
+      // outcome does. Terminal, so the record goes regardless of the
+      // current identity (it is keyed to the one that broadcast it).
+      forgetPending();
+      publishReceiptInvalidation(queryClient, ['sanctions']);
+      if (genRef.current !== gen) return;
+      setStep({ kind: 'unknownOutcome', txHash, receiptless: 'executed' });
+      return;
+    }
+    // Counter untouched: no recovery ran under this signature. Before
+    // calling the transaction dead, make sure it isn't simply still
+    // QUEUED — someone who checks seconds after submitting on a slow
+    // network would otherwise be told it "never went through" while it
+    // sits in the mempool. ONLY a positively-unmined transaction holds
+    // the pending card; not-found (replaced, dropped) or an unreadable
+    // probe falls through, because the conclusion the counter already
+    // settled — nothing was recovered — holds either way.
+    const stillQueued = await publicClient
+      .getTransaction({ hash: txHash })
+      .then((tx) => tx.blockNumber === null)
+      .catch(() => false);
+    if (stillQueued) {
+      if (genRef.current !== gen) return;
+      setReconcileError(copy.recover.reconcileStillPending);
+      return;
+    }
+    // Gone, and nothing was processed — nothing moved on-chain, so
+    // there is no invalidation to publish. Starting over is safe: the
+    // signature is bound to the recovery nonce, so a straggler mining
+    // later can only be the ONE recovery that goes through.
+    forgetPending();
+    if (genRef.current !== gen) return;
+    setStep({ kind: 'unknownOutcome', txHash, receiptless: 'never' });
   }
 
   const explorerTx = (txHash: Hex) =>
@@ -1002,34 +1357,52 @@ export function Recover() {
         // variant (Codex #1547 r4) covers a BROADCAST tx whose
         // confirmation couldn't be read; the `replaced` variant (Codex
         // #1547 r5) covers a wallet speed-up / cancel whose mined tx
-        // carries no recovery event — a definite "nothing happened".
+        // carries no recovery event — a definite "nothing happened";
+        // the `receiptless` variants (Codex #1547 r6) cover a
+        // transaction with NO readable receipt at all, adjudicated
+        // from the on-chain recovery counter instead.
         <div className="banner banner-warn" role="alert">
           <TriangleAlert aria-hidden />
           <span className="banner-body">
             <strong>
               {step.pending
                 ? copy.recover.unknownOutcomePendingTitle
-                : step.replaced
-                  ? copy.recover.replacedTitle
-                  : copy.recover.unknownOutcomeTitle}
+                : step.receiptless === 'executed'
+                  ? copy.recover.recoveryLandedTitle
+                  : step.receiptless === 'never'
+                    ? copy.recover.notProcessedTitle
+                    : step.replaced
+                      ? copy.recover.replacedTitle
+                      : copy.recover.unknownOutcomeTitle}
             </strong>
             <br />
-            {/* Body picked by the variant (Codex #1547 r4 / r5): a
+            {/* Body picked by the variant (Codex #1547 r4 / r5 / r6): a
                 broadcast-but-unconfirmed tx must not be described as
-                "went through", and a replaced-then-mined tx that
-                carries no recovery event must not be described as
-                "the recovery may already have completed". */}
+                "went through"; a replaced-then-mined tx that carries no
+                recovery event must not be described as "the recovery
+                may already have completed"; and a receipt-less verdict
+                must name what the counter actually proves, without
+                claiming a cause (replaced vs dropped) it can't see. */}
             {step.pending
               ? copy.recover.unknownOutcomePendingBody
-              : step.replaced
-                ? copy.recover.replacedCancelledBody
-                : copy.recover.unknownOutcomeBody}
+              : step.receiptless === 'executed'
+                ? copy.recover.recoveryLandedBody
+                : step.receiptless === 'never'
+                  ? copy.recover.notProcessedBody
+                  : step.replaced
+                    ? copy.recover.replacedCancelledBody
+                    : copy.recover.unknownOutcomeBody}
             <br />
-            {/* Always the hash that actually MINED (Codex #1547 r5) —
+            {/* Normally the hash that actually MINED (Codex #1547 r5) —
                 for a replaced transaction that is the replacement, not
-                the original the wallet dropped. */}
+                the original the wallet dropped. On the receipt-less
+                cards no mined hash is knowable, so the link is the
+                stored SUBMISSION and is labelled as such (Codex #1547
+                r6). */}
             <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
-              {copy.recover.viewTx}
+              {step.receiptless
+                ? copy.recover.viewOriginalTx
+                : copy.recover.viewTx}
             </a>
             <br />
             {step.pending ? (
@@ -1066,7 +1439,12 @@ export function Recover() {
                 style={{ marginTop: 8 }}
                 onClick={() => {
                   // Fresh form, nothing carried over — same reset shape
-                  // as the account/chain effect.
+                  // as the account/chain effect. Every path that lands
+                  // here has already dropped the persisted record; the
+                  // clear is belt-and-braces so no reload can resurrect
+                  // a pending card the user has explicitly left
+                  // (Codex #1547 r6).
+                  clearPendingRecovery(walletChain.chainId, address);
                   setTokenInput('');
                   setSourceInput('');
                   setAmountInput('');
@@ -1081,19 +1459,50 @@ export function Recover() {
             )}
           </span>
         </div>
-      ) : oracleReady === null ? (
+      ) : oracleState === 'probing' || accountKind === 'probing' ? (
+        // Both availability probes run in parallel and both fail
+        // closed, so one "checking" line covers them (Codex #1547 r6).
         <section className="card">
           <p className="muted" style={{ margin: 0 }}>
             {copy.recover.checkingAvailability}
           </p>
         </section>
-      ) : oracleReady === false ? (
+      ) : oracleState === 'unset' ? (
+        // CONFIRMED absent on this network — a permanent property, so
+        // no retry is offered (Codex #1547 r6).
         <div className="banner banner-warn" role="alert">
           <Lock aria-hidden />
           <span className="banner-body">
             <strong>{copy.recover.unavailableTitle}</strong>
             <br />
             {copy.recover.unavailableBody}
+          </span>
+        </div>
+      ) : oracleState === 'unreachable' ? (
+        // The probe THREW (Codex #1547 r6) — still fails closed, but a
+        // passing RPC failure must not read as "recovery will never
+        // work here", and must be recoverable without a page reload.
+        // A bounded auto-retry runs behind this card; the button is
+        // the manual way out once that budget is spent.
+        <div className="banner banner-warn" role="alert">
+          <TriangleAlert aria-hidden />
+          <span className="banner-body">
+            <strong>{copy.recover.unavailableUnreachableTitle}</strong>
+            <br />
+            {copy.recover.unavailableUnreachableBody}
+            <br />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ marginTop: 8 }}
+              onClick={() => {
+                // A deliberate retry refills the auto-retry budget too.
+                oracleAutoRetriesRef.current = 0;
+                setOracleAttempt((n) => n + 1);
+              }}
+            >
+              {copy.recover.retryCheck}
+            </button>
           </span>
         </div>
       ) : sanctions.flagged ? (
@@ -1107,6 +1516,22 @@ export function Recover() {
             <strong>{copy.recover.unavailableTitle}</strong>
             <br />
             {copy.recover.sanctionedBlockedBody}
+          </span>
+        </div>
+      ) : accountKind === 'contract' ? (
+        // Smart-contract account (Codex #1547 r6): the facet recovers
+        // the signer from the acknowledgement with ECDSA and requires
+        // it to EQUAL msg.sender, which a contract account can never
+        // satisfy — so the form would end in a guaranteed revert after
+        // the user typed CONFIRM and approved a transaction. Block it
+        // here instead. Ordered AFTER the sanctions gate: a flagged
+        // wallet's blocked state is the more consequential fact.
+        <div className="banner banner-warn" role="alert">
+          <Lock aria-hidden />
+          <span className="banner-body">
+            <strong>{copy.recover.contractWalletTitle}</strong>
+            <br />
+            {copy.recover.contractWalletBody}
           </span>
         </div>
       ) : step.kind === 'review' || reviewBusy ? (
@@ -1359,7 +1784,8 @@ export function Recover() {
       )}
 
       {/* Standing warning — visible alongside the form and review. */}
-      {oracleReady === true &&
+      {oracleState === 'ready' &&
+      accountKind === 'eoa' &&
       address &&
       onSupportedChain &&
       !sanctions.flagged &&

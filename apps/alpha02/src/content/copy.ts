@@ -1349,6 +1349,24 @@ const copySource = {
     unavailableTitle: 'Recovery isn’t available on this network yet',
     unavailableBody:
       'This flow depends on the screening service that decides a recovery’s outcome, and it isn’t configured on this network. Nothing can be recovered until it is — your tokens stay exactly where they are.',
+    // A FAILED availability check is not the same statement as a
+    // confirmed-missing screening service (Codex #1547 r6): the first
+    // is a temporary read problem the user can retry out of, the
+    // second is a permanent property of the network. Both still fail
+    // CLOSED (no form), but only this one is recoverable in place.
+    unavailableUnreachableTitle: 'We couldn’t check whether recovery is available',
+    unavailableUnreachableBody:
+      'The check that decides whether recovery can run on this network didn’t answer — most likely a passing network problem, not anything about your tokens. Nothing has been sent and nothing has moved. Try the check again in a moment.',
+    retryCheck: 'Check again',
+    // Smart-contract accounts are blocked BEFORE the form (Codex #1547
+    // r6): recovery is authorised by a plain wallet signature that the
+    // network re-derives and compares against the sender, and a
+    // contract account has no such signature to give — every attempt
+    // would fail at the last step, after the user had already typed
+    // CONFIRM and approved a transaction.
+    contractWalletTitle: 'This kind of wallet can’t use recovery yet',
+    contractWalletBody:
+      'Recovery has to be authorised by a signature from an ordinary wallet address, and this one is a smart-contract account (a Safe or similar). Those aren’t supported here yet, so nothing can be recovered from this account for now — your tokens stay exactly where they are.',
     checkingAvailability: 'Checking whether recovery is available here…',
     formTitle: 'What arrived, and from where',
     tokenLabel: 'Token contract address',
@@ -1454,6 +1472,28 @@ const copySource = {
     reconciling: 'Checking…',
     reconcileStillPending:
       'Still no confirmation for this transaction — it may not have been mined yet. Wait a moment and check again, or open the transaction link to follow it on the block explorer. Do not start a new recovery until this one resolves.',
+    // Receipt-less landings (Codex #1547 r6). A transaction the wallet
+    // REPLACED can never be found by its original hash, so the check
+    // falls back to the account's own recovery counter on-chain: it
+    // moves once, and only once, per processed attempt. A moved
+    // counter therefore settles the question "did my attempt run?"
+    // even when the transaction itself is unreadable — but not WHICH
+    // of the two outcomes it had, so this must say both.
+    recoveryLandedTitle: 'Your recovery attempt went through',
+    recoveryLandedBody:
+      'We still can’t read the transaction itself, but the network shows your attempt was processed — so do not sign again. Check your wallet: if the tokens arrived, you’re done. If they didn’t, the sender you declared was on the sanctions list, which blocks your wallet from new positions until that address is de-listed; existing loans can still be repaid or closed.',
+    // Receipt-less "never ran" landing (Codex #1547 r6): the counter
+    // has NOT moved, so the attempt was never processed. Whether the
+    // wallet replaced the transaction or it was simply dropped from
+    // the queue is not knowable here, so — unlike replacedCancelledBody,
+    // which is used only when a replacement was actually OBSERVED —
+    // this states the outcome without asserting a cause.
+    notProcessedTitle: 'This recovery never went through',
+    notProcessedBody:
+      'The network shows this recovery attempt was never processed — your wallet either replaced the transaction or dropped it. Nothing was recovered and your tokens stayed exactly where they were. It’s safe to start over below: even if the original transaction turns up later, only one recovery can ever go through for it.',
+    // Labels the STORED hash honestly on the receipt-less cards: it is
+    // what the user submitted, which is not necessarily what mined.
+    viewOriginalTx: 'View the transaction you submitted (your wallet may have replaced it)',
     // Wallet-replacement outcome (Codex #1547 r5): the wallet replaced
     // (sped up / cancelled) the original transaction and the one that
     // actually mined carries no recovery event — so NOTHING was
