@@ -108,11 +108,33 @@ function loadCreds() {
   // "this process never wields write/delete authority", and a name cannot
   // promise that. B2 telling us what the key can actually do can.
   const pairs = [
-    [process.env.B2_READ_ACCESS_KEY_ID, process.env.B2_READ_SECRET_ACCESS_KEY],
-    [file.B2_READ_ACCESS_KEY_ID, file.B2_READ_SECRET_ACCESS_KEY],
-    [file.BACKBLAZE_KEY_ID, file.BACKBLAZE_APP_KEY],
-  ];
-  for (const [id, key] of pairs) if (id && key) return { id, key };
+    ['process env B2_READ_*', process.env.B2_READ_ACCESS_KEY_ID, process.env.B2_READ_SECRET_ACCESS_KEY],
+    ['.env B2_READ_*', file.B2_READ_ACCESS_KEY_ID, file.B2_READ_SECRET_ACCESS_KEY],
+    ['.env BACKBLAZE_KEY_ID/APP_KEY', file.BACKBLAZE_KEY_ID, file.BACKBLAZE_APP_KEY],
+  ].filter(([, id, key]) => id && key);
+
+  // AMBIGUITY IS FATAL, because the README leans on this command as proof
+  // that what is ON DISK is read-only. With an exported B2_READ_* taking
+  // precedence, the check could pass on that key while the legacy names in
+  // `.env` still held the pre-split MASTER — and the operator would then
+  // delete BACKBLAZE_MASTER_* believing the remaining pair was safe. A
+  // verification that can succeed without inspecting the thing it certifies
+  // is not a verification.
+  const distinct = [...new Set(pairs.map(([, id]) => id))];
+  if (distinct.length > 1) {
+    fail(
+      `found ${distinct.length} DIFFERENT B2 credentials:\n` +
+        pairs.map(([src]) => `    ${src}`).join('\n') +
+        `\n\n  Refusing to guess. This command is used to certify that the\n` +
+        `  credential on disk is read-only, so it must not silently prefer a\n` +
+        `  different one. Unset the extras and re-run.`,
+    );
+  }
+  if (pairs.length > 0) {
+    const [src, id, key] = pairs[0];
+    console.log(`Credential source: ${src}`);
+    return { id, key };
+  }
   fail(
     'No B2 credentials found. Set B2_READ_ACCESS_KEY_ID +\n' +
       '  B2_READ_SECRET_ACCESS_KEY in the environment or the repo-root .env.',
@@ -172,6 +194,19 @@ async function authorize(keyId, appKey) {
         `  ${extra.slice(0, 8).join(', ')}${extra.length > 8 ? ', …' : ''}\n\n` +
         `  Refusing to run an inventory with more authority than it needs.\n` +
         `  Use the bucket-scoped read key: ${ALLOWED_CAPABILITIES.join(' + ')}.`,
+    );
+  }
+  // A key can ALSO be restricted to a `namePrefix`, independently of its
+  // capabilities and bucket scope. One limited to `archives-monthly/2026-07/`
+  // authorizes cleanly, passes both checks above, and then makes every
+  // older object invisible to the listing — so the script would print a
+  // later baseline, or NONE, and mask exactly the cuts it exists to find.
+  const namePrefix = data.apiInfo?.storageApi?.namePrefix ?? data.allowed?.namePrefix;
+  if (namePrefix) {
+    fail(
+      `this key is restricted to namePrefix "${namePrefix}" — it cannot see\n` +
+        `  the whole family, so any baseline derived from it would be a\n` +
+        `  floor on what this KEY can list, not on what the bucket holds.`,
     );
   }
   return {
@@ -234,6 +269,7 @@ async function periodsUnder(auth, bucketId, prefix, tier) {
   const periods = new Set();
   let files = 0;
   let startFileName = null;
+  let startFileId = null;
   for (let page = 0; ; page++) {
     if (page >= PAGE_CAP) {
       // FAIL, never return partial. Exiting quietly here would print an
@@ -246,11 +282,17 @@ async function periodsUnder(auth, bucketId, prefix, tier) {
           `Refusing to report a partial inventory as the baseline.`,
       );
     }
-    const data = await b2(auth, 'b2_list_file_names', {
+    // VERSIONS, not names. `b2_list_file_names` returns only CURRENT
+    // versions, so an oldest cut that was administratively hidden — the
+    // precise loss these declared baselines exist to detect — looks like a
+    // period that never existed, and the baseline advances past it. The
+    // bucket still holds the evidence; the wrong call was hiding it.
+    const data = await b2(auth, 'b2_list_file_versions', {
       bucketId,
       prefix,
       maxFileCount: 1000,
       ...(startFileName ? { startFileName } : {}),
+      ...(startFileId ? { startFileId } : {}),
     });
     for (const f of data.files ?? []) {
       files += 1;
@@ -266,6 +308,9 @@ async function periodsUnder(auth, bucketId, prefix, tier) {
     }
     if (!data.nextFileName) break;
     startFileName = data.nextFileName;
+    // `b2_list_file_versions` pages on the (name, id) PAIR — carrying only
+    // the name re-reads the first version of that file forever.
+    startFileId = data.nextFileId ?? null;
   }
   return { periods: [...periods].sort(), files };
 }
