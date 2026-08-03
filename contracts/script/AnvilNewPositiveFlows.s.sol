@@ -1447,10 +1447,13 @@ contract AnvilNewPositiveFlows is Script {
             dBorrowerN10
         );
 
-        // Step 4: take a loan. The borrower is now tier-eligible with consent
-        // enabled on a liquid lending asset — i.e. exactly the state the
-        // retired peg-custody path required — so the no-custody
-        // assertion below is a real check, not a precondition failure.
+        // Step 4: take a loan. The borrower holds a tier-worthy vault balance
+        // with consent enabled on a liquid lending asset. That is NOT the
+        // full set of preconditions the retired peg-custody path required —
+        // this drive never configures `isCanonicalVpfiChain`, so the
+        // mirror-tier cache stays empty and the effective tier reads zero
+        // regardless. Stated so nobody reads the setup as establishing more
+        // than it does (#1555 r6).
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -1463,11 +1466,17 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Loan initiated under HoldOnly borrower LIF:", loanId);
 
-        // #1555 r2 — the scenario's REQUIRED check. A HoldOnly loan takes
-        // no VPFI custody, so the rebate receipt must be empty on both
-        // fields. This fails loudly if the retired peg-custody origination
-        // path is re-wired, which the previous best-effort rebate logging
-        // could not do.
+        // The scenario's required check: a HoldOnly loan takes no VPFI
+        // custody, so the rebate receipt must be empty on both fields.
+        //
+        // #1555 r6 — this is an OBSERVABLE END-STATE check and nothing more.
+        // An earlier revision said it "fails loudly if the retired
+        // peg-custody origination path is re-wired"; that was the same
+        // overclaim withdrawn in the note above and it survived there.
+        // Re-wiring would NOT fail this on the fresh-Anvil path, because the
+        // empty mirror-tier cache leaves the retired path returning
+        // `(false, 0)` anyway. The re-wiring guard is
+        // `testAcceptOfferWithVPFIDiscountApplied`.
         {
             (uint256 rebateAmt_, uint256 vpfiHeld_) =
                 ClaimFacet(diamond).getBorrowerLifRebate(loanId);

@@ -333,8 +333,12 @@ library LibVpfiRecycle {
      *         silent. The durable fix is to bound payout by funding DELIVERED
      *         FOR REWARDS instead, which needs no such list — tracked on
      *         #1498, shared root with #1434 prerequisite 1. Anyone adding a
-     *         new VPFI custody class must either subtract it here or land
-     *         that bound.
+     *         new VPFI custody class must land THAT BOUND — not another
+     *         subtraction here. (An earlier revision offered the two as
+     *         alternatives, which contradicted the "do NOT add a sixth
+     *         subtraction" instruction below and would have re-created the
+     *         claim-versus-expiry divergence that forced the treasury
+     *         subtraction to be reverted. Codex #1555 r6.)
      *
      *         So on a deployment ORIGINATED from this source the borrower-LIF
      *         term is zero. `unearmarked` is exact only to the extent this
