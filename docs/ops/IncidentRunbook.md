@@ -237,10 +237,13 @@ needed.
 [`apps/keeper/README.md`](../../apps/keeper/README.md) §"What the kill-switch
 does and does not stop". **That is a dashboard change, not a redeploy** —
 *Settings → Trigger Events*. An earlier revision of this line said "do not
-stop at the redeploy", which implied a deploy was part of it; `wrangler
-deploy` is actively the wrong tool here, because it applies the config's
-committed `TG_BOT_USERNAME: ""` over whatever is live, with or without
-`--keep-vars`.
+stop at the redeploy", which implied a deploy was part of it.
+
+A deploy is the wrong *shape* for this — it republishes the entire Worker
+configuration to change one schedule — rather than dangerous. A previous
+revision called it "actively wrong" on the strength of the
+`TG_BOT_USERNAME: ""` clobber; that clobber is harmless, because
+`apps/keeper` never reads the value (see lines above).
 
 Two things about it are load-bearing in an incident and neither is obvious:
 
