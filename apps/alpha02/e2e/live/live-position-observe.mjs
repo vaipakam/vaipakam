@@ -87,30 +87,51 @@ if (!deployment) throw new Error(`no deployment for chain ${CHAIN_ID}`);
 const DIAMOND = deployment.diamond;
 const DIAMOND_ABI_VIEM = loadDiamondAbi();
 
-/** Signing/sending is not merely denied — there is no key, so none of
- *  these could succeed anyway. They are named so an attempt is REPORTED
- *  loudly instead of erroring obscurely somewhere inside the app: a
- *  regression that starts asking for a signature mid-review is exactly
- *  the thing a live drive should surface, and a nameless failure deep in
- *  a wallet library reads as flakiness.
+/**
+ * ALLOWLIST, deliberately — not a list of banned writes.
  *
- *  The EIP-5792 batch methods are listed even though the app does not
- *  use them today. Unlisted, they would fall through to the RPC forward
- *  below and fail there as unknown methods — the drive would stay
- *  correct but go quiet about an attempted send, which is the one
- *  outcome this list exists to prevent. */
-const FORBIDDEN = new Set([
-  'eth_sendTransaction',
-  'eth_sendRawTransaction',
-  'eth_signTransaction',
-  'eth_sign',
-  'personal_sign',
-  'eth_signTypedData',
-  'eth_signTypedData_v1',
-  'eth_signTypedData_v3',
-  'eth_signTypedData_v4',
-  'wallet_sendCalls',
-  'wallet_sendTransaction',
+ * A denylist cannot carry a safety property: it has to enumerate every
+ * way to send, and the set keeps growing (`wallet_sendCalls`,
+ * `eth_sendUserOperation`, provider-specific sends, app-specific JSON-RPC
+ * mutations). One that is merely forgotten is forwarded (#1529 review).
+ * So this names the read and connection methods the drive actually needs
+ * and refuses everything else, which makes an omission a false REFUSAL —
+ * visible in the report and easy to fix — rather than a silent send.
+ *
+ * Every refusal is recorded and printed, so an allowlist that turns out
+ * to be too narrow shows up as a named refusal instead of a mysteriously
+ * degraded page.
+ */
+const ALLOWED_RPC = new Set([
+  // Reads. eth_call and eth_estimateGas change no state.
+  'eth_accounts',
+  'eth_blockNumber',
+  'eth_call',
+  'eth_chainId',
+  'eth_estimateGas',
+  'eth_feeHistory',
+  'eth_gasPrice',
+  'eth_getBalance',
+  'eth_getBlockByHash',
+  'eth_getBlockByNumber',
+  'eth_getCode',
+  'eth_getLogs',
+  'eth_getStorageAt',
+  'eth_getTransactionByHash',
+  'eth_getTransactionCount',
+  'eth_getTransactionReceipt',
+  'eth_maxPriorityFeePerGas',
+  'eth_syncing',
+  'net_version',
+  'web3_clientVersion',
+  // Subscriptions (WebSocket reads).
+  'eth_subscribe',
+  'eth_unsubscribe',
+  // Connection handshake — answered locally, never forwarded.
+  'eth_requestAccounts',
+  'wallet_getPermissions',
+  'wallet_requestPermissions',
+  'wallet_switchEthereumChain',
 ]);
 
 const pub = createPublicClient({ transport: http(RPC) });
@@ -138,6 +159,40 @@ const ids = await pub.readContract({
   args: [0n, activeCount > 25n ? 25n : activeCount],
 });
 
+// LoanStatus.Active — `getActiveLoansPaginated` also returns
+// FallbackPending (4), and AssetType.ERC20 — an NFT-rental row is not a
+// lending position. The chooser renders for neither, so a candidate that
+// is either would be a FALSE "chooser MISSING" rather than a finding
+// (#1529 review).
+const STATUS_ACTIVE = 0;
+const ASSET_ERC20 = 0;
+
+/**
+ * Who may act on the borrower side. NOT `loan.borrower`: role and action
+ * authority travel with the borrower POSITION NFT, and `PositionDetails`
+ * decides the role from `ownerOf(borrowerTokenId)` — so once a position
+ * has been transferred, the stored address is history and the page
+ * correctly classifies it as a viewer. Grouping by the stored address
+ * would inject exactly such a wallet and then report the resulting
+ * absent chooser as a regression (#1529 review).
+ *
+ * Falls back to the stored address only when the token read reverts —
+ * i.e. the token is gone — which the eligibility filter then drops
+ * anyway.
+ */
+async function borrowerAuthorityOf(loan) {
+  try {
+    return await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'ownerOf',
+      args: [loan.borrowerTokenId],
+    });
+  } catch {
+    return null;
+  }
+}
+
 const loans = [];
 for (const id of ids) {
   const d = await pub.readContract({
@@ -146,26 +201,59 @@ for (const id of ids) {
     functionName: 'getLoanDetails',
     args: [id],
   });
-  loans.push({ id, borrower: d.borrower, lender: d.lender, status: Number(d.status) });
+  const loan = {
+    id,
+    borrower: d.borrower,
+    lender: d.lender,
+    status: Number(d.status),
+    assetType: Number(d.assetType),
+    borrowerTokenId: d.borrowerTokenId,
+  };
+  loan.authority = await borrowerAuthorityOf(loan);
+  loans.push(loan);
 }
 
-// The observed address: whichever borrower holds the most active loans,
-// so one session covers as many position pages as possible.
+/** Exactly the predicate `PositionDetails` gates the chooser on. */
+const eligible = loans.filter(
+  (l) => l.status === STATUS_ACTIVE && l.assetType === ASSET_ERC20 && l.authority !== null,
+);
+const dropped = loans.length - eligible.length;
+if (dropped > 0) {
+  // Never silently narrow the candidate set — say what was set aside.
+  console.log(
+    `skipping  ${dropped} loan(s) the chooser does not render for` +
+      ` (fallback-pending, NFT rental, or burned borrower token)`,
+  );
+}
+
+// The observed address: whichever borrower-side authority holds the most
+// eligible loans, so one session covers as many position pages as
+// possible.
 let observed = process.env.OBSERVE_ADDRESS;
 if (!observed) {
-  const byBorrower = new Map();
-  for (const l of loans) {
-    const k = l.borrower.toLowerCase();
-    byBorrower.set(k, [...(byBorrower.get(k) ?? []), l]);
+  const byAuthority = new Map();
+  for (const l of eligible) {
+    const k = l.authority.toLowerCase();
+    byAuthority.set(k, [...(byAuthority.get(k) ?? []), l]);
   }
-  const [best] = [...byBorrower.entries()].sort((a, b) => b[1].length - a[1].length);
-  observed = best[1][0].borrower;
+  const [best] = [...byAuthority.entries()].sort((a, b) => b[1].length - a[1].length);
+  if (!best) {
+    console.log('\nBLOCKED: no chooser-eligible loans on chain — nothing verified.');
+    process.exit(2);
+  }
+  observed = best[1][0].authority;
 }
-const mine = loans.filter((l) => l.borrower.toLowerCase() === observed.toLowerCase());
-console.log(`observing ${observed} (watch-only, no key) — ${mine.length} active loan(s) as borrower`);
+const mine = eligible.filter((l) => l.authority.toLowerCase() === observed.toLowerCase());
+console.log(
+  `observing ${observed} (watch-only, no key) — ${mine.length} eligible loan(s) as borrower`,
+);
+for (const l of mine) {
+  const moved = l.authority.toLowerCase() !== l.borrower.toLowerCase();
+  console.log(`  loan ${l.id}${moved ? ` (position transferred from ${l.borrower})` : ''}`);
+}
 if (mine.length === 0) {
   console.error(
-    `\nBLOCKED: ${observed} holds no active loans as borrower — nothing verified.`,
+    `\nBLOCKED: ${observed} holds no chooser-eligible borrower position — nothing verified.`,
   );
   process.exit(2);
 }
@@ -178,7 +266,8 @@ const browser = await chromium.launch({
 });
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
 
-const signAttempts = [];
+/** Every refusal, with why — a too-narrow allowlist must be visible. */
+const refusedRpc = [];
 const blockedHttp = [];
 
 // Page traffic through this process (Chromium TLS is reset by the
@@ -189,21 +278,28 @@ await ctx.route('**/*', async (route) => {
   const req = route.request();
   const method = req.method().toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-    let readShaped = false;
+    // Default-deny: a mutating request rides through only when it is
+    // JSON-RPC whose EVERY method is on the allowlist. Anything else —
+    // a non-RPC POST, or RPC naming a method we did not sanction — is
+    // refused and named.
+    let why = `${method} (non-RPC mutating request)`;
+    let allowed = false;
     const body = req.postData();
     if (body) {
       try {
         const parsed = JSON.parse(body);
         const calls = Array.isArray(parsed) ? parsed : [parsed];
-        readShaped =
-          calls.every((c) => c && typeof c.jsonrpc === 'string') &&
-          !calls.some((c) => FORBIDDEN.has(c.method));
+        if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
+          const bad = calls.find((c) => !ALLOWED_RPC.has(c.method));
+          allowed = bad === undefined;
+          if (bad) why = `json-rpc ${bad.method} (not allowlisted)`;
+        }
       } catch {
-        /* not JSON — refuse */
+        /* not JSON — refuse with the default reason */
       }
     }
-    if (!readShaped) {
-      blockedHttp.push(`${method} ${req.url().slice(0, 140)}`);
+    if (!allowed) {
+      blockedHttp.push(`${why} → ${req.url().slice(0, 120)}`);
       await route.abort('accessdenied').catch(() => {});
       return;
     }
@@ -236,8 +332,8 @@ await ctx.route('**/*', async (route) => {
 
 await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) => {
   try {
-    if (FORBIDDEN.has(method)) {
-      signAttempts.push(method);
+    if (!ALLOWED_RPC.has(method)) {
+      refusedRpc.push(method);
       // 4100 "unauthorized" is what a watch-only account produces —
       // not 4001, which would read as the user simply declining.
       return { error: { code: 4100, message: `watch-only session: ${method} unavailable` } };
@@ -383,11 +479,25 @@ for (const v of visited) {
   const detail = /^\/positions\/\d+$/.test(v.path);
   const problems = [];
   if (v.nav) problems.push(`nav: ${v.nav}`);
+  // A 404/500 does not throw and does not fire `pageerror`: page.goto
+  // resolves and the status is merely recorded. Unchecked, a route that
+  // never loaded counted toward "routes clean" (#1529 review).
+  if (!v.nav && (v.http === null || v.http === undefined || v.http < 200 || v.http >= 300)) {
+    problems.push(`navigation returned ${v.http ?? 'no response'}`);
+  }
   if (v.hooks) problems.push('HOOKS-ORDER CRASH');
   if (v.pageErrors?.length) problems.push(`${v.pageErrors.length} uncaught error(s)`);
-  // A position DETAIL page for an ACTIVE loan must show the chooser —
-  // its absence is the regression this drive exists to catch.
-  if (detail && !v.nav && !v.chooser) problems.push('chooser MISSING on an active loan');
+  // A position DETAIL page for an eligible loan must show the chooser
+  // AND both newly-exposed paths. Printing handover/offset without
+  // failing on them let the drive pass while missing one of the two
+  // #1505 surfaces it claims to validate (#1529 review).
+  if (detail && !v.nav) {
+    if (!v.chooser) problems.push('chooser MISSING on an eligible loan');
+    else {
+      if (!v.handover) problems.push('handover path MISSING from the chooser');
+      if (!v.offset) problems.push('offset path MISSING from the chooser');
+    }
+  }
 
   const verdict = problems.length ? 'FAIL' : 'ok';
   if (problems.length) failures++;
@@ -406,12 +516,20 @@ for (const v of visited) {
   (v.consoleErrors ?? []).slice(0, 4).forEach((e) => console.log(`      c ${e}`));
 }
 
-if (signAttempts.length) {
-  console.log(`\nsigning attempts refused (watch-only): ${[...new Set(signAttempts)].join(', ')}`);
+// Refusals are printed rather than counted as failures: the drive is
+// SUPPOSED to refuse writes. They matter because a refusal that is
+// actually a too-narrow allowlist would otherwise present as a
+// mysteriously degraded page, so the list must always be visible.
+if (refusedRpc.length) {
+  console.log(
+    `\nwallet RPC refused (watch-only): ${[...new Set(refusedRpc)].join(', ')}` +
+      `\n  → if any of these is a READ the app legitimately needs,` +
+      ` add it to ALLOWED_RPC rather than reading past this line.`,
+  );
 }
 if (blockedHttp.length) {
   console.log(`\nmutating HTTP refused: ${blockedHttp.length}`);
-  blockedHttp.slice(0, 6).forEach((b) => console.log(`  ${b}`));
+  blockedHttp.slice(0, 8).forEach((b) => console.log(`  ${b}`));
 }
 
 const holds = visited.filter((v) => v.holdCard);

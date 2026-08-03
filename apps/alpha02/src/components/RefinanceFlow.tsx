@@ -41,7 +41,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { erc20Abi, parseEventLogs } from 'viem';
+import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -410,19 +410,17 @@ export function RefinanceFlow({
           (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
         symbol: sym,
       });
-      // Read the standing allowance FIRST — it is what an abandoned
-      // step 3 restores. Any pre-existing grant belongs to some other
-      // live arrangement (a prior request, a sale listing, a
-      // user-managed approval), so the unwind must put that figure
-      // back rather than zero it: ensureAllowance raises a non-zero
-      // but insufficient allowance too, and treating that as ours to
-      // erase would break the flow relying on it.
-      priorAllowance = await publicClient.readContract({
-        address: liveLoan.principalAsset,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [address, walletChain.diamondAddress],
-      });
+      // The standing allowance is what an abandoned step 3 restores. Any
+      // pre-existing grant belongs to some other live arrangement (a
+      // prior request, a sale listing, a user-managed approval), so the
+      // unwind must put that figure back rather than zero it:
+      // ensureAllowance raises a non-zero but insufficient allowance
+      // too, and treating that as ours to erase would break the flow
+      // relying on it. The figure comes from ensureAllowance's OWN read
+      // — sampling it separately here would be a second moment, and
+      // anything moving the allowance in between would leave this stale
+      // so the unwind restored a value that was never replaced (#1529
+      // review).
       approvalToken = liveLoan.principalAsset;
       await ensureAllowance({
         publicClient,
@@ -431,6 +429,9 @@ export function RefinanceFlow({
         owner: address,
         spender: walletChain.diamondAddress,
         amount: liveApproval,
+        onObserved: (value) => {
+          priorAllowance = value;
+        },
         onWrote: (value) => {
           wroteAllowance = value;
         },

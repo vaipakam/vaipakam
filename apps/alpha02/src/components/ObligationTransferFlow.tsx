@@ -23,7 +23,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { erc20Abi } from 'viem';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -460,17 +459,13 @@ export function ObligationTransferFlow({
         });
       }
       if (liveCost.total + pad > 0n) {
-        // Read the standing allowance first: it is what the unwind
-        // restores. ensureAllowance no-ops when it already covers the
-        // handover, in which case prior === needed and the restore is
-        // a no-op too.
+        // The standing allowance is what the unwind restores, and it is
+        // reported by ensureAllowance's own read rather than sampled
+        // here. Two reads are two moments: anything moving the allowance
+        // between them would leave this figure stale, and the unwind
+        // would then "restore" a value that was never the one replaced
+        // (#1529 review).
         const needed = liveCost.total + pad;
-        priorAllowance = await publicClient.readContract({
-          address: liveLoan.principalAsset,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [address, walletChain.diamondAddress],
-        });
         approvalToken = liveLoan.principalAsset;
         await ensureAllowance({
           publicClient,
@@ -479,6 +474,9 @@ export function ObligationTransferFlow({
           owner: address,
           spender: walletChain.diamondAddress,
           amount: needed,
+          onObserved: (value) => {
+            priorAllowance = value;
+          },
           onWrote: (value) => {
             wroteAllowance = value;
           },

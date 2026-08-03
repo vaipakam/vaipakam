@@ -33,7 +33,14 @@ const SPENDER = '0xcccccccccccccccccccccccccccccccccccccccc' as const;
  * write sequence — including the zero-first reset — rather than just the
  * end state.
  */
-function harness(opts: { allowance: bigint; rejectApproveOf?: (value: bigint) => boolean }) {
+function harness(opts: {
+  allowance: bigint;
+  rejectApproveOf?: (value: bigint) => boolean;
+  /** Simulates a concurrent actor: called after each approve mines with
+   *  the value just written; a returned bigint becomes the new live
+   *  allowance, as if another tab wrote it in that window. */
+  afterWrite?: (value: bigint) => bigint | undefined;
+}) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
 
@@ -49,6 +56,8 @@ function harness(opts: { allowance: bigint; rejectApproveOf?: (value: bigint) =>
       if (opts.rejectApproveOf?.(value)) throw new Error('user rejected');
       writes.push(value);
       allowance = value;
+      const raced = opts.afterWrite?.(value);
+      if (raced !== undefined) allowance = raced;
       return '0xdead' as `0x${string}`;
     }),
   } as unknown as WalletClient;
@@ -120,6 +129,68 @@ describe('restoreAllowance', () => {
     const h = harness({ allowance: 5_000n });
     const tx = await restoreAllowance({ ...base(h), previous: 0n, wrote: 1_000n });
     expect(tx).toBeNull();
+    expect(h.writes).toEqual([]);
+  });
+});
+
+describe('restoreAllowance — the second transaction is guarded too', () => {
+  it('aborts the restore when someone claims the allowance after the reset', async () => {
+    // previous 500, we wrote 1000, unwinding. The reset to 0 mines, and
+    // in that window another tab grants 900. Writing our 500 over it
+    // would be the same clobber the pre-flight guard prevents, just one
+    // transaction later (#1529 review round 3).
+    const h = harness({
+      allowance: 1_000n,
+      afterWrite: (v) => (v === 0n ? 900n : undefined),
+    });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    // The reset happened — it had to, to reach the race — but the
+    // restore did NOT overwrite the newcomer's value.
+    expect(h.writes).toEqual([0n]);
+    expect(h.allowance).toBe(900n);
+  });
+
+  it('completes the restore when nothing intervenes', async () => {
+    const h = harness({ allowance: 1_000n });
+    await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(h.writes).toEqual([0n, 500n]);
+    expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('ensureAllowance onObserved', () => {
+  it('reports the allowance it replaced, so the caller need not re-read', async () => {
+    // The caller sampling separately is a second moment: anything moving
+    // the allowance in between leaves the caller's figure stale, and the
+    // unwind then restores a value that was never replaced (#1529 review
+    // round 3). One read, one truth.
+    const h = harness({ allowance: 250n });
+    let observed: bigint | null = null;
+    await ensureAllowance({
+      ...base(h),
+      amount: 1_000n,
+      onObserved: (v) => {
+        observed = v;
+      },
+    });
+    expect(observed).toBe(250n);
+  });
+
+  it('reports even when the standing allowance already suffices', async () => {
+    const h = harness({ allowance: 5_000n });
+    let observed: bigint | null = null;
+    const tx = await ensureAllowance({
+      ...base(h),
+      amount: 1_000n,
+      onObserved: (v) => {
+        observed = v;
+      },
+    });
+    // Nothing written, but the observation still stands — and with
+    // `wrote` null the restore is a no-op regardless.
+    expect(tx).toBeNull();
+    expect(observed).toBe(5_000n);
     expect(h.writes).toEqual([]);
   });
 });

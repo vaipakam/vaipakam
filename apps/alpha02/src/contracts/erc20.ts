@@ -101,8 +101,16 @@ export async function ensureAllowance(opts: {
    *  been changed — to 0 — and an unwind keyed on the return value
    *  would walk away leaving the prior grant destroyed. */
   onWrote?: (value: bigint) => void;
+  /** Called once with the allowance THIS function observed, before it
+   *  changes anything. Unwinding callers must take `previous` from here
+   *  rather than reading the allowance themselves: two separate reads
+   *  are two separate moments, and anything that moves the allowance
+   *  between them makes the caller's figure stale — so a later unwind
+   *  would "restore" a value that was never the one replaced (#1529
+   *  review). One read, one truth. */
+  onObserved?: (current: bigint) => void;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, amount, onPrompt, onWrote } =
+  const { publicClient, walletClient, token, owner, spender, amount, onPrompt, onWrote, onObserved } =
     opts;
   const current = await publicClient.readContract({
     address: token,
@@ -110,6 +118,7 @@ export async function ensureAllowance(opts: {
     functionName: 'allowance',
     args: [owner, spender],
   });
+  onObserved?.(current);
   if (current >= amount) return null;
 
   const approve = async (value: bigint): Promise<`0x${string}`> => {
@@ -208,7 +217,23 @@ export async function restoreAllowance(opts: {
   // Same zero-first rule as ensureAllowance — tokens like mainnet USDT
   // revert on a non-zero→non-zero approve, and this path is by
   // definition running against a non-zero current value.
-  if (current > 0n && previous > 0n) await approve(0n);
+  if (current > 0n && previous > 0n) {
+    await approve(0n);
+    // The no-clobber guarantee has to hold across BOTH transactions, not
+    // just before the first. Between the reset mining and this restore
+    // being submitted, another tab can grant a fresh allowance — and
+    // writing `previous` over it would be exactly the overwrite the
+    // guard above exists to prevent, merely one transaction later
+    // (#1529 review). Anything but the zero we just wrote means the
+    // value is no longer ours to put back.
+    const afterReset = await publicClient.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [owner, spender],
+    });
+    if (afterReset !== 0n) return null;
+  }
   return approve(previous);
 }
 
