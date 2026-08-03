@@ -882,13 +882,14 @@ GovernanceRunbook gains a recycling section, executed in order:
    source (and non-zero on one UPGRADED from pre-#1352, where custody against
    loans open at the upgrade is spendable as reward and the borrower's later
    settlement then reverts or leaves them unpaid).
-   **But the headroom is NOT exact even on a fresh deployment.** Six review
-   rounds identified **EIGHT** owners of the Diamond's VPFI balance and only
-   `recycleBucket` is subtracted; the others are `treasuryBalances[vpfi]`,
+   **But the headroom is NOT exact even on a fresh deployment.** Review kept
+   identifying further owners of the Diamond's VPFI balance — the list grew in
+   every round it was declared complete, so no total is quoted here — and only
+   `recycleBucket` is subtracted; the others found so far are `treasuryBalances[vpfi]`,
    `rewardEmissionsBudget`, `keeperRewardBudget`, a live swap-to-repay
    intent's `custodialCollateral`, and liquidation `fallbackSnapshot` custody
-   (plus the grandfathered LIF term; the Full tariff's `C*` is covered since
-   it credits the bucket). **Two of those are USER COLLATERAL**, which makes
+   funded VPFI payroll streams (plus the grandfathered LIF term; the Full
+   tariff's `C*` is covered since it credits the bucket). **Two of those are USER COLLATERAL**, which makes
    this a fund-safety item rather than an accounting one — a reward payout
    drawing on them spends a borrower's collateral. **#1498 stays OPEN for that half**, re-pointed: its
    root is shared with #1434 prerequisite 1 (payout bounded by un-earmarked

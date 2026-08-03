@@ -39,10 +39,9 @@ on, so subtracting it would refuse claims their own money. Its place in the
 underlying rule says the platform must be *holding* it, not that a payout may
 not touch it. That distinction was implicit before and is now stated.
 
-### Seven more owners of the same holding — and why none of them are reserved here
+### More owners of the same holding kept appearing — and why none are reserved here
 
-Review kept finding the same shape with different owners. Eight were
-identified: the recycled reserve, borrower fee custody on grandfathered
+Review kept finding the same shape with different owners: the recycled reserve, borrower fee custody on grandfathered
 loans, the per-party tariff (already safe — it credits the recycled reserve),
 treasury revenue where the platform holds its own, the reward-emissions
 budget, the keeper reward budget, collateral held during a live
@@ -62,8 +61,9 @@ tidy-up and became a fund-safety item.
 One of them **was** reserved during this work, and that change has been
 **withdrawn**. Two reasons, and the second is the more instructive.
 
-First, the count. Eight owners across six rounds, with no sign of the rate
-falling, says the approach itself is wrong: permitting a payout up to
+First, the count. The list grew in every round it was written up as
+complete, with no sign of the rate falling, which says the approach itself is
+wrong: permitting a payout up to
 "everything we hold, minus the claims we remembered to write down" needs that
 list to be complete forever, and a missing entry causes no visible failure —
 which is exactly how each of these went unnoticed.

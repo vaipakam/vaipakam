@@ -322,9 +322,10 @@ library LibVpfiRecycle {
      *           omitting the aggregate. Codex #1555 r1.)
      *
      *         **The invariant's three classes are NOT the whole list, and
-     *         that is the real lesson here.** EIGHT owners of this one
-     *         balance have been identified across SIX review rounds, and
-     *         **only the first is subtracted**:
+     *         that is the real lesson here.** Owners of this one balance
+     *         keep being found — SEVEN review rounds so far, and the list has
+     *         grown in every round it was called complete. **Only the first
+     *         is subtracted:**
      *
      *           1. `recycleBucket` — SUBTRACTED (see the body).
      *           2. borrower-LIF rebate custody — grandfathered loans only;
@@ -349,6 +350,17 @@ library LibVpfiRecycle {
      *              Diamond ({RiskFacet._fullCollateralTransferFallback}).
      *              **NOT subtracted.**
      *
+     *           9. funded payroll streams — {PayrollFacet.fundPayrollStream}
+     *              DEBITS `treasuryBalances[asset]` and increments
+     *              `stream.funded` **without moving tokens out**, and
+     *              `createPayrollStream` permits `asset == vpfiToken`. So the
+     *              VPFI sits here owed to a stream while the treasury counter
+     *              that used to cover it has already been reduced.
+     *              **NOT subtracted.** Note this one would have escaped the
+     *              reverted treasury subtraction TOO — funding a stream moves
+     *              the earmark out of `treasuryBalances` — which is a second,
+     *              independent reason that subtraction was not a fix.
+     *
      *         **7 and 8 are USER COLLATERAL, not protocol ledgers.** A reward
      *         payout drawing on them spends a BORROWER's collateral — a
      *         different severity from over-drawing an operational budget, and
@@ -367,7 +379,7 @@ library LibVpfiRecycle {
      *         are corrected here; reverting a change is itself a sweep, and
      *         treating it as a single edit is what left them. Codex #1555 r7.)
      *
-     *         Eight owners over six rounds, with the rate not falling, is what
+     *         A list that grows in every round it is declared finished is what
      *         says the enumeration is the wrong instrument: a payout bounded
      *         by BALANCE must know every owner of that balance, forever, and
      *         a missed one is silent. The durable fix is to bound payout by
@@ -428,10 +440,19 @@ library LibVpfiRecycle {
      *         it with `vpfiBalance` and `bucket` to tell those apart.
      *
      *         **This is an UPPER BOUND on genuinely free tokens, on every
-     *         deployment.** Four other owners of this balance are known and
-     *         unsubtracted — see the body for why enumerating them was
-     *         abandoned and what replaces it (#1498). Do not read a healthy
-     *         value here as "these tokens are free to pay out".
+     *         deployment.** Other owners of this balance are known and
+     *         unsubtracted — see the table above for which, and the body for
+     *         why enumerating them was abandoned and what replaces it
+     *         (#1498). Do not read a healthy value here as "these tokens are
+     *         free to pay out".
+     *
+     *         **No count is given here deliberately.** This sentence has
+     *         carried a stale number in three consecutive review rounds —
+     *         it said four while the table said five, then six, then eight.
+     *         A count is a claim that goes out of date every time the list
+     *         grows, and this list has grown in every round it was declared
+     *         complete. The table is the single place that enumerates; every
+     *         other reference points at it rather than restating its size.
      */
     function backingPosition(LibVaipakam.Storage storage s)
         internal
