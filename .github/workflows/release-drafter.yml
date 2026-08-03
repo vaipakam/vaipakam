@@ -58,7 +58,7 @@ jobs:
     #    with read-only permissions.
     steps:
       - name: Update draft release
-        uses: release-drafter/release-drafter@da8b9b696abad2ad997580e49f4c1c2e03cc2bd2 # v7.3.0
+        uses: release-drafter/release-drafter@c2e2804cc59f45f57076a99af580d0fedb697927 # v7.3.0
         with:
           config-name: release-drafter.yml
           publish: false   # always stays a draft; maintainer publishes manually
