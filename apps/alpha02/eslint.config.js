@@ -60,27 +60,25 @@ export default defineConfig([
     files: ['src/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended],
     rules: {
+      // Take EVERY rule the recommended set turns on and drop it to a
+      // warning, then re-assert the one that blocks. Derived rather
+      // than hand-listed on purpose: the v7 recommended set enables 16
+      // rules, 12 of them as errors, and naming the deferred ones
+      // individually would silently start blocking the moment the
+      // plugin adds a seventeenth (#1529 review — an earlier draft of
+      // this file downgraded three and left nine erroring, which
+      // contradicted the policy stated above).
+      ...Object.fromEntries(
+        Object.keys(reactHooks.configs.flat.recommended.rules ?? {}).map(
+          (rule) => [rule, 'warn'],
+        ),
+      ),
+
       // ERROR, and clean at zero violations as of this commit — so it
       // is enforcing from day one rather than a backlog that never
       // gets paid down. This is the rule that would have caught the
-      // #1511 crash.
+      // #1511 crash, and the only one this config blocks on.
       'react-hooks/rules-of-hooks': 'error',
-
-      // The plugin's v7 additions below are genuine signals, but the
-      // existing surface has never been held to them (35 / 7 / 5 hits
-      // respectively at the time of writing). Erroring now would mean
-      // either a large unrelated refactor bolted onto this change, or
-      // — far worse — turning the whole config advisory to get it
-      // green. Warn instead: new code gets flagged in the editor and
-      // in CI output, and the sweep is tracked separately (#1520) so
-      // each can be judged on its own merits rather than rubber-
-      // stamped in bulk.
-      'react-hooks/set-state-in-effect': 'warn',
-      'react-hooks/purity': 'warn',
-      'react-hooks/refs': 'warn',
-      // A stale closure reading last render's state is a real bug
-      // source, but same reasoning — warn for now.
-      'react-hooks/exhaustive-deps': 'warn',
     },
   },
 ])

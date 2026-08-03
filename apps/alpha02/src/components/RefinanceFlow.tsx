@@ -32,20 +32,22 @@
  *      (exact; the pull only shrinks as partials settle interest).
  *   3. createOffer with the refinance tag and a hard `expiresAt` at
  *      the disclosed request lifetime.
- * If the user abandons the sequence after step 2, the approval is
- * best-effort revoked — a payoff-sized authorization must not linger
- * behind a pristine form with nothing to cancel.
+ * If the user abandons the sequence after step 2, the allowance is
+ * best-effort RESTORED to whatever it was before — a payoff-sized
+ * authorization must not linger behind a pristine form with nothing to
+ * cancel, and a pre-existing grant another arrangement depends on must
+ * not be zeroed either.
  */
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { parseEventLogs } from 'viem';
+import { erc20Abi, parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
+import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -257,9 +259,12 @@ export function RefinanceFlow({
     if (rateBps === null || durationDays === null) return;
     setBusy(true);
     setError(null);
-    // Tracks whether THIS attempt granted the payoff approval, so an
-    // abandoned step 3 can unwind it (see header).
-    let approvalGranted = false;
+    // The allowance as it stood BEFORE this attempt, so an abandoned
+    // step 3 can put it back (see header). The prior VALUE, not a
+    // boolean: ensureAllowance also raises a non-zero-but-insufficient
+    // allowance, and zeroing that would destroy a grant another live
+    // arrangement depends on (#1529 review).
+    let priorAllowance: bigint | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // createOffer + the accept-time refinance are Tier-1 — live
@@ -399,12 +404,21 @@ export function RefinanceFlow({
           (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
         symbol: sym,
       });
-      // Only a MINED approve tx arms the unwind — when the wallet
-      // already held a sufficient allowance (ensureAllowance returns
-      // null), that allowance belongs to some other live arrangement
-      // (a prior request, a sale listing, a user-managed grant) and a
-      // failed step 3 must not zero it out from under that flow.
-      const approvalTx = await ensureAllowance({
+      // Read the standing allowance FIRST — it is what an abandoned
+      // step 3 restores. Any pre-existing grant belongs to some other
+      // live arrangement (a prior request, a sale listing, a
+      // user-managed approval), so the unwind must put that figure
+      // back rather than zero it: ensureAllowance raises a non-zero
+      // but insufficient allowance too, and treating that as ours to
+      // erase would break the flow relying on it.
+      priorAllowance = await publicClient.readContract({
+        address: liveLoan.principalAsset,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [address, walletChain.diamondAddress],
+      });
+      approvalToken = liveLoan.principalAsset;
+      await ensureAllowance({
         publicClient,
         walletClient,
         token: liveLoan.principalAsset,
@@ -412,8 +426,6 @@ export function RefinanceFlow({
         spender: walletChain.diamondAddress,
         amount: liveApproval,
       });
-      approvalGranted = approvalTx !== null;
-      approvalToken = liveLoan.principalAsset;
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
         rateBpsMax: rateBps,
         durationDays,
@@ -432,14 +444,15 @@ export function RefinanceFlow({
           // already have MINED above — unwind it the same best-effort
           // way (Codex #1511 r11): a blocked submit must not leave a
           // payoff-sized authorization behind a pristine form.
-          if (approvalGranted && approvalToken) {
+          if (priorAllowance !== null && approvalToken) {
             try {
-              await revokeAllowance({
+              await restoreAllowance({
                 publicClient,
                 walletClient,
                 token: approvalToken,
                 owner: address,
                 spender: walletChain.diamondAddress,
+                previous: priorAllowance,
               });
             } catch {
               // Leave the block message as the surfaced outcome.
@@ -467,14 +480,15 @@ export function RefinanceFlow({
       // behind a pristine form with nothing to cancel. Best-effort:
       // a second rejection just leaves the wallet's approvals view
       // as the remedy (the error banner already shows the failure).
-      if (approvalGranted && approvalToken) {
+      if (priorAllowance !== null && approvalToken) {
         try {
-          await revokeAllowance({
+          await restoreAllowance({
             publicClient,
             walletClient,
             token: approvalToken,
             owner: address,
             spender: walletChain.diamondAddress,
+            previous: priorAllowance,
           });
         } catch {
           // Leave the submit error as the surfaced failure.

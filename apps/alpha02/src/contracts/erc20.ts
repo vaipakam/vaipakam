@@ -134,6 +134,64 @@ export async function ensureAllowance(opts: {
 }
 
 /**
+ * Put an allowance BACK to what it was before a flow raised it (#1529
+ * review).
+ *
+ * Unwinding with {@link revokeAllowance} is only correct when the flow
+ * created the grant out of nothing. `ensureAllowance` also raises a
+ * NON-ZERO but insufficient allowance — and returns a hash for it, so
+ * an unwind that keys on "did we send an approve?" would zero a grant
+ * some OTHER live arrangement is relying on. Restoring the observed
+ * prior value is right in both cases: zero when there was nothing,
+ * the original figure when there was.
+ *
+ * Skips the transaction when the allowance already reads `previous`
+ * (the flow failed before its approve mined, or someone else has since
+ * moved it — either way there is nothing of ours to undo).
+ */
+export async function restoreAllowance(opts: {
+  publicClient: PublicClient;
+  walletClient: WalletClient;
+  token: `0x${string}`;
+  owner: `0x${string}`;
+  spender: `0x${string}`;
+  /** Allowance observed BEFORE this flow touched it. */
+  previous: bigint;
+}): Promise<`0x${string}` | null> {
+  const { publicClient, walletClient, token, owner, spender, previous } = opts;
+  const current = await publicClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, spender],
+  });
+  if (current === previous) return null;
+
+  const approve = async (value: bigint): Promise<`0x${string}`> => {
+    const hash = await walletClient.writeContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [spender, value],
+      account: owner,
+      chain: walletClient.chain,
+    });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') {
+      throw new Error(`Token approval restore failed (${hash})`);
+    }
+    publishReceiptInvalidationGlobal();
+    return hash;
+  };
+
+  // Same zero-first rule as ensureAllowance — tokens like mainnet USDT
+  // revert on a non-zero→non-zero approve, and this path is by
+  // definition running against a non-zero current value.
+  if (current > 0n && previous > 0n) await approve(0n);
+  return approve(previous);
+}
+
+/**
  * Revoke a standing allowance (approve 0), skipping the tx when it is
  * already zero. For flows that granted a long-lived approval (e.g. a
  * refinance payoff) and are unwinding it.

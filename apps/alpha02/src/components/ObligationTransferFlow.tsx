@@ -23,12 +23,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
+import { erc20Abi } from 'viem';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
+import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import {
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
@@ -262,9 +263,13 @@ export function ObligationTransferFlow({
     }
     setBusy(true);
     setError(null);
-    // Tracks whether THIS attempt granted the handover allowance, so a
-    // submit that never reaches the write can unwind it (#1514).
-    let approvalGranted = false;
+    // The allowance as it stood BEFORE this attempt, so a submit that
+    // never reaches the write can put it back (#1514). Tracking the
+    // prior VALUE rather than a boolean matters: ensureAllowance also
+    // raises a non-zero-but-insufficient allowance, and zeroing that
+    // would destroy a grant another live arrangement depends on
+    // (#1529 review).
+    let priorAllowance: bigint | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // transferObligationViaOffer is Tier-1 — live re-screen first.
@@ -448,20 +453,26 @@ export function ObligationTransferFlow({
         });
       }
       if (liveCost.total + pad > 0n) {
-        // Only a MINED approve arms the unwind. When the wallet already
-        // held a sufficient allowance, ensureAllowance returns null —
-        // that grant belongs to some other arrangement and must not be
-        // zeroed out from under it.
-        const approvalTx = await ensureAllowance({
+        // Read the standing allowance first: it is what the unwind
+        // restores. ensureAllowance no-ops when it already covers the
+        // handover, in which case prior === needed and the restore is
+        // a no-op too.
+        const needed = liveCost.total + pad;
+        priorAllowance = await publicClient.readContract({
+          address: liveLoan.principalAsset,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [address, walletChain.diamondAddress],
+        });
+        approvalToken = liveLoan.principalAsset;
+        await ensureAllowance({
           publicClient,
           walletClient,
           token: liveLoan.principalAsset,
           owner: address,
           spender: walletChain.diamondAddress,
-          amount: liveCost.total + pad,
+          amount: needed,
         });
-        approvalGranted = approvalTx !== null;
-        approvalToken = liveLoan.principalAsset;
       }
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
       if (preSubmitBlock) {
@@ -498,17 +509,19 @@ export function ObligationTransferFlow({
     // explains the failure, and overwriting it with a revoke error
     // would hide the real one.
     async function unwindApproval() {
-      if (!approvalGranted || !approvalToken) return;
+      if (priorAllowance === null || !approvalToken) return;
       if (!publicClient || !walletClient || !address || !walletChain) return;
+      const previous = priorAllowance;
+      priorAllowance = null;
       try {
-        await revokeAllowance({
+        await restoreAllowance({
           publicClient,
           walletClient,
           token: approvalToken,
           owner: address,
           spender: walletChain.diamondAddress,
+          previous,
         });
-        approvalGranted = false;
       } catch {
         // Intentionally silent — see above.
       }

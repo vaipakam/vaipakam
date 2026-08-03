@@ -1294,14 +1294,26 @@ async function assertAbiMatchesFork() {
       });
       const words = ((data?.data?.length ?? 2) - 2) / 64;
       if (words && words !== components.length) {
+        // Name the direction from the widths, never assume it. The
+        // usual case is a chain behind the checkout, but the reverse
+        // happens too — an older checkout, or a fork pointed at a
+        // newer deployment — and telling someone to redeploy FROM the
+        // stale side would make it worse (#1529 review).
+        const chainIsBehind = words < components.length;
+        const remedy = chainIsBehind
+          ? `The deployed Diamond is BEHIND the contracts in this checkout: ` +
+            `deploy the facets (contracts/script/redeploy-testnet-inplace.sh), ` +
+            `or point the fork at a chain that matches.`
+          : `This CHECKOUT is behind the deployed Diamond: rebase onto the ` +
+            `contract change and re-export the ABIs, or point the fork at the ` +
+            `chain this checkout targets. Do NOT redeploy from here — that ` +
+            `would roll the chain back.`;
         console.warn(
-          `[indexer-stub] ABI DRIFT — ${fn} on the forked chain returns ${words} ` +
-            `words, this checkout's ABI expects ${components.length}. The deployed ` +
-            `Base Sepolia Diamond is BEHIND the contracts in this repo, so every ` +
-            `${fn} decode will fail and the specs that need it will time out on ` +
-            `empty data. This is an environment problem, not a test bug: deploy ` +
-            `the facets (contracts/script/redeploy-testnet-inplace.sh) or point ` +
-            `the fork at a chain that matches. See #1518.`,
+          `[indexer-stub] ABI DRIFT — ${fn} returns ${words} words on the forked ` +
+            `chain, this checkout's ABI expects ${components.length}. Every ${fn} ` +
+            `decode will fail and the specs that need it will time out on empty ` +
+            `data. This is an environment problem, not a test bug. ${remedy} ` +
+            `See #1518.`,
         );
       }
     } catch (e) {
