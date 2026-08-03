@@ -34,6 +34,14 @@ describe contracts that will no longer exist:
 | `user_thresholds` / `notify_state` | 1 / 1 | thresholds on loans that will not exist |
 | `telegram_links` | 0 | already empty |
 
+> **Taken 2026-08-03.** Both a standalone `support_tickets` export and a
+> full-database export were pulled to `~/vaipakam-d1-export-2026-08-03/`
+> (dir `700`, files `600`, outside the repo) and verified per-table against
+> the live database. They are plaintext personal data — encrypt if they
+> persist, `shred -u` when done. The full export carries `d1_migrations` and
+> `sqlite_sequence`; filter both if it is ever imported into a database that
+> already has its own.
+
 **One exception, called out so it is a choice rather than an oversight:**
 `support_tickets` holds **4 rows, all `status=open`**. A support ticket is a
 person waiting for a reply, and a contract redeploy does not change that. If
