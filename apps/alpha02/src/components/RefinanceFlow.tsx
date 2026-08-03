@@ -271,6 +271,9 @@ export function RefinanceFlow({
     // the approve after it is rejected. The unwind acts only if the
     // allowance still reads exactly this (#1529 review).
     let wroteAllowance: bigint | null = null;
+    // Hash of that write, so the unwind can settle a still-pending
+    // approve instead of reading it as somebody else's change.
+    let wroteAllowanceTx: `0x${string}` | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // createOffer + the accept-time refinance are Tier-1 — live
@@ -432,8 +435,9 @@ export function RefinanceFlow({
         onObserved: (value) => {
           priorAllowance = value;
         },
-        onWrote: (value) => {
+        onWrote: (value, hash) => {
           wroteAllowance = value;
+          wroteAllowanceTx = hash;
         },
       });
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
@@ -464,6 +468,7 @@ export function RefinanceFlow({
                 spender: walletChain.diamondAddress,
                 previous: priorAllowance,
                 wrote: wroteAllowance,
+                wroteTxHash: wroteAllowanceTx,
               });
             } catch {
               // Leave the block message as the surfaced outcome.
@@ -501,6 +506,7 @@ export function RefinanceFlow({
             spender: walletChain.diamondAddress,
             previous: priorAllowance,
             wrote: wroteAllowance,
+            wroteTxHash: wroteAllowanceTx,
           });
         } catch {
           // Leave the submit error as the surfaced failure.

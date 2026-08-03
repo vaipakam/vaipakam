@@ -52,9 +52,21 @@ function harness(opts: {
   loseReceiptOf?: (value: bigint) => boolean;
   /** Nonce reads themselves fail. */
   nonceReadThrows?: boolean;
+  /** The write is SUBMITTED but does not take effect until its receipt is
+   *  awaited — the pending window an allowance read cannot see. */
+  pendingUntilReceipt?: (value: bigint) => boolean;
+  /** Every receipt wait throws (the pending write never resolves). */
+  receiptAlwaysThrows?: boolean;
+  /** The first N receipt waits throw; later ones succeed. Models the real
+   *  sequence this exists for — ensureAllowance's own wait times out on a
+   *  still-pending approve, and the unwind's retry then resolves it. */
+  receiptThrowsFirst?: number;
 }) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
+  /** Submitted-but-unmined effects, keyed by hash. */
+  const inFlight = new Map<string, bigint>();
+  let receiptWaits = 0;
 
   const publicClient = {
     readContract: vi.fn(async () => allowance),
@@ -63,7 +75,16 @@ function harness(opts: {
       return blockTag === 'pending' && opts.pendingTx?.() ? 8 : 7;
     }),
     waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: string }) => {
+      if (opts.receiptAlwaysThrows) throw new Error('receipt timeout');
+      if (receiptWaits++ < (opts.receiptThrowsFirst ?? 0)) {
+        throw new Error('receipt timeout');
+      }
       if (hash === '0xlost') throw new Error('receipt timeout');
+      // Awaiting the receipt is what lands a pending write.
+      if (inFlight.has(hash)) {
+        allowance = inFlight.get(hash)!;
+        inFlight.delete(hash);
+      }
       return { status: 'success' as const };
     }),
   } as unknown as PublicClient;
@@ -74,6 +95,12 @@ function harness(opts: {
       const value = args[1] as bigint;
       if (opts.rejectApproveOf?.(value)) throw new Error('user rejected');
       writes.push(value);
+      if (opts.pendingUntilReceipt?.(value)) {
+        // Submitted only — the chain does not show it yet.
+        const hash = `0xpending${writes.length}` as `0x${string}`;
+        inFlight.set(hash, value);
+        return hash;
+      }
       // Submitted AND took effect on chain — whether or not we get to
       // observe the receipt.
       allowance = value;
@@ -292,6 +319,64 @@ describe('ensureAllowance — a lost receipt still reports the write', () => {
     // match, so nothing is written.
     const h = harness({ allowance: 500n });
     const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([]);
+    expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('restoreAllowance — our own pending write is not somebody else\'s', () => {
+  it('settles a still-pending write before judging ownership', async () => {
+    // The receipt wait timed out while the approve was STILL PENDING, so
+    // the allowance reads `previous`, not `wrote`. Without the hash that
+    // is indistinguishable from "someone else moved it", and standing
+    // down leaves a grant to appear later unattended (#1529 review round
+    // 6). With the hash, the restore waits for that transaction and looks
+    // again.
+    const h = harness({
+      allowance: 0n,
+      // The 1000 grant is in flight; only awaiting its receipt lands it.
+      pendingUntilReceipt: (v) => v === 1_000n,
+      // ensureAllowance's OWN wait times out while it is still pending.
+      receiptThrowsFirst: 1,
+    });
+    let submitted: { value: bigint; hash: `0x${string}` } | null = null;
+    await expect(
+      ensureAllowance({
+        ...base(h),
+        amount: 1_000n,
+        onWrote: (value, hash) => {
+          submitted = { value, hash };
+        },
+      }),
+    ).rejects.toThrow(/receipt timeout/);
+
+    // Submitted and reported, but the chain does not show it — this is
+    // exactly the window an allowance read cannot distinguish from
+    // "someone else moved it".
+    expect(submitted).not.toBeNull();
+    expect(h.allowance).toBe(0n);
+
+    const tx = await restoreAllowance({
+      ...base(h),
+      previous: 0n,
+      wrote: submitted!.value,
+      wroteTxHash: submitted!.hash,
+    });
+    // It waited, found the grant, and took it back down to the prior zero.
+    expect(tx).not.toBeNull();
+    expect(h.allowance).toBe(0n);
+  });
+
+  it('stands down when the pending write never resolves', async () => {
+    const h = harness({ allowance: 500n, receiptAlwaysThrows: true });
+    const tx = await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote: 1_000n,
+      wroteTxHash: '0xstillpending',
+    });
+    // Cannot confirm the grant is ours, so nothing is written.
     expect(tx).toBeNull();
     expect(h.writes).toEqual([]);
     expect(h.allowance).toBe(500n);

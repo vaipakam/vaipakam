@@ -276,6 +276,9 @@ export function ObligationTransferFlow({
     // allowance still reads exactly this, so a change made meanwhile by
     // another tab or flow is left alone (#1529 review).
     let wroteAllowance: bigint | null = null;
+    // Hash of that write, so the unwind can settle a still-pending
+    // approve instead of reading it as somebody else's change.
+    let wroteAllowanceTx: `0x${string}` | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // transferObligationViaOffer is Tier-1 — live re-screen first.
@@ -477,8 +480,9 @@ export function ObligationTransferFlow({
           onObserved: (value) => {
             priorAllowance = value;
           },
-          onWrote: (value) => {
+          onWrote: (value, hash) => {
             wroteAllowance = value;
+            wroteAllowanceTx = hash;
           },
         });
       }
@@ -521,8 +525,10 @@ export function ObligationTransferFlow({
       if (!publicClient || !walletClient || !address || !walletChain) return;
       const previous = priorAllowance;
       const wrote = wroteAllowance;
+      const wroteTx = wroteAllowanceTx;
       priorAllowance = null;
       wroteAllowance = null;
+      wroteAllowanceTx = null;
       try {
         await restoreAllowance({
           publicClient,
@@ -532,6 +538,7 @@ export function ObligationTransferFlow({
           spender: walletChain.diamondAddress,
           previous,
           wrote,
+          wroteTxHash: wroteTx,
         });
       } catch {
         // Intentionally silent — see above.

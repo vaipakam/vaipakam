@@ -183,6 +183,78 @@ console.log(`fetched   ${ids.length} loan id(s) across ${Math.ceil(Number(active
 // (#1529 review).
 const STATUS_ACTIVE = 0;
 const ASSET_ERC20 = 0;
+/** LibERC721.LockReason.PrecloseOffset — mirrors data/offsetPending.ts. */
+const LOCK_PRECLOSE_OFFSET = 1;
+
+/**
+ * The chooser's render gate has FOUR conditions, not two
+ * (`PositionDetails.tsx`): active, not a rental, no live preclose-offset
+ * lock, and grace not verifiably over. The last two are just as capable
+ * of hiding it CORRECTLY, so a drive that checks only the first two calls
+ * valid deployed behaviour a regression (#1529 review round 6).
+ *
+ * Both follow the app's own reads: the offset lock from
+ * `positionLock(borrowerTokenId)`, the grace deadline from
+ * `getGraceBuckets` matched on the loan's duration and falling back to
+ * the compile-time schedule when the chain publishes no buckets.
+ *
+ * That fallback is load-bearing, not defensive: Base Sepolia publishes
+ * an EMPTY bucket set today. A first draft returned zero grace there,
+ * which made every matured loan read as past-grace and skipped all eight
+ * loans on the chain — the drive reported BLOCKED while the pages it
+ * would have checked were rendering perfectly well. Mirror the app's
+ * `readGraceSecondsLive` branch for branch; do not simplify it.
+ */
+/** Mirrors `lib/grace.defaultGraceSeconds`, which in turn mirrors
+ *  LibVaipakam.gracePeriod's compile-time schedule. Used when the chain
+ *  publishes NO buckets — which is the case on Base Sepolia today, so
+ *  this is the live path, not a corner. Treating an empty set as zero
+ *  grace makes every matured loan look past-grace the instant it
+ *  matures, which is how a first draft of this drive managed to skip
+ *  every loan on the chain. */
+function defaultGraceSeconds(durationDays) {
+  if (durationDays < 7n) return 3_600n;
+  if (durationDays < 30n) return 86_400n;
+  if (durationDays < 90n) return 3n * 86_400n;
+  if (durationDays < 180n) return 7n * 86_400n;
+  if (durationDays < 365n) return 14n * 86_400n;
+  return 30n * 86_400n;
+}
+
+let graceBucketsCache;
+async function graceSecondsFor(durationDays) {
+  graceBucketsCache ??= await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getGraceBuckets',
+  });
+  const buckets = graceBucketsCache;
+  if (buckets.length > 0) {
+    for (const b of buckets) {
+      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
+      if (durationDays < b.maxDurationDays) return b.graceSeconds;
+    }
+    // Malformed set — the contract falls back to the last entry.
+    return buckets[buckets.length - 1].graceSeconds;
+  }
+  return defaultGraceSeconds(durationDays);
+}
+
+async function offsetLockedOn(borrowerTokenId) {
+  try {
+    const lock = await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'positionLock',
+      args: [borrowerTokenId],
+    });
+    return Number(lock) === LOCK_PRECLOSE_OFFSET;
+  } catch {
+    // Unreadable — assume locked and skip the loan. Skipping costs one
+    // observation; a false regression costs trust in the whole drive.
+    return true;
+  }
+}
 
 /**
  * Who may act on the borrower side. NOT `loan.borrower`: role and action
@@ -210,6 +282,11 @@ async function borrowerAuthorityOf(loan) {
   }
 }
 
+// Chain time, not the local clock — the grace comparison the app makes is
+// chain-anchored, and a skewed sandbox clock would misclassify loans near
+// the boundary.
+const chainNow = (await pub.getBlock({ blockTag: 'latest' })).timestamp;
+
 const loans = [];
 for (const id of ids) {
   const d = await pub.readContract({
@@ -225,21 +302,49 @@ for (const id of ids) {
     status: Number(d.status),
     assetType: Number(d.assetType),
     borrowerTokenId: d.borrowerTokenId,
+    startTime: d.startTime,
+    durationDays: d.durationDays,
   };
   loan.authority = await borrowerAuthorityOf(loan);
+  // Only worth the extra reads on loans that clear the cheap gates.
+  if (loan.status === STATUS_ACTIVE && loan.assetType === ASSET_ERC20 && loan.authority) {
+    loan.offsetLocked = await offsetLockedOn(loan.borrowerTokenId);
+    const grace = await graceSecondsFor(loan.durationDays);
+    const graceDeadline = loan.startTime + loan.durationDays * 86_400n + grace;
+    loan.graceOver = chainNow > graceDeadline;
+  }
   loans.push(loan);
 }
 
 /** Exactly the predicate `PositionDetails` gates the chooser on. */
 const eligible = loans.filter(
-  (l) => l.status === STATUS_ACTIVE && l.assetType === ASSET_ERC20 && l.authority !== null,
+  (l) =>
+    l.status === STATUS_ACTIVE &&
+    l.assetType === ASSET_ERC20 &&
+    l.authority !== null &&
+    l.offsetLocked === false &&
+    l.graceOver === false,
 );
 const dropped = loans.length - eligible.length;
 if (dropped > 0) {
-  // Never silently narrow the candidate set — say what was set aside.
+  // Never silently narrow the candidate set — say what was set aside, and
+  // why, so a shrinking pool is legible rather than mysterious.
+  const why = (l) =>
+    l.status !== STATUS_ACTIVE
+      ? 'not active'
+      : l.assetType !== ASSET_ERC20
+        ? 'NFT rental'
+        : l.authority === null
+          ? 'borrower token burned'
+          : l.offsetLocked
+            ? 'offset in progress'
+            : 'past grace';
   console.log(
-    `skipping  ${dropped} loan(s) the chooser does not render for` +
-      ` (fallback-pending, NFT rental, or burned borrower token)`,
+    `skipping  ${dropped} loan(s) the chooser does not render for: ` +
+      loans
+        .filter((l) => !eligible.includes(l))
+        .map((l) => `${l.id} (${why(l)})`)
+        .join(', '),
   );
 }
 

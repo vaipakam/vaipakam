@@ -112,7 +112,7 @@ export async function ensureAllowance(opts: {
    *  fact — `restoreAllowance` re-reads and acts only if the allowance
    *  really does equal this value, so a submission that never landed
    *  reconciles to a no-op on its own (#1529 review). */
-  onWrote?: (value: bigint) => void;
+  onWrote?: (value: bigint, hash: `0x${string}`) => void;
   /** Called once with the allowance THIS function observed, before it
    *  changes anything. Unwinding callers must take `previous` from here
    *  rather than reading the allowance themselves: two separate reads
@@ -143,9 +143,10 @@ export async function ensureAllowance(opts: {
       account: owner,
       chain: walletClient.chain,
     });
-    // Report BEFORE waiting — see onWrote's contract. A revert or a
-    // lost receipt both reconcile in restoreAllowance's re-read.
-    onWrote?.(value);
+    // Report BEFORE waiting — see onWrote's contract. The hash goes with
+    // it so an unwind can tell "this has not landed YET" from "someone
+    // else moved it", which an allowance read alone cannot distinguish.
+    onWrote?.(value, hash);
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== 'success') {
       throw new Error(`Token approval failed (${hash})`);
@@ -197,8 +198,14 @@ export async function restoreAllowance(opts: {
   previous: bigint;
   /** Value this attempt actually wrote, or null if it wrote nothing. */
   wrote: bigint | null;
+  /** Hash of the transaction that wrote `wrote`, when the caller has it.
+   *  Needed because an allowance read cannot tell "our write has not
+   *  landed yet" from "somebody else moved it" — both read as
+   *  `current !== wrote`, and treating the first as the second walks away
+   *  from a grant that is about to appear (#1529 review round 6). */
+  wroteTxHash?: `0x${string}` | null;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, previous, wrote } =
+  const { publicClient, walletClient, token, owner, spender, previous, wrote, wroteTxHash } =
     opts;
   // This attempt changed nothing, so it has nothing to put back.
   if (wrote === null || wrote === previous) return null;
@@ -239,12 +246,32 @@ export async function restoreAllowance(opts: {
     }
   };
 
-  const current = await publicClient.readContract({
-    address: token,
-    abi: erc20Abi,
-    functionName: 'allowance',
-    args: [owner, spender],
-  });
+  const readAllowance = () =>
+    publicClient.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [owner, spender],
+    });
+
+  let current = await readAllowance();
+  if (current !== wrote && wroteTxHash) {
+    // Our own write may simply still be in flight — the caller reports at
+    // submission precisely so a lost receipt is not mistaken for "nothing
+    // happened", and the mirror of that is not mistaking "not yet" for
+    // "someone else's". Give it a bounded chance to settle, then look
+    // again. A revert lands here too and correctly leaves `current`
+    // unequal, so the restore stands down.
+    try {
+      await publicClient.waitForTransactionReceipt({
+        hash: wroteTxHash,
+        timeout: 60_000,
+      });
+      current = await readAllowance();
+    } catch {
+      // Still unresolved — fall through and stand down below.
+    }
+  }
   // Someone else owns the current value now — leave it alone.
   if (current !== wrote) return null;
   if (await ownerHasPendingTx()) return null;

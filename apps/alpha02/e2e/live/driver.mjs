@@ -38,13 +38,27 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // file lives OUTSIDE the repo on purpose (never commit keys); point
 // TESTNET_WALLETS_FILE at a JSON of { <role>: { address, privateKey } }
 // or an array of { role, address, privateKey }.
-const WALLETS_RAW = JSON.parse(
-  fs.readFileSync(
-    process.env.TESTNET_WALLETS_FILE ??
-      path.join(HERE, '../testnet-wallets/wallets.json'),
-    'utf8',
-  ),
-);
+const WALLETS_PATH =
+  process.env.TESTNET_WALLETS_FILE ??
+  path.join(HERE, '../testnet-wallets/wallets.json');
+let WALLETS_RAW;
+try {
+  WALLETS_RAW = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
+} catch (err) {
+  // Exit 2 = BLOCKED, per the contract in run-live-batch.mjs. An absent
+  // dev-wallet file is a missing PRECONDITION, not a product regression:
+  // letting this throw exits 1 and makes every ordinary
+  // secret-unavailable batch read as a defect, which is exactly the
+  // mislabelling the three-verdict contract exists to prevent (#1529
+  // review round 6).
+  console.error(
+    `\nBLOCKED: cannot read the dev wallet file — this driver signs, so it` +
+      ` cannot run without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
+      `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
+      ` (live-position-observe.mjs) which needs no key.`,
+  );
+  process.exit(2);
+}
 // Normalize both documented shapes to a role map — the array form
 // ({ role, address, privateKey }[]) indexed as a map yields
 // undefined.privateKey otherwise.
