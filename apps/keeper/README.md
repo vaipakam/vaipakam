@@ -49,7 +49,7 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 |---|---|
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
-| `KEEPER_ENABLED` | Master kill-switch; set to `false` to disable autonomous actions. |
+| `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). |
 | `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
 | `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). `REWARD_REMIT_ENABLED` also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-archive --remote` from `apps/indexer/`). |
@@ -59,6 +59,30 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
+
+### What the kill-switch does and does not stop (#1548)
+
+`KEEPER_ENABLED=false` disables the six **gated** passes: `matcher`,
+`liquidator`, `autoLifecycle`, `rewardBudgetRemit`, `remitAck` and
+`commitmentReport`.
+
+**`dailyOracleSnapshot` is not among them and still signs.** It is gated only
+on `KEEPER_PRIVATE_KEY` being present, so with the kill-switch off it
+continues submitting `captureDailyPriceSnapshot` every day, and continues
+spending gas.
+
+That is deliberate, decided 2026-08-03: the snapshot is a public good rather
+than an autonomous risk-taking action — anyone can call
+`captureDailyPriceSnapshot` permissionlessly — and gating it would leave holes
+in the oracle series whenever the keeper is disabled for an unrelated reason.
+
+The practical consequence, which is the reason this section exists: **flipping
+the kill-switch is not a way to stop the keeper spending gas entirely.** If you
+need that, remove `KEEPER_PRIVATE_KEY` — with no key the snapshot pass skips
+too, and every gated pass reports `KEEPER_PRIVATE_KEY unset` on the next tick.
+
+`liquidityConfidence` also always runs; it consults the gate only to decide
+whether to submit, so it stops writing but keeps reading.
 
 ### Confirming a flag actually took (#1475)
 

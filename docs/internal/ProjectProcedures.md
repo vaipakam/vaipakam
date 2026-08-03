@@ -971,7 +971,7 @@ correlation is recorded.
 
 Combined effect of the #74 arc:
 
-- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Build docs` + `Slither static analysis` + signed commits + thread resolution + linear history + no-delete + no-force-push** (ten gates).
+- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Slither static analysis` + `D1 name consistency (unconditional)` + signed commits + thread resolution + linear history + no-delete + no-force-push**. (`Build docs` is NOT among them — see §7.1. It runs on every PR but does not block. Owner decision 2026-08-03: leave it non-blocking.)
 - Path-filter (`detect-changes`) skips downstream jobs when scope doesn't apply — docs-only PRs merge in `<1 min`.
 - Contracts PRs run the deploy-sanity suite + positive-flow scenarios under the `cifast` foundry profile (~5 min cold) — production-bytecode-identical, but the full 2,012-test regression is operator-local + `mainnet-gate.yml`.
 - Mainnet cutover paths gated on `mainnet-gate.yml` (full regression as hard gate on `release/**` + `v*`).
