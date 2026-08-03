@@ -222,17 +222,24 @@ manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
 running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
-#1466). Then redeploy the Worker.
+#1466). That flag is a per-Worker `secret_text`, so `wrangler secret put`
+then a redeploy is the right shape for it.
 
 **To stop everything, including the snapshot**, empty the Worker's cron list
 (`"triggers": { "crons": [] }`) and follow the full procedure in
 [`apps/keeper/README.md`](../../apps/keeper/README.md) §"What the kill-switch
-does and does not stop" — do not stop at the redeploy. Two steps there are
-load-bearing in an incident and neither is obvious:
+does and does not stop". **That is a dashboard change, not a redeploy** —
+*Settings → Trigger Events*. An earlier revision of this line said "do not
+stop at the redeploy", which implied a deploy was part of it; `wrangler
+deploy` is actively the wrong tool here, because it applies the config's
+committed `TG_BOT_USERNAME: ""` over whatever is live, with or without
+`--keep-vars`.
+
+Two things about it are load-bearing in an incident and neither is obvious:
 
 - the readback must be **trigger-aware** (Trigger Events pane or the
-  schedules API), because a mistyped or wrongly-nested key leaves the
-  committed cron running while the deploy reports success; and
+  schedules API) — confirm the schedule is actually gone rather than
+  assuming the change took; and
 - an empty schedules response is the control plane accepting the change, not
   the ticks having stopped — Cloudflare documents **up to 15 minutes** of
   propagation, and this Worker runs every minute, so roughly a dozen further
