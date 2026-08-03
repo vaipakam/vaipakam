@@ -49,6 +49,24 @@ SITE_URL=https://<branch-preview>.workers.dev node live-dryrun-review.mjs
 | `live-desk-i18n-capture.mjs` | Read-only per-locale Rate-Desk i18n capture (post-#1403 review, `docs/DesignsAndPlans/RateDeskI18nLiveReview-2026-07-22.md`): seeds `vaipakam:language` per locale, loads `/desk`, screenshots + scrapes rendered `copy.desk.*` text and tooltip `title`s into `shots/desk-i18n/report.json`. Read-only — every page request rides the same undici route shim + JSON-RPC-read-only guard as `driver.mjs` (mutating/non-RPC requests are aborted and logged), so `LIVE_PROXY_SETUP` actually takes effect and the capture can't POST to a backend while scraping. A row counts as success only when the app actually switched to the requested `<html lang>` (and `dir="rtl"` for Arabic) AND some desk text rendered; the process **exits non-zero** if any locale fails to load or switch, so the batch runner can't report a blocked/regressed run green. `LIVE_CHROMIUM_PATH` overrides the browser binary for a pinned-build sandbox. Confirms the language switch + publicly-rendered desk chrome; wallet-gated strings (positions/own orders) need a connected review run. |
 | `live-rate-desk.mjs` | #1129/#1134 + #1130/#1139 — Rate Desk live half, phases 1+2: loads the WETH/tLIQ market via the custom-pair branch (chain-read book), posts a 0.002 WETH GTC/Partial lend order at a distinctive rate, amends it in place (one `modifyOffer`, same offer id), waits out the REAL 300 s cancel cooldown, cancels (escrow refunded) — every offer-scoped step verified on-chain via viem, and the indexer-backed surfaces ASSERTED healthy: a degraded indexer (any of them rendering its "couldn't load" copy) fails the drive by design. Phase-1 surfaces: markets summary + tape. Phase-2 pass (rides the same drive, no new waits): the executed-rate chart card must render a drawn series or an honest empty copy — never `copy.desk.chart.unavailable` — with interval/range chips + the TradingView attribution asserted and a direct `GET /loans/rate-candles` wire probe (200 + `buckets` array, count recorded); the History bottom tab as the lender must render rows or its honest empty copy — never `copy.desk.history.unavailable` — with a direct `GET /loans/by-participant` wire probe (200 + `loans` array + `nextBefore`, counts/roles recorded, UI/wire emptiness cross-checked). `INDEXER_ORIGIN` overrides the probed worker (default `https://indexer.vaipakam.com`). NB: performs real testnet writes and blocks ~6 min on the genuine cooldown; self-cleans via an unconditional offer-index delta sweep with a receipt-verified direct on-chain cancel fallback. |
 
+| `live-position-observe.mjs` | #1505/#1511 post-deploy review — the borrower position page against the live diamond, **WATCH-ONLY: needs no wallet file and holds no private key**. Injects an EIP-1193 provider over an address it does not own (account reads answer with it, every other RPC forwards to the chain, every signing/sending method throws 4100), auto-discovers the borrower holding the most active loans from `getActiveLoansPaginated`, then loads `/positions` and each of that borrower's `/positions/<id>`. Asserts no uncaught error — specifically no hooks-order crash, the #1511 defect that survived fourteen review rounds, typecheck, the production build and a green preview deploy because none of those can see it — and that the #1505 "Ways to repay or exit early" chooser renders on a real active loan naming the handover + offset paths. Reports whether the #1511 listing-hold card is present and in which state (informational: a hold only exists while some lender actually has a sale listing standing). Exits non-zero on any crash or a chooser missing from an active loan. |
+
 When a live review for a new feature needs a new drive, add the
 script here in the same PR (or the follow-up fix PR) so the next
 review doesn't rebuild the tooling from scratch.
+
+## Watch-only drives vs. signing drives
+
+Every driver above except `live-position-observe.mjs` needs
+`TESTNET_WALLETS_FILE`, because it signs. That is unavoidable for the
+write half of a review — but it made the READ half unrunnable too
+whenever the funded-wallet secret wasn't to hand, and the read half is
+where a render crash, a missing card, or a mis-decoded chain value
+shows up. `live-position-observe.mjs` is the pattern for that half:
+observe a real address's real chain state with no key in the process at
+all, so the read-only guarantee is structural rather than a flag that
+could be passed wrong.
+
+Prefer it when what you need to confirm is *what the deployed build
+renders for real on-chain state*. Reach for a signing driver only when
+the behaviour under review genuinely requires a transaction.
