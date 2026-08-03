@@ -61,7 +61,7 @@ Operator has provisioned (verified via Cloudflare API
 D1 databases:
 
 - `vaipakam-alerts-db` (`50850eab-…`) — **PRODUCTION D1, untouched**
-- `vaipakam-warm`   (`3cffebf5-…`) — staging D1 for the new
+- `vaipakam-warm`   (`e5e927cf-…`) — staging D1 for the new
   Workers. Migrations not yet applied (one-time step).
 
 Pre-existing primary infra (untouched until staging is proven):
