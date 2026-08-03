@@ -40,6 +40,11 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The SAME validator the healthcheck uses. Re-deriving "is this a real
+// period" here would let the two disagree, and this script's whole output
+// is a period the operator is asked to commit.
+import { isRealPeriod } from '../src/tiers.ts';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..', '..');
 const BUCKET = process.env.BUCKET_NAME || 'vaipakam-offchain-data-archive';
@@ -49,13 +54,13 @@ const FAMILIES = [
   {
     env: 'ARCHIVE_FIRST_MONTHLY',
     prefix: 'manifests-monthly/',
-    shape: /^\d{4}-\d{2}$/,
+    tier: 'monthly',
     label: 'monthly (written on the 1st)',
   },
   {
     env: 'ARCHIVE_FIRST_YEARLY',
     prefix: 'manifests-yearly/',
-    shape: /^\d{4}$/,
+    tier: 'yearly',
     label: 'yearly (written on Jan 1)',
   },
 ];
@@ -65,24 +70,57 @@ function fail(msg) {
   process.exit(1);
 }
 
-function loadEnv() {
+/**
+ * Credentials for a READ-ONLY inventory.
+ *
+ * Prefers the dedicated read key, and takes it from the process
+ * environment first so an operator can supply one without writing it to
+ * disk at all. `setup-backblaze.mjs` says the repo-root master key should
+ * stay offline after provisioning, and this is routine discovery — there
+ * is no reason for it to hold account-wide key, bucket and DELETE powers
+ * to list six prefixes. An earlier version of this script read only that
+ * master key, which quietly walked back the scoped-key posture.
+ */
+function loadCreds() {
   const envPath = resolve(REPO_ROOT, '.env');
-  let raw;
+  let raw = '';
   try {
     raw = readFileSync(envPath, 'utf8');
-  } catch (err) {
-    fail(`Could not read ${envPath}: ${err.message}`);
+  } catch {
+    /* the error below covers it */
   }
-  const out = {};
+  const file = {};
   for (const line of raw.split('\n')) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    if (m) file[m[1]] = m[2].replace(/^["']|["']$/g, '');
   }
-  if (!out.BACKBLAZE_KEY_ID || !out.BACKBLAZE_APP_KEY) {
-    fail(`BACKBLAZE_KEY_ID and BACKBLAZE_APP_KEY must both be set in ${envPath}`);
-  }
-  return out;
+  // Process env first, so an operator can supply a key without writing it
+  // to disk; then the dedicated read key; then whatever the repo-root
+  // .env holds. The LAST of those is accepted only because the capability
+  // check below rejects a master key at runtime — the guarantee is
+  // "this process never wields write/delete authority", and a name cannot
+  // promise that. B2 telling us what the key can actually do can.
+  const pairs = [
+    [process.env.B2_READ_ACCESS_KEY_ID, process.env.B2_READ_SECRET_ACCESS_KEY],
+    [file.B2_READ_ACCESS_KEY_ID, file.B2_READ_SECRET_ACCESS_KEY],
+    [file.BACKBLAZE_KEY_ID, file.BACKBLAZE_APP_KEY],
+  ];
+  for (const [id, key] of pairs) if (id && key) return { id, key };
+  fail(
+    'No B2 credentials found. Set B2_READ_ACCESS_KEY_ID +\n' +
+      '  B2_READ_SECRET_ACCESS_KEY in the environment or the repo-root .env.',
+  );
 }
+
+/** Capabilities no read-only inventory has any business holding. */
+const FORBIDDEN_CAPABILITIES = [
+  'writeFiles',
+  'deleteFiles',
+  'writeBuckets',
+  'deleteBuckets',
+  'writeKeys',
+  'deleteKeys',
+];
 
 async function authorize(keyId, appKey) {
   const res = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
@@ -94,11 +132,44 @@ async function authorize(keyId, appKey) {
     fail(`b2_authorize_account failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
   }
   const data = await res.json();
+  const apiUrl = data.apiInfo?.storageApi?.apiUrl ?? data.apiUrl;
+  // The endpoint comes from B2's own authorize response, so pin it to
+  // Backblaze rather than following wherever the body points. Cheap, and
+  // it turns "trust the response" into a checked assumption.
+  let host;
+  try {
+    host = new URL(apiUrl).host;
+  } catch {
+    fail(`b2_authorize_account returned an unusable apiUrl`);
+  }
+  if (!/(^|\.)backblazeb2\.com$/.test(host)) {
+    fail(`refusing to call a non-Backblaze apiUrl host: ${host}`);
+  }
+  // REJECT MASTER CAPABILITY, rather than trusting a variable name. This
+  // script lists six prefixes; it must not be able to write, delete, or
+  // mint keys while doing it. `setup-backblaze.mjs` says the master key
+  // stays offline after provisioning, and a routine discovery command is
+  // exactly where that quietly stops being true.
+  const caps = data.apiInfo?.storageApi?.capabilities ?? data.allowed?.capabilities ?? [];
+  const held = FORBIDDEN_CAPABILITIES.filter((c) => caps.includes(c));
+  if (held.length > 0) {
+    fail(
+      `this key holds ${held.join(', ')} — refusing to run a read-only\n` +
+        `  inventory with write/delete authority. Use the read-only key\n` +
+        `  (listBuckets + listFiles + readFiles).`,
+    );
+  }
+  if (caps.length === 0) {
+    fail('authorize returned no capability list; refusing to assume read-only');
+  }
   return {
     token: data.authorizationToken,
-    // v3 splits the endpoints; the native storage API is the one we need.
-    apiUrl: data.apiInfo?.storageApi?.apiUrl ?? data.apiUrl,
+    apiUrl,
+    // Needed by `b2_list_buckets`, which REQUIRES accountId — omitting it
+    // made the master-key path fail before listing anything.
+    accountId: data.accountId ?? data.apiInfo?.storageApi?.accountId,
     allowedBucketId: data.apiInfo?.storageApi?.bucketId ?? data.allowed?.bucketId,
+    allowedBucketName: data.apiInfo?.storageApi?.bucketName ?? data.allowed?.bucketName,
   };
 }
 
@@ -119,9 +190,24 @@ async function b2(auth, endpoint, body) {
 }
 
 async function resolveBucketId(auth) {
-  if (auth.allowedBucketId) return auth.allowedBucketId;
+  // A bucket-scoped key can only ever see its own bucket. Returning that
+  // id blindly meant a mistyped BUCKET_NAME, or a key copied from another
+  // deployment, scanned one bucket while the output named another — and
+  // those dates would then be committed as baselines for the wrong
+  // bucket. Confirm the name matches before trusting the scope.
+  if (auth.allowedBucketId) {
+    if (auth.allowedBucketName && auth.allowedBucketName !== BUCKET) {
+      fail(
+        `this key is scoped to bucket "${auth.allowedBucketName}" but ` +
+          `BUCKET_NAME is "${BUCKET}" — refusing to report one bucket's ` +
+          `periods under another's name`,
+      );
+    }
+    return auth.allowedBucketId;
+  }
+  if (!auth.accountId) fail('authorize returned no accountId and no bucket scope');
   const data = await b2(auth, 'b2_list_buckets', {
-    accountId: undefined,
+    accountId: auth.accountId,
     bucketName: BUCKET,
   });
   const found = (data.buckets ?? []).find((b) => b.bucketName === BUCKET);
@@ -130,13 +216,24 @@ async function resolveBucketId(auth) {
 }
 
 /** Every period segment present under a prefix, plus the object count. */
-async function periodsUnder(auth, bucketId, prefix, shape) {
+const PAGE_CAP = 500;
+
+async function periodsUnder(auth, bucketId, prefix, tier) {
   const periods = new Set();
   let files = 0;
   let startFileName = null;
-  // Paged: a family can hold years of objects, and a truncated first page
-  // would silently report a later "earliest".
-  for (let page = 0; page < 200; page++) {
+  for (let page = 0; ; page++) {
+    if (page >= PAGE_CAP) {
+      // FAIL, never return partial. Exiting quietly here would print an
+      // "earliest" drawn from a prefix of the listing — and with a leaked
+      // write key seeding lexically-early foreign names, that is exactly
+      // how a wrong baseline gets committed. A cap that silently
+      // truncates is worse than no cap.
+      fail(
+        `listing ${prefix} exceeded ${PAGE_CAP} pages without completing. ` +
+          `Refusing to report a partial inventory as the baseline.`,
+      );
+    }
     const data = await b2(auth, 'b2_list_file_names', {
       bucketId,
       prefix,
@@ -146,8 +243,14 @@ async function periodsUnder(auth, bucketId, prefix, shape) {
     for (const f of data.files ?? []) {
       files += 1;
       const rest = f.fileName.slice(prefix.length);
+      if (!rest.includes('/')) continue;
       const seg = rest.split('/')[0];
-      if (rest.includes('/') && shape.test(seg)) periods.add(seg);
+      // Real calendar period, not merely the right width. `2026-00` passes
+      // a width check AND sorts before every genuine month, so it would be
+      // reported as the baseline and committed — then rejected by
+      // `validateBaseline`, after the operator had already been told to
+      // set it.
+      if (isRealPeriod(tier, seg)) periods.add(seg);
     }
     if (!data.nextFileName) break;
     startFileName = data.nextFileName;
@@ -155,15 +258,15 @@ async function periodsUnder(auth, bucketId, prefix, shape) {
   return { periods: [...periods].sort(), files };
 }
 
-const env = loadEnv();
-const auth = await authorize(env.BACKBLAZE_KEY_ID, env.BACKBLAZE_APP_KEY);
+const creds = loadCreds();
+const auth = await authorize(creds.id, creds.key);
 const bucketId = await resolveBucketId(auth);
 
 console.log(`\nBucket: ${BUCKET}\n`);
 const toSet = [];
 
 for (const fam of FAMILIES) {
-  const { periods, files } = await periodsUnder(auth, bucketId, fam.prefix, fam.shape);
+  const { periods, files } = await periodsUnder(auth, bucketId, fam.prefix, fam.tier);
   console.log(`── ${fam.label}`);
   console.log(`   prefix:  ${fam.prefix}`);
   console.log(`   objects: ${files}`);

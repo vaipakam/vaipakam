@@ -148,7 +148,7 @@ const PERIOD_SHAPE: Record<TierName, RegExp> = {
  * parses an ATTACKER-CHOSEN manifest instead of the real newest backup.
  * The shape check stopped the range explosion; it did not stop selection.
  */
-function isRealPeriod(tier: TierName, seg: string): boolean {
+export function isRealPeriod(tier: TierName, seg: string): boolean {
   if (!PERIOD_SHAPE[tier].test(seg)) return false;
   if (tier === 'yearly') {
     const y = Number(seg);
