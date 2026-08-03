@@ -733,11 +733,14 @@ Independent gates on every merge:
 
 **This list is transcribed from the live ruleset, and was wrong before.**
 It claimed `Build docs` was a required context; the ruleset does not
-contain it and did not when that line was written. The job still runs on
-every PR — it is simply not merge-blocking. Whether it should be is an
-question the owner has since answered: **`Build docs` stays
-non-blocking** (decided 2026-08-03). It is informational and runs only on
-contracts-scoped PRs. Adding a required check is a decision with its own
+contain it and did not when that line was written. Whether it should be
+required is a question the owner has since answered: **`Build docs` stays
+non-blocking** (decided 2026-08-03).
+
+It is informational, and it runs only on contracts-scoped PRs whose
+`contracts-fast` succeeded — both conditions, per the `needs:` in `ci.yml`.
+An earlier revision of this paragraph said it "runs on every PR" two lines
+above saying it runs only on contracts-scoped ones. Adding a required check is a decision with its own
 consequences — notably that a check which never reports blocks a PR
 forever, and that it retroactively blocks every in-flight PR whose branch
 predates the job.
