@@ -110,12 +110,26 @@ up by committing
 all and silently leaves the committed cron in place — and deploy that
 deliberately, once the var hazard below has been dealt with.
 
-**Do not reach for `wrangler deploy` to do this.** Without `--keep-vars` it
-deletes every var before applying the config's. *With* `--keep-vars` it stops
-deleting vars the config omits — but it still **applies the ones the config
-declares**, and this config commits `"TG_BOT_USERNAME": ""`. A value filled
-in through the dashboard is overwritten either way. An earlier revision of
-this section recommended `--keep-vars` as the fix; it is not one.
+**Prefer the dashboard over `wrangler deploy` for this.** A deploy republishes
+the whole Worker configuration to change one schedule, which is more surface
+than an emergency needs.
+
+The var mechanics, stated accurately after two revisions got them wrong in
+opposite directions: without `--keep-vars` a deploy deletes every var before
+applying the config's; *with* it, vars the config omits survive but the ones
+it **declares are still applied**. So this config's `"TG_BOT_USERNAME": ""`
+lands either way.
+
+**That specific clobber is harmless, though**, and an earlier revision of
+this section treated it as a live hazard across several documents. Verified:
+`apps/keeper` never *reads* `TG_BOT_USERNAME` — it appears in a type, a
+comment, and a pass-through copy in `env.ts`, and nothing consumes it. The
+Telegram deep link that actually uses the handle is built by **`apps/agent`**
+(`index.ts:468`) from the agent's own binding, which a keeper deploy does not
+touch.
+
+The mechanic still matters for any var the keeper does read, and on other
+Workers. It is not a reason to fear this particular deploy.
 
 `wrangler triggers deploy` is not the answer either — experimental, and
 scoped to the `wrangler versions upload` flow.

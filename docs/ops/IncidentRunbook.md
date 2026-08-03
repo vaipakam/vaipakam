@@ -223,14 +223,14 @@ running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
 #1466). That flag is a per-Worker `secret_text`, so `wrangler secret put` is
-the right tool for it — but **if you follow it with `wrangler deploy`, that
-deploy applies the committed `"TG_BOT_USERNAME": ""` over whatever is live**,
-with or without `--keep-vars`. Same hazard as the cron path, and it was
-documented there while this path was left exposed.
+the right tool for it.
 
-Setting the value in the dashboard avoids the deploy entirely. If you do
-deploy, restore `TG_BOT_USERNAME` afterwards and confirm it — do not assume
-the flag change was the only thing that landed.
+A deploy afterwards does apply the committed `"TG_BOT_USERNAME": ""` over
+whatever is live, with or without `--keep-vars` — but that is harmless here
+and an earlier revision of this line said otherwise. `apps/keeper` never
+reads that variable; the Telegram deep link is built by `apps/agent` from its
+own binding, which a keeper deploy does not touch. No restore step is
+needed.
 
 **To stop everything, including the snapshot**, empty the Worker's cron list
 (`"triggers": { "crons": [] }`) and follow the full procedure in
