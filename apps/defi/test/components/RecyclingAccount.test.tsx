@@ -65,6 +65,7 @@ const series = (over: Partial<RecyclingSeries> = {}): RecyclingSeries => ({
     platformRetained: tok(25),
     releasedRemitStranded: '0',
     blockNumber: '12345678',
+    diamond: '0xd89f0000000000000000000000000000000000ab',
     unavailableReason: null,
     asOf: '2026-08-03T00:00:00.000Z',
   },
@@ -815,6 +816,15 @@ describe('RecyclingAccount — a floored figure must not hide a shortfall', () =
         screen.getByTestId('recycling-backing-unavailable').textContent,
       ).toContain('chain-behind'),
     );
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('withholds the block when it cannot say WHOSE state it describes', async () => {
+    // A block number says WHEN. After a redeploy only the Diamond says
+    // WHOSE, and reproducing the figures independently needs both.
+    mockSeries(series({ backing: { ...series().backing, diamond: null } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
     expect(screen.queryByTestId('recycling-retained')).toBeNull();
   });
 });

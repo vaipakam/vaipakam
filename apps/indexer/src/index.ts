@@ -178,12 +178,14 @@ export default {
       // deliberate fail-open into a whole-tick outage.
       const t = controller.scheduledTime;
       const minute = Number.isFinite(t) ? Math.floor((t as number) / 60_000) : 0;
-      const ordinal = doIngestEnabled(env)
-        ? Math.floor(minute / DO_PATH_CADENCE_MINUTES)
-        : minute;
+      // ONE decision, used for both the rotation and the row's recorded
+      // cadence — `doIngestEnabled` needs the binding, which only this
+      // scope has.
+      const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
+      const ordinal = Math.floor(minute / tickMinutes);
       const target = backingChains[Math.abs(ordinal) % backingChains.length];
       ctx.waitUntil(
-        captureBackingSnapshot(resolved, target.id).catch((err) => {
+        captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
           // One chain's RPC blip must not wedge the tick.
           // eslint-disable-next-line no-console
           console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);

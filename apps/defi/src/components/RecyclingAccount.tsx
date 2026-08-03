@@ -283,6 +283,11 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
     // disclosure, which is the same defect as omitting it.
     typeof b.asOf === 'string' &&
     Number.isFinite(Date.parse(b.asOf)) &&
+    // Required, and NOT in the amount family — it is an address, and that
+    // family validates digit strings. A successful read returns it, so a
+    // response missing it is partial rather than withheld.
+    typeof b.diamond === 'string' &&
+    b.diamond.length > 0 &&
     // Malformed amounts withhold the BLOCK, not the account.
     backingAmountsAreWellFormed(b) &&
     AMOUNT_FIELDS.backing.every(

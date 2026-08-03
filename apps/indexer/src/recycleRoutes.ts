@@ -142,9 +142,19 @@ interface BackingSnapshot {
   paidOutRecycled: string | null;
   keeperBudget: string | null;
   platformRetained: string | null;
-  /** The block both pinned reads observed, so the figures are
-   *  reproducible by anyone once the chain has moved on. */
+  /** The block both pinned reads observed. */
   blockNumber: string | null;
+  /**
+   * The Diamond the figures came from.
+   *
+   * Published, not merely checked. A block identifies WHEN; after a
+   * `--fresh` redeploy the current deployment artifact points at the
+   * successor, so an archived response carrying only chain and block no
+   * longer identifies WHOSE state produced these numbers — and the
+   * ratified requirement is that an outside reader can reproduce them
+   * without trusting this indexer.
+   */
+  diamond: string | null;
   /**
    * Value that LEFT the bucket and is stranded in transport.
    *
@@ -170,6 +180,7 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   platformRetained: null,
   releasedRemitStranded: null,
   blockNumber: null,
+  diamond: null,
   unavailableReason: reason,
   asOf: null,
 });
@@ -216,6 +227,17 @@ export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint
 export async function captureBackingSnapshot(
   env: Env,
   chainId: number,
+  /**
+   * Minutes between EXECUTED cron ticks, passed in by the scheduler.
+   *
+   * Not sniffed from `env` here: the resolved `Env` does not carry
+   * `CHAIN_INGEST_DO`, so the cast I used to reach it always read
+   * `undefined` and every DO-path row recorded a 1-minute tick — making
+   * `readBacking` expire healthy snapshots at 30 minutes while their real
+   * rotation took 35-55. The scheduler is the only place both the flag
+   * and the binding are visible, so it is the only place that can answer.
+   */
+  tickMinutes: number,
 ): Promise<void> {
   // Recorded WITH the row: the cadence that produced it. Counted from the
   // DEPLOYED set, not the secrets readable on this tick — a count taken
@@ -230,17 +252,7 @@ export async function captureBackingSnapshot(
       return 1;
     }
   })();
-  // The EFFECTIVE tick, decided where both inputs are visible. The route
-  // sees only the flag, and I previously argued the resulting asymmetry
-  // was safe in one direction — it is not. Flag true with the binding
-  // ABSENT is a supported state in which ingest runs the 1-minute legacy
-  // schedule while the route assumes 5, so a stopped capture would be
-  // accepted for up to 110 minutes against an effective bound of 30. The
-  // row carries the answer instead of each side guessing.
-  const tickMinutes =
-    env.CHAIN_INGEST_VIA_DO === 'true' && !!(env as { CHAIN_INGEST_DO?: unknown }).CHAIN_INGEST_DO
-      ? DO_PATH_CADENCE_MINUTES
-      : 1;
+
   let chain;
   try {
     chain = getChainConfigs(env).find((c) => c.id === chainId);
@@ -488,6 +500,7 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
         'unavailableReason' | 'asOf' | 'blockNumber'
       >),
       blockNumber: row.block_number,
+      diamond: row.diamond,
       unavailableReason: null,
       // The BLOCK's time — what these figures describe. `observed_at` is
       // bookkeeping about the schedule, and post-dates the block.
