@@ -322,16 +322,32 @@ library LibVpfiRecycle {
      *           omitting the aggregate. Codex #1555 r1.)
      *
      *         **The invariant's three classes are NOT the whole list, and
-     *         that is the real lesson here (Codex #1555 r3).** A fourth
-     *         claimant exists on a Diamond-as-treasury deployment —
-     *         `treasuryBalances[vpfi]`, credited by
-     *         {LibFacet.recordTreasuryAccrual} with no bucket credit — and it
-     *         is now subtracted in the body. Two rounds of review surfaced two
-     *         DIFFERENT unreserved claimants, which says the enumeration is
-     *         the wrong instrument: a payout bounded by BALANCE must know
-     *         every owner of that balance, forever, and a missed one is
-     *         silent. The durable fix is to bound payout by funding DELIVERED
-     *         FOR REWARDS instead, which needs no such list — tracked on
+     *         that is the real lesson here.** FIVE owners of this one balance
+     *         were identified across FOUR review rounds, and **only the first
+     *         is subtracted**:
+     *
+     *           1. `recycleBucket` — SUBTRACTED (see the body).
+     *           2. borrower-LIF rebate custody — grandfathered loans only;
+     *              zero on a deployment originated from this source.
+     *           3. Full-tariff `C*` — covered, it credits the bucket.
+     *           4. `treasuryBalances[vpfi]` — {LibFacet.recordTreasuryAccrual}
+     *              on a Diamond-as-treasury deployment. **NOT subtracted.**
+     *           5. `keeperRewardBudget` — {LibTreasuryBuyback._routePriority}.
+     *              **NOT subtracted.**
+     *
+     *         4 and 5 are KNOWN-UNRESERVED. An r3 revision did subtract 4 and
+     *         it was REVERTED in r4 — the body records why. (This paragraph
+     *         still said "it is now subtracted" after that revert, and said
+     *         "two rounds, two claimants" after the count reached five. Both
+     *         are corrected here; reverting a change is itself a sweep, and
+     *         treating it as a single edit is what left them. Codex #1555 r7.)
+     *
+     *         Five owners over four rounds, with the rate not falling, is what
+     *         says the enumeration is the wrong instrument: a payout bounded
+     *         by BALANCE must know every owner of that balance, forever, and
+     *         a missed one is silent. The durable fix is to bound payout by
+     *         funding DELIVERED FOR REWARDS instead, which needs no list —
+     *         tracked on
      *         #1498, shared root with #1434 prerequisite 1. Anyone adding a
      *         new VPFI custody class must land THAT BOUND — not another
      *         subtraction here. (An earlier revision offered the two as
