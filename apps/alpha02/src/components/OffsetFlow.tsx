@@ -304,12 +304,14 @@ export function OffsetFlow({
         return;
       }
       // Re-judge the term bound by LIVE chain time — the reviewed
-      // duration can stop fitting while the receipt sits open. The
-      // same margin the default reserves applies here: judging at the
-      // exact boundary passes a term the contract will reject seconds
-      // later (the latest block's stamp always trails execution time —
-      // pathologically so on the e2e fork, where no block mines
-      // between acceptance and this check).
+      // duration can stop fitting while the receipt sits open. Only
+      // the small SUBMIT buffer is demanded here (not the 600s sizing
+      // reserve — that headroom exists to be consumed by review +
+      // confirmation): judging at the exact boundary would pass a
+      // term the contract rejects seconds later (the latest block's
+      // stamp always trails execution time — pathologically so on the
+      // e2e fork, where no block mines between acceptance and this
+      // check).
       if (
         latestBlock.timestamp +
           BigInt(durationDays) * 86_400n +

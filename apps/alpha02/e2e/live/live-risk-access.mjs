@@ -189,7 +189,20 @@ check(
 
 } finally {
   try {
-    if (Number(await rawTierOf()) !== 0) {
+    // The cleanup GATE read gets the same transient-error tolerance
+    // pollUntil gives everything else (Codex #1539 r6): one flaky RPC
+    // response must not skip restoration entirely.
+    let cleanupTier = null;
+    for (let i = 0; i < 5 && cleanupTier === null; i++) {
+      try {
+        cleanupTier = Number(await rawTierOf());
+      } catch {
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+    // Unreadable after retries → attempt restoration anyway; the
+    // chain-confirmed check below is the arbiter.
+    if (cleanupTier !== 0) {
       console.log('cleanup: restoring Blue-chip');
       try {
         await page
