@@ -83,15 +83,27 @@ the kill-switch is not a way to stop the keeper spending gas entirely.**
 pass runs from `scheduled()`. Removing its cron trigger stops all of them,
 snapshot included, with nothing to restore afterwards but the trigger:
 
-Set the trigger list **empty** — not absent. An absent `triggers` object
-sends no schedule update at all and silently leaves the existing cron
-running, which is the failure this paragraph exists to prevent:
+**Remove the trigger from the dashboard** — *Settings → Trigger Events*.
+That is the whole of the emergency action: it takes effect immediately and
+touches nothing else.
+
+Editing `wrangler.jsonc` does **not** stop anything by itself, and an earlier
+revision of this section told you to do both, which is incoherent — the file
+change has no effect without a deploy, and a deploy is exactly what the next
+paragraph forbids.
+
+**But the repository still commits an active cron** (`"crons": ["* * * * *"]`),
+so the dashboard change is *temporary*: the next deploy of this Worker from a
+clean checkout re-arms it. If the stop needs to outlive the incident, follow
+up by committing
 
 ```jsonc
 "triggers": { "crons": [] }
 ```
 
-then remove the trigger **from the dashboard** — *Settings → Trigger Events*.
+— empty, not absent; an absent `triggers` object sends no schedule update at
+all and silently leaves the committed cron in place — and deploy that
+deliberately, once the var hazard below has been dealt with.
 
 **Do not reach for `wrangler deploy` to do this.** Without `--keep-vars` it
 deletes every var before applying the config's. *With* `--keep-vars` it stops
