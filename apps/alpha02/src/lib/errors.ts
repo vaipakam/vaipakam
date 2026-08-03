@@ -135,6 +135,100 @@ export function captureTxError(
   return message;
 }
 
+/** viem error names proving the CONTRACT itself answered — it reverted,
+ *  returned nothing, or returned data the ABI decoder can't read (a
+ *  legacy `bytes32` `symbol()` lands here). These are the only shapes
+ *  that license an optional-read fallback. */
+const CONTRACT_ANSWERED_NAMES = new Set([
+  'ContractFunctionRevertedError',
+  'ContractFunctionZeroDataError',
+]);
+
+/** Decoder-failure names: the node returned bytes, the ABI decoder
+ *  couldn't read them. Matched by PATTERN rather than enumerated,
+ *  because enumerating them is provably incomplete — r15 missed
+ *  `IntegerOutOfRangeError`, r16's explicit list then missed
+ *  `PositionOutOfBoundsError` (Codex #1547 r17). The pattern covers
+ *  viem's decode families (AbiDecoding*, *OutOfBounds*, *OutOfRange*,
+ *  *Overflow*, InvalidBytes*, *DataSize*) and cannot collide with the
+ *  node-failure names, which are vetoed before this is consulted and
+ *  are all either transport classes or `*RpcError`. */
+const DECODER_FAILURE_PATTERN =
+  /(AbiDecoding|OutOfBounds|OutOfRange|Overflow|InvalidBytes|DataSize|SliceOffset)/;
+
+/** viem error names that mean the request never got an answer out of the
+ *  node — transport failures AND node-side JSON-RPC failures (rate
+ *  limits, unavailable resources, internal errors). Listed so the
+ *  veto is explicit even though the default below is already "unknown
+ *  ⇒ unreadable" (Codex #1547 r16). */
+const NODE_FAILURE_NAMES = new Set([
+  'HttpRequestError',
+  'TimeoutError',
+  'SocketClosedError',
+  'WebSocketRequestError',
+  'RpcRequestError',
+  'InternalRpcError',
+  'LimitExceededRpcError',
+  'ResourceUnavailableRpcError',
+  'ResourceNotFoundRpcError',
+  'MethodNotSupportedRpcError',
+  'UnknownRpcError',
+]);
+
+/**
+ * Did the CONTRACT answer — as opposed to the read never reaching a
+ * usable answer (Codex #1547 r15/r16)?
+ *
+ * This is the discriminator for OPTIONAL reads whose failure has a safe
+ * fallback: an ERC-20 without `symbol()`, or one whose `symbol()`
+ * returns `bytes32` instead of the ABI `string`. Only a revert, empty
+ * data, or undecodable data licenses that fallback.
+ *
+ * Deliberately a POSITIVE test with an unreadable default, not a
+ * denylist of failures. A denylist was the r15 shape and it silently
+ * re-opened the r10 bug: viem also reports node-side failures as
+ * `RpcRequestError` / `InternalRpcError` / `LimitExceededRpcError` /
+ * `ResourceUnavailableRpcError`, none of which were listed, so a
+ * rate-limited `eth_call` read as "this token has no metadata" and
+ * flipped an ordinary 18-decimal token into raw base units — a user
+ * typing `1` would have signed for one base unit. Anything not
+ * positively recognised as a contract answer must fail the read and
+ * let the user retry.
+ *
+ * The two halves are shaped differently ON PURPOSE. Node failures are
+ * a BOUNDED, stable set (transport classes + `*RpcError`), so they are
+ * enumerated. Decoder failures are NOT bounded — two rounds of review
+ * each found a name the previous list had missed — so they are matched
+ * by pattern. The asymmetry follows the risk: being too strict costs a
+ * recoverable token an honest "couldn't read its details, retry",
+ * while being too permissive misreads an amount the user then signs.
+ *
+ * Detection mirrors `isUserRejection`: viem's stable error `name`
+ * walked down the cause chain, never `instanceof`, because a pnpm
+ * workspace can resolve more than one physical copy of viem.
+ */
+export function isContractAnswered(err: unknown): boolean {
+  let answered = false;
+  let node: unknown = err;
+  for (let depth = 0; node != null && depth < 8; depth += 1) {
+    if (typeof node !== 'object') break;
+    const o = node as { name?: unknown; cause?: unknown };
+    if (typeof o.name === 'string') {
+      // A node failure anywhere in the chain vetoes outright — even if
+      // an outer wrapper looks contract-shaped.
+      if (NODE_FAILURE_NAMES.has(o.name)) return false;
+      if (
+        CONTRACT_ANSWERED_NAMES.has(o.name) ||
+        DECODER_FAILURE_PATTERN.test(o.name)
+      ) {
+        answered = true;
+      }
+    }
+    node = o.cause;
+  }
+  return answered;
+}
+
 /** Strict decimal check for amount inputs — exactly what viem's
  *  parseUnits accepts minus signs/exponents ('1e18', '.', 'abc', '0x5'
  *  are all rejected). Use BEFORE enabling any button whose handler

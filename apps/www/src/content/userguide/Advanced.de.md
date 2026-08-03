@@ -1643,7 +1643,7 @@ Du hast die Token versehentlich selbst gesendet, du kontrollierst das Quell-Wall
 
 ### Wiederherstellungs-Flow
 
-1. Besuche die [Wiederherstellungs-Seite](/app/recover).
+1. Besuche die [Wiederherstellungs-Seite](https://alpha02.vaipakam.com/recover).
 2. Gib die Token-Vertragsadresse, die Quelle, von der du gesendet hast, und den Betrag ein.
 3. Lies den Hinweis auf dem Bildschirm sorgfältig durch.
 4. Tippe "CONFIRM" ein, um das Signieren freizuschalten.

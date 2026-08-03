@@ -1872,7 +1872,7 @@ from, etc.).
 
 ### Recovery flow
 
-1. Visit the [recovery page](/app/recover).
+1. Visit the [recovery page](https://alpha02.vaipakam.com/recover).
 2. Enter the token contract address, the source you sent
    from, and the amount.
 3. Review the on-screen acknowledgment carefully.

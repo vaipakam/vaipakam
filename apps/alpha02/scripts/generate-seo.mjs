@@ -9,7 +9,8 @@
  *   - PUBLIC_ROUTES below are the generic product surfaces — listed
  *     in the sitemap, no robots restrictions.
  *   - Wallet-gated, per-user surfaces (/positions, /claims, /vault,
- *     /activity, /settings, /risk-access, /faucet) are NOT Disallowed
+ *     /activity, /settings, /risk-access, /recover, /faucet) are NOT
+ *     Disallowed
  *     here —
  *     deliberately. A robots.txt Disallow prevents crawling but NOT
  *     indexing of the bare URL if it's linked from elsewhere; the

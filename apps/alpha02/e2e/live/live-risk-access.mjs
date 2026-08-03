@@ -217,8 +217,11 @@ check(
   'success message rendered',
   await pollUntil('success copy', async () => {
     const t = await page.locator('body').innerText();
-    // Both wordings accepted across the copy-direction change.
-    return /now using a riskier level|level raised|level updated|confirmed against/i.test(t);
+    // All wordings accepted across copy-direction changes (Codex
+    // #1547 r4 added "riskier level saved"; the older alternatives
+    // stay for cross-deploy compatibility until every deploy carries
+    // the new copy).
+    return /riskier level saved|now using a riskier level|level raised|level updated|confirmed against/i.test(t);
   }, { timeoutMs: 60000 }),
 );
 await assertSelectionMatchesChain('post-raise');
