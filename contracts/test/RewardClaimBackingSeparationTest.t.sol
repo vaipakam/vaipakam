@@ -240,4 +240,13 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
             "separation holds on the unblocked path too"
         );
     }
+
+    // #1555 r4 — the two tests that pinned a treasury-owned-VPFI
+    // reservation were REMOVED with the subtraction they covered. Reverting
+    // it was deliberate: four rounds surfaced five distinct owners of this
+    // balance, so enumerating them is unsound, and that r3 subtraction had
+    // already diverged the claim gate from the RL-3 expiry predicates. The
+    // reservation returns with the delivered-reward-funding bound (#1498),
+    // which covers every owner at once and is where the coverage belongs.
+
 }

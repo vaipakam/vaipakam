@@ -874,10 +874,34 @@ GovernanceRunbook gains a recycling section, executed in order:
    `RewardAggregatorFacet`'s enforcement comment is corrected in the same
    change, and `RewardClaimBackingSeparationTest` asserts the post-state
    `balanceOf >= recycleBucket` across a **paying** claim — the assertion
-   whose absence let this survive. One imprecision is stated rather than
-   hidden: per-loan borrower-LIF custody shares the balance and has no
-   running total, so the headroom is an upper bound on free tokens, shared
-   with the two pre-existing enforcement points.
+   whose absence let this survive. The imprecision this row used to record —
+   per-loan borrower-LIF custody sharing the balance with no running total —
+   was **overtaken by #1555 review**. The LIF half is real: #1352 retired the
+   peg-custody origination path and every surviving write to
+   `borrowerLifRebate[...].vpfiHeld` in `src/` assigns ZERO — scoped to the
+   custody storage deliberately, since `MetricsFacet` copies the slot into a
+   memory summary where it reads non-zero for a grandfathered loan, so the
+   broader "no non-zero `vpfiHeld` assignment anywhere" phrasing fails a
+   literal source sweep. So that term is zero on a deployment originated from
+   current source (and non-zero on one UPGRADED from pre-#1352, where custody against
+   loans open at the upgrade is spendable as reward and the borrower's later
+   settlement then reverts or leaves them unpaid).
+   **But the headroom is NOT exact even on a fresh deployment.** Review kept
+   identifying further owners of the Diamond's VPFI balance — the list grew in
+   every round it was declared complete, so no total is quoted here — and only
+   `recycleBucket` is subtracted; the others found so far are `treasuryBalances[vpfi]`,
+   `rewardEmissionsBudget`, `keeperRewardBudget`, a live swap-to-repay
+   intent's `custodialCollateral`, and liquidation `fallbackSnapshot` custody
+   funded VPFI payroll streams (plus the grandfathered LIF term; the Full
+   tariff's `C*` is covered since it credits the bucket). **Two of those are USER COLLATERAL**, which makes
+   this a fund-safety item rather than an accounting one — a reward payout
+   drawing on them spends a borrower's collateral. **#1498 stays OPEN for that half**, re-pointed: its
+   root is shared with #1434 prerequisite 1 (payout bounded by un-earmarked
+   BALANCE rather than by funding DELIVERED FOR REWARDS), and the delivered
+   bound closes both. #1555 landed the other half — collapsing the three
+   inlined copies of the headroom arithmetic into the one definition the
+   owning library exports, since the copies agreed on the arithmetic and had
+   drifted on the prose, which is what produced the stale claim.
    **The `BACKING --> ARM` edge in §4 stays** — it is discharged, not
    deleted; arming still requires this closed.
    *The forensic account below is retained as the historical record of the

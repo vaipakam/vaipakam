@@ -57,3 +57,8 @@ One imprecision is recorded rather than papered over: a third, smaller
 reservation within the same holding has no running total to subtract, so
 the check is a safe upper bound on what is genuinely free rather than an
 exact figure. It is the same bound the two pre-existing checks use.
+
+*(Follow-up: a later change found that reservation is no longer taken at
+all — the path that collected it was retired earlier — so on a platform
+deployed under current rules the figure is exact, not an upper bound. See
+the note on giving that figure a single definition.)*
