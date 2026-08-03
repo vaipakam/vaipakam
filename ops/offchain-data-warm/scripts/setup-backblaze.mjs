@@ -7,7 +7,7 @@
  * idempotent steps:
  *
  *   1. Authorize with B2 native API and discover the account.
- *   2. Create the backup bucket (`vaipakam-offchain-data-archive` by
+ *   2. Create the backup bucket (`vaipakam-offchain-data-warm` by
  *      default; private). Skipped if it already exists.
  *   3. Apply the lifecycle rules from `../bucket-lifecycle.json` — this
  *      script no longer carries its own copy, and no longer describes the
@@ -54,7 +54,7 @@ const REPO_ROOT = resolve(HERE, '../../..');
 
 // ── Defaults — overridable via env or CLI flags. ────────────────────
 const DEFAULTS = {
-  bucketName: 'vaipakam-offchain-data-archive',
+  bucketName: 'vaipakam-offchain-data-warm',
   // Two scoped Application Keys (PR #248 round-2 follow-up to
   // Codex's healthcheck-can't-GET finding):
   //   write-only — nightly backup uploader.
@@ -62,8 +62,8 @@ const DEFAULTS = {
   // The cleavage keeps the nightly key incapable of leaking archive
   // contents; the healthcheck key gets read access but the
   // ciphertext stays AES-256-GCM-protected against the offline key.
-  writeKeyName: 'vaipakam-offchain-data-archive-write-only',
-  readKeyName: 'vaipakam-offchain-data-archive-read-only',
+  writeKeyName: 'vaipakam-offchain-data-warm-write-only',
+  readKeyName: 'vaipakam-offchain-data-warm-read-only',
 };
 
 function parseDotEnv(path) {

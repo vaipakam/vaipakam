@@ -2,7 +2,7 @@
 -- widget via the agent Worker's POST /support/ticket.
 --
 -- Lives in apps/indexer/migrations/ per the D1 schema discipline:
--- this directory owns EVERY table on the shared vaipakam-archive
+-- this directory owns EVERY table on the shared vaipakam-warm
 -- database, including tables only apps/agent writes (see CLAUDE.md
 -- "Cloudflare D1 schema discipline"). apps/agent reads/writes this
 -- table through its existing DB binding.

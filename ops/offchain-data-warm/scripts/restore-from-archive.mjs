@@ -389,7 +389,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
   const sections = [
     {
       tables: archive.d1.archive,
-      database: 'vaipakam-archive',
+      database: 'vaipakam-warm',
       subdir: 'd1',
       allowed: KNOWN_ARCHIVE_TABLES,
     },
@@ -427,7 +427,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // Baseline completeness for the main section: every era of the
     // backup carries these even at zero rows, so `[]` or a partial
     // set is a truncated/hostile archive, not a small one.
-    if (database === 'vaipakam-archive') {
+    if (database === 'vaipakam-warm') {
       const missingBaseline = BASELINE_TABLES.filter((t) => !names.has(t));
       if (missingBaseline.length > 0) {
         fail(
@@ -522,7 +522,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
       }
     }
     // Absolute from here on: the runbook invokes the converter inside
-    // a `( cd ops/offchain-data-archive && … )` subshell, so a printed
+    // a `( cd ops/offchain-data-warm && … )` subshell, so a printed
     // relative path resolves to a DIFFERENT, nonexistent file once the
     // operator copies the command at the repo root (Codex #1484 r7).
     const dir = path.resolve(outDir, subdir);
@@ -552,7 +552,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
         rowCount: table.rows.length,
         database,
         tier:
-          database !== 'vaipakam-archive'
+          database !== 'vaipakam-warm'
             ? 'legacy-lz'
             : RE_DERIVABLE_TABLES.has(table.name)
               ? 're-derivable'
@@ -569,7 +569,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // Without them the converter emits nothing for such a table and a
     // selective restore silently keeps whatever the live database already
     // holds — possibly the fabricated rows the restore exists to remove.
-    if (database === 'vaipakam-archive') {
+    if (database === 'vaipakam-warm') {
       for (const name of eraLossClears) {
         const file = path.join(dir, `${name}.sql`);
         const sql =

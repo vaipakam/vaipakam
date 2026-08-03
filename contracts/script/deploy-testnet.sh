@@ -102,7 +102,7 @@
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer [--fresh]
 #       Deploys apps/indexer (D1 indexer + read-only API) via
 #       wrangler, then applies any pending D1 migrations to the shared
-#       `vaipakam-archive` database. The indexer is the only Worker
+#       `vaipakam-warm` database. The indexer is the only Worker
 #       that owns migrations — keeper + agent are stateless. With
 #       `--fresh` (i.e. after a fresh contract redeploy that changed the
 #       diamond address) it ALSO purges this chain's stale D1 rows
@@ -267,7 +267,7 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
   cf-www           — Build + wrangler deploy apps/www (marketing).
   cf-keeper        — wrangler deploy apps/keeper (autonomous keeper).
   cf-indexer       — wrangler deploy apps/indexer + D1 migrations
-                     on the shared \`vaipakam-archive\` database.
+                     on the shared \`vaipakam-warm\` database.
   cf-agent         — wrangler deploy apps/agent (notifications, frames).
   verify           — Read-only smoke checks.
   pause-rehearsal  — TESTNET-ONLY sub-5-min pause drill.
@@ -600,7 +600,7 @@ purge_chain_d1() {
     echo "    (skipping D1 purge — CHAIN_ID unset)"
     return 0
   fi
-  echo "  purging D1 rows for chainId=$cid in vaipakam-archive..."
+  echo "  purging D1 rows for chainId=$cid in vaipakam-warm..."
   # Enumerate EVERY chain-scoped table DYNAMICALLY — any table carrying a
   # `chain_id` column — instead of a hardcoded list. Indexer routes read
   # loan-scoped tables by (chain_id, loan_id); a new loan reusing a retired
@@ -624,7 +624,7 @@ purge_chain_d1() {
   # the warn-and-skip path below — NOT abort the whole deploy via the failing
   # command substitution (#853 Codex P2). The trailing `|| true` neutralises the
   # pipeline's exit status for the assignment.
-  tables=$( { cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+  tables=$( { cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm \
     --remote --json --command "$introspect" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); rows=(d[0] if isinstance(d,list) else d).get('results',[]); print('\n'.join(r['name'] for r in rows))" 2>/dev/null ; } || true )
   if [ -z "$tables" ]; then
@@ -638,7 +638,7 @@ purge_chain_d1() {
     n=$((n + 1))
   done <<< "$tables"
   echo "    purging $n chain-scoped table(s): $(echo "$tables" | tr '\n' ' ')"
-  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm \
     --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -3 ) || \
     echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
 }
@@ -670,7 +670,7 @@ seed_indexer_cursor_safe_head() {
   fi
   local now_ts
   now_ts=$(date +%s)
-  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive --remote --command \
+  ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-warm --remote --command \
     "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
      VALUES ($chain_id, 'diamond', $head, $now_ts)
      ON CONFLICT(chain_id, kind) DO UPDATE SET
@@ -1617,7 +1617,7 @@ phase_cf_keeper() {
 
 # ── Phase: cf-indexer ─────────────────────────────────────────────────
 # Deploys apps/indexer — the D1 indexer + read-only API. Owns the
-# shared `vaipakam-archive` D1 database + its migrations (the keeper
+# shared `vaipakam-warm` D1 database + its migrations (the keeper
 # and agent Workers BIND the same D1 but never run migrations against
 # it). Three sub-steps:
 #   [a] wrangler deploy
@@ -1631,7 +1631,7 @@ phase_cf_keeper() {
 # prior cursor, so re-seeding would lose indexed history. If a
 # mainnet operator ever genuinely needs to reset the cursor (e.g.
 # migration to a brand-new diamond, full-history reindex), do it
-# manually via `pnpm exec wrangler d1 execute vaipakam-archive
+# manually via `pnpm exec wrangler d1 execute vaipakam-warm
 # --remote --command "UPDATE indexer_cursor SET last_block = ..."`.
 
 phase_cf_indexer() {
@@ -1651,11 +1651,11 @@ phase_cf_indexer() {
   ( cd "$INDEXER_DIR" && pnpm exec wrangler deploy )
 
   echo
-  echo "[b] D1 migrations apply (vaipakam-archive)"
+  echo "[b] D1 migrations apply (vaipakam-warm)"
   # Idempotent — wrangler skips already-applied entries. Without this
   # the indexer returns 500 D1_ERROR (no such table) on every
   # /offers/recent / /loans/byParticipant query.
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-archive --remote )
+  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-warm --remote )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo

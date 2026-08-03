@@ -20,12 +20,12 @@
 #   8. Deploys the three Cloudflare Workers via wrangler:
 #        apps/keeper  → vaipakam-keeper   (HF watcher autonomous keeper)
 #        apps/indexer → vaipakam-indexer  (D1 indexer + read-only API,
-#                       owns the `vaipakam-archive` D1 + its migrations)
+#                       owns the `vaipakam-warm` D1 + its migrations)
 #        apps/agent   → vaipakam-agent    (notifications, frames, agent)
 #
 # Stage 3 split (May 2026): the historical `ops/hf-watcher` monolith
 # was decomposed into three focused Workers under apps/{keeper,indexer,
-# agent}. All three bind the same D1 database (`vaipakam-archive`); only
+# agent}. All three bind the same D1 database (`vaipakam-warm`); only
 # the indexer owns migrations. The legacy `ops/hf-watcher` tree is
 # archived under `alpha/hf-watcher/` and is not deployed by this script.
 #
@@ -1149,7 +1149,7 @@ fi
 #
 # Stage 3 split (May 2026): the historical `ops/hf-watcher` monolith
 # is now three focused Workers under apps/{keeper,indexer,agent}, all
-# bound to the same D1 database (`vaipakam-archive`). Only the indexer
+# bound to the same D1 database (`vaipakam-warm`). Only the indexer
 # owns migrations + the indexer_cursor row; the keeper and agent are
 # stateless RPC-call surfaces.
 #
@@ -1241,7 +1241,7 @@ else
 fi
 
 # ── 8b. apps/indexer — D1 indexer + read-only API ─────────────────────
-# Owns the `vaipakam-archive` D1 database + its migrations. Indexes
+# Owns the `vaipakam-warm` D1 database + its migrations. Indexes
 # Diamond events to D1 on every cron tick; serves /offers/recent,
 # /loans/byParticipant, etc. Three sub-steps:
 #   8b.1 wrangler deploy
@@ -1264,12 +1264,12 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   ( cd "$INDEXER_DIR" && pnpm exec wrangler deploy )
 
   echo
-  echo "  [8b.2] D1 migrations apply (vaipakam-archive)"
+  echo "  [8b.2] D1 migrations apply (vaipakam-warm)"
   # Wrangler's `d1 migrations apply` is idempotent — already-applied
   # entries are skipped. Without this step the indexer returns 500
   # `D1_ERROR no such table` on every loan/offer query after a fresh
   # database creation or a schema-bumping deploy.
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-archive --remote )
+  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-warm --remote )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
@@ -1330,7 +1330,7 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
         echo "    ⚠ cast block-number failed against $CURSOR_RPC_VAR — skipping cursor seed"
       else
         NOW_TS=$(date +%s)
-        ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 execute vaipakam-archive --remote --command \
+        ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 execute vaipakam-warm --remote --command \
           "INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
            VALUES ($CHAIN_ID, 'diamond', $SAFE_HEAD, $NOW_TS)
            ON CONFLICT(chain_id, kind) DO UPDATE SET

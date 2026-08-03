@@ -792,7 +792,7 @@ Decisions from the shipped half, not to re-litigate:
 Codex #1513 r8:**
 
 1. Back-fill BEFORE any demotion or role migration (the getter's inputs).
-2. **Deploy `ops/offchain-data-archive` BEFORE running the pass**, and
+2. **Deploy `ops/offchain-data-warm` BEFORE running the pass**, and
    confirm a nightly run has included `recycle_day_backfill`. No deploy
    script deploys that Worker — `deploy-{mainnet,testnet,chain}.sh` deploy
    the indexer and apply 0047 and stop — so following the canonical rollout

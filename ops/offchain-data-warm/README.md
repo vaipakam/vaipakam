@@ -1,4 +1,4 @@
-# vaipakam-offchain-data-archive
+# vaipakam-offchain-data-warm
 
 Internal-ops Cloudflare Worker that nightly exports Vaipakam's off-
 chain footprint to Backblaze B2 on a separate billing/credential
@@ -23,7 +23,7 @@ forged overwrite left nothing to fall back on (#1469).
 # From the REPOSITORY ROOT this needs the `cd` — the root `package.json` has
 # none of these scripts, so copying the block without it fails with a
 # missing-script error rather than anything that hints at the cause (#1471 r4).
-cd ops/offchain-data-archive
+cd ops/offchain-data-warm
 # CREDENTIALS MUST BE IN THE ENVIRONMENT — this script reads
 # BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY from `process.env` only and, unlike
 # setup-backblaze.mjs, does not load any file. Export the key the MODE needs:
@@ -180,8 +180,8 @@ which means tickets have no backup — a product decision, tracked as **#1474**.
 
 | Source | Coverage |
 | --- | --- |
-| `vaipakam-archive` D1 (born-off-chain) | `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets` — irrecoverable without backup. |
-| `vaipakam-archive` D1 (re-derivable) | `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` — kept for restore-performance only; can be skipped on restore in favour of a fresh re-index from block 0. |
+| `vaipakam-warm` D1 (born-off-chain) | `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets` — irrecoverable without backup. |
+| `vaipakam-warm` D1 (re-derivable) | `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` — kept for restore-performance only; can be skipped on restore in favour of a fresh re-index from block 0. |
 | `vaipakam-legal-vault` R2 | Every uploaded legal-hold document. |
 
 ## What does NOT get backed up
@@ -235,7 +235,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    # it creates buckets, mints application keys and writes lifecycle
    # rules. After it runs, the master key only comes back out for
    # explicit rotation events; the Worker uses the scoped keys.
-   cd ops/offchain-data-archive
+   cd ops/offchain-data-warm
    node scripts/setup-backblaze.mjs
    ```
 
@@ -253,7 +253,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    The script is idempotent in the provisioning sense — a re-run
    converges the bucket to THIS TREE's declared state (which is
    exactly why it must not be used mid-incident). It will:
-   - Create the `vaipakam-offchain-data-archive` bucket (allPrivate) if
+   - Create the `vaipakam-offchain-data-warm` bucket (allPrivate) if
      missing, reuse if present.
    - Set the FOUR lifecycle rules from `bucket-lifecycle.json` (the setup
      script reads that file rather than carrying its own copy): `archives/`
@@ -267,9 +267,9 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
      verifies the newest yearly object since #1476, but treats its ABSENCE as
      expected rather than pageable — a deployment that has not lived through a
      Jan 1 legitimately has none.)
-   - Create `vaipakam-offchain-data-archive-write-only` (listBuckets +
+   - Create `vaipakam-offchain-data-warm-write-only` (listBuckets +
      writeFiles, bucket-scoped — NOT listFiles) for the nightly cron.
-   - Create `vaipakam-offchain-data-archive-read-only` (listBuckets +
+   - Create `vaipakam-offchain-data-warm-read-only` (listBuckets +
      listFiles + readFiles, bucket-scoped) for the weekly
      healthcheck.
    - Print both key IDs + Application Key strings ONCE. Save them
@@ -288,7 +288,7 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 4. **Configure the Worker secrets** — paste each value when prompted:
 
    ```bash
-   cd ops/offchain-data-archive
+   cd ops/offchain-data-warm
    wrangler secret put BACKUP_ENCRYPTION_KEY        # 64-hex from step 3
    wrangler secret put B2_WRITE_ACCESS_KEY_ID       # from step 2 output
    wrangler secret put B2_WRITE_SECRET_ACCESS_KEY   # from step 2 output

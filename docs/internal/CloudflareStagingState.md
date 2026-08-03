@@ -9,7 +9,7 @@
 
 | Database | ID | Region | Schema owner | Other binders |
 |---|---|---|---|---|
-| `vaipakam-archive` | `3cffebf5-b652-4da7-953c-9e1d143ad2fe` | APAC | `apps/indexer` (canonical `migrations/`) | `apps/keeper`, `apps/agent` |
+| `vaipakam-warm` | `3cffebf5-b652-4da7-953c-9e1d143ad2fe` | APAC | `apps/indexer` (canonical `migrations/`) | `apps/keeper`, `apps/agent` |
 
 **Topology**: single shared D1, owned by indexer. The keeper and agent
 Workers bind to the same `database_id`; they intentionally have no
@@ -21,7 +21,7 @@ source survey, distinguishing writes from reads):
 - **agent writes**: `user_thresholds`, `notify_state`, `telegram_links`, `loans`, `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`.
 - **agent reads-only**: (none — every table the agent reads, it also writes.)
 
-Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
+Apply schema changes with `wrangler d1 migrations apply vaipakam-warm
 --remote` from inside `apps/indexer/`.
 
 ## Workers (all currently serving placeholder 503)
@@ -62,6 +62,6 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 - [ ] Source-tree refactor: `frontend/` → `apps/defi/`, `ops/hf-watcher/` → split into
       `apps/agent/` + `apps/indexer/` + `apps/keeper/`
 - [ ] Per-app `wrangler.jsonc` with this state's IDs
-- [ ] Apply migrations to `vaipakam-archive`
+- [ ] Apply migrations to `vaipakam-warm`
 - [ ] Add `0011_offers_cancelled_at.sql` migration for cancelled-offer D1 capture
 - [ ] Update chainIndexer.ts: UPDATE-on-OfferCanceled instead of DELETE

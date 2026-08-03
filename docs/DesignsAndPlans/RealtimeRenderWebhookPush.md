@@ -105,7 +105,7 @@ Alchemy webhook ─► indexer Worker /hooks/chain-event                     │
         │  Holds the browser WebSockets (inbound + Hibernation).                │
         └───────────────────────────────────────────────────────────────────────┘
                  ▼
-        shared D1 (vaipakam-archive)  — the DO is the only EVENT-PROJECTION writer per chain
+        shared D1 (vaipakam-warm)  — the DO is the only EVENT-PROJECTION writer per chain
 ```
 
 - **One DO per chain** via `idFromName(String(chainId))`. The webhook Worker and

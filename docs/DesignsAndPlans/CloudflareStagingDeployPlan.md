@@ -61,7 +61,7 @@ Operator has provisioned (verified via Cloudflare API
 D1 databases:
 
 - `vaipakam-alerts-db` (`50850eab-…`) — **PRODUCTION D1, untouched**
-- `vaipakam-archive`   (`3cffebf5-…`) — staging D1 for the new
+- `vaipakam-warm`   (`3cffebf5-…`) — staging D1 for the new
   Workers. Migrations not yet applied (one-time step).
 
 Pre-existing primary infra (untouched until staging is proven):
@@ -93,7 +93,7 @@ NO secrets — the frontend bundle is static.
 
 - **Custom domain:** `indexer.vaipakam.com` (binding pending —
   add to wrangler.jsonc `routes`).
-- **D1:** `vaipakam-archive`, `migrations_dir: "migrations"`.
+- **D1:** `vaipakam-warm`, `migrations_dir: "migrations"`.
 - **Cron:** `* * * * *` — chain-event scan + cancelled-offer
   retention prune.
 - **Secrets** (all `RPC_*`):
@@ -105,7 +105,7 @@ NO secrets — the frontend bundle is static.
 ### 4.3 `vaipakam-agent`
 
 - **Custom domain:** `agent.vaipakam.com` ✓
-- **D1:** `vaipakam-archive` (read-mostly: link_codes,
+- **D1:** `vaipakam-warm` (read-mostly: link_codes,
   thresholds, diag_errors, cross-Worker reads of indexer's
   loan tables).
 - **Cron:** `* * * * *` — periodic-interest pre-notify,
@@ -131,7 +131,7 @@ NO secrets — the frontend bundle is static.
 ### 4.4 `vaipakam-keeper`
 
 - No public domain (cron-only, no fetch handler).
-- **D1:** `vaipakam-archive` (reads notify_state + thresholds,
+- **D1:** `vaipakam-warm` (reads notify_state + thresholds,
   cross-Worker reads of indexer's loan + offer tables).
 - **Cron:** `* * * * *` — HF watcher loop. The daily oracle
   snapshot pass internally pre-checks the 00:00–00:09 UTC
@@ -177,8 +177,8 @@ Stage 3 PR5.
 | Step | Owner | What happens |
 |---|---|---|
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
-| 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
-| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
+| 2 | Author | Patch wrangler.jsonc with `vaipakam-warm` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
+| 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote` (one-time schema apply) |
 | 4 | Operator | `wrangler secret put` for the missing secrets per §4.3 + §4.4 (BLOCKAID, ZEROEX, ONEINCH on keeper, etc.) |
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
@@ -197,7 +197,7 @@ Stage 3 PR5.
    STAGING tokens (operator verified 2026-05-08).
 
 3. **D1 cost** — running two D1 instances (`vaipakam-alerts-db`
-   for prod + `vaipakam-archive` for staging) doubles the
+   for prod + `vaipakam-warm` for staging) doubles the
    Workers Free Tier rows quota. Both have retention prunes
    (`CANCELLED_OFFER_RETENTION_DAYS=30`, `DIAG_RETENTION_DAYS=90`)
    so growth is bounded. If quota tightens, lower retention

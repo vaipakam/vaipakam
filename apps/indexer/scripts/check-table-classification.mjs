@@ -23,7 +23,7 @@
  * docket, not that every decision is already made.
  *
  * It also cross-checks the `born-off-chain` class against the archive
- * Worker's own list (`ops/offchain-data-archive/src/backup.ts`), so
+ * Worker's own list (`ops/offchain-data-warm/src/backup.ts`), so
  * the classification and the backup cannot drift apart silently.
  *
  * SCOPE CONTRACT — a tripwire against honest drift, not a hostile-code
@@ -430,7 +430,7 @@ const missingExternal = Object.entries(EXTERNAL_WRITERS)
 // probe-verified that raw-text matching accepted all three loop
 // spreads commented out (Codex #1485 r5).
 const backupLex = lexTs(
-  readFileSync(join(REPO_ROOT, 'ops', 'offchain-data-archive', 'src', 'backup.ts'), 'utf8'),
+  readFileSync(join(REPO_ROOT, 'ops', 'offchain-data-warm', 'src', 'backup.ts'), 'utf8'),
 );
 // Strings KEPT for the array parse (the table names ARE string
 // literals); strings BLANKED for the consumption tripwires (a spread
@@ -603,13 +603,13 @@ export function archivedTablesFrom(backupSrc) {
 
 /** Table names deleted by the runbook §6 clear-before-replay command.
  *  Targets the bash fence(s) that invoke `wrangler d1 execute
- *  vaipakam-archive` with DELETE statements — prose mentions of
+ *  vaipakam-warm` with DELETE statements — prose mentions of
  *  DELETE FROM elsewhere in the document do not count. */
 export function clearedTablesFrom(runbookSrc) {
   const cleared = new Set();
   for (const fence of runbookSrc.matchAll(/```bash\n([\s\S]*?)```/g)) {
     const raw = fence[1];
-    if (!raw.includes('wrangler d1 execute vaipakam-archive') || !raw.includes('DELETE FROM')) {
+    if (!raw.includes('wrangler d1 execute vaipakam-warm') || !raw.includes('DELETE FROM')) {
       continue;
     }
     // Model bash BEFORE SQL (Codex #1485 r4): join `\`-newline
@@ -645,14 +645,14 @@ export function clearedTablesFrom(runbookSrc) {
 }
 
 /** Table names in the runbook §4 born-off-chain import list — the
- *  backticked names after the "**`vaipakam-archive` tables**
+ *  backticked names after the "**`vaipakam-warm` tables**
  *  (born-off-chain):" marker, up to the end of that sentence.
  *  Returns them IN LIST ORDER: §4's order is load-bearing (parent
  *  before cascade children), so callers check sequence, not just
  *  membership. */
 export function importTablesFrom(runbookSrc) {
   const m = runbookSrc.match(
-    /\*\*`vaipakam-archive` tables\*\* \(born-off-chain\):([\s\S]*?)\.\n/,
+    /\*\*`vaipakam-warm` tables\*\* \(born-off-chain\):([\s\S]*?)\.\n/,
   );
   if (!m) {
     throw new Error('could not locate the §4 born-off-chain import list in OffChainRestore.md');

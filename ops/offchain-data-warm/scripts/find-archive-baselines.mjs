@@ -29,7 +29,7 @@
  * It prints the object count so you can see whether the range looks
  * complete.
  *
- * Usage, from `ops/offchain-data-archive/`:
+ * Usage, from `ops/offchain-data-warm/`:
  *   node scripts/find-archive-baselines.mjs
  *
  * Credentials: repo-root `.env`, same as `setup-backblaze.mjs`
@@ -47,7 +47,7 @@ import { isRealPeriod, validateBaseline } from '../src/tiers.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..', '..');
-const BUCKET = process.env.BUCKET_NAME || 'vaipakam-offchain-data-archive';
+const BUCKET = process.env.BUCKET_NAME || 'vaipakam-offchain-data-warm';
 
 /** Families to inspect: the prefix, and the shape its period segment takes. */
 const FAMILIES = [
@@ -378,7 +378,7 @@ if (toSet.length === 0) {
   console.log('Nothing to set yet.\n');
 } else {
   console.log('Add these to the "vars" block of');
-  console.log('ops/offchain-data-archive/wrangler.jsonc, then redeploy:\n');
+  console.log('ops/offchain-data-warm/wrangler.jsonc, then redeploy:\n');
   console.log('  "vars": {');
   console.log(toSet.map((v) => `    "${v.split('=')[0]}": "${v.split('=')[1]}"`).join(',\n'));
   console.log('  }\n');

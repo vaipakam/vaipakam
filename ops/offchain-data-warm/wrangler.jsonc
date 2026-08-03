@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vaipakam-offchain-data-archive",
+  "name": "vaipakam-offchain-data-warm",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-23",
   "compatibility_flags": ["nodejs_compat"],
@@ -34,10 +34,10 @@
     "crons": ["17 3 * * *"],
   },
   // D1 — read-only bindings to the two production databases this
-  // Worker backs up. The shared vaipakam-archive holds the indexer
+  // Worker backs up. The shared vaipakam-warm holds the indexer
   // tables + the diag / legal-hold registers. (vaipakam-lz-alerts-db
   // was the lz-watcher's separate alerts DB, kept distinct from
-  // vaipakam-archive for the trust-boundary reasons documented in
+  // vaipakam-warm for the trust-boundary reasons documented in
   // CLAUDE.md's D1-schema-discipline section).
   //
   // The Worker NEVER writes to either DB; the bindings are present
@@ -48,7 +48,7 @@
   "d1_databases": [
     {
       "binding": "DB_ARCHIVE",
-      "database_name": "vaipakam-archive",
+      "database_name": "vaipakam-warm",
       "database_id": "3cffebf5-b652-4da7-953c-9e1d143ad2fe",
       "remote": false,
     },
@@ -137,7 +137,7 @@
   //     a different account whose bucket lives in a different
   //     region.
   //   - B2_BUCKET names are globally unique across all B2 accounts.
-  //     A fork can't reuse "vaipakam-offchain-data-archive" — they
+  //     A fork can't reuse "vaipakam-offchain-data-warm" — they
   //     need their own bucket name.
   //   - TG_OPS_CHAT_ID isn't strictly secret (chat ids grant
   //     nothing without the bot token) but lifting it out of the

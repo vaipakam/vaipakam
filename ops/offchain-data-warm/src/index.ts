@@ -115,8 +115,8 @@ function assertRequiredEnv(env: Env): void {
     throw new Error(
       `MISSING ENV: ${missing.join(', ')}. ` +
       `Set each via \`wrangler secret put <NAME>\` against the ` +
-      `vaipakam-offchain-data-archive Worker. See ` +
-      `ops/offchain-data-archive/README.md §Setup for the full list ` +
+      `vaipakam-offchain-data-warm Worker. See ` +
+      `ops/offchain-data-warm/README.md §Setup for the full list ` +
       `+ values to paste.`,
     );
   }
@@ -230,7 +230,7 @@ export default {
    *  Always returns 404 with an honest description of why. */
   async fetch(): Promise<Response> {
     return new Response(
-      'vaipakam-offchain-data-archive is a cron-driven Worker. No HTTP surface.',
+      'vaipakam-offchain-data-warm is a cron-driven Worker. No HTTP surface.',
       { status: 404 },
     );
   },

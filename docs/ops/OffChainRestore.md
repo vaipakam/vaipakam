@@ -4,7 +4,7 @@ When you read this, something has gone wrong with the Cloudflare side
 of Vaipakam — the account is locked out, the data is tampered with,
 or a deploy mistake wiped a D1 table. This runbook walks the recovery
 path back to a known-good off-chain state from a Backblaze B2 archive
-produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README.md).
+produced by [`ops/offchain-data-warm`](../../ops/offchain-data-warm/README.md).
 
 > **On-chain state is fine.** The Diamond, the VPFI token, and every
 > position-NFT live on chain. The protocol's economic core is
@@ -150,7 +150,7 @@ then deploy.
    — you'll paste these into the wrangler configs in step 5.
 
    ```bash
-   wrangler d1 create vaipakam-archive
+   wrangler d1 create vaipakam-warm
    ```
 
    > **#1440** — `vaipakam-lz-alerts-db` is NOT recreated. It belonged to
@@ -172,10 +172,10 @@ then deploy.
 5. Update every `wrangler.jsonc` in the monorepo that carries a
    `database_id` to the new IDs from step 3. The bound paths:
 
-   - `apps/indexer/wrangler.jsonc`     → vaipakam-archive
-   - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
-   - `apps/agent/wrangler.jsonc`       → vaipakam-archive
-   - `ops/offchain-data-archive/wrangler.jsonc` → vaipakam-archive
+   - `apps/indexer/wrangler.jsonc`     → vaipakam-warm
+   - `apps/keeper/wrangler.jsonc`      → vaipakam-warm
+   - `apps/agent/wrangler.jsonc`       → vaipakam-warm
+   - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-warm
 
    > `ops/mesh-watcher` is deliberately NOT part of this runbook. It owns a
    > SEPARATE database (`vaipakam-mesh-alerts-db`) that this archive does not
@@ -271,7 +271,7 @@ then deploy.
    >   it. That is worse than the user-facing bot: those are the signals
    >   **you** are acting on while you work. @BotFather `/revoke`, re-issue,
    >   and upload the replacement to **every** consumer —
-   >   `ops/offchain-data-archive` AND `apps/agent` (steps 6d and 6e below,
+   >   `ops/offchain-data-warm` AND `apps/agent` (steps 6d and 6e below,
    >   which otherwise re-upload the saved token verbatim). `TG_OPS_CHAT_ID`
    >   is not a credential and needs no rotation.
    > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys **FIRST**,
@@ -360,20 +360,20 @@ then deploy.
       it is the one verified against the live API
       (`docs/DesignsAndPlans/SecretsStoreMigration.md` §9).
 
-   d. `ops/offchain-data-archive` does NOT use the Secrets Store; its nine
+   d. `ops/offchain-data-warm` does NOT use the Secrets Store; its nine
       secrets are per-Worker `wrangler secret put`. Those are **not**
       validated at deploy, so skipping them lets the Worker deploy green
       and then fail at 03:17 UTC — silently, which is the exact failure
       mode the nightly exists to prevent. Set them before step 8:
 
       The first seven are HARD-REQUIRED — `assertRequiredEnv()` in
-      `ops/offchain-data-archive/src/index.ts` aborts every scheduled
+      `ops/offchain-data-warm/src/index.ts` aborts every scheduled
       invocation if any is missing, so omitting one produces a Worker that
       deploys green and then never backs anything up. The two `TG_OPS_*`
       values are optional (their absence downgrades to a console warn):
 
       ```bash
-      ( cd ops/offchain-data-archive
+      ( cd ops/offchain-data-warm
         for NAME in BACKUP_ENCRYPTION_KEY \
                     B2_ENDPOINT B2_BUCKET \
                     B2_WRITE_ACCESS_KEY_ID B2_WRITE_SECRET_ACCESS_KEY \
@@ -443,7 +443,7 @@ then deploy.
 7. Apply migrations:
 
    ```bash
-   ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-archive --remote )
+   ( cd apps/indexer    && wrangler d1 migrations apply vaipakam-warm --remote )
    ```
 
 8. Add the `vaipakam.com` ZONE to the replacement account BEFORE any
@@ -615,7 +615,7 @@ then deploy.
    > in §7a after the smoke test. Do not simply revert the config now — the
    > point is that the schedules stay off until each one's data is verified.
 
-   > **DO NOT deploy `ops/offchain-data-archive` yet.** Deploy it LAST,
+   > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
    > restored. A fresh archive Worker reaching its 03:17 cron before then
    > writes a validly encrypted, correctly checksummed backup **of the new
@@ -786,7 +786,7 @@ then deploy.
 >      genuine nonce and upload a new version **at that exact key**. The
 >      ordinary listing then shows one nonce and the download returns the
 >      forgery;
->    - **Object Lock is not enabled** on `vaipakam-offchain-data-archive`
+>    - **Object Lock is not enabled** on `vaipakam-offchain-data-warm`
 >      (`isFileLockEnabled: false`, no default retention), so nothing makes
 >      any object immutable;
 >    - the genuine copy persists only as a hidden older VERSION, and only for
@@ -816,7 +816,7 @@ then deploy.
 >    ```bash
 >    for p in manifests/ archives/ manifests-monthly/ archives-monthly/ \
 >             manifests-yearly/ archives-yearly/; do
->      b2 ls vaipakam-offchain-data-archive --recursive --long --versions "$p"
+>      b2 ls vaipakam-offchain-data-warm --recursive --long --versions "$p"
 >    done
 >    ```
 >
@@ -903,7 +903,7 @@ b2 account authorize <APPLICATION_KEY_ID> <APPLICATION_KEY>
 #     (post-2025 syntax) so the nonce-bearing files at
 #     `manifests/<date>/<nonce>.json` actually surface. Sort by
 #     LastModified (newest last) and take the tail.
-b2 ls vaipakam-offchain-data-archive --recursive --long manifests/ \
+b2 ls vaipakam-offchain-data-warm --recursive --long manifests/ \
   | sort -k 2,3 \
   | tail -5
 
@@ -921,10 +921,10 @@ ARCHIVE_KEY="${ARCHIVE_KEY/.json/.bin}"
 
 mkdir -p restore
 b2 file download \
-  "b2://vaipakam-offchain-data-archive/${MANIFEST_KEY}" \
+  "b2://vaipakam-offchain-data-warm/${MANIFEST_KEY}" \
   ./restore/manifest.json
 b2 file download \
-  "b2://vaipakam-offchain-data-archive/${ARCHIVE_KEY}" \
+  "b2://vaipakam-offchain-data-warm/${ARCHIVE_KEY}" \
   ./restore/archive.bin
 ```
 
@@ -940,7 +940,7 @@ an attacker upload via a leaked write key, or bit-rot). Pick the
 next-newest manifest from the `ls` output and repeat. If two
 consecutive manifests mismatch, the backup pipeline was broken
 silently and the operator needs to investigate `wrangler tail
-vaipakam-offchain-data-archive`.
+vaipakam-offchain-data-warm`.
 
 ---
 
@@ -1035,7 +1035,7 @@ wrangler d1 execute <that database> --file=/tmp/lz.sql --remote
 `24641f98` is the last commit on `main` that still carried the file; any
 commit before #1440 merged works. Only then run the row import.
 
-**Critical**: `d1.archive[]` entries go to `vaipakam-archive`. Restoring
+**Critical**: `d1.archive[]` entries go to `vaipakam-warm`. Restoring
 another database's tables into it lands data in the wrong place and leaves
 the originating database empty after the restore. Match by source.
 
@@ -1051,7 +1051,7 @@ For each table:
    tested converter** (#1477):
 
    ```bash
-   ( cd ops/offchain-data-archive && \
+   ( cd ops/offchain-data-warm && \
      node scripts/restore-from-archive.mjs /path/to/decrypted-archive.json \
        --outdir /path/to/restore )
    ```
@@ -1108,7 +1108,7 @@ For each table:
 
 3. Apply via wrangler — targeting the matching D1 binding:
 
-   **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
+   **`vaipakam-warm` tables** (born-off-chain): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
    archives), `telegram_links`, `support_tickets`,
@@ -1142,7 +1142,7 @@ For each table:
    > re-run is not a substitute.
 
    ```bash
-   wrangler d1 execute vaipakam-archive --file=restore/d1/<table>.sql --remote
+   wrangler d1 execute vaipakam-warm --file=restore/d1/<table>.sql --remote
    ```
 
    **`vaipakam-lz-alerts-db` tables** (lz-watcher): `lz_alert_state`,
@@ -1191,7 +1191,7 @@ illustrative fragment (not runnable on its own) and an "executable"
 heredoc that skipped the materialization entirely and handed wrangler
 paths to files that were never written (#1450 r28). The committed,
 tested tooling that replaced them is
-`ops/offchain-data-archive/scripts/restore-from-archive.mjs` (#1477 —
+`ops/offchain-data-warm/scripts/restore-from-archive.mjs` (#1477 —
 one script covering both this section and the §4 SQL conversion);
 its tests pin the requirements above plus the two pitfalls below.
 
@@ -1234,7 +1234,7 @@ from the archive. Why:
 ```bash
 # Clear EVERY replay-derived table, then the cursor, so the replay
 # starts from genesis into empty tables.
-wrangler d1 execute vaipakam-archive --remote --command="\
+wrangler d1 execute vaipakam-warm --remote --command="\
 DELETE FROM activity_events; \
 DELETE FROM loan_participants; \
 DELETE FROM notifications; \
@@ -1477,7 +1477,7 @@ caught at the cheapest stage.
    - **D1 migration `0044_keeper_remit_ack.sql`** is checked into
      `apps/indexer/migrations/`, so §1 step 7 applied it with every other
      migration. Confirm:
-     `wrangler d1 migrations list vaipakam-archive --remote`.
+     `wrangler d1 migrations list vaipakam-warm --remote`.
    - **The on-chain authority.** Two of them, and they are not the same —
      this is the part that is easy to get wrong. `remitRewardBudget`
      authorises through `_checkRemitter`, which accepts `ADMIN_ROLE` **or**
@@ -1602,10 +1602,10 @@ caught at the cheapest stage.
 ## 7b. LAST: activate the backup writer
 
 Only now — after §§4–5 have restored D1 and R2, and §7's smoke test says
-the stack is real — deploy `ops/offchain-data-archive`:
+the stack is real — deploy `ops/offchain-data-warm`:
 
 ```bash
-( cd ops/offchain-data-archive && npm ci && npm run deploy )
+( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
 **Why it is last, and not with the other Workers.** Its cron fires at
@@ -1625,7 +1625,7 @@ Then exercise it once, immediately — this is the smoke test deliberately
 left out of §7, since the Worker did not exist at that point:
 
 ```bash
-wrangler tail vaipakam-offchain-data-archive
+wrangler tail vaipakam-offchain-data-warm
 # Trigger the cron manually from the CF dashboard's "Trigger" button.
 ```
 
@@ -1683,7 +1683,7 @@ two procedures share the offline-key handling discipline.
    sweep needs the set to tell your own re-uploads apart from a
    genuine late Worker write.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
-   `vaipakam-offchain-data-archive` to flip the Worker to the new key.
+   `vaipakam-offchain-data-warm` to flip the Worker to the new key.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
 6. **Sweep for stragglers before retiring anything**: list every

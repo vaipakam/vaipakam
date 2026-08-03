@@ -1,6 +1,6 @@
 -- #1222 M3 B2-d1 (Codex #1425 r2) — keeper-owned commitment-report scan
 -- state. WRITTEN BY apps/keeper ONLY (the schema lives here because
--- apps/indexer/migrations owns every table on the shared vaipakam-archive
+-- apps/indexer/migrations owns every table on the shared vaipakam-warm
 -- D1 — see "Cloudflare D1 schema discipline" in CLAUDE.md).
 --
 -- Why this exists: the commitment-report pass walks the mirror chain's

@@ -35,7 +35,7 @@
 --
 -- D1 schema discipline (CLAUDE.md): this file is the single source of truth
 -- for the table; apply with
---   cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote
+--   cd apps/indexer && wrangler d1 migrations apply vaipakam-warm --remote
 -- — never `wrangler d1 execute --command "CREATE TABLE ..."` on the live db.
 
 CREATE TABLE IF NOT EXISTS signed_offers (

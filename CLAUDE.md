@@ -272,7 +272,7 @@ arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 ## Cloudflare D1 schema discipline
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
-all bind to **one shared D1 database** — `vaipakam-archive`
+all bind to **one shared D1 database** — `vaipakam-warm`
 (database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging**
 database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
@@ -286,7 +286,7 @@ read and write a subset of the shared tables via the same binding
 **Rule**: every schema change — even for a table only `keeper` or
 `agent` writes — lands as a new file under
 `apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
-`wrangler d1 migrations apply vaipakam-archive --remote` from inside
+`wrangler d1 migrations apply vaipakam-warm --remote` from inside
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
 directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.
@@ -304,7 +304,7 @@ migration**, since that changes its `d1_migrations` key and re-runs it.
 `ops/mesh-watcher` uses a **separate** D1 (`vaipakam-mesh-alerts-db`,
 schema in `ops/mesh-watcher/migrations/`) for trust-boundary reasons —
 its internal ops alerts must not co-locate with user-facing data. Don't
-fold those tables into `vaipakam-archive`. (The retired `ops/lz-watcher`
+fold those tables into `vaipakam-warm`. (The retired `ops/lz-watcher`
 followed the same rule with `vaipakam-lz-alerts-db`; both the Worker and
 its source tree were removed in #1440, and the database is an operator
 deletion gated on one clean nightly backup.)
@@ -376,7 +376,7 @@ artifacts and stay in their respective env / config:
   periodic-interest pre-notify). Posts to user-supplied chat IDs
   (`tg_chat_id` per subscription).
 - `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/mesh-watcher`
-  (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-archive`
+  (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-warm`
   (nightly backup outcomes + weekly healthcheck verdicts). Posts to a
   single operator chat (`TG_OPS_CHAT_ID`). The retired `ops/lz-watcher`
   used it too before #1440 removed that Worker and its source.

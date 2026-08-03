@@ -1,8 +1,8 @@
 {
-  "name": "vaipakam-offchain-data-archive",
+  "name": "vaipakam-offchain-data-warm",
   "private": true,
   "type": "module",
-  "description": "Internal-ops Cloudflare Worker that nightly exports vaipakam-archive D1 (offers + loans + diag_errors + legal_holds) + the vaipakam-legal-vault R2 bucket to Backblaze B2 on a separate billing/credential boundary, client-side encrypted with AES-256-GCM using a key NOT stored in CF (operator-offline). Stage A of the off-chain data resilience plan (issue #30 / T-077); see docs/DesignsAndPlans/OffChainDataResilience.md.",
+  "description": "Internal-ops Cloudflare Worker that nightly exports vaipakam-warm D1 (offers + loans + diag_errors + legal_holds) + the vaipakam-legal-vault R2 bucket to Backblaze B2 on a separate billing/credential boundary, client-side encrypted with AES-256-GCM using a key NOT stored in CF (operator-offline). Stage A of the off-chain data resilience plan (issue #30 / T-077); see docs/DesignsAndPlans/OffChainDataResilience.md.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
