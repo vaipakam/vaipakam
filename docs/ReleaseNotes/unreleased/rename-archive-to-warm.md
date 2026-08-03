@@ -22,4 +22,6 @@ The **shared database** keeps its contents and identity; only its label changes.
 
 The **Worker** is created fresh under the new name, and the old one must then be deleted — not merely stopped. It holds a scheduled slot from a limited pool, and the account has no spare, so leaving it in place blocks the replacement from running on schedule.
 
+There is one visible consequence in the meantime, and it is expected rather than a fault. The hosting provider builds the Worker automatically from a path recorded on its side, and that path is the old directory — so from the moment the rename lands, that build fails. It does not disturb the running service, which keeps operating from its last successful build; it only means the automated check for the old Worker reports red until the provider-side project is pointed at the new location or replaced. Anyone reading a red check there should not go looking for a defect in the change.
+
 Until those steps are done the running system is unchanged and unaffected; the repository simply describes it by its new name.
