@@ -1648,10 +1648,29 @@ caught at the cheapest stage.
    first:
 
    ```bash
-   wrangler secrets-store secret list <STORE_ID> --remote
+   wrangler secrets-store secret list <STORE_ID> --remote --per-page 100
    ```
 
-   then `update` it. A `KEEPER_PRIVATE_KEY unset` line is the `create` case.
+   `--per-page` defaults to **10** and this store holds more than twenty
+   names, so without it `KEEPER_PRIVATE_KEY` may simply not be on the page
+   you get back — and the repair stalls looking for an id that is there. The
+   Deployment and Incident runbooks use `--per-page 100` for the same reason.
+
+   Then update it:
+
+   ```bash
+   wrangler secrets-store secret update <STORE_ID> --secret-id <ID> \
+     --scopes workers --remote
+   ```
+
+   **Answer YES when it asks whether to update the secret value.** That
+   prompt defaults to **no**, and because the command also carries
+   `--scopes workers` it will exit successfully having changed only the
+   scopes — reporting success while leaving the malformed key exactly as it
+   was, and every signing pass disarmed. Accepting the defaults here is the
+   failure mode, not the safe path.
+
+   A `KEEPER_PRIVATE_KEY unset` line is the `create` case instead.
 
    **`--config` is not optional here.** Without it, `wrangler secret put`
    applies to the Worker named in whatever Wrangler config is active — and

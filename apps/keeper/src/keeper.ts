@@ -830,7 +830,7 @@ const KEEPER_KEY_CHARS = 66;
  * The reason never quotes the value. An unusable key is still a key, and
  * this goes to the same log as everything else.
  */
-function resolveKeeperAccount(
+export function resolveKeeperAccount(
   raw: string,
 ): { account: PrivateKeyAccount } | { problem: string } {
   const trimmed = raw.trim();

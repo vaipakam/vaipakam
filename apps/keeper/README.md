@@ -109,6 +109,14 @@ anything the signer would reject is reported by the gate, and the two cannot
 drift. A syntax-only check let 32 valid-looking hex bytes through that are
 not scalars on the curve (zero, or at/above the group order).
 
+That is also why **every** key construction in this Worker goes through the
+one resolver, and a test fails if a second call site appears. It is not
+tidiness: `dailyOracleSnapshot` used to build the account itself, outside a
+`try`, so an invalid scalar threw and the scheduled handler logged the
+error — and viem's message for that case contains the rejected scalar, from
+which the key is recoverable. The "never echoed" guarantee above is only
+true while that remains the single construction site.
+
 Note the second example: `KEEPER_ENABLED` accepts `True`, the two reward flags
 do not. Use lowercase `true` everywhere and the asymmetry never arises; if it
 already has, the log now says so instead of the pass simply staying dark.

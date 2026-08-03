@@ -12,6 +12,7 @@
  * that only checked the boolean would pass against the silent version this
  * replaces, which is exactly the bug.
  */
+import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
 import { isKeeperEnabled, passIsArmed } from '../src/keeper';
@@ -271,5 +272,26 @@ describe('isKeeperEnabled — unchanged, and tied to the reason', () => {
         expect(passIsArmed(e, 'p')).toBe(isKeeperEnabled(e));
       }
     }
+  });
+});
+
+describe('the key is constructed in exactly one place', () => {
+  it('no module outside keeper.ts calls privateKeyToAccount', () => {
+    // The leak this pins (#1540 r6): `dailyOracleSnapshot` had its own copy
+    // of normalise-and-check and built the account OUTSIDE a try, so an
+    // invalid scalar threw and `index.ts` logged the error — and viem's
+    // message for that case contains the rejected scalar, from which the
+    // key is recoverable. Three copies of this logic existed; each new one
+    // is a fresh chance to reintroduce exactly that.
+    //
+    // A grep-shaped test because the property is "nobody else does this",
+    // which no type or signature can express.
+    const dir = new URL('../src/', import.meta.url);
+    const offenders = readdirSync(dir)
+      .filter((f) => f.endsWith('.ts') && f !== 'keeper.ts')
+      .filter((f) =>
+        readFileSync(new URL(f, dir), 'utf8').includes('privateKeyToAccount('),
+      );
+    expect(offenders).toEqual([]);
   });
 });
