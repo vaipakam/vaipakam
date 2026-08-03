@@ -267,11 +267,24 @@ library LibVpfiRecycle {
      *         the same claim, un-swept, one file away.
      *
      *         **#1498 — THIS IS THE ONE DEFINITION. Do not inline
-     *         `balanceOf − recycleBucket` at a call site.** Three enforcement
-     *         points each had their own copy; the arithmetic agreed and the
-     *         prose describing its limits did not, which is how #1498 came to
-     *         specify a custody aggregate for a term that is already zero.
-     *         Taking the three claimants in turn:
+     *         `balanceOf − recycleBucket` at a call site.** The TWO
+     *         enforcement sites — {RewardClaimFacet}, which REJECTS an
+     *         under-backed claim, and {InteractionRewardsFacet}, which CAPS
+     *         the RL-3 expiry sweep — each inlined the arithmetic instead of
+     *         calling this function, which already defined it. This function
+     *         enforces nothing itself; it is the definition, additionally
+     *         exposed as a transparency reader through
+     *         {InteractionRewardsLensFacet.getRecycleBackingSnapshot}.
+     *         (An earlier revision called all three "enforcement points",
+     *         which overstated the protected write surface — Codex #1555 r2.)
+     *         The inflow asserts in {credit} / {creditCustodyRelocated} are a
+     *         related but differently-shaped check: they compare against
+     *         `bucket + amount` and need `amount` for the revert payload.
+     *
+     *         The arithmetic agreed across those copies and the prose
+     *         describing its limits did not, which is how #1498 came to
+     *         specify a custody aggregate. Taking the three claimants in
+     *         turn:
      *
      *         • `recycleBucket` — SUBTRACTED. Recycled backing has to survive
      *           a fresh payout; that is the whole of #1460's condition.
@@ -281,10 +294,19 @@ library LibVpfiRecycle {
      *           presence in the invariant says the Diamond must HOLD it, not
      *           that a reward payout may not draw on it.
      *         • `userLifCustody` — NOT subtracted, and whether that is SAFE
-     *           depends on the deployment. The checkable fact is that **no
-     *           non-zero assignment to `vpfiHeld` survives anywhere in
-     *           `src/`**: the three remaining writes are all `= 0`, the
-     *           drains inside {LibVPFIDiscount.settleBorrowerLifProper} /
+     *           depends on the deployment. The checkable fact, stated over
+     *           the CUSTODY STORAGE rather than over the identifier: **every
+     *           surviving write to `borrowerLifRebate[...].vpfiHeld` in
+     *           `src/` assigns zero.** (Scoped this way deliberately — the
+     *           earlier "no non-zero assignment to `vpfiHeld` anywhere in
+     *           `src/`" disagreed with a literal source sweep, because
+     *           `MetricsFacet` copies the slot into a memory summary
+     *           (`s.vpfiHeld = r.vpfiHeld`) where it can be non-zero for a
+     *           grandfathered loan. That read changes no custody and does not
+     *           touch the conclusion — but a "checkable fact" that fails when
+     *           checked is worse than none. Codex #1555 r2.)
+     *           Those zeroing writes are the drains inside
+     *           {LibVPFIDiscount.settleBorrowerLifProper} /
      *           {LibVPFIDiscount.forfeitBorrowerLif}, which return early at
      *           `held == 0` — so the ~15 terminal paths calling them
      *           (preclose, refinance, prepay, swap-to-repay, repay, every

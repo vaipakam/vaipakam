@@ -1318,26 +1318,32 @@ contract AnvilNewPositiveFlows is Script {
     ///           vault (Tier-2: 15% rebate band) via
     ///           `depositVPFIToVault`, then opts in via
     ///           `setVPFIDiscountConsent(true)`.
-    ///        4. Lender + borrower take a normal loan. `_acceptOffer`
-    ///           calls `LibVPFIDiscount.tryApplyBorrowerLif` which
-    ///           deducts the 0.1% LIF in VPFI from the borrower's
-    ///           vault into Diamond custody (recorded on
-    ///           `borrowerLifRebate[loanId].vpfiHeld`).
-    ///        5. Borrower repays. `settleBorrowerLifProper` splits
-    ///           `vpfiHeld` time-weighted: rebate to borrower,
-    ///           treasury share to treasury.
-    ///        6. `claimAsBorrower` pays out the rebate atomically.
+    ///        4. Lender + borrower take a normal loan. Under the
+    ///           **HoldOnly** model (#1352) the borrower's hold-tier
+    ///           discount is applied DIRECTLY to the lending-asset LIF
+    ///           at acceptance: no VPFI leaves the borrower's vault and
+    ///           NO custody is taken, so `vpfiHeld` stays 0.
+    ///        5. Borrower repays. `settleBorrowerLifProper` still runs
+    ///           on every proper-close path, but returns immediately at
+    ///           `held == 0` — it is a no-op for a HoldOnly loan.
+    ///        6. `claimAsBorrower` therefore pays no VPFI rebate; there
+    ///           is no rebate slot to pay.
     ///
-    ///      End-state assertions: borrower's VPFI wallet balance is
-    ///      higher post-claim than after the deposit (some VPFI came
-    ///      back as rebate); the discount-applied flag fired.
+    ///      **Required assertion: `vpfiHeld == 0` after acceptance.**
+    ///      That is the point of this scenario now — it fails if the
+    ///      retired peg-custody origination path is ever re-wired.
     ///
-    ///      If the discount-quote conversion silently fails (wrong
-    ///      mock rate, missing oracle), the path falls through to the
-    ///      normal-LIF (lending-asset fee) flow — the loan still
-    ///      settles. The scenario asserts the loan settled cleanly
-    ///      either way; explicit "rebate received" verification is
-    ///      best-effort (logged, not required).
+    ///      #1555 r2 — this natspec previously described acceptance as
+    ///      calling `tryApplyBorrowerLif`, moving VPFI into custody and
+    ///      paying a rebate at close. That path was retired by #1352 and
+    ///      the producer has had no caller since. Because the scenario's
+    ///      only hard requirement was "the loan settled" and the rebate
+    ///      check was explicitly best-effort, it kept PASSING while
+    ///      exercising none of what it advertised — and taught every
+    ///      reader the inverse of the current behaviour. The tier setup
+    ///      in steps 1-3 is kept exactly as it was: it puts the borrower
+    ///      in the state that WOULD have taken custody, which is what
+    ///      makes the assertion below meaningful rather than vacuous.
     // ─── VPFI-config snapshot fields (set in N10, restored after N14) ───
     //
     // N10 + N13 + N14 form a single VPFI-discount + deposit sequence
@@ -1395,8 +1401,10 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
 
-        // Step 4: take a loan. Tier-2 borrower with consent enabled
-        // and liquid lending asset triggers tryApplyBorrowerLif.
+        // Step 4: take a loan. The borrower is Tier-2 with consent
+        // enabled on a liquid lending asset — i.e. exactly the state the
+        // retired peg-custody path required — so the no-custody
+        // assertion below is a real check, not a precondition failure.
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
@@ -1407,16 +1415,29 @@ contract AnvilNewPositiveFlows is Script {
         weth.approve(diamond, COLLATERAL_AMOUNT);
         uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t9, _sig9);
         vm.stopBroadcast();
-        console.log("Loan initiated under VPFI discount path:", loanId);
+        console.log("Loan initiated under HoldOnly borrower LIF:", loanId);
 
-        // Step 5: repay → settleBorrowerLifProper splits the held VPFI
-        // into rebate + treasury share.
+        // #1555 r2 — the scenario's REQUIRED check. A HoldOnly loan takes
+        // no VPFI custody, so the rebate receipt must be empty on both
+        // fields. This fails loudly if the retired peg-custody origination
+        // path is re-wired, which the previous best-effort rebate logging
+        // could not do.
+        {
+            (uint256 rebateAmt_, uint256 vpfiHeld_) =
+                ClaimFacet(diamond).getBorrowerLifRebate(loanId);
+            require(vpfiHeld_ == 0, "N10: HoldOnly loan must take NO VPFI custody");
+            require(rebateAmt_ == 0, "N10: HoldOnly loan must have no rebate slot");
+        }
+        console.log("Asserted: no VPFI custody taken (vpfiHeld == 0)");
+
+        // Step 5: repay. settleBorrowerLifProper still runs on the proper
+        // -close path but is a no-op here, returning at `held == 0`.
         vm.startBroadcast(borrowerKey);
         uint256 repayAmt = RepayFacet(diamond).calculateRepaymentAmount(loanId);
         usdc.approve(diamond, repayAmt + 100e6);
         RepayFacet(diamond).repayLoan(loanId);
         vm.stopBroadcast();
-        console.log("Loan repaid; settleBorrowerLifProper split rebate vs treasury");
+        console.log("Loan repaid; settleBorrowerLifProper was a no-op (held == 0)");
 
         // Step 6: claim borrower → rebate atomically delivered.
         uint256 vpfiBalBefore = vpfi.balanceOf(borrower);
@@ -1424,10 +1445,16 @@ contract AnvilNewPositiveFlows is Script {
         uint256 vpfiBalAfter = vpfi.balanceOf(borrower);
         console.log("VPFI wallet pre-claim:", vpfiBalBefore);
         console.log("VPFI wallet post-claim:", vpfiBalAfter);
-        // Rebate-received check is best-effort: depending on whether
-        // the LIF→VPFI quote succeeded, vpfiHeld may be 0 (fall-
-        // through path) and rebateAmount = 0. Either way the loan
-        // settled — that's the assertion we make.
+        // #1555 r2 — no rebate is expected: HoldOnly took no custody, so
+        // there is nothing for `claimAsBorrower` to pay back in VPFI. The
+        // wallet figures above are logged for the operator, not asserted
+        // against. The custody assertion that carries this scenario is the
+        // `vpfiHeld == 0` require at acceptance; this one confirms the loan
+        // reached a terminal state through the no-op settlement path.
+        //
+        // The previous comment described this as "best-effort depending on
+        // whether the LIF→VPFI quote succeeded" — a fall-through that has
+        // not been reachable since #1352 retired the path it fell back from.
         LibVaipakam.Loan memory loanAfter = LoanFacet(diamond).getLoanDetails(loanId);
         require(
             loanAfter.status != LibVaipakam.LoanStatus.Active,

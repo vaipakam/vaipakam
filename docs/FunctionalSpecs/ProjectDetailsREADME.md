@@ -1910,7 +1910,11 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - This consent should be a common user preference rather than an offer-level or loan-level toggle.
   - Only when that platform-level consent is active and sufficient VPFI is available in vault should the system automatically deduct the discounted fee amount in VPFI from vault and transfer it to treasury.
 
-- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain a sufficient canonical vaulted VPFI balance for tier eligibility and sufficient protocol-tracked VPFI on the settlement chain to pay the full up-front fee are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
+- **Borrower Loan Initiation Fee Discount:**
+
+  > **SUPERSEDED for new loans — this describes the retired up-front-then-rebate path.** New loans take the **HoldOnly** borrower model: the tier discount is applied **directly to the lending-asset fee at acceptance**, no VPFI moves out of the borrower's vault, and **no VPFI is taken into protocol custody, so there is no rebate to claim later**. Everything below — the up-front full-fee deduction, the custody-for-the-life-of-the-loan holding, the rebate at proper close, and the forfeit-on-default treatment of that held VPFI — applies **only to loans already open on the retired custody path** at the point it was retired, which still settle through their original lifecycle. A platform deployed fresh has no such loans and this block describes nothing that can occur on it. The tier *schedule* below still governs the discount percentages; only the mechanism by which the discount is delivered changed.
+
+  Borrowers who maintain a sufficient canonical vaulted VPFI balance for tier eligibility and sufficient protocol-tracked VPFI on the settlement chain to pay the full up-front fee are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
   - Vault-held VPFI also counts toward the balance-based fee-discount model.
   - The active tier schedule is:
     | Tier | Vaulted VPFI Balance | Discount | Borrower Effective Initiation Fee |

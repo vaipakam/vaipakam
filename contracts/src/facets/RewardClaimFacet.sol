@@ -299,7 +299,8 @@ contract RewardClaimFacet is
         //
         // #1498 — read the un-earmarked figure from the ONE definition
         // {LibVpfiRecycle} exports rather than recomputing it. The same
-        // arithmetic was inlined at three enforcement points; the comments
+        // arithmetic was inlined at BOTH enforcement sites (here, and the
+        // RL-3 expiry-sweep cap); the comments
         // stating its limits then drifted apart, which is how #1498 came to
         // describe a gap that no longer existed. The helper's zero-token
         // revert is unreachable here — {VPFITokenNotSet} above already fired.
@@ -308,8 +309,8 @@ contract RewardClaimFacet is
         // borrower-LIF custody needs no subtraction on a deployment built
         // from this source, and the two conditions that would re-open it, are
         // stated ONCE on {LibVpfiRecycle.backingPosition}. Deliberately not
-        // restated here: three inlined copies of the arithmetic are what let
-        // the prose drift in the first place.
+        // restated here: inlining the arithmetic instead of calling the
+        // definition is what let the prose drift in the first place.
         (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
 
         // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term

@@ -2,20 +2,22 @@
 
 Before a reward is paid, the platform checks that the tokens backing it are
 genuinely spare — that paying this reward will not eat the balance set aside
-as recycled reward runway. Three separate places performed that check, and
-each worked out the figure for itself. The arithmetic agreed. The
-explanations sitting beside it did not.
+as recycled reward runway. **Two** places enforce that: one refuses a claim
+that would overdraw it, and one caps the amount an expiry sweep may take.
+Each worked the figure out for itself, even though the library that owns the
+underlying ledger already defined it and publishes it as a read-only
+transparency figure. The arithmetic agreed. The explanations sitting beside
+it did not.
 
-They now all read the same figure from the single place that owns it. Nothing
-about what is or is not allowed has changed; the same claims succeed and the
-same ones are refused.
+Both now read that single definition. Nothing about what is or is not
+allowed has changed; the same claims succeed and the same ones are refused.
 
 ### Why the duplication mattered more than it looks
 
-The three copies had drifted in their *descriptions*, not their results — and
-a description is what the next person acts on. One of them said the figure
-was only an approximation, and that making it exact needed a new running
-total of a second category of held tokens.
+The copies had drifted in their *descriptions*, not their results — and a
+description is what the next person acts on. One of them said the figure was
+only an approximation, and that making it exact needed a new running total of
+a second category of held tokens.
 
 That was true when it was written and had since stopped being true. The
 category it referred to is VPFI collected from a borrower at the start of a

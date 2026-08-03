@@ -188,10 +188,11 @@ contract InteractionRewardsFacet is
         //
         // #1498 — the un-earmarked figure comes from
         // {LibVpfiRecycle.backingPosition}, the ONE definition the bucket's
-        // owning library exports, rather than being recomputed here. Three
-        // sites had each inlined `balanceOf − recycleBucket`; identical
-        // arithmetic in three places is a drift class, and the comments
-        // describing its limits had already drifted apart. The zero-token
+        // owning library exports, rather than being recomputed here. BOTH
+        // enforcement sites — this sweep cap and the claim-time reject —
+        // inlined `balanceOf − recycleBucket` instead of calling the
+        // definition, and the comments stating its limits then drifted
+        // apart. Duplicated arithmetic is the drift class. The zero-token
         // case cannot reach the helper's own revert — this function's
         // {VPFITokenNotSet} guard has already rejected it.
         (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
