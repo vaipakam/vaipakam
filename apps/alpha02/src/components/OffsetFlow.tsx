@@ -357,6 +357,23 @@ export function OffsetFlow({
         spender: walletChain.diamondAddress,
         amount: liveLoan.principal + liveBound,
       });
+      // Codex #1539 r1 — `ensureAllowance` can add its OWN approval
+      // transaction and wallet-confirm window between the early
+      // maturity re-judge above and this write. Re-judge against a
+      // FRESH block here so that window can't silently consume the
+      // reserve and hand the user the very revert the margin exists
+      // to prevent. The early check stays — it fails fast before any
+      // approval is spent.
+      const blockAtWrite = await publicClient.getBlock();
+      if (
+        blockAtWrite.timestamp +
+          BigInt(durationDays) * 86_400n +
+          OFFSET_MATURITY_MARGIN_SECONDS >
+        loanEndTimeOf(liveLoan)
+      ) {
+        setError(copy.offset.onlyBeforeDue);
+        return;
+      }
       const { receipt } = await write('offsetWithNewOffer', [
         BigInt(row.loanId),
         BigInt(rateBps),
