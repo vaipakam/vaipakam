@@ -265,7 +265,7 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
           (await migrationApplied(env.DB_ARCHIVE, gated.migrationPrefix))
         ) {
           throw new Error(
-            `BACKUP ABORT: export of vaipakam-warm.${t} failed ` +
+            `BACKUP ABORT: export of vaipakam-archive.${t} failed ` +
             `(${tableMissing ? 'table missing on a post-migration DB' : 'export error'}): ` +
             `${(err as Error).message}`,
           );
@@ -275,7 +275,7 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
       // log + skip. Required tables that
       // truly missing are detected by the row-count check after
       // the loop.
-      console.warn(`[backup] skipped vaipakam-warm.${t}: ${(err as Error).message}`);
+      console.warn(`[backup] skipped vaipakam-archive.${t}: ${(err as Error).message}`);
     }
   }
   // Required-table guards — if a born-off-chain table truly isn't
@@ -286,7 +286,7 @@ export async function runNightlyBackup(env: Env, b2Cfg: B2Config): Promise<Backu
   );
   if (missingArchive.length > 0) {
     throw new Error(
-      `BACKUP ABORT: required tables missing from vaipakam-warm: ${missingArchive.join(', ')}`,
+      `BACKUP ABORT: required tables missing from vaipakam-archive: ${missingArchive.join(', ')}`,
     );
   }
   // Migration-gated tables missing → warn loudly but keep the run:

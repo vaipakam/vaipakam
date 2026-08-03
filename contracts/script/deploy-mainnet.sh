@@ -93,7 +93,7 @@
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-indexer
 #       Deploys apps/indexer (D1 indexer + read-only API) via
 #       wrangler, then applies any pending D1 migrations to the shared
-#       `vaipakam-warm` database. The indexer is the only Worker
+#       `vaipakam-archive` database. The indexer is the only Worker
 #       that owns migrations — keeper + agent are stateless. Seeds
 #       indexer_cursor at safe head if `--seed-cursor` is passed
 #       alongside this phase (skipped by default — mainnet redeploys
@@ -249,7 +249,7 @@ Phases:
   cf-www          — Build + wrangler deploy apps/www (marketing).
   cf-keeper       — wrangler deploy apps/keeper (autonomous keeper).
   cf-indexer      — wrangler deploy apps/indexer + D1 migrations
-                    on the shared `vaipakam-warm` database.
+                    on the shared `vaipakam-archive` database.
   cf-agent        — wrangler deploy apps/agent (notifications, frames).
   verify          — Read-only smoke checks.
 
@@ -1454,7 +1454,7 @@ phase_cf_keeper() {
 
 # ── Phase: cf-indexer ─────────────────────────────────────────────────
 # Deploys apps/indexer — the D1 indexer + read-only API. Owns the
-# shared `vaipakam-warm` D1 database + its migrations (the keeper
+# shared `vaipakam-archive` D1 database + its migrations (the keeper
 # and agent Workers BIND the same D1 but never run migrations against
 # it). Three sub-steps:
 #   [a] wrangler deploy
@@ -1468,7 +1468,7 @@ phase_cf_keeper() {
 # prior cursor, so re-seeding would lose indexed history. If a
 # mainnet operator ever genuinely needs to reset the cursor (e.g.
 # migration to a brand-new diamond, full-history reindex), do it
-# manually via `pnpm exec wrangler d1 execute vaipakam-warm
+# manually via `pnpm exec wrangler d1 execute vaipakam-archive
 # --remote --command "UPDATE indexer_cursor SET last_block = ..."`.
 
 phase_cf_indexer() {
@@ -1488,11 +1488,11 @@ phase_cf_indexer() {
   ( cd "$INDEXER_DIR" && pnpm exec wrangler deploy )
 
   echo
-  echo "[b] D1 migrations apply (vaipakam-warm)"
+  echo "[b] D1 migrations apply (vaipakam-archive)"
   # Idempotent — wrangler skips already-applied entries. Without this
   # the indexer returns 500 D1_ERROR (no such table) on every
   # /offers/recent / /loans/byParticipant query.
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-warm --remote )
+  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-archive --remote )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo

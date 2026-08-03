@@ -24,6 +24,10 @@ Two things made bundling them unsafe rather than merely untidy. The application 
 
 So the replacement database exists and is fully prepared — created, every schema step applied, and the handful of genuinely irrecoverable rows copied and checked — but nothing points at it. The services continue reading and writing the database they always have. Switching over is its own deliberate step, and it needs a fresh copy of those rows taken *after* the last writer has moved, compared for equality, rather than the early copy that is there now.
 
+**A check now enforces that the database is named in one place.** Backing the rename out of the database was itself done twice: the first attempt reached the four service configurations but not the deploy commands, the operator runbooks, or the restore steps — which would have applied schema changes to one database while the services read another. Neither half looks wrong on its own, and nothing fails: the deploy succeeds, the service starts, and the schema it needs is simply somewhere else. So the name is now declared once and verified everywhere it is used, including in the copy-paste blocks operators run by hand. A partial rename — the exact shape that got past the first attempt — is now a build failure rather than something a reader has to notice.
+
+That check reads commands, not prose. A sentence in a design document describing the database by name is still only as good as the person who wrote it; what is now guaranteed is that nothing which *moves data* can disagree about which database it means.
+
 The **Worker** is created fresh under the new name, and the old one is then deleted — not merely stopped, because a stopped Worker still holds its scheduled slot from a limited pool.
 
 There is one spare slot, so the replacement can be created before the old one goes. (An earlier draft of this note said the pool was full and the two could not coexist; counting the live triggers showed four of five in use, the fifth being held for a service that is not yet deployed. It is worth borrowing during the switch and is free again afterwards.)

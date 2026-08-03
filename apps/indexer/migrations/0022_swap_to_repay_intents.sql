@@ -25,7 +25,7 @@
 --
 -- `chain_id` matches the schema convention of every other per-row
 -- table so the same D1 holds cross-chain rows (the indexer + agent
--- + keeper Workers all share `vaipakam-warm`).
+-- + keeper Workers all share `vaipakam-archive`).
 CREATE TABLE IF NOT EXISTS swap_to_repay_intents (
   -- Composite primary identification.
   chain_id            INTEGER NOT NULL,

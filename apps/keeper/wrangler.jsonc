@@ -46,7 +46,7 @@
   // Cross-Worker D1 sharing is the deliberate coupling that lets the
   // three Workers stay independent without a message-bus layer
   // (Stage 3 plan §5).
-  // D1 binding — `vaipakam-warm` is the STAGING database for
+  // D1 binding — `vaipakam-archive` is the STAGING database for
   // the new 3-Worker split (apps/{keeper,indexer,agent}). It's
   // distinct from `vaipakam-alerts-db` which the legacy
   // `vaipakam-hf-watcher` Worker (primary infra) writes to and

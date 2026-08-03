@@ -480,7 +480,7 @@ indexer.vaipakam.com
 vaipakam-indexer
 vaipakam-agent
 agent.vaipakam.com
-vaipakam-warm
+vaipakam-archive
 vaipakam-record
 vaipakam-labs
 `Launch Vaipakam`

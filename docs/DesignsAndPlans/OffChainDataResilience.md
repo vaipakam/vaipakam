@@ -24,8 +24,8 @@ that, today, lives **only on Cloudflare**:
 
 | Surface | Store | Owner | Re-derivable from chain? |
 | --- | --- | --- | --- |
-| `vaipakam-warm` D1 — `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
-| `vaipakam-warm` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets` | Cloudflare D1 | apps/agent + apps/indexer + apps/keeper (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification/pre-grace dedupe state). |
+| `vaipakam-archive` D1 — `offers`, `loans`, `activity_events`, `oracle_snapshot_state`, `liquidity_confidence`, `indexer_cursor` | Cloudflare D1 | apps/indexer (writer), apps/keeper + apps/agent (readers / minor writers) | **Yes** — re-index from `block 0` reconstructs every row deterministically. |
+| `vaipakam-archive` D1 — `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`, `notify_state`, `pre_grace_notify_state`, `telegram_links`, `support_tickets` | Cloudflare D1 | apps/agent + apps/indexer + apps/keeper (write paths) | **No** — born off-chain (frontend error captures, operator legal-hold actions, user-supplied HF thresholds + Telegram chat links + notification/pre-grace dedupe state). |
 | `vaipakam-lz-alerts-db` D1 — `lz_alert_state`, `scan_cursor`, `oft_balance_history` | Cloudflare D1 | ops/lz-watcher | **Partly** — alerts are derived from chain logs, so re-running the watcher reconstructs them, but the alert dispatch history (who-was-notified-when) is born off-chain. **RETIRED 2026-07-28 (#1440).** The Worker was deleted post-T-068 and the nightly backup no longer exports this database — archives written from that date omit the `d1.lzAlerts` section. The dispatch history is deliberately NOT preserved: it is who-was-notified-when for a transport that no longer exists, and the database itself is scheduled for operator deletion. Nothing in Stage A depends on it. |
 | `vaipakam-legal-vault` R2 bucket — uploaded legal-hold documents | Cloudflare R2 | apps/agent (uploads) | **No** — third-party documents uploaded by operators, not derivable from any external source. |
 
@@ -40,7 +40,7 @@ A subtler risk: a partial-credential compromise (e.g. CF account access
 without full takeover) lets an attacker **tamper** with D1 rows live.
 The indexer's offer-book rows have a frontend "verify on-chain"
 affordance that catches outright fabrication, but users routinely skip
-verification on fast paths. A single phantom offer in `vaipakam-warm`
+verification on fast paths. A single phantom offer in `vaipakam-archive`
 could lure a user into a transaction the contract refuses, costing
 gas — or worse, a tampered `status` flip ("accepted" → "active") could
 trick a user into accepting an already-filled offer.
@@ -75,7 +75,7 @@ Schedule a Cloudflare Worker (`ops/offchain-data-warm`) that nightly:
 1. Exports the **born off-chain** D1 tables — `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state`, `telegram_links`,
-   `support_tickets` from `vaipakam-warm`.
+   `support_tickets` from `vaipakam-archive`.
    (Pre-#1440 this step also exported `vaipakam-lz-alerts-db`; see the
    surface table in §1 for why it no longer does.)
 2. Exports the **re-derivable** D1 tables (`offers`, `loans`,
@@ -307,7 +307,7 @@ Stage A protects against *loss* but not against *live tampering*. The
 attack surface today:
 
 - An attacker who gets CF dashboard access can write directly to
-  `vaipakam-warm` D1. A phantom offer (inserted row with valid
+  `vaipakam-archive` D1. A phantom offer (inserted row with valid
   shape) appears on the OfferBook and the user's `MyOffers`. A flipped
   `status` from `accepted` → `active` makes an already-filled offer
   re-appear as fillable. A mutated `amount_filled` hides partial fills.
@@ -431,7 +431,7 @@ can race for the bonus).
 account** — an earlier revision of this section said 5 minutes without that
 distinction, and the distinction is the whole difficulty. `apps/keeper` and
 `apps/agent` are NOT stateless with respect to the account: both hard-bind
-the account-specific `vaipakam-warm` D1 (`database_id`) and the
+the account-specific `vaipakam-archive` D1 (`database_id`) and the
 account-specific Secrets Store (`store_id`) in their `wrangler.jsonc`. A
 paused copy in a second account therefore either fails binding validation
 or points at that account's EMPTY database and replacement credential

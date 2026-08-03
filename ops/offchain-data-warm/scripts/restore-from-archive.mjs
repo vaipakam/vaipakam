@@ -389,7 +389,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
   const sections = [
     {
       tables: archive.d1.archive,
-      database: 'vaipakam-warm',
+      database: 'vaipakam-archive',
       subdir: 'd1',
       allowed: KNOWN_ARCHIVE_TABLES,
     },
@@ -427,7 +427,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // Baseline completeness for the main section: every era of the
     // backup carries these even at zero rows, so `[]` or a partial
     // set is a truncated/hostile archive, not a small one.
-    if (database === 'vaipakam-warm') {
+    if (database === 'vaipakam-archive') {
       const missingBaseline = BASELINE_TABLES.filter((t) => !names.has(t));
       if (missingBaseline.length > 0) {
         fail(
@@ -552,7 +552,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
         rowCount: table.rows.length,
         database,
         tier:
-          database !== 'vaipakam-warm'
+          database !== 'vaipakam-archive'
             ? 'legacy-lz'
             : RE_DERIVABLE_TABLES.has(table.name)
               ? 're-derivable'
@@ -569,7 +569,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // Without them the converter emits nothing for such a table and a
     // selective restore silently keeps whatever the live database already
     // holds — possibly the fabricated rows the restore exists to remove.
-    if (database === 'vaipakam-warm') {
+    if (database === 'vaipakam-archive') {
       for (const name of eraLossClears) {
         const file = path.join(dir, `${name}.sql`);
         const sql =

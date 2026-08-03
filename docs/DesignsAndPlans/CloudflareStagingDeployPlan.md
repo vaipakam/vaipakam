@@ -93,7 +93,7 @@ NO secrets — the frontend bundle is static.
 
 - **Custom domain:** `indexer.vaipakam.com` (binding pending —
   add to wrangler.jsonc `routes`).
-- **D1:** `vaipakam-warm`, `migrations_dir: "migrations"`.
+- **D1:** `vaipakam-archive`, `migrations_dir: "migrations"`.
 - **Cron:** `* * * * *` — chain-event scan + cancelled-offer
   retention prune.
 - **Secrets** (all `RPC_*`):
@@ -105,7 +105,7 @@ NO secrets — the frontend bundle is static.
 ### 4.3 `vaipakam-agent`
 
 - **Custom domain:** `agent.vaipakam.com` ✓
-- **D1:** `vaipakam-warm` (read-mostly: link_codes,
+- **D1:** `vaipakam-archive` (read-mostly: link_codes,
   thresholds, diag_errors, cross-Worker reads of indexer's
   loan tables).
 - **Cron:** `* * * * *` — periodic-interest pre-notify,
@@ -131,7 +131,7 @@ NO secrets — the frontend bundle is static.
 ### 4.4 `vaipakam-keeper`
 
 - No public domain (cron-only, no fetch handler).
-- **D1:** `vaipakam-warm` (reads notify_state + thresholds,
+- **D1:** `vaipakam-archive` (reads notify_state + thresholds,
   cross-Worker reads of indexer's loan + offer tables).
 - **Cron:** `* * * * *` — HF watcher loop. The daily oracle
   snapshot pass internally pre-checks the 00:00–00:09 UTC
@@ -197,7 +197,7 @@ Stage 3 PR5.
    STAGING tokens (operator verified 2026-05-08).
 
 3. **D1 cost** — running two D1 instances (`vaipakam-alerts-db`
-   for prod + `vaipakam-warm` for staging) doubles the
+   for prod + `vaipakam-archive` for staging) doubles the
    Workers Free Tier rows quota. Both have retention prunes
    (`CANCELLED_OFFER_RETENTION_DAYS=30`, `DIAG_RETENTION_DAYS=90`)
    so growth is bounded. If quota tightens, lower retention

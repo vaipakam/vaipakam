@@ -272,7 +272,7 @@ arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 ## Cloudflare D1 schema discipline
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
-all bind to **one shared D1 database** — `vaipakam-warm`
+all bind to **one shared D1 database** — `vaipakam-archive`
 (database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging**
 database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
@@ -304,7 +304,7 @@ migration**, since that changes its `d1_migrations` key and re-runs it.
 `ops/mesh-watcher` uses a **separate** D1 (`vaipakam-mesh-alerts-db`,
 schema in `ops/mesh-watcher/migrations/`) for trust-boundary reasons —
 its internal ops alerts must not co-locate with user-facing data. Don't
-fold those tables into `vaipakam-warm`. (The retired `ops/lz-watcher`
+fold those tables into `vaipakam-archive`. (The retired `ops/lz-watcher`
 followed the same rule with `vaipakam-lz-alerts-db`; both the Worker and
 its source tree were removed in #1440, and the database is an operator
 deletion gated on one clean nightly backup.)

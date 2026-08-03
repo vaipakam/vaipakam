@@ -6,7 +6,7 @@
 -- the compiled ABI, so it stops decoding/writing them going forward; and the
 -- front-end (logIndex union + Activity/LoanTimeline label/accent maps) dropped
 -- both kinds. But any row the indexer wrote BEFORE the excision lingers in the
--- shared `vaipakam-warm` D1, and the Worker `/activity` feed
+-- shared `vaipakam-archive` D1, and the Worker `/activity` feed
 -- (`useIndexedActivity`) would keep serving those rows — which now render with
 -- a blank label / `status-undefined` because the front-end no longer maps them.
 --
