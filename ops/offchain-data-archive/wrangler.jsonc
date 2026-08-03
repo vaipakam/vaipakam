@@ -145,5 +145,17 @@
   //     in. Free-of-cost obfuscation.
   // Workers reads `env.X` identically for vars and secrets — no
   // Worker code change is needed.
-  "vars": {},
+  // The first monthly / yearly archive THIS deployment wrote — declared,
+  // because the healthcheck cannot infer them (#1476). Inferring from the
+  // surviving objects is circular: delete the oldest and the inferred
+  // baseline advances past it, so the deleted period stops being required.
+  //
+  // Discover the values with `node scripts/find-archive-baselines.mjs`.
+  // ARCHIVE_FIRST_YEARLY is deliberately absent: no yearly archive exists
+  // yet (this deployment has not lived through a Jan 1), and while unset
+  // the weekly report says COVERAGE DEGRADED for that tier rather than
+  // implying a guarantee it does not have.
+  "vars": {
+    "ARCHIVE_FIRST_MONTHLY": "2026-06",
+  },
 }
