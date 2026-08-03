@@ -8,7 +8,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { retainedFrom, storedPayloadIsComplete } from '../src/recycleRoutes';
+import {
+  retainedFrom,
+  snapshotMaxAgeMs,
+  storedPayloadIsComplete,
+} from '../src/recycleRoutes';
 
 const T = (n: bigint) => n * 10n ** 18n;
 
@@ -81,5 +85,38 @@ describe('storedPayloadIsComplete', () => {
     expect(storedPayloadIsComplete({ ...good, bucket: '4,0' })).toBe(false);
     expect(storedPayloadIsComplete({ ...good, bucket: '' })).toBe(false);
     expect(storedPayloadIsComplete({ ...good, bucket: '-1' })).toBe(false);
+  });
+});
+
+describe('snapshotMaxAgeMs', () => {
+  const MIN = 30 * 60_000;
+
+  it('never drops below the floor', () => {
+    expect(snapshotMaxAgeMs(1, 1, 1, 1)).toBe(MIN);
+  });
+
+  it('uses the STORED rotation when the current set is transiently smaller', () => {
+    // A Secrets Store blip shrinks the readable chain set. Computing from
+    // it alone would expire a healthy snapshot during an unrelated
+    // failure.
+    const stored = snapshotMaxAgeMs(11, 5, 1, 5);
+    expect(stored).toBe(11 * 5 * 2 * 60_000);
+  });
+
+  it('uses the CURRENT rotation when config change makes the next refresh slower', () => {
+    // Switching legacy(1min) -> DO(5min), or adding chains, leaves old
+    // rows carrying the shorter cadence until their turn comes round —
+    // and their expiry would fire before that turn arrives.
+    const current = snapshotMaxAgeMs(7, 1, 7, 5);
+    expect(current).toBe(7 * 5 * 2 * 60_000);
+    // The stored-only answer would have been well short of the real
+    // 35-minute rotation.
+    expect(7 * 1 * 2 * 60_000).toBeLessThan(7 * 5 * 60_000);
+  });
+
+  it('takes the larger of the two, not the newer', () => {
+    // Neither input is authoritative on its own: the row knows what
+    // produced it, the environment knows what will refresh it next.
+    expect(snapshotMaxAgeMs(11, 5, 3, 1)).toBe(snapshotMaxAgeMs(3, 1, 11, 5));
   });
 });

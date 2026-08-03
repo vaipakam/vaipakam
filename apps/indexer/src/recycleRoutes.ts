@@ -398,10 +398,43 @@ const MAX_BLOCK_LAG_MS = 30 * 60_000;
 
 const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
 
-function snapshotMaxAgeMs(chainCount: number, tickMinutes: number): number {
-  const chains = Math.max(1, chainCount);
-  const tick = Math.max(1, tickMinutes);
-  return Math.max(SNAPSHOT_MIN_MAX_AGE_MS, chains * tick * 2 * 60_000);
+/**
+ * How old this row may be before the SCHEDULE is judged to have stalled.
+ *
+ * Takes the LARGER of the rotation that produced the row and the rotation
+ * in force now, and the asymmetry is deliberate in both directions:
+ *
+ *  - a transient Secrets Store outage shrinks the CURRENT readable chain
+ *    set, so computing purely from it would expire a healthy snapshot
+ *    during an unrelated failure. The stored value protects that.
+ *  - switching legacy→DO ingest, or adding chains, makes the NEXT refresh
+ *    slower than the one that wrote the row — which still carries the old,
+ *    shorter cadence until its turn comes round. The current value
+ *    protects that.
+ *
+ * Neither alone is right because they answer different halves of the same
+ * question: the row knows what produced it, the environment knows what
+ * will refresh it next. The bound that matters is the second, and the max
+ * is how it survives the first being temporarily wrong.
+ *
+ * Erring long is the safe direction here. Too SHORT withholds a healthy
+ * reading; too LONG delays noticing a stalled capture — and every one of
+ * these bounds is finite, so a genuinely stopped capture is still caught,
+ * just later.
+ */
+export function snapshotMaxAgeMs(
+  storedChainCount: number,
+  storedTickMinutes: number,
+  currentChainCount: number,
+  currentTickMinutes: number,
+): number {
+  const rotation = (chains: number, tick: number) =>
+    Math.max(1, chains) * Math.max(1, tick) * 2 * 60_000;
+  return Math.max(
+    SNAPSHOT_MIN_MAX_AGE_MS,
+    rotation(storedChainCount, storedTickMinutes),
+    rotation(currentChainCount, currentTickMinutes),
+  );
 }
 
 /** Every amount the stored payload must carry. A row missing one, or
@@ -473,9 +506,26 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
     // under, not one recomputed now from state an unrelated failure can
     // change.
     const observedAge = Date.now() - Date.parse(row.observed_at);
+    let currentChains = row.chain_count;
+    try {
+      currentChains = Math.max(1, getDeployedChainCount());
+    } catch {
+      /* keep the stored count */
+    }
+    // The route sees only the flag; the scheduler owns the real decision
+    // and records it. Reading the flag here is a floor on the CURRENT
+    // rotation, never the authority on the one that wrote the row.
+    const currentTick =
+      env.CHAIN_INGEST_VIA_DO === 'true' ? DO_PATH_CADENCE_MINUTES : 1;
     if (
       !Number.isFinite(observedAge) ||
-      observedAge > snapshotMaxAgeMs(row.chain_count, row.tick_minutes)
+      observedAge >
+        snapshotMaxAgeMs(
+          row.chain_count,
+          row.tick_minutes,
+          currentChains,
+          currentTick,
+        )
     ) {
       return BACKING_UNAVAILABLE('snapshot-stale');
     }
