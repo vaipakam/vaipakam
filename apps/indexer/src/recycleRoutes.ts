@@ -71,7 +71,16 @@
  * computed in BigInt. Reads are open-CORS like every other indexer read.
  */
 
+import { createPublicClient, http, type Address } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import {
+  InteractionRewardsLensFacetABI,
+  RewardAggregatorFacetABI,
+} from '@vaipakam/contracts/abis';
+
 import type { Env } from './env';
+import { getChainConfigs, getDeployedChainCount } from './env';
+import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
 import { jsonResponse } from './offerRoutes';
 
 const DEFAULT_DAYS = 30;
@@ -89,6 +98,484 @@ const MAX_DAYS = 365;
  * disagrees with the protocol's own is worse than no figure.
  */
 const RUNWAY_WINDOW_DAYS = 7;
+
+/**
+ * The retained-reserve figure, read LIVE from the chain.
+ *
+ * Every other figure this route serves comes from stored counters, and a
+ * counter cannot notice that the tokens behind it have left. The ratified
+ * requirement is therefore that the reserve is published ALONGSIDE the
+ * balance actually held, so a reader can tell whether the tokens backing
+ * the reported reserve exist at all — the difference between a healthy
+ * deployment and a corrupted one, and unreadable from D1 by construction.
+ *
+ * The read is live because there is no honest cached version of it: a
+ * stale balance is exactly the failure the figure exists to expose.
+ *
+ * WITHHELD, NEVER GUESSED. If the RPC read fails, every field is null and
+ * `unavailableReason` says why. It must not fall back to zeros (a zero
+ * reserve and an unreadable one are opposite claims) and must not be
+ * derived from the counters this route already holds — a counter-derived
+ * reserve with no balance beside it is precisely what the requirement
+ * exists to prevent. A failure here also must not fail the ROUTE: the
+ * day series is D1-derived and remains true regardless.
+ */
+/**
+ * FIXED reason codes, never underlying error text.
+ *
+ * A public, open-CORS body must not carry an operator's error detail:
+ * transport errors embed the RPC URL and this repository's RPC URLs carry
+ * provider API keys. Detail goes to the log; the caller gets a code.
+ */
+type BackingReason =
+  | 'not-captured-yet'
+  | 'read-failed'
+  | 'snapshot-stale'
+  | 'chain-behind'
+  | 'snapshot-other-deployment';
+
+interface BackingSnapshot {
+  vpfiBalance: string | null;
+  bucket: string | null;
+  unearmarked: string | null;
+  outstandingRecycled: string | null;
+  paidOutRecycled: string | null;
+  keeperBudget: string | null;
+  platformRetained: string | null;
+  /** The block both pinned reads observed. */
+  blockNumber: string | null;
+  /**
+   * The Diamond the figures came from.
+   *
+   * Published, not merely checked. A block identifies WHEN; after a
+   * `--fresh` redeploy the current deployment artifact points at the
+   * successor, so an archived response carrying only chain and block no
+   * longer identifies WHOSE state produced these numbers — and the
+   * ratified requirement is that an outside reader can reproduce them
+   * without trusting this indexer.
+   */
+  diamond: string | null;
+  /**
+   * Value that LEFT the bucket and is stranded in transport.
+   *
+   * `restoreReleasedRemit` puts the commitment back into
+   * `outstandingCommitRecycled` WITHOUT re-crediting `recycleBucket`, so
+   * `platformRetained` falls by that amount and can floor to zero while
+   * the value is neither lost nor spent — merely in flight. Without this
+   * term beside it, a stranded remittance renders as a depleted platform
+   * reserve, which the lens natspec warns about in as many words.
+   */
+  releasedRemitStranded: string | null;
+  unavailableReason: BackingReason | null;
+  asOf: string | null;
+}
+
+const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
+  vpfiBalance: null,
+  bucket: null,
+  unearmarked: null,
+  outstandingRecycled: null,
+  paidOutRecycled: null,
+  keeperBudget: null,
+  platformRetained: null,
+  releasedRemitStranded: null,
+  blockNumber: null,
+  diamond: null,
+  unavailableReason: reason,
+  asOf: null,
+});
+
+/**
+ * `platformRetained = bucket − outstandingRecycled − keeperBudget`, floored
+ * at zero (ratified; TokenomicsTechSpec + plan §M5).
+ *
+ * The keeper term is why deriving from `getRecycleBucket` alone is wrong:
+ * once `recycleRegisterKeeperBps` is non-zero, each day's margin is
+ * earmarked into `recycleKeeperBudget` from INSIDE the bucket, so the
+ * bucket does not move and a reserve computed without it overstates for as
+ * long as the register runs.
+ *
+ * The floor is not cosmetic: the subtraction goes negative in the breached
+ * state, and a negative reserve on a public page reads as a display bug
+ * rather than as the shortfall it is. The balance published beside it is
+ * what makes that state visible instead.
+ */
+export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint): bigint {
+  const net = bucket - outstanding - keeper;
+  return net > 0n ? net : 0n;
+}
+
+
+/**
+ * The browser aborts the whole `/metrics/recycling` request at 4s, so an
+ * unbounded read here does not fail gracefully — it takes the D1-derived
+ * day series down with it, which is the containment this block claims to
+ * have. viem's default is a 10s timeout WITH retries, comfortably past
+ * that, so the bound has to be set explicitly and retries disabled.
+ */
+/**
+ * Capture the backing snapshot from the chain. Called on the SCHEDULED
+ * path only — never from a request.
+ *
+ * Everything the request path used to need for this — a deadline inside
+ * the browser's abort, request coalescing, a cross-isolate cache, a
+ * per-joiner budget — existed solely because a chain call sat inside a
+ * public HTTP handler. None of it is needed here: the scheduled pass has
+ * its own budget, runs once a minute, and is already where chain reads
+ * are accounted for.
+ */
+export async function captureBackingSnapshot(
+  env: Env,
+  chainId: number,
+  /**
+   * Minutes between EXECUTED cron ticks, passed in by the scheduler.
+   *
+   * Not sniffed from `env` here: the resolved `Env` does not carry
+   * `CHAIN_INGEST_DO`, so the cast I used to reach it always read
+   * `undefined` and every DO-path row recorded a 1-minute tick — making
+   * `readBacking` expire healthy snapshots at 30 minutes while their real
+   * rotation took 35-55. The scheduler is the only place both the flag
+   * and the binding are visible, so it is the only place that can answer.
+   */
+  tickMinutes: number,
+): Promise<void> {
+  // Recorded WITH the row: the cadence that produced it. Counted from the
+  // DEPLOYED set, not the secrets readable on this tick — a count taken
+  // during a transient Secrets Store failure is smaller than the rotation
+  // that resumes once secrets recover, and storing it would expire a
+  // healthy snapshot before its own next turn. That is the inverse of the
+  // bug carrying the count was meant to fix.
+  const chainCount = (() => {
+    try {
+      return Math.max(1, getDeployedChainCount());
+    } catch {
+      return 1;
+    }
+  })();
+
+  let chain;
+  try {
+    chain = getChainConfigs(env).find((c) => c.id === chainId);
+  } catch {
+    chain = undefined;
+  }
+  if (!chain?.rpc) return;
+
+  const client = createPublicClient({
+    // No retry: a retry doubles this capture's subrequest count inside an
+    // invocation whose budget the ingest pass already reserves most of.
+    // A missed capture is picked up on the chain's next turn.
+    transport: http(chain.rpc, { timeout: 10_000, retryCount: 0 }),
+  });
+  // Identity BEFORE trust: a secret pointed at the wrong network still
+  // answers, and a fork or a matching deterministic address would store
+  // another chain's reserve under this chain's id.
+  // SAFE head, not `latest`. Pinning to the unsafe tip means a 1-32 block
+  // reorg leaves the stored amounts describing an ORPHANED block while the
+  // published block number now resolves to different canonical state — so
+  // the snapshot stops being reproducible by the reader it was published
+  // for, and can serve an obsolete verdict for the whole staleness window.
+  // `chainIndexer` already avoids exactly this, with the same fallback for
+  // RPCs that do not support the safe tag.
+  const [observedChainId, head] = await Promise.all([
+    client.getChainId(),
+    (async () => {
+      try {
+        const b = await client.getBlock({ blockTag: 'safe' });
+        return { number: b.number, timestamp: b.timestamp };
+      } catch {
+        const latest = await client.getBlockNumber();
+        const number =
+          latest > SAFE_FALLBACK_BUFFER ? latest - SAFE_FALLBACK_BUFFER : 0n;
+        const b = await client.getBlock({ blockNumber: number });
+        return { number, timestamp: b.timestamp };
+      }
+    })(),
+  ]);
+  const blockNumber = head.number;
+  if (observedChainId !== chainId) {
+    console.warn(
+      `[recycling] RPC for chain ${chainId} reports ${observedChainId}; not storing backing`,
+    );
+    return;
+  }
+  // PINNED TO ONE BLOCK. These two reads explain each other — the second
+  // is what stops a released remittance rendering as a depleted reserve —
+  // so they have to describe the same moment.
+  const [snap, composition] = await Promise.all([
+    client.readContract({
+      address: chain.diamond as Address,
+      abi: InteractionRewardsLensFacetABI,
+      functionName: 'getRecycleBackingSnapshot',
+      blockNumber,
+    }) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>,
+    client.readContract({
+      address: chain.diamond as Address,
+      abi: RewardAggregatorFacetABI,
+      functionName: 'getRecycleCompositionPosition',
+      blockNumber,
+    }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
+  ]);
+  const [vpfiBalance, bucket, unearmarked, outstanding, paidOut, keeper] = snap;
+  const payload = {
+    vpfiBalance: vpfiBalance.toString(),
+    bucket: bucket.toString(),
+    unearmarked: unearmarked.toString(),
+    outstandingRecycled: outstanding.toString(),
+    paidOutRecycled: paidOut.toString(),
+    keeperBudget: keeper.toString(),
+    platformRetained: retainedFrom(bucket, outstanding, keeper).toString(),
+    releasedRemitStranded: composition[1].toString(),
+  };
+  await env.DB.prepare(
+    `INSERT INTO recycle_backing_snapshot
+       (chain_id, payload, diamond, observed_at, block_time, block_number,
+        chain_count, tick_minutes)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+     ON CONFLICT(chain_id) DO UPDATE SET
+       payload = excluded.payload,
+       diamond = excluded.diamond,
+       observed_at = excluded.observed_at,
+       block_time = excluded.block_time,
+       block_number = excluded.block_number,
+       chain_count = excluded.chain_count,
+       tick_minutes = excluded.tick_minutes
+     WHERE
+       -- NEVER GO BACKWARDS. A load-balanced RPC can serve an older safe
+       -- head, and two captures can complete out of order; an
+       -- unconditional upsert then replaces a newer reading with an older
+       -- one AND refreshes observed_at, so the regression passes every
+       -- freshness check and the dashboard silently moves back to a
+       -- previous verdict. A different Diamond is not a regression — it
+       -- is a new subject, and must always win.
+       recycle_backing_snapshot.diamond != excluded.diamond
+       OR CAST(excluded.block_number AS INTEGER)
+          >= CAST(recycle_backing_snapshot.block_number AS INTEGER)`,
+  )
+    .bind(
+      chainId,
+      JSON.stringify(payload),
+      chain.diamond,
+      new Date().toISOString(),
+      new Date(Number(head.timestamp) * 1000).toISOString(),
+      blockNumber.toString(),
+      chainCount,
+      tickMinutes,
+    )
+    .run();
+}
+
+/**
+ * Serve the stored snapshot. NO network I/O.
+ *
+ * `asOf` is the capture time, and the surface renders its age — a figure
+ * whose currency the reader can judge is a different object from one they
+ * are asked to trust.
+ */
+/**
+ * How old a stored snapshot may be before it is withheld.
+ *
+ * DERIVED from the refresh cadence, not a fixed number. Captures are
+ * round-robin — one chain per executed tick — so a chain's own refresh
+ * interval is `chains × tick`. A fixed 30 minutes silently became
+ * UNSATISFIABLE past six chains on the DO path (7 × 5 = 35 > 30), which
+ * would have marked every healthy chain stale for five minutes of every
+ * cycle, and the bindings already support eleven.
+ *
+ * Two full cycles: one missed turn is a blip, not a wedged capture.
+ */
+/** Mirrors `chainIndexer`'s buffer for RPCs without a `safe` tag. */
+const SAFE_FALLBACK_BUFFER = 32n;
+
+/**
+ * How far the safe head may trail the wall clock before the CHAIN, rather
+ * than the schedule, is treated as the problem.
+ *
+ * Finality lag plus the 32-block fallback is minutes on the chains in
+ * scope; an RPC frozen for half an hour is not lag.
+ */
+const MAX_BLOCK_LAG_MS = 30 * 60_000;
+
+const SNAPSHOT_MIN_MAX_AGE_MS = 30 * 60_000;
+
+/**
+ * How old this row may be before the SCHEDULE is judged to have stalled.
+ *
+ * Takes the LARGER of the rotation that produced the row and the rotation
+ * in force now, and the asymmetry is deliberate in both directions:
+ *
+ *  - a transient Secrets Store outage shrinks the CURRENT readable chain
+ *    set, so computing purely from it would expire a healthy snapshot
+ *    during an unrelated failure. The stored value protects that.
+ *  - switching legacy→DO ingest, or adding chains, makes the NEXT refresh
+ *    slower than the one that wrote the row — which still carries the old,
+ *    shorter cadence until its turn comes round. The current value
+ *    protects that.
+ *
+ * Neither alone is right because they answer different halves of the same
+ * question: the row knows what produced it, the environment knows what
+ * will refresh it next. The bound that matters is the second, and the max
+ * is how it survives the first being temporarily wrong.
+ *
+ * Erring long is the safe direction here. Too SHORT withholds a healthy
+ * reading; too LONG delays noticing a stalled capture — and every one of
+ * these bounds is finite, so a genuinely stopped capture is still caught,
+ * just later.
+ */
+export function snapshotMaxAgeMs(
+  storedChainCount: number,
+  storedTickMinutes: number,
+  currentChainCount: number,
+  currentTickMinutes: number,
+): number {
+  const rotation = (chains: number, tick: number) =>
+    Math.max(1, chains) * Math.max(1, tick) * 2 * 60_000;
+  return Math.max(
+    SNAPSHOT_MIN_MAX_AGE_MS,
+    rotation(storedChainCount, storedTickMinutes),
+    rotation(currentChainCount, currentTickMinutes),
+  );
+}
+
+/** Every amount the stored payload must carry. A row missing one, or
+ *  carrying a non-decimal, is not a partial answer — it is not an answer. */
+const STORED_PAYLOAD_FIELDS = [
+  'vpfiBalance',
+  'bucket',
+  'unearmarked',
+  'outstandingRecycled',
+  'paidOutRecycled',
+  'keeperBudget',
+  'platformRetained',
+  'releasedRemitStranded',
+] as const;
+
+const DECIMAL_STRING = /^\d+$/;
+
+/**
+ * Is the stored payload EXACTLY what a backing block requires?
+ *
+ * The frontend gate protects the dashboard; it does nothing for any other
+ * consumer of this API. Syntactically valid JSON — `{}`, or a field of the
+ * wrong type — would otherwise be spread into the response with
+ * `unavailableReason: null`, so a consumer honouring the all-or-nothing
+ * contract would publish a partial block believing it complete. The
+ * contract has to hold at the boundary that states it.
+ */
+export function storedPayloadIsComplete(v: unknown): v is Record<string, string> {
+  if (typeof v !== 'object' || v === null) return false;
+  const rec = v as Record<string, unknown>;
+  return STORED_PAYLOAD_FIELDS.every(
+    (f) => typeof rec[f] === 'string' && DECIMAL_STRING.test(rec[f] as string),
+  );
+}
+
+async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT payload, diamond, observed_at, block_time, block_number,
+              chain_count, tick_minutes
+         FROM recycle_backing_snapshot WHERE chain_id = ?1`,
+    )
+      .bind(chainId)
+      .first<{
+        payload: string;
+        diamond: string;
+        observed_at: string;
+        block_time: string;
+        block_number: string;
+        chain_count: number;
+        tick_minutes: number;
+      }>();
+    if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
+
+    // WHOSE figures are these? A `--fresh` redeploy puts a new Diamond on
+    // the same chain, and `chain_id` alone would keep serving the old
+    // one's balances as current — a fully backed predecessor masking an
+    // empty successor, with nothing to indicate it. A block number cannot
+    // fix that: it says WHEN, never WHOSE.
+    // From the DEPLOYMENT artifact, not `getChainConfigs` — the latter
+    // filters by RPC secret availability, and this route must not depend
+    // on secrets at all (see the dispatch note in index.ts).
+    const current = getDeployment(chainId);
+    if (!current || current.diamond.toLowerCase() !== row.diamond.toLowerCase()) {
+      return BACKING_UNAVAILABLE('snapshot-other-deployment');
+    }
+
+    // Has the SCHEDULE kept up? Against the cadence THIS ROW was captured
+    // under, not one recomputed now from state an unrelated failure can
+    // change.
+    const observedAge = Date.now() - Date.parse(row.observed_at);
+    let currentChains = row.chain_count;
+    try {
+      currentChains = Math.max(1, getDeployedChainCount());
+    } catch {
+      /* keep the stored count */
+    }
+    // The route sees only the flag; the scheduler owns the real decision
+    // and records it. Reading the flag here is a floor on the CURRENT
+    // rotation, never the authority on the one that wrote the row.
+    const currentTick =
+      env.CHAIN_INGEST_VIA_DO === 'true' ? DO_PATH_CADENCE_MINUTES : 1;
+    if (
+      !Number.isFinite(observedAge) ||
+      observedAge >
+        snapshotMaxAgeMs(
+          row.chain_count,
+          row.tick_minutes,
+          currentChains,
+          currentTick,
+        )
+    ) {
+      return BACKING_UNAVAILABLE('snapshot-stale');
+    }
+    // Is the CHAIN still moving? The schedule check cannot see that: it
+    // only knows the capture pass ran.
+    const blockLag = Date.parse(row.observed_at) - Date.parse(row.block_time);
+    if (!Number.isFinite(blockLag) || blockLag > MAX_BLOCK_LAG_MS) {
+      return BACKING_UNAVAILABLE('chain-behind');
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.payload);
+    } catch {
+      return BACKING_UNAVAILABLE('read-failed');
+    }
+    if (!storedPayloadIsComplete(parsed)) return BACKING_UNAVAILABLE('read-failed');
+
+    return {
+      ...(parsed as unknown as Omit<
+        BackingSnapshot,
+        'unavailableReason' | 'asOf' | 'blockNumber'
+      >),
+      blockNumber: row.block_number,
+      diamond: row.diamond,
+      unavailableReason: null,
+      // The BLOCK's time — what these figures describe. `observed_at` is
+      // bookkeeping about the schedule, and post-dates the block.
+      asOf: row.block_time,
+    };
+  } catch (err) {
+    console.warn(`[recycling] backing snapshot read failed: ${String(err)}`);
+    return BACKING_UNAVAILABLE('read-failed');
+  }
+}
+
+/**
+ * This route must never be cached by the CLIENT. The shared
+ * `jsonResponse` sets `Cache-Control: public, max-age=10`, which would
+ * add browser staleness on top of the capture's own — and the capture's
+ * age is the one thing this surface publishes so a reader can judge it.
+ * A figure whose stated age understates its real age is worse than an
+ * openly old one.
+ */
+function liveJsonResponse(body: unknown, status = 200): Response {
+  const res = jsonResponse(body, status);
+  const headers = new Headers(res.headers);
+  headers.set('Cache-Control', 'no-store');
+  return new Response(res.body, { status: res.status, headers });
+}
 
 function parseChainId(raw: string | null): number | null {
   if (!raw) return null;
@@ -198,7 +685,7 @@ export async function handleRecyclingSeries(
 
     const maxDay = head?.max_day ?? null;
     if (maxDay === null) {
-      return jsonResponse({
+      return liveJsonResponse({
         chainId,
         days,
         fromDay: null,
@@ -220,6 +707,13 @@ export async function handleRecyclingSeries(
           // "not self-funded" from "field absent" (Codex #1507 r1 P2).
           selfFunded: false,
         },
+        // The SAME rule the comment above states, which this block was
+        // missing: a fresh or pre-launch deployment has no day rows but
+        // can absolutely hold a recycled reserve, and omitting the field
+        // makes a current indexer indistinguishable from one too old to
+        // serve it — so the page withheld a readable reserve until an
+        // unrelated day row happened to appear.
+        backing: await readBacking(env, chainId),
       });
     }
 
@@ -723,7 +1217,7 @@ export async function handleRecyclingSeries(
             ? 'attribution-column-unavailable'
             : null;
 
-    return jsonResponse({
+    return liveJsonResponse({
       chainId,
       days,
       fromDay: cutoff,
@@ -752,9 +1246,13 @@ export async function handleRecyclingSeries(
         runwayUnavailableReason,
         selfFunded,
       },
+      // Live, and deliberately outside `cumulative`: every field there is
+      // counter-derived, and the whole point of this block is that it is
+      // not. Grouping them would invite a reader to trust both equally.
+      backing: await readBacking(env, chainId),
     });
   } catch (err) {
-    return jsonResponse(
+    return liveJsonResponse(
       { error: 'recycling-series query failed', detail: String(err) },
       500,
     );

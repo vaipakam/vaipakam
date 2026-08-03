@@ -57,6 +57,7 @@ import {
   readSecret,
   getChainConfigs,
   type WorkerEnv,
+  type Env,
   type SecretBinding,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
@@ -76,7 +77,7 @@ import {
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
 export { ChainIngestDO } from './chainIngestDO';
-import { shouldRunCronTick } from './cronRouting';
+import { DO_PATH_CADENCE_MINUTES, shouldRunCronTick } from './cronRouting';
 
 /**
  * #757 — is the DO ingest path active? Gated on BOTH the DO binding being
@@ -99,7 +100,7 @@ import {
   handleOffersPreflight,
 } from './offerRoutes';
 import { handleLoopClosure } from './rewardRoutes';
-import { handleRecyclingSeries } from './recycleRoutes';
+import { captureBackingSnapshot, handleRecyclingSeries } from './recycleRoutes';
 import {
   handleSignedOfferPost,
   handleSignedOffersGet,
@@ -148,6 +149,50 @@ export default {
     // chain is serviced each minute (not one per round-robin tick), and the DO
     // is the single serialized writer that the webhook also routes through.
     // Without the DO binding, fall back to the legacy inline round-robin scan.
+    // #1525 — capture the retained-reserve backing snapshot for ONE chain
+    // per tick, round-robin by scheduled minute.
+    //
+    // Not a fan-out over every chain: free-tier Workers cap at 50
+    // subrequests per invocation and `chainIndexer` reserves ~38 of them
+    // for a single-chain backfill (see its round-robin note). Four RPC
+    // calls per chain across four chains would sit in the same invocation
+    // as that scan and can exhaust the budget — recreating the dropped-
+    // event condition round-robin exists to prevent. The same constraint
+    // that shaped the ingest pass shapes this one.
+    //
+    // Per-chain cadence is therefore `len(chains) × tick`, which the
+    // surface discloses as its capture time rather than implying live.
+    const backingChains = getChainConfigs(resolved);
+    if (backingChains.length > 0) {
+      // The ordinal must advance by ONE PER EXECUTED TICK, not per
+      // minute. `shouldRunCronTick` skips 4 of every 5 minutes on the DO
+      // path, so a raw-minute index advances by 5 each time it runs: with
+      // three chains that is a 15-minute cadence rather than the three
+      // this comment claims, and with FIVE chains the index never moves
+      // at all and four chains are captured never. Dividing by the
+      // cadence restores a step of one in both modes.
+      // `shouldRunCronTick` FAILS OPEN on an undefined or non-finite
+      // scheduled time (manual invocation), so this must too. Deriving an
+      // ordinal from it unguarded produced NaN, `target` undefined, and a
+      // throw before any `waitUntil` was registered — turning a
+      // deliberate fail-open into a whole-tick outage.
+      const t = controller.scheduledTime;
+      const minute = Number.isFinite(t) ? Math.floor((t as number) / 60_000) : 0;
+      // ONE decision, used for both the rotation and the row's recorded
+      // cadence — `doIngestEnabled` needs the binding, which only this
+      // scope has.
+      const tickMinutes = doIngestEnabled(env) ? DO_PATH_CADENCE_MINUTES : 1;
+      const ordinal = Math.floor(minute / tickMinutes);
+      const target = backingChains[Math.abs(ordinal) % backingChains.length];
+      ctx.waitUntil(
+        captureBackingSnapshot(resolved, target.id, tickMinutes).catch((err) => {
+          // One chain's RPC blip must not wedge the tick.
+          // eslint-disable-next-line no-console
+          console.error(`[indexer] backing snapshot failed for ${target.id}:`, err);
+        }),
+      );
+    }
+
     if (doIngestEnabled(env) && env.CHAIN_INGEST_DO) {
       const ns = env.CHAIN_INGEST_DO;
       for (const chain of getChainConfigs(resolved)) {
@@ -273,6 +318,22 @@ export default {
       return new Response('Not found', { status: 404 });
     }
 
+    // ─── /metrics/recycling ─────────────────────────────────────
+    // Dispatched BEFORE `resolveEnv` deliberately. The handler performs no
+    // network I/O — that was the whole point of moving the chain read to
+    // the scheduled pass — but awaiting the Secrets Store fan-out below
+    // would reintroduce exactly the failure the recut removed: a degraded
+    // secrets binding could push the response past the browser's abort and
+    // discard a valid D1 series. It needs D1, the ingest flag and the
+    // deployment artifact; none of those come from Secrets Store.
+    if (url.pathname === '/metrics/recycling') {
+      if (req.method === 'OPTIONS') return handleOffersPreflight();
+      if (req.method === 'GET') {
+        return handleRecyclingSeries(req, env as unknown as Env);
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -296,16 +357,6 @@ export default {
     if (url.pathname === '/metrics/loop-closure') {
       if (req.method === 'OPTIONS') return handleOffersPreflight();
       if (req.method === 'GET') return handleLoopClosure(req, resolved);
-      return new Response('Not found', { status: 404 });
-    }
-
-    // ─── /metrics/recycling ─────────────────────────────────────
-    // M5 (#1218 / #1349) — the per-day recycling transparency series
-    // (pool composition, absorption, net emission) the public dashboard
-    // reads. Top-level for the same reason as the route above.
-    if (url.pathname === '/metrics/recycling') {
-      if (req.method === 'OPTIONS') return handleOffersPreflight();
-      if (req.method === 'GET') return handleRecyclingSeries(req, resolved);
       return new Response('Not found', { status: 404 });
     }
 

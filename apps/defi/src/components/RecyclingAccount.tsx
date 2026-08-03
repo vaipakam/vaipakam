@@ -45,6 +45,20 @@ const AMOUNT_FIELDS = {
     'absorbedMirror',
     'absorbed',
   ],
+  // The live backing block. A new family of amounts that skipped this list
+  // would be rendered unvalidated — the validator walks what it is told
+  // about, and nothing else notices an omission.
+  backing: [
+    'vpfiBalance',
+    'bucket',
+    'unearmarked',
+    'outstandingRecycled',
+    'paidOutRecycled',
+    'keeperBudget',
+    'platformRetained',
+    'releasedRemitStranded',
+    'blockNumber',
+  ],
 } as const;
 
 /**
@@ -60,16 +74,33 @@ const AMOUNT_FIELDS = {
  * detected corruption into a confident false figure, which is the failure
  * this entire surface is built to avoid.
  */
-function amountsAreWellFormed(s: RecyclingSeries): boolean {
-  const ok = (v: unknown) =>
-    v === null || (typeof v === 'string' && WELL_FORMED_AMOUNT.test(v));
+const wellFormedAmount = (v: unknown) =>
+  v === null || (typeof v === 'string' && WELL_FORMED_AMOUNT.test(v));
+
+/**
+ * The D1-DERIVED series only. Backing is validated separately, on purpose.
+ *
+ * Folding backing into this check made one malformed backing amount mark
+ * the WHOLE account unavailable — hiding a perfectly good day series and
+ * cumulative totals. That is the opposite of the rule this component's
+ * own spec clause states: a surface that cannot trust an input refuses
+ * ITS OWN figures and no more. Backing is a separately captured payload,
+ * so its failures belong to its own block.
+ */
+function seriesAmountsAreWellFormed(s: RecyclingSeries): boolean {
   const cum = s.cumulative as unknown as Record<string, unknown>;
-  for (const f of AMOUNT_FIELDS.cumulative) if (!ok(cum[f])) return false;
+  for (const f of AMOUNT_FIELDS.cumulative) if (!wellFormedAmount(cum[f])) return false;
   for (const d of s.daily) {
     const row = d as unknown as Record<string, unknown>;
-    for (const f of AMOUNT_FIELDS.daily) if (!ok(row[f])) return false;
+    for (const f of AMOUNT_FIELDS.daily) if (!wellFormedAmount(row[f])) return false;
   }
   return true;
+}
+
+/** The backing block alone. A failure here withholds only that block. */
+function backingAmountsAreWellFormed(b: RecyclingSeries['backing']): boolean {
+  const rec = b as unknown as Record<string, unknown>;
+  return AMOUNT_FIELDS.backing.every((f) => wellFormedAmount(rec[f]));
 }
 
 /**
@@ -184,7 +215,7 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
           if (cancelled) return;
           // A null read is "we cannot say", not "nothing happened" — and
           // a malformed one is the same answer, reached differently.
-          if (!s || !amountsAreWellFormed(s)) {
+          if (!s || !seriesAmountsAreWellFormed(s)) {
             setState('unavailable');
             return;
           }
@@ -224,6 +255,61 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
   }
 
   const { cumulative, daily, scope, coverageFromDay } = series;
+  // EVERY displayed member, not just the two I first checked. The
+  // validator accepts nulls (a withheld read is all-nulls by design), so a
+  // partial payload — retained present, balance null — passed the old gate
+  // and rendered the reserve with an empty balance cell beside it. That is
+  // the all-or-nothing rule failing on precisely the untrusted-payload
+  // path it exists to cover.
+  // Driven off the AMOUNT FAMILY, not a second hand-kept list.
+  //
+  // Two lists that must agree is how this rule failed three times in one
+  // PR: the gate covered two of the four members, then four of the five
+  // once `releasedRemitStranded` was added. A field can now only enter
+  // the payload through `AMOUNT_FIELDS.backing`, and entering it puts the
+  // field in the gate automatically. `unavailableReason` being null means
+  // the read SUCCEEDED, so every amount it returns must be present; a
+  // null among them is a partial payload, not a withheld one.
+  const backingPublishable = (b: RecyclingSeries['backing']): boolean =>
+    b.unavailableReason === null &&
+    // The capture time is part of the success tuple, not decoration.
+    // These figures are read on a schedule, and the ONLY thing making
+    // that honest is the reader being able to judge their currency — so
+    // a snapshot that cannot say when it was taken is not publishable.
+    // It is required here rather than in the amount family because it is
+    // a timestamp, and that family validates digit strings.
+    // A PARSEABLE instant, not merely a non-empty string: `asOf:
+    // "unknown"` passed a length check and was rendered as the freshness
+    // disclosure, which is the same defect as omitting it.
+    typeof b.asOf === 'string' &&
+    Number.isFinite(Date.parse(b.asOf)) &&
+    // Required, and NOT in the amount family — it is an address, and that
+    // family validates digit strings. A successful read returns it, so a
+    // response missing it is partial rather than withheld.
+    typeof b.diamond === 'string' &&
+    b.diamond.length > 0 &&
+    // Malformed amounts withhold the BLOCK, not the account.
+    backingAmountsAreWellFormed(b) &&
+    AMOUNT_FIELDS.backing.every(
+      (f) => (b as unknown as Record<string, unknown>)[f] !== null,
+    );
+
+  // An indexer that predates the backing block serves no `backing` at all.
+  // Treat that as the same refusal a failed read produces — the page must
+  // degrade to "cannot say", never crash the analytics surface over a
+  // field that a rolling deploy legitimately has not shipped yet.
+  const backing = series.backing ?? {
+    vpfiBalance: null,
+    bucket: null,
+    unearmarked: null,
+    outstandingRecycled: null,
+    paidOutRecycled: null,
+    keeperBudget: null,
+    platformRetained: null,
+    unavailableReason: 'not-served-by-this-indexer',
+    asOf: null,
+  };
+  const backingShown = backingPublishable(backing);
   // Every amount arrives as an 18-decimal wei decimal string. Rendering it
   // verbatim shows a 20-digit integer for an ordinary figure.
   const amt = (v: string | null): string => {
@@ -341,6 +427,100 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
       {partsExceedCombined && (
         <p className="muted" data-testid="recycling-split-scope">
           {t('recycling.splitScopeNote')}
+        </p>
+      )}
+
+      {/* THE RETAINED RESERVE, AND THE TOKENS BEHIND IT.
+          Published as a pair on purpose. Every other figure on this page
+          is counter-derived, and a counter cannot notice that the tokens
+          behind it have left; this is the one figure that can, and it is
+          worthless alone. The ratified requirement is the reserve
+          "alongside the token balance actually held", so the page renders
+          BOTH or NEITHER — a reserve on its own is the confident, checkable
+          -looking number the requirement exists to prevent. */}
+      {backingShown ? (
+        <dl className="recycling-backing" data-testid="recycling-backing">
+          <div>
+            <dt>{t('recycling.platformRetained')}</dt>
+            <dd data-testid="recycling-retained">
+              {amt(backing.platformRetained)}
+            </dd>
+          </div>
+          <div>
+            <dt>{t('recycling.vpfiBalance')}</dt>
+            <dd data-testid="recycling-balance">{amt(backing.vpfiBalance)}</dd>
+          </div>
+          <div>
+            <dt>{t('recycling.bucketLabel')}</dt>
+            <dd data-testid="recycling-bucket">{amt(backing.bucket)}</dd>
+          </div>
+          <div>
+            <dt>{t('recycling.outsideBucket')}</dt>
+            <dd data-testid="recycling-unearmarked">
+              {amt(backing.unearmarked)}
+            </dd>
+          </div>
+          {/* THE VERDICT, stated rather than left to be inferred.
+              `unearmarked` is `balance − bucket` FLOORED AT ZERO, so a
+              bucket that is exactly consumed and one that is SHORT both
+              render 0 — the lens documentation says so in as many words
+              and directs a reader to compare balance against bucket. A
+              page that shows only the floored value publishes the two
+              states identically, which is the one distinction this whole
+              block exists to make. */}
+          {/* Only when non-zero: a permanent "stranded: 0" row is a
+              caveat whose condition is absent, which this surface's own
+              rule forbids. */}
+          {backing.releasedRemitStranded !== null &&
+            BigInt(backing.releasedRemitStranded) > 0n && (
+              <div>
+                <dt>{t('recycling.strandedLabel')}</dt>
+                <dd data-testid="recycling-stranded">
+                  {amt(backing.releasedRemitStranded)}
+                </dd>
+              </div>
+            )}
+          <div>
+            <dt>{t('recycling.backedLabel')}</dt>
+            <dd data-testid="recycling-backed">
+              {BigInt(backing.vpfiBalance!) >= BigInt(backing.bucket!)
+                ? t('recycling.backedYes')
+                : t('recycling.backedShort', {
+                    // Through `amt`, not the raw formatter. A shortfall
+                    // under 0.0001 truncates to "short by 0 VPFI" — a
+                    // FALSE quantified claim, and worse than the bare
+                    // verdict it decorates. The below-threshold handling
+                    // already existed two functions up; this new call
+                    // site simply did not go through it.
+                    amount: amt(
+                      (
+                        BigInt(backing.bucket!) - BigInt(backing.vpfiBalance!)
+                      ).toString(),
+                    ),
+                  })}
+            </dd>
+          </div>
+          {/* THE AGE, RENDERED. The snapshot is captured on a schedule,
+              so it is minutes old by construction — and I had justified
+              serving a non-live figure by saying its age was "published",
+              when it was published only into the JSON. A disclosure the
+              reader cannot see is not one. */}
+          {backing.asOf !== null && (
+            <div>
+              <dt>{t('recycling.asOfLabel')}</dt>
+              <dd data-testid="recycling-asof">
+                {t('recycling.asOfValue', { at: backing.asOf })}
+              </dd>
+            </div>
+          )}
+        </dl>
+      ) : (
+        // The REASON, never a dash: a dash reads as a zero reserve, which
+        // is the opposite claim to "we could not read the chain".
+        <p className="muted" data-testid="recycling-backing-unavailable">
+          {t('recycling.backingUnavailable', {
+            reason: backing.unavailableReason ?? 'unknown',
+          })}
         </p>
       )}
 

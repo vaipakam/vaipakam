@@ -1115,10 +1115,24 @@ For each table:
    `recycle_day_backfill` (absent from pre-#1349-M5 archives).
 
    > **`recycle_day_backfill` is the one recycling table that is restored
-   > rather than replayed**, and the distinction is load-bearing. Every
-   > other `recycle_*` table is a fold of chain logs, so §6's replay
+   > rather than replayed**, and the distinction is load-bearing. Almost
+   > every other `recycle_*` table is a fold of chain logs, so §6's replay
    > rebuilds it exactly — those are in the clear-before-replay command
-   > and must NOT be imported here. This one holds pre-cutover day figures
+   > and must NOT be imported here.
+   >
+   > **`recycle_backing_snapshot` is a second exception, in the opposite
+   > direction** (#1525). It is cleared like the replayed tables, but the
+   > replay does NOT rebuild it: it holds a periodic reading of LIVE
+   > contract state, written only by the scheduled capture pass, so it
+   > stays empty until that pass next runs — within one round-robin cycle
+   > of restore. Do not wait for it during the replay and do not verify it
+   > as replay output; an empty table there is the expected state, and the
+   > dashboard withholds the backing block rather than publishing zeros.
+   > It is deliberately NOT imported from the archive either: a restored
+   > copy would republish an old backing verdict as a current one.
+   >
+   > **Back to `recycle_day_backfill`** — the table this section is about,
+   > and the one that IS imported here. It holds pre-cutover day figures
    > recomputed from `getRecycleDayMetrics`, whose `dayCapThreshold18`
    > input `setBroadcastDayCapThreshold` can overwrite for an
    > already-finalized day on a demoted Diamond. After that, re-running
@@ -1235,6 +1249,7 @@ DELETE FROM recycle_series_events; \
 DELETE FROM recycle_series_state; \
 DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
+DELETE FROM recycle_backing_snapshot; \
 DELETE FROM indexer_cursor"
 ```
 

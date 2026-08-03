@@ -881,6 +881,49 @@ export interface RecyclingSeries {
     runwayUnavailableReason: string | null;
     selfFunded: boolean;
   };
+  /**
+   * The retained reserve and the balance actually behind it — a SCHEDULED
+   * reading of chain state, deliberately not inside `cumulative`.
+   *
+   * Not live: the platform captures it on a rotation and serves what was
+   * stored, so it trails the chain. `asOf` is the timestamp of the block
+   * these figures describe, and a consumer displaying them is expected to
+   * show it — an undisclosed age is what makes a stale figure
+   * indistinguishable from a current one.
+   *
+   * Every field in `cumulative` is derived from stored counters, and a
+   * counter cannot notice that the tokens behind it have left. This block
+   * is the only one that can, which is why it is separate: grouping them
+   * would invite a reader to trust both equally.
+   *
+   * Every field is null together when there is no reading to publish —
+   * none captured yet, the capture schedule fallen behind, or the chain
+   * itself no longer advancing — with `unavailableReason` saying which.
+   * Null here means "we have no reading we can stand behind", never "the
+   * reserve is zero". Those are opposite claims.
+   */
+  backing: {
+    vpfiBalance: string | null;
+    bucket: string | null;
+    unearmarked: string | null;
+    outstandingRecycled: string | null;
+    paidOutRecycled: string | null;
+    keeperBudget: string | null;
+    /** `bucket − outstandingRecycled − keeperBudget`, floored at zero. */
+    platformRetained: string | null;
+    /** The block both pinned reads observed. */
+    blockNumber: string | null;
+    /** The Diamond the figures came from. A block says WHEN; after a
+     *  redeploy only this says WHOSE, and both are needed to reproduce
+     *  the figures independently. */
+    diamond: string | null;
+    /** Value that left the bucket and is stranded in transport. Without
+     *  it beside the reserve, a stranded remittance reads as a depleted
+     *  platform reserve rather than as value in flight. */
+    releasedRemitStranded: string | null;
+    unavailableReason: string | null;
+    asOf: string | null;
+  };
 }
 
 /**

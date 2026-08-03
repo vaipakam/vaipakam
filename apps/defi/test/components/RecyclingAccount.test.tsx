@@ -55,6 +55,20 @@ const series = (over: Partial<RecyclingSeries> = {}): RecyclingSeries => ({
   scope: 'global',
   coverageFromDay: 1,
   daily: [day()],
+  backing: {
+    vpfiBalance: tok(100),
+    bucket: tok(40),
+    unearmarked: tok(60),
+    outstandingRecycled: tok(10),
+    paidOutRecycled: tok(2),
+    keeperBudget: tok(5),
+    platformRetained: tok(25),
+    releasedRemitStranded: '0',
+    blockNumber: '12345678',
+    diamond: '0xd89f0000000000000000000000000000000000ab',
+    unavailableReason: null,
+    asOf: '2026-08-03T00:00:00.000Z',
+  },
   cumulative: {
     absorbed: '5',
     absorbedPreLaunch: '0',
@@ -516,5 +530,301 @@ describe('RecyclingAccount — per-day provenance and scope', () => {
     await screen.findByTestId('recycling-scope-note');
     expect(screen.queryByTestId('recycling-absorbed')).toBeNull();
     expect(screen.queryByTestId('recycling-split-scope')).toBeNull();
+  });
+});
+
+const noBacking = (reason: string) => ({
+    vpfiBalance: null,
+    bucket: null,
+    unearmarked: null,
+    outstandingRecycled: null,
+    paidOutRecycled: null,
+    keeperBudget: null,
+    platformRetained: null,
+    releasedRemitStranded: null,
+  unavailableReason: reason,
+  asOf: null,
+});
+
+describe('RecyclingAccount — the reserve is never published alone', () => {
+  it('publishes the retained reserve WITH the balance actually behind it', async () => {
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-retained').textContent).toBe('25'),
+    );
+    // The pair is the whole requirement: every other figure on this page is
+    // counter-derived, and a counter cannot notice the tokens have left.
+    expect(screen.getByTestId('recycling-balance').textContent).toBe('100');
+    expect(screen.getByTestId('recycling-unearmarked').textContent).toBe('60');
+    expect(screen.getByTestId('recycling-bucket').textContent).toBe('40');
+  });
+
+  it('withholds the reserve ENTIRELY when the chain could not be read', async () => {
+    mockSeries(series({ backing: noBacking('read-failed: timeout') }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    // Not a zero, not a dash, and above all not the reserve on its own.
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+    expect(screen.queryByTestId('recycling-balance')).toBeNull();
+  });
+
+  it('states WHY the reserve is missing, since a dash reads as zero', async () => {
+    mockSeries(series({ backing: noBacking('no-rpc-endpoint-configured') }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('recycling-backing-unavailable').textContent,
+      ).toContain('no-rpc-endpoint-configured'),
+    );
+  });
+
+  it('degrades rather than crashing when an older indexer omits the block', async () => {
+    // A rolling deploy legitimately serves a response without `backing`.
+    // Destructuring it blind took the whole /analytics surface down.
+    const s = series();
+    delete (s as unknown as Record<string, unknown>).backing;
+    mockSeries(s);
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('recycling-backing-unavailable').textContent,
+      ).toContain('not-served-by-this-indexer'),
+    );
+    // …and the rest of the account still renders.
+    expect(screen.getByTestId('recycling-absorbed-local')).toBeDefined();
+  });
+
+  it('a corrupt BACKING amount withholds the BLOCK, not the account', async () => {
+    // Folding backing into the series validator made one bad backing
+    // value hide a perfectly good day series — the opposite of this
+    // surface's own rule that a distrusted input costs only its own
+    // figures.
+    mockSeries(
+      series({
+        backing: { ...series().backing, platformRetained: 'not-a-number' },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    // …and the D1-derived figures survive.
+    expect(screen.getByTestId('recycling-absorbed-local')).toBeDefined();
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('a corrupt DAILY amount still withholds the whole account', async () => {
+    // The series IS the account; a corrupt row there has nothing to fall
+    // back to.
+    mockSeries(series({ daily: [day({ dayId: 3, scheduleFloor: '1,2' })] }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByText('recycling.unavailable');
+  });
+});
+
+describe('RecyclingAccount — a floored figure must not hide a shortfall', () => {
+  it('says the pool is SHORT when the balance is below the bucket', async () => {
+    // `unearmarked` is `balance − bucket` floored at zero, so a bucket
+    // exactly consumed and one in breach render identically. The lens
+    // documentation says the zero is ambiguous by construction and
+    // directs a reader to compare balance against bucket — so the page
+    // states the comparison rather than leaving it to be inferred.
+    mockSeries(
+      series({
+        backing: {
+          ...series().backing,
+          vpfiBalance: tok(95),
+          bucket: tok(100),
+          unearmarked: '0', // floored — looks identical to fully consumed
+          outstandingRecycled: tok(90),
+          keeperBudget: '0',
+          platformRetained: tok(10),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-backed').textContent).toContain(
+        'backedShort',
+      ),
+    );
+    // The shortfall is quantified, not merely flagged.
+    expect(screen.getByTestId('recycling-backed').textContent).toContain('5');
+  });
+
+  it('says the pool IS backed when the balance covers it', async () => {
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-backed').textContent).toContain(
+        'backedYes',
+      ),
+    );
+  });
+
+  it('does not distinguish exactly-consumed from short by the floored value alone', async () => {
+    // Both render `unearmarked` 0; only the verdict separates them.
+    mockSeries(
+      series({
+        backing: {
+          ...series().backing,
+          vpfiBalance: tok(100),
+          bucket: tok(100),
+          unearmarked: '0',
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-unearmarked').textContent).toBe('0'),
+    );
+    expect(screen.getByTestId('recycling-backed').textContent).toContain(
+      'backedYes',
+    );
+  });
+
+  it('withholds the WHOLE block when any displayed member is null', async () => {
+    // A partial payload — retained present, balance null — passed the
+    // earlier two-field gate and rendered the reserve with an empty
+    // balance cell, breaking all-or-nothing on the untrusted-payload path
+    // the validator exists to cover.
+    mockSeries(
+      series({
+        backing: { ...series().backing, vpfiBalance: null },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('withholds the block when the BUCKET is null, not just the balance', async () => {
+    // Same rule, other member — the gate must cover every displayed
+    // field rather than a representative sample.
+    mockSeries(series({ backing: { ...series().backing, bucket: null } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('never claims a shortfall of ZERO for a real shortfall', async () => {
+    // A gap under 0.0001 truncates to "short by 0 VPFI" — a false
+    // quantified claim, and worse than the bare verdict it decorates.
+    mockSeries(
+      series({
+        backing: {
+          ...series().backing,
+          vpfiBalance: (100n * 10n ** 18n).toString(),
+          bucket: (100n * 10n ** 18n + 3n).toString(), // 3 wei short
+          unearmarked: '0',
+          outstandingRecycled: '0',
+          keeperBudget: '0',
+          platformRetained: (100n * 10n ** 18n + 3n).toString(),
+        },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-backed').textContent).toContain(
+        'backedShort',
+      ),
+    );
+    const text = screen.getByTestId('recycling-backed').textContent!;
+    expect(text).toContain('recycling.belowThreshold');
+    expect(text).not.toMatch(/short by 0\b/);
+  });
+
+  it('publishes stranded value so it does not read as a depleted reserve', async () => {
+    // `restoreReleasedRemit` returns the commitment WITHOUT re-crediting
+    // the bucket, so the reserve falls — and can floor to zero — while
+    // the value is neither lost nor spent, merely in flight.
+    mockSeries(
+      series({
+        backing: { ...series().backing, releasedRemitStranded: tok(7) },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-stranded').textContent).toBe('7'),
+    );
+  });
+
+  it('omits the stranded row entirely when there is none', async () => {
+    // A permanent "stranded: 0" is a caveat whose condition is absent.
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backed');
+    expect(screen.queryByTestId('recycling-stranded')).toBeNull();
+  });
+
+  it('withholds the block when the STRANDED term is null', async () => {
+    // Third time this rule failed on a newly added member. The gate is
+    // now derived from the amount family itself, so a field cannot enter
+    // the payload without entering the gate — this test pins that the
+    // newest member is genuinely covered rather than separately listed.
+    mockSeries(
+      series({
+        backing: { ...series().backing, releasedRemitStranded: null },
+      }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('RENDERS the capture time, since the figures are not live', async () => {
+    // The snapshot is captured on a schedule, so it is minutes old by
+    // construction. I had justified serving a non-live figure by saying
+    // its age was "published" — it was published into the JSON only, and
+    // a disclosure the reader cannot see is not one.
+    mockSeries(series());
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(screen.getByTestId('recycling-asof').textContent).toContain(
+        '2026-08-03T00:00:00.000Z',
+      ),
+    );
+  });
+
+  it('withholds the whole block when no snapshot has been captured yet', async () => {
+    mockSeries(
+      series({ backing: { ...noBacking('not-captured-yet') } }),
+    );
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('withholds the block when the snapshot cannot say WHEN it was taken', async () => {
+    // These figures are read on a schedule; the only thing making that
+    // honest is the reader being able to judge their currency. A snapshot
+    // with every amount but no capture time silently dropped the age row
+    // and published anyway.
+    mockSeries(series({ backing: { ...series().backing, asOf: null } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('withholds the block when the CHAIN has stopped moving', async () => {
+    // A frozen RPC answers happily with an old head. The schedule check
+    // cannot see that at all — it only knows the capture pass ran — so
+    // the two conditions are reported separately.
+    mockSeries(series({ backing: { ...noBacking('chain-behind') } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('recycling-backing-unavailable').textContent,
+      ).toContain('chain-behind'),
+    );
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
+  });
+
+  it('withholds the block when it cannot say WHOSE state it describes', async () => {
+    // A block number says WHEN. After a redeploy only the Diamond says
+    // WHOSE, and reproducing the figures independently needs both.
+    mockSeries(series({ backing: { ...series().backing, diamond: null } }));
+    render(<RecyclingAccount chainId={8453} />);
+    await screen.findByTestId('recycling-backing-unavailable');
+    expect(screen.queryByTestId('recycling-retained')).toBeNull();
   });
 });
