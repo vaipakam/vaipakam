@@ -194,12 +194,22 @@ await page.getByRole('radio', { name: /Broad liquid/i }).click();
 check(
   'raise landed on-chain (effective Broad)',
   await pollUntil('raise to 1', async () => {
-    if (Number(await tierOf()) !== 1) return false;
-    // Anchor the height at which the raise was OBSERVED — the lower
-    // confirmation must come from a strictly newer block (Codex #1539
-    // r8: a stale pre-raise view also reads 0).
-    raiseSeenBlock = await pub.getBlockNumber();
-    confirmFloor = raiseSeenBlock + 1n;
+    // Fetch the height FIRST and read the tier PINNED to it (Codex
+    // #1539 r10): deriving the floor from a second request could pair
+    // an up-to-date tier answer with a lagging block number, leaving
+    // a floor that still admits pre-raise state. Pinned, the floor is
+    // by construction the height that proved tier 1.
+    const bn = await pub.getBlockNumber();
+    const t = await pub.readContract({
+      address: DIAMOND,
+      abi: READ_ABI,
+      functionName: 'getEffectiveRiskTier',
+      args: [who],
+      blockNumber: bn,
+    });
+    if (Number(t) !== 1) return false;
+    raiseSeenBlock = bn;
+    confirmFloor = bn + 1n;
     return true;
   }),
 );
