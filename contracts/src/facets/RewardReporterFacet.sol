@@ -438,8 +438,11 @@ contract RewardReporterFacet is
             marginBpsAtFinalize: 0,
             stamped: true
         });
+        // #1434 P1-a — routed through the shared installer so the
+        // `interactionPoolPaidOut` snapshot is taken with it; the guard is
+        // kept here because it also skips the LIBRARY call on a replay.
         if (armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
-            s.governorCommitArmedFromDay = armedFromDay;
+            LibInteractionRewards.installArmedFromDay(s, armedFromDay);
         }
         s.knownGlobalSet[dayId] = true;
 
@@ -594,8 +597,9 @@ contract RewardReporterFacet is
             freshBorrowerHalf: b.freshBorrowerHalf
         });
 
+        // #1434 P1-a — see the installer note on the other arrival path.
         if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
-            s.governorCommitArmedFromDay = b.armedFromDay;
+            LibInteractionRewards.installArmedFromDay(s, b.armedFromDay);
         }
 
         // #1222 M3 B2-d3 — arrival COMMITS (plan §M3: "broadcast *commits*;

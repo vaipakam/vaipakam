@@ -814,6 +814,21 @@ contract RewardRemittanceFacet is
             revert RewardBudgetTokenMismatch(s.vpfiToken, token);
         }
         s.rewardBudgetReceivedTotal += amount;
+        // #1434 P1-a — split out the FRESH component of this delivery.
+        // `recycledShare` is bounded against `amount` further down before it
+        // is used for the bucket credit; the same clamp is applied here so a
+        // malformed payload can only ever UNDERSTATE delivered fresh, never
+        // inflate it. Understating defers a claim until more funding lands
+        // (recoverable); overstating would let the chain pay fresh nobody
+        // sent it, which is the whole defect this counter exists to close.
+        //
+        // Recorded on the canonical chain too, where it stays zero because
+        // Base receives no remits — {LibInteractionRewards
+        // .deliveredFreshAvailable} is documented as not applicable there.
+        unchecked {
+            s.rewardBudgetReceivedFresh +=
+                amount > recycledShare ? amount - recycledShare : 0;
+        }
         // #1222 M3 B2-d5 — the RECYCLED component of this delivery is
         // RELOCATED CUSTODY: the tokens are physically here and the claim
         // path will debit the bucket for the WHOLE recycled payout
@@ -1899,5 +1914,43 @@ contract RewardRemittanceFacet is
     /// @notice Cumulative VPFI reward budget received from Base on this mirror.
     function getRewardBudgetReceivedTotal() external view returns (uint256) {
         return LibVaipakam.storageSlot().rewardBudgetReceivedTotal;
+    }
+
+    /**
+     * @notice #1434 P1-a — this chain's DELIVERED-FRESH position.
+     * @dev    Read together: `available` is the operative figure and the two
+     *         cumulatives behind it are returned so a zero can be told apart
+     *         from a fully-spent position (the same reason
+     *         {LibVpfiRecycle.backingPosition} returns its inputs).
+     *
+     *         `available` is NOT applicable on the canonical chain — Base
+     *         receives no remits, so `receivedFresh` stays zero there and the
+     *         figure reads zero regardless of how much Base may legitimately
+     *         pay. Callers on Base use {LibInteractionRewards.poolRemaining}.
+     *
+     *         Nothing enforces this yet. P1-a is the accounting slice; the
+     *         ShareOfPool walk applies it in P1-b, which is blocked behind
+     *         P2 (the mirror armed-day pricing halt — while it stands, armed
+     *         mirror days never price and there is nothing to bound).
+     * @return receivedFresh  Σ fresh component of every remit received here.
+     * @return spentSinceArming Fresh paid out since `D*` was installed.
+     * @return available      `receivedFresh − spentSinceArming`, floored.
+     */
+    function getDeliveredFreshPosition()
+        external
+        view
+        returns (
+            uint256 receivedFresh,
+            uint256 spentSinceArming,
+            uint256 available
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        receivedFresh = s.rewardBudgetReceivedFresh;
+        spentSinceArming = s.interactionPoolPaidOut
+            > s.interactionPaidOutFreshAtArming
+            ? s.interactionPoolPaidOut - s.interactionPaidOutFreshAtArming
+            : 0;
+        available = LibInteractionRewards.deliveredFreshAvailable(s);
     }
 }

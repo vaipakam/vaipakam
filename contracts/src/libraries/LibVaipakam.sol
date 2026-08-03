@@ -5990,6 +5990,49 @@ library LibVaipakam {
         ///      raw tier + anchor still moves the nonce and reverts the
         ///      stale write (Codex #1528 r1).
         mapping(address => uint64) riskTierMutation;
+        // `rewardBudgetReceivedFresh` + `interactionPaidOutFreshAtArming`
+        //   (#1434 P1-a) — APPENDED AT THE TAIL, same in-place-upgrade rule.
+        //
+        /// @dev DELIVERED-FRESH cumulative on this chain: Σ of the FRESH
+        ///      component of every reward-budget remit received, i.e.
+        ///      `amount − recycledShare` at each {onRewardBudgetReceived}.
+        ///      The recycled component is not counted here — it credits the
+        ///      bucket as relocated custody (B2-d5) and is bounded there.
+        ///
+        ///      Exists because `poolRemaining()` is NOT a delivered-funding
+        ///      bound on a mirror: it is the GLOBAL 69M cap less LOCAL
+        ///      payouts, so every mirror independently believes it owns the
+        ///      whole pool. What actually limits a mirror is what Base sent
+        ///      it. #1497's claim-time gate bounds payout by un-earmarked
+        ///      BALANCE, which is strictly better than nothing but still
+        ///      lets stray VPFI (a donation, an operator top-up meant for
+        ///      something else) be paid out as fresh reward without Base's
+        ///      `rewardBudgetRemittedGlobal` ever seeing it.
+        ///
+        ///      WRITTEN but not yet READ — P1-a is the accounting slice.
+        ///      The walk consumes it in P1-b, which cannot land before P2
+        ///      lifts the mirror armed-day pricing halt (#1434 §2g): while
+        ///      that halt stands, armed mirror days never price, so there is
+        ///      nothing for this bound to bound.
+        uint256 rewardBudgetReceivedFresh;
+        /// @dev `interactionPoolPaidOut` SNAPSHOT taken when this chain
+        ///      installs `governorCommitArmedFromDay`.
+        ///
+        ///      Load-bearing, and the reason the available figure is not
+        ///      simply `receivedFresh − interactionPoolPaidOut`: that
+        ///      cumulative also counts UNARMED-day fresh payouts, which are
+        ///      drawn from the global schedule (`halfPoolForDay`) and were
+        ///      never remit-funded. Charging them against delivered funding
+        ///      would defer armed days to repay a debt delivered funding
+        ///      never owed. Measuring from the arming snapshot instead makes
+        ///      the bound exact regardless of pre-arming activity — so it
+        ///      does not quietly depend on "we armed at genesis".
+        ///
+        ///      Written by {LibInteractionRewards.installArmedFromDay}, the
+        ///      single chokepoint all three arming-install sites route
+        ///      through (the canonical setter + both mirror broadcast-arrival
+        ///      paths), so the snapshot cannot be missed on one of them.
+        uint256 interactionPaidOutFreshAtArming;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
