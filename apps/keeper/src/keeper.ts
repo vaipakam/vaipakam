@@ -776,6 +776,23 @@ function describeFlagValue(
     return c === 'true' || c === '1';
   };
   const trimmed = raw.trim();
+
+  // `false` is the DOCUMENTED way to disable the keeper (README: "Master
+  // kill-switch; set to `false`"), so reporting it as `unrecognised (5
+  // chars)` told an operator their deliberate shutdown looked like a typo —
+  // during a shutdown or restore, which is exactly when a spurious
+  // configuration warning is most expensive. An explicitly-off value is a
+  // state, not a mistake, and the line should say so.
+  //
+  // Recognised case-insensitively on BOTH gates even though the pass flags
+  // arm case-sensitively. This function only LABELS; it never arms, and the
+  // caller has already decided the value is not accepted. `False` means the
+  // same thing its author intended whichever flag it sits on.
+  if (['false', '0'].includes(trimmed.toLowerCase())) {
+    return trimmed === raw
+      ? 'off (explicitly disabled)'
+      : 'off (explicitly disabled), with surrounding whitespace';
+  }
   if (trimmed !== raw) {
     return accepts(trimmed)
       ? 'has surrounding whitespace (otherwise correct — re-enter without it)'

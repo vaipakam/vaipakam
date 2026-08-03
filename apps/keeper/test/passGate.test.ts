@@ -78,8 +78,46 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
     passIsArmed(flagOff, 'p');
     passIsArmed(noKey, 'p');
     expect(lines).toEqual([
-      '[keeper] p skipped: KEEPER_ENABLED unrecognised (5 chars)',
+      '[keeper] p skipped: KEEPER_ENABLED off (explicitly disabled)',
       '[keeper] p skipped: KEEPER_PRIVATE_KEY unset',
+    ]);
+  });
+
+  it('reports a deliberate kill-switch as OFF, not as a typo', () => {
+    // `false` is the documented way to disable the keeper. Calling that
+    // `unrecognised (5 chars)` told an operator their intentional shutdown
+    // looked like a mistake — during a shutdown, which is when a spurious
+    // configuration warning is most expensive.
+    for (const off of ['false', 'False', 'FALSE', '0']) {
+      lines = [];
+      passIsArmed(env({ KEEPER_ENABLED: off }), 'liquidator');
+      expect(lines).toEqual([
+        '[keeper] liquidator skipped: KEEPER_ENABLED off (explicitly disabled)',
+      ]);
+    }
+    // Same for a pass flag, which is also routinely left deliberately off.
+    lines = [];
+    passIsArmed(env({ REWARD_REMIT_ENABLED: 'false' }), 'remitAck', 'REWARD_REMIT_ENABLED');
+    expect(lines).toEqual([
+      '[keeper] remitAck skipped: REWARD_REMIT_ENABLED off (explicitly disabled)',
+    ]);
+  });
+
+  it('still refuses to arm on an off value', () => {
+    // The classification is a label, never a decision.
+    expect(isKeeperEnabled(env({ KEEPER_ENABLED: 'false' }))).toBe(false);
+    expect(
+      passIsArmed(env({ REWARD_REMIT_ENABLED: '0' }), 'p', 'REWARD_REMIT_ENABLED'),
+    ).toBe(false);
+  });
+
+  it('distinguishes a deliberate off from a mistyped one', () => {
+    lines = [];
+    passIsArmed(env({ KEEPER_ENABLED: ' false ' }), 'p');
+    passIsArmed(env({ KEEPER_ENABLED: 'flase' }), 'p');
+    expect(lines).toEqual([
+      '[keeper] p skipped: KEEPER_ENABLED off (explicitly disabled), with surrounding whitespace',
+      '[keeper] p skipped: KEEPER_ENABLED unrecognised (5 chars)',
     ]);
   });
 

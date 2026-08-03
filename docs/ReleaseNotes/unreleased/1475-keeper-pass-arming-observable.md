@@ -10,11 +10,13 @@ For these particular jobs that is the worst case, because they move funds betwee
 
 Three details worth calling out:
 
-**No value is ever printed — only what is wrong with it.** "Unset", "empty", "wrong capitalisation", "has spaces around it", or "unrecognised, 4 characters long". This is deliberate and was a correction during review: the situation this diagnostic exists for is the value being *wrong*, and one of the ways a value gets wrong is somebody pasting a password or key into the wrong box. Printing it would copy that secret into the logs at exactly the moment the system is meant to be protecting it. The character count still tells an operator whether they are looking at a four-letter typo or something long that does not belong there.
+**No value is ever printed — only what is wrong with it.** "Unset", "empty", "deliberately switched off", "wrong capitalisation", "has spaces around it", or "unrecognised, 4 characters long". This is deliberate and was a correction during review: the situation this diagnostic exists for is the value being *wrong*, and one of the ways a value gets wrong is somebody pasting a password or key into the wrong box. Printing it would copy that secret into the logs at exactly the moment the system is meant to be protecting it. The character count still tells an operator whether they are looking at a four-letter typo or something long that does not belong there.
 
 **Everything wrong is reported at once.** If three settings are wrong, one line names all three. An earlier version stopped at the first, which would have meant fixing one, waiting for the next run, and discovering the next — turning a single check into a sequence of them.
 
 **One message became several.** The master switch previously reported a single "keeper disabled", covering two genuinely different situations — the switch being off, and the signing key being missing. Both are unreadable, so an operator seeing that message could not tell which to go and fix.
+
+**A deliberate "off" reads as off, not as a mistake.** Setting a switch to `false` is the documented way to turn a job off, and an earlier version of this reported that as "unrecognised, 5 characters" — telling an operator their intentional shutdown looked like a typo, at the moment a spurious warning is least welcome. It now says the job is explicitly disabled. It still refuses to run, of course; the message describes the state, it does not decide it.
 
 ### Which jobs this covers
 

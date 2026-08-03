@@ -85,9 +85,13 @@ Two properties worth knowing:
 Reporting only the first would mean fixing one binding, waiting a tick, and
 discovering the next.
 
-**The value itself is never printed** — only the form of the mistake
-(`unset`, `empty`, `wrong case`, `has surrounding whitespace`,
-`unrecognised (N chars)`). These are `secret_text` bindings, and the case this
+**The value itself is never printed** — only the form of the state
+(`unset`, `empty`, `off (explicitly disabled)`, `wrong case`,
+`has surrounding whitespace`, `unrecognised (N chars)`). Note the third:
+setting a flag to `false` is the documented way to disable a pass, so it
+reads as a deliberate state rather than as a fault — during an intentional
+shutdown you should not be shown a line implying you mistyped something.
+These are `secret_text` bindings, and the case this
 diagnostic exists for is the value being wrong, which is exactly how a pasted
 credential arrives; echoing it would write that credential into the logs and
 defeat the no-readback protection precisely when it matters. The character

@@ -1566,9 +1566,14 @@ caught at the cheapest stage.
      [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
      ```
 
-   **No value is ever printed — only the form of the mistake**: `unset`,
-   `empty`, `wrong case`, `has surrounding whitespace`, or
-   `unrecognised (N chars)`. That is deliberate. These are `secret_text`
+   **No value is ever printed — only the form of the state**: `unset`,
+   `empty`, `off (explicitly disabled)`, `wrong case`,
+   `has surrounding whitespace`, or `unrecognised (N chars)`.
+
+   Note `off (explicitly disabled)` in that list. Setting a flag to `false`
+   is the documented way to disable a pass, so it is reported as a state
+   rather than as a fault — during a deliberate shutdown you should not be
+   reading a line that suggests you mistyped something. That is deliberate. These are `secret_text`
    bindings, and the case this diagnostic exists for is the value being
    *wrong* — which is exactly how a pasted credential arrives. Echoing it
    would copy that credential into the Worker logs at the moment the binding's
@@ -1594,8 +1599,17 @@ caught at the cheapest stage.
 
    | binding | how it is bound | command |
    |---|---|---|
-   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME>` |
+   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
    | `KEEPER_PRIVATE_KEY` | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
+
+   **`--config` is not optional here.** Without it, `wrangler secret put`
+   applies to the Worker named in whatever Wrangler config is active — and
+   from the repository root that is `wrangler.jsonc`, which names
+   **`vaipakam-alpha`**, not the keeper. The `( cd apps/keeper && … )` above
+   runs in a subshell, so it does not change your working directory. The
+   command would report success while the keeper's flags stayed exactly as
+   they were, which is the worst possible outcome for a step whose purpose
+   is to fix them.
 
    `wrangler secret put` creates a secret **for a Worker**;
    `wrangler secrets-store secret create` creates one **within a store**.
@@ -1621,8 +1635,10 @@ caught at the cheapest stage.
    > and could only be confirmed by waiting for a successful remittance. Both
    > are now obsolete. If you are reading a stale copy, prefer this one.
 
-   Do not conclude the restore is complete until a tick has been observed
-   for every pass, and every line reads the way you intended.
+   Do not conclude the restore is complete until one tick has produced a
+   line from **each of the six gated passes**, and every line reads the way
+   you intended. The other four emit nothing by design — waiting for them
+   would be waiting forever.
 
    Confirm each flag you intended is present and, where the value is
    visible, reads what you meant.
@@ -1634,9 +1650,13 @@ caught at the cheapest stage.
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
    | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
-   So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is
-   silently off. Use lowercase `true` for all three and the asymmetry
-   never bites.
+   So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
+   **off but reported**, not silently so. That is the whole point of the
+   diagnostic above: the tick says `REWARD_REMIT_ENABLED wrong case — these
+   flags require lowercase \`true\``, naming the asymmetry rather than
+   leaving you to deduce it. (It WAS silent until #1475; if you are working
+   from memory of the old behaviour, that is the change.) Use lowercase
+   `true` for all three and the asymmetry never arises.
 
    Note the second half of the `KEEPER_ENABLED` row: the settings readback
    shows *variables*, and `isKeeperEnabled` also requires the
