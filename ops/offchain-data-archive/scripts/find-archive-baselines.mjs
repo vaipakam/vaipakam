@@ -119,15 +119,19 @@ function loadCreds() {
   );
 }
 
-/** Capabilities no read-only inventory has any business holding. */
-const FORBIDDEN_CAPABILITIES = [
-  'writeFiles',
-  'deleteFiles',
-  'writeBuckets',
-  'deleteBuckets',
-  'writeKeys',
-  'deleteKeys',
-];
+/**
+ * The ONLY capabilities this script may hold — an allowlist, not a
+ * denylist.
+ *
+ * A denylist of six obviously-dangerous permissions passed a key holding
+ * `listFiles` plus `writeFileLegalHolds`, `writeFileRetentions` or
+ * `bypassGovernance` — all of which mutate, and the last of which can
+ * override Object Lock retention, the very mechanism #1469/#1473 lean on.
+ * Enumerating what must not be present is a promise that decays every
+ * time the provider adds a capability; enumerating what MAY be present
+ * does not. This is the documented read-key set and nothing else.
+ */
+const ALLOWED_CAPABILITIES = ['listBuckets', 'listFiles', 'readFiles'];
 
 async function authorize(keyId, appKey) {
   const res = await fetch('https://api.backblazeb2.com/b2api/v3/b2_authorize_account', {
@@ -158,16 +162,17 @@ async function authorize(keyId, appKey) {
   // stays offline after provisioning, and a routine discovery command is
   // exactly where that quietly stops being true.
   const caps = data.apiInfo?.storageApi?.capabilities ?? data.allowed?.capabilities ?? [];
-  const held = FORBIDDEN_CAPABILITIES.filter((c) => caps.includes(c));
-  if (held.length > 0) {
-    fail(
-      `this key holds ${held.join(', ')} — refusing to run a read-only\n` +
-        `  inventory with write/delete authority. Use the read-only key\n` +
-        `  (listBuckets + listFiles + readFiles).`,
-    );
-  }
   if (caps.length === 0) {
     fail('authorize returned no capability list; refusing to assume read-only');
+  }
+  const extra = caps.filter((c) => !ALLOWED_CAPABILITIES.includes(c));
+  if (extra.length > 0) {
+    fail(
+      `this key holds ${extra.length} capability(ies) beyond read-only:\n` +
+        `  ${extra.slice(0, 8).join(', ')}${extra.length > 8 ? ', …' : ''}\n\n` +
+        `  Refusing to run an inventory with more authority than it needs.\n` +
+        `  Use the bucket-scoped read key: ${ALLOWED_CAPABILITIES.join(' + ')}.`,
+    );
   }
   return {
     token: data.authorizationToken,
