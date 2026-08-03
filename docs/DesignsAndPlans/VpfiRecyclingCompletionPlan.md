@@ -874,10 +874,18 @@ GovernanceRunbook gains a recycling section, executed in order:
    `RewardAggregatorFacet`'s enforcement comment is corrected in the same
    change, and `RewardClaimBackingSeparationTest` asserts the post-state
    `balanceOf >= recycleBucket` across a **paying** claim — the assertion
-   whose absence let this survive. One imprecision is stated rather than
-   hidden: per-loan borrower-LIF custody shares the balance and has no
-   running total, so the headroom is an upper bound on free tokens, shared
-   with the two pre-existing enforcement points.
+   whose absence let this survive. The imprecision this row used to record —
+   per-loan borrower-LIF custody sharing the balance with no running total —
+   was **corrected by #1498**, which found there is nothing to subtract:
+   #1352 retired the peg-custody origination path and its collector has no
+   caller, so no loan opened under current rules takes custody and the
+   headroom is EXACT on a deployment built from this source. It reverts to an
+   upper bound only on a Diamond upgraded from a pre-#1352 deployment (custody
+   against loans open at the upgrade) or if that collector is re-wired. #1498
+   also collapsed the three inlined copies of the headroom arithmetic into the
+   one definition the owning library exports — the copies agreed on the
+   arithmetic and had drifted on the prose, which is what produced the stale
+   claim in the first place.
    **The `BACKING --> ARM` edge in §4 stays** — it is discharged, not
    deleted; arming still requires this closed.
    *The forensic account below is retained as the historical record of the

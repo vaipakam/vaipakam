@@ -297,18 +297,20 @@ contract RewardClaimFacet is
         // is in the bucket by construction, which is the promised steady
         // state at fresh exhaustion.
         //
-        // Same shape as the two enforcement points that already exist
-        // ({LibVpfiRecycle.credit}'s inflow assert and the RL-3 expiry
-        // sweep's `backingRoom`), so all three agree on what "un-earmarked"
-        // means. KNOWN LIMIT shared with both: per-loan borrower-LIF custody
-        // (`borrowerLifRebate[].vpfiHeld`) also sits in this balance and has
-        // no global counter to subtract, so this is an upper bound on
-        // genuinely free tokens rather than an exact one — tightening it
-        // needs a custody aggregate and is tracked separately.
-        uint256 backingRoom = IERC20(vpfi).balanceOf(address(this));
-        backingRoom = backingRoom > s.recycleBucket
-            ? backingRoom - s.recycleBucket
-            : 0;
+        // #1498 — read the un-earmarked figure from the ONE definition
+        // {LibVpfiRecycle} exports rather than recomputing it. The same
+        // arithmetic was inlined at three enforcement points; the comments
+        // stating its limits then drifted apart, which is how #1498 came to
+        // describe a gap that no longer existed. The helper's zero-token
+        // revert is unreachable here — {VPFITokenNotSet} above already fired.
+        //
+        // Which of the separation invariant's three claimants this nets, why
+        // borrower-LIF custody needs no subtraction on a deployment built
+        // from this source, and the two conditions that would re-open it, are
+        // stated ONCE on {LibVpfiRecycle.backingPosition}. Deliberately not
+        // restated here: three inlined copies of the arithmetic are what let
+        // the prose drift in the first place.
+        (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
 
         // PR-3c (#1217 §3.1) — the 69M hard cap governs the FRESH term
         // only. The recycled components are bucket-backed (sized by the

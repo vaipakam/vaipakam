@@ -266,6 +266,44 @@ library LibVpfiRecycle {
      *         reading facet's own natspec had already been corrected for —
      *         the same claim, un-swept, one file away.
      *
+     *         **#1498 — THIS IS THE ONE DEFINITION. Do not inline
+     *         `balanceOf − recycleBucket` at a call site.** Three enforcement
+     *         points each had their own copy; the arithmetic agreed and the
+     *         prose describing its limits did not, which is how #1498 came to
+     *         specify a custody aggregate for a term that is already zero.
+     *         Taking the three claimants in turn:
+     *
+     *         • `recycleBucket` — SUBTRACTED. Recycled backing has to survive
+     *           a fresh payout; that is the whole of #1460's condition.
+     *         • `unclaimedRewardBudget` — deliberately NOT subtracted. It is
+     *           precisely the source a reward claim is entitled to spend, so
+     *           netting it would refuse claims their own funding. Its
+     *           presence in the invariant says the Diamond must HOLD it, not
+     *           that a reward payout may not draw on it.
+     *         • `userLifCustody` — NOTHING TO SUBTRACT on a deployment built
+     *           from this source. #1352 retired the peg-custody origination
+     *           path, and {LibVPFIDiscount.tryApplyBorrowerLif} — the only
+     *           writer of a non-zero `vpfiHeld` — has NO caller anywhere in
+     *           `src/`. Every surviving write is the `= 0` drain inside
+     *           {LibVPFIDiscount.settleBorrowerLifProper} /
+     *           {LibVPFIDiscount.forfeitBorrowerLif}, both of which return
+     *           early at `held == 0`, so the ~15 terminal paths that call
+     *           them (preclose, refinance, prepay, swap-to-repay, repay, and
+     *           every default / liquidation route) are no-ops for custody.
+     *           Pinned by `testAcceptOfferWithVPFIDiscountApplied`, which
+     *           funds a borrower vault, originates, and asserts the Diamond
+     *           takes none.
+     *
+     *         TWO conditions re-open it, and both are real rather than
+     *         hypothetical: a Diamond UPGRADED from a pre-#1352 deployment
+     *         still holds custody against loans that were open at the
+     *         upgrade, and re-wiring `tryApplyBorrowerLif` would start taking
+     *         it again. Under either, `unearmarked` reverts to an UPPER BOUND
+     *         on genuinely free tokens and the global custody aggregate
+     *         #1498 describes becomes necessary. The guard against the second
+     *         is that test: it fails the moment origination takes custody
+     *         again.
+     *
      *         `unearmarked` is exactly the quantity #1460's third condition
      *         turns on — the defect needs a non-zero bucket AND a
      *         scheduled-only claim AND this figure below the scheduled
