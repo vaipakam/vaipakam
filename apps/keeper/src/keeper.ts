@@ -804,6 +804,33 @@ function describeFlagValue(
   return `unrecognised (${raw.length} chars)`;
 }
 
+/** `0x` + 32 bytes, hex-encoded. */
+const KEEPER_KEY_CHARS = 66;
+
+/**
+ * The signing key as `buildKeeperContext` will read it, or a bounded
+ * description of why it is unusable.
+ *
+ * Shared so the gate and the consumer cannot disagree (#1540 r4). Before
+ * this, `passIsArmed` only asked whether the binding was non-empty, so a
+ * malformed key logged `start` on all six gated passes and then produced
+ * nothing — `buildKeeperContext` rejects it per chain, well after the line
+ * claiming the pass was armed. That defeats a one-tick diagnosis in the
+ * worst way: it reports the healthy state for an unusable key, and the
+ * runbook's completion check would pass with every signing path disarmed.
+ *
+ * The reason never quotes the value. A wrong-length or non-hex key is still
+ * a key, and this runs on the same channel as everything else.
+ */
+function keeperKeyProblem(raw: string): string | null {
+  const pk = raw.trim().startsWith('0x') ? raw.trim() : `0x${raw.trim()}`;
+  if (pk.length !== KEEPER_KEY_CHARS) {
+    return `malformed (${pk.length} chars, expected ${KEEPER_KEY_CHARS})`;
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) return 'malformed (not hexadecimal)';
+  return null;
+}
+
 /**
  * EVERY keeper-level reason the pass cannot run — not just the first.
  *
@@ -820,7 +847,12 @@ function keeperBlockers(env: Env): string[] {
   if (enabled === undefined || !['true', '1'].includes(enabled.toLowerCase())) {
     blockers.push(`KEEPER_ENABLED ${describeFlagValue(enabled, true)}`);
   }
-  if (!env.KEEPER_PRIVATE_KEY) blockers.push('KEEPER_PRIVATE_KEY unset');
+  if (!env.KEEPER_PRIVATE_KEY) {
+    blockers.push('KEEPER_PRIVATE_KEY unset');
+  } else {
+    const problem = keeperKeyProblem(env.KEEPER_PRIVATE_KEY);
+    if (problem !== null) blockers.push(`KEEPER_PRIVATE_KEY ${problem}`);
+  }
   return blockers;
 }
 
@@ -887,10 +919,14 @@ export function buildKeeperContext(
   publicClient: PublicClient,
 ): KeeperContext | null {
   if (!env.KEEPER_PRIVATE_KEY) return null;
-  let pk = env.KEEPER_PRIVATE_KEY.trim();
-  if (!pk.startsWith('0x')) pk = `0x${pk}`;
-  if (pk.length !== 66) {
-    console.error('[keeper] KEEPER_PRIVATE_KEY malformed length');
+  const raw = env.KEEPER_PRIVATE_KEY.trim();
+  const pk = raw.startsWith('0x') ? raw : `0x${raw}`;
+  // Same rule the pass gate reports on, so a key that logged `start` cannot
+  // be rejected here — and vice versa. The hex check also stops a 66-char
+  // non-hex value throwing out of `privateKeyToAccount`.
+  const problem = keeperKeyProblem(env.KEEPER_PRIVATE_KEY);
+  if (problem !== null) {
+    console.error(`[keeper] KEEPER_PRIVATE_KEY ${problem}`);
     return null;
   }
   const account = privateKeyToAccount(pk as `0x${string}`);

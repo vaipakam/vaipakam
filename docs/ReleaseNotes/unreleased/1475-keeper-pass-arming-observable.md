@@ -8,13 +8,15 @@ For these particular jobs that is the worst case, because they move funds betwee
 
 **Every switchable job now announces itself once per run**, whichever way its switch reads. If it is running, it says so. If it is not, it names the specific switch that stopped it, and what is wrong with the value. One pass of the log settles the state of every switch the keeper has.
 
-Three details worth calling out:
+Some details worth calling out:
 
 **No value is ever printed — only what is wrong with it.** "Unset", "empty", "deliberately switched off", "wrong capitalisation", "has spaces around it", or "unrecognised, 4 characters long". This is deliberate and was a correction during review: the situation this diagnostic exists for is the value being *wrong*, and one of the ways a value gets wrong is somebody pasting a password or key into the wrong box. Printing it would copy that secret into the logs at exactly the moment the system is meant to be protecting it. The character count still tells an operator whether they are looking at a four-letter typo or something long that does not belong there.
 
 **Everything wrong is reported at once.** If three settings are wrong, one line names all three. An earlier version stopped at the first, which would have meant fixing one, waiting for the next run, and discovering the next — turning a single check into a sequence of them.
 
 **One message became several.** The master switch previously reported a single "keeper disabled", covering two genuinely different situations — the switch being off, and the signing key being missing. Both are unreadable, so an operator seeing that message could not tell which to go and fix.
+
+**A key that is present but unusable is now a blocker, not a green light.** The signing key was only checked for being non-empty, so a malformed one — wrong length, or not a valid key at all — let every job announce it had started and then quietly do nothing. Reporting the healthy state for a broken key is the worst direction to be wrong in, and it would have let the restore procedure sign off while nothing could actually sign. The key itself is still never printed; the line says only that it is malformed and how long it is.
 
 **A deliberate "off" reads as off, not as a mistake.** Setting a switch to `false` is the documented way to turn a job off, and an earlier version of this reported that as "unrecognised, 5 characters" — telling an operator their intentional shutdown looked like a typo, at the moment a spurious warning is least welcome. It now says the job is explicitly disabled. It still refuses to run, of course; the message describes the state, it does not decide it.
 

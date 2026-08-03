@@ -79,7 +79,7 @@ of their own and so have nothing to report; `liquidityConfidence` always runs
 and consults the keeper gate only to decide whether to submit. **Absent lines
 from those four are normal** — do not read them as a failed tick.
 
-Two properties worth knowing:
+Properties worth knowing:
 
 **Every applicable blocker appears on the one line**, as in the third example.
 Reporting only the first would mean fixing one binding, waiting a tick, and
@@ -96,6 +96,13 @@ diagnostic exists for is the value being wrong, which is exactly how a pasted
 credential arrives; echoing it would write that credential into the logs and
 defeat the no-readback protection precisely when it matters. The character
 count still distinguishes a four-letter typo from a pasted key.
+
+`KEEPER_PRIVATE_KEY` is reported as present, absent, or **malformed** — never
+echoed. Malformed matters: a key that is present but unusable (wrong length,
+not hexadecimal) used to satisfy the gate, so every pass logged `start` and
+then produced nothing when the key was rejected per chain. Reporting the
+healthy state for a broken key is the worst direction to be wrong in, and it
+would let the restore procedure sign off while nothing could sign.
 
 Note the second example: `KEEPER_ENABLED` accepts `True`, the two reward flags
 do not. Use lowercase `true` everywhere and the asymmetry never arises; if it

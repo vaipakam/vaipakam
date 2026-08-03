@@ -20,7 +20,7 @@ import { isKeeperEnabled, passIsArmed } from '../src/keeper';
 function env(over: Partial<Env> = {}): Env {
   return {
     KEEPER_ENABLED: 'true',
-    KEEPER_PRIVATE_KEY: '0xkey',
+    KEEPER_PRIVATE_KEY: `0x${'a'.repeat(64)}`,
     ...over,
   } as Env;
 }
@@ -170,8 +170,44 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
     }
   });
 
+  it('reports a malformed signing key instead of claiming the pass is armed', () => {
+    // A non-empty but unusable key used to pass the gate: every gated pass
+    // logged `start`, then produced nothing when `buildKeeperContext`
+    // rejected it per chain. The one-tick diagnosis reported the healthy
+    // state for a broken key, which is the worst direction to be wrong in.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['0xabc', 'malformed (5 chars, expected 66)'],
+      ['a'.repeat(63), 'malformed (65 chars, expected 66)'],
+      ['0x' + 'z'.repeat(64), 'malformed (not hexadecimal)'],
+    ];
+    for (const [key, expected] of cases) {
+      lines = [];
+      expect(passIsArmed(env({ KEEPER_PRIVATE_KEY: key }), 'liquidator')).toBe(
+        false,
+      );
+      expect(lines).toEqual([
+        `[keeper] liquidator skipped: KEEPER_PRIVATE_KEY ${expected}`,
+      ]);
+      expect(lines[0]).not.toContain(key);
+    }
+  });
+
+  it('accepts a well-formed key with or without the 0x prefix', () => {
+    for (const key of [
+      '0x' + 'a'.repeat(64),
+      'a'.repeat(64),
+      ' 0x' + 'A'.repeat(64) + ' ',
+    ]) {
+      lines = [];
+      expect(passIsArmed(env({ KEEPER_PRIVATE_KEY: key }), 'liquidator')).toBe(
+        true,
+      );
+      expect(lines).toEqual(['[keeper] liquidator start']);
+    }
+  });
+
   it('never echoes the signing key', () => {
-    const secret = '0xdeadbeefcafe';
+    const secret = '0xdead' + 'b'.repeat(60);
     passIsArmed(env({ KEEPER_ENABLED: 'nope', KEEPER_PRIVATE_KEY: secret }), 'p');
     passIsArmed(env({ KEEPER_PRIVATE_KEY: undefined }), 'p');
     expect(lines.join('\n')).not.toContain(secret);
@@ -224,7 +260,7 @@ describe('isKeeperEnabled — unchanged, and tied to the reason', () => {
     // The delegation is the guarantee that the boolean and the reason cannot
     // drift; this pins it rather than trusting the one-line body to stay.
     for (const KEEPER_ENABLED of [undefined, '', 'true', 'True', '1', 'ture']) {
-      for (const KEEPER_PRIVATE_KEY of [undefined, '0xkey']) {
+      for (const KEEPER_PRIVATE_KEY of [undefined, `0x${'a'.repeat(64)}`]) {
         const e = env({ KEEPER_ENABLED, KEEPER_PRIVATE_KEY });
         lines = [];
         expect(passIsArmed(e, 'p')).toBe(isKeeperEnabled(e));

@@ -1534,18 +1534,22 @@ caught at the cheapest stage.
    > `--keep-vars` discipline — is a real question, and it is #1465's, not a
    > decision to take mid-restore.
 
-4. **Read the deployed variable values back.** Do not infer the flags took
-   from a quiet `wrangler tail`: `runRewardBudgetRemit`, `runRemitAck` and
-   `runCommitmentReport` all `return` silently at their flag guards, and a
-   correctly-armed pass is *also* silent when there is no pending work or
-   the chain is inapplicable. Silence therefore means "off" and "armed with
-   nothing to do" equally, and the restore can complete with remittance or
-   commitment reporting still dark. A typo reads as false and is
-   indistinguishable from deliberately-off — the same invisible failure the
-   uncommitted flags caused in the first place.
+4. **Confirm the flags from a tick — and note what the settings readback
+   can and cannot tell you.**
 
-   The authoritative check is the deployed settings, which list the
-   variables actually in effect:
+   > This step used to say the opposite, and the reversal is the point.
+   > Until #1475 the three reward passes returned silently at their flag
+   > guards, so a quiet tail meant "off" and "armed with nothing to do"
+   > equally, and a typo was indistinguishable from deliberately-off. That
+   > is fixed: every gated pass now emits exactly one line per tick naming
+   > its state, so **the tick is the authoritative check** — see the
+   > `wrangler tail` step below.
+
+   The settings readback below remains useful, but for a narrower purpose
+   than an earlier revision claimed: these flags are `secret_text`, so the
+   API returns each binding's NAME and TYPE and never its value. It tells
+   you a binding exists and is a secret. It cannot tell you whether it says
+   `true`, `ture`, or `True` — only the tick does that.
 
    ```bash
    read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
