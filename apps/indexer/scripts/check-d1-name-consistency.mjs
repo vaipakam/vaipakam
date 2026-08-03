@@ -208,8 +208,13 @@ for (const { file, reason } of MUST_NOT_SHARE) {
 // Only `vaipakam-*` targets are treated as database names: that keeps prose
 // like "⚠ wrangler d1 execute failed" out, while still catching every case
 // where a real database is named — which is the class that moves data.
+// The optional quote group is load-bearing, not defensive: the restore
+// generator shell-quotes its arguments (`shQuote` wraps in single quotes),
+// so `wrangler d1 execute 'vaipakam-…'` is a shape this repo actually
+// produces. Requiring the name to start immediately after whitespace
+// skipped every quoted target while the check reported success.
 const D1_COMMAND =
-  /wrangler\s+d1\s+(?:migrations\s+)?(?:apply|list|execute|create|info|delete)\s+(vaipakam-[a-z0-9-]+)/g;
+  /wrangler\s+d1\s+(?:migrations\s+)?(?:apply|list|execute|create|info|delete)\s+(['"]?)(vaipakam-[a-z0-9-]+)\1/g;
 
 const tracked = execFileSync(
   'git',
@@ -242,7 +247,7 @@ for (const file of tracked) {
   if (!src.includes('wrangler')) continue;
   for (const m of src.matchAll(D1_COMMAND)) {
     commandCount += 1;
-    const target = m[1];
+    const target = m[2];
     if (target === SHARED_NAME || OTHER_DATABASES.has(target)) continue;
     const line = src.slice(0, m.index).split('\n').length;
     problems.push(

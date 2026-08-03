@@ -15,6 +15,17 @@ import { runNightlyBackup } from './backup';
 import { runHealthcheck, type TierOutcome } from './healthcheck';
 import type { Env } from './env';
 
+/**
+ * This Worker's deployed name, mirroring `wrangler.jsonc`'s `name`.
+ *
+ * Needed because the preflight alert fires BEFORE any config is resolved,
+ * so there is no bucket to name — and during the archive→warm handoff two
+ * Workers share the schedule and the ops bot, making an unattributed alert
+ * unactionable. `identity.test.ts` asserts this equals the wrangler config,
+ * so the two cannot drift apart silently.
+ */
+const WORKER_NAME = 'vaipakam-offchain-data-warm';
+
 /** Two B2 configs — see env.ts for why the keys are split. */
 function b2WriteConfig(env: Env): B2Config {
   return {
@@ -187,7 +198,18 @@ export default {
       // Note: we haven't booted the encryption key yet, but the
       // error path doesn't need it — only the tg() call which
       // reads TG_OPS_BOT_TOKEN + TG_OPS_CHAT_ID directly from env.
-      ctx.waitUntil(tg(env, `🚨 Worker preflight FAILED:\n${msg}`));
+      // Identity on THIS alert especially (#1537 r8). Preflight failure —
+      // a missing B2 or encryption secret — is the likeliest way the
+      // replacement Worker fails during the archive→warm handoff, and in
+      // that window two Workers share the schedule AND the ops bot. An
+      // unattributed "preflight FAILED" cannot tell the operator which
+      // deployment is broken. `cfg.bucket` is unavailable here (an unset
+      // bucket is one of the things being reported), so the Worker name is
+      // the identity that always resolves; `WORKER_NAME` is pinned to
+      // wrangler.jsonc by a test so it cannot drift.
+      ctx.waitUntil(
+        tg(env, `🚨 ${WORKER_NAME} preflight FAILED:\n${msg}`),
+      );
       throw err;
     }
 
