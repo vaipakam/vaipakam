@@ -276,14 +276,16 @@ describe('isKeeperEnabled — unchanged, and tied to the reason', () => {
 });
 
 describe('the key is constructed in exactly one place', () => {
+  const srcDir = new URL('../src/', import.meta.url);
+  const srcFiles = () =>
+    readdirSync(srcDir).filter((f) => f.endsWith('.ts'));
+
   /** Every `privateKeyToAccount(` CALL in src/, as `file:line`. The import
    *  and the prose references lack the paren and are not calls. */
   function constructionSites(): string[] {
-    const dir = new URL('../src/', import.meta.url);
-    return readdirSync(dir)
-      .filter((f) => f.endsWith('.ts'))
+    return srcFiles()
       .flatMap((f) =>
-        readFileSync(new URL(f, dir), 'utf8')
+        readFileSync(new URL(f, srcDir), 'utf8')
           .split('\n')
           .map((line, i) => ({ line, n: i + 1 }))
           .filter(({ line }) => line.includes('privateKeyToAccount('))
@@ -291,6 +293,29 @@ describe('the key is constructed in exactly one place', () => {
       )
       .sort();
   }
+
+  it('only keeper.ts can reach viem/accounts, and unaliased', () => {
+    // Scanning for the call TEXT is only sound if the spelling is pinned.
+    // `import { privateKeyToAccount as makeAccount }`, or a namespace
+    // import, would let a new construction sit outside the protected try
+    // while the call-text scan below still saw one site (#1540 r10).
+    //
+    // Pinning the IMPORT closes that at the source: you cannot call what
+    // you have not imported, so no alias and no namespace form can appear
+    // in another module, and inside keeper.ts the local name is fixed.
+    const importers = srcFiles().filter((f) =>
+      readFileSync(new URL(f, srcDir), 'utf8').includes('viem/accounts'),
+    );
+    expect(importers).toEqual(['keeper.ts']);
+
+    const src = readFileSync(new URL('keeper.ts', srcDir), 'utf8');
+    const line = src.split('\n').find((l) => l.includes('viem/accounts'));
+    expect(line).toBeDefined();
+    // Named, unaliased, no `* as`.
+    expect(line).not.toMatch(/\*\s+as\s/);
+    expect(line).not.toMatch(/privateKeyToAccount\s+as\s/);
+    expect(line).toMatch(/\bprivateKeyToAccount\b/);
+  });
 
   it('there is exactly ONE construction site, and it is the resolver', () => {
     // The leak this pins (#1540 r6): `dailyOracleSnapshot` had its own copy
