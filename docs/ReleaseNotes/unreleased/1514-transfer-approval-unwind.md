@@ -15,12 +15,28 @@ possible, because catching an acceptance that lands while the review
 sits open is its entire purpose. So it necessarily runs after the
 approval, and the guarantee no longer held.
 
-Now the handover withdraws an approval it obtained but did not use.
-This is best-effort by design: if the withdrawal is itself declined,
-the original failure stays the reported one rather than being replaced
-by a second, more confusing error. An approval the wallet already held
-before the attempt is never touched — it was granted for some other
-purpose and is not this flow's to revoke.
+Now the handover puts the approval back to whatever it was before the
+attempt. Putting it back is the right description rather than
+withdrawing it: an approval is not only ever created from nothing, it
+is also sometimes raised from an existing smaller figure, and revoking
+in that case would destroy a standing arrangement the wallet holds for
+some other purpose. Whatever was there before the attempt is what is
+there after it.
 
-The sibling refinance flow already behaved this way; the handover is
-now consistent with it.
+That care runs in the other direction too. If the approval has changed
+since this attempt set it — a second tab, another flow, or the spender
+having already drawn on it — the unwind leaves it entirely alone. Its
+own idea of the earlier figure is stale by then, and writing it back
+would be the same destructive overwrite pointed the opposite way.
+
+Withdrawal is best-effort by design: if it is itself declined, the
+original failure stays the reported one rather than being replaced by a
+second, more confusing error.
+
+The sibling refinance flow already withdrew its unused approval, and
+shared both of the flaws above; it is fixed in the same way. Both are
+now covered by tests that pin the exact sequence of approval writes,
+including the awkward middle case where a two-step approval is
+interrupted after the first step — the point at which the wallet's
+earlier figure has already been cleared and genuinely does need
+restoring.

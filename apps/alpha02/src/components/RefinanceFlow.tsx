@@ -265,6 +265,12 @@ export function RefinanceFlow({
     // allowance, and zeroing that would destroy a grant another live
     // arrangement depends on (#1529 review).
     let priorAllowance: bigint | null = null;
+    // The value THIS attempt last put on-chain — null while it has
+    // written nothing. Stamped per mined approve rather than from
+    // ensureAllowance's return value, so the zero-reset counts even when
+    // the approve after it is rejected. The unwind acts only if the
+    // allowance still reads exactly this (#1529 review).
+    let wroteAllowance: bigint | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // createOffer + the accept-time refinance are Tier-1 — live
@@ -425,6 +431,9 @@ export function RefinanceFlow({
         owner: address,
         spender: walletChain.diamondAddress,
         amount: liveApproval,
+        onWrote: (value) => {
+          wroteAllowance = value;
+        },
       });
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
         rateBpsMax: rateBps,
@@ -453,6 +462,7 @@ export function RefinanceFlow({
                 owner: address,
                 spender: walletChain.diamondAddress,
                 previous: priorAllowance,
+                wrote: wroteAllowance,
               });
             } catch {
               // Leave the block message as the surfaced outcome.
@@ -489,6 +499,7 @@ export function RefinanceFlow({
             owner: address,
             spender: walletChain.diamondAddress,
             previous: priorAllowance,
+            wrote: wroteAllowance,
           });
         } catch {
           // Leave the submit error as the surfaced failure.

@@ -94,8 +94,16 @@ export async function ensureAllowance(opts: {
    *  twice on the zero-first reset path) — drives the "step x of y"
    *  submit-progress label (#1037). */
   onPrompt?: () => void;
+  /** Called after EACH approve mines, with the value now on-chain.
+   *  Callers that unwind on failure need this rather than the return
+   *  value: when the zero-first reset succeeds and the second approve
+   *  then throws, this function never returns, yet the allowance HAS
+   *  been changed — to 0 — and an unwind keyed on the return value
+   *  would walk away leaving the prior grant destroyed. */
+  onWrote?: (value: bigint) => void;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, amount, onPrompt } = opts;
+  const { publicClient, walletClient, token, owner, spender, amount, onPrompt, onWrote } =
+    opts;
   const current = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -118,6 +126,7 @@ export async function ensureAllowance(opts: {
     if (receipt.status !== 'success') {
       throw new Error(`Token approval failed (${hash})`);
     }
+    onWrote?.(value);
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
     // not diamond.ts, so they feed the same centralized receipt floor
     // (standingApprovals / funding-watch roots ride push+focus+net
@@ -139,15 +148,21 @@ export async function ensureAllowance(opts: {
  *
  * Unwinding with {@link revokeAllowance} is only correct when the flow
  * created the grant out of nothing. `ensureAllowance` also raises a
- * NON-ZERO but insufficient allowance — and returns a hash for it, so
- * an unwind that keys on "did we send an approve?" would zero a grant
- * some OTHER live arrangement is relying on. Restoring the observed
- * prior value is right in both cases: zero when there was nothing,
- * the original figure when there was.
+ * NON-ZERO but insufficient allowance, so an unwind that keys on "did
+ * we send an approve?" would zero a grant some OTHER live arrangement
+ * is relying on. Restoring the observed prior value is right in both
+ * cases: zero when there was nothing, the original figure when there
+ * was.
  *
- * Skips the transaction when the allowance already reads `previous`
- * (the flow failed before its approve mined, or someone else has since
- * moved it — either way there is nothing of ours to undo).
+ * `wrote` is what makes it safe to act at all. The caller passes the
+ * value THIS attempt set, and the restore proceeds only while the
+ * allowance still reads exactly that. Anything else means another tab,
+ * another flow, or a spender that consumed it has moved the allowance
+ * since — and overwriting that with our stale `previous` would be the
+ * very clobbering this function exists to avoid. Nothing to undo is
+ * the common case, not an error: a flow whose `ensureAllowance` found
+ * the allowance already sufficient wrote nothing and must restore
+ * nothing.
  */
 export async function restoreAllowance(opts: {
   publicClient: PublicClient;
@@ -157,15 +172,21 @@ export async function restoreAllowance(opts: {
   spender: `0x${string}`;
   /** Allowance observed BEFORE this flow touched it. */
   previous: bigint;
+  /** Value this attempt actually wrote, or null if it wrote nothing. */
+  wrote: bigint | null;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, previous } = opts;
+  const { publicClient, walletClient, token, owner, spender, previous, wrote } =
+    opts;
+  // This attempt changed nothing, so it has nothing to put back.
+  if (wrote === null || wrote === previous) return null;
   const current = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
     functionName: 'allowance',
     args: [owner, spender],
   });
-  if (current === previous) return null;
+  // Someone else owns the current value now — leave it alone.
+  if (current !== wrote) return null;
 
   const approve = async (value: bigint): Promise<`0x${string}`> => {
     const hash = await walletClient.writeContract({

@@ -4,8 +4,8 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
-// Lint for apps/alpha02 (#1516). Scoped DELIBERATELY to the correctness
-// rules that a type-checker cannot see, not to style.
+// Lint for apps/alpha02 (#1516). Scoped DELIBERATELY to correctness
+// rules a type-checker cannot see, not to style.
 //
 // The motivating defect: #1511 shipped a `useCallback` below the page's
 // loading/not-found early returns, so the hook was skipped on the first
@@ -18,6 +18,50 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 // A full style ruleset over an existing codebase is a separate, noisier
 // change; keeping this narrow is what lets it be enforcing from day one
 // instead of advisory forever.
+
+/** Every rule name a shared config turns on, flattened — the config
+ *  presets are arrays in some cases and single objects in others. */
+const rulesOf = (preset) =>
+  (Array.isArray(preset) ? preset : [preset]).flatMap((c) =>
+    Object.keys(c?.rules ?? {}),
+  )
+
+/** Rules this config INTENDS to block on. Anything not named here is
+ *  advisory, and the derivation below guarantees that rather than
+ *  trusting the presets' own severities.
+ *
+ *  Two review rounds were spent discovering that "extends a recommended
+ *  preset, override a few rules" does not achieve it: the first draft
+ *  left nine react-hooks v7 rules erroring, and the second still left
+ *  19 blockers inherited from `tseslint.configs.recommended`
+ *  (`prefer-const`, `no-var`, `no-namespace`, `no-require-imports`, …).
+ *  Every preset is now flattened to advisory FIRST and these are
+ *  re-asserted after, so a preset gaining a rule can never quietly
+ *  start failing `typecheck`. Verify with:
+ *
+ *    npx eslint --print-config src/main.tsx
+ *
+ *  which should report exactly these at error severity. */
+const BLOCKING_CORE = {
+  // "This code cannot be doing what its author meant" — bug rules, not
+  // taste. Each is cheap, unambiguous, and already clean.
+  'no-cond-assign': 'error',
+  'no-dupe-keys': 'error',
+  'no-dupe-else-if': 'error',
+  'no-duplicate-case': 'error',
+  'no-self-compare': 'error',
+  'no-unsafe-negation': 'error',
+  'no-unreachable': 'error',
+}
+
+/** Kept separate because a rule may only be configured in a block that
+ *  loads its plugin — the hooks rule belongs to the second block. */
+const BLOCKING_HOOKS = {
+  // The rule this config exists for. Clean at zero violations, so it
+  // enforces from day one instead of becoming a backlog nobody pays.
+  'react-hooks/rules-of-hooks': 'error',
+}
+
 export default defineConfig([
   globalIgnores(['dist', 'node_modules', '.wrangler', 'playwright-report']),
   {
@@ -28,57 +72,36 @@ export default defineConfig([
       globals: { ...globals.browser, ...globals.node },
     },
     rules: {
-      // Everything from the recommended sets is advisory here — the
-      // point of this config is the hooks rules below. Turning the
-      // style/typing opinions on over an existing codebase would bury
-      // the signal we actually added this for.
+      // Style and typing opinions from the base presets go OFF, not
+      // warn: they are not what this config is for, and a few hundred
+      // advisory hits would bury the signal it was added to surface.
       ...Object.fromEntries(
-        Object.keys({
-          ...js.configs.recommended.rules,
-        }).map((r) => [r, 'off']),
+        [
+          ...rulesOf(js.configs.recommended),
+          ...rulesOf(tseslint.configs.recommended),
+        ].map((rule) => [rule, 'off']),
       ),
-      // …with the narrow exceptions that catch real bugs rather than
-      // taste. Each of these is a "this code cannot be doing what its
-      // author meant" rule.
-      'no-cond-assign': 'error',
-      'no-dupe-keys': 'error',
-      'no-dupe-else-if': 'error',
-      'no-duplicate-case': 'error',
-      'no-self-compare': 'error',
-      'no-unsafe-negation': 'error',
-      'no-unreachable': 'error',
-      'require-atomic-updates': 'off', // too noisy on async React handlers
-      '@typescript-eslint/no-unused-expressions': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unused-vars': 'off', // tsc already covers this
-      '@typescript-eslint/no-empty-object-type': 'off',
-      '@typescript-eslint/ban-ts-comment': 'off',
+      ...BLOCKING_CORE,
     },
   },
-  // The reason this config exists.
   {
     files: ['src/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended],
     rules: {
-      // Take EVERY rule the recommended set turns on and drop it to a
-      // warning, then re-assert the one that blocks. Derived rather
-      // than hand-listed on purpose: the v7 recommended set enables 16
-      // rules, 12 of them as errors, and naming the deferred ones
-      // individually would silently start blocking the moment the
-      // plugin adds a seventeenth (#1529 review — an earlier draft of
-      // this file downgraded three and left nine erroring, which
-      // contradicted the policy stated above).
+      // The hooks preset's other rules DO stay visible as warnings —
+      // unlike the style presets these are genuine correctness signals
+      // (work done in the wrong render phase, refs read during render).
+      // The existing surface has never been held to them, so the sweep
+      // is tracked separately in #1520 rather than bolted onto a
+      // plumbing change or used as an excuse to make everything
+      // advisory.
       ...Object.fromEntries(
-        Object.keys(reactHooks.configs.flat.recommended.rules ?? {}).map(
-          (rule) => [rule, 'warn'],
-        ),
+        rulesOf(reactHooks.configs.flat.recommended).map((rule) => [
+          rule,
+          'warn',
+        ]),
       ),
-
-      // ERROR, and clean at zero violations as of this commit — so it
-      // is enforcing from day one rather than a backlog that never
-      // gets paid down. This is the rule that would have caught the
-      // #1511 crash, and the only one this config blocks on.
-      'react-hooks/rules-of-hooks': 'error',
+      ...BLOCKING_HOOKS,
     },
   },
 ])

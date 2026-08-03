@@ -270,6 +270,13 @@ export function ObligationTransferFlow({
     // would destroy a grant another live arrangement depends on
     // (#1529 review).
     let priorAllowance: bigint | null = null;
+    // The value THIS attempt last put on-chain — null while it has
+    // written nothing. Stamped per mined approve rather than from
+    // ensureAllowance's return value, so the zero-reset counts even when
+    // the approve after it is rejected. The unwind acts only if the
+    // allowance still reads exactly this, so a change made meanwhile by
+    // another tab or flow is left alone (#1529 review).
+    let wroteAllowance: bigint | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // transferObligationViaOffer is Tier-1 — live re-screen first.
@@ -472,6 +479,9 @@ export function ObligationTransferFlow({
           owner: address,
           spender: walletChain.diamondAddress,
           amount: needed,
+          onWrote: (value) => {
+            wroteAllowance = value;
+          },
         });
       }
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
@@ -512,7 +522,9 @@ export function ObligationTransferFlow({
       if (priorAllowance === null || !approvalToken) return;
       if (!publicClient || !walletClient || !address || !walletChain) return;
       const previous = priorAllowance;
+      const wrote = wroteAllowance;
       priorAllowance = null;
+      wroteAllowance = null;
       try {
         await restoreAllowance({
           publicClient,
@@ -521,6 +533,7 @@ export function ObligationTransferFlow({
           owner: address,
           spender: walletChain.diamondAddress,
           previous,
+          wrote,
         });
       } catch {
         // Intentionally silent — see above.
