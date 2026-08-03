@@ -48,7 +48,7 @@
 #                        job, precisely because it is not a member here.
 #   - ops/subgraph       drift subgraph; runs on The Graph.
 #   - ops/tenderly       alert presets; deploy via the Tenderly CLI.
-#   - ops/offchain-data-archive  nightly D1 backup Worker.
+#   - ops/offchain-data-warm  nightly D1 backup Worker.
 #   (ops/lz-watcher, the LayerZero security monitor, is GONE. Its
 #    Cloudflare Worker was deleted 2026-07-28 — the T-068 CCIP migration
 #    and the #687-A securities excision had between them made every

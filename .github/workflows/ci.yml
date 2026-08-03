@@ -70,12 +70,20 @@
 #                     resolved, `pnpm -r test` joins this workflow in a
 #                     small follow-up PR.
 #
-# For the `Protect main` ruleset's required-status-checks rule, wire
-# `contracts-fast`, `workspaces`, `detect-changes`, `Build docs`, and
-# `Slither static analysis` (post-#296 / ADR-0011 — five required
-# contexts on every merge to main). All five are conditionally
-# required via path-filter `if:` guards — branch protection treats
-# `if:`-skipped checks as SUCCESS, so docs-only PRs still merge fast.
+# The `Protect main` ruleset's required-status-checks rule wires
+# `contracts-fast`, `workspaces`, `detect-changes`, `Slither static
+# analysis` and `D1 name consistency (unconditional)` (post-#296 /
+# ADR-0011, plus #1537). An earlier version of this comment also listed
+# `Build docs`; the live ruleset does not contain it — see
+# ProjectProcedures §7.1, which now says how to check rather than
+# asserting a list that can drift.
+#
+# The first four are conditionally required via path-filter `if:`
+# guards — branch protection treats `if:`-skipped checks as SUCCESS, so
+# docs-only PRs still merge fast. `D1 name consistency` is the
+# exception and runs unconditionally BY DESIGN: it scans the whole
+# repository, so any path gate would exclude the changes it exists to
+# catch (#1537 r6).
 #
 # The release/* / `v*` tag-gated `mainnet-gate.yml` follow-up
 # (tracked as 74.C) re-runs `predeploy-check.sh --full` as a hard gate
@@ -254,7 +262,7 @@ jobs:
           # those sources alone must still run the workspaces job — or
           # exactly the drift the guard exists to reject would merge
           # with the job path-skipped (Codex #1485 r1 + r3).
-          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-archive/src/|docs/ops/OffChainRestore\.md$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-warm/src/|docs/ops/OffChainRestore\.md$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -275,14 +283,14 @@ jobs:
             echo "mesh_watcher=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # ops/offchain-data-archive — same standalone-npm-package
+          # ops/offchain-data-warm — same standalone-npm-package
           # situation as mesh-watcher (own trust boundary, outside the
           # pnpm workspace, so the `workspaces` job cannot reach it).
           # Gained a test surface with #1477's restore converter, whose
           # whole value is that its hostile-input rejections actually
           # fire — so the suite runs in CI, not only on the operator's
           # machine.
-          OFFCHAIN_ARCHIVE_RE='^(ops/offchain-data-archive/|\.github/workflows/ci\.yml$)'
+          OFFCHAIN_ARCHIVE_RE='^(ops/offchain-data-warm/|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$OFFCHAIN_ARCHIVE_RE"; then
             echo "offchain_archive=true" >> "$GITHUB_OUTPUT"
           else
@@ -894,7 +902,7 @@ jobs:
       - name: Unit tests
         run: ./node_modules/.bin/vitest run
 
-  # ── ops/offchain-data-archive ─────────────────────────────────────────
+  # ── ops/offchain-data-warm ─────────────────────────────────────────
   # The nightly-backup Worker + its committed restore converter (#1477).
   # Standalone npm package outside the pnpm workspace (own trust
   # boundary — same rationale as mesh-watcher), so the `workspaces` job
@@ -904,8 +912,45 @@ jobs:
   # compromise-path restore and must go red in CI when weakened, not at
   # the first real incident. Like mesh-watcher, detection/restore-only —
   # NOT a required status check.
-  offchain-data-archive:
-    name: ops/offchain-data-archive (typecheck + tests)
+  # -------------------------------------------------------------------
+  # d1-name-consistency — the ONE job that is deliberately NOT path-gated.
+  #
+  # The guard asserts that every D1 binding and every `wrangler d1` command
+  # in the repo names the same shared database. Its whole value is catching
+  # a change ANYWHERE, so gating it on a path list is self-defeating: the
+  # exact defect it was written for (#1537 — a rename that reached the
+  # deploy scripts and runbooks but not the bindings) touches
+  # `contracts/script/deploy-*.sh` and `docs/ops/*.md`, neither of which is
+  # in `workspaces`'s filter. Such a PR would have set `contracts=true`,
+  # `workspaces=false`, skipped the guard entirely, and merged the split.
+  #
+  # Extending the workspaces filter instead was the alternative, and it is
+  # worse: the guard scans essentially every tracked script and doc, so the
+  # filter would have to match nearly everything, which removes the path
+  # gating it exists to provide.
+  #
+  # The script imports only node builtins, so this needs no install step.
+  d1-name-consistency:
+    name: D1 name consistency (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Every binding and command names the same shared database
+        run: node apps/indexer/scripts/check-d1-name-consistency.mjs
+
+  offchain-data-warm:
+    name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes
     if: needs.detect-changes.outputs.offchain_archive == 'true'
     runs-on: ubuntu-latest
@@ -913,7 +958,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ops/offchain-data-archive
+        working-directory: ops/offchain-data-warm
 
     steps:
       - name: Checkout
@@ -926,7 +971,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: ops/offchain-data-archive/package-lock.json
+          cache-dependency-path: ops/offchain-data-warm/package-lock.json
 
       - name: Install
         run: npm ci --ignore-scripts

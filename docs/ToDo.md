@@ -500,7 +500,7 @@ Vaipakam-config
 vaipakam-terms
 vaipakam-policy
 vaipakam-legal-vault
-vaipakam-offchain-data-archive
+vaipakam-offchain-data-warm
 
 ---
 

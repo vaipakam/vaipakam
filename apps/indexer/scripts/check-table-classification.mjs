@@ -23,7 +23,7 @@
  * docket, not that every decision is already made.
  *
  * It also cross-checks the `born-off-chain` class against the archive
- * Worker's own list (`ops/offchain-data-archive/src/backup.ts`), so
+ * Worker's own list (`ops/offchain-data-warm/src/backup.ts`), so
  * the classification and the backup cannot drift apart silently.
  *
  * SCOPE CONTRACT — a tripwire against honest drift, not a hostile-code
@@ -430,7 +430,7 @@ const missingExternal = Object.entries(EXTERNAL_WRITERS)
 // probe-verified that raw-text matching accepted all three loop
 // spreads commented out (Codex #1485 r5).
 const backupLex = lexTs(
-  readFileSync(join(REPO_ROOT, 'ops', 'offchain-data-archive', 'src', 'backup.ts'), 'utf8'),
+  readFileSync(join(REPO_ROOT, 'ops', 'offchain-data-warm', 'src', 'backup.ts'), 'utf8'),
 );
 // Strings KEPT for the array parse (the table names ARE string
 // literals); strings BLANKED for the consumption tripwires (a spread

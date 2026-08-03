@@ -70,7 +70,7 @@ This bifurcation cuts the cross-replication surface roughly in half.
 
 ### 3.1 Scope
 
-Schedule a Cloudflare Worker (`ops/offchain-data-archive`) that nightly:
+Schedule a Cloudflare Worker (`ops/offchain-data-warm`) that nightly:
 
 1. Exports the **born off-chain** D1 tables — `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
@@ -121,7 +121,7 @@ but the healthcheck has to perform signed GETs to verify archives,
 which a write-only key cannot do. The corrected spec uses two
 bucket-scoped Application Keys:
 
-- **`vaipakam-offchain-data-archive-write-only`** — `listBuckets` +
+- **`vaipakam-offchain-data-warm-write-only`** — `listBuckets` +
   `writeFiles`, which is what `setup-backblaze.mjs` actually provisions
   (`writeCaps = ['listBuckets', 'writeFiles']`). **NOT `listFiles`**, which an
   earlier revision of this line listed (#1450 r27) — and the omission is
@@ -145,7 +145,7 @@ bucket-scoped Application Keys:
   `BACKUP_ENCRYPTION_KEY`, so a self-consistent archive+manifest pair passes
   every check it makes. Closing that is #1473; version-aware recovery is why
   the retention window exists at all (#1469).
-- **`vaipakam-offchain-data-archive-read-only`** — `listBuckets` + `listFiles`
+- **`vaipakam-offchain-data-warm-read-only`** — `listBuckets` + `listFiles`
   + `readFiles`. Used by the weekly healthcheck. A CF compromise
   here yields AES-256-GCM ciphertext only; the offline encryption
   key blocks plaintext recovery.
@@ -457,7 +457,7 @@ the shared-state restore, measured in hours. If a genuinely fast failover is
 wanted, the prerequisite is per-account state — its own D1 kept in sync and its
 own Secrets Store populated — which is a different design, not a runbook step.
 
-**`ops/offchain-data-archive` is deliberately NOT part of this
+**`ops/offchain-data-warm` is deliberately NOT part of this
 mechanism**, and it was listed here in error. Cold standby works for the
 Workers above because each has a DNS record or feature flag to flip at all
 — but note the paragraph above: on ACCOUNT loss none of them is stateless
@@ -501,7 +501,7 @@ loss). Stage C closes the integrity gap before mainnet.
 
 ## 6. Sequencing
 
-1. **NOW (pre-audit)**: implement Stage A in `ops/offchain-data-archive`.
+1. **NOW (pre-audit)**: implement Stage A in `ops/offchain-data-warm`.
    Backup pipeline live, restore-runbook drafted, healthcheck
    alerting in place.
 2. **Audit window**: design doc reviewed; auditors invited to flag any
