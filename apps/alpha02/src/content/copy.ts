@@ -1398,8 +1398,13 @@ const copySource = {
       'Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.',
     strict: {
       title: 'Strict mode',
+      // "whose overall risk level is mid-tier", NOT "involving a
+      // mid-tier asset" (Codex #1517 P2): the riskier side of a deal
+      // decides its level, so a deal that pairs a mid-tier asset with
+      // an illiquid one counts as illiquid — it uses the per-deal
+      // consent path, and strict mode adds nothing there.
       blurb:
-        'An opt-in that makes every deal involving a mid-tier asset (liquid, but not blue-chip) require one extra, deliberate per-deal confirmation on top of your level above.',
+        'An opt-in that makes every deal whose overall risk level is mid-tier (liquid, but not blue-chip — decided by the riskier side of the deal) require one extra, deliberate per-deal confirmation on top of your level above.',
       on: 'Strict mode is ON — click to turn off',
       // Enabling is deliberately NOT offered here (Codex #1517 r1):
       // strict mode demands a fresh per-deal acknowledgement this app
@@ -1412,7 +1417,7 @@ const copySource = {
       // contract's disable-linger cooldown keeps that requirement in
       // force for a window after the disable.
       offLocked:
-        'Strict mode is OFF. Turning it on isn’t offered here yet: while on, every mid-tier deal needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.',
+        'Strict mode is OFF. Turning it on isn’t offered here yet: while on, every deal whose overall risk level is mid-tier needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.',
       updating: 'Updating…',
       disabledMsg:
         'Strict mode is off. If a safety cooldown is configured, the extra confirmation keeps applying until it finishes.',

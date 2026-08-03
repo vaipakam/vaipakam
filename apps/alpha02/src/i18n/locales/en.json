@@ -825,9 +825,9 @@
       "reaffirmedMsg": "Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.",
       "strict": {
         "title": "Strict mode",
-        "blurb": "An opt-in that makes every deal involving a mid-tier asset (liquid, but not blue-chip) require one extra, deliberate per-deal confirmation on top of your level above.",
+        "blurb": "An opt-in that makes every deal whose overall risk level is mid-tier (liquid, but not blue-chip — decided by the riskier side of the deal) require one extra, deliberate per-deal confirmation on top of your level above.",
         "on": "Strict mode is ON — click to turn off",
-        "offLocked": "Strict mode is OFF. Turning it on isn’t offered here yet: while on, every mid-tier deal needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.",
+        "offLocked": "Strict mode is OFF. Turning it on isn’t offered here yet: while on, every deal whose overall risk level is mid-tier needs an extra confirmation this app can’t collect yet — you’d be locking yourself out of those deals. Turning it off always works here.",
         "updating": "Updating…",
         "disabledMsg": "Strict mode is off. If a safety cooldown is configured, the extra confirmation keeps applying until it finishes.",
         "lingerNote": "You turned this off recently — the extra confirmation keeps applying until the safety cooldown finishes.",
