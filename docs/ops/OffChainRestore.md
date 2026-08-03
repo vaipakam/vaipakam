@@ -1129,7 +1129,10 @@ For each table:
    > as replay output; an empty table there is the expected state, and the
    > dashboard withholds the backing block rather than publishing zeros.
    > It is deliberately NOT imported from the archive either: a restored
-   > copy would republish an old backing verdict as a current one. This one holds pre-cutover day figures
+   > copy would republish an old backing verdict as a current one.
+   >
+   > **Back to `recycle_day_backfill`** — the table this section is about,
+   > and the one that IS imported here. It holds pre-cutover day figures
    > recomputed from `getRecycleDayMetrics`, whose `dayCapThreshold18`
    > input `setBroadcastDayCapThreshold` can overwrite for an
    > already-finalized day on a demoted Diamond. After that, re-running

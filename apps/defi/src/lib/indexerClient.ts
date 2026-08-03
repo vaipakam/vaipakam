@@ -890,9 +890,11 @@ export interface RecyclingSeries {
    * is the only one that can, which is why it is separate: grouping them
    * would invite a reader to trust both equally.
    *
-   * Every field is null together when the live read failed, with
-   * `unavailableReason` saying why. Null here means "we could not read the
-   * chain", never "the reserve is zero" — opposite claims.
+   * Every field is null together when there is no reading to publish —
+   * none captured yet, the capture schedule fallen behind, or the chain
+   * itself no longer advancing — with `unavailableReason` saying which.
+   * Null here means "we have no reading we can stand behind", never "the
+   * reserve is zero". Those are opposite claims.
    */
   backing: {
     vpfiBalance: string | null;

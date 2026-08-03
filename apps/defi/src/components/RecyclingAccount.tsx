@@ -278,8 +278,11 @@ export default function RecyclingAccount({ chainId }: { chainId: number }) {
     // a snapshot that cannot say when it was taken is not publishable.
     // It is required here rather than in the amount family because it is
     // a timestamp, and that family validates digit strings.
+    // A PARSEABLE instant, not merely a non-empty string: `asOf:
+    // "unknown"` passed a length check and was rendered as the freshness
+    // disclosure, which is the same defect as omitting it.
     typeof b.asOf === 'string' &&
-    b.asOf.length > 0 &&
+    Number.isFinite(Date.parse(b.asOf)) &&
     // Malformed amounts withhold the BLOCK, not the account.
     backingAmountsAreWellFormed(b) &&
     AMOUNT_FIELDS.backing.every(

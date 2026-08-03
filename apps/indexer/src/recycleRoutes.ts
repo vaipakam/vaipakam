@@ -79,7 +79,7 @@ import {
 } from '@vaipakam/contracts/abis';
 
 import type { Env } from './env';
-import { getChainConfigs } from './env';
+import { getChainConfigs, getDeployedChainCount } from './env';
 import { DO_PATH_CADENCE_MINUTES } from './cronRouting';
 import { jsonResponse } from './offerRoutes';
 
@@ -218,10 +218,15 @@ export async function captureBackingSnapshot(
   env: Env,
   chainId: number,
 ): Promise<void> {
-  // Recorded WITH the row: the cadence that produced it.
+  // Recorded WITH the row: the cadence that produced it. Counted from the
+  // DEPLOYED set, not the secrets readable on this tick — a count taken
+  // during a transient Secrets Store failure is smaller than the rotation
+  // that resumes once secrets recover, and storing it would expire a
+  // healthy snapshot before its own next turn. That is the inverse of the
+  // bug carrying the count was meant to fix.
   const chainCount = (() => {
     try {
-      return Math.max(1, getChainConfigs(env).length);
+      return Math.max(1, getDeployedChainCount());
     } catch {
       return 1;
     }
@@ -425,10 +430,12 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
 }
 
 /**
- * This route must never be cached. The shared `jsonResponse` sets
- * `Cache-Control: public, max-age=10`, and a replayed `vpfiBalance` can
- * briefly conceal the very backing loss the live read exists to expose —
- * the figure would be stale exactly when it matters.
+ * This route must never be cached by the CLIENT. The shared
+ * `jsonResponse` sets `Cache-Control: public, max-age=10`, which would
+ * add browser staleness on top of the capture's own — and the capture's
+ * age is the one thing this surface publishes so a reader can judge it.
+ * A figure whose stated age understates its real age is worse than an
+ * openly old one.
  */
 function liveJsonResponse(body: unknown, status = 200): Response {
   const res = jsonResponse(body, status);

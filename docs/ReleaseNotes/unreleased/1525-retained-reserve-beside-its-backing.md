@@ -34,5 +34,7 @@ The reserve and the balance behind it were originally read from the chain *while
 
 None of them exist if answering the page does no network work at all. The platform already reads the chain on a schedule, so the reserve is captured there and the page serves what was stored.
 
-The cost is that the figures lag the chain by minutes rather than seconds, and **the page now shows when they were read**. That last part was the part I had wrong: I justified serving a not-quite-live figure on the grounds that its age was published, when it was only present in the underlying data and never shown to anyone. A disclosure a reader cannot see is not a disclosure. For a question like *do the tokens behind this reserve exist*, a reading a few minutes old answers it perfectly well — but only if the reader can tell how old it is.
+The cost is that the figures trail the chain, and **the page now shows the timestamp of the state they describe**. How far they trail depends on how many chains the platform is reading — captures rotate one chain at a time — so the page states the timestamp rather than promising an interval it cannot keep at every size. If the reading falls further behind than the rotation should allow, or the chain it came from stops advancing, the whole section is withheld rather than shown as current.
+
+That disclosure is the part I originally had wrong: I justified serving a not-quite-live figure on the grounds that its age was published, when it was only present in the underlying data and never shown to anyone. A disclosure a reader cannot see is not a disclosure. For a question like *do the tokens behind this reserve exist*, a reading somewhat behind the chain answers it perfectly well — but only if the reader can tell how far behind it is.
 

@@ -306,6 +306,25 @@ export interface ChainConfig {
  * consult the chain-id → RPC mapping for live-ownership reads).
  * Polygon mainnet stays absent — no Diamond there in Phase 1.
  */
+/**
+ * Every chain this build KNOWS ABOUT, independent of which RPC secrets
+ * happen to resolve on a given tick.
+ *
+ * `getChainConfigs` filters by secret availability, which is correct for
+ * "what can I scan right now" and wrong for anything that must stay
+ * stable across a transient Secrets Store failure — such as the
+ * round-robin cadence a stored snapshot was captured under. A count taken
+ * during an outage is smaller than the rotation that will actually run
+ * once secrets recover.
+ */
+export function getDeployedChainCount(): number {
+  return CHAIN_META_IDS.filter((id) => !!getDeployment(id)).length;
+}
+
+const CHAIN_META_IDS = [
+  8453, 1, 42161, 10, 1101, 56, 84532, 11155111, 421614, 11155420, 80002, 97,
+];
+
 export function getChainConfigs(env: Env): ChainConfig[] {
   const meta: { id: number; name: string; rpc: string | undefined }[] = [
     // Mainnets — included once both the deployment artifact and the

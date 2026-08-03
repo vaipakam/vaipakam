@@ -2113,7 +2113,7 @@
     "backedYes": "Yes — the platform holds at least the pool it reports",
     "backedShort": "No — the pool is short by {{amount}} VPFI",
     "strandedLabel": "Released from the pool and never credited back",
-    "asOfLabel": "These figures were read at",
-    "asOfValue": "{{at}} — the platform reads these on a rotating schedule, so they trail the chain; the time shown is when they were read"
+    "asOfLabel": "Chain state as of",
+    "asOfValue": "{{at}} — the timestamp of the block these figures describe. The platform reads them on a rotating schedule, so they trail the chain."
   }
 }
