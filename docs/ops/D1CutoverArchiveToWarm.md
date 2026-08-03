@@ -44,8 +44,17 @@ into a terminal during an irreversible operation.
 
 Note also that `ops/offchain-data-warm` is **outside the pnpm workspace** — a
 root install does not populate its `node_modules`, so `npx wrangler` there is
-an unpinned download. Use the form `DeploymentRunbook.md` uses for that
-Worker rather than inventing one.
+an unpinned download. Its canonical form is in `OffChainRestore.md` §7b:
+
+```bash
+# [unrun here] — verified form, copied from OffChainRestore.md §7b
+( cd ops/offchain-data-warm && npm ci && npm run deploy )
+```
+
+An earlier revision of this line pointed at `DeploymentRunbook.md`, which
+contains no procedure for this Worker at all. Replacing an invented command
+with a dangling reference is not an improvement, so the form is quoted here
+with its source named.
 
 ## 1. What is being discarded, deliberately
 
@@ -222,8 +231,10 @@ its last deploy predates several merges.
 
 ```bash
 pnpm --filter @vaipakam/agent exec wrangler deploy
-# ops/offchain-data-warm is OUTSIDE the pnpm workspace — use the deploy
-# form in DeploymentRunbook.md for it, not a bare npx from here.
+# [unrun here] — verified form, from OffChainRestore.md §7b.
+# NOT `npx wrangler` from the repo root: this package is outside the
+# pnpm workspace, so that would be an unpinned download.
+( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
 Do this in the same sitting as the merge. Until it is done, **agent reads and
@@ -266,6 +277,7 @@ Use checks that can only be true of the new database. Since the target starts
 empty, its emptiness is the discriminator:
 
 ```bash
+# [unrun] — same shape as the [run] commands above; confirm before pasting.
 # Before restoring traffic: the new database has zero rows in these.
 (cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
   "SELECT (SELECT COUNT(*) FROM offers) o, (SELECT COUNT(*) FROM activity_events) a")
@@ -335,7 +347,10 @@ Order matters here, and this plan does not own all of it:
       inverted #1551's own sequence.
 - [ ] All four Workers confirmed on the target by a **discriminating** probe.
 - [ ] One nightly backup completed against the target, verified by content.
-- [ ] `support_tickets` exported (§1) or consciously abandoned.
+- [ ] **Both §1 exceptions decided** — `support_tickets` (4 open) and
+      `user_thresholds` (1 row, per-wallet alert config carrying a Telegram
+      chat id). Neither is obsoleted by a contract redeploy, and the discard
+      check below does not cover them precisely because §1 excludes them.
 - [ ] **The discard list re-validated on the day.** The row counts in §1 are
       from 2026-08-03 and the database is live. `diag_legal_holds` and its
       audit trail are classified born-off-chain and irrecoverable — they are
