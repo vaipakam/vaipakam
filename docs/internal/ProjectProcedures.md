@@ -733,11 +733,17 @@ Independent gates on every merge:
 
 **This list is transcribed from the live ruleset, and was wrong before.**
 It claimed `Build docs` was a required context; the ruleset does not
-contain it and did not when that line was written. The job still runs on
-every PR — it is simply not merge-blocking. Whether it should be is an
-open question for the owner, not something to settle by editing this
-list; adding a required check is a decision with its own consequences
-(notably that a check which never reports blocks a PR forever).
+contain it and did not when that line was written. Whether it should be
+required is a question the owner has since answered: **`Build docs` stays
+non-blocking** (decided 2026-08-03).
+
+It is informational, and it runs only on contracts-scoped PRs whose
+`contracts-fast` succeeded — both conditions, per the `needs:` in `ci.yml`.
+An earlier revision of this paragraph said it "runs on every PR" two lines
+above saying it runs only on contracts-scoped ones. Adding a required check is a decision with its own
+consequences — notably that a check which never reports blocks a PR
+forever, and that it retroactively blocks every in-flight PR whose branch
+predates the job.
 
 Verify against the live ruleset rather than trusting this block:
 
@@ -971,7 +977,7 @@ correlation is recorded.
 
 Combined effect of the #74 arc:
 
-- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Build docs` + `Slither static analysis` + signed commits + thread resolution + linear history + no-delete + no-force-push** (ten gates).
+- Routine PRs gated on **`detect-changes` + `contracts-fast` + `workspaces` + `Slither static analysis` + `D1 name consistency (unconditional)` + signed commits + thread resolution + linear history + no-delete + no-force-push**. (`Build docs` is NOT among them — see §7.1. It is informational: it runs on contracts-scoped PRs only, gated on `detect-changes.outputs.contracts` and a successful `contracts-fast`, and it never blocks merge. Owner decision 2026-08-03: leave it non-blocking.)
 - Path-filter (`detect-changes`) skips downstream jobs when scope doesn't apply — docs-only PRs merge in `<1 min`.
 - Contracts PRs run the deploy-sanity suite + positive-flow scenarios under the `cifast` foundry profile (~5 min cold) — production-bytecode-identical, but the full 2,012-test regression is operator-local + `mainnet-gate.yml`.
 - Mainnet cutover paths gated on `mainnet-gate.yml` (full regression as hard gate on `release/**` + `v*`).

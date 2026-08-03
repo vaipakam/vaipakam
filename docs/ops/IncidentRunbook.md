@@ -219,8 +219,44 @@ remit it with the manual §2b procedure — it will not be picked up otherwise.
 
 **To disable in an incident** (e.g. a misconfigured lane, or to hand back to
 manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
-running) or `KEEPER_ENABLED=false` (stops all keeper actions), then redeploy the
-Worker. The pass is idempotent and bounds its receipt waits, so stopping it never
+running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
+`runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
+keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
+#1466). That flag is a per-Worker `secret_text`, so `wrangler secret put` is
+the right tool for it.
+
+A deploy afterwards does apply the committed `"TG_BOT_USERNAME": ""` over
+whatever is live, with or without `--keep-vars` — but that is harmless here
+and an earlier revision of this line said otherwise. `apps/keeper` never
+reads that variable; the Telegram deep link is built by `apps/agent` from its
+own binding, which a keeper deploy does not touch. No restore step is
+needed.
+
+**To stop everything, including the snapshot**, empty the Worker's cron list
+(`"triggers": { "crons": [] }`) and follow the full procedure in
+[`apps/keeper/README.md`](../../apps/keeper/README.md) §"What the kill-switch
+does and does not stop". **That is a dashboard change, not a redeploy** —
+*Settings → Trigger Events*. An earlier revision of this line said "do not
+stop at the redeploy", which implied a deploy was part of it.
+
+A deploy is the wrong *shape* for this — it republishes the entire Worker
+configuration to change one schedule — rather than dangerous. A previous
+revision called it "actively wrong" on the strength of the
+`TG_BOT_USERNAME: ""` clobber; that clobber is harmless, because
+`apps/keeper` never reads the value (see lines above).
+
+Two things about it are load-bearing in an incident and neither is obvious:
+
+- the readback must be **trigger-aware** (Trigger Events pane or the
+  schedules API) — confirm the schedule is actually gone rather than
+  assuming the change took; and
+- an empty schedules response is the control plane accepting the change, not
+  the ticks having stopped — Cloudflare documents **up to 15 minutes** of
+  propagation, and this Worker runs every minute, so roughly a dozen further
+  ticks can still sign. **The confirmation is the absence of ticks after the window**, not
+  before it. A stationary nonce is corroboration only — it is per-chain,
+  and a RUNNING keeper has one anyway outside the snapshot window with no
+  eligible work. The pass is idempotent and bounds its receipt waits, so stopping it never
 strands funds — any in-flight day simply re-evaluates on the next armed tick or
 via the manual procedure above.
 

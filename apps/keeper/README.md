@@ -49,7 +49,7 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 |---|---|
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
-| `KEEPER_ENABLED` | Master kill-switch; set to `false` to disable autonomous actions. |
+| `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). |
 | `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
 | `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). `REWARD_REMIT_ENABLED` also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-archive --remote` from `apps/indexer/`). |
@@ -59,6 +59,134 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
+
+### What the kill-switch does and does not stop (#1548)
+
+`KEEPER_ENABLED=false` disables the six **gated** passes: `matcher`,
+`liquidator`, `autoLifecycle`, `rewardBudgetRemit`, `remitAck` and
+`commitmentReport`.
+
+**`dailyOracleSnapshot` is not among them and still signs.** It is gated only
+on `KEEPER_PRIVATE_KEY` being present, so with the kill-switch off it
+continues submitting `captureDailyPriceSnapshot` every day, and continues
+spending gas.
+
+That is deliberate, decided 2026-08-03: the snapshot is a public good rather
+than an autonomous risk-taking action — anyone can call
+`captureDailyPriceSnapshot` permissionlessly — and gating it would leave holes
+in the oracle series whenever the keeper is disabled for an unrelated reason.
+
+The practical consequence, which is the reason this section exists: **flipping
+the kill-switch is not a way to stop the keeper spending gas entirely.**
+
+**Stop the schedule, not the key.** This Worker has no HTTP surface — every
+pass runs from `scheduled()`. Removing its cron trigger stops all of them,
+snapshot included, with nothing to restore afterwards but the trigger:
+
+**Remove the trigger from the dashboard** — *Settings → Trigger Events*.
+That is the whole of the emergency action, and it touches nothing else.
+
+**It is not instant, though.** The control plane accepts the change
+immediately; the schedule stops firing everywhere only after propagation —
+see the window below, during which this Worker can still sign. An earlier
+revision said "takes effect immediately", which in an incident is precisely
+the wrong thing to believe.
+
+Editing `wrangler.jsonc` does **not** stop anything by itself, and an earlier
+revision of this section told you to do both, which is incoherent — the file
+change has no effect without a deploy, and a deploy is exactly what the next
+paragraph forbids.
+
+**But the repository still commits an active cron** (`"crons": ["* * * * *"]`),
+so the dashboard change is *temporary*: the next deploy of this Worker from a
+clean checkout re-arms it. If the stop needs to outlive the incident, follow
+up by committing
+
+```jsonc
+"triggers": { "crons": [] }
+```
+
+— empty, not absent; an absent `triggers` object sends no schedule update at
+all and silently leaves the committed cron in place — and deploy that
+deliberately, once the var hazard below has been dealt with.
+
+**Prefer the dashboard over `wrangler deploy` for this.** A deploy republishes
+the whole Worker configuration to change one schedule, which is more surface
+than an emergency needs.
+
+The var mechanics, stated accurately after two revisions got them wrong in
+opposite directions: without `--keep-vars` a deploy deletes every var before
+applying the config's; *with* it, vars the config omits survive but the ones
+it **declares are still applied**. So this config's `"TG_BOT_USERNAME": ""`
+lands either way.
+
+**That specific clobber is harmless, though**, and an earlier revision of
+this section treated it as a live hazard across several documents. Verified:
+`apps/keeper` never *reads* `TG_BOT_USERNAME` — it appears in a type, a
+comment, and a pass-through copy in `env.ts`, and nothing consumes it. The
+Telegram deep link that actually uses the handle is built by **`apps/agent`**
+(`index.ts:468`) from the agent's own binding, which a keeper deploy does not
+touch.
+
+The mechanic still matters for any var the keeper does read, and on other
+Workers. It is not a reason to fear this particular deploy.
+
+`wrangler triggers deploy` is not the answer either — experimental, and
+scoped to the `wrangler versions upload` flow.
+
+The dashboard change touches the schedule and nothing else, which is what an
+emergency stop needs.
+
+**Confirm it, do not assume it** — the readback must be trigger-aware, since
+a mistyped or wrongly-nested key leaves the committed cron in place. Check
+the Worker's *Settings → Trigger Events* pane or query its schedules
+directly; `wrangler tail` showing no tick only tells you none has fired
+*yet*. Same hazard and same remedy as `OffChainRestore.md` §1 **step 9**.
+
+**Then wait out the propagation window before calling it stopped.** An empty
+schedules response confirms the control plane accepted the change; Cloudflare
+documents that Cron Trigger updates can take **up to 15 minutes** to reach
+every location. This keeper runs `* * * * *` — every minute — so on the order
+of a dozen more ticks can still be dispatched after a successful readback,
+each able to sign.
+
+During an incident that gap is the whole question. **The confirmation is the
+absence of scheduled ticks after the window has elapsed** — keep
+`wrangler tail vaipakam-keeper` open across it, and treat quiet *before* the
+window as meaningless.
+
+A stationary keeper nonce is corroboration, not proof, and an earlier
+revision of this section called it ground truth. It is wrong in both
+directions: the nonce is per-chain, so one chain's stillness says nothing
+about another; and outside the 00:00–00:09 UTC snapshot window, with no
+eligible liquidation or remittance, a *running* keeper has a stationary nonce
+anyway. It confirms a stop only if it was moving beforehand.
+
+**Do not reach for the signing key to achieve this.** `KEEPER_PRIVATE_KEY`
+is bound via `secrets_store_secrets`, so `wrangler secret put` /
+`secret delete` writes or removes a per-Worker value **this Worker ignores** —
+a successful-looking command and a keeper that keeps signing
+(`docs/ops/AdminKeysAndPause.md` says exactly this for exactly this key). And
+removing the store entry is rotation-grade, and the repository documents
+rotation but **no removal procedure** — so it is not a step to improvise
+during an incident. (`apps/keeper` is its only binder — `apps/agent`
+deliberately does not hold a signing key — so an earlier "affects every
+binder" here overstated the blast radius. The reason to avoid it stands; the
+scare does not.) Stopping the schedule
+achieves the same outcome and is reversible in one command.
+
+**Three other passes also run ungated** — `watcher`, `preGraceWatcher` and
+`liquidityConfidence` — so the snapshot is not the only thing the switch
+leaves alive. The health-factor watcher matters most: it keeps evaluating
+positions and **keeps sending Telegram and Push alerts to users**. If the
+reason for flipping the switch is that users should stop hearing from the
+system, the switch alone does not do it.
+
+`liquidityConfidence` in particular has a gate narrower than it looks: it decides whether to **submit on-chain**. The pass still reads, and
+still writes its D1 counter — `upsertLiquidityConfidence` runs before the
+`canSubmit` check, deliberately ("always persist the updated counter, even
+when not submitting"). So `KEEPER_ENABLED=false` stops its transactions, not
+its storage writes.
 
 ### Confirming a flag actually took (#1475)
 

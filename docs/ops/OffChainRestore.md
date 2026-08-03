@@ -1412,7 +1412,13 @@ caught at the cheapest stage.
    > that is true of its *other* passes, not of this one. Its schedule goes
    > back in step 3, together with the signing configuration it implies.
    > Gating that pass behind `isKeeperEnabled` like every other signing
-   > pass is a code fix, tracked as #1466.
+   > pass was tracked as #1466 and has been **declined** (owner decision
+   > 2026-08-03): the snapshot is a public good rather than an autonomous
+   > risk-taking action — anyone may call `captureDailyPriceSnapshot`
+   > permissionlessly — and gating it would leave holes in the price series
+   > whenever the keeper is disabled for an unrelated reason. So the
+   > behaviour above is permanent, not pending a fix. To make a window
+   > genuinely write-free, empty the Worker's cron list.
 
 2. **Watch one full agent tick before going further.**
 
