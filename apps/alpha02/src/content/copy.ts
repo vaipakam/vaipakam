@@ -1452,6 +1452,11 @@ const copySource = {
       ['amount', 'token'],
     ),
     viewTx: 'View the transaction',
+    // The completed-recovery card's way back to a blank form (Codex
+    // #1547 r15). Named for what it actually starts — a wallet can hold
+    // more than one unsolicited token, and this outcome is decoded from
+    // the receipt, so nothing about the finished attempt is unresolved.
+    recoverAnother: 'Recover another token',
     // The BANNED outcome card must state the WHOLE consequence (Codex
     // #1547 r14). This card renders ahead of the generic sanctioned-
     // wallet gate (the r2 ordering rule), so it is the only

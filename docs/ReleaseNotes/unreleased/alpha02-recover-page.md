@@ -352,3 +352,43 @@ picks up the one that replaced it, in that order. The release stays
 exactly as narrow as before: only an unresolved card belonging to this
 wallet, only when the attempt that left is the one on screen, and never a
 settled verdict.
+
+A completed recovery now offers a way to start another one. The page
+stays open on the result it just produced, and the record of the
+finished attempt is already forgotten — but there was no button to clear
+the result card, so a wallet holding unsolicited tokens from a second
+sender had to reload the page or navigate away and come back before it
+could try again. The completed-recovery card now ends with "Recover
+another token", which returns an empty form in place. The blocked
+outcome deliberately does not get the same action: a wallet flagged that
+way is barred from new positions across the whole protocol until the
+declared address is de-listed, so a fresh form there could only lead to
+another attempt that cannot succeed — that card ends with the
+explanation and the note that the block lifts by itself.
+
+Some long-standing tokens are recoverable again. A handful of tokens
+predating the final token standard publish their symbol in an older
+format, and while the network returns it perfectly well, the app cannot
+read it as a name. The page treated that as a failed reading and refused
+to offer the recovery form at all, when the promised behaviour was
+simply to fall back to a shortened address. Because the symbol and the
+decimal format are optional decoration, any answer the network actually
+delivers now falls back gracefully — only a failure to REACH the network
+keeps the stricter treatment, which is the protection that stops a
+momentary connection problem from making an ordinary token accept an
+amount interpreted in its smallest units. For the older symbol format
+the page now goes one better and reads it in that format, so these
+tokens show their real ticker; that extra read happens only after the
+normal one has failed, so nothing slows down for the tokens that publish
+a symbol the usual way.
+
+Releasing a stale card no longer depends on this tab having redrawn in
+between. When another tab records an attempt and removes it a moment
+later — the shape of a signature declined as soon as the wallet opened —
+both pieces of news arrive together, before the tab that receives them
+has had any chance to redraw. It was answering "is this news about the
+card I'm showing?" from a picture of the screen that was one redraw
+behind, so it still believed it was showing an empty form, skipped the
+release, and was left sitting on a card for an attempt that had already
+been withdrawn. The tab now answers from the state it has just taken on,
+so the pair releases correctly however closely together it arrives.

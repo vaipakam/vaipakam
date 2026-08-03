@@ -220,6 +220,16 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
   })) as bigint;
   expect(walletBalAfter - walletBalBefore).toBe(dust);
 
+  // The completed-recovery card offers the way back to a blank form
+  // (Codex #1547 r15). The route stays mounted and the stored record is
+  // already forgotten, so without this action a wallet holding a SECOND
+  // unsolicited token had to reload or navigate away and back.
+  await page.getByRole('button', { name: /recover another token/i }).click();
+  await expect(page.getByText(/recovery complete/i)).toHaveCount(0);
+  const tokenField = page.getByLabel(/token contract address/i);
+  await expect(tokenField).toBeVisible();
+  await expect(tokenField).toHaveValue('');
+
   // The settled submission must be FORGOTTEN (Codex #1547 r6/r7): a
   // reload here has to land on a fresh form, never rehydrate an
   // unresolved-submission card — or the terminal 'executed' lock —
@@ -321,7 +331,9 @@ test('a processed-but-unreadable recovery stays locked across a reload', async (
  * removal naming THIS attempt returns the tab to a usable form, an
  * event whose oldValue names THIS attempt while its newValue already
  * carries a NEWER one releases the stale card and adopts the newer
- * record (Codex #1547 r14 — the backgrounded-tab ordering case), and a
+ * record (Codex #1547 r14 — the backgrounded-tab ordering case), a
+ * write and its removal delivered BACK TO BACK in one task still
+ * release (Codex #1547 r15 — no render happens in between), and a
  * SETTLED verdict (the executed lock) survives a removal untouched.
  *
  * Driven by dispatching the same `storage` event the browser delivers
@@ -462,7 +474,55 @@ test('a record another tab removes releases only the matching unresolved card', 
       page.getByText(/we don.t know whether this was sent/i),
     ).toHaveCount(0);
 
-    // (4) A SETTLED verdict survives the same removal: the processed-
+    // (4) BACK-TO-BACK write-then-removal (Codex #1547 r15). Another
+    // tab reserving an attempt and dropping it a moment later — the
+    // signature the user rejects as soon as the wallet opens — delivers
+    // BOTH events in the same task, so React batches the two updates
+    // with no render between them. Deciding the release from a step
+    // snapshot that a passive effect mirrors one render later saw
+    // `form` (the state before the adoption it had just made), skipped
+    // the release, and stranded this tab on a hashless card for an
+    // attempt that no longer existed. Dispatched without an intervening
+    // render wait on purpose — waiting for one hides the ordering.
+    const rejectedRecord = JSON.stringify({
+      txHash: null,
+      attemptId: 'attempt-four',
+      declaredSource: account.address,
+      amount: '3500000000000000000',
+      symbol: 'MOCK',
+      decimals: 18,
+      recoveryNonce: '2',
+      deadline: '1',
+    });
+    await page.evaluate(
+      ([key, next]) => {
+        window.localStorage.setItem(key, next);
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key,
+            oldValue: null,
+            newValue: next,
+            storageArea: window.localStorage,
+          }),
+        );
+        window.localStorage.removeItem(key);
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key,
+            oldValue: next,
+            newValue: null,
+            storageArea: window.localStorage,
+          }),
+        );
+      },
+      [storageKey, rejectedRecord] as const,
+    );
+    await expect(
+      page.getByText(/we don.t know whether this was sent/i),
+    ).toHaveCount(0);
+    await expect(page.getByLabel(/token contract address/i)).toBeVisible();
+
+    // (5) A SETTLED verdict survives the same removal: the processed-
     // attempt lock is something the user still has to read, and another
     // tab clearing storage must never wipe it off this screen.
     const settledRecord = JSON.stringify({

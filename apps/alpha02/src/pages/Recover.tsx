@@ -35,6 +35,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Lock, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
   hashDomain,
+  hexToString,
   isAddress,
   keccak256,
   parseAbi,
@@ -56,7 +57,11 @@ import {
   assertWalletNotSanctionedLive,
   useSanctionsCheck,
 } from '../data/sanctions';
-import { captureTxError, isUserRejection } from '../lib/errors';
+import {
+  captureTxError,
+  isTransportFailure,
+  isUserRejection,
+} from '../lib/errors';
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
 import { exactAmountString, shortAddress } from '../lib/format';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
@@ -129,6 +134,20 @@ const ERC20_META_ABI = [
     stateMutability: 'view',
     inputs: [{ type: 'address' }],
     outputs: [{ type: 'uint256' }],
+  },
+] as const;
+
+/** The PRE-STANDARD `symbol()` shape (Codex #1547 r15): MKR and its
+ *  contemporaries declare it as a fixed 32-byte word rather than the
+ *  ABI `string` the final ERC-20 settled on. Read only after the
+ *  `string` decode fails, so a modern token never pays for it. */
+const ERC20_SYMBOL_BYTES32_ABI = [
+  {
+    type: 'function',
+    name: 'symbol',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'bytes32' }],
   },
 ] as const;
 
@@ -655,66 +674,37 @@ function isUserRejectedTransaction(err: unknown): boolean {
   return false;
 }
 
-/** viem error names that mean the call REACHED the node and the
- *  contract had no answer to give — a revert, or a reply carrying no
- *  data at all (the shape a missing optional ERC-20 method, or a
- *  non-contract address, produces). */
-const CONTRACT_ABSENCE_ERROR_NAMES = new Set([
-  'ContractFunctionRevertedError',
-  'ContractFunctionZeroDataError',
-  'AbiDecodingZeroDataError',
-]);
-
-/** viem error names that mean the request never got a usable answer out
- *  of the node — the transport itself failed. */
-const TRANSPORT_ERROR_NAMES = new Set([
-  'HttpRequestError',
-  'TimeoutError',
-  'SocketClosedError',
-  'WebSocketRequestError',
-]);
-
 /**
- * Did the CONTRACT decline to answer, as opposed to the network failing
- * to ask it (Codex #1547 r10)?
+ * Is this OPTIONAL metadata read's failure safe to fall back on
+ * (Codex #1547 r15)?
  *
  * `symbol()` / `decimals()` are optional in ERC-20, and a token that
- * lacks them stays recoverable by treating amounts as raw base units.
- * But the previous catch classified ANY failure that way, so a passing
- * RPC error made an ordinary 18-decimal token parse as 0 decimals —
- * a user who typed `1` would then sign for ONE BASE UNIT. That is a
- * silent, fund-shaped wrong answer, so only a contract-level absence
- * may take the raw-units branch; everything else must fail the lookup.
+ * lacks them stays recoverable: raw base units for a missing
+ * `decimals()`, the shortened address for a missing `symbol()`. The
+ * question a failure has to answer is only ever "did the NODE answer?"
+ * — anything the node answered describes the token as it actually is,
+ * whatever shape that answer took.
  *
- * Detection mirrors `isTransactionNotFound` / `isUserRejectedTransaction`:
- * viem's stable error `name` walked down the cause chain, never
- * `instanceof`, because a pnpm workspace can resolve more than one
- * physical copy of viem. Transport names are checked first, so a
- * transport failure nested under a contract-shaped wrapper can never
- * read as an absence.
+ * The r10 rule listed the two contract-level shapes it knew (revert,
+ * zero data) and rethrew everything else, which turned out to be too
+ * narrow: legacy pre-standard tokens (MKR and its contemporaries)
+ * declare `symbol()` / `name()` as `bytes32`, so the call REACHES the
+ * contract and returns 32 perfectly good bytes that viem's `string`
+ * decoder then rejects (an `IntegerOutOfRangeError` under a
+ * `ContractFunctionExecutionError`). Rethrowing that failed the whole
+ * lookup and made those tokens unrecoverable, instead of the shortened-
+ * address fallback the guide promises.
  *
- * Deliberately CONSERVATIVE: an error matching neither set is not an
- * absence. Failing the lookup only costs the user a retry ("we couldn't
- * read this token's details"); guessing 0 decimals costs them funds.
- * The one known imprecision is a node that answers a transient failure
- * with JSON-RPC code -32603 plus a message — viem builds a
- * `ContractFunctionRevertedError` from that, and we would read it as an
- * absence. It is the same classification viem's own contract layer
- * makes, and it still requires the node to have answered.
+ * So the discriminator is now the TRANSPORT check alone, and only in
+ * the rejecting direction: a transport failure proves nothing about the
+ * token, and quietly reading it as "no decimals" is what once let an
+ * ordinary 18-decimal token parse as raw base units — a user who typed
+ * `1` would sign for a single base unit. Those still fail the lookup,
+ * with the honest "we couldn't read this token's details" the user can
+ * retry out of.
  */
-function isContractLevelAbsence(err: unknown): boolean {
-  let sawAbsence = false;
-  let node: unknown = err;
-  for (let depth = 0; node != null && depth < 8; depth += 1) {
-    if (typeof node !== 'object') break;
-    const o = node as { name?: unknown; cause?: unknown };
-    if (typeof o.name === 'string') {
-      if (TRANSPORT_ERROR_NAMES.has(o.name)) return false;
-      if (CONTRACT_ABSENCE_ERROR_NAMES.has(o.name)) sawAbsence = true;
-    }
-    node = o.cause;
-  }
-  return sawAbsence;
+function isOptionalMetadataUnavailable(err: unknown): boolean {
+  return !isTransportFailure(err);
 }
 
 /** Display cap for an attacker-controlled token symbol. */
@@ -1100,7 +1090,34 @@ export function Recover() {
   // which may belong to a wallet/chain that is no longer connected. The
   // `step` the render consumes is DERIVED from it below, after the
   // identity check — nothing outside that derivation reads this.
-  const [rawStep, setStep] = useState<Step>({ kind: 'form' });
+  const [rawStep, setStepState] = useState<Step>({ kind: 'form' });
+  // The step as of the LAST COMMIT REQUEST, not the last render (Codex
+  // #1547 r15). Event listeners — the cross-tab `storage` handler
+  // below — need to know what this tab is showing without
+  // re-subscribing on every step change, and they need the raw step
+  // (tag included) to decide whether an event concerns them.
+  //
+  // Written by `setStep` itself, in the same synchronous turn as the
+  // state update, because a passive `useEffect` mirror is a RENDER
+  // behind: another tab that reserves an attempt and then immediately
+  // drops it (a signature the user rejected at once) delivers both
+  // `storage` events in one task, and React batches the two updates
+  // with no render in between. The removal handler then read a mirror
+  // still showing `form`, skipped the release, and left this tab stuck
+  // on the hashless card it had just adopted.
+  const stepRef = useRef<Step>({ kind: 'form' });
+  /** The ONLY way to commit a step. Functional updaters read the ref —
+   *  which is exactly what was last handed to React — so back-to-back
+   *  commits inside one batch compose correctly without waiting for a
+   *  render. */
+  const setStep = (next: Step | ((prev: Step) => Step)) => {
+    const value =
+      typeof next === 'function'
+        ? (next as (prev: Step) => Step)(stepRef.current)
+        : next;
+    stepRef.current = value;
+    setStepState(value);
+  };
   const [error, setError] = useState<string | null>(null);
   // Reconcile state for the PENDING terminal card (Codex #1547 r5).
   // Its failure line is SEPARATE from `error` on purpose: the shared
@@ -1220,15 +1237,6 @@ export function Recover() {
     )
       ? { kind: 'form' }
       : rawStep;
-
-  // Mirror of the committed step for event listeners (Codex #1547 r13):
-  // the `storage` handler below has to know what this tab is showing
-  // WITHOUT re-subscribing on every step change, and it needs the raw
-  // step (tag included) to decide whether a removal concerns it.
-  const stepRef = useRef<Step>(rawStep);
-  useEffect(() => {
-    stepRef.current = rawStep;
-  }, [rawStep]);
 
   // CROSS-TAB rehydrate (Codex #1547 r8): a second tab on the same
   // wallet must not sit on a blank form while the first tab has a
@@ -1507,27 +1515,52 @@ export function Recover() {
         // missing → shortened address. The vault/balance reads are the
         // load-bearing ones and still fail the whole lookup.
         //
-        // ONLY a contract-level absence takes those branches (Codex
-        // #1547 r10). Catching every failure meant a passing RPC error
+        // ONLY a TRANSPORT failure re-throws (Codex #1547 r10, widened
+        // in r15). Catching every failure meant a passing RPC error
         // read as "this token has no decimals", so an ordinary
         // 18-decimal token parsed at 0 decimals and a user who typed
-        // `1` signed for a single base unit. A transport failure now
-        // RE-THROWS into the outer catch, which is the existing
-        // lookup-failed path — an honest "we couldn't read this token's
-        // details" the user can retry out of.
+        // `1` signed for a single base unit. A transport failure
+        // therefore RE-THROWS into the outer catch, which is the
+        // existing lookup-failed path — an honest "we couldn't read
+        // this token's details" the user can retry out of. Every other
+        // failure, decoding failures included, is the token being what
+        // it is, and takes the fallback.
         const absentOrRethrow = (err: unknown): null => {
-          if (isContractLevelAbsence(err)) return null;
+          if (isOptionalMetadataUnavailable(err)) return null;
           throw err;
         };
+        // Legacy `bytes32` symbol (Codex #1547 r15): MKR and its
+        // pre-standard contemporaries return a fixed 32-byte word, so
+        // the ABI-`string` read above fails to DECODE something the
+        // contract did answer. One extra read with the bytes32 shape
+        // recovers the real ticker instead of falling back to the
+        // shortened address. It costs nothing on the happy path — it
+        // runs only inside the failed read's catch, still inside the
+        // same parallel batch as the decimals/vault reads.
+        const symbolWithBytes32Fallback = publicClient
+          .readContract({
+            address: token,
+            abi: ERC20_META_ABI,
+            functionName: 'symbol',
+            blockNumber,
+          })
+          .catch((err: unknown) => {
+            if (!isOptionalMetadataUnavailable(err)) throw err;
+            return publicClient
+              .readContract({
+                address: token,
+                abi: ERC20_SYMBOL_BYTES32_ABI,
+                functionName: 'symbol',
+                blockNumber,
+              })
+              // `size: 32` trims the right-hand zero padding a bytes32
+              // ticker carries; whatever survives goes through the same
+              // sanitizer + short-address fallback as a string symbol.
+              .then((raw) => hexToString(raw as Hex, { size: 32 }))
+              .catch(absentOrRethrow);
+          });
         const [symRes, decRes, vault] = await Promise.all([
-          publicClient
-            .readContract({
-              address: token,
-              abi: ERC20_META_ABI,
-              functionName: 'symbol',
-              blockNumber,
-            })
-            .catch(absentOrRethrow),
+          symbolWithBytes32Fallback,
           publicClient
             .readContract({
               address: token,
@@ -2718,9 +2751,34 @@ export function Recover() {
                 )}
             <br />
             {txLink(step.txHash, step.owner, copy.recover.viewTx)}
+            <br />
+            {/* A completed recovery must offer the way back to a blank
+                form (Codex #1547 r15). This card is terminal and the
+                route stays mounted, so without an explicit action a
+                wallet holding a SECOND unsolicited token had to reload
+                or navigate away and back to try again. Safe here in a
+                way it is not on the executed-lock card: this outcome
+                was DECODED from the receipt, so the attempt is fully
+                accounted for, and a fresh flow re-reads the remaining
+                surplus and signs its own declaration. */}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ marginTop: 8 }}
+              onClick={resetToFreshForm}
+            >
+              {copy.recover.recoverAnother}
+            </button>
           </span>
         </div>
       ) : step.kind === 'banned' ? (
+        // DELIBERATELY no start-over action here (Codex #1547 r15).
+        // The success card above gets one, but a flagged wallet is
+        // blocked protocol-wide until the declared address is
+        // de-listed: `recoverStuckERC20` is a Tier-1 entry point, so a
+        // fresh form here could only walk the user into another doomed
+        // signature. Withholding the action leaves the standing
+        // verdict — and the auto-unlock note — as the last word.
         <div className="banner banner-danger" role="alert">
           <Lock aria-hidden />
           <span className="banner-body">

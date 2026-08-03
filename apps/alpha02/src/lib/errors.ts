@@ -135,6 +135,48 @@ export function captureTxError(
   return message;
 }
 
+/** viem error names that mean the request never got a usable answer out
+ *  of the node — the transport itself failed, so NOTHING can be
+ *  concluded about the contract that was asked. */
+const TRANSPORT_ERROR_NAMES = new Set([
+  'HttpRequestError',
+  'TimeoutError',
+  'SocketClosedError',
+  'WebSocketRequestError',
+]);
+
+/**
+ * Did the NETWORK fail to ask, as opposed to the contract answering
+ * something we couldn't use (Codex #1547 r15)?
+ *
+ * This is the discriminator for OPTIONAL reads — a call whose failure
+ * has a safe fallback (an ERC-20 without `symbol()`, a token whose
+ * `symbol()` returns `bytes32` instead of the ABI `string`). Anything
+ * the node actually answered — a revert, empty data, or data the ABI
+ * decoder chokes on — means the contract is what it is, and the caller
+ * may take its fallback. A TRANSPORT failure proves nothing: taking a
+ * fallback on it is how a passing RPC error once made an ordinary
+ * 18-decimal token parse as raw base units, so a user who typed `1`
+ * would have signed for a single base unit. Callers must fail the read
+ * (and let the user retry) when this returns true.
+ *
+ * Detection mirrors `isUserRejection`: viem's stable error `name`
+ * walked down the cause chain, never `instanceof`, because a pnpm
+ * workspace can resolve more than one physical copy of viem.
+ */
+export function isTransportFailure(err: unknown): boolean {
+  let node: unknown = err;
+  for (let depth = 0; node != null && depth < 8; depth += 1) {
+    if (typeof node !== 'object') break;
+    const o = node as { name?: unknown; cause?: unknown };
+    if (typeof o.name === 'string' && TRANSPORT_ERROR_NAMES.has(o.name)) {
+      return true;
+    }
+    node = o.cause;
+  }
+  return false;
+}
+
 /** Strict decimal check for amount inputs — exactly what viem's
  *  parseUnits accepts minus signs/exponents ('1e18', '.', 'abc', '0x5'
  *  are all rejected). Use BEFORE enabling any button whose handler

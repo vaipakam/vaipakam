@@ -835,6 +835,7 @@
       "successBody": "Sent {{amount}} {{symbol}} back to your wallet — fee-on-transfer tokens may deliver slightly less.",
       "successBodyUnknownToken": "Sent {{amount}} of the token at {{token}} back to your wallet. That isn’t the token this page looked up — your wallet appears to have replaced the transaction — so the amount is shown in the token’s smallest units. Open the transaction to see the full detail.",
       "viewTx": "View the transaction",
+      "recoverAnother": "Recover another token",
       "bannedTitle": "Your wallet is flagged — new positions are blocked",
       "bannedBody": "The sender you declared ({{source}}) is on the sanctions list, so your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like. Existing loans can still be repaid or closed. Nothing moved — the tokens stayed where they were.",
       "bannedAutoUnlock": "The block lifts automatically if that address is later removed from the sanctions oracle.",
