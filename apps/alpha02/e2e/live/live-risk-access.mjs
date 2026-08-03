@@ -27,7 +27,10 @@ const READ_ABI = parseAbi([
   'function getEffectiveRiskTier(address) view returns (uint8)',
   'function getRiskStrictMode(address) view returns (bool)',
 ]);
-const WRITE_ABI = parseAbi(['function setVaultRiskTier(uint8 level)']);
+const WRITE_ABI = parseAbi([
+  'function setVaultRiskTier(uint8 level)',
+  'function setRiskStrictMode(bool enabled)',
+]);
 const pub = createPublicClient({
   transport: http(process.env.BASE_SEPOLIA_RPC ?? 'https://sepolia.base.org'),
 });
@@ -91,14 +94,38 @@ async function assertSelectionMatchesChain(context) {
   check(`${context}: selected radio matches chain raw tier`, ok);
 }
 
+// Persistent-wallet normalization BEFORE the page loads (Codex #1539
+// r4): a prior strict-mode run must not poison the OFF-posture
+// assertions. Chain-confirmed direct write, exactly like the fork
+// spec's resetRiskState.
+if (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'getRiskStrictMode', args: [who] })) {
+  console.log('note: strict mode ON from a prior run — normalizing OFF');
+  const w = clientsFor(84532).wallet('borrower');
+  const hash = await w.writeContract({
+    address: DIAMOND,
+    abi: WRITE_ABI,
+    functionName: 'setRiskStrictMode',
+    args: [false],
+  });
+  await pub.waitForTransactionReceipt({ hash });
+}
+
 await page.goto(SITE + '/risk-access', { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForTimeout(3000);
 await ensureConnected(page);
-await page.waitForTimeout(2500);
 
-// 1. Read path: the rendered selection reflects the chain.
+// 1. Read path — POLL for the initial snapshot first (Codex #1539
+// r4): under a lagging RPC the page can still be in its loading
+// state moments after connect, and recording assertions against that
+// would report infrastructure latency as a product failure.
+check(
+  'initial risk snapshot rendered',
+  await pollUntil('initial snapshot', async () => {
+    const t = await page.locator('body').innerText();
+    return /Blue-chip only/i.test(t) && /Broad liquid/i.test(t);
+  }, { timeoutMs: 90000 }),
+);
 const body0 = await page.locator('body').innerText();
-check('page rendered tier cards', /Blue-chip only/i.test(body0) && /Broad liquid/i.test(body0));
 check('strict card withheld-enable posture', /isn’t offered here yet/i.test(body0));
 check('no strict switch while OFF', (await page.getByRole('switch').count()) === 0);
 await assertSelectionMatchesChain('pre-write');
@@ -117,7 +144,19 @@ if (Number(await rawTierOf()) !== 0) {
     'normalization landed (effective Blue-chip)',
     await pollUntil('normalize to 0', async () => Number(await tierOf()) === 0),
   );
-  await page.waitForTimeout(4000); // let the page's reread settle
+  // Poll until the PAGE shows Blue-chip selected and Broad clickable —
+  // a fixed settle delay can expire inside the page's refetch window
+  // and leave the next click aimed at a disabled radio (Codex #1539 r4).
+  check(
+    'page caught up with normalization',
+    await pollUntil('UI shows Blue-chip selected', async () => {
+      const sel = page.getByRole('radio', { checked: true });
+      if ((await sel.count()) !== 1) return false;
+      const name = (await sel.innerText()).split('\n')[0];
+      if (!/Blue-chip only/i.test(name)) return false;
+      return page.getByRole('radio', { name: /Broad liquid/i }).isEnabled();
+    }, { timeoutMs: 90000 }),
+  );
 }
 
 // 3. Raise to Broad through the real flow — the tier radios SUBMIT on
