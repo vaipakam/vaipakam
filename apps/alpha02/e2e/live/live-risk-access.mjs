@@ -101,6 +101,26 @@ async function assertSelectionMatchesChain(context) {
 let raiseClicked = false;
 let lowerConfirmed = false;
 let raiseSeenBlock = 0n;
+// Any cleanup-confirming Blue-chip read must come from a block at or
+// after this floor (Codex #1539 r9): raised past the observed raise
+// and past each cleanup write's receipt, so a lagging backend's
+// pre-raise 0 can never satisfy a confirmation.
+let confirmFloor = 0n;
+
+/** Tier-0 observation with a block floor — the uniform stale-read
+ *  discipline for every cleanup confirmation. */
+async function tierZeroAtOrAfter(minBlock) {
+  const bn = await pub.getBlockNumber();
+  if (bn < minBlock) return false;
+  const t = await pub.readContract({
+    address: DIAMOND,
+    abi: READ_ABI,
+    functionName: 'getVaultRiskTier',
+    args: [who],
+    blockNumber: bn,
+  });
+  return Number(t) === 0;
+}
 
 // EVERYTHING after launch runs under the cleanup boundary (Codex
 // #1539 r5): a throw during strict normalization, navigation, connect
@@ -179,6 +199,7 @@ check(
     // confirmation must come from a strictly newer block (Codex #1539
     // r8: a stale pre-raise view also reads 0).
     raiseSeenBlock = await pub.getBlockNumber();
+    confirmFloor = raiseSeenBlock + 1n;
     return true;
   }),
 );
@@ -251,10 +272,15 @@ check(
           functionName: 'setVaultRiskTier',
           args: [0],
         });
-        await pub.waitForTransactionReceipt({ hash });
+        const receipt = await pub.waitForTransactionReceipt({ hash });
+        // The receipt may belong to a same-nonce replacement (the
+        // raise) — and a lagging backend can serve a pre-raise 0
+        // (Codex #1539 r9). Confirm only from at least the receipt's
+        // own block.
+        if (receipt.blockNumber > confirmFloor) confirmFloor = receipt.blockNumber;
         const settled = await pollUntil(
           `cleanup write ${attempt + 1} confirmed Blue-chip`,
-          async () => Number(await rawTierOf()) === 0,
+          () => tierZeroAtOrAfter(confirmFloor),
           { timeoutMs: 45000 },
         );
         if (settled) break;
@@ -271,7 +297,7 @@ check(
       }
       const restored = await pollUntil(
         'cleanup lower',
-        async () => Number(await rawTierOf()) === 0,
+        () => tierZeroAtOrAfter(confirmFloor),
         { timeoutMs: 60000 },
       );
       if (!restored) {
@@ -290,10 +316,16 @@ check(
     }
     // The restore is a CHECK, not best-effort logging (Codex #1539
     // r3): a run that leaves the production wallet raised must exit
-    // non-zero, whatever path got it there.
+    // non-zero, whatever path got it there. Block-floored like every
+    // other confirmation (r9) — a stale final read must not report a
+    // false success.
     check(
       'cleanup: wallet left at Blue-chip on-chain',
-      Number(await rawTierOf()) === 0,
+      await pollUntil(
+        'final Blue-chip confirmation',
+        () => tierZeroAtOrAfter(confirmFloor),
+        { timeoutMs: 45000 },
+      ),
     );
   } catch (e) {
     console.log('cleanup failed:', String(e).slice(0, 200));
