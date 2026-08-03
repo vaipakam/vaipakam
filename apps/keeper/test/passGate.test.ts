@@ -308,18 +308,50 @@ describe('the key is constructed in exactly one place', () => {
     expect(sites[0]).toMatch(/^keeper\.ts:\d+$/);
   });
 
-  it('that site is inside resolveKeeperAccount, not merely in the file', () => {
-    // Being in `keeper.ts` is not the property; being in the bounded
-    // resolver is. A call elsewhere in this file would not be wrapped by
-    // the try/catch that replaces viem's error with a safe reason.
+  it('that site is inside the resolver\'s try/catch, not merely in the file', () => {
+    // Three properties, each strictly stronger than the last, and each
+    // added because the previous one let the real bug through:
+    //
+    //   1. not in another module      — `dailyOracleSnapshot` had a copy;
+    //   2. inside `resolveKeeperAccount` — being in the right file is not it;
+    //   3. inside its `try` block     — THIS one. A call moved above the
+    //      `try` while staying in the function satisfies (1) and (2), and
+    //      viem's error escapes to be logged with the key in it. That is
+    //      not hypothetical: construction-outside-the-try is exactly what
+    //      `dailyOracleSnapshot` did (#1540 r6/r8).
     const src = readFileSync(new URL('../src/keeper.ts', import.meta.url), 'utf8');
     const from = src.indexOf('export function resolveKeeperAccount');
     expect(from).toBeGreaterThan(-1);
     const body = src.slice(from, src.indexOf('\n}\n', from));
-    expect(body).toContain('privateKeyToAccount(');
-    // ...and nowhere else in the file.
-    const outside =
-      src.slice(0, from) + src.slice(from + body.length);
-    expect(outside).not.toContain('privateKeyToAccount(');
+
+    const tryAt = body.indexOf('try {');
+    const catchAt = body.indexOf('} catch', tryAt);
+    expect(tryAt).toBeGreaterThan(-1);
+    expect(catchAt).toBeGreaterThan(tryAt);
+    const guarded = body.slice(tryAt, catchAt);
+
+    expect(guarded).toContain('privateKeyToAccount(');
+    // ...and nowhere else at all — not elsewhere in the resolver, not
+    // elsewhere in the file.
+    const unguarded =
+      src.slice(0, from) +
+      body.slice(0, tryAt) +
+      body.slice(catchAt) +
+      src.slice(from + body.length);
+    expect(unguarded).not.toContain('privateKeyToAccount(');
+  });
+
+  it('the catch does not echo the underlying error', () => {
+    // The bounded reason is the point of wrapping it. Re-throwing or
+    // logging `err` would put viem's message — which contains the rejected
+    // scalar — back in the log, with the try/catch still present to satisfy
+    // the test above.
+    const src = readFileSync(new URL('../src/keeper.ts', import.meta.url), 'utf8');
+    const from = src.indexOf('export function resolveKeeperAccount');
+    const body = src.slice(from, src.indexOf('\n}\n', from));
+    const tail = body.slice(body.indexOf('} catch'));
+    expect(tail).not.toMatch(/console\.(log|warn|error)/);
+    expect(tail).not.toMatch(/\bthrow\b/);
+    expect(tail).toContain("problem: 'malformed (not a valid signing key)'");
   });
 });
