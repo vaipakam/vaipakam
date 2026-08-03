@@ -745,29 +745,74 @@ export async function maybeAutonomousLiquidate(
 export type PassArmingFlag = 'REWARD_REMIT_ENABLED' | 'REWARD_COMMIT_ENABLED';
 
 /**
- * Why the keeper as a whole is not running, or `null` if it is.
+ * Describe a rejected flag value WITHOUT echoing it.
  *
- * Split out because `isKeeperEnabled` collapses two independent causes into
- * one boolean — the flag being off, and the signing key being absent. Both
- * are held as secrets whose values cannot be read back, so an operator who
- * cannot tell the two apart cannot tell which one to fix.
+ * An earlier version printed the raw value quoted, which reads as harmless
+ * for a boolean-ish binding and is not. `KEEPER_ENABLED` is `secret_text` on
+ * the live Worker, and the whole reason this diagnostic exists is the case
+ * where the value is NOT what was intended — a paste error is exactly how a
+ * credential ends up in the wrong binding. Echoing it would write that
+ * credential into the Worker logs, defeating the binding's no-readback
+ * protection precisely in the scenario the diagnostic handles.
+ *
+ * So the classification is bounded: it names the FORM of the mistake, never
+ * the content. Every failure mode #1475 set out to expose survives —
+ * surrounding whitespace, wrong case, and a value that is simply not either
+ * accepted spelling — and the character count distinguishes a four-letter
+ * typo from a pasted key without disclosing which.
+ *
+ * `caseInsensitive` because the two gates genuinely differ: `KEEPER_ENABLED`
+ * accepts `True`, the pass flags do not. Reporting "wrong case" for a value
+ * the caller would have accepted would send an operator chasing a non-fault.
  */
-function keeperGateReason(env: Env): string | null {
-  if (env.KEEPER_ENABLED === undefined) return 'KEEPER_ENABLED unset';
-  const v = env.KEEPER_ENABLED.toLowerCase();
-  if (v !== 'true' && v !== '1') {
-    return `KEEPER_ENABLED not true (got ${JSON.stringify(env.KEEPER_ENABLED)})`;
+function describeFlagValue(
+  raw: string | undefined,
+  caseInsensitive: boolean,
+): string {
+  if (raw === undefined) return 'unset';
+  if (raw === '') return 'empty';
+  const accepts = (s: string): boolean => {
+    const c = caseInsensitive ? s.toLowerCase() : s;
+    return c === 'true' || c === '1';
+  };
+  const trimmed = raw.trim();
+  if (trimmed !== raw) {
+    return accepts(trimmed)
+      ? 'has surrounding whitespace (otherwise correct — re-enter without it)'
+      : `has surrounding whitespace and is unrecognised (${raw.length} chars)`;
   }
-  if (!env.KEEPER_PRIVATE_KEY) return 'KEEPER_PRIVATE_KEY unset';
-  return null;
+  if (!caseInsensitive && accepts(trimmed.toLowerCase())) {
+    return 'wrong case — these flags require lowercase `true`';
+  }
+  return `unrecognised (${raw.length} chars)`;
 }
 
 /**
- * Unchanged in behaviour — delegates so the boolean and the reason cannot
+ * EVERY keeper-level reason the pass cannot run — not just the first.
+ *
+ * Two independent causes hide behind `isKeeperEnabled`: the flag being off,
+ * and the signing key being absent. Both are unreadable, so an operator who
+ * cannot tell them apart cannot tell which to fix. And they are reported
+ * together rather than in sequence: stopping at the first would mean fixing
+ * one binding and waiting a tick to discover the next, which is not what
+ * "one cycle settles every switch" promises.
+ */
+function keeperBlockers(env: Env): string[] {
+  const blockers: string[] = [];
+  const enabled = env.KEEPER_ENABLED;
+  if (enabled === undefined || !['true', '1'].includes(enabled.toLowerCase())) {
+    blockers.push(`KEEPER_ENABLED ${describeFlagValue(enabled, true)}`);
+  }
+  if (!env.KEEPER_PRIVATE_KEY) blockers.push('KEEPER_PRIVATE_KEY unset');
+  return blockers;
+}
+
+/**
+ * Unchanged in behaviour — delegates so the boolean and the reasons cannot
  * drift apart. A future cause added to one is a cause in the other.
  */
 export function isKeeperEnabled(env: Env): boolean {
-  return keeperGateReason(env) === null;
+  return keeperBlockers(env).length === 0;
 }
 
 /**
@@ -784,23 +829,23 @@ export function isKeeperEnabled(env: Env): boolean {
  * reporting that is the worst case, because a silent stall looks exactly
  * like a quiet period.
  *
- * The skip line names the specific binding that stopped the pass and echoes
- * its raw value quoted, so wrong casing and trailing whitespace are visible
- * rather than merely suspected. `KEEPER_PRIVATE_KEY` is reported only as
- * present or absent — its value is never echoed.
+ * The skip line names the specific binding that stopped the pass and the FORM
+ * of the mistake — never the value itself, for the reason given on
+ * `describeFlagValue`. `KEEPER_PRIVATE_KEY` is reported only as present or
+ * absent.
  *
- * One `wrangler tail` cycle now resolves every gate the keeper has.
+ * ALL applicable blockers appear on the one line. Reporting only the first
+ * would mean an operator fixes one binding, waits a tick, and discovers the
+ * next — which is not what a single-cycle diagnosis is worth having for.
+ *
+ * One `wrangler tail` cycle resolves every gate on every gated pass.
  */
 export function passIsArmed(
   env: Env,
   pass: string,
   flag?: PassArmingFlag,
 ): boolean {
-  const blocked = keeperGateReason(env);
-  if (blocked !== null) {
-    console.log(`[keeper] ${pass} skipped: ${blocked}`);
-    return false;
-  }
+  const blockers = keeperBlockers(env);
   if (flag !== undefined) {
     // Deliberately NOT lowercased, matching the behaviour this replaces.
     // `KEEPER_ENABLED` accepts `True`; these flags do not. Making them agree
@@ -808,11 +853,12 @@ export function passIsArmed(
     // the asymmetry is surfaced in the log rather than silently resolved.
     const raw = env[flag];
     if (raw !== 'true' && raw !== '1') {
-      const detail =
-        raw === undefined ? 'unset' : `not true (got ${JSON.stringify(raw)})`;
-      console.log(`[keeper] ${pass} skipped: ${flag} ${detail}`);
-      return false;
+      blockers.push(`${flag} ${describeFlagValue(raw, false)}`);
     }
+  }
+  if (blockers.length > 0) {
+    console.log(`[keeper] ${pass} skipped: ${blockers.join('; ')}`);
+    return false;
   }
   console.log(`[keeper] ${pass} start`);
   return true;

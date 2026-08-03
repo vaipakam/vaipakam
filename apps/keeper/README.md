@@ -63,21 +63,37 @@ See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret lis
 ### Confirming a flag actually took (#1475)
 
 Secrets cannot be read back — the API and dashboard return names only. So
-every periodic pass emits exactly one line per tick, whichever way its gate
+every **gated** pass emits exactly one line per tick, whichever way its gate
 goes, and one `wrangler tail` cycle resolves all of them:
 
 ```
 [keeper] rewardBudgetRemit start
-[keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED not true (got "True")
-[keeper] remitAck skipped: KEEPER_PRIVATE_KEY unset
+[keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED wrong case — these flags require lowercase `true`
+[keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
 ```
 
-The skip line names the **specific** binding that stopped the pass and echoes
-its raw value quoted, so `"true"`, `" true"` and `"true\n"` are told apart
-rather than guessed at. `KEEPER_PRIVATE_KEY` is reported only as present or
-absent — never echoed.
+The six gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+`rewardBudgetRemit`, `remitAck` and `commitmentReport`. The others
+(`watcher`, `dailyOracleSnapshot`, `preGraceWatcher`) have no on/off binding
+of their own and so have nothing to report; `liquidityConfidence` always runs
+and consults the keeper gate only to decide whether to submit. **Absent lines
+from those four are normal** — do not read them as a failed tick.
 
-Note the example above: `KEEPER_ENABLED` accepts `True`, the two reward flags
+Two properties worth knowing:
+
+**Every applicable blocker appears on the one line**, as in the third example.
+Reporting only the first would mean fixing one binding, waiting a tick, and
+discovering the next.
+
+**The value itself is never printed** — only the form of the mistake
+(`unset`, `empty`, `wrong case`, `has surrounding whitespace`,
+`unrecognised (N chars)`). These are `secret_text` bindings, and the case this
+diagnostic exists for is the value being wrong, which is exactly how a pasted
+credential arrives; echoing it would write that credential into the logs and
+defeat the no-readback protection precisely when it matters. The character
+count still distinguishes a four-letter typo from a pasted key.
+
+Note the second example: `KEEPER_ENABLED` accepts `True`, the two reward flags
 do not. Use lowercase `true` everywhere and the asymmetry never arises; if it
 already has, the log now says so instead of the pass simply staying dark.
 

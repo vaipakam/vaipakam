@@ -6,13 +6,19 @@ That would be a small annoyance if the switches could be read back. They cannot.
 
 For these particular jobs that is the worst case, because they move funds between chains and report what has been committed. A job that has silently stopped looks exactly like a quiet week.
 
-**Every job now announces itself once per run**, whichever way its switch reads. If it is running, it says so. If it is not, it names the specific switch that stopped it and shows the value it actually found, in quotes — so a trailing space or a capital letter is visible rather than merely suspected. One pass of the log now settles the state of every switch the keeper has.
+**Every switchable job now announces itself once per run**, whichever way its switch reads. If it is running, it says so. If it is not, it names the specific switch that stopped it, and what is wrong with the value. One pass of the log settles the state of every switch the keeper has.
 
-Two details worth calling out:
+Three details worth calling out:
 
-**The signing key is never printed.** It is reported only as present or absent. That is the one setting where showing the value to prove it is set would defeat the purpose of it being a secret.
+**No value is ever printed — only what is wrong with it.** "Unset", "empty", "wrong capitalisation", "has spaces around it", or "unrecognised, 4 characters long". This is deliberate and was a correction during review: the situation this diagnostic exists for is the value being *wrong*, and one of the ways a value gets wrong is somebody pasting a password or key into the wrong box. Printing it would copy that secret into the logs at exactly the moment the system is meant to be protecting it. The character count still tells an operator whether they are looking at a four-letter typo or something long that does not belong there.
 
-**One message became three.** The master switch previously reported a single "keeper disabled", which covered two genuinely different situations — the switch being off, and the signing key being missing — and both are unreadable, so an operator seeing that message could not tell which one to go and fix. Those are now separate messages.
+**Everything wrong is reported at once.** If three settings are wrong, one line names all three. An earlier version stopped at the first, which would have meant fixing one, waiting for the next run, and discovering the next — turning a single check into a sequence of them.
+
+**One message became several.** The master switch previously reported a single "keeper disabled", covering two genuinely different situations — the switch being off, and the signing key being missing. Both are unreadable, so an operator seeing that message could not tell which to go and fix.
+
+### Which jobs this covers
+
+Six of the keeper's ten periodic jobs have a switch of their own and now report it. The other four have no switch to report, so they stay quiet — and the operator documentation says so explicitly, because "no line" would otherwise read as "the job failed".
 
 ### A quirk this exposes rather than fixes
 
@@ -23,3 +29,5 @@ We deliberately did not make them agree here. Doing so would switch **on** a fun
 ### Operator-facing
 
 The restore runbook previously instructed operators to treat the two reward switches as write-only — re-enter the value rather than verify it, and wait for a successful remittance as the only confirmation. That instruction is now obsolete and has been replaced: one log cycle verifies all of them.
+
+It also gained a correction that has nothing to do with logging but everything to do with acting on what the log says. The signing key is not stored the same way the switches are — it lives in a shared account-level store rather than on the individual job runner — and the command for one does not work for the other. Using the wrong one appears to succeed while leaving the job disarmed, so the runbook now spells out which command belongs to which setting.

@@ -68,8 +68,8 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
 
   it('separates the two causes isKeeperEnabled collapses', () => {
     // Both make `isKeeperEnabled` false; only the log tells them apart, and
-    // both bindings are unreadable secrets — so without this an operator
-    // cannot tell which one to fix.
+    // both bindings are unreadable — so without this an operator cannot tell
+    // which one to fix.
     const flagOff = env({ KEEPER_ENABLED: 'false' });
     const noKey = env({ KEEPER_PRIVATE_KEY: undefined });
     expect(isKeeperEnabled(flagOff)).toBe(false);
@@ -78,26 +78,57 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
     passIsArmed(flagOff, 'p');
     passIsArmed(noKey, 'p');
     expect(lines).toEqual([
-      '[keeper] p skipped: KEEPER_ENABLED not true (got "false")',
+      '[keeper] p skipped: KEEPER_ENABLED unrecognised (5 chars)',
       '[keeper] p skipped: KEEPER_PRIVATE_KEY unset',
     ]);
   });
 
-  it('echoes the raw value so a typo is visible rather than suspected', () => {
-    // The failure modes named in #1475: a misspelling, wrong casing on a
-    // flag that does not accept it, and a trailing newline — each of which
-    // leaves the pass dark and looking healthy.
-    for (const bad of ['ture', 'True', 'true\n', ' true', '']) {
+  it('reports BOTH keeper-level causes when both apply', () => {
+    // Sequentially they would cost two ticks to discover.
+    passIsArmed(env({ KEEPER_ENABLED: undefined, KEEPER_PRIVATE_KEY: undefined }), 'p');
+    expect(lines).toEqual([
+      '[keeper] p skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset',
+    ]);
+  });
+
+  it('names the FORM of each failure mode without echoing the value', () => {
+    // The failure modes named in #1475, each classified rather than quoted.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['ture', 'unrecognised (4 chars)'],
+      ['True', 'wrong case — these flags require lowercase `true`'],
+      ['true\n', 'has surrounding whitespace (otherwise correct — re-enter without it)'],
+      [' true', 'has surrounding whitespace (otherwise correct — re-enter without it)'],
+      ['', 'empty'],
+      [' ture ', 'has surrounding whitespace and is unrecognised (6 chars)'],
+    ];
+    for (const [bad, expected] of cases) {
       lines = [];
       const e = env({ REWARD_COMMIT_ENABLED: bad });
       expect(passIsArmed(e, 'commitmentReport', 'REWARD_COMMIT_ENABLED')).toBe(
         false,
       );
       expect(lines).toEqual([
-        `[keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED not true (got ${JSON.stringify(bad)})`,
+        `[keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED ${expected}`,
       ]);
-      // The quoting is the point: these are indistinguishable unquoted.
-      expect(lines[0]).toContain(JSON.stringify(bad));
+    }
+  });
+
+  it('never writes a flag value into the log', () => {
+    // These bindings are `secret_text` on the live Worker, and the case this
+    // diagnostic exists for is the value being wrong — which is exactly how
+    // a pasted credential arrives. Echoing it would defeat the no-readback
+    // protection precisely when it matters.
+    const pasted = 'sk-live-4f8a2c9e1b7d6a3f0e5c8b2d9a4f7e1c';
+    for (const e of [
+      env({ KEEPER_ENABLED: pasted }),
+      env({ REWARD_REMIT_ENABLED: pasted }),
+    ]) {
+      lines = [];
+      passIsArmed(e, 'p', 'REWARD_REMIT_ENABLED');
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).not.toContain(pasted);
+      // Still diagnostic: the length says "you pasted something long here".
+      expect(lines[0]).toContain(`(${pasted.length} chars)`);
     }
   });
 
@@ -109,16 +140,31 @@ describe('passIsArmed — a skipped pass names the binding that stopped it', () 
     expect(lines[1]).toBe('[keeper] p skipped: KEEPER_PRIVATE_KEY unset');
   });
 
-  it('stops at the first failing gate, so the line names one cause', () => {
-    // Keeper-level gates are checked before the pass flag: a Worker with
-    // neither set should be told to fix the keeper first, not handed two
-    // lines to reconcile.
+  it('names every applicable blocker on the one line', () => {
+    // An earlier version stopped at the first, which meant fixing one
+    // binding and waiting a tick to discover the next — not what a
+    // single-cycle diagnosis is worth having for.
     const e = env({ KEEPER_ENABLED: undefined, REWARD_REMIT_ENABLED: 'ture' });
     expect(passIsArmed(e, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED')).toBe(
       false,
     );
     expect(lines).toEqual([
-      '[keeper] rewardBudgetRemit skipped: KEEPER_ENABLED unset',
+      '[keeper] rewardBudgetRemit skipped: KEEPER_ENABLED unset; ' +
+        'REWARD_REMIT_ENABLED unrecognised (4 chars)',
+    ]);
+  });
+
+  it('names all three when the keeper and the pass flag are all wrong', () => {
+    const e = env({
+      KEEPER_ENABLED: undefined,
+      KEEPER_PRIVATE_KEY: undefined,
+      REWARD_REMIT_ENABLED: 'True',
+    });
+    passIsArmed(e, 'remitAck', 'REWARD_REMIT_ENABLED');
+    expect(lines).toEqual([
+      '[keeper] remitAck skipped: KEEPER_ENABLED unset; ' +
+        'KEEPER_PRIVATE_KEY unset; ' +
+        'REWARD_REMIT_ENABLED wrong case — these flags require lowercase `true`',
     ]);
   });
 });

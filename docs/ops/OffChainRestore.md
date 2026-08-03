@@ -1570,8 +1570,28 @@ caught at the cheapest stage.
    ways an operator has already got this wrong. The signing key is reported
    only as present or absent — its value is never printed.
 
-   If you see a `skipped:` line, the named binding is the one to re-enter
-   (`wrangler secret put <NAME>`); watch another tick to confirm.
+   If you see a `skipped:` line, the named binding is the one to re-enter —
+   but **the two kinds of binding take different commands**, and using the
+   wrong one leaves the pass disarmed while appearing to succeed:
+
+   | binding | how it is bound | command |
+   |---|---|---|
+   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME>` |
+   | `KEEPER_PRIVATE_KEY` | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY` |
+
+   `wrangler secret put` creates a secret **for a Worker**;
+   `wrangler secrets-store secret create` creates one **within a store**.
+   Running the former for `KEEPER_PRIVATE_KEY` does not populate the store
+   entry the Worker actually reads — it creates a second, conflicting
+   binding of the same name, and every signing pass stays disarmed.
+
+   A `KEEPER_PRIVATE_KEY unset` line therefore has two possible causes worth
+   telling apart before acting: the store entry is genuinely missing, or the
+   binding resolved to nothing this tick because the store lookup failed. If
+   the entry exists in the store, treat it as the latter and watch a second
+   tick before re-creating anything.
+
+   Watch another tick after any change to confirm.
 
    > Earlier versions of this step said first that a tick verified all three
    > flags (it did not), and then that the two reward flags were **write-only**

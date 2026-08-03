@@ -39,7 +39,7 @@ import { createPublicClient, http, type Abi, type Address } from 'viem';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { isKeeperEnabled, maybeAutonomousLiquidate, resetKeeperDedupe } from './keeper';
+import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
@@ -59,7 +59,7 @@ const MAX_LIQUIDATIONS_PER_TICK = 12;
 const HF_LIQUIDATION_THRESHOLD = 10n ** 18n;
 
 export async function runLiquidator(env: Env): Promise<void> {
-  if (!isKeeperEnabled(env)) return;
+  if (!passIsArmed(env, 'liquidator')) return;
   // Reset the in-isolate dedupe set so a previously-attempted loan can
   // be retried this tick. Lived in `runWatcher` pre-split; lives here
   // now because this pass owns the liquidation surface.

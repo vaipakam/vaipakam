@@ -59,7 +59,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import {
   buildKeeperContext,
-  isKeeperEnabled,
+  passIsArmed,
   type KeeperContext,
 } from './keeper';
 
@@ -1278,7 +1278,7 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
  * can't wedge the rest.
  */
 export async function runMatcher(env: Env): Promise<void> {
-  if (!isKeeperEnabled(env)) return;
+  if (!passIsArmed(env, 'matcher')) return;
   const chains: ChainConfig[] = getChainConfigs(env);
   for (const chain of chains) {
     try {

@@ -54,10 +54,18 @@ interface BaseEnv {
   // Phase 7a.4 — autonomous-keeper enable flag. When
   // `KEEPER_ENABLED == 'true'` AND `KEEPER_PRIVATE_KEY` is set, the
   // liquidator / matcher / liquidity-confidence passes arm their
-  // on-chain submit paths. A plain var (not a secret).
+  // on-chain submit paths.
+  //
+  // Bound as `secret_text` on the live Worker, NOT a plain var — an
+  // earlier comment here said the opposite. That matters: a secret's
+  // value cannot be read back from the API or dashboard, which is why
+  // the pass gate has to REPORT its resolution (#1475). Set it with
+  // `wrangler secret put`, not in `vars`.
   KEEPER_ENABLED?: string;
 
-  // #925 — reward-budget remittance pass knobs (plain vars, not secrets).
+  // #925 — reward-budget remittance pass knobs. The `*_ENABLED` flags are
+  // `secret_text` like KEEPER_ENABLED (so equally unreadable — see the
+  // note above); the numeric tuning knobs below are plain vars.
   /** 'true' arms the reward-budget remit pass (in addition to KEEPER_ENABLED). */
   REWARD_REMIT_ENABLED?: string;
   /** recent-day window re-scanned for un-remitted budget each tick (default 45). */
