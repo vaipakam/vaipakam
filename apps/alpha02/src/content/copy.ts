@@ -1470,9 +1470,9 @@ const copySource = {
     noLongerStaleAbort:
       'Your level no longer needs re-confirming — it was already brought up to date (perhaps from another device). This page has refreshed; nothing was sent.',
     directionNote:
-      'Moving down is instant. Moving up may wait out a short safety cooldown before it becomes active.',
+      'Choosing a safer level applies instantly. Choosing a riskier level may wait out a short safety cooldown before it becomes active.',
     raisedMsg:
-      'Level raised. If a safety cooldown is configured, it becomes active once the cooldown finishes.',
+      'Now using a riskier level. If a safety cooldown is configured, it becomes active once the cooldown finishes.',
     loweredMsg: 'Level updated.',
     reaffirmedMsg:
       'Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.',

@@ -87,7 +87,7 @@ test('risk level renders true chain state, raises with consent, lowers immediate
 
     // Raise to Broad liquid — a real on-chain write.
     await broadLiquid.click();
-    await expect(page.getByText(/level raised/i)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/now using a riskier level/i)).toBeVisible({ timeout: 60_000 });
     await expect(broadLiquid).toHaveAttribute('aria-checked', 'true');
 
     // Lower back — immediate, and the safest level reads active (✓).
