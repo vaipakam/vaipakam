@@ -105,93 +105,123 @@ npx wrangler d1 execute vaipakam-archive --remote \
 
 ---
 
-## 4. The cutover
+## 4. The method: quiesce, replicate whole, switch
 
-### Step 1 — the binding PR
+An earlier revision of this plan hand-copied the six irrecoverable rows and
+argued about the rest. That was unnecessary, and it forced a decision
+(#1481's five undecided tables) that this exercise has no business forcing.
 
-Change `database_name` + `database_id` in all four configs
-(`apps/{indexer,keeper,agent}/wrangler.jsonc`,
-`ops/offchain-data-warm/wrangler.jsonc`) and in the docs that describe the
-live binding. The guard passes only when all four agree.
+Two facts make a **complete replica** possible instead:
 
-### Step 2 — merge, then immediately deploy the two that do not auto-deploy
+1. `wrangler d1 export --remote --no-schema --table …` emits plain
+   `INSERT INTO "t" (cols) VALUES(…)` for whatever tables you name.
+2. Migrations `0043`–`0048` are **purely additive** — `CREATE TABLE IF NOT
+   EXISTS` only, no `ALTER` or `DROP` on an existing table. So the target's
+   schema is a strict superset of the source's, and every column the export
+   names still exists with the same shape. The six new tables simply receive
+   no rows, which is correct.
 
-```bash
-pnpm --filter @vaipakam/agent exec wrangler deploy
-cd ops/offchain-data-warm && npx wrangler deploy
+So: copy everything, decide nothing, lose nothing.
+
+Two properties of the export that dictate the sequence:
+
+- It is **plain `INSERT`**, not `INSERT OR REPLACE`. The target tables must be
+  EMPTY or the import fails on primary-key conflict. `vaipakam-warm` currently
+  holds six rows from an early hand-copy; those must go first. They are the
+  only reason a conflict would arise.
+- It is a **point-in-time snapshot**. Anything written between the export and
+  the switch exists only in the old database. Rather than reconcile a delta
+  afterwards — which is where the previous revision went wrong, because a
+  consumed Telegram link or an updated threshold cannot be distinguished from
+  a missing row by an upsert — **stop the writers first**. The platform is
+  pre-live; a few minutes without ingestion costs nothing, and it removes the
+  entire class of reconciliation error.
+
+### The sequence
+
+**Step 1 — quiesce.** Empty the cron list on all three writers:
+
+```jsonc
+"triggers": { "crons": [] }
 ```
 
-Do this in the same sitting as the merge. Every minute of delay is a minute
-of agent writing rows to a database that is about to be abandoned.
+for `apps/{indexer,keeper,agent}`, deploy each, then **confirm trigger-aware**
+(Trigger Events pane or the schedules API) — an absent `triggers` object sends
+no update and silently leaves the schedule running. Wait out Cloudflare's
+propagation window (**up to 15 minutes**) before treating the writers as
+stopped; the keeper runs every minute, so a readback alone is not the
+confirmation. Its EOA nonce going quiet is.
 
-### Step 3 — confirm all four moved
+`apps/agent` also serves HTTP, so it can still write from a user action. On a
+pre-live platform, note the time and move quickly rather than engineering
+around it.
 
-```bash
-for w in vaipakam-indexer vaipakam-keeper vaipakam-agent vaipakam-offchain-data-warm; do
-  npx wrangler deployments list --name "$w" | head -3
-done
-```
-
-Then confirm from behaviour, not configuration: the indexer should begin
-writing rows into the new database's `offers` / `activity_events`.
-
----
-
-## 5. Reconcile the six rows — the step that actually matters
-
-The copy in `vaipakam-warm` was taken hours before the cutover. It matched at
-the time of writing and that is **luck, not safety**: one support ticket
-between the copy and the switch breaks it, and agent may have written more
-during the §2a window.
-
-After the last writer has moved, re-read all eight born-off-chain tables from
-the OLD database and compare:
+**Step 2 — clear the target.**
 
 ```bash
 cd apps/indexer
-for t in diag_errors diag_legal_holds diag_legal_hold_audit user_thresholds \
-         notify_state pre_grace_notify_state telegram_links support_tickets; do
-  echo -n "$t old="
-  npx wrangler d1 execute vaipakam-archive --remote --json \
-    --command "SELECT COUNT(*) n FROM $t" | sed -n '/^\[/,$p' \
-    | python3 -c "import json,sys;print(json.load(sys.stdin)[0]['results'][0]['n'],end=' ')"
-  echo -n "new="
-  npx wrangler d1 execute vaipakam-warm --remote --json \
-    --command "SELECT COUNT(*) n FROM $t" | sed -n '/^\[/,$p' \
-    | python3 -c "import json,sys;print(json.load(sys.stdin)[0]['results'][0]['n'])"
-done
+npx wrangler d1 execute vaipakam-warm --remote --command \
+  "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;"
 ```
 
-Counts are the smoke test, not the proof — a row changed in place keeps the
-count identical. For each table with rows, diff the contents and apply
-anything missing with an `INSERT … ON CONFLICT DO UPDATE`. At this volume
-that is a handful of statements, and it is worth doing by inspection rather
-than by script.
+Confirm every table in `vaipakam-warm` is empty before importing.
 
-**Do not proceed while any count differs and is unexplained.**
+**Step 3 — export everything, data-only.**
 
----
+```bash
+npx wrangler d1 export vaipakam-archive --remote --no-schema \
+  --output /tmp/d1-cutover.sql -y
+```
 
-## 6. Soak before deleting
+Omitting `--table` takes every table. Keep this file — until the old database
+is deleted it is a second copy, and after deletion it is the only one.
 
-Deletion is irreversible and the old database is the only copy of anything
-missed. Hold until all of:
+**Step 4 — import.**
 
-- [ ] The indexer has caught up — new `offers` / `loans` counts are at least
-      the old 59 / 38, and `activity_events` is climbing toward ~1,015.
-- [ ] The six born-off-chain rows verified equal (§5), **after** the last
-      writer moved.
-- [ ] One nightly backup has run against the new database and its alert names
-      the new bucket.
-- [ ] No Worker error referencing the old database id in `wrangler tail`.
+```bash
+npx wrangler d1 execute vaipakam-warm --remote --file /tmp/d1-cutover.sql
+```
 
-Only then:
+**Step 5 — verify by counting, per table, both sides.** Every table must
+match exactly. A mismatch here is the signal to stop, not to patch.
+
+**Step 6 — switch the bindings** (one PR, all four configs; the guard blocks a
+partial switch) and **deploy the two that do not auto-deploy** —
+`apps/agent` and `ops/offchain-data-warm` — in the same sitting as the merge.
+
+**Step 7 — restore the crons** and confirm each Worker is reading the new
+database from behaviour, not configuration.
+
+Because the replica is complete, the indexer resumes from the copied
+`indexer_cursor` rather than re-indexing from block zero, and `notifications`
+history survives intact — the partial-regeneration problem the previous
+revision accepted does not arise.
+
+## 5. What this no longer requires
+
+Stated because the previous revision required all of it, wrongly:
+
+- **No decision on #1481.** All five decision-needed tables come across
+  verbatim. The classification question stays open on its own merits.
+- **No delta reconciliation**, and therefore no risk of resurrecting a
+  consumed Telegram link or overwriting a newer threshold with an older one.
+- **No accepted notification loss.**
+- **No re-index**, so no soak waiting for a cursor to reach head.
+
+## 6. Before deleting the old database
+
+- [ ] Per-table counts equal on both sides, verified after the switch.
+- [ ] All four Workers confirmed reading `vaipakam-warm` from behaviour.
+- [ ] Crons restored and one full cycle observed on each Worker.
+- [ ] One nightly backup completed **after** the import, its alert naming the
+      new bucket. A backup taken before the import is not evidence.
+- [ ] The `/tmp/d1-cutover.sql` export archived somewhere durable.
+
+Then:
 
 ```bash
 npx wrangler d1 delete vaipakam-archive
 ```
-
----
 
 ## 7. Rollback
 
