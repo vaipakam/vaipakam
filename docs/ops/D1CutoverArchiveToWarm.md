@@ -80,9 +80,10 @@ Two orders work, and one does not:
 | cutover → redeploy → update artifacts | old-contract replay, then a second replay; the first is junk that must be cleared ✅ but wasteful |
 | cutover while artifacts still point at the old contracts, and leave it | old-contract data accumulates indefinitely ❌ |
 
-**Prefer the first.** If the cutover must happen before the redeploy, plan to
-clear the new database again afterwards, and say so at the time rather than
-discovering a mixed dataset later.
+**Chosen 2026-08-03: the first** — redeploy contracts, update
+`deployments.json`, then cut over. If circumstances force the cutover first,
+plan to clear the new database again afterwards and say so at the time,
+rather than discovering a mixed dataset later.
 
 ## 3. The cutover
 
@@ -151,8 +152,10 @@ Two ways to close it, and the choice is the operator's:
   the redeploy. A user who is told "try again shortly" has lost nothing; one
   whose ticket silently disappeared has.
 
-Pre-live, the first is defensible. Say which was chosen rather than leaving
-it to whoever executes.
+**Chosen 2026-08-03: the shortest window.** Have the agent deploy ready to
+run and execute it the moment the merge lands. Defensible pre-live, and the
+exposure is a couple of minutes. If circumstances change — real users, a
+support queue in use — revisit it rather than inheriting this line.
 
 ### Step 3 — confirm from behaviour, not configuration
 
