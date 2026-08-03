@@ -8,4 +8,4 @@ The keeper's master switch was documented as disabling "autonomous actions". In 
 
 What was wrong was only the wording, and the practical consequence of getting it wrong: an operator flipping the switch to stop the keeper spending money would have found it still spending. The documentation now states the exception plainly, names the six jobs the switch does cover, and gives the actual answer for a full stop — remove the signing key, at which point the snapshot skips as well and every gated job reports the missing key on its next run.
 
-A second job is called out in the same place: the liquidity-confidence pass always runs and consults the switch only when deciding whether to submit, so it stops writing but keeps reading.
+A second job is called out in the same place, and the switch is narrower there than it looks: the liquidity-confidence pass always runs, and consults the switch only when deciding whether to send a transaction. It keeps reading, and it keeps updating its own bookkeeping either way — deliberately, so the counter it maintains stays continuous. So the switch stops what that job spends, not what it stores.

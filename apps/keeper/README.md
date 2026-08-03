@@ -77,12 +77,25 @@ than an autonomous risk-taking action — anyone can call
 in the oracle series whenever the keeper is disabled for an unrelated reason.
 
 The practical consequence, which is the reason this section exists: **flipping
-the kill-switch is not a way to stop the keeper spending gas entirely.** If you
-need that, remove `KEEPER_PRIVATE_KEY` — with no key the snapshot pass skips
-too, and every gated pass reports `KEEPER_PRIVATE_KEY unset` on the next tick.
+the kill-switch is not a way to stop the keeper spending gas entirely.**
 
-`liquidityConfidence` also always runs; it consults the gate only to decide
-whether to submit, so it stops writing but keeps reading.
+Stopping the snapshot too means the Worker must have no usable signing key —
+and that is a **Secrets Store** operation, not a per-Worker one.
+`KEEPER_PRIVATE_KEY` is bound via `secrets_store_secrets`, so
+`wrangler secret put` / `secret delete` writes or removes a per-Worker value
+**this Worker ignores**: you would see a successful command and a keeper that
+kept signing. The procedure — including the store/secret-id lookup — is in
+[`docs/ops/AdminKeysAndPause.md`](../../docs/ops/AdminKeysAndPause.md) under
+the `KEEPER_PRIVATE_KEY` row; it is rotation-grade and is deliberately not
+inlined here. Confirm on the next tick that every gated pass reports
+`KEEPER_PRIVATE_KEY unset`.
+
+`liquidityConfidence` also always runs, and the gate is narrower than it
+looks: it decides whether to **submit on-chain**. The pass still reads, and
+still writes its D1 counter — `upsertLiquidityConfidence` runs before the
+`canSubmit` check, deliberately ("always persist the updated counter, even
+when not submitting"). So `KEEPER_ENABLED=false` stops its transactions, not
+its storage writes.
 
 ### Confirming a flag actually took (#1475)
 
