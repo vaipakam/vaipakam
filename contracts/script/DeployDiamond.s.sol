@@ -1588,7 +1588,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](29);
+        s = new bytes4[](32);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -1624,6 +1624,9 @@ contract DeployDiamond is Script {
         s[26] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
         s[27] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
         s[28] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
+        s[29] = RiskAccessFacet.setVaultRiskTierChecked.selector; // #1522 TOCTOU guard
+        s[30] = RiskAccessFacet.setVaultRiskTierCheckedBySig.selector; // #1522 gasless
+        s[31] = RiskAccessFacet.getRiskTierMutationNonce.selector; // #1522 nonce view
     }
 
     /// @dev #1104 — the read-only preview cluster + the two cross-facet gate

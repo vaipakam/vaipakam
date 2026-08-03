@@ -229,26 +229,52 @@ async function applyOne(
   // Stored as a MAX because a replayed or out-of-order report must never
   // walk a monotonic figure backwards.
   const reported = argBig(log.args.cumulative);
+  // Same pre-migration window as the rebuild: a live report arriving before
+  // 0047 applies would otherwise abort the whole scan (Codex #1513 r6).
+  const withAttribution = await attributionColumnPresent(env);
   const prevReported = await env.DB.prepare(
-    `SELECT reported_cumulative FROM recycle_chain_reported
-      WHERE chain_id = ? AND source_chain_id = ?`,
+    withAttribution
+      ? `SELECT reported_cumulative, attributed_cumulative
+           FROM recycle_chain_reported
+          WHERE chain_id = ? AND source_chain_id = ?`
+      : `SELECT reported_cumulative FROM recycle_chain_reported
+          WHERE chain_id = ? AND source_chain_id = ?`,
   )
     .bind(chainId, sourceChainId)
-    .first<{ reported_cumulative: string }>();
-  const reportedWrite = env.DB.prepare(
-    `INSERT INTO recycle_chain_reported
-       (chain_id, source_chain_id, reported_cumulative)
-     VALUES (?, ?, ?)
-     ON CONFLICT (chain_id, source_chain_id)
-     DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
-  ).bind(
-    chainId,
-    sourceChainId,
-    (reported > big(prevReported?.reported_cumulative)
+    .first<{ reported_cumulative: string; attributed_cumulative?: string }>();
+  // ATTRIBUTED accumulates the accepted day credits for this source. The
+  // day series' mirror term is summed across mirrors on chain, so without
+  // this the per-source reconciliation in the read surface has nothing to
+  // subtract and a backfill-only mirror gets compared away (#1513 r4).
+  const nextReported = (
+    reported > big(prevReported?.reported_cumulative)
       ? reported
       : big(prevReported?.reported_cumulative)
-    ).toString(),
-  );
+  ).toString();
+  const reportedWrite = withAttribution
+    ? env.DB.prepare(
+        `INSERT INTO recycle_chain_reported
+           (chain_id, source_chain_id, reported_cumulative, attributed_cumulative)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (chain_id, source_chain_id)
+         DO UPDATE SET reported_cumulative = excluded.reported_cumulative,
+                       attributed_cumulative = excluded.attributed_cumulative`,
+      ).bind(
+        chainId,
+        sourceChainId,
+        nextReported,
+        (
+          big(prevReported?.attributed_cumulative) +
+          (sourceChainId === chainId ? 0n : accepted)
+        ).toString(),
+      )
+    : env.DB.prepare(
+        `INSERT INTO recycle_chain_reported
+           (chain_id, source_chain_id, reported_cumulative)
+         VALUES (?, ?, ?)
+         ON CONFLICT (chain_id, source_chain_id)
+         DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+      ).bind(chainId, sourceChainId, nextReported);
   if (sourceChainId === chainId || accepted === 0n) {
     // Still recorded, so a replay cannot re-evaluate the filter — and the
     // reporting chain's lifetime cumulative is kept either way, since a
@@ -356,8 +382,44 @@ export async function ensureRecycleSeriesBackfill(
  * so databases that already completed the activity_events replay rebuild it.
  *
  * 1 — `recycle_chain_reported` (per-source lifetime cumulative).
+ * 2 — `attributed_cumulative` on the same table. 0047 initialises it to
+ *     zero, so a database that already completed version 1 would return
+ *     early and never populate it — and the read surface would then treat
+ *     every historical accepted credit as UNREPORTED and add it on top of
+ *     its source's full reported cumulative (Codex #1513 r5 P1).
+ *
+ * The rule is written at the top of 0046 and I broke it one round later,
+ * in this file: adding a column to a projection is adding a projection.
  */
-const PROJECTION_VERSION = 1;
+const PROJECTION_VERSION = 2;
+
+/**
+ * Is `attributed_cumulative` present yet?
+ *
+ * Every deploy script deploys the Worker BEFORE `d1 migrations apply`, so a
+ * cron or webhook scan can run against the pre-0047 shape. Without this the
+ * rebuild and `applyOne` both hit `no such column` and abort the WHOLE chain
+ * scan before its cursor advances — a stalled indexer, not just a degraded
+ * metric (Codex #1513 r6). I made the READ path tolerant one round earlier
+ * and left its write-side sibling, which is the same omission this PR has
+ * now made three times.
+ *
+ * Probed once per invocation rather than cached across them: the migration
+ * lands mid-life, and a cached `false` would keep the column unused
+ * afterwards.
+ */
+async function attributionColumnPresent(env: Env): Promise<boolean> {
+  try {
+    await env.DB.prepare(
+      `SELECT attributed_cumulative FROM recycle_chain_reported LIMIT 1`,
+    ).first();
+    return true;
+  } catch (err) {
+    if (/no such column/i.test(String(err))) return false;
+    if (/no such table/i.test(String(err))) return false;
+    throw err;
+  }
+}
 
 /**
  * Rebuild the per-source lifetime cumulative from `activity_events`.
@@ -380,6 +442,9 @@ export async function ensureReportedCumulativeProjection(
     .bind(chainId)
     .first<{ projection_version: number }>();
   if ((state?.projection_version ?? 0) >= PROJECTION_VERSION) return;
+  // Pre-migration: do NOT record the version either, so the rebuild runs
+  // again once the column exists.
+  const withAttribution = await attributionColumnPresent(env);
 
   const rows = await env.DB.prepare(
     `SELECT args_json FROM activity_events
@@ -390,6 +455,7 @@ export async function ensureReportedCumulativeProjection(
     .all<{ args_json: string }>();
 
   const maxBySource = new Map<number, bigint>();
+  const attributedBySource = new Map<number, bigint>();
   for (const row of rows.results ?? []) {
     let args: Record<string, unknown>;
     try {
@@ -400,26 +466,57 @@ export async function ensureReportedCumulativeProjection(
     const src = Number(argBig(args.sourceChainId));
     const cum = argBig(args.cumulative);
     if (cum > (maxBySource.get(src) ?? 0n)) maxBySource.set(src, cum);
+    if (src !== chainId) {
+      attributedBySource.set(
+        src,
+        (attributedBySource.get(src) ?? 0n) + argBig(args.dayCreditAccepted),
+      );
+    }
   }
 
-  for (const [src, cum] of maxBySource) {
+  for (const src of new Set([...maxBySource.keys(), ...attributedBySource.keys()])) {
+    const cum = maxBySource.get(src) ?? 0n;
+    const attr = attributedBySource.get(src) ?? 0n;
     const prev = await env.DB.prepare(
-      `SELECT reported_cumulative FROM recycle_chain_reported
-        WHERE chain_id = ? AND source_chain_id = ?`,
+      withAttribution
+        ? `SELECT reported_cumulative, attributed_cumulative
+             FROM recycle_chain_reported
+            WHERE chain_id = ? AND source_chain_id = ?`
+        : `SELECT reported_cumulative FROM recycle_chain_reported
+            WHERE chain_id = ? AND source_chain_id = ?`,
     )
       .bind(chainId, src)
-      .first<{ reported_cumulative: string }>();
-    if (cum <= big(prev?.reported_cumulative)) continue;
-    await env.DB.prepare(
-      `INSERT INTO recycle_chain_reported
-         (chain_id, source_chain_id, reported_cumulative)
-       VALUES (?, ?, ?)
-       ON CONFLICT (chain_id, source_chain_id)
-       DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
-    )
-      .bind(chainId, src, cum.toString())
-      .run();
+      .first<{ reported_cumulative: string; attributed_cumulative?: string }>();
+    const nextCum = cum > big(prev?.reported_cumulative) ? cum : big(prev?.reported_cumulative);
+    const nextAttr = attr > big(prev?.attributed_cumulative) ? attr : big(prev?.attributed_cumulative);
+    if (
+      nextCum === big(prev?.reported_cumulative) &&
+      nextAttr === big(prev?.attributed_cumulative)
+    ) {
+      continue;
+    }
+    await (withAttribution
+      ? env.DB.prepare(
+          `INSERT INTO recycle_chain_reported
+             (chain_id, source_chain_id, reported_cumulative, attributed_cumulative)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (chain_id, source_chain_id)
+           DO UPDATE SET reported_cumulative = excluded.reported_cumulative,
+                         attributed_cumulative = excluded.attributed_cumulative`,
+        ).bind(chainId, src, nextCum.toString(), nextAttr.toString())
+      : env.DB.prepare(
+          `INSERT INTO recycle_chain_reported
+             (chain_id, source_chain_id, reported_cumulative)
+           VALUES (?, ?, ?)
+           ON CONFLICT (chain_id, source_chain_id)
+           DO UPDATE SET reported_cumulative = excluded.reported_cumulative`,
+        ).bind(chainId, src, nextCum.toString())
+    ).run();
   }
+
+  // Version recorded ONLY when the column existed — otherwise the rebuild
+  // must run again after the migration lands.
+  if (!withAttribution) return;
 
   await env.DB.prepare(
     `INSERT INTO recycle_series_state (chain_id, projection_version)

@@ -592,6 +592,22 @@ library LibRiskAccess {
         uint256 deadline; // unix-seconds
     }
 
+    /// @notice #1522 — checked variant of {SetVaultRiskTier}: additionally
+    ///         binds the signer's OBSERVED tier state, so the relayed write
+    ///         reverts (`RiskTierStateMoved`) if any tier write or terms
+    ///         reveal landed after the signer's reads. The expectations sit
+    ///         inside the signed digest — a relayer can neither alter nor
+    ///         strip them.
+    struct SetVaultRiskTierChecked {
+        address vault; // == recovered / 1271 signer
+        uint8 level; // target RiskAccessLevel
+        uint64 expectedTierNonce; // == riskTierMutation[vault] as observed
+        uint64 expectedTermsVersion; // == currentRiskTermsVersion as observed
+        bytes32 termsHash; // must == currentRiskTermsHash at submit (#737)
+        uint256 nonce; // per-vault replay nonce
+        uint256 deadline; // unix-seconds
+    }
+
     /// @notice Record (or revoke) explicit consent to a specific ILLIQUID pair.
     ///         Carries the full pair identity (asset types + token ids) so the
     ///         consent is bound to the exact NFT the signer reviewed, not the
@@ -644,6 +660,9 @@ library LibRiskAccess {
     bytes32 internal constant SET_VAULT_RISK_TIER_TYPEHASH = keccak256(
         "SetVaultRiskTier(address vault,uint8 level,bytes32 termsHash,uint256 nonce,uint256 deadline)"
     );
+    bytes32 internal constant SET_VAULT_RISK_TIER_CHECKED_TYPEHASH = keccak256(
+        "SetVaultRiskTierChecked(address vault,uint8 level,uint64 expectedTierNonce,uint64 expectedTermsVersion,bytes32 termsHash,uint256 nonce,uint256 deadline)"
+    );
     bytes32 internal constant SET_ILLIQUID_PAIR_CONSENT_TYPEHASH = keccak256(
         "SetIlliquidPairConsent(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool consent,bytes32 termsHash,uint256 nonce,uint256 deadline)"
     );
@@ -688,6 +707,27 @@ library LibRiskAccess {
                     SET_VAULT_RISK_TIER_TYPEHASH,
                     m.vault,
                     m.level,
+                    m.termsHash,
+                    m.nonce,
+                    m.deadline
+                )
+            )
+        );
+    }
+
+    function digest(SetVaultRiskTierChecked memory m)
+        internal
+        view
+        returns (bytes32)
+    {
+        return _digest(
+            keccak256(
+                abi.encode(
+                    SET_VAULT_RISK_TIER_CHECKED_TYPEHASH,
+                    m.vault,
+                    m.level,
+                    m.expectedTierNonce,
+                    m.expectedTermsVersion,
                     m.termsHash,
                     m.nonce,
                     m.deadline

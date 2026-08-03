@@ -3,11 +3,11 @@
  * One-time Backblaze B2 account setup for the off-chain backup
  * pipeline. Runs LOCALLY on the operator's workstation — never in CF
  * or any Worker. Reads the master Application Key from the repo
- * `.env` (BACKBLAZE_KEY_ID + BACKBLAZE_APP_KEY) and performs four
+ * `.env` (BACKBLAZE_MASTER_KEY_ID + BACKBLAZE_MASTER_APP_KEY) and performs four
  * idempotent steps:
  *
  *   1. Authorize with B2 native API and discover the account.
- *   2. Create the backup bucket (`vaipakam-offchain-data-archive` by
+ *   2. Create the backup bucket (`vaipakam-offchain-data-warm` by
  *      default; private). Skipped if it already exists.
  *   3. Apply the lifecycle rules from `../bucket-lifecycle.json` — this
  *      script no longer carries its own copy, and no longer describes the
@@ -54,7 +54,7 @@ const REPO_ROOT = resolve(HERE, '../../..');
 
 // ── Defaults — overridable via env or CLI flags. ────────────────────
 const DEFAULTS = {
-  bucketName: 'vaipakam-offchain-data-archive',
+  bucketName: 'vaipakam-offchain-data-warm',
   // Two scoped Application Keys (PR #248 round-2 follow-up to
   // Codex's healthcheck-can't-GET finding):
   //   write-only — nightly backup uploader.
@@ -62,8 +62,8 @@ const DEFAULTS = {
   // The cleavage keeps the nightly key incapable of leaking archive
   // contents; the healthcheck key gets read access but the
   // ciphertext stays AES-256-GCM-protected against the offline key.
-  writeKeyName: 'vaipakam-offchain-data-archive-write-only',
-  readKeyName: 'vaipakam-offchain-data-archive-read-only',
+  writeKeyName: 'vaipakam-offchain-data-warm-write-only',
+  readKeyName: 'vaipakam-offchain-data-warm-read-only',
 };
 
 function parseDotEnv(path) {
@@ -331,10 +331,36 @@ async function main() {
     fail(`Could not read ${envPath}: ${err.message}. Create from .env.example first.`);
   }
 
-  const keyId = env.BACKBLAZE_KEY_ID;
-  const appKey = env.BACKBLAZE_APP_KEY;
+  // PROVISIONING NEEDS THE MASTER KEY, and it must be named as such.
+  //
+  // This script creates buckets, mints application keys and writes
+  // lifecycle rules — `writeBuckets`, `writeKeys`, `writeBucketLifecycleRules`.
+  // It previously read BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY, and once those
+  // hold the scoped READ key (listBuckets + listFiles + readFiles) — which
+  // is the posture the rest of this directory assumes — provisioning fails
+  // partway with an opaque B2 authorization error rather than saying what
+  // it needed.
+  //
+  // Reading the MASTER_* names explicitly keeps the two credentials
+  // distinguishable at a glance, so the one script that legitimately wants
+  // account-wide authority asks for it by name and every other script can
+  // keep refusing it.
+  // Select the PAIR atomically. Two independent `??` fallbacks combine an
+  // ID from one credential with a secret from the other whenever a `.env`
+  // is half-migrated — and B2 then answers with an opaque
+  // invalid-credentials error instead of either working or saying what is
+  // missing.
+  const [keyId, appKey] =
+    env.BACKBLAZE_MASTER_KEY_ID && env.BACKBLAZE_MASTER_APP_KEY
+      ? [env.BACKBLAZE_MASTER_KEY_ID, env.BACKBLAZE_MASTER_APP_KEY]
+      : [env.BACKBLAZE_KEY_ID, env.BACKBLAZE_APP_KEY];
   if (!keyId || !appKey) {
-    fail('BACKBLAZE_KEY_ID and BACKBLAZE_APP_KEY must both be set in .env');
+    fail(
+      'BACKBLAZE_MASTER_KEY_ID and BACKBLAZE_MASTER_APP_KEY must both be set\n' +
+        '  in .env. This script provisions buckets, keys and lifecycle rules,\n' +
+        '  so it needs the account master key — the scoped read key cannot do\n' +
+        '  it, and failing here is better than failing halfway through.',
+    );
   }
 
   const bucketName = process.env.BUCKET_NAME || DEFAULTS.bucketName;

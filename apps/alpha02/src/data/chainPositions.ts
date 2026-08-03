@@ -57,12 +57,17 @@ function isBatchTooLarge(e: unknown): boolean {
 
 /** MetricsFacet.OfferState — the CANONICAL offer lifecycle (the raw
  *  getOffer struct cannot express a ConsumedBySale terminal; see
- *  #955). Index-aligned with the Solidity enum. */
+ *  #955). Index-aligned with the Solidity enum. Index 4 (Expired)
+ *  landed with the #1503/#1505 lender-sale listing contracts — with
+ *  the map ending at 3, a chain-reported Expired fell into the
+ *  unknown-future-value null and the offer VANISHED from
+ *  chain-hydrated lists instead of rendering as expired. */
 const OFFER_STATE: readonly IndexedOffer['status'][] = [
   'active',
   'accepted',
   'cancelled',
   'consumed_by_sale',
+  'expired',
 ];
 
 /** Map a live offer struct plus its canonical OfferState onto the

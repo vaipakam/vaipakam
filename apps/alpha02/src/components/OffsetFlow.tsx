@@ -48,10 +48,24 @@ import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
-import {
-  OFFSET_MATURITY_MARGIN_SEC,
-  offsetMaxDurationDays,
-} from '../lib/offsetTerms';
+
+/** Headroom reserved between the offset's replacement maturity and the
+ *  original loan's maturity when sizing the DEFAULT/max term. The
+ *  contract's bound is seconds-precise and judged at execution time
+ *  (`block.timestamp + duration·1day > maturity` reverts), so a term
+ *  computed to fit EXACTLY only survives if it executes in the same
+ *  second — the wallet-confirmation window alone breaks that. Ten
+ *  minutes comfortably covers confirmation + RPC/simulation lag while
+ *  costing at most one whole day of term near a day boundary. */
+const OFFSET_MATURITY_MARGIN_SECONDS = 600n;
+
+/** What the pre-write re-judges demand on top of the contract's own
+ *  bound: only enough for the submit→mine gap. The 600s reserve above
+ *  is SIZING headroom, meant to be CONSUMED by review + wallet
+ *  confirmation — re-requiring the full reserve at submit time would
+ *  reject a default with hundreds of seconds of valid contract
+ *  headroom left (Codex #1539 r5). */
+const OFFSET_SUBMIT_BUFFER_SECONDS = 60n;
 
 export function OffsetFlow({
   row,
@@ -96,33 +110,32 @@ export function OffsetFlow({
     () => String(Number(live.interestRateBps) / 100),
   );
   // The replacement term must END no later than the original maturity
-  // AND within the protocol's live offer-duration ceiling — governance
-  // can lower that below the remaining term, and createOffer rejects a
-  // longer duration (Codex #1500 r4). The form uses the tighter of the
-  // two; submit re-reads the ceiling live.
+  // (seconds-precise on-chain; whole days here rounds DOWN) AND within
+  // the protocol's live offer-duration ceiling — governance can lower
+  // that below the remaining term, and createOffer rejects a longer
+  // duration (Codex #1500 r4). The form uses the tighter of the two;
+  // submit re-reads the ceiling live.
   //
-  // The maturity half needs a MARGIN, and rounding down is not one
-  // (#1535). PrecloseFacet compares seconds against a loan that
-  // re-originates at MINE time, while this bound is computed at READ
-  // time: `block.timestamp + durationDays·1d > startTime +
-  // durationDays·1d` reverts. Flooring to whole days looks like it
-  // leaves slack, and usually does — but when the remaining term is an
-  // exact multiple of a day (a loan opened moments ago, which is
-  // precisely when someone reaches for an offset) it floors to the
-  // loan's OWN duration and leaves none at all. Every second between
-  // quoting and mining then puts it over, so the offered maximum
-  // reverts with a message about lender-favourability that reads like
-  // the terms were unfair rather than one second too long.
-  //
-  // Subtracting the margin before flooring fixes the offered maximum,
-  // the validity test and the pre-submit re-check together, since all
-  // three read this value.
+  // The MARGIN is load-bearing: "rounds down" alone still yields the
+  // boundary-EXACT term when the remaining time is a whole number of
+  // days — exactly the state right after acceptance, where the
+  // contract's `now + duration > maturity` guard passes only in the
+  // same second it was computed. Every second between computing the
+  // default and the transaction executing (wallet confirmation, RPC
+  // lag — or on the e2e fork, anvil stamping the pending block with
+  // wall time while the latest block still carries the acceptance
+  // timestamp) pushes the boundary term past maturity and reverts
+  // InvalidOfferTerms. Reserving headroom makes the default a term
+  // that still fits by the time it lands.
   const fees = useProtocolFees();
-  const maxDurationDays = offsetMaxDurationDays(
-    loanEndTimeOf(live),
-    chainNow,
-    fees.ready ? BigInt(fees.maxOfferDurationDays) : undefined,
-  );
+  const maxDurationDays = (() => {
+    const end = loanEndTimeOf(live);
+    const usable = end - OFFSET_MATURITY_MARGIN_SECONDS;
+    const remaining = usable > chainNow ? (usable - chainNow) / 86_400n : 0n;
+    if (!fees.ready) return remaining;
+    const cap = BigInt(fees.maxOfferDurationDays);
+    return remaining < cap ? remaining : cap;
+  })();
   const [durationInput, setDurationInput] = useState(() =>
     String(maxDurationDays),
   );
@@ -291,13 +304,19 @@ export function OffsetFlow({
         return;
       }
       // Re-judge the term bound by LIVE chain time — the reviewed
-      // duration can stop fitting while the receipt sits open. Carries
-      // the same margin as the offered maximum (#1535): this reads the
-      // LATEST block, but the transaction mines in a later one, so a
-      // check that only just passes here still reverts on chain.
+      // duration can stop fitting while the receipt sits open. Only
+      // the small SUBMIT buffer is demanded here (not the 600s sizing
+      // reserve — that headroom exists to be consumed by review +
+      // confirmation): judging at the exact boundary would pass a
+      // term the contract rejects seconds later (the latest block's
+      // stamp always trails execution time — pathologically so on the
+      // e2e fork, where no block mines between acceptance and this
+      // check).
       if (
-        latestBlock.timestamp + BigInt(durationDays) * 86_400n >
-        loanEndTimeOf(liveLoan) - OFFSET_MATURITY_MARGIN_SEC
+        latestBlock.timestamp +
+          BigInt(durationDays) * 86_400n +
+          OFFSET_SUBMIT_BUFFER_SECONDS >
+        loanEndTimeOf(liveLoan)
       ) {
         setError(copy.offset.onlyBeforeDue);
         return;
@@ -348,6 +367,23 @@ export function OffsetFlow({
         spender: walletChain.diamondAddress,
         amount: liveLoan.principal + liveBound,
       });
+      // Codex #1539 r1 — `ensureAllowance` can add its OWN approval
+      // transaction and wallet-confirm window between the early
+      // maturity re-judge above and this write. Re-judge against a
+      // FRESH block here so that window can't silently consume the
+      // reserve and hand the user the very revert the margin exists
+      // to prevent. The early check stays — it fails fast before any
+      // approval is spent.
+      const blockAtWrite = await publicClient.getBlock();
+      if (
+        blockAtWrite.timestamp +
+          BigInt(durationDays) * 86_400n +
+          OFFSET_SUBMIT_BUFFER_SECONDS >
+        loanEndTimeOf(liveLoan)
+      ) {
+        setError(copy.offset.onlyBeforeDue);
+        return;
+      }
       const { receipt } = await write('offsetWithNewOffer', [
         BigInt(row.loanId),
         BigInt(rateBps),

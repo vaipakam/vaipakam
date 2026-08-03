@@ -835,3 +835,109 @@ export async function postPrepayMatchSource(
     clearTimeout(timer);
   }
 }
+
+// ─── M5 (#1218 / #1349) — recycling transparency series ────────────────
+
+/** One day of the recycling account, as `/metrics/recycling` serves it. */
+export interface RecyclingDay {
+  dayId: number;
+  stamped: boolean;
+  armed: boolean;
+  /** The day's figures are a schedule, not a commitment. Honour it. */
+  estimate: boolean;
+  origin: 'event' | 'backfill' | null;
+  scheduleFloor: string | null;
+  recycledBudget: string | null;
+  aBar: string | null;
+  marginBps: number | null;
+  freshDrawdown: string | null;
+  /** Only present for an armed, finalized day. Never derive it locally. */
+  netEmission: string | null;
+  selfFundingRatio: number | null;
+  absorbedLocal: string;
+  absorbedMirror: string;
+  /** Global only once the day is finalized; `null` while partial. */
+  absorbed: string | null;
+}
+
+export interface RecyclingSeries {
+  chainId: number;
+  days: number;
+  fromDay: number | null;
+  toDay: number | null;
+  /** `local-only` means this deployment has finalized no day itself. */
+  scope: 'global' | 'local-only' | 'empty';
+  coverageFromDay: number | null;
+  daily: RecyclingDay[];
+  cumulative: {
+    absorbed: string;
+    absorbedPreLaunch: string;
+    absorbedLocal: string;
+    absorbedMirror: string;
+    freshDrawdown: string;
+    recycledBudget: string;
+    runwayExtensionDays: number | null;
+    /** Why the runway is absent, when it is. Render the reason, not a dash. */
+    runwayUnavailableReason: string | null;
+    selfFunded: boolean;
+  };
+  /**
+   * The retained reserve and the balance actually behind it — a SCHEDULED
+   * reading of chain state, deliberately not inside `cumulative`.
+   *
+   * Not live: the platform captures it on a rotation and serves what was
+   * stored, so it trails the chain. `asOf` is the timestamp of the block
+   * these figures describe, and a consumer displaying them is expected to
+   * show it — an undisclosed age is what makes a stale figure
+   * indistinguishable from a current one.
+   *
+   * Every field in `cumulative` is derived from stored counters, and a
+   * counter cannot notice that the tokens behind it have left. This block
+   * is the only one that can, which is why it is separate: grouping them
+   * would invite a reader to trust both equally.
+   *
+   * Every field is null together when there is no reading to publish —
+   * none captured yet, the capture schedule fallen behind, or the chain
+   * itself no longer advancing — with `unavailableReason` saying which.
+   * Null here means "we have no reading we can stand behind", never "the
+   * reserve is zero". Those are opposite claims.
+   */
+  backing: {
+    vpfiBalance: string | null;
+    bucket: string | null;
+    unearmarked: string | null;
+    outstandingRecycled: string | null;
+    paidOutRecycled: string | null;
+    keeperBudget: string | null;
+    /** `bucket − outstandingRecycled − keeperBudget`, floored at zero. */
+    platformRetained: string | null;
+    /** The block both pinned reads observed. */
+    blockNumber: string | null;
+    /** The Diamond the figures came from. A block says WHEN; after a
+     *  redeploy only this says WHOSE, and both are needed to reproduce
+     *  the figures independently. */
+    diamond: string | null;
+    /** Value that left the bucket and is stranded in transport. Without
+     *  it beside the reserve, a stranded remittance reads as a depleted
+     *  platform reserve rather than as value in flight. */
+    releasedRemitStranded: string | null;
+    unavailableReason: string | null;
+    asOf: string | null;
+  };
+}
+
+/**
+ * The per-day recycling account.
+ *
+ * Returns `null` when no indexer origin is configured or the read fails —
+ * the caller renders nothing rather than substituting zeros, which on this
+ * surface would be indistinguishable from a real quiet period.
+ */
+export function fetchRecyclingSeries(
+  chainId: number,
+  days = 30,
+): Promise<RecyclingSeries | null> {
+  return getJson<RecyclingSeries>(
+    `/metrics/recycling?chainId=${chainId}&days=${days}`,
+  );
+}

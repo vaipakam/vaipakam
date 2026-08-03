@@ -23,7 +23,7 @@ Vaipakam is a non-custodial DeFi protocol where lenders and borrowers negotiate 
 ```
                         ┌──────────────────────────────┐
  users / keepers ──────▶│  VaipakamDiamond (EIP-2535)  │──▶ 60+ facets: offers, loans,
-                        │  single entry, shared storage │    risk, liquidation, oracle,
+                        │ single entry, shared storage │    risk, liquidation, oracle,
                         └──────────────┬───────────────┘    rentals, VPFI, rewards…
                                        │
                  ┌─────────────────────┼──────────────────────┐

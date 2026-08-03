@@ -42,10 +42,8 @@ the next occurrence announces itself in the first seconds of a test run
 instead of hiding behind four unrelated-looking failures.
 
 That proved its worth immediately. Clearing the first mismatch revealed
-a second one hiding behind it, of the same family but a different kind:
-the redeployed contracts describe an offer's state with one more
-possibility than the harness knew about — an offer can now report itself
-expired, where before the harness worked that out from the clock. Four
+a second one hiding behind it, of the same family but a different kind —
+the offer-state gap described in its own note alongside this one. Four
 tests were still failing, for a reason that looked identical from the
 outside.
 
@@ -55,6 +53,5 @@ offer at once and refused all of them if any one was unfamiliar, so a
 one-offer problem presented as a total outage with no hint of its cause.
 Twice now that has cost weeks. The harness still refuses to guess at a
 state it does not recognise, but it now omits just that offer and says
-which value it did not understand — the failure is proportional to the
-fact. The new state is also simply handled, so the tests that were
-failing on it pass.
+which value it did not understand, so the failure is proportional to the
+fact rather than to where it happened to sit in the list.

@@ -376,7 +376,7 @@ artifacts and stay in their respective env / config:
   periodic-interest pre-notify). Posts to user-supplied chat IDs
   (`tg_chat_id` per subscription).
 - `TG_OPS_BOT_TOKEN` — ops-internal bot. Used by `ops/mesh-watcher`
-  (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-archive`
+  (VPFI recycling-mesh ledger invariants) + `ops/offchain-data-warm`
   (nightly backup outcomes + weekly healthcheck verdicts). Posts to a
   single operator chat (`TG_OPS_CHAT_ID`). The retired `ops/lz-watcher`
   used it too before #1440 removed that Worker and its source.

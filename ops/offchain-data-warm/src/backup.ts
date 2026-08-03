@@ -108,7 +108,17 @@ const ARCHIVE_TABLES_REQUIRED = [
 const ARCHIVE_TABLES_REQUIRED_ONCE_MIGRATED: Array<{
   table: string;
   migrationPrefix: string;
-}> = [{ table: 'support_tickets', migrationPrefix: '0028' }];
+}> = [
+  { table: 'support_tickets', migrationPrefix: '0028' },
+  //   - recycle_day_backfill (#1349 M5, migration 0047) — pre-cutover
+  //     recycling day figures. The ONLY born-off-chain table in the
+  //     recycling set: every other one is a fold of chain logs and is
+  //     rebuilt by the block-zero replay, but these are recomputed from a
+  //     getter whose input a role demotion can overwrite, after which a
+  //     re-run yields different numbers and the original is unrecoverable.
+  //     A D1 loss without backup silently rewrites published history.
+  { table: 'recycle_day_backfill', migrationPrefix: '0047' },
+];
 
 // Re-derivable tables (backed up as restore-performance optimisation only).
 const ARCHIVE_TABLES_OPTIONAL = [

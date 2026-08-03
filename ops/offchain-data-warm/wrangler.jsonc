@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vaipakam-offchain-data-archive",
+  "name": "vaipakam-offchain-data-warm",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-23",
   "compatibility_flags": ["nodejs_compat"],
@@ -137,7 +137,7 @@
   //     a different account whose bucket lives in a different
   //     region.
   //   - B2_BUCKET names are globally unique across all B2 accounts.
-  //     A fork can't reuse "vaipakam-offchain-data-archive" — they
+  //     A fork can't reuse "vaipakam-offchain-data-warm" — they
   //     need their own bucket name.
   //   - TG_OPS_CHAT_ID isn't strictly secret (chat ids grant
   //     nothing without the bot token) but lifting it out of the
@@ -145,5 +145,23 @@
   //     in. Free-of-cost obfuscation.
   // Workers reads `env.X` identically for vars and secrets — no
   // Worker code change is needed.
+  // The first monthly / yearly archive THIS deployment wrote — declared,
+  // because the healthcheck cannot infer them (#1476). Inferring from the
+  // surviving objects is circular: delete the oldest and the inferred
+  // baseline advances past it, so the deleted period stops being required.
+  //
+  // BOTH ARE DELIBERATELY UNSET. The archive→warm rename created a NEW,
+  // EMPTY bucket rather than migrating the old one, so this deployment has
+  // written no monthly or yearly cut yet. `ARCHIVE_FIRST_MONTHLY="2026-06"`
+  // was committed here while it still described the OLD bucket — against
+  // the new one it would mark every month from 2026-06 as required and the
+  // monthly tier would report FAILED rather than the honest "young bucket,
+  // coverage degraded".
+  //
+  // Set each one once its first cut exists — the 1st of a month for
+  // monthly, Jan 1 for yearly — using:
+  //     cd ops/offchain-data-warm && npm run archive:baselines
+  // While unset, the weekly report says COVERAGE DEGRADED for that tier,
+  // which is the truthful state for a bucket with nothing older to lose.
   "vars": {},
 }

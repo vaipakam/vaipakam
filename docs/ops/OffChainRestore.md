@@ -4,7 +4,7 @@ When you read this, something has gone wrong with the Cloudflare side
 of Vaipakam — the account is locked out, the data is tampered with,
 or a deploy mistake wiped a D1 table. This runbook walks the recovery
 path back to a known-good off-chain state from a Backblaze B2 archive
-produced by [`ops/offchain-data-archive`](../../ops/offchain-data-archive/README.md).
+produced by [`ops/offchain-data-warm`](../../ops/offchain-data-warm/README.md).
 
 > **On-chain state is fine.** The Diamond, the VPFI token, and every
 > position-NFT live on chain. The protocol's economic core is
@@ -175,7 +175,7 @@ then deploy.
    - `apps/indexer/wrangler.jsonc`     → vaipakam-archive
    - `apps/keeper/wrangler.jsonc`      → vaipakam-archive
    - `apps/agent/wrangler.jsonc`       → vaipakam-archive
-   - `ops/offchain-data-archive/wrangler.jsonc` → vaipakam-archive
+   - `ops/offchain-data-warm/wrangler.jsonc` → vaipakam-archive
 
    > `ops/mesh-watcher` is deliberately NOT part of this runbook. It owns a
    > SEPARATE database (`vaipakam-mesh-alerts-db`) that this archive does not
@@ -271,7 +271,7 @@ then deploy.
    >   it. That is worse than the user-facing bot: those are the signals
    >   **you** are acting on while you work. @BotFather `/revoke`, re-issue,
    >   and upload the replacement to **every** consumer —
-   >   `ops/offchain-data-archive` AND `apps/agent` (steps 6d and 6e below,
+   >   `ops/offchain-data-warm` AND `apps/agent` (steps 6d and 6e below,
    >   which otherwise re-upload the saved token verbatim). `TG_OPS_CHAT_ID`
    >   is not a credential and needs no rotation.
    > - **`BACKUP_ENCRYPTION_KEY` + `B2_*`** — rotate the B2 keys **FIRST**,
@@ -360,20 +360,20 @@ then deploy.
       it is the one verified against the live API
       (`docs/DesignsAndPlans/SecretsStoreMigration.md` §9).
 
-   d. `ops/offchain-data-archive` does NOT use the Secrets Store; its nine
+   d. `ops/offchain-data-warm` does NOT use the Secrets Store; its nine
       secrets are per-Worker `wrangler secret put`. Those are **not**
       validated at deploy, so skipping them lets the Worker deploy green
       and then fail at 03:17 UTC — silently, which is the exact failure
       mode the nightly exists to prevent. Set them before step 8:
 
       The first seven are HARD-REQUIRED — `assertRequiredEnv()` in
-      `ops/offchain-data-archive/src/index.ts` aborts every scheduled
+      `ops/offchain-data-warm/src/index.ts` aborts every scheduled
       invocation if any is missing, so omitting one produces a Worker that
       deploys green and then never backs anything up. The two `TG_OPS_*`
       values are optional (their absence downgrades to a console warn):
 
       ```bash
-      ( cd ops/offchain-data-archive
+      ( cd ops/offchain-data-warm
         for NAME in BACKUP_ENCRYPTION_KEY \
                     B2_ENDPOINT B2_BUCKET \
                     B2_WRITE_ACCESS_KEY_ID B2_WRITE_SECRET_ACCESS_KEY \
@@ -615,7 +615,7 @@ then deploy.
    > in §7a after the smoke test. Do not simply revert the config now — the
    > point is that the schedules stay off until each one's data is verified.
 
-   > **DO NOT deploy `ops/offchain-data-archive` yet.** Deploy it LAST,
+   > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
    > restored. A fresh archive Worker reaching its 03:17 cron before then
    > writes a validly encrypted, correctly checksummed backup **of the new
@@ -743,6 +743,29 @@ then deploy.
 
 ## 2. Download the most recent archive from B2
 
+> ⚠️ **FIRST: set `B2_BUCKET`.** Every command in this section reads it,
+> including the time-critical `--versions` listing in the compromise box
+> below. Unset, it expands to an empty argument and the listing fails; in a
+> reused shell it may still hold a stale value and list the wrong bucket.
+>
+> ```bash
+> # Newest first; use whichever lists your date.
+> B2_BUCKET=vaipakam-offchain-data-warm      # after the switchover
+> # B2_BUCKET=vaipakam-offchain-data-archive # before it, or for older nights
+> ```
+>
+> **The backup service was renamed and a bucket cannot be renamed**, so the
+> replacement was created new and the old `vaipakam-offchain-data-archive`
+> stays live until the replacement has completed a run. Until then the
+> usable archives are in the OLD bucket and the new one is empty or absent.
+>
+> So **an empty listing is not "no backups exist"** — re-run against the
+> other bucket before concluding anything. The two never both hold a given
+> night, so whichever lists your date is the one to restore from.
+>
+> Delete this box once the old bucket is retired: at that point there is one
+> answer, and offering a choice becomes a hazard of its own.
+
 > ⚠️ **AFTER A COMPROMISE, "most recent that verifies" IS THE ATTACK.**
 > Skip to the selection rules below before running anything in this
 > section. On a lockout / billing / deploy-mistake restore the ordinary
@@ -786,7 +809,7 @@ then deploy.
 >      genuine nonce and upload a new version **at that exact key**. The
 >      ordinary listing then shows one nonce and the download returns the
 >      forgery;
->    - **Object Lock is not enabled** on `vaipakam-offchain-data-archive`
+>    - **Object Lock is not enabled** on `vaipakam-offchain-data-warm`
 >      (`isFileLockEnabled: false`, no default retention), so nothing makes
 >      any object immutable;
 >    - the genuine copy persists only as a hidden older VERSION, and only for
@@ -816,7 +839,7 @@ then deploy.
 >    ```bash
 >    for p in manifests/ archives/ manifests-monthly/ archives-monthly/ \
 >             manifests-yearly/ archives-yearly/; do
->      b2 ls vaipakam-offchain-data-archive --recursive --long --versions "$p"
+>      b2 ls "$B2_BUCKET" --recursive --long --versions "$p"
 >    done
 >    ```
 >
@@ -903,7 +926,7 @@ b2 account authorize <APPLICATION_KEY_ID> <APPLICATION_KEY>
 #     (post-2025 syntax) so the nonce-bearing files at
 #     `manifests/<date>/<nonce>.json` actually surface. Sort by
 #     LastModified (newest last) and take the tail.
-b2 ls vaipakam-offchain-data-archive --recursive --long manifests/ \
+b2 ls "$B2_BUCKET" --recursive --long manifests/ \
   | sort -k 2,3 \
   | tail -5
 
@@ -921,10 +944,10 @@ ARCHIVE_KEY="${ARCHIVE_KEY/.json/.bin}"
 
 mkdir -p restore
 b2 file download \
-  "b2://vaipakam-offchain-data-archive/${MANIFEST_KEY}" \
+  "b2://${B2_BUCKET}/${MANIFEST_KEY}" \
   ./restore/manifest.json
 b2 file download \
-  "b2://vaipakam-offchain-data-archive/${ARCHIVE_KEY}" \
+  "b2://${B2_BUCKET}/${ARCHIVE_KEY}" \
   ./restore/archive.bin
 ```
 
@@ -940,7 +963,7 @@ an attacker upload via a leaked write key, or bit-rot). Pick the
 next-newest manifest from the `ls` output and repeat. If two
 consecutive manifests mismatch, the backup pipeline was broken
 silently and the operator needs to investigate `wrangler tail
-vaipakam-offchain-data-archive`.
+vaipakam-offchain-data-warm`.
 
 ---
 
@@ -1051,7 +1074,7 @@ For each table:
    tested converter** (#1477):
 
    ```bash
-   ( cd ops/offchain-data-archive && \
+   ( cd ops/offchain-data-warm && \
      node scripts/restore-from-archive.mjs /path/to/decrypted-archive.json \
        --outdir /path/to/restore )
    ```
@@ -1111,7 +1134,35 @@ For each table:
    **`vaipakam-archive` tables** (born-off-chain): `diag_errors`,
    `diag_legal_holds`, `diag_legal_hold_audit`, `user_thresholds`,
    `notify_state`, `pre_grace_notify_state` (absent from pre-#1480
-   archives), `telegram_links`, `support_tickets`.
+   archives), `telegram_links`, `support_tickets`,
+   `recycle_day_backfill` (absent from pre-#1349-M5 archives).
+
+   > **`recycle_day_backfill` is the one recycling table that is restored
+   > rather than replayed**, and the distinction is load-bearing. Almost
+   > every other `recycle_*` table is a fold of chain logs, so §6's replay
+   > rebuilds it exactly — those are in the clear-before-replay command
+   > and must NOT be imported here.
+   >
+   > **`recycle_backing_snapshot` is a second exception, in the opposite
+   > direction** (#1525). It is cleared like the replayed tables, but the
+   > replay does NOT rebuild it: it holds a periodic reading of LIVE
+   > contract state, written only by the scheduled capture pass, so it
+   > stays empty until that pass next runs — within one round-robin cycle
+   > of restore. Do not wait for it during the replay and do not verify it
+   > as replay output; an empty table there is the expected state, and the
+   > dashboard withholds the backing block rather than publishing zeros.
+   > It is deliberately NOT imported from the archive either: a restored
+   > copy would republish an old backing verdict as a current one.
+   >
+   > **Back to `recycle_day_backfill`** — the table this section is about,
+   > and the one that IS imported here. It holds pre-cutover day figures
+   > recomputed from `getRecycleDayMetrics`, whose `dayCapThreshold18`
+   > input `setBroadcastDayCapThreshold` can overwrite for an
+   > already-finalized day on a demoted Diamond. After that, re-running
+   > the backfill yields DIFFERENT numbers and the original is
+   > unrecoverable — those days carry no widened event to fall back on.
+   > Restoring it is the only way to keep published history intact; a
+   > re-run is not a substitute.
 
    ```bash
    wrangler d1 execute vaipakam-archive --file=restore/d1/<table>.sql --remote
@@ -1163,7 +1214,7 @@ illustrative fragment (not runnable on its own) and an "executable"
 heredoc that skipped the materialization entirely and handed wrangler
 paths to files that were never written (#1450 r28). The committed,
 tested tooling that replaced them is
-`ops/offchain-data-archive/scripts/restore-from-archive.mjs` (#1477 —
+`ops/offchain-data-warm/scripts/restore-from-archive.mjs` (#1477 —
 one script covering both this section and the §4 SQL conversion);
 its tests pin the requirements above plus the two pitfalls below.
 
@@ -1221,6 +1272,7 @@ DELETE FROM recycle_series_events; \
 DELETE FROM recycle_series_state; \
 DELETE FROM recycle_prelaunch; \
 DELETE FROM recycle_chain_reported; \
+DELETE FROM recycle_backing_snapshot; \
 DELETE FROM indexer_cursor"
 ```
 
@@ -1573,10 +1625,10 @@ caught at the cheapest stage.
 ## 7b. LAST: activate the backup writer
 
 Only now — after §§4–5 have restored D1 and R2, and §7's smoke test says
-the stack is real — deploy `ops/offchain-data-archive`:
+the stack is real — deploy `ops/offchain-data-warm`:
 
 ```bash
-( cd ops/offchain-data-archive && npm ci && npm run deploy )
+( cd ops/offchain-data-warm && npm ci && npm run deploy )
 ```
 
 **Why it is last, and not with the other Workers.** Its cron fires at
@@ -1596,7 +1648,7 @@ Then exercise it once, immediately — this is the smoke test deliberately
 left out of §7, since the Worker did not exist at that point:
 
 ```bash
-wrangler tail vaipakam-offchain-data-archive
+wrangler tail vaipakam-offchain-data-warm
 # Trigger the cron manually from the CF dashboard's "Trigger" button.
 ```
 
@@ -1654,7 +1706,7 @@ two procedures share the offline-key handling discipline.
    sweep needs the set to tell your own re-uploads apart from a
    genuine late Worker write.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
-   `vaipakam-offchain-data-archive` to flip the Worker to the new key.
+   `vaipakam-offchain-data-warm` to flip the Worker to the new key.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
 6. **Sweep for stragglers before retiring anything**: list every

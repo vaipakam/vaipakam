@@ -104,6 +104,25 @@
   },
   {
     "type": "function",
+    "name": "getRiskTierMutationNonce",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRiskTierUnlockAt",
     "inputs": [
       {
@@ -948,6 +967,84 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setVaultRiskTierChecked",
+    "inputs": [
+      {
+        "name": "level",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "expectedTierNonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "expectedTermsVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVaultRiskTierCheckedBySig",
+    "inputs": [
+      {
+        "name": "m",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.SetVaultRiskTierChecked",
+        "components": [
+          {
+            "name": "vault",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "level",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "expectedTierNonce",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "expectedTermsVersion",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "termsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "sig",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "IlliquidPairConsentSet",
     "inputs": [
@@ -1209,5 +1306,21 @@
     "type": "error",
     "name": "RiskTermsRevealMismatch",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskTierStateMoved",
+    "inputs": [
+      {
+        "name": "currentTierNonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "currentTermsVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   }
 ]

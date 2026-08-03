@@ -62,15 +62,17 @@ const n = (v) => Number(v ?? 0);
 // still reads open), so status must come from getOfferState, exactly
 // like the real indexer's derivation. Unknown enum values throw (500)
 // rather than guess.
-// Index-aligned with LibMetricsTypes.OfferState
-// { Open, Accepted, Cancelled, ConsumedBySale, Expired }. `Expired`
-// (4) arrived with the 2026-08-02 facet refresh; before it, the chain
-// reported an elapsed offer as Open and the clock overlay below did
-// the deriving. Both paths now coexist on purpose: the chain reports
-// Expired once something writes, while an offer that merely elapsed
-// (very common on a time-travelled fork, where evm_increaseTime moves
-// the clock without touching storage) still reads Open and needs the
-// overlay.
+// Index 4 (Expired) landed with the #1503/#1505 lender-sale listing
+// contracts: getOfferState now reports GTT expiry as a first-class
+// state, and the LIVE testnet holds offers in it — a map missing it
+// 500s /offers/active and empties the whole book (the post-redeploy
+// fork-tier outage of 2026-08-03).
+//
+// The clock overlay below still stays: the chain reports Expired only
+// once something writes, while an offer that merely ELAPSED still
+// reads Open — very common on a time-travelled fork, where
+// evm_increaseTime moves block.timestamp without touching storage.
+// Both paths coexist on purpose.
 const OFFER_STATE = [
   'active',
   'accepted',

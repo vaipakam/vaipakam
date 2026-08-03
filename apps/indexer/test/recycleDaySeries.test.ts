@@ -996,3 +996,545 @@ describe('handleRecyclingSeries — coverage-bounded folds vs self-healing repor
     expect((await readSeries(env)).cumulative.runwayExtensionDays).toBe(9);
   });
 });
+
+describe('handleRecyclingSeries — pre-cutover backfill', () => {
+  function seedBackfill(
+    h: SqliteD1,
+    dayId: number,
+    opts: {
+      floor?: string;
+      budget?: string;
+      drawdown?: string;
+      armed?: number;
+      local?: string;
+    } = {},
+  ) {
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at)
+         VALUES (?, ?, 1, ?, ?, ?, ?, '0', ?, 0, 1700000000)`,
+      )
+      .run(
+        CHAIN,
+        dayId,
+        opts.floor ?? '1000',
+        opts.budget ?? '250',
+        opts.drawdown ?? '900',
+        opts.local ?? '0',
+        opts.armed ?? 1,
+      );
+  }
+
+  it('serves a pre-cutover day the event stream refuses', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 4, { local: '55' });
+    // A later day arrives by event, so the window covers day 4.
+    await applyRecycleDaySeries([stamped(6n)], env, CHAIN);
+
+    const d4 = day(await readSeries(env), 4);
+    expect(d4.stamped).toBe(true);
+    expect(d4.origin).toBe('backfill');
+    expect(d4.scheduleFloor).toBe('1000');
+    expect(d4.freshDrawdown).toBe('900');
+    expect(d4.absorbedLocal).toBe('55');
+    // 250 / (1000 + 250) = 0.2
+    expect(d4.selfFundingRatio).toBe(0.2);
+  });
+
+  it('serves NULL for the two fields the getter cannot supply', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 4);
+    await applyRecycleDaySeries([stamped(6n)], env, CHAIN);
+    const d4 = day(await readSeries(env), 4);
+    // Not 0 — a zero margin is a real, different thing.
+    expect(d4.aBar).toBeNull();
+    expect(d4.marginBps).toBeNull();
+  });
+
+  it('withholds netEmission on an UNARMED backfilled day', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 4, { armed: 0, drawdown: '777' });
+    await applyRecycleDaySeries([stamped(6n)], env, CHAIN);
+    const d4 = day(await readSeries(env), 4);
+    expect(d4.armed).toBe(false);
+    expect(d4.estimate).toBe(true);
+    expect(d4.freshDrawdown).toBe('777');
+    // The whole reason the backfill must carry arming status: these are
+    // unreserved estimates and must not be republished as net emission.
+    expect(d4.netEmission).toBeNull();
+  });
+
+  it('PREFERS THE EVENT where both sources describe the same day', async () => {
+    const { h, env } = makeHarness();
+    // The backfill recomputes from a slot a demotion can overwrite; the
+    // event is immutable. Where they disagree, the event is the record.
+    seedBackfill(h, 5, { floor: '111', drawdown: '111' });
+    await applyRecycleDaySeries(
+      [stamped(5n, { scheduleFloor: 999n, freshDrawdown: 999n })],
+      env,
+      CHAIN,
+    );
+    const d5 = day(await readSeries(env), 5);
+    expect(d5.origin).toBe('event');
+    expect(d5.scheduleFloor).toBe('999');
+    expect(d5.freshDrawdown).toBe('999');
+  });
+
+  it('folds backfilled days into the LIFETIME aggregates, not just the chart', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 2, {
+      floor: '1000',
+      budget: '400',
+      drawdown: '900',
+      local: '77',
+      armed: 1,
+    });
+    await applyRecycleDaySeries([stamped(6n, { freshDrawdown: 10n, recycledBudget: 5n })], env, CHAIN);
+
+    const body = await readSeries(env);
+    // A backfilled day is a finalized day: it belongs in every total, not
+    // only in the day it is drawn on.
+    expect(body.cumulative.absorbed).toBe('77');
+    expect(body.cumulative.absorbedLocal).toBe('77');
+    expect(body.cumulative.freshDrawdown).toBe('910'); // 900 + 10
+    expect(body.cumulative.recycledBudget).toBe('405'); // 400 + 5
+  });
+
+  it('reports GLOBAL scope for a backfill-only dataset', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 2, { local: '5' });
+    // No event rows at all — the only finalized days this chain has are
+    // backfilled ones. Calling that "local-only" would say the deployment
+    // never finalized a day, which is false.
+    const body = await readSeries(env);
+    expect(body.scope).toBe('global');
+    expect(day(body, 2).origin).toBe('backfill');
+  });
+
+  it('does NOT add event absorption the backfill snapshot already counted', async () => {
+    const { h, env } = makeHarness();
+    // The backfill reads the LIVE on-chain accumulator, which already
+    // includes the very credits the event rows folded. An ordinary
+    // pre-cutover replay therefore has both rows describing the same 100 —
+    // adding them would report 125 for a day that absorbed 100.
+    seedBackfill(h, 3, { local: '100' });
+    await applyRecycleDaySeries(
+      [
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 25n, dayId: 3n }),
+        stamped(6n),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    const d3 = day(body, 3);
+    expect(d3.origin).toBe('backfill');
+    expect(d3.scheduleFloor).toBe('1000');
+    // The snapshot, not the sum.
+    expect(d3.absorbedLocal).toBe('100');
+    expect(body.cumulative.absorbedLocal).toBe('100');
+  });
+
+  it('computes the runway window over BACKFILLED armed days too', async () => {
+    const { h, env } = makeHarness();
+    // A backfill-only dataset: the runway block used to query the event
+    // table directly, so it found no armed days and reported null.
+    seedBackfill(h, 1, { floor: '100', budget: '0', local: '300', armed: 1 });
+    const body = await readSeries(env);
+    // 300 / 100 = 3
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+    expect(body.cumulative.selfFunded).toBe(false);
+  });
+
+  it('anchors the runway on a backfilled day when it is the latest armed one', async () => {
+    const { h, env } = makeHarness();
+    seedBackfill(h, 1, { floor: '400', budget: '0', local: '0', armed: 1 });
+    seedBackfill(h, 2, { floor: '100', budget: '0', local: '600', armed: 1 });
+    const body = await readSeries(env);
+    // mean over days 1..2 = 250  ->  600 / 250 = 2.4
+    expect(body.cumulative.runwayExtensionDays).toBe(2.4);
+  });
+
+  it('still serves the event series when migration 0047 has not run yet', async () => {
+    // Every deploy script runs `wrangler deploy` BEFORE
+    // `migrations apply`, so the new Worker answers requests against a
+    // database without this table for the length of the rollout — and
+    // indefinitely if the migration fails. 500ing the whole endpoint over
+    // an ADDITIVE change is worse than serving yesterday's series.
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_day_backfill`).run();
+    await applyRecycleDaySeries([stamped(3n, { freshDrawdown: 12n })], env, CHAIN);
+
+    const body = await readSeries(env);
+    expect(day(body, 3).freshDrawdown).toBe('12');
+    expect(body.cumulative.freshDrawdown).toBe('12');
+  });
+
+  it('REFUSES the runway when a backfilled day carries mirror absorption', async () => {
+    const { h, env } = makeHarness();
+    // A backfilled day's mirror total is summed across mirrors ON CHAIN, so
+    // it cannot be decomposed per source. No arithmetic over aggregates
+    // recovers the real stock — four review rounds each fixed one case and
+    // broke the next. The endpoint refuses, as it does everywhere else here.
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 1, 1, '100', '0', '0', '0', '900', 1, 1, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'backfilled-mirror-absorption-not-decomposable',
+    );
+    // The components it would have been built from are still published.
+    expect(body.cumulative.absorbedMirror).toBe('900');
+    expect(day(body, 1).absorbedMirror).toBe('900');
+  });
+
+  it('STILL computes the runway when backfilled days carry no mirror absorption', async () => {
+    const { h, env } = makeHarness();
+    // The refusal is narrow: a backfilled day is not itself disqualifying,
+    // only an undecomposable cross-chain total is.
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 1, 1, '100', '0', '0', '300', '0', 1, 1, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    const body = await readSeries(env);
+    // 300 / 100 = 3
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+  });
+
+  it('keeps absorption-only backfilled days (unstamped, real credits)', async () => {
+    const { h, env } = makeHarness();
+    // The pass emits these for historical days that accrued absorption but
+    // were never finalized — for a day predating event coverage the getter
+    // is the only source for that attribution.
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at)
+         VALUES (?, 2, 0, '0', '0', '0', '40', '0', 0, 0, 1700000000)`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries([stamped(5n)], env, CHAIN);
+    const body = await readSeries(env);
+    const d2 = day(body, 2);
+    expect(d2.stamped).toBe(false);
+    expect(d2.absorbedLocal).toBe('40');
+    // Not finalized, so it has no pool and no global aggregate…
+    expect(d2.scheduleFloor).toBeNull();
+    expect(d2.absorbed).toBeNull();
+    // …but the component total still sees it.
+    expect(body.cumulative.absorbedLocal).toBe('40');
+  });
+
+  it('still reconciles reported mirrors when no backfill is involved', async () => {
+    const { env } = makeHarness();
+    // With every day event-sourced the mirror stock IS decomposable: each
+    // source contributes its own reported cumulative.
+    await applyRecycleDaySeries(
+      [
+        stamped(5n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 5n,
+          cumulative: 500n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    // 500 / 100 = 5 — the reported lifetime figure, not the accepted 100.
+    expect(body.cumulative.runwayExtensionDays).toBe(5);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+  });
+
+  it('serves the series when 0047 has added no column yet (rollout window)', async () => {
+    // Every deploy script deploys the Worker BEFORE applying migrations, so
+    // pre-0047 `recycle_chain_reported` exists WITHOUT
+    // `attributed_cumulative`. An uncaught `no such column` rejects the
+    // whole parallel read and 500s the endpoint for the rollout.
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_day_backfill`).run();
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    h.db
+      .prepare(
+        `CREATE TABLE recycle_chain_reported (
+           chain_id INTEGER NOT NULL,
+           source_chain_id INTEGER NOT NULL,
+           reported_cumulative TEXT NOT NULL DEFAULT '0',
+           PRIMARY KEY (chain_id, source_chain_id))`,
+      )
+      .run();
+    h.db
+      .prepare(
+        `INSERT INTO recycle_chain_reported
+           (chain_id, source_chain_id, reported_cumulative)
+         VALUES (?, ?, '400')`,
+      )
+      .run(CHAIN, MIRROR);
+    // Mirror absorption is what makes attribution matter — without it the
+    // rollout window is served exactly (see the sibling test). This fixture
+    // deliberately has some, so the missing column DOES withhold.
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 400n,
+          forDayReported: 120n,
+          dayCreditAccepted: 120n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    // TWO properties, and r5 only had the first:
+    //   the endpoint SERVES (no 500) — that was the point of the fallback;
+    //   and it WITHHOLDS the runway, because without attribution the
+    //   unreported term equals the whole fold and gets added on top of the
+    //   source's full reported cumulative. Defaulting attribution to zero
+    //   publishes a knowingly double-counted figure (Codex #1513 r6).
+    expect(body.cumulative.absorbedMirror).toBe('120');
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'attribution-column-unavailable',
+    );
+    // …and the day series itself is unaffected by the missing column.
+    expect(day(body, 1).scheduleFloor).toBe('100');
+  });
+
+  it('does NOT refuse when a delayed report supplies a zero-mirror snapshot', async () => {
+    const { h, env } = makeHarness();
+    // The snapshot captured no cross-chain absorption; a delayed report
+    // arrived afterwards. The merge keeps origin='backfill' while carrying
+    // the EVENT's figure — which is fully reconcilable per source, so
+    // refusing here would contradict the narrow refusal (Codex #1513 r6).
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 1, 0, '0', '0', '0', '0', '0', 0, 1, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries(
+      [
+        stamped(2n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 300n,
+          forDayReported: 300n,
+          dayCreditAccepted: 300n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+    // 300 / 100 = 3
+    expect(body.cumulative.runwayExtensionDays).toBe(3);
+  });
+
+  it('keeps scanning when 0047 has not applied yet (write path)', async () => {
+    // The read path was made tolerant a round earlier; the rebuild and the
+    // live write were not, so a scan in the rollout window aborted before
+    // its cursor advanced — a stalled indexer, not a degraded metric.
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    h.db
+      .prepare(
+        `CREATE TABLE recycle_chain_reported (
+           chain_id INTEGER NOT NULL,
+           source_chain_id INTEGER NOT NULL,
+           reported_cumulative TEXT NOT NULL DEFAULT '0',
+           PRIMARY KEY (chain_id, source_chain_id))`,
+      )
+      .run();
+    const applied = await applyRecycleDaySeries(
+      [
+        stamped(1n),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 700n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    expect(applied).toBe(2);
+    const row = h.db
+      .prepare(
+        `SELECT reported_cumulative FROM recycle_chain_reported
+          WHERE chain_id = ? AND source_chain_id = ?`,
+      )
+      .get(CHAIN, MIRROR) as { reported_cumulative: string } | undefined;
+    expect(row?.reported_cumulative).toBe('700');
+  });
+
+  it('keeps a real row distinguishable from a dense-series gap', async () => {
+    const { h, env } = makeHarness();
+    h.db
+      .prepare(
+        `INSERT INTO recycle_day_backfill
+           (chain_id, day_id, stamped, schedule_floor, recycled_budget,
+            fresh_drawdown, absorbed_local, absorbed_mirror, armed,
+            armed_from_day, recorded_at, generator_rev)
+         VALUES (?, 1, 0, '0', '0', '0', '60', '0', 0, 0, 1700000000, 'x')`,
+      )
+      .run(CHAIN);
+    await applyRecycleDaySeries([stamped(3n)], env, CHAIN);
+    const body = await readSeries(env);
+    // A stored absorption-only row keeps its provenance…
+    expect(day(body, 1).origin).toBe('backfill');
+    expect(day(body, 1).absorbedLocal).toBe('60');
+    // …while a synthesised gap has none.
+    expect(day(body, 2).origin).toBeNull();
+  });
+
+  it('WITHHOLDS the runway when the reported table is gone (not a rollout)', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 300n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    // A missing TABLE is data loss or a partial restore — not the 0047
+    // window, which has the table minus one column. Publishing then omits
+    // every mirror's reported-only lifetime stock.
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'attribution-column-unavailable',
+    );
+  });
+
+  it('WITHHOLDS the runway until the attribution rebuild has actually run', async () => {
+    const { h, env } = makeHarness();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('ChainRecycledReported', {
+          sourceChainId: MIRROR,
+          dayId: 1n,
+          cumulative: 400n,
+          forDayReported: 100n,
+          dayCreditAccepted: 100n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    // Migration 0047 creates the column defaulted to zero, so between the
+    // migration landing and the next scan the column EXISTS while
+    // attribution is still empty. Presence is not readiness — the
+    // projection version is what says the rebuild finished.
+    h.db
+      .prepare(`UPDATE recycle_series_state SET projection_version = 1 WHERE chain_id = ?`)
+      .run(CHAIN);
+    const body = await readSeries(env);
+    expect(body.cumulative.runwayExtensionDays).toBeNull();
+    expect(body.cumulative.runwayUnavailableReason).toBe(
+      'attribution-column-unavailable',
+    );
+  });
+
+  it('does NOT withhold for a report that attributed nothing', async () => {
+    const { h, env } = makeHarness();
+    // A canonical SELF-report (never attributed by design) and a mirror
+    // report that accepted zero both leave `mirrorUnreported` at zero, so
+    // the numerator is already exact. Withholding there is pure loss —
+    // my r8 gate tripped on "a report row exists" rather than on risk.
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 500n, dayId: 1n }),
+        log('ChainRecycledReported', {
+          sourceChainId: CHAIN, // self-report
+          dayId: 1n,
+          cumulative: 500n,
+          forDayReported: 500n,
+          dayCreditAccepted: 500n,
+        }),
+      ],
+      env,
+      CHAIN,
+    );
+    h.db
+      .prepare(`UPDATE recycle_series_state SET projection_version = 1 WHERE chain_id = ?`)
+      .run(CHAIN);
+    const body = await readSeries(env);
+    expect(body.cumulative.absorbedMirror).toBe('0');
+    // 500 / 100 = 5 — served, because nothing about it could be stale.
+    expect(body.cumulative.runwayExtensionDays).toBe(5);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+  });
+
+  it('serves the runway during the rollout when NO mirror absorption exists', async () => {
+    // Pre-0047 the column is missing, but a chain whose only report is its
+    // own self-report has `cumAbsorbedMirror === 0` — attribution is unused
+    // and the numerator is exact. Withholding there was loss for the whole
+    // rollout, or forever if the migration failed (Codex #1513 r13).
+    const { h, env } = makeHarness();
+    h.db.prepare(`DROP TABLE recycle_day_backfill`).run();
+    h.db.prepare(`DROP TABLE recycle_chain_reported`).run();
+    h.db
+      .prepare(
+        `CREATE TABLE recycle_chain_reported (
+           chain_id INTEGER NOT NULL,
+           source_chain_id INTEGER NOT NULL,
+           reported_cumulative TEXT NOT NULL DEFAULT '0',
+           PRIMARY KEY (chain_id, source_chain_id))`,
+      )
+      .run();
+    await applyRecycleDaySeries(
+      [
+        stamped(1n, { scheduleFloor: 100n, recycledBudget: 0n }),
+        log('VpfiRecycled', { source: 1, refId: 1n, amount: 400n, dayId: 1n }),
+      ],
+      env,
+      CHAIN,
+    );
+    const body = await readSeries(env);
+    expect(body.cumulative.absorbedMirror).toBe('0');
+    // 400 / 100 = 4 — served, because nothing about it could be stale.
+    expect(body.cumulative.runwayExtensionDays).toBe(4);
+    expect(body.cumulative.runwayUnavailableReason).toBeNull();
+  });
+
+  it('marks event-sourced days so a reader can tell the two apart', async () => {
+    const { env } = makeHarness();
+    await applyRecycleDaySeries([stamped(2n)], env, CHAIN);
+    expect(day(await readSeries(env), 2).origin).toBe('event');
+  });
+});

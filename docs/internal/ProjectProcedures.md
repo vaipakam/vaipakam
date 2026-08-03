@@ -715,7 +715,7 @@ whitepaper for auditors and integrators lives at
 
 ### 7.1 `Protect main` ruleset (monorepo)
 
-Ten independent gates on every merge:
+Independent gates on every merge:
 
 ```
  1. ✅ no branch deletion
@@ -725,10 +725,31 @@ Ten independent gates on every merge:
  5. ✅ detect-changes check SUCCESS (CI path-filter job)
  6. ✅ contracts-fast check SUCCESS (forge build + deploy-sanity + positive-flow scenarios; FOUNDRY_PROFILE=cifast)
  7. ✅ workspaces check SUCCESS (pnpm typecheck per workspace)
- 8. ✅ Build docs check SUCCESS (forge doc; FOUNDRY_PROFILE=quick — #1493)
- 9. ✅ Slither static analysis check SUCCESS (FOUNDRY_PROFILE=cifast)
+ 8. ✅ Slither static analysis check SUCCESS (FOUNDRY_PROFILE=cifast)
+ 9. ✅ D1 name consistency (unconditional) SUCCESS — every D1 binding and
+       every `wrangler d1` command names the same shared database (#1537)
 10. ✅ signed commits
 ```
+
+**This list is transcribed from the live ruleset, and was wrong before.**
+It claimed `Build docs` was a required context; the ruleset does not
+contain it and did not when that line was written. The job still runs on
+every PR — it is simply not merge-blocking. Whether it should be is an
+open question for the owner, not something to settle by editing this
+list; adding a required check is a decision with its own consequences
+(notably that a check which never reports blocks a PR forever).
+
+Verify against the live ruleset rather than trusting this block:
+
+```bash
+gh api repos/vaipakam/vaipakam/rulesets/16536829 \
+  --jq '.rules[]|select(.type=="required_status_checks")
+        |.parameters.required_status_checks[]|.context'
+```
+
+Gate 9 is deliberately **not** path-gated. It scans the whole repository,
+so gating it by path would exclude the very changes it exists to catch —
+which is exactly what happened when it was first added (#1537 r6).
 
 The full 2,012-test forge regression is **NOT** a per-PR CI gate. It
 overruns the 16 GB ubuntu-latest RSS ceiling cold and was removed

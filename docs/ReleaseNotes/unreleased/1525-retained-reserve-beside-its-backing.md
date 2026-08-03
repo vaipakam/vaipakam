@@ -1,0 +1,42 @@
+## The retained reserve, published only alongside the tokens behind it (#1525)
+
+The public recycling account already showed where each day's reward pool came from and how much was drawn. It did not show the one figure people most want from a reserve: **how much the platform has retained** — and, deliberately, it showed nothing rather than showing that figure alone.
+
+The reason is the difference between this number and every other number on the page. All the others are computed from the platform's own internal counters. A counter is a record of what *should* have happened, and it cannot notice that the tokens it describes have since left. A reserve figure derived that way can report perfect health over an account with nothing in it, and a reader has no way to tell.
+
+So the reserve is published **beside the token balance actually held**, and the two travel together or not at all. There is no falling back to the counter-derived half when the balance is unavailable — the page publishes neither, and says why. A reserve on its own is exactly the confident, checkable-*looking* number this requirement exists to prevent.
+
+Worth being precise about what "unavailable" means here, since the reading is captured on a schedule rather than fetched per visit: a capture that fails does **not** blank the section. The last acceptable reading continues to be shown, with its own timestamp, until it passes the point where the schedule should have replaced it — or until the chain it came from stops advancing. Only then is the pair withheld. Blanking on the first failed capture would replace a slightly older true figure with nothing, which is worse for the question being asked.
+
+Several figures now appear together: what the platform has retained, the VPFI it actually holds, how much of that holding is labelled as recycled runway, how much sits outside that label, and a plain answer to whether the recycled pool is fully backed — with the size of any shortfall. The balance is what makes the reserve checkable; the plain answer is there because the numbers alone cannot distinguish a pool that has been exactly spent down from one that is short.
+
+**Two details that are easy to get subtly wrong, and were:**
+
+The retained figure nets out both value already promised to users *and* the share set aside to pay for permissionless upkeep. That second term is carved from inside the same balance without reducing it, so a reserve that nets only the first is correct exactly while the upkeep share is switched off, and begins overstating silently the day it is switched on.
+
+The figure is floored at zero. The subtraction can genuinely go negative — that is what a shortfall looks like — but a negative reserve rendered on a public page reads as a display bug rather than as the problem it is. The balance published beside it is what makes that state visible instead, which is the whole reason the pair exists.
+
+Reading the live chain also introduces a way for the page to fail that the rest of it does not have. That failure is contained: the day-by-day account comes from the platform's own records and stays readable, and only the reserve block reports itself unavailable — with the reason, since a blank reads as zero and zero is the opposite of *we could not check*.
+
+**Two of the figures were, on their own, capable of misleading.**
+
+The "balance outside the pool" number is floored at zero. That means a pool the platform has exactly spent down and a pool it is genuinely *short of* display the same value — the ambiguity is built into the figure rather than being a fault in it. A page showing only that number publishes the healthy and the broken state identically, which is the one distinction the whole block exists to draw. So the page now answers the question directly: whether the pool is fully backed, and if not, by how much it falls short.
+
+That same number was also labelled "not earmarked for anyone", which claimed more than it can support. It sets aside one kind of commitment, not all of them — value the platform is holding on a user's behalf is still counted inside it. Describing that as belonging to nobody would tell a reader the platform has more freely available than it does. It is now described as what it is: the balance sitting outside the recycled pool.
+
+**And a set of failures that would have misled rather than simply degraded.** The capture confirms it is talking to the chain it thinks it is — an endpoint pointed at the wrong network answers perfectly well, and would otherwise have recorded another network's reserve under this one's name — and it records *which* deployment the figures came from, because replacing the contract on a chain would otherwise leave the previous one's balances being served as current, a healthy predecessor masking an empty successor. A reading that stops being refreshed is withheld rather than served indefinitely, and so is one whose chain has stopped advancing: those are different faults with different responses. And a reading can never move backwards — an older capture arriving late cannot replace a newer one, which would quietly walk the published verdict back in time.
+
+One figure needed its name changed after a closer look at what the underlying counter does. Value released from the recycled pool is recorded permanently — if the transfer later goes through after all, the recipient gets it but the counter is deliberately never wound back. Calling that row "sent but not yet delivered" would therefore become untrue the moment a delayed release completed, and stay untrue. It now says what the counter actually measures: value released from the pool and never credited back to it.
+
+The two chain reads behind this section are pinned to a single block. They exist to explain each other — the second is what stops released value looking like a depleted reserve — and read independently, a release landing between them produces exactly the misleading pair the second read was added to prevent. That block is published too, so the figures can be reproduced by anyone rather than taken on trust.
+
+**A note on how this is read from the chain, because the first design was wrong in an instructive way.**
+
+The reserve and the balance behind it were originally read from the chain *while answering each request for the page*. That sounds like the freshest possible answer and it is, but it couples a blockchain round trip to a browser request — and every consequence of that coupling then has to be solved separately: the read has to finish before the browser gives up, or it takes the rest of the page down with it; simultaneous *and* consecutive visitors have to be prevented from each spending a call against the same quota the platform's own indexing depends on; that prevention has to work across the many isolated instances serving the page; and each visitor waiting on a shared read needs their own time limit. Each of those was fixed, and each fix produced the next problem.
+
+None of them exist if answering the page does no network work at all. The platform already reads the chain on a schedule, so the reserve is captured there and the page serves what was stored.
+
+The cost is that the figures trail the chain, and **the page now shows the timestamp of the state they describe**. How far they trail depends on how many chains the platform is reading — captures rotate one chain at a time — so the page states the timestamp rather than promising an interval it cannot keep at every size. If the reading falls further behind than the rotation should allow, or the chain it came from stops advancing, the whole section is withheld rather than shown as current.
+
+That disclosure is the part I originally had wrong: I justified serving a not-quite-live figure on the grounds that its age was published, when it was only present in the underlying data and never shown to anyone. A disclosure a reader cannot see is not a disclosure. For a question like *do the tokens behind this reserve exist*, a reading somewhat behind the chain answers it perfectly well — but only if the reader can tell how far behind it is.
+

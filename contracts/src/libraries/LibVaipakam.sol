@@ -5976,6 +5976,20 @@ library LibVaipakam {
         ///      availability, which is a separate clamp. It simply stops
         ///      pretending to be a day's activity.
         uint256 recycledCreditedPreLaunch;
+        // `riskTierMutation` (#1522) — APPENDED AT THE TAIL (the in-place-
+        //   upgrade rule above: inserting mid-struct shifts every later
+        //   member's slot on the testnet diamonds that upgrade in place).
+        //
+        /// @dev Per-vault TIER MUTATION NONCE: incremented by EVERY tier
+        ///      write (`RiskAccessFacet._applyTier`), never reset. The #1522
+        ///      checked setter compares it (plus the live terms version)
+        ///      against the client's observed values — a single monotonic
+        ///      counter subsumes every field a tier write touches
+        ///      (`userRiskAccess`, `riskTierVersionAt`, `riskTierSettled`,
+        ///      `riskTierUnlockAt`), so an A→B→A sequence that restores the
+        ///      raw tier + anchor still moves the nonce and reverts the
+        ///      stale write (Codex #1528 r1).
+        mapping(address => uint64) riskTierMutation;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

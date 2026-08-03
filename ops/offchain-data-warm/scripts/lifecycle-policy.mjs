@@ -118,8 +118,11 @@ export const DAILY_MAX_TOTAL_DAYS = 29;
 /** Published: monthly archives kept 12 months. */
 export const MONTHLY_MAX_TOTAL_DAYS = 365;
 /**
- * Recovery-window floors, PER TIER, because the two tiers have different
- * detectors — and the monthly tier has none at all (#1471 r6).
+ * Recovery-window floors, PER TIER, because the tiers are not inspected the
+ * same way. Both are now READ by the weekly healthcheck (#1476), but only the
+ * newest period of each family is verified in full — which is enough to
+ * derive the daily floor, whose newest period turns over every night, and is
+ * NOT enough to derive the monthly one. See the monthly note below.
  *
  * Daily: 8 is the weekly healthcheck's cadence (Mon 09:00 UTC) plus a day.
  * Read that as the interval at which SOMETHING routinely looks at these
@@ -128,12 +131,38 @@ export const MONTHLY_MAX_TOTAL_DAYS = 365;
  * "the window outlives one full cycle of the only routine inspection there
  * is", which is the weakest defensible reading and the honest one.
  *
- * Monthly: `healthcheck.ts` NEVER looks at the monthly prefixes. So a monthly
- * overwrite is not detected by anything today, and a 9-day window could not be
- * justified by "the detector will catch it" — there is no detector. Until
- * #1476 extends the healthcheck, the window has to be long enough that the
- * next monthly cycle is still inside it, which is why the floor is 31 rather
- * than 8. That is a weaker guarantee, stated as such rather than dressed up.
+ * Monthly: STAYS 31, and #1476 did not change it. I lowered it to 8 on the
+ * reasoning that the healthcheck now covers the monthly prefixes, and review
+ * showed that reasoning does not reach far enough. The check FULLY verifies
+ * (hash, size, decrypt) only the NEWEST period of each family; every other
+ * retained month gets a presence-and-pairing check. An overwrite or a
+ * corruption of an older month leaves both keys in place, so it passes those
+ * checks silently, and the genuine superseded version can reach its deletion
+ * date with no alert ever raised.
+ *
+ * The floor's derivation is "the window outlives one full cycle of the only
+ * routine inspection there is". That holds only for objects the cycle
+ * actually inspects in full. For the older retained months it does not, so
+ * an 8-day window there would have been justified by a detector that does
+ * not watch them — the same substitution of a number for a detector this
+ * comment previously called out, made again one level down.
+ *
+ * Rotating full verification across the retained months was considered and
+ * is worse: with ~10 months and one extra object per weekly run, each month
+ * is verified about every 11 weeks, so the honest floor would be ~78 days,
+ * not 8. Verifying all of them every run is not affordable inside the
+ * Worker's memory and CPU budget.
+ *
+ * Before #1476 the check examined only `manifests/<recent dates>/`, so a
+ * monthly overwrite was detected by nothing and the floor could not be
+ * justified by detection at all — it was 31 purely so the window outlasted
+ * the monthly write cadence. Note which way that argument ran: the weaker
+ * guarantee was ACKNOWLEDGED in this comment while the number quietly stood
+ * in for a detector that did not exist. The floor moved only once the
+ * detector it names actually existed, not before.
+ *
+ * Both floors remain floors of USEFULNESS, not sufficiency: neither tier's
+ * check can raise an alert for an authenticated forgery (#1473).
  */
 export const MIN_RECOVERY_DAYS_DAILY = 8;
 export const MIN_RECOVERY_DAYS_MONTHLY = 31;
@@ -188,9 +217,11 @@ export function assertPolicyCeilings(decl, fail) {
   // daily and monthly groups, so a rule accidentally declared for
   // `archives-yearly/` or `manifests-yearly/` was ignored here and forwarded
   // to B2 by both writers. That would silently start expiring the legal-audit
-  // durability tier, which is the one tier nothing else would notice: no
-  // healthcheck reads it (#1476) and no promise caps it, so there is no other
-  // signal.
+  // durability tier. The healthcheck does read these prefixes since #1476, but
+  // it verifies the newest object against its manifest — it cannot report that
+  // an object which should still exist has been aged out, and no promise caps
+  // this tier either. So a rule here still expires the tier with no other
+  // signal; reading it is not the same as noticing it shrink.
   // PREFIX MATCHING, NOT EQUALITY (#1471 r11). B2 applies a rule to every key
   // UNDER its prefix, so `archives-yearly/2025/` expires yearly objects just as
   // surely as `archives-yearly/` would — and an exact-membership test let it
@@ -204,8 +235,9 @@ export function assertPolicyCeilings(decl, fail) {
           `yearly prefixes must have NO rule — their indefinite retention is ` +
           `exactly that absence, and it exists for legal-audit durability. Any ` +
           `rule here starts expiring that tier, and nothing else would report ` +
-          `it: no healthcheck examines those prefixes (#1476) and no published ` +
-          `promise bounds them.`,
+          `it: the healthcheck verifies the newest object under those prefixes ` +
+          `(#1476) but cannot notice one that has been aged out, and no ` +
+          `published promise bounds them.`,
       );
     }
   }
@@ -336,10 +368,16 @@ export function assertPolicyCeilings(decl, fail) {
                 `single inspection cycle. Note it cannot raise an alert for an ` +
                 `authenticated forgery at all (#1473) — this floor buys a full ` +
                 `cycle of routine looking, not response time (#1469).`
-              : `There is NO detector for the monthly prefixes: healthcheck.ts ` +
-                `examines only \`manifests/<recent dates>/\`. So this window ` +
-                `cannot be justified by detection at all, and must at least ` +
-                `outlast the monthly write cadence (#1476).`),
+              : `The monthly floor is HIGHER than the daily one on purpose. ` +
+                `Since #1476 the weekly healthcheck reads these prefixes, but ` +
+                `it fully verifies only the NEWEST period; every older month ` +
+                `still inside retention gets a presence-and-pairing check, ` +
+                `which an in-place overwrite or corruption passes unchanged. ` +
+                `So nothing routinely inspects those objects in full, and the ` +
+                `window has to outlast the monthly write cadence rather than ` +
+                `an inspection cycle. Lowering it toward the daily figure was ` +
+                `tried and reverted for exactly this reason. It cannot raise ` +
+                `an alert for an authenticated forgery either (#1473).`),
         );
       }
     }

@@ -12,8 +12,19 @@
 import { importBackupKey } from './crypto';
 import { parseRegionFromEndpoint, type B2Config } from './b2';
 import { runNightlyBackup } from './backup';
-import { runHealthcheck } from './healthcheck';
+import { runHealthcheck, type TierOutcome } from './healthcheck';
 import type { Env } from './env';
+
+/**
+ * This Worker's deployed name, mirroring `wrangler.jsonc`'s `name`.
+ *
+ * Needed because the preflight alert fires BEFORE any config is resolved,
+ * so there is no bucket to name — and during the archive→warm handoff two
+ * Workers share the schedule and the ops bot, making an unattributed alert
+ * unactionable. `identity.test.ts` asserts this equals the wrangler config,
+ * so the two cannot drift apart silently.
+ */
+const WORKER_NAME = 'vaipakam-offchain-data-warm';
 
 /** Two B2 configs — see env.ts for why the keys are split. */
 function b2WriteConfig(env: Env): B2Config {
@@ -115,8 +126,8 @@ function assertRequiredEnv(env: Env): void {
     throw new Error(
       `MISSING ENV: ${missing.join(', ')}. ` +
       `Set each via \`wrangler secret put <NAME>\` against the ` +
-      `vaipakam-offchain-data-archive Worker. See ` +
-      `ops/offchain-data-archive/README.md §Setup for the full list ` +
+      `vaipakam-offchain-data-warm Worker. See ` +
+      `ops/offchain-data-warm/README.md §Setup for the full list ` +
       `+ values to paste.`,
     );
   }
@@ -187,7 +198,18 @@ export default {
       // Note: we haven't booted the encryption key yet, but the
       // error path doesn't need it — only the tg() call which
       // reads TG_OPS_BOT_TOKEN + TG_OPS_CHAT_ID directly from env.
-      ctx.waitUntil(tg(env, `🚨 Worker preflight FAILED:\n${msg}`));
+      // Identity on THIS alert especially (#1537 r8). Preflight failure —
+      // a missing B2 or encryption secret — is the likeliest way the
+      // replacement Worker fails during the archive→warm handoff, and in
+      // that window two Workers share the schedule AND the ops bot. An
+      // unattributed "preflight FAILED" cannot tell the operator which
+      // deployment is broken. `cfg.bucket` is unavailable here (an unset
+      // bucket is one of the things being reported), so the Worker name is
+      // the identity that always resolves; `WORKER_NAME` is pinned to
+      // wrangler.jsonc by a test so it cannot drift.
+      ctx.waitUntil(
+        tg(env, `🚨 ${WORKER_NAME} preflight FAILED:\n${msg}`),
+      );
       throw err;
     }
 
@@ -230,7 +252,7 @@ export default {
    *  Always returns 404 with an honest description of why. */
   async fetch(): Promise<Response> {
     return new Response(
-      'vaipakam-offchain-data-archive is a cron-driven Worker. No HTTP surface.',
+      'vaipakam-offchain-data-warm is a cron-driven Worker. No HTTP surface.',
       { status: 404 },
     );
   },
@@ -269,6 +291,15 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
       env,
       [
         '✅ Nightly off-chain backup succeeded',
+        // WHICH bucket, on every alert (#1537 r7). During the archive→warm
+        // switchover two Workers share the 03:17 schedule AND the same ops
+        // bot, so an unattributed success line could come from either — and
+        // the retirement step treats that line as proof the replacement
+        // works before deleting the old Worker. Reading the old one's alert
+        // as the new one's would delete the only functioning backup.
+        // The bucket is the honest discriminator: each Worker writes its
+        // own, and it is what an operator actually needs to know.
+        `  bucket: ${cfg.bucket}`,
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
@@ -326,43 +357,56 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
     }
   } catch (err) {
     const msg = (err as Error).message;
-    await tg(env, `🚨 Nightly backup FAILED: ${msg}`);
+    await tg(env, `🚨 Nightly backup FAILED (bucket: ${cfg.bucket}): ${msg}`);
     // Re-throw so Worker's invocation log shows the failure too
     // (operator-visible via `wrangler tail`).
     throw err;
   }
 }
 
+/**
+ * One reported line per tier — ALWAYS, on pass as well as on failure.
+ *
+ * The alert enumerates what was actually examined rather than implying
+ * it. That is half of #1476: before it, the check only ever read the
+ * daily prefixes, but the message said "Weekly backup healthcheck
+ * PASS" with no scope, so a green run was read as "the backups are
+ * fine" when two of the three prefix families had never been looked at
+ * by anything. Extending the check without changing the message would
+ * have left the same false assurance for the next tier added.
+ */
+function tierLine(t: TierOutcome): string {
+  const mark = t.ok ? (t.absent ? '·' : '✓') : '✗';
+  const age =
+    t.archiveAgeHours !== undefined ? ` (${t.archiveAgeHours.toFixed(1)} h)` : '';
+  const key = t.archiveKey ? `\n      ${t.archiveKey}${age}` : '';
+  return `  ${mark} ${t.tier}: ${t.reason}${key}`;
+}
+
 async function handleHealthcheck(env: Env, cfg: B2Config): Promise<void> {
   try {
     const r = await runHealthcheck(env, cfg);
+    const lines = r.tiers.map(tierLine);
     if (r.ok) {
-      await tg(
-        env,
-        [
-          '✅ Weekly backup healthcheck PASS',
-          `  archive: ${r.archiveKey}`,
-          r.archiveAgeHours !== undefined
-            ? `  age: ${r.archiveAgeHours.toFixed(1)} h`
-            : '',
-          `  sha256: ${r.manifestSha?.slice(0, 16)}…`,
-          `  ${r.reason}`,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      );
+      await tg(env, ['✅ Weekly backup healthcheck PASS', ...lines].join('\n'));
     } else {
+      const failed = r.tiers.filter((t) => !t.ok);
       await tg(
         env,
         [
-          '🚨 Weekly backup healthcheck FAILED',
-          `  reason: ${r.reason}`,
-          r.archiveKey ? `  archive: ${r.archiveKey}` : '',
-          r.manifestSha ? `  manifest sha: ${r.manifestSha}` : '',
-          r.actualSha ? `  actual sha:   ${r.actualSha}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
+          `🚨 Weekly backup healthcheck FAILED (${failed.length}/${r.tiers.length} tiers)`,
+          ...lines,
+          // Only a hash divergence carries these, and only for the
+          // tier that diverged — printing them per tier keeps them
+          // attached to the object they describe.
+          ...failed
+            .filter((t) => t.manifestSha && t.actualSha)
+            .map(
+              (t) =>
+                `  ${t.tier} manifest sha: ${t.manifestSha}\n` +
+                `  ${t.tier} actual sha:   ${t.actualSha}`,
+            ),
+        ].join('\n'),
       );
     }
   } catch (err) {

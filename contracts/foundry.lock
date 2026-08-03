@@ -26,6 +26,9 @@
   "lib/forge-std": {
     "rev": "1801b0541f4fda118a10798fd3486bb7051c5dd6"
   },
+  "lib/limit-order-protocol": {
+    "rev": "67c56aee3b6a9f4982bf487084bd8da1f6638da0"
+  },
   "lib/openzeppelin-contracts": {
     "tag": {
       "name": "v5.6.1",
@@ -40,5 +43,8 @@
       "name": "v0.8.4",
       "rev": "f4413cd6137b78403e3a1156bee6aceab46b46fa"
     }
+  },
+  "lib/solidity-utils": {
+    "rev": "02cff08e5a95a4041f36f351624f3d5747b98336"
   }
 }

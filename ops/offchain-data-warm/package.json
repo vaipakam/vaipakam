@@ -1,5 +1,5 @@
 {
-  "name": "vaipakam-offchain-data-archive",
+  "name": "vaipakam-offchain-data-warm",
   "private": true,
   "type": "module",
   "description": "Internal-ops Cloudflare Worker that nightly exports vaipakam-archive D1 (offers + loans + diag_errors + legal_holds) + the vaipakam-legal-vault R2 bucket to Backblaze B2 on a separate billing/credential boundary, client-side encrypted with AES-256-GCM using a key NOT stored in CF (operator-offline). Stage A of the off-chain data resilience plan (issue #30 / T-077); see docs/DesignsAndPlans/OffChainDataResilience.md.",
@@ -7,16 +7,20 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --test scripts/*.test.mjs",
+    "test": "node --experimental-strip-types --test scripts/*.test.mjs",
     "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit",
     "bucket:lifecycle:check": "node scripts/apply-bucket-lifecycle.mjs --check",
     "bucket:lifecycle:print": "node scripts/apply-bucket-lifecycle.mjs --print-live",
-    "bucket:lifecycle:apply": "node scripts/apply-bucket-lifecycle.mjs --apply"
+    "bucket:lifecycle:apply": "node scripts/apply-bucket-lifecycle.mjs --apply",
+    "archive:baselines": "node scripts/find-archive-baselines.mjs"
   },
   "dependencies": {},
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240924.0",
     "typescript": "^5.5.0",
     "wrangler": "^4.85.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }

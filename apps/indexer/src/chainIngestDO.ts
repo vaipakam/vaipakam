@@ -40,6 +40,8 @@
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import type { PushHints } from './pushHints';
 import {
+  SCAN_PASS_MAX_BLOCKS,
+  isRetryableScanSkip,
   runChainIndexerForChain,
   type ChainIndexerResult,
 } from './chainIndexer';
@@ -117,6 +119,26 @@ export async function clearAttempts(storage: LoopStateStorage): Promise<void> {
 /** LoopStateStorage plus the alarm slot — what the re-arm helper needs. */
 export interface AlarmStorage extends LoopStateStorage {
   setAlarm(scheduledTime: number): Promise<void>;
+  getAlarm(): Promise<number | null>;
+}
+
+/** #1416 backlog drain, alarm arming (Codex #1527 r1 P2). The DO has ONE
+ *  alarm slot, and a webhook trigger that interleaves after the running
+ *  pass's final `pendingTarget` read arms an IMMEDIATE alarm
+ *  (`setAlarm(Date.now())` in `fetch`). Overwriting that slot with the
+ *  30 s slow-lane time would silently degrade the webhook's
+ *  immediate-trigger contract to a slow-lane wait — so the slow-lane arm
+ *  keeps whichever firing time is EARLIER. `nowMs` injected for the
+ *  deterministic unit test. */
+export async function armSlowLaneAlarm(
+  storage: AlarmStorage,
+  nowMs: number,
+): Promise<void> {
+  const slowAt = nowMs + SLOW_ALARM_DELAY_MS;
+  const existing = await storage.getAlarm();
+  if (existing === null || existing > slowAt) {
+    await storage.setAlarm(slowAt);
+  }
 }
 
 /**
@@ -129,6 +151,25 @@ export interface AlarmStorage extends LoopStateStorage {
  * resets `attempts` (recordTrigger) and restores the fast lane.
  * Exported for the unit test; `nowMs` injected for determinism.
  */
+/** #1416 — backlog drain accelerator, the DECISION. A successful pass
+ *  that stopped more than one full pass-budget short of the safe head
+ *  is a truncated BACKLOG pass: parking it until the next 5-min cron
+ *  tick drains a deep backlog at ~one chunk per tick (the July 2026
+ *  recovery measured Arb Sepolia at a ~week to converge). Keep the
+ *  loop self-driving on the SLOW lane instead. Only SUCCESSFUL passes
+ *  qualify — failures keep the bounded fast/slow retry budget, so an
+ *  erroring chain can never storm through this path. */
+export function shouldRearmForBacklog(
+  headBlock: bigint | undefined,
+  scannedTo: bigint | null,
+  retryableFailure: boolean,
+): boolean {
+  if (retryableFailure || headBlock === undefined || scannedTo === null) {
+    return false;
+  }
+  return headBlock - scannedTo > SCAN_PASS_MAX_BLOCKS;
+}
+
 export async function rearmOrFinishAttempts(
   storage: AlarmStorage,
   attempts: number,
@@ -398,6 +439,7 @@ export class ChainIngestDO {
       const attempts = (await this.state.storage.get<number>('attempts')) ?? 0;
 
       let scannedTo: bigint | null = null;
+      let headBlock: bigint | undefined;
       let retryableFailure = false;
       try {
         const resolved = await resolveEnv(this.env);
@@ -409,13 +451,14 @@ export class ChainIngestDO {
         }
         const result = await runChainIndexerForChain(resolved, chain);
         scannedTo = result.scannedTo;
+        headBlock = result.headBlock;
         // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
         // `scannedTo` rewound to the previous cursor instead of throwing
         // (Codex #764 round 5). Treat it as retryable so the caught-up check
         // below doesn't mistake a failed pass (whose `scannedTo` is usually
         // `>= target`, e.g. target 0 for a block-less webhook) for success and
         // drop the already-acked webhook's only retry until the next cron tick.
-        retryableFailure = result.skipped === 'rpc-error';
+        retryableFailure = isRetryableScanSkip(result.skipped);
         // #757 Phase B — broadcast the coarse invalidation keys to subscribed
         // clients AFTER the D1 write, so a connected dapp refetches the changed
         // slice within seconds instead of waiting for its next poll. If a PRIOR
@@ -446,7 +489,22 @@ export class ChainIngestDO {
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
       if (!retryableFailure && scannedTo !== null && scannedTo >= target) {
-        await this.clearLoopState(); // genuinely caught up
+        if (shouldRearmForBacklog(headBlock, scannedTo, retryableFailure)) {
+          // #1416 — truncated backlog pass: the cron target (0 for a
+          // plain tick) is met, but the safe head is still more than a
+          // full pass-budget away. Clear the RETRY budget (this pass
+          // was progress, not failure) and self-drive the next pass on
+          // the slow lane — a deep backlog drains in minutes/hours
+          // instead of one chunk per 5-minute tick. One setAlarm row
+          // per draining pass, only while genuinely behind. The arm
+          // keeps an EARLIER already-set alarm (a webhook trigger that
+          // interleaved after this pass's final target read) instead
+          // of clobbering it — see armSlowLaneAlarm.
+          await this.clearLoopState();
+          await armSlowLaneAlarm(this.state.storage, Date.now());
+        } else {
+          await this.clearLoopState(); // genuinely caught up
+        }
       } else {
         await this.rearmOrFinish(attempts); // more work, or retry a soft failure
       }
@@ -587,7 +645,7 @@ export class ChainIngestDO {
     // the persisted `updated_at` stops advancing and the client sees the
     // stall instead of a fake-fresh rail. An `rpc-error` pass (or a
     // failed cursor read) sends no heartbeat at all.
-    if (result.skipped !== 'rpc-error') {
+    if (!isRetryableScanSkip(result.skipped)) {
       try {
         const row = await this.env.DB.prepare(
           `SELECT last_block, updated_at FROM indexer_cursor

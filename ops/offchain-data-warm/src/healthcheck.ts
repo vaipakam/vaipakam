@@ -20,10 +20,21 @@
  */
 
 import { decrypt, sha256Hex } from './crypto';
+import {
+  TIERS,
+  classifyListing,
+  newestVerifiableManifest,
+  siblingArchiveKey,
+  validateBaseline,
+  type ArchiveBaseline,
+  type Listing,
+  type TierName,
+  type TierSpec,
+} from './tiers';
 import type { B2Config } from './b2';
 import type { Env } from './env';
 
-interface HealthOutcome {
+export interface HealthOutcome {
   ok: boolean;
   reason: string;
   archiveKey?: string;
@@ -33,17 +44,48 @@ interface HealthOutcome {
   actualSha?: string;
 }
 
+export interface TierOutcome extends HealthOutcome {
+  tier: TierName;
+  /**
+   * True when nothing was found under the tier's prefixes at all, as
+   * opposed to something found and rejected. Kept distinct because the
+   * two need different operator responses — and because reporting an
+   * absence as a plain pass is how this whole class of defect starts.
+   */
+  absent: boolean;
+}
+
+export interface HealthReport {
+  ok: boolean;
+  tiers: TierOutcome[];
+}
+
+
 /** Memory ceiling on the healthcheck side — same constant as the
  *  backup path's MAX_ARCHIVE_BYTES. If an archive ever exceeds this,
  *  the check aborts before OOM-ing the Worker; the alert text steers
  *  the operator to the streaming follow-up. */
 const MAX_HEALTHCHECK_BYTES = 100_000_000;
 
-/** YYYY-MM-DD for `n` days ago (UTC). */
-function isoDate(daysAgo: number): string {
-  const d = new Date(Date.now() - daysAgo * 86400_000);
-  return d.toISOString().slice(0, 10);
-}
+/** A manifest is a few hundred bytes; anything near this is hostile. */
+const MAX_MANIFEST_BYTES = 256_000;
+
+/**
+ * Above this, the archive's CONTENT is not parsed.
+ *
+ * `MAX_HEALTHCHECK_BYTES` (100 MB) bounds what is fetched and decrypted;
+ * it does not bound what parsing costs. `TextDecoder` plus `JSON.parse`
+ * materialise a decoded string AND a full object graph while both the
+ * ciphertext and the plaintext are still resident, so a legitimate
+ * archive well under the fetch ceiling can still exhaust the documented
+ * 128 MB isolate — and an OOM is not a failed check, it is no check and
+ * no alert, in the invocation that also runs the nightly backup.
+ *
+ * Above the ceiling the hash, length and decryption still run; only the
+ * content check is skipped, and the tier SAYS so rather than reporting a
+ * verification it did not perform.
+ */
+const MAX_CONTENT_CHECK_BYTES = 8_000_000;
 
 interface S3ListEntry {
   key: string;
@@ -158,39 +200,150 @@ async function getObject(cfg: B2Config, key: string): Promise<Response> {
   return res;
 }
 
-export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthOutcome> {
-  // Look back 0..2 days for the most recent manifest. Archives live
-  // under `archives/<date>/<nonce>.bin`; we look at the matching
-  // manifest prefix (`manifests/<date>/`) because manifests are
-  // smaller (faster list, fewer bytes to fetch).
-  let pickedManifest: S3ListEntry | undefined;
+/**
+ * Verify one prefix family: newest manifest under it, its sibling
+ * archive, hash, byte length, decryptability.
+ *
+ * Split out of `runHealthcheck` for #1476 so the same verification
+ * runs against every tier. Nothing in the body is tier-aware — the
+ * differences live entirely in the `TierSpec`, which is what stops a
+ * tier from being covered "differently" and therefore not at all.
+ */
 
-  for (let i = 0; i <= 2; i++) {
-    const dateKey = isoDate(i);
-    const prefix = `manifests/${dateKey}/`;
-    let entries: S3ListEntry[];
-    try {
-      entries = await listPrefix(b2Cfg, prefix);
-    } catch (err) {
-      // A list failure on i==0 might be transient — try i==1.
-      console.warn(`[healthcheck] list ${prefix} failed: ${(err as Error).message}`);
-      continue;
-    }
-    if (entries.length === 0) continue;
-    // Newest by LastModified — covers the "uploaded twice by an
-    // attacker" case where both an honest + a malicious manifest
-    // exist for the same date. Picking newest forces the attacker
-    // to land an upload AFTER our last honest run; the embedded
-    // SHA check then catches the divergence.
-    entries.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
-    pickedManifest = entries[0];
-    break;
+/** Long tiers exclude support tickets so a ticket's backup copies live
+ *  ONLY in the 30-day daily tier — a published deletion promise, not a
+ *  size optimisation. */
+const EXCLUDED_FROM_LONG_TIERS = ['support_tickets'];
+
+/**
+ * Does the decrypted payload actually belong in the period it was filed
+ * under, and in this tier?
+ *
+ * The timestamp is read from the DECRYPTED PLAINTEXT, never from the
+ * manifest. The manifest is unencrypted and writable with the very B2
+ * credential used to plant a copied archive, so a holder of it can
+ * republish a manifest carrying the original SHA and length with
+ * `createdAt` rewritten to the target period — and every byte-level
+ * check, including AES-GCM, still passes. Only the plaintext's own
+ * `createdAt` is covered by the authentication tag, so only that copy
+ * says anything an attacker without the AES key cannot say.
+ *
+ * Parsed for EVERY tier, including daily: returning early for daily left
+ * the cheapest tier the one place a substituted payload went unexamined.
+ */
+function archiveContentFault(
+  spec: TierSpec,
+  period: string,
+  plaintext: Uint8Array,
+): string | null {
+  let obj: { createdAt?: string; d1?: { archive?: { name?: string }[] } };
+  try {
+    obj = JSON.parse(new TextDecoder().decode(plaintext));
+  } catch {
+    return `${spec.tier} archive decrypted but is not parseable as a backup payload`;
+  }
+  const createdAt = obj.createdAt;
+  if (!createdAt || !createdAt.startsWith(period)) {
+    return (
+      `${spec.tier} archive filed under ${period} was created ` +
+      `${createdAt || '(unstated)'} — stale or copied from another period`
+    );
+  }
+  if (spec.tier === 'daily') return null;
+  const names = (obj.d1?.archive ?? []).map((t) => t?.name).filter(Boolean);
+  const forbidden = names.filter((n) =>
+    EXCLUDED_FROM_LONG_TIERS.includes(n as string),
+  );
+  if (forbidden.length > 0) {
+    return (
+      `${spec.tier} archive contains ${forbidden.join(', ')}, which the long ` +
+      `tiers exclude — a daily payload copied into a long-retention family ` +
+      `would retain them past their promised deletion`
+    );
+  }
+  return null;
+}
+
+export async function verifyTier(
+  env: Env,
+  b2Cfg: B2Config,
+  spec: TierSpec,
+  now: number = Date.now(),
+  baseline: ArchiveBaseline = {},
+): Promise<TierOutcome> {
+  const base = { tier: spec.tier, absent: false };
+  let listedEntries: S3ListEntry[] = [];
+
+  // ONE listing of the family root, not a walk of guessed period prefixes.
+  // The verdict logic lives in `tiers.ts` so it is unit-testable — the
+  // three no-fetch outcomes (list failed / a required period is gone /
+  // never written) are precisely the three that were wrong.
+  let listing: Listing;
+  try {
+    const entries = await listPrefix(b2Cfg, spec.manifestPrefix);
+    listing = { ok: true, keys: entries.map((e) => e.key) };
+    listedEntries = entries;
+  } catch (err) {
+    listing = { ok: false, error: (err as Error).message };
   }
 
+  // The archive prefix is listed too, so a manifest whose archive has
+  // gone can be caught for EVERY required period rather than only for the
+  // one whose bytes are fetched.
+  let archiveListing: Listing;
+  try {
+    const a = await listPrefix(b2Cfg, spec.archivePrefix);
+    archiveListing = { ok: true, keys: a.map((e) => e.key) };
+  } catch (err) {
+    archiveListing = { ok: false, error: (err as Error).message };
+  }
+
+  const verdict = classifyListing(spec, listing, now, baseline, archiveListing);
+  if (verdict.done) {
+    return {
+      ...base,
+      ok: verdict.ok!,
+      absent: verdict.absent ?? false,
+      reason: verdict.reason!,
+    };
+  }
+  const degraded = verdict.degraded;
+
+  // Verify the NEWEST period in full. Presence is asserted for every
+  // required period above; full verification is bounded to ONE object so
+  // the Worker's memory and CPU budget cannot grow with the archive's
+  // age. That boundary is deliberate and is this tier's coverage limit.
+  const survivingArchives = new Set(
+    archiveListing.ok ? archiveListing.keys : [],
+  );
+  const pickedManifest = newestVerifiableManifest(
+    spec,
+    listedEntries,
+    survivingArchives,
+    verdict.newestPeriod!,
+  );
   if (!pickedManifest) {
     return {
+      ...base,
       ok: false,
-      reason: 'no manifest in B2 for the last 3 days (cron likely stopped firing)',
+      reason: `${spec.tier} period ${verdict.newestPeriod} has no manifest with a surviving archive`,
+    };
+  }
+
+  // A manifest is a few hundred bytes. Refuse to buffer and parse an
+  // object that is not: the write credential can upload a very large JSON
+  // under the genuine current period, and `Response.json()` on it exhausts
+  // the isolate before any verdict or alert is produced — on Monday the
+  // same isolate is running the nightly backup.
+  if (pickedManifest.size > MAX_MANIFEST_BYTES) {
+    return {
+      ...base,
+      ok: false,
+      reason:
+        `${spec.tier} manifest ${pickedManifest.key} is ` +
+        `${pickedManifest.size} bytes, over MAX_MANIFEST_BYTES ` +
+        `(${MAX_MANIFEST_BYTES}) — refusing to parse it`,
+      manifestKey: pickedManifest.key,
     };
   }
 
@@ -199,25 +352,22 @@ export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthO
     return { error: (err as Error).message } as { error: string };
   });
   if ('error' in manifestRes) {
-    return { ok: false, reason: `manifest GET failed: ${manifestRes.error}`, manifestKey: pickedManifest.key };
+    return { ...base, ok: false, reason: `manifest GET failed: ${manifestRes.error}`, manifestKey: pickedManifest.key };
   }
   const manifestJson = (await manifestRes.json()) as {
     archive: { sha256: string; byteLength: number };
     createdAt: string;
   };
 
-  // The archive's nonce + date come from the manifest's filename
-  // structure: `manifests/<date>/<nonce>.json` → archive lives at
-  // `archives/<date>/<nonce>.bin`. Compute the sibling key.
-  const archiveKey = pickedManifest.key
-    .replace(/^manifests\//, 'archives/')
-    .replace(/\.json$/, '.bin');
+  // `<manifestPrefix><period>/<nonce>.json` → `<archivePrefix>…/<nonce>.bin`.
+  const archiveKey = siblingArchiveKey(spec, pickedManifest.key);
 
   // Pre-fetch size gate: refuse to OOM-page the Worker by trying to
   // pull a 500 MB archive into RAM. If we ever hit this, the
   // streaming follow-up is overdue.
   if (manifestJson.archive.byteLength > MAX_HEALTHCHECK_BYTES) {
     return {
+      ...base,
       ok: false,
       reason: `manifest reports archive size ${manifestJson.archive.byteLength} bytes > ` +
               `MAX_HEALTHCHECK_BYTES (${MAX_HEALTHCHECK_BYTES}). Streaming healthcheck overdue.`,
@@ -231,7 +381,7 @@ export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthO
     return { error: (err as Error).message } as { error: string };
   });
   if ('error' in archiveRes) {
-    return { ok: false, reason: `archive GET failed: ${archiveRes.error}`, archiveKey, manifestKey: pickedManifest.key };
+    return { ...base, ok: false, reason: `archive GET failed: ${archiveRes.error}`, archiveKey, manifestKey: pickedManifest.key };
   }
 
   const archiveBytes = new Uint8Array(await archiveRes.arrayBuffer());
@@ -239,6 +389,7 @@ export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthO
 
   if (actualSha !== manifestJson.archive.sha256) {
     return {
+      ...base,
       ok: false,
       reason: 'archive SHA-256 mismatch — bit-rot or upload corruption',
       archiveKey,
@@ -250,6 +401,7 @@ export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthO
 
   if (archiveBytes.byteLength !== manifestJson.archive.byteLength) {
     return {
+      ...base,
       ok: false,
       reason: 'archive byte-length mismatch with manifest',
       archiveKey,
@@ -261,10 +413,23 @@ export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthO
 
   // Decryption probe — confirms the archive isn't merely well-
   // formed bytes but actually decrypts with the configured key.
+  //
+  // AND that it is the RIGHT backup. SHA, byte length and AES-GCM
+  // authentication all describe the BYTES; none of them says which backup
+  // those bytes are. A holder of the B2 read+write keys but NOT the AES
+  // key can copy a genuine old archive and its manifest into a currently
+  // required prefix and pass every one of those checks — hiding a failed
+  // cut behind stale data. Copying a DAILY payload into the indefinite
+  // yearly family is worse than stale: the long tiers deliberately
+  // exclude `support_tickets` so a ticket's backup copies live only in
+  // the 30-day tier, and that copy would retain them forever, breaching
+  // the published deletion promise.
+  let plaintext: Uint8Array;
   try {
-    await decrypt(env.encryptionKey, archiveBytes);
+    plaintext = new Uint8Array(await decrypt(env.encryptionKey, archiveBytes));
   } catch (err) {
     return {
+      ...base,
       ok: false,
       reason: `archive decryption failed: ${(err as Error).message}`,
       archiveKey,
@@ -274,18 +439,98 @@ export async function runHealthcheck(env: Env, b2Cfg: B2Config): Promise<HealthO
     };
   }
 
+  const contentTooLarge = plaintext.byteLength > MAX_CONTENT_CHECK_BYTES;
+  const contentFault = contentTooLarge
+    ? null
+    : archiveContentFault(spec, verdict.newestPeriod!, plaintext);
+  if (contentFault) {
+    return {
+      ...base,
+      ok: false,
+      reason: contentFault,
+      archiveKey,
+      manifestKey: pickedManifest.key,
+      manifestSha: manifestJson.archive.sha256,
+      actualSha,
+    };
+  }
+
   const archiveAgeHours =
-    (Date.now() - Date.parse(pickedManifest.lastModified)) / 3_600_000;
+    (now - Date.parse(pickedManifest.lastModified)) / 3_600_000;
 
   return {
+    ...base,
     ok: true,
-    reason: 'manifest + archive paired, SHA matches, decrypts cleanly',
+    reason:
+      'manifest + archive paired, SHA matches, decrypts cleanly' +
+      (contentTooLarge
+        ? ` — CONTENT NOT VERIFIED: payload is ${plaintext.byteLength} bytes, ` +
+          `over MAX_CONTENT_CHECK_BYTES (${MAX_CONTENT_CHECK_BYTES}); a copied ` +
+          `or wrong-tier payload would not be detected`
+        : '') +
+      (degraded ? ` — COVERAGE DEGRADED: ${degraded}` : ''),
     archiveKey,
     manifestKey: pickedManifest.key,
     archiveAgeHours,
     manifestSha: manifestJson.archive.sha256,
     actualSha,
   };
+}
+
+/**
+ * Verify EVERY tier and report each one.
+ *
+ * The run fails if any tier fails. Tiers are verified independently —
+ * one tier's failure must not stop the others being examined, or the
+ * first failure would mask everything behind it and the operator would
+ * fix one thing a week.
+ */
+export async function runHealthcheck(
+  env: Env,
+  b2Cfg: B2Config,
+  now: number = Date.now(),
+): Promise<HealthReport> {
+  const checked = validateBaseline(
+    {
+      monthly: env.ARCHIVE_FIRST_MONTHLY || undefined,
+      yearly: env.ARCHIVE_FIRST_YEARLY || undefined,
+    },
+    now,
+  );
+  // A malformed baseline fails ONLY the tier it belongs to. Returning
+  // fabricated failures for all three performed no storage checks at all,
+  // so a typo in ARCHIVE_FIRST_MONTHLY suppressed daily and yearly
+  // verification for the whole week — simultaneous loss in those
+  // unrelated families would have gone undiscovered behind an alert
+  // about a typo.
+  const baselineErrors = checked.ok ? {} : checked.byTier;
+  const baseline = checked.ok ? checked.baseline : checked.baseline;
+  const tiers: TierOutcome[] = [];
+  for (const spec of TIERS) {
+    const bad = baselineErrors[spec.tier as 'monthly' | 'yearly'];
+    if (bad) {
+      tiers.push({
+        tier: spec.tier,
+        absent: false,
+        ok: false,
+        reason: `archive baseline misconfigured: ${bad}`,
+      });
+      continue;
+    }
+    try {
+      tiers.push(await verifyTier(env, b2Cfg, spec, now, baseline));
+    } catch (err) {
+      // A thrown tier is a failed tier, not a failed run: the
+      // remaining tiers still get checked and reported.
+      tiers.push({
+        tier: spec.tier,
+        absent: false,
+        ok: false,
+        reason: `check threw: ${(err as Error).message}`,
+      });
+    }
+  }
+  return { ok: tiers.every((t) => t.ok), tiers };
 }
 
 /** Hand-rolled SigV4 GET / list. Same shape as `b2.ts`'s PUT signer
