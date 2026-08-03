@@ -158,18 +158,35 @@ around it.
 
 **Step 2 — clear the target.**
 
+Set the target once and use the variables throughout:
+
 ```bash
 cd apps/indexer
-npx wrangler d1 execute vaipakam-warm --remote --command \
+SOURCE_DB=vaipakam-archive   # being retired
+TARGET_DB=vaipakam-warm      # being cut over to
+```
+
+> Deliberately variables. `check-d1-name-consistency` — the required check
+> that makes a partial cutover unmergeable — flags any `wrangler d1` command
+> naming a database no binding uses, which during a cutover is *every*
+> command touching the target. It failed this document, correctly.
+> Parameterising keeps the guard at full strength rather than carving an
+> exemption for the one file most likely to be followed literally, and makes
+> the procedure reusable for the next cutover.
+
+
+```bash
+cd apps/indexer
+npx wrangler d1 execute "$TARGET_DB" --remote --command \
   "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;"
 ```
 
-Confirm every table in `vaipakam-warm` is empty before importing.
+Confirm every table in `$TARGET_DB` is empty before importing.
 
 **Step 3 — export everything, data-only.**
 
 ```bash
-npx wrangler d1 export vaipakam-archive --remote --no-schema \
+npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --output /tmp/d1-cutover.sql -y
 ```
 
@@ -179,7 +196,7 @@ is deleted it is a second copy, and after deletion it is the only one.
 **Step 4 — import.**
 
 ```bash
-npx wrangler d1 execute vaipakam-warm --remote --file /tmp/d1-cutover.sql
+npx wrangler d1 execute "$TARGET_DB" --remote --file /tmp/d1-cutover.sql
 ```
 
 **Step 5 — verify by counting, per table, both sides.** Every table must
@@ -211,7 +228,7 @@ Stated because the previous revision required all of it, wrongly:
 ## 6. Before deleting the old database
 
 - [ ] Per-table counts equal on both sides, verified after the switch.
-- [ ] All four Workers confirmed reading `vaipakam-warm` from behaviour.
+- [ ] All four Workers confirmed reading the new database from behaviour.
 - [ ] Crons restored and one full cycle observed on each Worker.
 - [ ] One nightly backup completed **after** the import, its alert naming the
       new bucket. A backup taken before the import is not evidence.
@@ -220,7 +237,7 @@ Stated because the previous revision required all of it, wrongly:
 Then:
 
 ```bash
-npx wrangler d1 delete vaipakam-archive
+npx wrangler d1 delete "$SOURCE_DB"     # irreversible
 ```
 
 ## 7. Rollback
