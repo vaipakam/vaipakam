@@ -876,13 +876,21 @@ GovernanceRunbook gains a recycling section, executed in order:
    `balanceOf >= recycleBucket` across a **paying** claim — the assertion
    whose absence let this survive. The imprecision this row used to record —
    per-loan borrower-LIF custody sharing the balance with no running total —
-   was **split in two by #1555**. On a deployment ORIGINATED from current
-   source there is nothing to subtract: #1352 retired the peg-custody
-   origination path, no non-zero `vpfiHeld` assignment survives in `src/`, and
-   the headroom is EXACT. On a Diamond **UPGRADED** from a pre-#1352
-   deployment it is not — custody against loans open at the upgrade is
-   spendable as reward and the borrower's later settlement then reverts or
-   leaves them unpaid. **#1498 stays OPEN for that half**, re-pointed: its
+   was **overtaken by #1555 review**. The LIF half is real: #1352 retired the
+   peg-custody origination path and no non-zero `vpfiHeld` assignment survives
+   in `src/`, so that term is zero on a deployment originated from current
+   source (and non-zero on one UPGRADED from pre-#1352, where custody against
+   loans open at the upgrade is spendable as reward and the borrower's later
+   settlement then reverts or leaves them unpaid).
+   **But the headroom is NOT exact even on a fresh deployment.** Six review
+   rounds identified **EIGHT** owners of the Diamond's VPFI balance and only
+   `recycleBucket` is subtracted; the others are `treasuryBalances[vpfi]`,
+   `rewardEmissionsBudget`, `keeperRewardBudget`, a live swap-to-repay
+   intent's `custodialCollateral`, and liquidation `fallbackSnapshot` custody
+   (plus the grandfathered LIF term; the Full tariff's `C*` is covered since
+   it credits the bucket). **Two of those are USER COLLATERAL**, which makes
+   this a fund-safety item rather than an accounting one — a reward payout
+   drawing on them spends a borrower's collateral. **#1498 stays OPEN for that half**, re-pointed: its
    root is shared with #1434 prerequisite 1 (payout bounded by un-earmarked
    BALANCE rather than by funding DELIVERED FOR REWARDS), and the delivered
    bound closes both. #1555 landed the other half — collapsing the three

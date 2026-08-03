@@ -39,20 +39,30 @@ on, so subtracting it would refuse claims their own money. Its place in the
 underlying rule says the platform must be *holding* it, not that a payout may
 not touch it. That distinction was implicit before and is now stated.
 
-### Five more owners of the same holding — and why none of them are reserved here
+### Seven more owners of the same holding — and why none of them are reserved here
 
-Review kept finding the same shape with different owners. Six were identified
-in the end: the recycled reserve, borrower fee custody on grandfathered loans,
-the per-party tariff (already safe — it credits the recycled reserve),
+Review kept finding the same shape with different owners. Eight were
+identified: the recycled reserve, borrower fee custody on grandfathered
+loans, the per-party tariff (already safe — it credits the recycled reserve),
 treasury revenue where the platform holds its own, the reward-emissions
-budget, and the keeper reward budget. Each round of review produced another
-one — and the sixth arrived in the round *after* the list had been written up
-as complete, which is the clearest possible statement of the problem.
+budget, the keeper reward budget, collateral held during a live
+swap-to-repay, and collateral left in place when a liquidation cannot find a
+route to sell it.
+
+Each round of review produced another — and more than once the newest arrived
+in the round *after* the list had been written up as complete, which is the
+clearest possible statement of the problem.
+
+**The last two change what kind of problem this is.** They are not protocol
+budgets; they are a **borrower's collateral**, sitting in the same holding
+while their loan is mid-flight. A reward payout that draws on them is
+spending money that belongs to a user, so this stopped being a bookkeeping
+tidy-up and became a fund-safety item.
 
 One of them **was** reserved during this work, and that change has been
 **withdrawn**. Two reasons, and the second is the more instructive.
 
-First, the count. Six owners across five rounds, with no sign of the rate
+First, the count. Eight owners across six rounds, with no sign of the rate
 falling, says the approach itself is wrong: permitting a payout up to
 "everything we hold, minus the claims we remembered to write down" needs that
 list to be complete forever, and a missing entry causes no visible failure —

@@ -322,9 +322,9 @@ library LibVpfiRecycle {
      *           omitting the aggregate. Codex #1555 r1.)
      *
      *         **The invariant's three classes are NOT the whole list, and
-     *         that is the real lesson here.** SIX owners of this one balance
-     *         have been identified across FIVE review rounds, and **only the
-     *         first is subtracted**:
+     *         that is the real lesson here.** EIGHT owners of this one
+     *         balance have been identified across SIX review rounds, and
+     *         **only the first is subtracted**:
      *
      *           1. `recycleBucket` — SUBTRACTED (see the body).
      *           2. borrower-LIF rebate custody — grandfathered loans only;
@@ -340,6 +340,19 @@ library LibVpfiRecycle {
      *              **NOT subtracted.**
      *           6. `keeperRewardBudget` — the same routing function, step 2.
      *              **NOT subtracted.**
+     *           7. `intentCommits[loanId].custodialCollateral` — a live
+     *              swap-to-repay intent on a VPFI-collateral loan pulls the
+     *              WHOLE collateral into the Diamond and returns it on
+     *              cancel ({SwapToRepayIntentFacet}). **NOT subtracted.**
+     *           8. liquidation `fallbackSnapshot` custody — an exhausted
+     *              swap try-list leaves the full VPFI collateral on the
+     *              Diamond ({RiskFacet._fullCollateralTransferFallback}).
+     *              **NOT subtracted.**
+     *
+     *         **7 and 8 are USER COLLATERAL, not protocol ledgers.** A reward
+     *         payout drawing on them spends a BORROWER's collateral — a
+     *         different severity from over-drawing an operational budget, and
+     *         the reason #1498 is no longer an accounting-tidiness item.
      *
      *         **This list is not claimed to be complete, and treating it as
      *         complete is the failure mode.** Entry 5 was found in the round
@@ -354,7 +367,7 @@ library LibVpfiRecycle {
      *         are corrected here; reverting a change is itself a sweep, and
      *         treating it as a single edit is what left them. Codex #1555 r7.)
      *
-     *         Six owners over five rounds, with the rate not falling, is what
+     *         Eight owners over six rounds, with the rate not falling, is what
      *         says the enumeration is the wrong instrument: a payout bounded
      *         by BALANCE must know every owner of that balance, forever, and
      *         a missed one is silent. The durable fix is to bound payout by
@@ -440,13 +453,21 @@ library LibVpfiRecycle {
         // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
         // full, because the reasoning is the useful part:
         //
-        // Five review rounds surfaced SIX distinct owners of this one
-        // balance — the bucket, borrower-LIF rebate custody (grandfathered),
-        // the Full tariff's `C*` (covered, it credits the bucket),
-        // `treasuryBalances[vpfi]`, and `keeperRewardBudget`. Each round
-        // produced another and the rate did not fall. A bound of the form
-        // "balance minus the owners we remembered to list" cannot be made
-        // sound: completeness is unverifiable and a miss is SILENT.
+        // SIX review rounds surfaced EIGHT distinct owners of this one
+        // balance. The canonical list is in the natspec above and is NOT
+        // duplicated here — an earlier revision kept a second copy, said
+        // "six", and named five. Read the table.
+        //
+        // Two of the eight are USER COLLATERAL, not protocol ledgers:
+        // `intentCommits[loanId].custodialCollateral` (a live swap-to-repay
+        // intent on a VPFI-collateral loan) and the liquidation
+        // `fallbackSnapshot` custody. A reward payout drawing on those is
+        // spending a BORROWER's collateral, which is a different severity
+        // from over-drawing an operational budget.
+        //
+        // Each round produced another and the rate did not fall. A bound of
+        // the form "balance minus the owners we remembered to list" cannot be
+        // made sound: completeness is unverifiable and a miss is SILENT.
         //
         // Worse, patching it compounds. The r3 treasury subtraction
         // immediately diverged this from the RL-3 expiry predicates
