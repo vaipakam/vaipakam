@@ -100,6 +100,7 @@ async function assertSelectionMatchesChain(context) {
 // clean right before the raise mines (Codex #1539 r7).
 let raiseClicked = false;
 let lowerConfirmed = false;
+let raiseSeenBlock = 0n;
 
 // EVERYTHING after launch runs under the cleanup boundary (Codex
 // #1539 r5): a throw during strict normalization, navigation, connect
@@ -172,7 +173,14 @@ raiseClicked = true;
 await page.getByRole('radio', { name: /Broad liquid/i }).click();
 check(
   'raise landed on-chain (effective Broad)',
-  await pollUntil('raise to 1', async () => Number(await tierOf()) === 1),
+  await pollUntil('raise to 1', async () => {
+    if (Number(await tierOf()) !== 1) return false;
+    // Anchor the height at which the raise was OBSERVED — the lower
+    // confirmation must come from a strictly newer block (Codex #1539
+    // r8: a stale pre-raise view also reads 0).
+    raiseSeenBlock = await pub.getBlockNumber();
+    return true;
+  }),
 );
 check(
   'success message rendered',
@@ -186,10 +194,21 @@ await assertSelectionMatchesChain('post-raise');
 
 // 4. Lower back to Blue-chip; vault must end at the safest tier.
 await page.getByRole('radio', { name: /Blue-chip only/i }).click();
-lowerConfirmed = await pollUntil(
-  'lower to 0',
-  async () => Number(await tierOf()) === 0,
-);
+lowerConfirmed = await pollUntil('lower to 0', async () => {
+  // Pin the read to a block STRICTLY AFTER the observed raise — bare
+  // value equality can be satisfied by a lagging backend still
+  // serving the pre-raise state (Codex #1539 r8).
+  const bn = await pub.getBlockNumber();
+  if (bn <= raiseSeenBlock) return false;
+  const t = await pub.readContract({
+    address: DIAMOND,
+    abi: READ_ABI,
+    functionName: 'getEffectiveRiskTier',
+    args: [who],
+    blockNumber: bn,
+  });
+  return Number(t) === 0;
+});
 check('lower landed on-chain (effective Blue-chip)', lowerConfirmed);
 check(
   'strict mode still OFF on-chain',
@@ -218,14 +237,28 @@ check(
       // raise and guarantees the terminal state (Codex #1539 r7). If
       // nothing was actually pending this is a same-tier no-op write.
       console.log('cleanup: nonce-ordered lowering behind a possibly-pending raise');
+      // Load-balanced public RPCs can hand out a pending-nonce that
+      // misses the in-flight raise, making the lowering COMPETE with
+      // it instead of following it (Codex #1539 r8). The receipt alone
+      // is therefore not proof: re-read the confirmed tier and keep
+      // submitting a fresh lowering until Blue-chip is confirmed
+      // (bounded).
       const w = clientsFor(84532).wallet('borrower');
-      const hash = await w.writeContract({
-        address: DIAMOND,
-        abi: WRITE_ABI,
-        functionName: 'setVaultRiskTier',
-        args: [0],
-      });
-      await pub.waitForTransactionReceipt({ hash });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const hash = await w.writeContract({
+          address: DIAMOND,
+          abi: WRITE_ABI,
+          functionName: 'setVaultRiskTier',
+          args: [0],
+        });
+        await pub.waitForTransactionReceipt({ hash });
+        const settled = await pollUntil(
+          `cleanup write ${attempt + 1} confirmed Blue-chip`,
+          async () => Number(await rawTierOf()) === 0,
+          { timeoutMs: 45000 },
+        );
+        if (settled) break;
+      }
     }
     if (cleanupTier !== 0) {
       console.log('cleanup: restoring Blue-chip');
