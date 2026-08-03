@@ -46,6 +46,12 @@ interface RouteMeta {
   description?: string;
   /** false → emit `<meta name="robots" content="noindex">`. */
   index: boolean;
+  /** false → strengthen to `noindex,nofollow` (Codex #1547 r1). Set
+   *  ONLY for /recover: the flow is deliberately unlisted, and its
+   *  links must not lend it crawl equity either. Other noindex routes
+   *  keep default follow — their outbound links (help, explorer) are
+   *  fine to crawl. */
+  follow?: false;
 }
 
 /** Match a route with exactly one optional child segment
@@ -94,7 +100,11 @@ function metaForPath(rawPathname: string): RouteMeta {
   if (pathname === '/activity') return { ...seo.activity, index: false };
   if (pathname === '/settings') return { ...seo.settings, index: false };
   if (pathname === '/risk-access') return { ...seo.riskAccess, index: false };
-  if (pathname === '/recover') return { ...seo.recover, index: false };
+  if (pathname === '/recover') {
+    // Deliberately-unlisted surface: noindex AND nofollow (Codex #1547
+    // r1) — mirrored by the /recover X-Robots-Tag rules in _headers.
+    return { ...seo.recover, index: false, follow: false };
+  }
   if (pathname === '/faucet') return { ...seo.faucet, index: false };
   return { ...seo.notFound, index: false };
 }
@@ -136,7 +146,10 @@ export function SeoMeta() {
     // a client-side navigation would silently deindex a public page).
     const robots = document.querySelector('meta[name="robots"]');
     if (!meta.index) {
-      upsertMeta('robots', 'noindex');
+      upsertMeta(
+        'robots',
+        meta.follow === false ? 'noindex,nofollow' : 'noindex',
+      );
     } else if (robots) {
       robots.remove();
     }

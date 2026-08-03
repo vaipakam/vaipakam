@@ -1358,6 +1358,11 @@ const copySource = {
       'The address these tokens actually came from. Declaring it here asserts on-chain that it belongs to you or acted with your permission.',
     amountLabel: 'Amount to recover',
     overMax: 'That’s more than the recoverable surplus for this token.',
+    // Metadata-optional tokens (Codex #1547 r1): decimals() is OPTIONAL
+    // in ERC-20 — when the token doesn't report it, amounts are taken
+    // as raw base units (integers) rather than blocking recovery.
+    rawUnitsNote:
+      'This token doesn’t report a decimal format, so enter the amount in raw base units — whole numbers only.',
     review: 'Review recovery',
     warningTitle: 'Read this before recovering',
     warnings: [
@@ -1373,8 +1378,18 @@ const copySource = {
       'Declaring a sanctions-listed sender locks recovery for your vault until that address leaves the oracle’s list — the same lock the protocol applies to any sanctioned address.',
     reviewWarnOwnership:
       'Signing asserts, as a typed wallet signature, that the declared sender is a wallet you control or that acted with your permission.',
+    // Introduces the verbatim on-chain declaration text on the review
+    // card (Codex #1547 r1). The declaration ITSELF is deliberately NOT
+    // in this catalog — it is contract-fixed English whose keccak256
+    // must equal the on-chain RECOVERY_ACK_TEXT_HASH, so it must never
+    // be translated or reworded (see RECOVERY_ACK_TEXT in Recover.tsx).
+    ackTextIntro: 'You are signing this exact declaration:',
     confirmPrompt: 'Type CONFIRM to enable signing',
     sign: 'Sign & recover',
+    // Distinct busy label for the pre-sign checks + wallet-signature
+    // window (Codex #1547 r1): the review controls lock from the moment
+    // the sign button is pressed, before the transaction exists.
+    signing: 'Waiting for your wallet…',
     submitting: 'Submitting…',
     successTitle: 'Recovery complete',
     successBody: tmpl('{{amount}} {{symbol}} returned to your wallet.', [
@@ -1392,6 +1407,29 @@ const copySource = {
     errTitle: 'Recovery didn’t go through',
     errOutcomeMissing:
       'The transaction went through, but we couldn’t find the recovery outcome in it. Refresh the page to see the current state.',
+    // Pre-sign abort reasons (Codex #1547 r1) — each one blocks BEFORE
+    // the wallet signature so the user never signs against stale or
+    // unverifiable on-chain state. All of them leave everything as it
+    // was ("nothing was sent").
+    errSurplusMoved:
+      'The recoverable surplus for this token changed after you reviewed — nothing was sent. Go back and check the amount against the new surplus.',
+    errAckTextDrift:
+      'The declaration text this network expects doesn’t match the one this app shows, so signing is blocked — nothing was sent. Reload the app; if this keeps happening, the app needs an update.',
+    errDomainDrift:
+      'This network’s signing configuration doesn’t match what the app expects, so signing is blocked — nothing was sent. Reload the app; if this keeps happening, the app needs an update.',
+    // Shown INSTEAD of the recovery form when the connected wallet
+    // itself is flagged by the sanctions oracle (Codex #1547 r1) —
+    // recovery is a fund-moving Tier-1 surface, so a flagged wallet
+    // must not be walked into a doomed signature. Full sanctions
+    // wording stays off marketing surfaces (retail-deploy policy);
+    // this renders only to the flagged wallet.
+    sanctionedBlockedBody:
+      'This wallet is flagged by the sanctions oracle, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.',
+    // The tx mined but REVERTED — waitForTransactionReceipt resolves on
+    // reverted receipts too (Codex #1547 r1), and decoding events from
+    // a reverted receipt would misread the outcome.
+    errTxReverted:
+      'The network rejected the transaction after it was submitted — nothing was recovered and the tokens stayed where they were. Please try again.',
     helpSection: {
       title: 'Tokens stuck in your vault?',
       body1:

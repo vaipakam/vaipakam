@@ -87,10 +87,13 @@
   X-Robots-Tag: noindex
 /risk-access/*
   X-Robots-Tag: noindex
+# /recover is additionally nofollow (Codex #1547 r1): the flow is
+# deliberately unlisted, so its links must not lend it crawl equity
+# either. Matches SeoMeta's follow:false for this route.
 /recover
-  X-Robots-Tag: noindex
+  X-Robots-Tag: noindex, nofollow
 /recover/*
-  X-Robots-Tag: noindex
+  X-Robots-Tag: noindex, nofollow
 /faucet
   X-Robots-Tag: noindex
 /faucet/*
