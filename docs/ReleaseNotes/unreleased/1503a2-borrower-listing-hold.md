@@ -52,13 +52,16 @@ cleanup transaction the button would send and classifying the outcome
 — no local marker, no off-chain index, so a listing made by the
 lender on any device shows, and an outcome the app cannot classify
 renders nothing rather than a false hold or a doomed button. The
-committed fork spec drives the full lifecycle (live hold → expiry →
-cleanup → on-chain link severed) and arms itself automatically once
-the PR-A facet refresh reaches the live testnet Diamond; until then
-it self-skips on a loupe probe — the same positive facet-version
-signal the in-app probe requires before classifying, so the
-pre-refresh Diamond (whose older teardown shares error names with the
-new one) renders nothing rather than a wrong hold.
+committed browser-level test drives the full lifecycle (live hold →
+expiry → cleanup → on-chain link severed). It arms itself: it asks the
+test network whether the new listing entry point is actually routed
+there, and stays out of the way until the answer is yes. That answer
+turned yes when the contracts were redeployed, so the test now runs.
+The same question guards the app itself, which is the point of asking
+it — an older deployment reports some of the new outcomes under the
+same names as the old ones, so rather than risk describing a hold
+wrongly, the surface says nothing at all until it knows it is talking
+to a deployment that has the feature.
 
 The review rounds also removed the app's stale
 pre-acceptance-binding partial-repayment freeze: the partial-repay

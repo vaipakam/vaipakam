@@ -26,5 +26,17 @@ a deploy lag into no coverage at all would trade one silent failure for
 a louder one. What was missing was never the failure — it was being
 told which failure it is.
 
-The underlying mismatch is cleared by the pending test-network deploy,
-which the release review has been waiting on for other reasons too.
+The underlying mismatch itself is now gone: the contracts were
+redeployed to the test network, which is what the banner was telling
+anyone who read it to do. The records the app reads and the records the
+network serves agree again, and the browser-level tests that had been
+failing on it can run properly.
+
+The banner stays regardless. The mismatch it caught was not a mistake by
+anyone — the change that introduced it followed the documented process
+exactly; that process simply says nothing about the deployed test
+network, so the two drifted apart quietly and stayed that way for two
+weeks. Nothing about the redeploy prevents the same drift the next time
+a contract change lands ahead of a deployment. What has changed is that
+the next occurrence announces itself in the first seconds of a test run
+instead of hiding behind four unrelated-looking failures.

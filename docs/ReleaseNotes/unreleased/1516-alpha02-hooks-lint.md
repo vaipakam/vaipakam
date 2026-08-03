@@ -25,11 +25,12 @@ place.
 The check runs inside the same command continuous integration already
 invokes for this app, so enforcement needed no new pipeline step.
 
-Running the same check against the OTHER connected surface — which has
+Running the same check against the older connected surface — which has
 had a lint configuration for some time that nothing has ever executed —
-surfaced the identical defect class fourteen more times, one of them a
-live crash: changing the asset type on the offer-creation form flips a
-branch that sits above two hooks, so an ordinary dropdown change takes
-the page down. That is filed separately with the reproduction, along
-with the rest of that surface's backlog; it is not fixed here, because
-a plumbing change is the wrong vehicle for a fix to a different app.
+found the identical defect class fourteen more times, one of them a
+live crash on its offer-creation form. That surface is being retired in
+favour of this one, so those go unfixed by decision rather than by
+oversight; they are recorded for anyone who reads its code before it
+goes. The more useful reading is that the same blind spot produced the
+same bug in both apps independently, which is the argument for the
+check existing at all rather than for any particular fix.
