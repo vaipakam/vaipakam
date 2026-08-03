@@ -321,8 +321,24 @@ library LibVpfiRecycle {
      *           code-reachability claim at the exact point used to justify
      *           omitting the aggregate. Codex #1555 r1.)
      *
-     *         So on a deployment ORIGINATED from this source the term is
-     *         zero and `unearmarked` is exact. On a Diamond **UPGRADED** from
+     *         **The invariant's three classes are NOT the whole list, and
+     *         that is the real lesson here (Codex #1555 r3).** A fourth
+     *         claimant exists on a Diamond-as-treasury deployment —
+     *         `treasuryBalances[vpfi]`, credited by
+     *         {LibFacet.recordTreasuryAccrual} with no bucket credit — and it
+     *         is now subtracted in the body. Two rounds of review surfaced two
+     *         DIFFERENT unreserved claimants, which says the enumeration is
+     *         the wrong instrument: a payout bounded by BALANCE must know
+     *         every owner of that balance, forever, and a missed one is
+     *         silent. The durable fix is to bound payout by funding DELIVERED
+     *         FOR REWARDS instead, which needs no such list — tracked on
+     *         #1498, shared root with #1434 prerequisite 1. Anyone adding a
+     *         new VPFI custody class must either subtract it here or land
+     *         that bound.
+     *
+     *         So on a deployment ORIGINATED from this source the borrower-LIF
+     *         term is zero. `unearmarked` is exact only to the extent this
+     *         list is complete. On a Diamond **UPGRADED** from
      *         a pre-#1352 deployment it is NOT: custody against loans open at
      *         the upgrade sits inside this figure, a reward claim or the RL-3
      *         sweep can spend or relabel it, and the borrower's later
@@ -361,10 +377,15 @@ library LibVpfiRecycle {
      * @param  s Diamond storage.
      * @return vpfiBalance The Diamond's live VPFI balance (all labels).
      * @return bucket      VPFI wei labelled as recycled reward runway.
-     * @return unearmarked `vpfiBalance − bucket`, floored at zero — the
-     *         balance available to fresh/scheduled payout without eating
-     *         recycle backing. Zero means fully consumed OR in breach; read
-     *         it with `vpfiBalance` and `bucket` to tell those apart.
+     * @return unearmarked `vpfiBalance − bucket − treasuryBalances[vpfi]`,
+     *         floored at zero — the balance available to fresh/scheduled
+     *         payout without eating recycle backing OR treasury-owned VPFI.
+     *         Zero means fully consumed OR in breach; read it with
+     *         `vpfiBalance` and `bucket` to tell those apart. NOTE the
+     *         treasury term is subtracted but NOT returned, so
+     *         `unearmarked != vpfiBalance − bucket` on a Diamond-as-treasury
+     *         deployment; that is deliberate (see the body) and callers must
+     *         not re-derive it from the other two returns.
      */
     function backingPosition(LibVaipakam.Storage storage s)
         internal
@@ -381,7 +402,21 @@ library LibVpfiRecycle {
         if (token == address(0)) revert RecycleBackingTokenUnset();
         vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
-        unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
+        // #1555 r3 — TREASURY-OWNED VPFI is a second earmark and must come
+        // out too. On a Diamond-as-treasury deployment
+        // ({LibFacet.recordTreasuryAccrual} credits `treasuryBalances[asset]`
+        // exactly when `s.treasury == address(this)`), fee cuts land in THIS
+        // balance and credit no bucket. Without this subtraction a reward
+        // payout could transfer treasury-owned tokens while
+        // `treasuryBalances[vpfi]` stayed unchanged, leaving a later
+        // `claimTreasuryFees` / conversion / payroll draw underfunded — the
+        // same shape as #1460, a different owner.
+        //
+        // Off-deployment this reads zero (an external treasury address means
+        // the accrual never increments the mapping), so the subtraction is
+        // inert where it does not apply and exact where it does.
+        uint256 earmarked = bucket + s.treasuryBalances[token];
+        unearmarked = vpfiBalance > earmarked ? vpfiBalance - earmarked : 0;
     }
 
     /**

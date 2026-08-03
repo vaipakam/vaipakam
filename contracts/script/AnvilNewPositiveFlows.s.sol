@@ -1401,7 +1401,26 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
         console.log("Borrower deposited 2,000 VPFI + opted in to discount path");
 
-        // Step 4: take a loan. The borrower is Tier-2 with consent
+        // #1555 r3 — CLEAR THE MIN-HISTORY GATE FIRST. `effectiveTierAndBps`
+        // returns tier 0 until the default three-day staking window elapses,
+        // and the retired `tryApplyBorrowerLif` took its eligibility from
+        // that gated tier. Accepting immediately after the deposit would
+        // therefore leave the borrower ineligible, so the no-custody
+        // assertion below would have held whether or not the path were
+        // reconnected — vacuous, exactly what the previous revision claimed
+        // it had fixed. The focused unit test warps four days for the same
+        // reason; this drive must too.
+        vm.warp(block.timestamp + 4 days);
+
+        // Prove the fixture is LIVE before asserting the property: a non-zero
+        // effective discount means the borrower genuinely qualifies for the
+        // path that would have taken custody.
+        (, , uint256 dBorrowerN10) = VPFIDiscountFacet(diamond)
+            .getVPFIDiscountTier(borrower);
+        require(dBorrowerN10 > 0, "N10: tier gate not cleared - assertion would be vacuous");
+        console.log("Effective borrower discount bps (fixture live):", dBorrowerN10);
+
+        // Step 4: take a loan. The borrower is now tier-eligible with consent
         // enabled on a liquid lending asset — i.e. exactly the state the
         // retired peg-custody path required — so the no-custody
         // assertion below is a real check, not a precondition failure.
@@ -1636,9 +1655,12 @@ contract AnvilNewPositiveFlows is Script {
     ///      6 decimals). The test therefore (a) reads USDC treasury
     ///      balance pre and post a fresh loan-and-repay and asserts
     ///      it's non-decreasing (the counter is monotonic on positive
-    ///      paths), and (b) reads VPFI treasury balance — which DOES
-    ///      grow when N10's settleBorrowerLifProper runs because the
-    ///      LIF amount is fixed (not duration-weighted). Real treasury
+    ///      paths), and (b) reads VPFI treasury balance as a CALL-SURFACE
+    ///      check only. #1555 r3 — this used to claim the VPFI counter
+    ///      "DOES grow when N10's settleBorrowerLifProper runs"; that has
+    ///      been false since #1352 retired the peg-custody path, so N10
+    ///      holds nothing to forward and no current positive flow in this
+    ///      drive accrues VPFI treasury revenue. Real treasury
     ///      growth on duration-bearing fees is exercised by
     ///      TreasuryFacetTest.t.sol unit tests where vm.warp can move
     ///      simulation time.
@@ -1677,14 +1699,33 @@ contract AnvilNewPositiveFlows is Script {
             "N20: USDC treasury must be non-decreasing"
         );
 
-        // VPFI treasury surface: N10 ran settleBorrowerLifProper which
-        // forwards the treasury share of the held LIF to treasury, so
-        // the VPFI counter should be > 0 by the time we reach N20.
+        // VPFI treasury surface — CALL-SURFACE ONLY, and now honestly
+        // labelled as such (#1555 r3).
+        //
+        // This block used to say N10's `settleBorrowerLifProper` forwards the
+        // treasury share of held LIF, so the VPFI counter "should be > 0 by
+        // the time we reach N20". That has been false since #1352 retired the
+        // peg-custody path: N10 takes no custody, so its settlement is a
+        // no-op and forwards nothing. The check underneath was
+        // `vpfiTreasuryAtEntry >= 0` — tautological for a uint256 — so the
+        // scenario reported the treasury-accrual case as passing while
+        // exercising no VPFI accrual at all, and kept teaching operators that
+        // the retired flow had run.
+        //
+        // Deliberately NOT replaced with a manufactured accrual: no current
+        // positive flow in this drive produces VPFI treasury revenue (the
+        // Full tariff credits the recycle bucket, not treasury). Asserting
+        // reachability and saying so is honest; inventing a source to make an
+        // assertion look strong would be the same failure in a new costume.
+        // Real VPFI treasury accrual is covered by TreasuryFacetTest.
         require(
-            vpfiTreasuryAtEntry >= 0, // tautological — assertion is just on the call surface
+            vpfiTreasuryAtEntry >= 0, // tautological BY DESIGN — see above
             "N20: VPFI treasury balance call should not revert"
         );
-        console.log("VPFI treasury at N20 entry:", vpfiTreasuryAtEntry);
+        console.log(
+            "VPFI treasury at N20 entry (no current flow accrues it):",
+            vpfiTreasuryAtEntry
+        );
 
         console.log(">>> N20 PASSED <<<");
     }

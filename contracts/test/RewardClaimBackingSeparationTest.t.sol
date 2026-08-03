@@ -240,4 +240,80 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
             "separation holds on the unblocked path too"
         );
     }
+
+    // ─── #1555 r3 — treasury-owned VPFI is a SECOND earmark ──────────────
+    //
+    // #1460 reserved the recycle bucket. Review then found a second owner of
+    // the same balance: on a Diamond-as-treasury deployment
+    // (`LibFacet.recordTreasuryAccrual` credits `treasuryBalances[asset]`
+    // exactly when `s.treasury == address(this)`) fee cuts land here and
+    // credit no bucket, so `backingPosition` counted them as free reward
+    // backing. A claim could transfer treasury-owned tokens while
+    // `treasuryBalances[vpfi]` stayed unchanged, leaving a later
+    // `claimTreasuryFees` underfunded — the #1460 shape, a different owner.
+
+    /// A payout that fits the raw balance but NOT the balance net of treasury
+    /// IOUs must be refused, and the treasury's claim must still be backed
+    /// afterwards.
+    ///
+    /// Non-vacuity: the bucket is set to ZERO here, so the refusal cannot be
+    /// coming from the #1460 term — only the treasury reservation can produce
+    /// it. Reverting the subtraction in {LibVpfiRecycle.backingPosition}
+    /// makes this test pay in full and the final assertion fail.
+    function testTreasuryOwnedVpfiIsNotSpendableAsReward() public {
+        (, uint256 expected) = _seedPayable(alice, 77);
+
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        // No recycle earmark at all — isolate the treasury term.
+        _mut().setRecycleBucketRaw(0);
+        // Treasury owns everything except a quarter of the accrual, so a
+        // treasury-blind implementation sees the whole balance and pays.
+        uint256 room = expected / 4;
+        uint256 treasuryOwed = bal - room;
+        _mut().setTreasuryBalanceRaw(address(vpfi), treasuryOwed);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(InteractionRewardBackingShort.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        assertEq(vpfi.balanceOf(alice), 0, "nothing paid over the treasury's IOU");
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            treasuryOwed,
+            "treasury's claim on the balance is still fully backed"
+        );
+    }
+
+    /// The complement: once the treasury IOU is settled the same claim pays
+    /// in full. Without this, the test above is satisfied by an
+    /// implementation that simply refuses everything.
+    function testClaimPaysOnceTreasuryClaimIsReleased() public {
+        (, uint256 expected) = _seedPayable(alice, 78);
+
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        _mut().setRecycleBucketRaw(0);
+        _mut().setTreasuryBalanceRaw(address(vpfi), bal - expected / 4);
+
+        vm.prank(alice);
+        vm.expectPartialRevert(InteractionRewardBackingShort.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        // Treasury draws its IOU down; the reward budget is unencumbered.
+        _mut().setTreasuryBalanceRaw(address(vpfi), 0);
+
+        vm.prank(alice);
+        (uint256 paid, , ) =
+            RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        // Same 1e6 wei tolerance the sibling recovery test uses: the walk
+        // floors each entry's pro-rata share, so a few wei of dust is
+        // expected and is not what this test is about.
+        assertApproxEqAbs(
+            paid, expected, 1e6, "full accrual paid once the earmark clears"
+        );
+        assertGt(
+            paid,
+            expected / 2,
+            "recovered the accrual, not a part-payment"
+        );
+    }
 }

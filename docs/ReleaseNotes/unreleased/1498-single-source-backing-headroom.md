@@ -39,7 +39,30 @@ on, so subtracting it would refuse claims their own money. Its place in the
 underlying rule says the platform must be *holding* it, not that a payout may
 not touch it. That distinction was implicit before and is now stated.
 
-### One half of this is fixed; the other is now stated plainly as open
+### A second owner of the same balance — found in review, and now reserved
+
+Review then found the same shape with a different owner, and this one **is**
+fixed here rather than deferred.
+
+Where the platform acts as its own treasury, fee revenue is recorded as owed
+to the treasury and physically sits in the same holding. Nothing marked it as
+spoken for, so it read as spare — meaning a reward payout could transfer
+tokens the treasury was owed, leaving the treasury's own recorded balance
+untouched and a later withdrawal short. Those tokens are now subtracted along
+with the recycled reserve.
+
+Where the treasury is a separate address, no such balance is ever recorded, so
+the subtraction is inert there and exact where it applies.
+
+**The lesson is the count, not the fix.** Two rounds of review surfaced two
+different unreserved owners of one balance. That says the approach — allow a
+payout up to "everything we hold, minus the claims we remembered to list" — is
+the wrong instrument, because it requires the list to be complete forever and
+a missing entry is silent. Bounding payouts by *funding delivered for rewards*
+needs no list at all. That is now recorded as the durable fix, and the same
+one the outstanding cross-chain work needs.
+
+### One half of the first finding is fixed; the other is now stated plainly as open
 
 The above holds for a platform deployed **fresh** under current rules. A
 platform **upgraded from an older one** is a different matter, and review

@@ -478,6 +478,20 @@ reasons.
 
 ## VPFI Fee Discounts — Time-Weighted + Claim-Based (Phase 5)
 
+> **⚠ SCOPE — the borrower half of this section is GRANDFATHERED-ONLY.**
+> #1352 retired the peg-custody borrower path. **New loans take no VPFI
+> into `vpfiHeld` custody and earn no rebate**: the borrower's hold-tier
+> discount is applied **directly to the lending-asset LIF at acceptance**
+> (HoldOnly), or, where the per-party Full tariff is enabled, the party's
+> `C*` is charged into Diamond custody and credited to
+> `RecycleSource.FullTariff`. Everything below about up-front VPFI
+> collection, Diamond custody for the life of the loan, and the rebate at
+> settlement describes **only loans already open on the retired path** —
+> they still settle through the retained lifecycle, which is why the
+> settle/forfeit invariants remain live. **Do not reconnect
+> `tryApplyBorrowerLif` on the strength of this section.** The LENDER half
+> (yield-fee discount) is unaffected and current. See #1352, #1555.
+
 Both sides of the VPFI fee discount (lender yield-fee + borrower Loan
 Initiation Fee) are **time-weighted** across a loan's lifetime and
 **not** a point-in-time tier lookup. The lender discount reduces the
