@@ -392,3 +392,11 @@ behind, so it still believed it was showing an empty form, skipped the
 release, and was left sitting on a card for an attempt that had already
 been withdrawn. The tab now answers from the state it has just taken on,
 so the pair releases correctly however closely together it arrives.
+
+The rule for reading a token's published details was also tightened: the
+form now only falls back to raw-unit entry when the token itself gave an
+answer it could recognise — declining, returning nothing, or answering in
+an old format. Anything that merely failed to get an answer, including a
+node refusing the request or rate-limiting it, is reported as "we couldn't
+read this token's details" so the user can retry, rather than being taken
+as evidence about the token.

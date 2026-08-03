@@ -59,7 +59,7 @@ import {
 } from '../data/sanctions';
 import {
   captureTxError,
-  isTransportFailure,
+  isContractAnswered,
   isUserRejection,
 } from '../lib/errors';
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
@@ -695,16 +695,19 @@ function isUserRejectedTransaction(err: unknown): boolean {
  * lookup and made those tokens unrecoverable, instead of the shortened-
  * address fallback the guide promises.
  *
- * So the discriminator is now the TRANSPORT check alone, and only in
- * the rejecting direction: a transport failure proves nothing about the
- * token, and quietly reading it as "no decimals" is what once let an
- * ordinary 18-decimal token parse as raw base units — a user who typed
- * `1` would sign for a single base unit. Those still fail the lookup,
- * with the honest "we couldn't read this token's details" the user can
- * retry out of.
+ * So the discriminator POSITIVELY identifies a contract answer and
+ * defaults to unreadable (Codex #1547 r16). The r15 shape — a denylist
+ * of transport names — silently re-opened the r10 bug, because viem
+ * also reports node-side failures as RpcRequestError /
+ * InternalRpcError / LimitExceededRpcError / ResourceUnavailableRpcError:
+ * a rate-limited eth_call fell through as "no metadata" and flipped an
+ * ordinary 18-decimal token into raw base units, so a user who typed
+ * `1` would sign for a single base unit. Anything not recognised as a
+ * contract answer fails the lookup, with the honest "we couldn't read
+ * this token's details" the user can retry out of.
  */
 function isOptionalMetadataUnavailable(err: unknown): boolean {
-  return !isTransportFailure(err);
+  return isContractAnswered(err);
 }
 
 /** Display cap for an attacker-controlled token symbol. */
