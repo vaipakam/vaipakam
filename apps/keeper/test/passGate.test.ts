@@ -276,22 +276,50 @@ describe('isKeeperEnabled — unchanged, and tied to the reason', () => {
 });
 
 describe('the key is constructed in exactly one place', () => {
-  it('no module outside keeper.ts calls privateKeyToAccount', () => {
+  /** Every `privateKeyToAccount(` CALL in src/, as `file:line`. The import
+   *  and the prose references lack the paren and are not calls. */
+  function constructionSites(): string[] {
+    const dir = new URL('../src/', import.meta.url);
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.ts'))
+      .flatMap((f) =>
+        readFileSync(new URL(f, dir), 'utf8')
+          .split('\n')
+          .map((line, i) => ({ line, n: i + 1 }))
+          .filter(({ line }) => line.includes('privateKeyToAccount('))
+          .map(({ n }) => `${f}:${n}`),
+      )
+      .sort();
+  }
+
+  it('there is exactly ONE construction site, and it is the resolver', () => {
     // The leak this pins (#1540 r6): `dailyOracleSnapshot` had its own copy
     // of normalise-and-check and built the account OUTSIDE a try, so an
     // invalid scalar threw and `index.ts` logged the error — and viem's
     // message for that case contains the rejected scalar, from which the
-    // key is recoverable. Three copies of this logic existed; each new one
-    // is a fresh chance to reintroduce exactly that.
+    // key is recoverable.
     //
-    // A grep-shaped test because the property is "nobody else does this",
-    // which no type or signature can express.
-    const dir = new URL('../src/', import.meta.url);
-    const offenders = readdirSync(dir)
-      .filter((f) => f.endsWith('.ts') && f !== 'keeper.ts')
-      .filter((f) =>
-        readFileSync(new URL(f, dir), 'utf8').includes('privateKeyToAccount('),
-      );
-    expect(offenders).toEqual([]);
+    // The first version of this test excluded `keeper.ts` and so enforced
+    // "no call outside keeper.ts" — a second construction added INSIDE that
+    // file would have passed while the README and release note claim a
+    // single site (#1540 r7). Count everywhere instead.
+    const sites = constructionSites();
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatch(/^keeper\.ts:\d+$/);
+  });
+
+  it('that site is inside resolveKeeperAccount, not merely in the file', () => {
+    // Being in `keeper.ts` is not the property; being in the bounded
+    // resolver is. A call elsewhere in this file would not be wrapped by
+    // the try/catch that replaces viem's error with a safe reason.
+    const src = readFileSync(new URL('../src/keeper.ts', import.meta.url), 'utf8');
+    const from = src.indexOf('export function resolveKeeperAccount');
+    expect(from).toBeGreaterThan(-1);
+    const body = src.slice(from, src.indexOf('\n}\n', from));
+    expect(body).toContain('privateKeyToAccount(');
+    // ...and nowhere else in the file.
+    const outside =
+      src.slice(0, from) + src.slice(from + body.length);
+    expect(outside).not.toContain('privateKeyToAccount(');
   });
 });
