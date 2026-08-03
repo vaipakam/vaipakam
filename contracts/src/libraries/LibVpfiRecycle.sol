@@ -322,10 +322,12 @@ library LibVpfiRecycle {
      *           omitting the aggregate. Codex #1555 r1.)
      *
      *         **The invariant's three classes are NOT the whole list, and
-     *         that is the real lesson here.** Owners of this one balance
-     *         keep being found — SEVEN review rounds so far, and the list has
-     *         grown in every round it was called complete. **Only the first
-     *         is subtracted:**
+     *         that is the real lesson here.** Owners of this one balance keep
+     *         being found: the list has grown in every round it was treated
+     *         as complete. No round count either — that was stale within two
+     *         rounds of being written, in the very comment explaining why
+     *         hard-coded totals drift (Codex #1555 r13). **Only the first is
+     *         subtracted:**
      *
      *           1. `recycleBucket` — SUBTRACTED (see the body).
      *           2. borrower-LIF rebate custody — grandfathered loans only;
