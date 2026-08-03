@@ -323,3 +323,32 @@ was removed, and only when that card is still an unresolved one. A newer
 attempt is left alone, and a settled verdict the user still needs to
 read — it worked, it was refused, or an attempt was processed — is never
 cleared out from under them.
+
+The card that reports a blocked recovery now states the whole
+consequence. When the declared sender turns out to be sanctions-listed,
+the wallet itself is flagged and every new-position action is blocked —
+creating or accepting offers, deposits, recovery and the like — while
+existing loans can still be repaid or closed, and the block lifts
+automatically if that address is later removed from the sanctions list.
+The card previously said only that recovery had been locked, which
+mattered more than usual: outcome cards are shown ahead of every other
+check on the page, so this is the only status the user sees after the
+transaction, and everything else they tried would have failed without
+explanation. It now uses the same words as the standing warning on the
+form and the Help explainer, so all three surfaces agree.
+
+Releasing a stale pending card no longer depends on the tab being
+awake at the right moment. A tab left in the background can process the
+news of a removal only after the other tab has already started a new
+attempt over it — and the page used to answer the question "does this
+card still describe the outstanding attempt?" by looking at whatever the
+shared record holds at that moment, which by then was the newer attempt.
+It concluded the slot was still occupied, kept the stale card, and did
+the same again when the news of the new attempt arrived, leaving that tab
+stuck forever on an attempt that no longer exists. The decision is now
+taken from what the change itself reports — which attempt left, and which
+one replaced it — so the tab releases the card that went away and then
+picks up the one that replaced it, in that order. The release stays
+exactly as narrow as before: only an unresolved card belonging to this
+wallet, only when the attempt that left is the one on screen, and never a
+settled verdict.

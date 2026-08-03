@@ -316,9 +316,12 @@ test('a processed-but-unreadable recovery stays locked across a reload', async (
  * before anything was sent: there is no transaction for "check again"
  * to find, so the card sat there until the signed deadline expired.
  *
- * The release is deliberately narrow, and all three rules are pinned
+ * The release is deliberately narrow, and all four rules are pinned
  * here: a removal naming a DIFFERENT attempt leaves the card alone, a
- * removal naming THIS attempt returns the tab to a usable form, and a
+ * removal naming THIS attempt returns the tab to a usable form, an
+ * event whose oldValue names THIS attempt while its newValue already
+ * carries a NEWER one releases the stale card and adopts the newer
+ * record (Codex #1547 r14 — the backgrounded-tab ordering case), and a
  * SETTLED verdict (the executed lock) survives a removal untouched.
  *
  * Driven by dispatching the same `storage` event the browser delivers
@@ -383,6 +386,26 @@ test('a record another tab removes releases only the matching unresolved card', 
         [storageKey, oldValue] as const,
       );
 
+    /** The event the browser delivers on a WRITE — another tab claiming
+     *  the shared slot. `oldValue` carries whatever the slot held
+     *  before, which on a claim-over-a-removal is the attempt this tab
+     *  is still showing (Codex #1547 r14). */
+    const claimFromAnotherTab = (oldValue: string | null, newValue: string) =>
+      page.evaluate(
+        ([key, previous, next]) => {
+          window.localStorage.setItem(key, next);
+          window.dispatchEvent(
+            new StorageEvent('storage', {
+              key,
+              oldValue: previous,
+              newValue: next,
+              storageArea: window.localStorage,
+            }),
+          );
+        },
+        [storageKey, oldValue, newValue] as const,
+      );
+
     // (1) A removal naming a DIFFERENT attempt must not touch this card
     // — that is another tab tidying up an older record, not news about
     // the attempt on screen.
@@ -402,7 +425,44 @@ test('a record another tab removes releases only the matching unresolved card', 
     ).toHaveCount(0);
     await expect(page.getByLabel(/token contract address/i)).toBeVisible();
 
-    // (3) A SETTLED verdict survives the same removal: the processed-
+    // (3) The removal is not always delivered on its own (Codex #1547
+    // r14). A backgrounded tab can process its queued event only after
+    // the other tab has ALREADY claimed a new attempt over the removed
+    // one — so the event says "the attempt you are showing left the
+    // slot, this newer one owns it now". Deciding from a fresh read of
+    // storage saw only the newer record and left this tab stuck on the
+    // stale card forever; deciding from the event releases it first and
+    // then adopts what replaced it.
+    await claimFromAnotherTab(null, pendingRecord);
+    await expect(
+      page.getByText(/transaction submitted — result unconfirmed/i),
+    ).toBeVisible();
+    const newerRecord = JSON.stringify({
+      // A fresh claim is HASHLESS — reserved before the wallet prompt
+      // opens — which is also what makes the swap unmistakable on
+      // screen: a different card title, not just a different link.
+      txHash: null,
+      attemptId: 'attempt-three',
+      declaredSource: account.address,
+      amount: '2500000000000000000',
+      symbol: 'MOCK',
+      decimals: 18,
+      recoveryNonce: '1',
+      deadline: '1',
+    });
+    await claimFromAnotherTab(pendingRecord, newerRecord);
+    await expect(
+      page.getByText(/transaction submitted — result unconfirmed/i),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText(/we don.t know whether this was sent/i),
+    ).toBeVisible();
+    await removeFromAnotherTab(newerRecord);
+    await expect(
+      page.getByText(/we don.t know whether this was sent/i),
+    ).toHaveCount(0);
+
+    // (4) A SETTLED verdict survives the same removal: the processed-
     // attempt lock is something the user still has to read, and another
     // tab clearing storage must never wipe it off this screen.
     const settledRecord = JSON.stringify({

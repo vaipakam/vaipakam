@@ -1452,13 +1452,21 @@ const copySource = {
       ['amount', 'token'],
     ),
     viewTx: 'View the transaction',
-    bannedTitle: 'Recovery is locked for your vault',
+    // The BANNED outcome card must state the WHOLE consequence (Codex
+    // #1547 r14). This card renders ahead of the generic sanctioned-
+    // wallet gate (the r2 ordering rule), so it is the only
+    // post-transaction status this user sees — a body that named only
+    // "recovery is locked" left them to discover the protocol-wide
+    // block by hitting it on some other page. Worded to match the
+    // standing warning and the Help explainer (both fixed in r2) so all
+    // three surfaces say the same thing.
+    bannedTitle: 'Your wallet is flagged — new positions are blocked',
     bannedBody: tmpl(
-      'The sender you declared ({{source}}) is on the sanctions list, so recovery locked for your vault. Nothing moved — the tokens stayed where they were.',
+      'The sender you declared ({{source}}) is on the sanctions list, so your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like. Existing loans can still be repaid or closed. Nothing moved — the tokens stayed where they were.',
       ['source'],
     ),
     bannedAutoUnlock:
-      'The lock lifts automatically if that address is later removed from the sanctions oracle.',
+      'The block lifts automatically if that address is later removed from the sanctions oracle.',
     errTitle: 'Recovery didn’t go through',
     // Terminal unknown-outcome card (Codex #1547 r3): a success receipt
     // whose logs carry NO decodable outcome event must NOT bounce back

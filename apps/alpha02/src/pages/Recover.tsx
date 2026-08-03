@@ -1247,6 +1247,17 @@ export function Recover() {
   // the signed 30-minute deadline expired, over a send that was never
   // made. So a removal releases the card — but only a pending one, and
   // only when the record that went away is the one this card describes.
+  //
+  // Both halves are decided from the EVENT itself (Codex #1547 r14) —
+  // `oldValue` says which attempt LEFT the shared slot, `newValue` says
+  // which one now owns it — never from a fresh read of storage. A
+  // re-read only ever sees the LATEST record, so a backgrounded tab
+  // whose queued event is processed after another tab both removed the
+  // displayed attempt AND claimed a new one saw that newer record, took
+  // the "slot still occupied" branch, and refused to replace its card —
+  // and the following write event did the same, stranding this tab on
+  // an attempt that no longer owns the slot. Order matters: RELEASE the
+  // stale card first, then ADOPT the record that replaced it.
   useEffect(() => {
     const chainId = walletChain?.chainId;
     if (!address || chainId === undefined) return;
@@ -1255,50 +1266,51 @@ export function Recover() {
     const onStorage = (event: StorageEvent) => {
       // `key === null` is a whole-storage clear, which also concerns us.
       if (event.key !== null && event.key !== ownKey) return;
-      const stored = readPendingRecovery(chainId, address);
-      if (stored !== null) {
-        setStep((current) =>
-          current.kind === 'form' || current.kind === 'review'
-            ? stepFromRecord(stored, owner)
-            : current,
-        );
-        return;
-      }
-      // Nothing in storage for this identity any more — the removal
-      // path. Only an UNRESOLVED card is released: a settled one
+      // RELEASE. Only an UNRESOLVED card is released: a settled one
       // (success, banned, the executed lock, "nothing was processed")
       // is a verdict the user still has to read, and another tab
       // tidying storage must never wipe it off this screen.
       const current = stepRef.current;
       if (
-        current.kind !== 'unknownOutcome' ||
-        current.pending !== true ||
-        current.owner.address !== owner.address ||
-        current.owner.chainId !== owner.chainId
+        current.kind === 'unknownOutcome' &&
+        current.pending === true &&
+        current.owner.address === owner.address &&
+        current.owner.chainId === owner.chainId
       ) {
-        return;
+        // Whose attempt left the slot? `event.oldValue` still carries
+        // it, and matching on it is what stops a card belonging to a
+        // NEWER attempt (this tab re-submitted after the other tab
+        // settled) from being cleared by a stale event. When the
+        // browser gives no oldValue — a whole-storage clear, or an
+        // event shape without it — the only safe reading left is the
+        // weaker one: this card is pending and no record exists for it
+        // at all, so it is stale either way.
+        const removed = parsePendingRecovery(event.oldValue);
+        const releases =
+          removed !== null
+            ? pendingRecoveryMatches(
+                removed,
+                current.txHash,
+                current.ctx?.recoveryNonce.toString(),
+                current.ctx?.attemptId,
+              )
+            : readPendingRecovery(chainId, address) === null;
+        if (releases) clearToFreshForm();
       }
-      // Whose attempt was removed? `event.oldValue` still carries it,
-      // and matching on it is what stops a card belonging to a NEWER
-      // attempt (this tab re-submitted after the other tab settled)
-      // from being cleared by a stale removal. When the browser gives
-      // no oldValue — a whole-storage clear, or an event shape without
-      // it — the only safe reading left is the weaker one: this card is
-      // pending and no record exists for it at all, so it is stale
-      // either way.
-      const removed = parsePendingRecovery(event.oldValue);
-      if (
-        removed !== null &&
-        !pendingRecoveryMatches(
-          removed,
-          current.txHash,
-          current.ctx?.recoveryNonce.toString(),
-          current.ctx?.attemptId,
-        )
-      ) {
-        return;
+      // ADOPT. Only a form/review state takes on the record that now
+      // owns the slot — a card that already describes an attempt (or an
+      // in-flight signature) is never overwritten by a background
+      // event. The release above runs first precisely so a card the
+      // event itself just invalidated cannot block the newer record
+      // from landing.
+      const written = parsePendingRecovery(event.newValue);
+      if (written !== null) {
+        setStep((s) =>
+          s.kind === 'form' || s.kind === 'review'
+            ? stepFromRecord(written, owner)
+            : s,
+        );
       }
-      clearToFreshForm();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
