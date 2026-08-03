@@ -833,6 +833,8 @@
       "errTitle": "Recovery didn’t go through",
       "unknownOutcomeTitle": "Transaction confirmed — outcome unknown",
       "unknownOutcomeBody": "The transaction went through, but we couldn’t read the recovery outcome from it. Do not sign again — the recovery may already have completed. Open the transaction link to see what happened, then refresh the page.",
+      "unknownOutcomePendingTitle": "Transaction submitted — result unconfirmed",
+      "unknownOutcomePendingBody": "The transaction was submitted, but we couldn’t read its confirmation — it may still complete in the background. Do not sign again yet: open the transaction link to check what happened, and refresh the page before retrying.",
       "startOver": "Start over",
       "errSurplusMoved": "The recoverable surplus for this token changed after you reviewed — nothing was sent. Go back and check the amount against the new surplus.",
       "errAckTextDrift": "The declaration text this network expects doesn’t match the one this app shows, so signing is blocked — nothing was sent. Reload the app; if this keeps happening, the app needs an update.",
@@ -882,7 +884,7 @@
       "alreadySelectedAbort": "That level is already set for your vault — this page was showing older information and has refreshed. Nothing was sent.",
       "noLongerStaleAbort": "Your level no longer needs re-confirming — it was already brought up to date (perhaps from another device). This page has refreshed; nothing was sent.",
       "directionNote": "Choosing a safer level applies instantly. Choosing a riskier level may wait out a short safety cooldown before it becomes active.",
-      "raisedMsg": "Now using a riskier level. If a safety cooldown is configured, it becomes active once the cooldown finishes.",
+      "raisedMsg": "Riskier level saved. It applies immediately — or, if a safety cooldown is configured, once the cooldown finishes.",
       "loweredMsg": "Level updated.",
       "reaffirmedMsg": "Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.",
       "strict": {

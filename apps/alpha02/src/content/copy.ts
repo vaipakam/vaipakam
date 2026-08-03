@@ -1430,6 +1430,14 @@ const copySource = {
     unknownOutcomeTitle: 'Transaction confirmed — outcome unknown',
     unknownOutcomeBody:
       'The transaction went through, but we couldn’t read the recovery outcome from it. Do not sign again — the recovery may already have completed. Open the transaction link to see what happened, then refresh the page.',
+    // Broadcast-but-unconfirmed variant (Codex #1547 r4): the wallet
+    // returned a transaction hash but the confirmation couldn't be
+    // read (RPC drop, wallet disconnect mid-wait). The tx may still
+    // mine, so this must NOT claim it "went through" — and must not
+    // bounce the user back to a re-armed sign button either.
+    unknownOutcomePendingTitle: 'Transaction submitted — result unconfirmed',
+    unknownOutcomePendingBody:
+      'The transaction was submitted, but we couldn’t read its confirmation — it may still complete in the background. Do not sign again yet: open the transaction link to check what happened, and refresh the page before retrying.',
     startOver: 'Start over',
     // Pre-sign abort reasons (Codex #1547 r1) — each one blocks BEFORE
     // the wallet signature so the user never signs against stale or
@@ -1537,8 +1545,12 @@ const copySource = {
       'Your level no longer needs re-confirming — it was already brought up to date (perhaps from another device). This page has refreshed; nothing was sent.',
     directionNote:
       'Choosing a safer level applies instantly. Choosing a riskier level may wait out a short safety cooldown before it becomes active.',
+    // Never claims current use (Codex #1547 r4): with a cooldown
+    // configured, the riskier level is SAVED but not yet active —
+    // "now using" would misstate the vault's effective state for the
+    // whole cooldown window.
     raisedMsg:
-      'Now using a riskier level. If a safety cooldown is configured, it becomes active once the cooldown finishes.',
+      'Riskier level saved. It applies immediately — or, if a safety cooldown is configured, once the cooldown finishes.',
     loweredMsg: 'Level updated.',
     reaffirmedMsg:
       'Level confirmed against the latest risk terms. If a safety cooldown is configured, it becomes active once the cooldown finishes.',

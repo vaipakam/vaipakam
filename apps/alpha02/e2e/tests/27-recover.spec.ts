@@ -22,7 +22,8 @@
  *  rendering is a copy branch of the same event-decode switch this
  *  spec exercises. The installed benign oracle is equivalent to the
  *  unset default for every other gate (both read "not sanctioned"),
- *  so suite-order side effects are nil; it is still reset in finally.
+ *  so suite-order side effects are nil; the finally still restores the
+ *  oracle to the exact pre-test value (Codex #1547 r4).
  */
 import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
@@ -77,6 +78,16 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
 }) => {
   const { page, account } = await launchWallet('borrower');
   const token = MOCKS!.liquidToken as Address;
+  // Snapshot the ORIGINAL oracle address BEFORE any assertion runs
+  // (Codex #1547 r4): the finally must restore THIS exact value, not
+  // unconditionally zero it — a fork whose deployment ships with an
+  // oracle configured keeps that state intact, and a failed-then-
+  // retried first attempt can't mask the drift by having zeroed it.
+  const originalOracle = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getSanctionsOracle',
+  })) as Address;
   try {
 
   // Ensure the borrower HAS a vault (fork state inherits one from the
@@ -186,8 +197,9 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
   })) as bigint;
   expect(walletBalAfter - walletBalBefore).toBe(dust);
   } finally {
-    // Back to the retail default (oracle unset) so the suite's state
-    // assumptions hold on retries and future specs.
-    await setSanctionsOracle('0x0000000000000000000000000000000000000000');
+    // Restore the EXACT pre-test oracle (Codex #1547 r4) — on the
+    // retail fork that's the unset default, but a configured-oracle
+    // deployment must get its own value back, not a forced zero.
+    await setSanctionsOracle(originalOracle);
   }
 });

@@ -210,8 +210,12 @@ type Step =
   | { kind: 'banned'; txHash: Hex; declaredSource: string }
   /** TERMINAL (Codex #1547 r3): the tx receipt was a success but no
    *  outcome event decoded — the recovery may already have completed,
-   *  so the flow must never re-arm the sign button from here. */
-  | { kind: 'unknownOutcome'; txHash: Hex };
+   *  so the flow must never re-arm the sign button from here.
+   *  `pending` (Codex #1547 r4): the tx was BROADCAST but its receipt
+   *  couldn't be read (RPC drop, wallet disconnect mid-wait) — it may
+   *  still mine, so the same terminal card renders with a body that
+   *  says "submitted but unconfirmed" instead of "confirmed". */
+  | { kind: 'unknownOutcome'; txHash: Hex; pending?: boolean };
 
 export function Recover() {
   const { address, onSupportedChain, walletChain } = useActiveChain();
@@ -226,7 +230,13 @@ export function Recover() {
   const [confirmInput, setConfirmInput] = useState('');
   const [step, setStep] = useState<Step>({ kind: 'form' });
   const [error, setError] = useState<string | null>(null);
-  const inFlightRef = useRef(false);
+  // Generation-KEYED in-flight mutex (Codex #1547 r4): stores the
+  // identity generation of the running signAndSubmit, or null when
+  // idle. Keying by generation (instead of a boolean) means the reset
+  // effect implicitly releases it — a mismatched generation reads as
+  // not-in-flight — while a still-running OLD closure's finally can't
+  // clear a NEW flow's claim (it only clears its own generation).
+  const inFlightRef = useRef<number | null>(null);
   // Identity generation token (Codex #1547 r3): bumped by the reset
   // effect below on every account/chain change. `signAndSubmit`
   // captures the value at entry and re-checks it before EVERY state
@@ -424,14 +434,23 @@ export function Recover() {
     amountWei <= activeLookup.surplus;
 
   async function signAndSubmit() {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
     // Capture the identity generation at entry (Codex #1547 r3). Every
     // state commit below re-checks it — if the account or chain changed
     // while an await was pending, the reset effect bumped genRef and
     // this flow must fall silent instead of committing a step, error,
     // lookup, or tx link that belongs to the previous identity.
     const gen = genRef.current;
+    // Mutex claim is generation-keyed (Codex #1547 r4): a claim left by
+    // a PREVIOUS identity's still-running flow doesn't block the new
+    // identity (its generation no longer matches), so an identity reset
+    // can never permanently jam submission.
+    if (inFlightRef.current === gen) return;
+    inFlightRef.current = gen;
+    // Set once writeContract RETURNS a hash (Codex #1547 r4): from that
+    // moment the tx is broadcast and may mine even if the receipt wait
+    // (or anything after it) throws — the catch below must not bounce
+    // back to review with the sign button re-armed.
+    let submittedTxHash: Hex | null = null;
     setError(null);
     try {
       if (!walletClient || !publicClient || !address || !walletChain) {
@@ -619,13 +638,19 @@ export function Recover() {
         chain: walletClient.chain,
         account: address,
       });
+      submittedTxHash = txHash; // broadcast — no return-to-review past here (Codex #1547 r4)
       const receipt = await publicClient.waitForTransactionReceipt({
         hash: txHash,
       });
       // waitForTransactionReceipt resolves on REVERTED receipts too
       // (Codex #1547 r1) — decoding events out of one would misread
-      // "no event" as a missing outcome. Fail loud first.
+      // "no event" as a missing outcome. Fail loud first. The receipt
+      // WAS read here, so the outcome is definitive (reverted, nothing
+      // moved) — clearing the submitted-hash marker lets the catch use
+      // the normal return-to-review path for this one post-broadcast
+      // error (Codex #1547 r4).
       if (receipt.status !== 'success') {
+        submittedTxHash = null;
         throw new Error(copy.recover.errTxReverted);
       }
 
@@ -686,11 +711,31 @@ export function Recover() {
         setStep({ kind: 'unknownOutcome', txHash });
       }
     } catch (err) {
+      // Post-broadcast failure (Codex #1547 r4): writeContract already
+      // RETURNED a hash, so the tx is in the mempool and may still mine
+      // — returning to review would re-arm the sign button over a
+      // recovery that may yet complete. Invalidate (state may move any
+      // moment) and park on the terminal unknown-outcome card instead;
+      // the `pending` flag picks the "submitted but unconfirmed" body.
+      // The invalidation publishes even for a stale generation (same
+      // rule as the decoded outcomes); only the step commit is
+      // identity-bound.
+      if (submittedTxHash !== null) {
+        publishReceiptInvalidation(queryClient);
+        if (genRef.current !== gen) return;
+        setStep({ kind: 'unknownOutcome', txHash: submittedTxHash, pending: true });
+        return;
+      }
+      // Pre-broadcast errors (checks, signature, submission rejection,
+      // definitive revert) keep the return-to-review behaviour.
       if (genRef.current !== gen) return; // Codex #1547 r3
       setStep({ kind: 'review' });
       setError(captureTxError(err));
     } finally {
-      inFlightRef.current = false;
+      // Only release a claim that is still OURS (Codex #1547 r4): after
+      // an identity reset a new flow may hold the mutex under the new
+      // generation — this old closure must not clear it.
+      if (inFlightRef.current === gen) inFlightRef.current = null;
     }
   }
 
@@ -771,13 +816,24 @@ export function Recover() {
         // receipt, no decodable outcome event. Never returns to review
         // — the recovery may already have completed, and re-arming the
         // sign button here invites a double submit. The only ways out
-        // are the tx link and a fresh start.
+        // are the tx link and a fresh start. The `pending` variant
+        // (Codex #1547 r4) covers a BROADCAST tx whose confirmation
+        // couldn't be read — same terminal card, honest wording.
         <div className="banner banner-warn" role="alert">
           <TriangleAlert aria-hidden />
           <span className="banner-body">
-            <strong>{copy.recover.unknownOutcomeTitle}</strong>
+            <strong>
+              {step.pending
+                ? copy.recover.unknownOutcomePendingTitle
+                : copy.recover.unknownOutcomeTitle}
+            </strong>
             <br />
-            {copy.recover.unknownOutcomeBody}
+            {/* Body picked by the `pending` flag (Codex #1547 r4): a
+                broadcast-but-unconfirmed tx must not be described as
+                "went through". */}
+            {step.pending
+              ? copy.recover.unknownOutcomePendingBody
+              : copy.recover.unknownOutcomeBody}
             <br />
             <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
               {copy.recover.viewTx}
