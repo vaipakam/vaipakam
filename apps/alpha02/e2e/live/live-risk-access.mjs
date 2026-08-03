@@ -165,8 +165,8 @@ check(
         { timeoutMs: 60000 },
       );
       if (!restored) {
-        // Best-effort direct write with the role's own key — the
-        // cleanup contract is CHAIN state, not UI reachability.
+        // Direct write with the role's own key — the cleanup
+        // contract is CHAIN state, not UI reachability.
         const w = clientsFor(84532).wallet('borrower');
         const hash = await w.writeContract({
           address: DIAMOND,
@@ -178,8 +178,16 @@ check(
         console.log('cleanup: restored via direct write');
       }
     }
+    // The restore is a CHECK, not best-effort logging (Codex #1539
+    // r3): a run that leaves the production wallet raised must exit
+    // non-zero, whatever path got it there.
+    check(
+      'cleanup: wallet left at Blue-chip on-chain',
+      Number(await rawTierOf()) === 0,
+    );
   } catch (e) {
     console.log('cleanup failed:', String(e).slice(0, 200));
+    fails.push('cleanup: wallet restored to Blue-chip');
   } finally {
     await done();
   }
