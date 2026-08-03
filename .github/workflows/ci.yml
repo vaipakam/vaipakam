@@ -904,6 +904,43 @@ jobs:
   # compromise-path restore and must go red in CI when weakened, not at
   # the first real incident. Like mesh-watcher, detection/restore-only —
   # NOT a required status check.
+  # -------------------------------------------------------------------
+  # d1-name-consistency — the ONE job that is deliberately NOT path-gated.
+  #
+  # The guard asserts that every D1 binding and every `wrangler d1` command
+  # in the repo names the same shared database. Its whole value is catching
+  # a change ANYWHERE, so gating it on a path list is self-defeating: the
+  # exact defect it was written for (#1537 — a rename that reached the
+  # deploy scripts and runbooks but not the bindings) touches
+  # `contracts/script/deploy-*.sh` and `docs/ops/*.md`, neither of which is
+  # in `workspaces`'s filter. Such a PR would have set `contracts=true`,
+  # `workspaces=false`, skipped the guard entirely, and merged the split.
+  #
+  # Extending the workspaces filter instead was the alternative, and it is
+  # worse: the guard scans essentially every tracked script and doc, so the
+  # filter would have to match nearly everything, which removes the path
+  # gating it exists to provide.
+  #
+  # The script imports only node builtins, so this needs no install step.
+  d1-name-consistency:
+    name: D1 name consistency (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Every binding and command names the same shared database
+        run: node apps/indexer/scripts/check-d1-name-consistency.mjs
+
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes

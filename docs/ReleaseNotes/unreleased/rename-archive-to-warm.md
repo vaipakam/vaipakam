@@ -1,6 +1,8 @@
 ## The off-chain backup service is now called "warm"
 
-A naming change, not a behaviour change. What was described throughout as the *archive* service — the Cloudflare Worker that copies off-chain data to separate storage nightly, and the database it shares with the indexer — is now called **warm**. Nothing about what it does, when it runs, or what it stores has changed.
+A naming change, not a behaviour change. What was described throughout as the *archive* service — the scheduled job that copies off-chain data to separate storage nightly, and the storage bucket it writes to — is now called **warm**. Nothing about what it does, when it runs, or what it stores has changed.
+
+**The shared database is not part of this.** It keeps its existing name, and every service still reads and writes exactly the database it did before. That is deliberate and is explained further down: a database cannot be renamed, so adopting the new name would mean moving to a different database — a change to where live data goes, which does not belong in a renaming. If you are looking for which database to point something at, the answer is unchanged.
 
 **The word was carrying two different jobs, and only one of them moved.** "Archive" was naming both the *service* and the *things it stores*. The service is renamed; the stored objects are still archives, and are still called that. So the bucket and the Worker change name, while an archive file is still an archive file — renaming those would have produced phrases like "warm bytes", which is worse than what we started with.
 

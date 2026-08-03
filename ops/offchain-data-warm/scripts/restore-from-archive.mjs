@@ -62,6 +62,19 @@ const R2_KEY_SHAPE = /^legal-holds\/[0-9a-f]{64}\.pdf$/;
 
 const R2_BUCKET = 'vaipakam-legal-vault';
 
+/**
+ * The shared D1 the `archive` tier restores into.
+ *
+ * Hoisted to one constant so it can be CHECKED. It was hard-coded at four
+ * sites, and the generated `wrangler d1 execute` line reaches it through
+ * interpolation — so a cutover that moved every binding and every literal
+ * command could still leave an incident restore writing to the retired
+ * database, with nothing red. `check-d1-name-consistency.mjs` validates
+ * this constant against the single declaration in
+ * `apps/indexer/wrangler.jsonc` (#1537 r6).
+ */
+const ARCHIVE_DATABASE = 'vaipakam-archive';
+
 // SQL identifiers come out of the archive too, so they are untrusted
 // input like everything else in it.
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -389,7 +402,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
   const sections = [
     {
       tables: archive.d1.archive,
-      database: 'vaipakam-archive',
+      database: ARCHIVE_DATABASE,
       subdir: 'd1',
       allowed: KNOWN_ARCHIVE_TABLES,
     },
@@ -427,7 +440,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // Baseline completeness for the main section: every era of the
     // backup carries these even at zero rows, so `[]` or a partial
     // set is a truncated/hostile archive, not a small one.
-    if (database === 'vaipakam-archive') {
+    if (database === ARCHIVE_DATABASE) {
       const missingBaseline = BASELINE_TABLES.filter((t) => !names.has(t));
       if (missingBaseline.length > 0) {
         fail(
@@ -552,7 +565,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
         rowCount: table.rows.length,
         database,
         tier:
-          database !== 'vaipakam-archive'
+          database !== ARCHIVE_DATABASE
             ? 'legacy-lz'
             : RE_DERIVABLE_TABLES.has(table.name)
               ? 're-derivable'
@@ -569,7 +582,7 @@ export function convertD1(archive, outDir, { lzDatabase = 'vaipakam-lz-alerts-db
     // Without them the converter emits nothing for such a table and a
     // selective restore silently keeps whatever the live database already
     // holds — possibly the fabricated rows the restore exists to remove.
-    if (database === 'vaipakam-archive') {
+    if (database === ARCHIVE_DATABASE) {
       for (const name of eraLossClears) {
         const file = path.join(dir, `${name}.sql`);
         const sql =

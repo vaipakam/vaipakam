@@ -12,8 +12,8 @@
  * look correct in isolation. Nothing fails loudly — the deploy succeeds,
  * the Worker starts, and the schema it needs is simply somewhere else.
  *
- * That is what this catches. Three checks, each aimed at a different way
- * the halves come apart:
+ * That is what this catches — each check aimed at a different way the
+ * halves come apart:
  *
  *   1. Every consumer of the shared database agrees with the indexer's
  *      declaration on BOTH name and id. Matching on one field only is the
@@ -31,9 +31,15 @@
  *      a preference — its internal ops alerts must not co-locate with
  *      user-facing data.
  *
+ *   4. Scripts that GENERATE `wrangler d1` commands name the shared
+ *      database too. The restore script builds its command by string
+ *      interpolation, so check 2 cannot see the target — every binding and
+ *      every literal command could move together while an incident restore
+ *      still writes to the retired database, with nothing red.
+ *
  * WHAT IT DOES NOT CATCH: prose. A sentence describing the database by
- * name in a design doc is invisible here. Check 2 covers the executable
- * and copy-pasteable surface, which is the part that moves data.
+ * name in a design doc is invisible here. Checks 2 and 4 cover the
+ * executable and copy-pasteable surface, which is the part that moves data.
  */
 
 import { readFileSync } from 'node:fs';
@@ -80,6 +86,19 @@ const OTHER_DATABASES = new Map([
     'retired ops/lz-watcher (#1440) — still named in the restore runbook',
   ],
 ]);
+
+/**
+ * Scripts that build a `wrangler d1` command rather than spelling one out,
+ * and the constant each holds the target in. Check 2's regex reads literal
+ * commands only, so without this a generated one is unverified.
+ */
+const COMMAND_GENERATORS = [
+  {
+    file: 'ops/offchain-data-warm/scripts/restore-from-archive.mjs',
+    constant: 'ARCHIVE_DATABASE',
+    why: 'emits the restore `wrangler d1 execute` lines by interpolation',
+  },
+];
 
 /** Paths whose D1 names record history and must not be rewritten. */
 const HISTORICAL = [
@@ -225,6 +244,31 @@ for (const file of tracked) {
   }
 }
 
+// ---------------------------------------------------------------- check 4
+for (const { file, constant, why } of COMMAND_GENERATORS) {
+  const src = readFileSync(join(REPO, file), 'utf8');
+  const decl = src.match(
+    new RegExp(`const\\s+${constant}\\s*=\\s*['"\`]([^'"\`]+)['"\`]`),
+  );
+  if (decl === null) {
+    problems.push(
+      `${file}: no \`const ${constant} = '…'\` declaration found. That ` +
+        `file ${why}, so its target must be a single named constant this ` +
+        `check can validate — not a literal repeated at each use.`,
+    );
+    continue;
+  }
+  if (decl[1] !== SHARED_NAME) {
+    const line = src.slice(0, decl.index).split('\n').length;
+    problems.push(
+      `${file}:${line}: ${constant} is "${decl[1]}", but the shared ` +
+        `database is "${SHARED_NAME}".\n    That file ${why} — a cutover ` +
+        `that moved the bindings but not this constant would leave an ` +
+        `incident restore writing to the retired database.`,
+    );
+  }
+}
+
 if (problems.length > 0) {
   console.error(
     `\n[check-d1-name-consistency] ${problems.length} problem(s):\n\n` +
@@ -241,6 +285,7 @@ if (problems.length > 0) {
 
 console.log(
   `[check-d1-name-consistency] OK — ${SHARED_NAME} agreed by ` +
-    `${SHARED_CONSUMERS.length} bindings and ${commandCount} \`wrangler d1\` ` +
-    `command(s); ${MUST_NOT_SHARE.length} Worker(s) verified separate.`,
+    `${SHARED_CONSUMERS.length} bindings, ${commandCount} \`wrangler d1\` ` +
+    `command(s) and ${COMMAND_GENERATORS.length} generator constant(s); ` +
+    `${MUST_NOT_SHARE.length} Worker(s) verified separate.`,
 );

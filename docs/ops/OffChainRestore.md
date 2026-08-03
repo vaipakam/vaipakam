@@ -816,7 +816,7 @@ then deploy.
 >    ```bash
 >    for p in manifests/ archives/ manifests-monthly/ archives-monthly/ \
 >             manifests-yearly/ archives-yearly/; do
->      b2 ls vaipakam-offchain-data-warm --recursive --long --versions "$p"
+>      b2 ls "$B2_BUCKET" --recursive --long --versions "$p"
 >    done
 >    ```
 >
@@ -894,6 +894,29 @@ manifests/<YYYY-MM-DD>/<32-hex-nonce>.json
 Same nonce per archive/manifest pair, so once you have one path you
 derive the other deterministically.
 
+> ⚠️ **Which bucket — check before you trust an empty listing.** The backup
+> service was renamed, and a bucket cannot be renamed: the replacement
+> `vaipakam-offchain-data-warm` was created new and the old
+> `vaipakam-offchain-data-archive` stays live until the replacement has
+> completed a run. **Until then the usable archives are in the OLD bucket**
+> and the new one is empty or absent.
+>
+> So if step 2.2 returns nothing, that is not "no backups exist" — re-run it
+> against `vaipakam-offchain-data-archive` before concluding anything. The
+> two buckets never both hold a given night, so whichever lists your date is
+> the one to restore from.
+>
+> Set it once and the rest of this section follows:
+>
+> ```bash
+> # Newest first; use whichever lists your date.
+> B2_BUCKET=vaipakam-offchain-data-warm      # after the switchover
+> # B2_BUCKET=vaipakam-offchain-data-archive # before it, or for older nights
+> ```
+>
+> Delete this note once the old bucket is retired — at that point there is
+> only one answer and a choice here becomes a hazard of its own.
+
 ```bash
 # 2.1 Authenticate the B2 CLI with the offline read credentials.
 b2 account authorize <APPLICATION_KEY_ID> <APPLICATION_KEY>
@@ -903,7 +926,7 @@ b2 account authorize <APPLICATION_KEY_ID> <APPLICATION_KEY>
 #     (post-2025 syntax) so the nonce-bearing files at
 #     `manifests/<date>/<nonce>.json` actually surface. Sort by
 #     LastModified (newest last) and take the tail.
-b2 ls vaipakam-offchain-data-warm --recursive --long manifests/ \
+b2 ls "$B2_BUCKET" --recursive --long manifests/ \
   | sort -k 2,3 \
   | tail -5
 
@@ -921,10 +944,10 @@ ARCHIVE_KEY="${ARCHIVE_KEY/.json/.bin}"
 
 mkdir -p restore
 b2 file download \
-  "b2://vaipakam-offchain-data-warm/${MANIFEST_KEY}" \
+  "b2://${B2_BUCKET}/${MANIFEST_KEY}" \
   ./restore/manifest.json
 b2 file download \
-  "b2://vaipakam-offchain-data-warm/${ARCHIVE_KEY}" \
+  "b2://${B2_BUCKET}/${ARCHIVE_KEY}" \
   ./restore/archive.bin
 ```
 
