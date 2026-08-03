@@ -213,7 +213,23 @@ const D1_COMMAND =
 
 const tracked = execFileSync(
   'git',
-  ['ls-files', '-z', '*.sh', '*.md', '*.mjs', '*.js', '*.ts', '*.jsonc', '*.sql'],
+  // `*.json` belongs here as much as the rest: package scripts are
+  // executable, and `ops/mesh-watcher/package.json` runs two
+  // `wrangler d1 migrations apply` commands. Omitting the extension left
+  // real data-moving commands unchecked while this script claimed to cover
+  // every one — an overclaim, which is worse than a narrower promise.
+  [
+    'ls-files',
+    '-z',
+    '*.sh',
+    '*.md',
+    '*.mjs',
+    '*.js',
+    '*.ts',
+    '*.json',
+    '*.jsonc',
+    '*.sql',
+  ],
   { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
 )
   .split('\0')

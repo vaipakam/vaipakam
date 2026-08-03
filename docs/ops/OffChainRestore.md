@@ -743,6 +743,29 @@ then deploy.
 
 ## 2. Download the most recent archive from B2
 
+> ⚠️ **FIRST: set `B2_BUCKET`.** Every command in this section reads it,
+> including the time-critical `--versions` listing in the compromise box
+> below. Unset, it expands to an empty argument and the listing fails; in a
+> reused shell it may still hold a stale value and list the wrong bucket.
+>
+> ```bash
+> # Newest first; use whichever lists your date.
+> B2_BUCKET=vaipakam-offchain-data-warm      # after the switchover
+> # B2_BUCKET=vaipakam-offchain-data-archive # before it, or for older nights
+> ```
+>
+> **The backup service was renamed and a bucket cannot be renamed**, so the
+> replacement was created new and the old `vaipakam-offchain-data-archive`
+> stays live until the replacement has completed a run. Until then the
+> usable archives are in the OLD bucket and the new one is empty or absent.
+>
+> So **an empty listing is not "no backups exist"** — re-run against the
+> other bucket before concluding anything. The two never both hold a given
+> night, so whichever lists your date is the one to restore from.
+>
+> Delete this box once the old bucket is retired: at that point there is one
+> answer, and offering a choice becomes a hazard of its own.
+
 > ⚠️ **AFTER A COMPROMISE, "most recent that verifies" IS THE ATTACK.**
 > Skip to the selection rules below before running anything in this
 > section. On a lockout / billing / deploy-mistake restore the ordinary
@@ -893,29 +916,6 @@ manifests/<YYYY-MM-DD>/<32-hex-nonce>.json
 
 Same nonce per archive/manifest pair, so once you have one path you
 derive the other deterministically.
-
-> ⚠️ **Which bucket — check before you trust an empty listing.** The backup
-> service was renamed, and a bucket cannot be renamed: the replacement
-> `vaipakam-offchain-data-warm` was created new and the old
-> `vaipakam-offchain-data-archive` stays live until the replacement has
-> completed a run. **Until then the usable archives are in the OLD bucket**
-> and the new one is empty or absent.
->
-> So if step 2.2 returns nothing, that is not "no backups exist" — re-run it
-> against `vaipakam-offchain-data-archive` before concluding anything. The
-> two buckets never both hold a given night, so whichever lists your date is
-> the one to restore from.
->
-> Set it once and the rest of this section follows:
->
-> ```bash
-> # Newest first; use whichever lists your date.
-> B2_BUCKET=vaipakam-offchain-data-warm      # after the switchover
-> # B2_BUCKET=vaipakam-offchain-data-archive # before it, or for older nights
-> ```
->
-> Delete this note once the old bucket is retired — at that point there is
-> only one answer and a choice here becomes a hazard of its own.
 
 ```bash
 # 2.1 Authenticate the B2 CLI with the offline read credentials.

@@ -70,12 +70,20 @@
 #                     resolved, `pnpm -r test` joins this workflow in a
 #                     small follow-up PR.
 #
-# For the `Protect main` ruleset's required-status-checks rule, wire
-# `contracts-fast`, `workspaces`, `detect-changes`, `Build docs`, and
-# `Slither static analysis` (post-#296 / ADR-0011 — five required
-# contexts on every merge to main). All five are conditionally
-# required via path-filter `if:` guards — branch protection treats
-# `if:`-skipped checks as SUCCESS, so docs-only PRs still merge fast.
+# The `Protect main` ruleset's required-status-checks rule wires
+# `contracts-fast`, `workspaces`, `detect-changes`, `Slither static
+# analysis` and `D1 name consistency (unconditional)` (post-#296 /
+# ADR-0011, plus #1537). An earlier version of this comment also listed
+# `Build docs`; the live ruleset does not contain it — see
+# ProjectProcedures §7.1, which now says how to check rather than
+# asserting a list that can drift.
+#
+# The first four are conditionally required via path-filter `if:`
+# guards — branch protection treats `if:`-skipped checks as SUCCESS, so
+# docs-only PRs still merge fast. `D1 name consistency` is the
+# exception and runs unconditionally BY DESIGN: it scans the whole
+# repository, so any path gate would exclude the changes it exists to
+# catch (#1537 r6).
 #
 # The release/* / `v*` tag-gated `mainnet-gate.yml` follow-up
 # (tracked as 74.C) re-runs `predeploy-check.sh --full` as a hard gate

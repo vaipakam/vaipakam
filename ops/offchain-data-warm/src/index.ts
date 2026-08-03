@@ -269,6 +269,15 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
       env,
       [
         '✅ Nightly off-chain backup succeeded',
+        // WHICH bucket, on every alert (#1537 r7). During the archive→warm
+        // switchover two Workers share the 03:17 schedule AND the same ops
+        // bot, so an unattributed success line could come from either — and
+        // the retirement step treats that line as proof the replacement
+        // works before deleting the old Worker. Reading the old one's alert
+        // as the new one's would delete the only functioning backup.
+        // The bucket is the honest discriminator: each Worker writes its
+        // own, and it is what an operator actually needs to know.
+        `  bucket: ${cfg.bucket}`,
         `  archive: ${out.archiveKey}`,
         `  manifest: ${out.manifestKey}`,
         `  size: ${(out.archiveBytes / 1024 / 1024).toFixed(2)} MB`,
@@ -326,7 +335,7 @@ async function handleNightlyBackup(env: Env, cfg: B2Config): Promise<void> {
     }
   } catch (err) {
     const msg = (err as Error).message;
-    await tg(env, `🚨 Nightly backup FAILED: ${msg}`);
+    await tg(env, `🚨 Nightly backup FAILED (bucket: ${cfg.bucket}): ${msg}`);
     // Re-throw so Worker's invocation log shows the failure too
     // (operator-visible via `wrangler tail`).
     throw err;
