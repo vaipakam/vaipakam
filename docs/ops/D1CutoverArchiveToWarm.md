@@ -115,11 +115,24 @@ Two facts make a **complete replica** possible instead:
 
 1. `wrangler d1 export --remote --no-schema --table …` emits plain
    `INSERT INTO "t" (cols) VALUES(…)` for whatever tables you name.
-2. Migrations `0043`–`0048` are **purely additive** — `CREATE TABLE IF NOT
-   EXISTS` only, no `ALTER` or `DROP` on an existing table. So the target's
-   schema is a strict superset of the source's, and every column the export
-   names still exists with the same shape. The six new tables simply receive
-   no rows, which is correct.
+2. **Both databases are now at migration `0048`**, so their schemas are
+   *equal* and every column the export names exists in the target with the
+   same shape.
+
+   > An earlier revision of this section claimed migrations `0043`–`0048`
+   > were "purely additive, `CREATE TABLE IF NOT EXISTS` only", making the
+   > target a strict superset. **That is false**: `0046` and `0047` both
+   > carry `ALTER TABLE … ADD COLUMN`. The grep I verified with matched
+   > `DROP`, `RENAME` and `CREATE TABLE` — it could not have found an
+   > `ADD COLUMN`, so I searched for what I expected and read the absence as
+   > proof.
+   >
+   > The conclusion survives, for a different reason: §3 applies those
+   > migrations to the SOURCE first, so the two schemas converge rather than
+   > one containing the other. That makes §3 a **hard prerequisite of the
+   > copy**, not merely a healthy-rollback measure — if the source were left
+   > at `0042` the export would still import, but the plan's stated
+   > justification would be describing a property it does not have.
 
 So: copy everything, decide nothing, lose nothing.
 
@@ -152,32 +165,45 @@ propagation window (**up to 15 minutes**) before treating the writers as
 stopped; the keeper runs every minute, so a readback alone is not the
 confirmation. Its EOA nonce going quiet is.
 
-**`apps/agent` also serves HTTP, and emptying its cron does not stop that.**
-A user submitting a threshold, linking or unlinking Telegram, or filing a
-support ticket writes to the source after the export — and that row is
-irrecoverable. "Move quickly" is not a quiesce, and an earlier revision of
-this plan said so as though it were.
+**Emptying the crons does not stop HTTP writes, and TWO Workers accept them.**
 
-Take its write routes out of service for the window: unbind the route, or
-deploy a build that returns `503` on the mutating endpoints. Reads may stay
-up.
+- `apps/agent` — thresholds, Telegram link/unlink, support tickets.
+- `apps/indexer` — `POST /signed-offers` (`src/index.ts:403`) inserts
+  user-submitted signed orders. An earlier revision missed this one entirely
+  and quiesced only the agent, which would have lost any offer posted after
+  the export: `signed_offers` is user-submitted and no replay reconstructs it.
 
-Then **verify rather than trust it**, because this is the one step whose
-failure is silent. Immediately after the export, re-count the born-off-chain
-tables in the source:
+Take the mutating routes of **both** out of service for the window — unbind
+the route, or deploy a build returning `503` on the mutating endpoints. Reads
+may stay up.
+
+**Then probe it, do not assume it.** Send one request to each mutating
+endpoint and confirm it is rejected. A maintenance step that silently failed
+to apply is indistinguishable from one that worked, right up until the data
+is gone.
+
+**Record the route state you changed**, because §7 has to put it back — see
+the note there. An externally managed custom-domain route is not recreated by
+restoring crons or by deploying a new binding.
+
+**And do not rely on row counts to detect a leak.** An UPDATE to an existing
+threshold, or any same-cardinality mutation, leaves every count identical
+while changing the value the export captured. Counts catch inserts and
+deletes only.
+
+The check that actually holds is a **second export compared against the
+first**:
 
 ```bash
-for t in user_thresholds notify_state support_tickets telegram_links \
-         pre_grace_notify_state diag_errors diag_legal_holds \
-         diag_legal_hold_audit recycle_day_backfill; do
-  npx wrangler d1 execute "$SOURCE_DB" --remote --command \
-    "SELECT '$t' t, COUNT(*) n FROM $t"
-done
+npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
+  --output /tmp/d1-verify.sql -y
+diff <(sort /tmp/d1-cutover.raw.sql) <(sort /tmp/d1-verify.sql) \
+  && echo "source unchanged during the window" \
+  || echo "A WRITE LANDED — discard both and restart from the quiesce"
 ```
 
-Any count that differs from the export means a write landed inside the
-window: discard the export and start step 3 again. Cheap, and it converts an
-assumption into a check.
+Sorted, because export ordering is not guaranteed stable. Any difference
+means the window leaked: fix the maintenance mode and start again.
 
 **Step 2 — clear the target.**
 
@@ -211,12 +237,19 @@ Confirm every table in `$TARGET_DB` is empty before importing.
 ```bash
 npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --output /tmp/d1-cutover.raw.sql -y
-grep -v 'INSERT INTO "d1_migrations"' /tmp/d1-cutover.raw.sql > /tmp/d1-cutover.sql
+grep -vE 'INSERT INTO "(d1_migrations|sqlite_sequence)"' \
+  /tmp/d1-cutover.raw.sql > /tmp/d1-cutover.sql
 ```
 
-**The filter is not optional.** `--no-schema` still exports `d1_migrations`
-rows, and the target already holds its own 49 — identical primary keys, so
-the import aborts on collision. Filtering rather than enumerating `--table`
+**The filter is not optional, and it covers two tables.** Despite its name,
+`--no-schema` still exports both bookkeeping tables:
+
+- `d1_migrations` — the target already holds its own 49 rows with identical
+  primary keys, so the import aborts on collision.
+- `sqlite_sequence` — `notifications` is `AUTOINCREMENT`, so importing its
+  rows makes SQLite create the sequence row itself; the exported insert then
+  duplicates it. Verified against the pinned Wrangler: an unscoped export
+  emits two `sqlite_sequence` inserts. Filtering rather than enumerating `--table`
 keeps the property that matters: no list to maintain means no table can be
 forgotten. The target's ledger is already correct for its own schema and
 must not be overwritten.
@@ -255,8 +288,18 @@ match exactly. A mismatch here is the signal to stop, not to patch.
 partial switch) and **deploy the two that do not auto-deploy** —
 `apps/agent` and `ops/offchain-data-warm` — in the same sitting as the merge.
 
-**Step 7 — restore the crons** and confirm each Worker is reading the new
-database from behaviour, not configuration.
+**Step 7 — restore the crons AND the routes**, then confirm from behaviour.
+
+Restoring crons does not undo the maintenance mode: an unbound
+custom-domain route stays unbound, and a `503` build stays deployed. Put back
+exactly what §1 recorded, then **probe each mutating endpoint again** — this
+time expecting success. The cutover is not complete while thresholds,
+Telegram linking or support submission are unreachable, and nothing else in
+this procedure would reveal that.
+
+Then confirm each Worker is reading the new database from behaviour, not
+configuration — a deploy that silently failed still lists an older
+successful one.
 
 Because the replica is complete, the indexer resumes from the copied
 `indexer_cursor` rather than re-indexing from block zero, and `notifications`
@@ -279,9 +322,21 @@ Stated because the previous revision required all of it, wrongly:
 - [ ] Per-table counts equal on both sides, verified after the switch.
 - [ ] All four Workers confirmed reading the new database from behaviour.
 - [ ] Crons restored and one full cycle observed on each Worker.
+- [ ] **Maintenance mode reversed** — routes rebound / the `503` build
+      replaced, and each mutating endpoint probed and now *accepting*.
 - [ ] One nightly backup completed **after** the import, its alert naming the
       new bucket. A backup taken before the import is not evidence.
-- [ ] The `/tmp/d1-cutover.sql` export archived somewhere durable.
+- [ ] **The export destroyed** — `shred -u /tmp/d1-cutover.raw.sql
+      /tmp/d1-cutover.sql /tmp/d1-verify.sql` — or, if a copy must persist,
+      encrypted offline and stored where legal-vault content lives, with the
+      `/tmp` copies then shredded.
+
+      > An earlier revision of this checklist said to archive it durably,
+      > contradicting the destruction instruction in §4. An operator
+      > satisfying the old gate would have kept Telegram IDs, link codes,
+      > support messages and diagnostics indefinitely, in the clear. The
+      > durable copy is the encrypted nightly backup; this file is a working
+      > artefact.
 
 Then:
 
