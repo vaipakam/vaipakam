@@ -187,7 +187,13 @@ const ORACLE_PROBE_RETRY_MS = 4_000;
 const pendingRecoveryStore = makePendingMarkerStore('alpha02.recoverPending');
 
 interface PendingRecoveryRecord {
-  txHash: Hex;
+  /** NULL when the attempt was SIGNED and handed to the wallet but the
+   *  wallet never returned a hash (Codex #1547 r8) — a send whose
+   *  JSON-RPC reply was lost is still a possible broadcast, so the
+   *  record must exist before the hash does. Reconciliation for a
+   *  hashless record skips every by-hash probe and adjudicates from the
+   *  on-chain recovery counter and the signed deadline alone. */
+  txHash: Hex | null;
   declaredSource: string;
   /** Base units, decimal string — JSON carries no bigint. */
   amount: string;
@@ -233,7 +239,15 @@ function readPendingRecovery(
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
     const r = parsed as Record<string, unknown>;
-    if (typeof r.txHash !== 'string' || !HEX32.test(r.txHash)) return null;
+    // `null` is a first-class value here (Codex #1547 r8) — the
+    // signed-but-unacknowledged attempt. Anything else must still be a
+    // well-formed hash.
+    if (
+      r.txHash !== null &&
+      (typeof r.txHash !== 'string' || !HEX32.test(r.txHash))
+    ) {
+      return null;
+    }
     if (typeof r.declaredSource !== 'string' || !isAddress(r.declaredSource)) {
       return null;
     }
@@ -261,7 +275,7 @@ function readPendingRecovery(
     }
     if (r.settled !== undefined && r.settled !== 'executed') return null;
     return {
-      txHash: r.txHash as Hex,
+      txHash: r.txHash === null ? null : (r.txHash as Hex),
       declaredSource: r.declaredSource,
       amount: r.amount,
       symbol: r.symbol,
@@ -275,19 +289,48 @@ function readPendingRecovery(
   }
 }
 
+/** Returns FALSE when the browser refused to store the record (Codex
+ *  #1547 r8) — private mode, quota, storage disabled. The caller
+ *  surfaces that as a degraded state rather than pretending the safety
+ *  record exists. */
 function writePendingRecovery(
   chainId: number,
   account: string,
   record: PendingRecoveryRecord,
-): void {
-  pendingRecoveryStore.write(
+): boolean {
+  return pendingRecoveryStore.write(
     chainId,
     account.toLowerCase(),
     JSON.stringify(record),
   );
 }
 
-function clearPendingRecovery(chainId: number, account: string): void {
+/**
+ * Drop the stored record ONLY when it is the attempt being settled
+ * (Codex #1547 r8).
+ *
+ * An unconditional clear could delete a NEWER record another tab wrote
+ * for the same wallet — throwing away that tab's pending card (or its
+ * executed LOCK) over an outcome that belongs to an older attempt. So
+ * the clear is identity-matched: by transaction hash when one is
+ * known, and by the signed recovery nonce for a hashless record.
+ */
+function clearPendingRecoveryIfMatches(
+  chainId: number,
+  account: string,
+  txHash: Hex | null,
+  recoveryNonce?: string,
+): void {
+  const stored = readPendingRecovery(chainId, account);
+  if (stored === null) return;
+  const matches =
+    txHash !== null
+      ? stored.txHash !== null &&
+        stored.txHash.toLowerCase() === txHash.toLowerCase()
+      : stored.txHash === null &&
+        recoveryNonce !== undefined &&
+        stored.recoveryNonce === recoveryNonce;
+  if (!matches) return;
   pendingRecoveryStore.write(chainId, account.toLowerCase(), null);
 }
 
@@ -415,12 +458,47 @@ type Step =
    *  absent AND its signature has expired). */
   | {
       kind: 'unknownOutcome';
-      txHash: Hex;
+      /** NULL for a signed attempt the wallet never acknowledged
+       *  (Codex #1547 r8) — the card renders without an explorer link
+       *  rather than linking a hash that does not exist. */
+      txHash: Hex | null;
       pending?: boolean;
       replaced?: boolean;
       receiptless?: 'executed' | 'never';
       ctx?: SubmittedContext;
     };
+
+/**
+ * The card a PERSISTED record rehydrates to. Shared by the identity
+ * effect, the cross-tab `storage` listener and the pre-sign re-read
+ * (Codex #1547 r8) so all three land on exactly the same state.
+ *
+ * A record marked `settled: 'executed'` rehydrates as the TERMINAL
+ * locked card, not as a pending one (Codex #1547 r7) — the verdict "an
+ * attempt was processed" must survive a reload, or refreshing the page
+ * would hand the user a fresh form over a recovery that may have moved
+ * only part of the surplus.
+ */
+function stepFromRecord(stored: PendingRecoveryRecord): Step {
+  const ctx: SubmittedContext = {
+    declaredSource: stored.declaredSource,
+    amount: BigInt(stored.amount),
+    symbol: stored.symbol,
+    decimals: stored.decimals,
+    recoveryNonce: BigInt(stored.recoveryNonce),
+    ...(stored.deadline === undefined
+      ? {}
+      : { deadline: BigInt(stored.deadline) }),
+  };
+  return stored.settled === 'executed'
+    ? {
+        kind: 'unknownOutcome',
+        txHash: stored.txHash,
+        receiptless: 'executed',
+        ctx,
+      }
+    : { kind: 'unknownOutcome', txHash: stored.txHash, pending: true, ctx };
+}
 
 /**
  * The outcome event a mined receipt carries, or null when none of the
@@ -484,6 +562,13 @@ export function Recover() {
   // wallet, which is what reveals the (still explicit) new-recovery
   // action. Reset by the identity effect below.
   const [executedAcked, setExecutedAcked] = useState(false);
+  // The browser refused to persist the safety record (Codex #1547 r8) —
+  // private mode, quota, storage disabled. NON-blocking: the recovery
+  // still runs, but the user is told plainly that a reload will lose
+  // the app's ability to pick this attempt back up, so they check their
+  // wallet before retrying. Silently reporting success here was the
+  // bug: the flow behaved as if the record existed.
+  const [persistFailed, setPersistFailed] = useState(false);
   // Generation-KEYED in-flight mutex (Codex #1547 r4): stores the
   // identity generation of the running signAndSubmit, or null when
   // idle. Keying by generation (instead of a boolean) means the reset
@@ -527,41 +612,40 @@ export function Recover() {
     setError(null);
     setReconcileError(null);
     setExecutedAcked(false);
+    setPersistFailed(false);
     oracleAutoRetriesRef.current = 0;
     const chainId = walletChain?.chainId;
     const stored =
       address && chainId !== undefined
         ? readPendingRecovery(chainId, address)
         : null;
-    if (stored === null) {
-      setStep({ kind: 'form' });
-      return;
-    }
-    const ctx: SubmittedContext = {
-      declaredSource: stored.declaredSource,
-      amount: BigInt(stored.amount),
-      symbol: stored.symbol,
-      decimals: stored.decimals,
-      recoveryNonce: BigInt(stored.recoveryNonce),
-      ...(stored.deadline === undefined
-        ? {}
-        : { deadline: BigInt(stored.deadline) }),
+    setStep(stored === null ? { kind: 'form' } : stepFromRecord(stored));
+  }, [address, walletChain?.chainId]);
+
+  // CROSS-TAB rehydrate (Codex #1547 r8): a second tab on the same
+  // wallet must not sit on a blank form while the first tab has a
+  // recovery in flight — localStorage `storage` events fire in every
+  // OTHER tab of the origin, so pick the record up as soon as it is
+  // written. Only a form/review state is replaced: a card that already
+  // describes an attempt (or an in-flight signature) is never
+  // overwritten by a background event.
+  useEffect(() => {
+    const chainId = walletChain?.chainId;
+    if (!address || chainId === undefined) return;
+    const ownKey = pendingRecoveryStore.key(chainId, address.toLowerCase());
+    const onStorage = (event: StorageEvent) => {
+      // `key === null` is a whole-storage clear, which also concerns us.
+      if (event.key !== null && event.key !== ownKey) return;
+      const stored = readPendingRecovery(chainId, address);
+      if (stored === null) return;
+      setStep((current) =>
+        current.kind === 'form' || current.kind === 'review'
+          ? stepFromRecord(stored)
+          : current,
+      );
     };
-    // A record marked `settled: 'executed'` rehydrates as the TERMINAL
-    // locked card, not as a pending one (Codex #1547 r7) — the verdict
-    // "an attempt was processed" must survive a reload, or refreshing
-    // the page would hand the user a fresh form over a recovery that
-    // may have moved only part of the surplus.
-    setStep(
-      stored.settled === 'executed'
-        ? {
-            kind: 'unknownOutcome',
-            txHash: stored.txHash,
-            receiptless: 'executed',
-            ctx,
-          }
-        : { kind: 'unknownOutcome', txHash: stored.txHash, pending: true, ctx },
-    );
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, [address, walletChain?.chainId]);
 
   // Fail-safe availability probe: `recoverStuckERC20` HARD-REQUIRES
@@ -639,8 +723,20 @@ export function Recover() {
         const code = await publicClient.getCode({ address });
         // viem answers `undefined` for an account with no code; some
         // nodes answer the empty-bytes literal instead.
-        const isContract = code !== undefined && code !== '0x' && code !== '0x0';
-        if (!cancelled) setAccountKind(isContract ? 'contract' : 'eoa');
+        const raw = (code ?? '0x').toLowerCase();
+        const hasCode = raw !== '0x' && raw !== '0x0';
+        // EIP-7702 DELEGATED EOAs are still EOAs (Codex #1547 r8): an
+        // account that signed a 7702 authorization carries exactly
+        // 0xef0100 ‖ <delegate address> as its code, but its private
+        // key still signs ordinary ECDSA messages — so
+        // `ECDSA.recover(...) == msg.sender` holds and recovery works
+        // fine. Blocking on "any code at all" would lock every
+        // smart-account-upgraded EOA out of recovery. Only NON-
+        // delegated code is a true contract account.
+        const delegatedEoa = raw.startsWith('0xef0100');
+        if (!cancelled) {
+          setAccountKind(hasCode && !delegatedEoa ? 'contract' : 'eoa');
+        }
       } catch {
         if (!cancelled) setAccountKind('eoa'); // fail OPEN
       }
@@ -810,6 +906,12 @@ export function Recover() {
     // (or anything after it) throws — the catch below must not bounce
     // back to review with the sign button re-armed.
     let submittedTxHash: Hex | null = null;
+    // Set the moment the SIGNATURE exists and the send has been handed
+    // to the wallet (Codex #1547 r8). From then on a rejection cannot
+    // prove the transaction never went out — only a READ receipt can —
+    // so the catch must land on the pending card, hash or no hash.
+    // Cleared again only by a definitively-read reverted receipt.
+    let attemptSigned = false;
     // What a terminal card needs beyond the receipt (Codex #1547 r5) —
     // captured alongside the hash so the pending card can hand it to
     // the reconcile action.
@@ -883,9 +985,39 @@ export function Recover() {
 
       // (b) Live re-screen of the connected wallet itself — the hook's
       // cached read can be up to five minutes old; a flagged wallet
-      // must not reach the wallet prompt. Throws the user-facing
-      // message when flagged (surfaces via captureTxError below).
-      await assertWalletNotSanctionedLive(publicClient, diamond, address);
+      // must not reach the wallet prompt.
+      //
+      // FAIL-CLOSED (Codex #1547 r8): the default posture is fail-OPEN
+      // ("the contract screens this path anyway"), which is wrong here
+      // — we just proved, one check above, that the screening oracle
+      // is the thing deciding this transaction's outcome, and an
+      // unreadable wallet-specific query is the SAME class of failure
+      // as an unreadable availability probe. Waving it through let a
+      // user sign against a screen nobody could read. So an unreadable
+      // screen aborts into the same retryable blocked treatment the
+      // availability probe gets, and a FLAGGED wallet aborts with its
+      // own definite message.
+      try {
+        await assertWalletNotSanctionedLive(publicClient, diamond, address, {
+          failClosed: true,
+        });
+      } catch (err) {
+        // Distinguish the two verdicts by the message the helper
+        // throws: a read failure is a passing network problem the user
+        // can retry out of (and should leave the page's own gate
+        // showing that), a flagged wallet is a settled fact.
+        const unreadableScreen =
+          err instanceof Error &&
+          err.message === copy.errors.sanctionsCheckRetry;
+        if (unreadableScreen && genRef.current === gen) {
+          // Refill the auto-retry budget: a NEW observation, exactly as
+          // the availability probe's own catch does.
+          oracleAutoRetriesRef.current = 0;
+          setOracleState('unreachable');
+        }
+        abortToReview(captureTxError(err));
+        return;
+      }
 
       // (c) The surplus cap, re-read at ONE fresh block (Codex #1547
       // r1) — the reviewed amount may exceed what is recoverable NOW
@@ -1001,6 +1133,21 @@ export function Recover() {
         return;
       }
 
+      // (f) LAST-MOMENT re-read of the persisted record (Codex #1547
+      // r8) — the safety-critical half of the cross-tab guard. Another
+      // tab (or this one, before a reload) may have signed and sent a
+      // recovery for this same wallet while this flow was walking
+      // through its checks. Signing a second declaration over that is
+      // the double recovery the whole pending machinery exists to
+      // prevent, so refuse and show the attempt that already exists.
+      const alreadyPending = readPendingRecovery(walletChain.chainId, address);
+      if (alreadyPending !== null) {
+        if (genRef.current !== gen) return;
+        setStep(stepFromRecord(alreadyPending));
+        setError(copy.recover.errAttemptInFlight);
+        return;
+      }
+
       const signature = await walletClient.signTypedData({
         account: address,
         domain,
@@ -1017,6 +1164,54 @@ export function Recover() {
         },
       });
 
+      submittedCtx = {
+        declaredSource,
+        amount,
+        symbol: snapshot.symbol,
+        decimals: snapshot.decimals,
+        recoveryNonce: nonce,
+        deadline,
+      };
+      // PERSIST BEFORE THE SEND (Codex #1547 r8) — not after it.
+      //
+      // `writeContract` handing the transaction to the wallet and the
+      // wallet's JSON-RPC reply reaching us are two different events. A
+      // dropped reply (wallet closed, extension reloaded, mobile deep
+      // link lost) rejects the await with NO hash while the transaction
+      // is already in the mempool — and the old shape read that as
+      // "pre-broadcast", bouncing back to an armed review card over a
+      // recovery that may be mining. So the uncertain attempt is
+      // recorded first, WITHOUT a hash; the hash is filled in below
+      // once the wallet actually returns one.
+      const persistedRecord: PendingRecoveryRecord = {
+        txHash: null,
+        declaredSource,
+        amount: amount.toString(),
+        symbol: snapshot.symbol,
+        decimals: snapshot.decimals,
+        recoveryNonce: nonce.toString(),
+        // The signed expiry travels with the record (Codex #1547 r7) —
+        // a later reconcile can only call an absent transaction dead
+        // once chain time is past it.
+        deadline: deadline.toString(),
+      };
+      // Written under the identity that signed it (not the current
+      // one), and deliberately NOT generation-guarded: the signature is
+      // real regardless of who is connected by the time this line runs.
+      // A REFUSED write is surfaced, never swallowed (Codex #1547 r8).
+      if (!writePendingRecovery(walletChain.chainId, address, persistedRecord)) {
+        if (genRef.current === gen) setPersistFailed(true);
+      }
+      // From here a rejection is NOT provably pre-broadcast.
+      attemptSigned = true;
+      const forgetPending = (hash: Hex | null) =>
+        clearPendingRecoveryIfMatches(
+          walletChain.chainId,
+          address,
+          hash,
+          nonce.toString(),
+        );
+
       if (genRef.current !== gen) return; // Codex #1547 r3
       setStep({ kind: 'submitting' });
       const txHash = await walletClient.writeContract({
@@ -1028,34 +1223,16 @@ export function Recover() {
         account: address,
       });
       submittedTxHash = txHash; // broadcast — no return-to-review past here (Codex #1547 r4)
-      submittedCtx = {
-        declaredSource,
-        amount,
-        symbol: snapshot.symbol,
-        decimals: snapshot.decimals,
-        recoveryNonce: nonce,
-        deadline,
-      };
-      // PERSIST the broadcast the moment it exists (Codex #1547 r6) —
-      // before any await that could be interrupted by a reload, an
-      // account switch, or a closed tab. Written under the identity
-      // that broadcast it (not the current one), and deliberately NOT
-      // generation-guarded: the transaction is real regardless of who
-      // is connected by the time this line runs.
-      writePendingRecovery(walletChain.chainId, address, {
-        txHash,
-        declaredSource,
-        amount: amount.toString(),
-        symbol: snapshot.symbol,
-        decimals: snapshot.decimals,
-        recoveryNonce: nonce.toString(),
-        // The signed expiry travels with the record (Codex #1547 r7) —
-        // a later reconcile can only call an absent transaction dead
-        // once chain time is past it.
-        deadline: deadline.toString(),
-      });
-      const forgetPending = () =>
-        clearPendingRecovery(walletChain.chainId, address);
+      // Upgrade the hashless record now that the wallet named the
+      // transaction — the by-hash probes become available again.
+      if (
+        !writePendingRecovery(walletChain.chainId, address, {
+          ...persistedRecord,
+          txHash,
+        })
+      ) {
+        if (genRef.current === gen) setPersistFailed(true);
+      }
       // Wallet REPLACEMENTS are followed, not lost (Codex #1547 r5): a
       // speed-up / cancel from the wallet mines a DIFFERENT hash under
       // the same nonce. Without `onReplaced` the wait would give up on
@@ -1066,11 +1243,12 @@ export function Recover() {
         onReplaced: (event) => {
           // Every reason means the hash the user was shown is not the
           // one that mines — but the REASON is kept (Codex #1547 r7),
-          // because only 'cancelled' / 'replaced' license the definite
-          // "nothing was recovered" copy. A 'repriced' replacement
+          // because only 'cancelled' licenses the definite "nothing was
+          // recovered" copy (narrowed in r8). A 'repriced' replacement
           // carries the SAME calldata, destination and value per viem,
-          // so it is still the recovery transaction and an
-          // event-less success receipt on it is an unreadable outcome.
+          // so it is still the recovery transaction; a generic
+          // 'replaced' only says destination/value/input DIFFER, which
+          // a second recovery with other parameters also satisfies.
           replacement.reason = event.reason;
           // Keep the post-broadcast marker on the hash that is actually
           // live, so a later throw parks the pending card on it.
@@ -1078,15 +1256,14 @@ export function Recover() {
           // Re-point the PERSISTED record at the live hash too (Codex
           // #1547 r6) — a receipt lookup after a reload then resolves
           // directly instead of falling back to the nonce comparison.
-          writePendingRecovery(walletChain.chainId, address, {
-            txHash: event.transaction.hash,
-            declaredSource,
-            amount: amount.toString(),
-            symbol: snapshot.symbol,
-            decimals: snapshot.decimals,
-            recoveryNonce: nonce.toString(),
-            deadline: deadline.toString(),
-          });
+          if (
+            !writePendingRecovery(walletChain.chainId, address, {
+              ...persistedRecord,
+              txHash: event.transaction.hash,
+            })
+          ) {
+            if (genRef.current === gen) setPersistFailed(true);
+          }
         },
       });
       // From here on the RECEIPT's hash is the authority (Codex #1547
@@ -1102,8 +1279,12 @@ export function Recover() {
       // the normal return-to-review path for this one post-broadcast
       // error (Codex #1547 r4).
       if (receipt.status !== 'success') {
+        forgetPending(minedHash); // settled: nothing to rehydrate (Codex #1547 r6)
         submittedTxHash = null;
-        forgetPending(); // settled: nothing to rehydrate (Codex #1547 r6)
+        // A READ reverted receipt is the one post-signature fact that
+        // definitively rules out a live broadcast (Codex #1547 r8), so
+        // the signed-attempt marker is released too.
+        attemptSigned = false;
         throw new Error(copy.recover.errTxReverted);
       }
 
@@ -1128,7 +1309,7 @@ export function Recover() {
       // card over an outcome the user has already been shown. In
       // particular the fork spec's happy path must leave nothing
       // behind for the next run.
-      forgetPending();
+      forgetPending(minedHash);
       if (outcome) {
         // Own-receipt floor (Codex #1547 r1): a recovery moves vault
         // balances (and a ban flips sanctions-derived state) — push the
@@ -1154,37 +1335,42 @@ export function Recover() {
         // step with the tx link and no sign-again path.
         publishReceiptInvalidation(queryClient);
         if (genRef.current !== gen) return;
-        // A CANCELLED (or wholesale replaced) transaction with no
-        // recovery event is not an unreadable outcome (Codex #1547
-        // r5) — it is a definite "nothing was recovered": the wallet
-        // took the nonce and whatever mined did something else. Say
-        // that, and link the transaction that actually mined.
-        //
-        // A REPRICED replacement is the opposite (Codex #1547 r7):
-        // viem defines it as the same calldata, destination and value
-        // re-sent at a higher fee, so the transaction that mined IS
-        // this recovery. An event-less success receipt on it means the
-        // outcome couldn't be read — the plain unknown-outcome card —
-        // never "nothing happened".
+        // ONLY a CANCEL licenses the definite "nothing was recovered"
+        // copy (Codex #1547 r8, narrowing r5). viem's replacement
+        // reasons are not equally informative:
+        //   'cancelled' — the wallet sent a zero-value self-transfer
+        //                 under the same nonce: nothing was recovered,
+        //                 and that IS a fact.
+        //   'repriced'  — same calldata, destination and value at a
+        //                 higher fee (r7): the transaction that mined
+        //                 IS this recovery, so an event-less success
+        //                 receipt is an unreadable OUTCOME.
+        //   'replaced'  — means only that destination, value or input
+        //                 DIFFER. Another `recoverStuckERC20` with
+        //                 different parameters satisfies that exactly,
+        //                 so it is NOT proof no recovery happened.
+        // Everything but 'cancelled' therefore falls through to the
+        // outcome-unknown card.
         setStep({
           kind: 'unknownOutcome',
           txHash: minedHash,
-          replaced:
-            replacement.reason === 'cancelled' ||
-            replacement.reason === 'replaced',
+          replaced: replacement.reason === 'cancelled',
         });
       }
     } catch (err) {
-      // Post-broadcast failure (Codex #1547 r4): writeContract already
-      // RETURNED a hash, so the tx is in the mempool and may still mine
-      // — returning to review would re-arm the sign button over a
-      // recovery that may yet complete. Invalidate (state may move any
-      // moment) and park on the terminal unknown-outcome card instead;
-      // the `pending` flag picks the "submitted but unconfirmed" body.
+      // Post-SIGNATURE failure (Codex #1547 r4, widened in r8): either
+      // writeContract returned a hash (the tx is in the mempool and may
+      // still mine) or the send was handed to the wallet and the reply
+      // never came back (it may equally be in the mempool — we simply
+      // don't know its hash). Returning to review would re-arm the sign
+      // button over a recovery that may yet complete. Invalidate (state
+      // may move any moment) and park on the terminal unknown-outcome
+      // card instead; the `pending` flag picks the "submitted but
+      // unconfirmed" body, and a NULL hash picks its hashless variant.
       // The invalidation publishes even for a stale generation (same
       // rule as the decoded outcomes); only the step commit is
       // identity-bound.
-      if (submittedTxHash !== null) {
+      if (submittedTxHash !== null || attemptSigned) {
         publishReceiptInvalidation(queryClient);
         if (genRef.current !== gen) return;
         // Carry the submitted context (Codex #1547 r5) so the pending
@@ -1222,7 +1408,7 @@ export function Recover() {
    * stored hash instead: only once the receipt resolves — with any
    * outcome — does a fresh-form action become available.
    */
-  async function reconcilePending(txHash: Hex, ctx?: SubmittedContext) {
+  async function reconcilePending(txHash: Hex | null, ctx?: SubmittedContext) {
     // Identity generation, same discipline as signAndSubmit (Codex
     // #1547 r3): an account/chain change mid-read must not commit a
     // step belonging to the previous identity.
@@ -1239,7 +1425,15 @@ export function Recover() {
     const diamond = walletChain.diamondAddress;
     const chainId = walletChain.chainId;
     const account = address;
-    const forgetPending = () => clearPendingRecovery(chainId, account);
+    // Identity-matched clear (Codex #1547 r8) — never delete a NEWER
+    // record another tab wrote for this wallet.
+    const forgetPending = () =>
+      clearPendingRecoveryIfMatches(
+        chainId,
+        account,
+        txHash,
+        ctx?.recoveryNonce.toString(),
+      );
     reconcileRef.current = gen;
     setReconcileClaim(gen);
     setReconcileError(null);
@@ -1257,9 +1451,16 @@ export function Recover() {
       // reason for the miss is treated the same, because the counter
       // read that follows is authoritative regardless of why the
       // receipt was unreadable.
-      const receipt = await publicClient
-        .getTransactionReceipt({ hash: txHash })
-        .catch(() => null);
+      //
+      // A HASHLESS record (Codex #1547 r8) skips every by-hash probe
+      // outright — there is no hash to look up — and goes straight to
+      // the counter-vs-deadline adjudication.
+      const receipt =
+        txHash === null
+          ? null
+          : await publicClient
+              .getTransactionReceipt({ hash: txHash })
+              .catch(() => null);
       if (receipt === null) {
         await reconcileWithoutReceipt(txHash, ctx, {
           gen,
@@ -1288,9 +1489,23 @@ export function Recover() {
       if (receipt.status !== 'success') {
         // Definitive: the transaction mined and REVERTED — nothing
         // moved and the on-chain recovery nonce is untouched, so a
-        // retry is safe. Same landing the submit path gives a reverted
-        // receipt: back to review with the reason.
-        setStep({ kind: 'review' });
+        // retry is safe.
+        //
+        // WHERE to land depends on whether a review card can even be
+        // rendered (Codex #1547 r8). When this reconcile started from a
+        // REHYDRATED record — a reload, or a switch back to this
+        // identity — the form inputs and the token lookup behind them
+        // are empty, so 'review' would show a card with no token, no
+        // sender and no amount, and its sign button permanently
+        // unusable. Fall back to the fresh FORM in that case and carry
+        // the reason across; the reviewed fields are only intact when
+        // the reconcile ran in the same session that filled them.
+        if (canReview) {
+          setStep({ kind: 'review' });
+        } else {
+          setConfirmInput('');
+          setStep({ kind: 'form' });
+        }
         setError(copy.recover.errTxReverted);
         return;
       }
@@ -1381,7 +1596,10 @@ export function Recover() {
    * recovery counter already answers "did a recovery happen".
    */
   async function reconcileWithoutReceipt(
-    txHash: Hex,
+    /** NULL for a signed attempt the wallet never named (Codex #1547
+     *  r8): every by-hash probe is skipped and the verdict rests on the
+     *  recovery counter and the signed deadline alone. */
+    txHash: Hex | null,
     ctx: SubmittedContext | undefined,
     scope: {
       gen: number;
@@ -1422,7 +1640,7 @@ export function Recover() {
       // reload clears is not a lock. Keyed to the identity that
       // broadcast it, so the write happens regardless of who is
       // connected now.
-      writePendingRecovery(chainId, account, {
+      const locked = writePendingRecovery(chainId, account, {
         txHash,
         declaredSource: ctx.declaredSource,
         amount: ctx.amount.toString(),
@@ -1434,6 +1652,9 @@ export function Recover() {
           : { deadline: ctx.deadline.toString() }),
         settled: 'executed',
       });
+      // A lock this browser refused to store is a lock a reload clears
+      // (Codex #1547 r8) — say so rather than imply it survives.
+      if (!locked && genRef.current === gen) setPersistFailed(true);
       publishReceiptInvalidation(queryClient, ['sanctions']);
       if (genRef.current !== gen) return;
       setStep({ kind: 'unknownOutcome', txHash, receiptless: 'executed', ctx });
@@ -1447,14 +1668,27 @@ export function Recover() {
     //   unreadable — the probe failed, or the transaction is mined but
     //                its receipt wasn't (a contradiction we can't
     //                resolve): decide NOTHING.
-    const presence = await publicClient
-      .getTransaction({ hash: txHash })
-      .then((tx) =>
-        tx.blockNumber === null ? ('queued' as const) : ('unreadable' as const),
-      )
-      .catch((err: unknown) =>
-        isTransactionNotFound(err) ? ('absent' as const) : ('unreadable' as const),
-      );
+    //
+    // A HASHLESS attempt (Codex #1547 r8) has nothing to probe — the
+    // wallet never told us what it sent. Treat it as 'absent' and let
+    // the DEADLINE do the deciding: an expired signature can no longer
+    // be accepted by the contract, whatever the wallet did with it,
+    // which is exactly the certainty this verdict needs.
+    const presence =
+      txHash === null
+        ? ('absent' as const)
+        : await publicClient
+            .getTransaction({ hash: txHash })
+            .then((tx) =>
+              tx.blockNumber === null
+                ? ('queued' as const)
+                : ('unreadable' as const),
+            )
+            .catch((err: unknown) =>
+              isTransactionNotFound(err)
+                ? ('absent' as const)
+                : ('unreadable' as const),
+            );
     if (presence !== 'absent') {
       if (genRef.current !== gen) return;
       setReconcileError(copy.recover.reconcileStillPending);
@@ -1513,13 +1747,20 @@ export function Recover() {
     reconcileClaim !== null && reconcileClaim === genRef.current;
 
   /** Back to a blank form, nothing carried over — the same shape the
-   *  account/chain effect resets to. Every caller has either already
-   *  dropped the persisted record or is explicitly discarding it, so
-   *  the clear is unconditional here: no reload may resurrect a card
-   *  the user has deliberately left (Codex #1547 r6/r7). */
+   *  account/chain effect resets to. The persisted record is discarded
+   *  so no reload resurrects a card the user has deliberately left
+   *  (Codex #1547 r6/r7) — but only when it IS the attempt this card
+   *  describes (Codex #1547 r8): a newer record another tab wrote for
+   *  the same wallet must survive, or leaving one resolved card would
+   *  silently disarm the other tab's live pending card. */
   const resetToFreshForm = () => {
-    if (address && walletChain) {
-      clearPendingRecovery(walletChain.chainId, address);
+    if (address && walletChain && step.kind === 'unknownOutcome') {
+      clearPendingRecoveryIfMatches(
+        walletChain.chainId,
+        address,
+        step.txHash,
+        step.ctx?.recoveryNonce.toString(),
+      );
     }
     setTokenInput('');
     setSourceInput('');
@@ -1528,6 +1769,7 @@ export function Recover() {
     setError(null);
     setReconcileError(null);
     setExecutedAcked(false);
+    setPersistFailed(false);
     setStep({ kind: 'form' });
   };
 
@@ -1611,7 +1853,9 @@ export function Recover() {
           <span className="banner-body">
             <strong>
               {step.pending
-                ? copy.recover.unknownOutcomePendingTitle
+                ? step.txHash === null
+                  ? copy.recover.unknownOutcomeSignedTitle
+                  : copy.recover.unknownOutcomePendingTitle
                 : step.receiptless === 'executed'
                   ? copy.recover.recoveryLandedTitle
                   : step.receiptless === 'never'
@@ -1629,7 +1873,9 @@ export function Recover() {
                 must name what the counter actually proves, without
                 claiming a cause (replaced vs dropped) it can't see. */}
             {step.pending
-              ? copy.recover.unknownOutcomePendingBody
+              ? step.txHash === null
+                ? copy.recover.unknownOutcomeSignedBody
+                : copy.recover.unknownOutcomePendingBody
               : step.receiptless === 'executed'
                 ? copy.recover.recoveryLandedBody
                 : step.receiptless === 'never'
@@ -1643,12 +1889,22 @@ export function Recover() {
                 the original the wallet dropped. On the receipt-less
                 cards no mined hash is knowable, so the link is the
                 stored SUBMISSION and is labelled as such (Codex #1547
-                r6). */}
-            <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
-              {step.receiptless
-                ? copy.recover.viewOriginalTx
-                : copy.recover.viewTx}
-            </a>
+                r6). When the wallet never returned a hash at ALL there
+                is nothing to link (Codex #1547 r8) — say so instead of
+                rendering a dead explorer URL. */}
+            {step.txHash === null ? (
+              copy.recover.noTxLink
+            ) : (
+              <a
+                href={explorerTx(step.txHash)}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                {step.receiptless
+                  ? copy.recover.viewOriginalTx
+                  : copy.recover.viewTx}
+              </a>
+            )}
             <br />
             {step.pending ? (
               // NO plain "start over" on the pending variant (Codex
@@ -2072,6 +2328,20 @@ export function Recover() {
               ))}
             </ul>
           </span>
+        </div>
+      ) : null}
+
+      {/* Degraded-state honesty (Codex #1547 r8): this browser refused
+          to store the safety record, so a reload or a closed tab loses
+          the app's ability to pick the attempt back up. Non-blocking —
+          the flow ran anyway — but the user has to know, because the
+          correct next move is "check your wallet before retrying",
+          not "try again". Rendered alongside whatever card is showing,
+          so it is visible on both the review and the pending card. */}
+      {persistFailed ? (
+        <div className="banner banner-warn" role="alert">
+          <TriangleAlert aria-hidden />
+          <span className="banner-body">{copy.recover.persistFailedWarning}</span>
         </div>
       ) : null}
 

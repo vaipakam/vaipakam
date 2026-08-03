@@ -97,7 +97,59 @@ Smart-contract wallets (a Safe and similar) are now told up front that
 recovery can't be used from them. Recovery has to be authorised by a
 signature from an ordinary wallet address, which those accounts cannot
 provide, so the page says so instead of walking the user through the
-typed confirmation and a transaction that could only fail.
+typed confirmation and a transaction that could only fail. Everyday
+wallets that have opted into the newer smart-account upgrade — the one
+that adds features to an ordinary wallet without changing its address —
+are explicitly not caught by that block: they still sign with the same
+key, so recovery works for them and the page now recognises them as the
+ordinary wallets they are instead of turning them away.
+
+The page no longer waits for a transaction hash before it starts
+protecting the user. From the moment the declaration is signed and the
+send is handed to the wallet, the attempt is treated as possibly on its
+way. A wallet that takes the send and never answers used to drop the
+user back on an armed confirmation card, inviting a second signature
+over a recovery that may already have gone out; now it lands on the
+unresolved-submission card in its honest form — "we don't know whether
+this was sent", no transaction link to offer, and a pointer to the
+wallet's own activity list. Re-checking from there reads the network
+directly: if a recovery was processed for the account it becomes the
+same lasting lock as any other processed attempt, and if none was and
+the signed approval has since expired, it can safely start over.
+
+Two tabs open on the same wallet no longer work against each other. The
+page re-reads its record of an outstanding submission immediately before
+asking for a signature and refuses to sign while one exists, showing
+that submission instead; a tab sitting on the form also picks up a
+submission the other tab records, so both show the same state. And when
+a submission is resolved and forgotten, only that submission is
+forgotten — a newer one recorded in the meantime survives, instead of
+being quietly wiped along with it.
+
+If the browser refuses to store that record at all — private browsing,
+storage switched off, storage full — the page now says so on the card
+instead of carrying on as though the record exists. It doesn't block the
+recovery; it warns that closing or reloading the tab will lose the
+page's ability to pick the attempt back up, and that the right next move
+is to check the wallet's activity before trying anything again.
+
+Two smaller corrections. A wallet replacement is no longer reported as
+"nothing was recovered" unless the wallet actually cancelled: a
+replacement only means the transaction that mined carried different
+instructions, and "different instructions" equally describes a second
+recovery for another token — so anything short of a cancellation is now
+reported as an outcome that couldn't be read. And when a re-check finds
+the transaction was rejected but the page no longer holds the details
+that were originally reviewed (the usual case after a reload), it now
+returns a fresh, usable form carrying the reason instead of an empty
+confirmation card.
+
+The last-moment screening check on the connected wallet itself now fails
+closed. Recovery's result is decided by that screening service, so a
+wallet check the page cannot read is not permission to sign; an
+unreadable check now leaves the same retryable blocked state an
+unreachable availability check produces, rather than being waved through
+as "clean".
 
 Finally, the page now separates "this network has no screening service"
 from "we couldn't reach it to find out". The first is permanent and is

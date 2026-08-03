@@ -1465,6 +1465,34 @@ const copySource = {
     // recover a second time.
     unknownOutcomePendingBody:
       'The transaction was submitted, but we couldn’t read its confirmation — it may still complete in the background. Do not sign again: check it again below once it has had a moment to settle, or open the transaction link to see what happened.',
+    // HASHLESS variant (Codex #1547 r8): you signed, the app asked your
+    // wallet to send it, and the wallet never came back with an answer
+    // — so we have no transaction reference at all. That is NOT the
+    // same as "it wasn't sent": a send whose reply was lost is still
+    // out there. Treated as pending until the network can say
+    // otherwise, and it must not re-arm the sign button.
+    unknownOutcomeSignedTitle: 'We don’t know whether this was sent',
+    unknownOutcomeSignedBody:
+      'You signed the declaration and your wallet was asked to send the recovery, but it never confirmed back — so we can’t tell whether it went out. Do not sign again: check below in a moment and we’ll read the network directly. Your wallet’s own activity list is the other place to look.',
+    // The pending/terminal cards normally link the transaction; on the
+    // hashless variant there is nothing to link to, so say so rather
+    // than render a dead link.
+    noTxLink:
+      'There’s no transaction link to open — your wallet never returned one. Check your wallet’s activity list instead.',
+    // Cross-tab / re-entry guard (Codex #1547 r8): another tab (or an
+    // earlier attempt in this one) already has a recovery in flight or
+    // a processed attempt on record for this wallet. Signing a second
+    // declaration over that is exactly the double recovery this flow
+    // exists to prevent, so the sign is refused and the existing card
+    // is shown instead.
+    errAttemptInFlight:
+      'Nothing was signed and nothing was sent: this wallet already has a recovery attempt on record on this network. Resolve that one first — it’s shown above.',
+    // Degraded-state honesty (Codex #1547 r8): this browser refused to
+    // store the safety record (private mode, storage full, storage
+    // disabled). The flow still works, but the record that would let
+    // the app pick a recovery back up after a reload does not exist.
+    persistFailedWarning:
+      'This browser won’t let the app save its safety record for this recovery, so if you close or reload this tab we won’t be able to pick it back up. Nothing is wrong with your tokens — but before you try again, check your wallet’s activity list to see whether the recovery already went out.',
     // The pending card's ONLY way forward (Codex #1547 r5) — re-reads
     // the receipt for the stored hash. A plain "start over" here would
     // throw the hash away while the transaction may still be mining.
@@ -1521,13 +1549,20 @@ const copySource = {
     // Labels the STORED hash honestly on the receipt-less cards: it is
     // what the user submitted, which is not necessarily what mined.
     viewOriginalTx: 'View the transaction you submitted (your wallet may have replaced it)',
-    // Wallet-replacement outcome (Codex #1547 r5): the wallet replaced
-    // (sped up / cancelled) the original transaction and the one that
+    // Wallet-CANCEL outcome (Codex #1547 r5, narrowed in r8): the
+    // wallet cancelled the original transaction and the one that
     // actually mined carries no recovery event — so NOTHING was
     // recovered. Must not read as "the recovery may have completed".
-    replacedTitle: 'Your wallet replaced the transaction',
+    //
+    // Deliberately NOT used for a generic "replaced" replacement any
+    // more (Codex #1547 r8): a replacement only means the destination,
+    // value or input differ from the original — it can still be
+    // another recovery with different parameters. Only a CANCEL is
+    // proof that nothing was recovered; everything else falls back to
+    // the outcome-unknown card.
+    replacedTitle: 'Your wallet cancelled the transaction',
     replacedCancelledBody:
-      'Your wallet replaced this recovery with a different transaction — a speed-up or a cancel — and the transaction that actually went through did not perform any recovery. Nothing was recovered and your tokens stayed where they were. You can start over below.',
+      'Your wallet cancelled this recovery and sent an empty transaction in its place, so no recovery was performed. Nothing was recovered and your tokens stayed where they were. You can start over below.',
     startOver: 'Start over',
     // Pre-sign abort reasons (Codex #1547 r1) — each one blocks BEFORE
     // the wallet signature so the user never signs against stale or
