@@ -22,7 +22,7 @@
   },
   // D1 — windowed-advisory streak state + alert repeat suppression.
   //
-  // SEPARATE database from the shared `vaipakam-archive` that
+  // SEPARATE database from the shared `vaipakam-warm` that
   // apps/{indexer,keeper,agent} bind to, for the same trust-boundary
   // reason `ops/lz-watcher` had its own: this Worker is internal ops
   // only, and co-locating its alerting bookkeeping with user-facing
@@ -53,7 +53,7 @@
   //                      workers.dev URL is public, so the endpoint is
   //                      fail-CLOSED. `openssl rand -hex 32`.
   //   TG_OPS_BOT_TOKEN — the OPS-internal Telegram bot, shared with
-  //                      ops/offchain-data-archive. DELIBERATELY NOT
+  //                      ops/offchain-data-warm. DELIBERATELY NOT
   //                      `TG_BOT_TOKEN`, which is the user-facing bot
   //                      apps/keeper + apps/agent post with. See
   //                      CLAUDE.md, "Two Telegram bots".

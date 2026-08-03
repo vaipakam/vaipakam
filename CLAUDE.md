@@ -273,7 +273,7 @@ arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
 all bind to **one shared D1 database** — `vaipakam-warm`
-(database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging**
+(database_id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging**
 database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
 §3 for the staging-vs-primary split). The schema is **owned by

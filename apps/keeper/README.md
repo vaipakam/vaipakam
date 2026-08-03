@@ -62,7 +62,7 @@ See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret lis
 
 ### D1 — shared `vaipakam-warm` (staging)
 
-The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/agent`.
+The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/agent`.
 
 Keeper writes: `user_thresholds`, `notify_state`, `telegram_links`, `liquidity_confidence`, `oracle_snapshot_state`, `hf_band_state` + `notifications` (#1213 PR 2b — the liquidator pass files HF-band inbox rows into the same feed table the indexer's event/calendar producers use; migration 0041).
 Keeper reads-only: `loans`, `offers`, `indexer_cursor` (the head-block stamp for HF-band rows).

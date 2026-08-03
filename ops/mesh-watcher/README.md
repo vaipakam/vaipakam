@@ -413,7 +413,7 @@ indefinitely while everything else looks fine. Every send is bounded, so
 one hung request cannot block the alerts behind it.
 
 **Its own D1, its own Telegram bot.** `vaipakam-mesh-alerts-db`, not the
-shared `vaipakam-archive`; `TG_OPS_BOT_TOKEN`, not the user-facing
+shared `vaipakam-warm`; `TG_OPS_BOT_TOKEN`, not the user-facing
 `TG_BOT_TOKEN`. Same trust-boundary reasoning that gave `ops/lz-watcher`
 its own database: internal ops alerting must not co-locate with
 user-facing data, and splitting the bots bounds the blast radius of a

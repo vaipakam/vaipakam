@@ -18,7 +18,9 @@ The names in the repository are only half of it — the live resources they refe
 
 The **storage bucket** cannot be renamed at all: those names are permanent once created. A new one has to be made and the old one retired. Because the platform is pre-live, nothing in the old bucket needs preserving, so this is a create-and-switch rather than a migration — but it is worth being explicit that the retained older copies of each backup do **not** come across, since those are what a recovery would draw on.
 
-The **shared database** keeps its contents and identity; only its label changes.
+The **shared database cannot be renamed either** — the platform offers no way to change the name of an existing one, so a new database has to be created and the old retired. This was the one live resource I had expected to be a simple relabel, and it is not.
+
+That turned out to be cheap here, and the reason is worth recording rather than assuming next time: almost everything the database holds is rebuilt from chain history on demand, so it does not need moving at all. What genuinely could not be recreated came to six rows — a couple of notification settings and a handful of test support tickets — which were copied across and checked to match. The rest is left for the indexer to rebuild from the beginning of chain history, which is precisely what the restore procedure already prescribes for that class of table.
 
 The **Worker** is created fresh under the new name, and the old one must then be deleted — not merely stopped. It holds a scheduled slot from a limited pool, and the account has no spare, so leaving it in place blocks the replacement from running on schedule.
 

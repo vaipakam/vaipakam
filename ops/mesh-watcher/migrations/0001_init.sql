@@ -2,7 +2,7 @@
 -- (#1222 M3 B4-c).
 --
 -- This database is deliberately SEPARATE from the shared
--- `vaipakam-archive` that apps/{indexer,keeper,agent} bind to. Same
+-- `vaipakam-warm` that apps/{indexer,keeper,agent} bind to. Same
 -- trust-boundary rule that gave ops/lz-watcher its own D1: internal ops
 -- alerting must not co-locate with user-facing data. Consequently the
 -- CLAUDE.md rule that all schema changes land under

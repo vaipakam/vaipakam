@@ -11,11 +11,11 @@
 export interface Env {
   /** D1 — alert dedup + the per-chain observation history the windowed
    *  advisories need. `vaipakam-mesh-alerts-db`; see wrangler.jsonc for
-   *  why it is NOT the shared `vaipakam-archive`. */
+   *  why it is NOT the shared `vaipakam-warm`. */
   DB: D1Database;
 
   // ── Telegram (ops-internal bot — never the user-facing TG_BOT_TOKEN) ──
-  /** Secret. Ops bot shared with `ops/offchain-data-archive`. */
+  /** Secret. Ops bot shared with `ops/offchain-data-warm`. */
   TG_OPS_BOT_TOKEN?: string;
   /** Var. Numeric chat id of the internal ops channel. */
   TG_OPS_CHAT_ID?: string;

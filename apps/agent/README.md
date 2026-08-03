@@ -59,7 +59,7 @@ No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.
 
 ### D1 — shared `vaipakam-warm` (staging)
 
-The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/keeper`.
+The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/keeper`.
 
 Agent writes: `user_thresholds`, `notify_state`, `telegram_links`, `loans`, `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`, `support_tickets` (#1040 phase 1 — `POST /support/ticket`).
 Agent reads-only: (none — every table the agent reads, it also writes.)
