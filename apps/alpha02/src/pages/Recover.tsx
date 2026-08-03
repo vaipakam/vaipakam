@@ -199,6 +199,20 @@ export function Recover() {
   const [error, setError] = useState<string | null>(null);
   const inFlightRef = useRef(false);
 
+  // Full reset to the initial state whenever the connected account OR
+  // chain changes (Codex #1547 r2): a terminal success/banned card,
+  // its explorer link, and every typed input belong to the PREVIOUS
+  // account/chain — another account (or the same one on another
+  // network) must never see that outcome or a wrong-chain tx link.
+  useEffect(() => {
+    setTokenInput('');
+    setSourceInput('');
+    setAmountInput('');
+    setConfirmInput('');
+    setStep({ kind: 'form' });
+    setError(null);
+  }, [address, walletChain?.chainId]);
+
   // Fail-safe availability probe: `recoverStuckERC20` HARD-REQUIRES
   // the sanctions oracle (it reverts SanctionsOracleUnavailable when
   // unset — the outcome can't be adjudicated without screening the
@@ -248,12 +262,32 @@ export function Recover() {
     // parseUnits(x, 0) would ROUND a fractional input instead of
     // rejecting it, silently changing what the user signs.
     if (activeLookup.rawUnits && !/^\d+$/.test(amountInput)) return null;
+    // Decimal-reporting tokens (Codex #1547 r2): reject MORE fractional
+    // digits than the token supports BEFORE parseUnits — parseUnits
+    // ROUNDS the excess (parseUnits('0.0000009', 6) → 1 base unit)
+    // instead of rejecting it, silently changing what the user signs.
+    if (!activeLookup.rawUnits) {
+      const pattern =
+        activeLookup.decimals > 0
+          ? new RegExp(`^\\d+(\\.\\d{1,${activeLookup.decimals}})?$`)
+          : /^\d+$/;
+      if (!pattern.test(amountInput)) return null;
+    }
     try {
       const v = parseUnits(amountInput, activeLookup.decimals);
       return v > 0n ? v : null;
     } catch {
       return null;
     }
+  }, [amountInput, activeLookup]);
+
+  // Drives the too-many-decimals hint (Codex #1547 r2): true when the
+  // entered amount's fractional part exceeds what the token supports —
+  // the case `amountWei` silently rejects above.
+  const tooManyDecimals = useMemo(() => {
+    if (!amountInput || !activeLookup || activeLookup.rawUnits) return false;
+    const m = /^\d+\.(\d+)$/.exec(amountInput);
+    return m !== null && m[1].length > activeLookup.decimals;
   }, [amountInput, activeLookup]);
 
   useEffect(() => {
@@ -424,6 +458,13 @@ export function Recover() {
         liveSurplus = bal > tracked ? bal - tracked : 0n;
       }
       if (amount > liveSurplus) {
+        // Refresh the keyed lookup with the LIVE surplus (Codex #1547
+        // r2) — without this the stale cap keeps showing the old
+        // maximum and `canReview` stays green for an amount the chain
+        // will never accept, looping the user through the same abort
+        // until a full reload. Same token stamp, so the atomic-lookup
+        // gate still holds.
+        setLookup({ ...snapshot, surplus: liveSurplus });
         abortToReview(copy.recover.errSurplusMoved);
         return;
       }
@@ -617,35 +658,12 @@ export function Recover() {
         <div className="banner banner-warn" role="alert">
           <span className="banner-body">{copy.recover.wrongChain}</span>
         </div>
-      ) : oracleReady === null ? (
-        <section className="card">
-          <p className="muted" style={{ margin: 0 }}>
-            {copy.recover.checkingAvailability}
-          </p>
-        </section>
-      ) : oracleReady === false ? (
-        <div className="banner banner-warn" role="alert">
-          <Lock aria-hidden />
-          <span className="banner-body">
-            <strong>{copy.recover.unavailableTitle}</strong>
-            <br />
-            {copy.recover.unavailableBody}
-          </span>
-        </div>
-      ) : sanctions.flagged ? (
-        // The connected wallet ITSELF is flagged (Codex #1547 r1) —
-        // recovery is a fund-moving surface, so don't render a form
-        // whose submit is doomed; the live pre-sign re-screen backs
-        // this gate up for the cache window.
-        <div className="banner banner-warn" role="alert">
-          <Lock aria-hidden />
-          <span className="banner-body">
-            <strong>{copy.recover.unavailableTitle}</strong>
-            <br />
-            {copy.recover.sanctionedBlockedBody}
-          </span>
-        </div>
       ) : step.kind === 'success' ? (
+        // Terminal outcomes render BEFORE the availability/sanctions
+        // gates (Codex #1547 r2): after a ban the sanctions query
+        // refetches and flags this wallet, and the generic sanctioned-
+        // wallet gate below would replace the receipt-specific outcome
+        // card (declared-source explanation + tx link) the user needs.
         <div className="banner banner-info" role="status">
           <CircleCheck aria-hidden />
           <span className="banner-body">
@@ -675,6 +693,34 @@ export function Recover() {
             </a>
           </span>
         </div>
+      ) : oracleReady === null ? (
+        <section className="card">
+          <p className="muted" style={{ margin: 0 }}>
+            {copy.recover.checkingAvailability}
+          </p>
+        </section>
+      ) : oracleReady === false ? (
+        <div className="banner banner-warn" role="alert">
+          <Lock aria-hidden />
+          <span className="banner-body">
+            <strong>{copy.recover.unavailableTitle}</strong>
+            <br />
+            {copy.recover.unavailableBody}
+          </span>
+        </div>
+      ) : sanctions.flagged ? (
+        // The connected wallet ITSELF is flagged (Codex #1547 r1) —
+        // recovery is a fund-moving surface, so don't render a form
+        // whose submit is doomed; the live pre-sign re-screen backs
+        // this gate up for the cache window.
+        <div className="banner banner-warn" role="alert">
+          <Lock aria-hidden />
+          <span className="banner-body">
+            <strong>{copy.recover.unavailableTitle}</strong>
+            <br />
+            {copy.recover.sanctionedBlockedBody}
+          </span>
+        </div>
       ) : step.kind === 'review' || reviewBusy ? (
         <section className="card">
           <div className="card-title">
@@ -682,13 +728,23 @@ export function Recover() {
             <h2 style={{ margin: 0 }}>{copy.recover.reviewTitle}</h2>
           </div>
           <div className="stack" style={{ gap: 8 }}>
+            {/* COMPLETE addresses on the review card (Codex #1547 r2):
+                short forms hide the middle, exactly where an address-
+                poisoning lookalike (matching prefix + suffix) differs.
+                What the signature commits to is shown in full here;
+                short forms stay fine elsewhere. */}
             <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewToken}:</span>{' '}
-              {activeLookup?.symbol ?? ''} ({shortAddress(tokenInput)})
+              {activeLookup?.symbol ?? ''}{' '}
+              <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+                {tokenInput}
+              </span>
             </p>
             <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewSource}:</span>{' '}
-              {shortAddress(sourceInput)}
+              <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+                {sourceInput}
+              </span>
             </p>
             <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewAmount}:</span>{' '}
@@ -830,6 +886,13 @@ export function Recover() {
               {activeLookup?.rawUnits ? (
                 <p className="muted" style={{ margin: '4px 0 0' }}>
                   {copy.recover.rawUnitsNote}
+                </p>
+              ) : null}
+              {tooManyDecimals && activeLookup ? (
+                <p className="muted" style={{ margin: '4px 0 0' }}>
+                  {copy.recover.errTooManyDecimals(
+                    String(activeLookup.decimals),
+                  )}
                 </p>
               ) : null}
               {amountWei !== null &&

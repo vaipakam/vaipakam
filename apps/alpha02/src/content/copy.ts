@@ -1335,8 +1335,11 @@ const copySource = {
     title: 'Recover stuck tokens',
     lede:
       'For tokens that were sent straight to your vault address outside the app. They aren’t part of any deal and never affect your balances — this flow returns them to your wallet after you declare where they came from.',
+    // Same alignment as the Help card (Codex #1547 r2): the
+    // consequence is a wallet-wide new-position block, not a
+    // feature-level lock.
     helpFirst:
-      'If you haven’t read the Help page’s explainer on stuck tokens yet, start there — recovering tokens you don’t recognise can lock this feature for your vault.',
+      'If you haven’t read the Help page’s explainer on stuck tokens yet, start there — recovering tokens you don’t recognise can get your wallet blocked from all new positions.',
     wrongChain: 'Switch your wallet to a supported network to use recovery.',
     // Fail-safe blocked state (spec: "if sanctions-oracle checks are
     // unavailable the app should surface a fail-safe blocked state"):
@@ -1358,6 +1361,13 @@ const copySource = {
       'The address these tokens actually came from. Declaring it here asserts on-chain that it belongs to you or acted with your permission.',
     amountLabel: 'Amount to recover',
     overMax: 'That’s more than the recoverable surplus for this token.',
+    // Excess fractional digits are REJECTED before parsing (Codex
+    // #1547 r2) — parseUnits would silently ROUND them into a
+    // different base-unit amount than the user typed.
+    errTooManyDecimals: tmpl(
+      'That amount has more decimal places than this token supports ({{decimals}} max) — trim the extra digits.',
+      ['decimals'],
+    ),
     // Metadata-optional tokens (Codex #1547 r1): decimals() is OPTIONAL
     // in ERC-20 — when the token doesn't report it, amounts are taken
     // as raw base units (integers) rather than blocking recovery.
@@ -1365,8 +1375,11 @@ const copySource = {
       'This token doesn’t report a decimal format, so enter the amount in raw base units — whole numbers only.',
     review: 'Review recovery',
     warningTitle: 'Read this before recovering',
+    // The first warning states the REAL consequence of a sanctioned
+    // declaration (Codex #1547 r2): the wallet is flagged protocol-wide
+    // and every new-position action is blocked — not just this feature.
     warnings: [
-      'If the sender you declare is on the sanctions list, recovery locks for your vault. The lock lifts only if that address is later removed from the sanctions oracle.',
+      'If the sender you declare is on the sanctions list, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like. Existing loans can still be repaid or closed. The flag lifts only if that address is later removed from the sanctions oracle.',
       'Recovered tokens can only go to YOUR connected wallet — no other recipient is possible.',
       'If you did not send these tokens yourself, do not recover them. Unsolicited “dust” never affects your balances or deals — leaving it in place costs you nothing.',
     ],
@@ -1392,10 +1405,13 @@ const copySource = {
     signing: 'Waiting for your wallet…',
     submitting: 'Submitting…',
     successTitle: 'Recovery complete',
-    successBody: tmpl('{{amount}} {{symbol}} returned to your wallet.', [
-      'amount',
-      'symbol',
-    ]),
+    // Claims the SEND, not the arrival (Codex #1547 r2): fee-on-
+    // transfer tokens deliver less than the transferred amount, so
+    // "X returned to your wallet" would overstate what arrived.
+    successBody: tmpl(
+      'Sent {{amount}} {{symbol}} back to your wallet — fee-on-transfer tokens may deliver slightly less.',
+      ['amount', 'symbol'],
+    ),
     viewTx: 'View the transaction',
     bannedTitle: 'Recovery is locked for your vault',
     bannedBody: tmpl(
@@ -1434,8 +1450,12 @@ const copySource = {
       title: 'Tokens stuck in your vault?',
       body1:
         'Sometimes tokens land in a vault address outside the app — a mistaken direct transfer, or “dust” a stranger sent. They aren’t part of any deal and never affect your balances or positions.',
+      // States the REAL consequence, not an understated "locks the
+      // recovery feature" (Codex #1547 r2): a sanctions-listed
+      // declaration flags the WALLET and blocks every new-position
+      // action until the address is de-listed.
       body2:
-        'If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: recovering unknown dust can lock the recovery feature for your vault if the sender turns out to be sanctions-listed — a trap known as dust poisoning.',
+        'If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: if the sender you declare turns out to be sanctions-listed, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like — until that address is de-listed (existing loans can still be repaid or closed). It’s a trap known as dust poisoning.',
       link: 'Open the recovery flow',
     },
   },

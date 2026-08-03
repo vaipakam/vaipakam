@@ -790,7 +790,7 @@
     "recover": {
       "title": "Recover stuck tokens",
       "lede": "For tokens that were sent straight to your vault address outside the app. They aren’t part of any deal and never affect your balances — this flow returns them to your wallet after you declare where they came from.",
-      "helpFirst": "If you haven’t read the Help page’s explainer on stuck tokens yet, start there — recovering tokens you don’t recognise can lock this feature for your vault.",
+      "helpFirst": "If you haven’t read the Help page’s explainer on stuck tokens yet, start there — recovering tokens you don’t recognise can get your wallet blocked from all new positions.",
       "wrongChain": "Switch your wallet to a supported network to use recovery.",
       "unavailableTitle": "Recovery isn’t available on this network yet",
       "unavailableBody": "This flow depends on the screening service that decides a recovery’s outcome, and it isn’t configured on this network. Nothing can be recovered until it is — your tokens stay exactly where they are.",
@@ -804,11 +804,12 @@
       "sourceHint": "The address these tokens actually came from. Declaring it here asserts on-chain that it belongs to you or acted with your permission.",
       "amountLabel": "Amount to recover",
       "overMax": "That’s more than the recoverable surplus for this token.",
+      "errTooManyDecimals": "That amount has more decimal places than this token supports ({{decimals}} max) — trim the extra digits.",
       "rawUnitsNote": "This token doesn’t report a decimal format, so enter the amount in raw base units — whole numbers only.",
       "review": "Review recovery",
       "warningTitle": "Read this before recovering",
       "warnings": [
-        "If the sender you declare is on the sanctions list, recovery locks for your vault. The lock lifts only if that address is later removed from the sanctions oracle.",
+        "If the sender you declare is on the sanctions list, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like. Existing loans can still be repaid or closed. The flag lifts only if that address is later removed from the sanctions oracle.",
         "Recovered tokens can only go to YOUR connected wallet — no other recipient is possible.",
         "If you did not send these tokens yourself, do not recover them. Unsolicited “dust” never affects your balances or deals — leaving it in place costs you nothing."
       ],
@@ -824,7 +825,7 @@
       "signing": "Waiting for your wallet…",
       "submitting": "Submitting…",
       "successTitle": "Recovery complete",
-      "successBody": "{{amount}} {{symbol}} returned to your wallet.",
+      "successBody": "Sent {{amount}} {{symbol}} back to your wallet — fee-on-transfer tokens may deliver slightly less.",
       "viewTx": "View the transaction",
       "bannedTitle": "Recovery is locked for your vault",
       "bannedBody": "The sender you declared ({{source}}) is on the sanctions list, so recovery locked for your vault. Nothing moved — the tokens stayed where they were.",
@@ -839,7 +840,7 @@
       "helpSection": {
         "title": "Tokens stuck in your vault?",
         "body1": "Sometimes tokens land in a vault address outside the app — a mistaken direct transfer, or “dust” a stranger sent. They aren’t part of any deal and never affect your balances or positions.",
-        "body2": "If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: recovering unknown dust can lock the recovery feature for your vault if the sender turns out to be sanctions-listed — a trap known as dust poisoning.",
+        "body2": "If you sent them yourself (or the sender acted for you), a careful recovery flow can return them to your wallet. If a stranger sent them, leave them alone: if the sender you declare turns out to be sanctions-listed, your wallet is flagged and every new-position action is blocked — creating or accepting offers, deposits, recovery and the like — until that address is de-listed (existing loans can still be repaid or closed). It’s a trap known as dust poisoning.",
         "link": "Open the recovery flow"
       }
     },
