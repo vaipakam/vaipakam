@@ -54,7 +54,7 @@ import {
   useSanctionsCheck,
 } from '../data/sanctions';
 import { captureTxError } from '../lib/errors';
-import { formatTokenAmount, shortAddress } from '../lib/format';
+import { exactAmountString, shortAddress } from '../lib/format';
 
 /** EIP-712 shape — must match VaultFactoryFacet's RECOVERY_TYPEHASH
  *  exactly, or the recovered signer won't equal msg.sender and the
@@ -160,6 +160,31 @@ async function probeSanctionsOracle(
   return true;
 }
 
+/** Display cap for an attacker-controlled token symbol. */
+const MAX_SYMBOL_LENGTH = 20;
+
+/**
+ * Sanitize the token's self-reported symbol() (Codex #1547 r3): it is
+ * attacker-controlled Unicode rendered directly NEXT TO addresses on
+ * the review card. A symbol carrying bidi override/embedding/isolate
+ * controls (U+202A–U+202E, U+2066–U+2069) or the LRM/RLM marks
+ * (U+200E/U+200F) can visually REORDER the adjacent address text, so a
+ * lookalike address reads as the real one at review time. Strip those
+ * plus C0/DEL controls at lookup time — the source of every render —
+ * and cap the length so a paragraph-sized "symbol" can't push the
+ * address off-screen. Rendering additionally bidi-isolates the spans
+ * (defense in depth).
+ */
+function sanitizeTokenSymbol(raw: string): string {
+  return raw
+    .replace(
+      // eslint-disable-next-line no-control-regex -- stripping controls is the point
+      /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+      '',
+    )
+    .slice(0, MAX_SYMBOL_LENGTH);
+}
+
 /** One atomic lookup result, carrying the token address it describes
  *  (Codex #1547 r1): the previous four-state shape (symbol / decimals /
  *  surplus / failed) could interleave a slow response for a PREVIOUS
@@ -182,7 +207,11 @@ type Step =
   | { kind: 'signing' }
   | { kind: 'submitting' }
   | { kind: 'success'; txHash: Hex; amount: bigint; symbol: string; decimals: number }
-  | { kind: 'banned'; txHash: Hex; declaredSource: string };
+  | { kind: 'banned'; txHash: Hex; declaredSource: string }
+  /** TERMINAL (Codex #1547 r3): the tx receipt was a success but no
+   *  outcome event decoded — the recovery may already have completed,
+   *  so the flow must never re-arm the sign button from here. */
+  | { kind: 'unknownOutcome'; txHash: Hex };
 
 export function Recover() {
   const { address, onSupportedChain, walletChain } = useActiveChain();
@@ -198,6 +227,14 @@ export function Recover() {
   const [step, setStep] = useState<Step>({ kind: 'form' });
   const [error, setError] = useState<string | null>(null);
   const inFlightRef = useRef(false);
+  // Identity generation token (Codex #1547 r3): bumped by the reset
+  // effect below on every account/chain change. `signAndSubmit`
+  // captures the value at entry and re-checks it before EVERY state
+  // commit, so an async flow started under a previous identity can
+  // never commit a step, an error, a lookup, or an explorer link
+  // against the new one — the r2 reset alone couldn't stop a promise
+  // that was already in flight from writing after the reset ran.
+  const genRef = useRef(0);
 
   // Full reset to the initial state whenever the connected account OR
   // chain changes (Codex #1547 r2): a terminal success/banned card,
@@ -205,6 +242,7 @@ export function Recover() {
   // account/chain — another account (or the same one on another
   // network) must never see that outcome or a wrong-chain tx link.
   useEffect(() => {
+    genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
     setTokenInput('');
     setSourceInput('');
     setAmountInput('');
@@ -335,7 +373,13 @@ export function Recover() {
         ]);
         const rawUnits = decRes === null;
         const decimals = rawUnits ? 0 : Number(decRes);
-        const symbol = symRes === null ? shortAddress(token) : (symRes as string);
+        // Sanitized at the source (Codex #1547 r3) so every consumer —
+        // form meta, review card, success card — gets the scrubbed
+        // string. A symbol that sanitizes to NOTHING falls back to the
+        // shortened address, same as a missing symbol().
+        const sanitizedSymbol =
+          symRes === null ? '' : sanitizeTokenSymbol(symRes as string);
+        const symbol = sanitizedSymbol === '' ? shortAddress(token) : sanitizedSymbol;
         let surplus = 0n;
         if (vault.toLowerCase() !== ZERO_ADDRESS) {
           const [bal, tracked] = await Promise.all([
@@ -382,6 +426,12 @@ export function Recover() {
   async function signAndSubmit() {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
+    // Capture the identity generation at entry (Codex #1547 r3). Every
+    // state commit below re-checks it — if the account or chain changed
+    // while an await was pending, the reset effect bumped genRef and
+    // this flow must fall silent instead of committing a step, error,
+    // lookup, or tx link that belongs to the previous identity.
+    const gen = genRef.current;
     setError(null);
     try {
       if (!walletClient || !publicClient || !address || !walletChain) {
@@ -401,8 +451,11 @@ export function Recover() {
       // Lock the review controls for the whole pre-sign-check + wallet
       // prompt window (Codex #1547 r1) — every abort path below
       // restores the review step alongside its error.
+      if (genRef.current !== gen) return;
       setStep({ kind: 'signing' });
       const abortToReview = (message: string) => {
+        // Stale-generation aborts commit nothing (Codex #1547 r3).
+        if (genRef.current !== gen) return;
         setStep({ kind: 'review' });
         setError(message);
       };
@@ -463,7 +516,9 @@ export function Recover() {
         // maximum and `canReview` stays green for an amount the chain
         // will never accept, looping the user through the same abort
         // until a full reload. Same token stamp, so the atomic-lookup
-        // gate still holds.
+        // gate still holds. Guarded (Codex #1547 r3): a stale flow must
+        // not plant a previous token's lookup under the new identity.
+        if (genRef.current !== gen) return;
         setLookup({ ...snapshot, surplus: liveSurplus });
         abortToReview(copy.recover.errSurplusMoved);
         return;
@@ -554,6 +609,7 @@ export function Recover() {
         },
       });
 
+      if (genRef.current !== gen) return; // Codex #1547 r3
       setStep({ kind: 'submitting' });
       const txHash = await walletClient.writeContract({
         address: diamond,
@@ -608,16 +664,29 @@ export function Recover() {
         // standard invalidation set to this and every other tab. The
         // banned outcome additionally carries the sanctions root so the
         // flagged-state banners refresh without waiting out the cache.
+        // The invalidation publishes even for a stale generation (the
+        // on-chain mutation happened regardless of who is connected
+        // now); only the STEP commit is identity-bound (Codex #1547 r3).
         publishReceiptInvalidation(
           queryClient,
           outcome.kind === 'banned' ? ['sanctions'] : [],
         );
+        if (genRef.current !== gen) return;
         setStep(outcome);
       } else {
-        setStep({ kind: 'review' });
-        setError(copy.recover.errOutcomeMissing);
+        // Success receipt but NO decodable outcome event (Codex #1547
+        // r3): this previously bounced back to review with CONFIRM
+        // still armed and SKIPPED invalidation — inviting a double
+        // submit of a recovery that may already have completed, over
+        // stale balances. Terminal card instead: invalidate (a success
+        // receipt means state moved), then park on the unknown-outcome
+        // step with the tx link and no sign-again path.
+        publishReceiptInvalidation(queryClient);
+        if (genRef.current !== gen) return;
+        setStep({ kind: 'unknownOutcome', txHash });
       }
     } catch (err) {
+      if (genRef.current !== gen) return; // Codex #1547 r3
       setStep({ kind: 'review' });
       setError(captureTxError(err));
     } finally {
@@ -669,8 +738,12 @@ export function Recover() {
           <span className="banner-body">
             <strong>{copy.recover.successTitle}</strong>
             <br />
+            {/* exactAmountString, not formatTokenAmount (Codex #1547
+                r3): the display formatter rounds to ~4 significant
+                digits — the receipt must state the EXACT amount that
+                was recovered. */}
             {copy.recover.successBody(
-              formatTokenAmount(step.amount, step.decimals),
+              exactAmountString(step.amount, step.decimals),
               step.symbol,
             )}
             <br />
@@ -691,6 +764,42 @@ export function Recover() {
             <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
               {copy.recover.viewTx}
             </a>
+          </span>
+        </div>
+      ) : step.kind === 'unknownOutcome' ? (
+        // TERMINAL unknown-outcome card (Codex #1547 r3): success
+        // receipt, no decodable outcome event. Never returns to review
+        // — the recovery may already have completed, and re-arming the
+        // sign button here invites a double submit. The only ways out
+        // are the tx link and a fresh start.
+        <div className="banner banner-warn" role="alert">
+          <TriangleAlert aria-hidden />
+          <span className="banner-body">
+            <strong>{copy.recover.unknownOutcomeTitle}</strong>
+            <br />
+            {copy.recover.unknownOutcomeBody}
+            <br />
+            <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
+              {copy.recover.viewTx}
+            </a>
+            <br />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ marginTop: 8 }}
+              onClick={() => {
+                // Fresh form, nothing carried over — same reset shape
+                // as the account/chain effect.
+                setTokenInput('');
+                setSourceInput('');
+                setAmountInput('');
+                setConfirmInput('');
+                setError(null);
+                setStep({ kind: 'form' });
+              }}
+            >
+              {copy.recover.startOver}
+            </button>
           </span>
         </div>
       ) : oracleReady === null ? (
@@ -732,26 +841,58 @@ export function Recover() {
                 short forms hide the middle, exactly where an address-
                 poisoning lookalike (matching prefix + suffix) differs.
                 What the signature commits to is shown in full here;
-                short forms stay fine elsewhere. */}
+                short forms stay fine elsewhere.
+
+                Every symbol and address span is bidi-ISOLATED and
+                forced LTR (Codex #1547 r3): the token symbol is
+                attacker-controlled Unicode, and a bidi override left
+                in a neighboring string can visually REORDER the
+                address characters — a lookalike then reads as the
+                real address. The sanitizer strips those controls at
+                lookup time; the isolation here is defense in depth.
+
+                Amount rendered with exactAmountString, not
+                formatTokenAmount (Codex #1547 r3): the display
+                formatter rounds to ~4 significant digits, so the user
+                could sign for MORE base units than the card shows.
+                The review must be lossless. */}
             <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewToken}:</span>{' '}
-              {activeLookup?.symbol ?? ''}{' '}
-              <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+              <span style={{ unicodeBidi: 'isolate', direction: 'ltr' }}>
+                {activeLookup?.symbol ?? ''}
+              </span>{' '}
+              <span
+                className="mono"
+                style={{
+                  overflowWrap: 'anywhere',
+                  unicodeBidi: 'isolate',
+                  direction: 'ltr',
+                }}
+              >
                 {tokenInput}
               </span>
             </p>
             <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewSource}:</span>{' '}
-              <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+              <span
+                className="mono"
+                style={{
+                  overflowWrap: 'anywhere',
+                  unicodeBidi: 'isolate',
+                  direction: 'ltr',
+                }}
+              >
                 {sourceInput}
               </span>
             </p>
             <p style={{ margin: 0 }}>
               <span className="muted">{copy.recover.reviewAmount}:</span>{' '}
               {amountWei !== null && activeLookup
-                ? formatTokenAmount(amountWei, activeLookup.decimals)
+                ? exactAmountString(amountWei, activeLookup.decimals)
                 : ''}{' '}
-              {activeLookup?.symbol ?? ''}
+              <span style={{ unicodeBidi: 'isolate', direction: 'ltr' }}>
+                {activeLookup?.symbol ?? ''}
+              </span>
             </p>
             <div className="banner banner-warn" role="note">
               <TriangleAlert aria-hidden />
@@ -851,8 +992,12 @@ export function Recover() {
                     String(activeLookup.decimals),
                   )}
                   {' · '}
+                  {/* exactAmountString (Codex #1547 r3): the surplus is
+                      the cap the user types against — a ~4-significant-
+                      digit display that rounds UP would invite an
+                      amount the chain rejects. */}
                   {copy.recover.maxRecoverable(
-                    formatTokenAmount(activeLookup.surplus, activeLookup.decimals),
+                    exactAmountString(activeLookup.surplus, activeLookup.decimals),
                   )}
                 </p>
               ) : null}

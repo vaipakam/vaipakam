@@ -1421,8 +1421,16 @@ const copySource = {
     bannedAutoUnlock:
       'The lock lifts automatically if that address is later removed from the sanctions oracle.',
     errTitle: 'Recovery didn’t go through',
-    errOutcomeMissing:
-      'The transaction went through, but we couldn’t find the recovery outcome in it. Refresh the page to see the current state.',
+    // Terminal unknown-outcome card (Codex #1547 r3): a success receipt
+    // whose logs carry NO decodable outcome event must NOT bounce back
+    // to review with the sign button re-armed — the recovery may
+    // already have completed, and signing again would double-submit.
+    // The card is terminal: transaction link + start over, never
+    // sign-again.
+    unknownOutcomeTitle: 'Transaction confirmed — outcome unknown',
+    unknownOutcomeBody:
+      'The transaction went through, but we couldn’t read the recovery outcome from it. Do not sign again — the recovery may already have completed. Open the transaction link to see what happened, then refresh the page.',
+    startOver: 'Start over',
     // Pre-sign abort reasons (Codex #1547 r1) — each one blocks BEFORE
     // the wallet signature so the user never signs against stale or
     // unverifiable on-chain state. All of them leave everything as it
