@@ -361,6 +361,27 @@ library LibVpfiRecycle {
      *              the earmark out of `treasuryBalances` — which is a second,
      *              independent reason that subtraction was not a fix.
      *
+     *          10. VPFI buyback allocations —
+     *              {TreasuryFacet.creditBuybackBudget} accepts
+     *              `token == vpfiToken` unless `buybackNoConvert` is set,
+     *              debits `treasuryBalances[vpfi]` and credits
+     *              `baseBuybackBudget[vpfi]` / `buybackBudget[vpfi]`. Same
+     *              shape as 9 — the earmark moves OUT of `treasuryBalances`
+     *              while the tokens stay here. **NOT subtracted.**
+     *
+     *         **THIS TABLE IS NOT AN AUDIT AND MUST NOT BE READ AS ONE.**
+     *         It lists what ADVERSARIAL REVIEW HAPPENED TO FIND across
+     *         successive rounds of one PR — it grew in every round it was
+     *         called complete, and its most recent entries were found only
+     *         because a reviewer went looking in surfaces nobody had thought
+     *         to check (payroll streams, buyback allocations). Do NOT infer that an owner absent
+     *         from this list does not exist. **A systematic audit of every
+     *         VPFI custody surface is #1498's job**, and its finding will be
+     *         that the enumeration approach cannot be completed — which is
+     *         why the remedy is the delivered-funding bound, not a longer
+     *         table. Entries here are illustrative evidence for that
+     *         conclusion, nothing more.
+     *
      *         **7 and 8 are USER COLLATERAL, not protocol ledgers.** A reward
      *         payout drawing on them spends a BORROWER's collateral — a
      *         different severity from over-drawing an operational budget, and
@@ -474,17 +495,16 @@ library LibVpfiRecycle {
         // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
         // full, because the reasoning is the useful part:
         //
-        // SIX review rounds surfaced EIGHT distinct owners of this one
-        // balance. The canonical list is in the natspec above and is NOT
-        // duplicated here — an earlier revision kept a second copy, said
-        // "six", and named five. Read the table.
+        // Review kept surfacing further owners of this one balance. The list
+        // is in the natspec above and is NOT duplicated or counted here — an
+        // earlier revision kept a second copy and a total, and both went
+        // stale within a round. Read the table.
         //
-        // Two of the eight are USER COLLATERAL, not protocol ledgers:
-        // `intentCommits[loanId].custodialCollateral` (a live swap-to-repay
-        // intent on a VPFI-collateral loan) and the liquidation
-        // `fallbackSnapshot` custody. A reward payout drawing on those is
-        // spending a BORROWER's collateral, which is a different severity
-        // from over-drawing an operational budget.
+        // Some of those owners are USER COLLATERAL rather than protocol
+        // ledgers — a live swap-to-repay intent's custody, and liquidation
+        // fallback custody. A reward payout drawing on those spends a
+        // BORROWER's collateral, which is a different severity from
+        // over-drawing an operational budget.
         //
         // Each round produced another and the rate did not fall. A bound of
         // the form "balance minus the owners we remembered to list" cannot be

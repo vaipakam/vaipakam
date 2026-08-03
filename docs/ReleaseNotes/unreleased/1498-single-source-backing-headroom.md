@@ -41,20 +41,24 @@ not touch it. That distinction was implicit before and is now stated.
 
 ### More owners of the same holding kept appearing — and why none are reserved here
 
-Review kept finding the same shape with different owners: the recycled reserve, borrower fee custody on grandfathered
-loans, the per-party tariff (already safe — it credits the recycled reserve),
-treasury revenue where the platform holds its own, the reward-emissions
-budget, the keeper reward budget, collateral held during a live
-swap-to-repay, and collateral left in place when a liquidation cannot find a
-route to sell it.
+Review kept finding the same shape with different owners — recycled reserve,
+borrower fee custody on grandfathered loans, treasury revenue where the
+platform holds its own, the reward-emissions budget, the keeper reward
+budget, collateral held during a live swap-to-repay, collateral left in place
+when a liquidation cannot find a route to sell it, funded payroll
+obligations, buyback allocations. The engineering note beside the code holds
+the current list; it is deliberately not repeated here, because every time it
+was repeated the copies disagreed within a round.
 
 Each round of review produced another — and more than once the newest arrived
 in the round *after* the list had been written up as complete, which is the
-clearest possible statement of the problem.
+clearest possible statement of the problem. **The list is not an audit.** It
+is what adversarial review happened to notice, and the last few were found
+only because someone went looking in places nobody had thought to check.
 
-**The last two change what kind of problem this is.** They are not protocol
-budgets; they are a **borrower's collateral**, sitting in the same holding
-while their loan is mid-flight. A reward payout that draws on them is
+**Some of them change what kind of problem this is.** Two are not protocol
+budgets at all; they are a **borrower's collateral**, sitting in the same
+holding while their loan is mid-flight. A reward payout that draws on them is
 spending money that belongs to a user, so this stopped being a bookkeeping
 tidy-up and became a fund-safety item.
 
