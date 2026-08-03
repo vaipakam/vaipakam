@@ -1343,9 +1343,12 @@ contract AnvilNewPositiveFlows is Script {
     ///      check was explicitly best-effort, it kept PASSING while
     ///      exercising none of what it advertised — and taught every
     ///      reader the inverse of the current behaviour. The tier setup
-    ///      in steps 1-3 is kept exactly as it was: it puts the borrower
-    ///      in the state that WOULD have taken custody, which is what
-    ///      makes the assertion below meaningful rather than vacuous.
+    ///      in steps 1-3 is kept as it was, but it does NOT establish the
+    ///      full preconditions the retired path required (this drive never
+    ///      sets `isCanonicalVpfiChain`, so the mirror-tier cache is empty
+    ///      and the effective tier reads zero) — so the assertion below
+    ///      pins the observable HoldOnly end state and is NOT a guard
+    ///      against reconnection. See the note at the assertion.
     // ─── VPFI-config snapshot fields (set in N10, restored after N14) ───
     //
     // N10 + N13 + N14 form a single VPFI-discount + deposit sequence

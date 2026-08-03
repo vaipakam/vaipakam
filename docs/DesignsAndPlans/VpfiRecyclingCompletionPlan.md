@@ -877,9 +877,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    whose absence let this survive. The imprecision this row used to record —
    per-loan borrower-LIF custody sharing the balance with no running total —
    was **overtaken by #1555 review**. The LIF half is real: #1352 retired the
-   peg-custody origination path and no non-zero `vpfiHeld` assignment survives
-   in `src/`, so that term is zero on a deployment originated from current
-   source (and non-zero on one UPGRADED from pre-#1352, where custody against
+   peg-custody origination path and every surviving write to
+   `borrowerLifRebate[...].vpfiHeld` in `src/` assigns ZERO — scoped to the
+   custody storage deliberately, since `MetricsFacet` copies the slot into a
+   memory summary where it reads non-zero for a grandfathered loan, so the
+   broader "no non-zero `vpfiHeld` assignment anywhere" phrasing fails a
+   literal source sweep. So that term is zero on a deployment originated from
+   current source (and non-zero on one UPGRADED from pre-#1352, where custody against
    loans open at the upgrade is spendable as reward and the borrower's later
    settlement then reverts or leaves them unpaid).
    **But the headroom is NOT exact even on a fresh deployment.** Review kept
