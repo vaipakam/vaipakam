@@ -683,6 +683,12 @@ jobs:
   # lives HERE so reviewers can download + inspect the rendered docs
   # before merge, and the build step is part of the same path-gated
   # serial chain as the rest of the contracts CI.
+  #
+  # NOT a required status check — informational, by owner decision
+  # (2026-08-03). It runs on every contracts-touching PR and a failure is
+  # worth reading, but it does not block merge. Three documents claimed
+  # otherwise for months, inheriting the error from ADR-0011, which
+  # recorded the INTENT of a ruleset change rather than its result.
   build-docs:
     name: Build docs
     needs: [detect-changes, contracts-fast]

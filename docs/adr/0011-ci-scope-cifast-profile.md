@@ -110,8 +110,8 @@ closes #296):
    the operator-local end-of-step full run is the real defence
    on contracts changes day-to-day.
 6. **`Protect main` ruleset** updated to drop `contracts-full` +
-   `Gas snapshot diff` from `required_status_checks`. The required
-   set at the time of this ADR: `contracts-fast` + `detect-changes` +
+   `Gas snapshot diff` from `required_status_checks`. The required set
+   this ADR INTENDED: `contracts-fast` + `detect-changes` +
    `workspaces` + `Build docs` + `Slither static analysis`.
 
    > **Superseded 2026-08-03.** `Build docs` is not in the live
