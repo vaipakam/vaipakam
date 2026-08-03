@@ -685,8 +685,9 @@ jobs:
   # serial chain as the rest of the contracts CI.
   #
   # NOT a required status check — informational, by owner decision
-  # (2026-08-03). It runs on every contracts-touching PR and a failure is
-  # worth reading, but it does not block merge. Three documents claimed
+  # (2026-08-03). It runs on contracts-touching PRs whose `contracts-fast`
+  # succeeded — the `needs:` below gates on both — and a failure is worth
+  # reading, but it does not block merge. Three documents claimed
   # otherwise for months, inheriting the error from ADR-0011, which
   # recorded the INTENT of a ruleset change rather than its result.
   build-docs:

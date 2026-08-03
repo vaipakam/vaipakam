@@ -91,8 +91,23 @@ running, which is the failure this paragraph exists to prevent:
 "triggers": { "crons": [] }
 ```
 
-then `npx wrangler deploy` (or `wrangler triggers deploy`) from
-`apps/keeper`.
+then, from `apps/keeper`:
+
+```bash
+npx wrangler deploy --keep-vars
+```
+
+**`--keep-vars` matters.** Without it wrangler "will delete all vars before
+setting those found in the Wrangler configuration", and this config commits
+`"TG_BOT_USERNAME": ""` — a value the comment beside it says is filled in
+after provisioning. A plain `deploy` during an incident would therefore wipe
+whatever is live. (It is empty live today, so the hazard is latent rather
+than active — but an emergency stop is the wrong moment to discover it.)
+
+`wrangler triggers deploy` is not the alternative it looks like: it is marked
+experimental and applies to the `wrangler versions upload` flow. If you would
+rather not deploy at all, remove the cron from the dashboard —
+*Settings → Trigger Events* — which touches nothing else.
 
 **Confirm it, do not assume it** — the readback must be trigger-aware, since
 a mistyped or wrongly-nested key leaves the committed cron in place. Check
@@ -107,25 +122,39 @@ every location. This keeper runs `* * * * *` — every minute — so on the orde
 of a dozen more ticks can still be dispatched after a successful readback,
 each able to sign.
 
-During an incident that gap is the whole question, so verify it from the
-chain rather than the dashboard: watch the keeper EOA's nonce. It stopping is
-the ground truth that the Worker stopped; an empty trigger list is only the
-instruction to stop. Keep `wrangler tail vaipakam-keeper` open across the
-window too — the absence of ticks *after* it elapses is the confirmation,
-not the absence immediately after the deploy.
+During an incident that gap is the whole question. **The confirmation is the
+absence of scheduled ticks after the window has elapsed** — keep
+`wrangler tail vaipakam-keeper` open across it, and treat quiet *before* the
+window as meaningless.
+
+A stationary keeper nonce is corroboration, not proof, and an earlier
+revision of this section called it ground truth. It is wrong in both
+directions: the nonce is per-chain, so one chain's stillness says nothing
+about another; and outside the 00:00–00:09 UTC snapshot window, with no
+eligible liquidation or remittance, a *running* keeper has a stationary nonce
+anyway. It confirms a stop only if it was moving beforehand.
 
 **Do not reach for the signing key to achieve this.** `KEEPER_PRIVATE_KEY`
 is bound via `secrets_store_secrets`, so `wrangler secret put` /
 `secret delete` writes or removes a per-Worker value **this Worker ignores** —
 a successful-looking command and a keeper that keeps signing
 (`docs/ops/AdminKeysAndPause.md` says exactly this for exactly this key). And
-the store entry is shared: removing it is rotation-grade, affects every
-binder, and the repository documents rotation but **no removal procedure** —
-so it is not a step to improvise during an incident. Stopping the schedule
+removing the store entry is rotation-grade, and the repository documents
+rotation but **no removal procedure** — so it is not a step to improvise
+during an incident. (`apps/keeper` is its only binder — `apps/agent`
+deliberately does not hold a signing key — so an earlier "affects every
+binder" here overstated the blast radius. The reason to avoid it stands; the
+scare does not.) Stopping the schedule
 achieves the same outcome and is reversible in one command.
 
-`liquidityConfidence` also always runs, and the gate is narrower than it
-looks: it decides whether to **submit on-chain**. The pass still reads, and
+**Three other passes also run ungated** — `watcher`, `preGraceWatcher` and
+`liquidityConfidence` — so the snapshot is not the only thing the switch
+leaves alive. The health-factor watcher matters most: it keeps evaluating
+positions and **keeps sending Telegram and Push alerts to users**. If the
+reason for flipping the switch is that users should stop hearing from the
+system, the switch alone does not do it.
+
+`liquidityConfidence` in particular has a gate narrower than it looks: it decides whether to **submit on-chain**. The pass still reads, and
 still writes its D1 counter — `upsertLiquidityConfidence` runs before the
 `canSubmit` check, deliberately ("always persist the updated counter, even
 when not submitting"). So `KEEPER_ENABLED=false` stops its transactions, not
