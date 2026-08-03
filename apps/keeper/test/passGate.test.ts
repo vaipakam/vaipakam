@@ -341,17 +341,32 @@ describe('the key is constructed in exactly one place', () => {
     expect(unguarded).not.toContain('privateKeyToAccount(');
   });
 
-  it('the catch does not echo the underlying error', () => {
-    // The bounded reason is the point of wrapping it. Re-throwing or
-    // logging `err` would put viem's message — which contains the rejected
-    // scalar — back in the log, with the try/catch still present to satisfy
-    // the test above.
+  it('the catch binds no error and returns exactly the bounded literal', () => {
+    // Wrapping the call only protects if what comes OUT of the catch is
+    // bounded. Checking that the literal merely OCCURS is not enough:
+    //   catch (err) { return { problem: '…not a valid signing key' + String(err) } }
+    // contains the literal, calls no logger and throws nothing — and both
+    // `passIsArmed` and `dailyOracleSnapshot` then log `resolved.problem`,
+    // restoring the exact disclosure this test exists to prevent (#1540 r9).
+    //
+    // So: the catch takes NO binding — with no `err` in scope there is
+    // nothing to interpolate — and its return is the literal and nothing
+    // else.
     const src = readFileSync(new URL('../src/keeper.ts', import.meta.url), 'utf8');
     const from = src.indexOf('export function resolveKeeperAccount');
     const body = src.slice(from, src.indexOf('\n}\n', from));
     const tail = body.slice(body.indexOf('} catch'));
+
+    expect(tail).toMatch(/^\} catch \{/);
+    expect(tail).not.toMatch(/\} catch\s*\(/);
     expect(tail).not.toMatch(/console\.(log|warn|error)/);
     expect(tail).not.toMatch(/\bthrow\b/);
-    expect(tail).toContain("problem: 'malformed (not a valid signing key)'");
+
+    // Exactly one return, and it is the bounded literal — no concatenation,
+    // no interpolation, no second field.
+    const returns = tail.match(/return[^;]*;/g) ?? [];
+    expect(returns).toEqual([
+      "return { problem: 'malformed (not a valid signing key)' };",
+    ]);
   });
 });
