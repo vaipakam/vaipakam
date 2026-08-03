@@ -42,15 +42,22 @@
  * Exit codes — a batch run must never read a drive that verified nothing
  * as a pass:
  *   0  observed and clean
- *   1  a regression: a route crashed, the chooser (or one of its two new
+ *   1  a REGRESSION, judged against a page we actually observed: a route
+ *      crashed or returned non-2xx, the chooser (or one of its two new
  *      paths) is missing from an eligible loan, or the PAGE tried to sign
  *      / send / POST something a read-only surface should never ask for
- *   2  BLOCKED — could not observe, or could not trust what it observed:
- *      no eligible loans on chain, the requested address holds none, or
- *      our own allowlist refused a read the app needed (which may have
- *      rendered a degraded page). Nothing was verified, so this is
+ *   2  BLOCKED — could not observe, or could not trust what it observed.
+ *      No eligible loans; the requested address holds none; a discovery
+ *      or setup step failed (unreachable RPC, browser launch); every
+ *      candidate's chain state moved before it could be visited; a
+ *      misconfigured OBSERVE_MAX_POSITIONS would assert nothing; or our
+ *      own allowlist refused a read the app needed, which may have left a
+ *      degraded page. Nothing trustworthy was verified, so this is
  *      deliberately not 0: `run-live-batch.mjs` would otherwise print
  *      PASS for a drive that made no trustworthy assertions at all.
+ *
+ * The 1-vs-2 line is the important one: exit 1 must always mean "the app
+ * did something wrong", never "the harness could not look properly".
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,7 +88,19 @@ function loadDiamondAbi() {
 const SITE = process.env.SITE_URL ?? 'https://alpha02.vaipakam.com';
 const CHAIN_ID = Number(process.env.OBSERVE_CHAIN_ID ?? 84532);
 const RPC = process.env.OBSERVE_RPC ?? 'https://sepolia.base.org';
-const MAX_POSITIONS = Number(process.env.OBSERVE_MAX_POSITIONS ?? 3);
+// A limit of 0 (or a typo) would visit no detail route at all: the
+// `/positions` list can pass on its own, and the run would exit 0 having
+// asserted nothing about the chooser — the exact no-verification-passes
+// outcome the exit contract exists to prevent (#1529 review round 7).
+const MAX_POSITIONS_RAW = process.env.OBSERVE_MAX_POSITIONS ?? '3';
+const MAX_POSITIONS = Number(MAX_POSITIONS_RAW);
+if (!Number.isInteger(MAX_POSITIONS) || MAX_POSITIONS < 1) {
+  console.error(
+    `\nBLOCKED: OBSERVE_MAX_POSITIONS must be a positive integer,` +
+      ` got "${MAX_POSITIONS_RAW}". A limit below 1 would assert nothing.`,
+  );
+  process.exit(2);
+}
 
 const deployment = JSON.parse(
   fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
@@ -139,6 +158,12 @@ const ALLOWED_RPC = new Set([
   'wallet_switchEthereumChain',
 ]);
 
+/** Severity classification ONLY — never a permission decision. What is
+ *  permitted is decided solely by ALLOWED_RPC, so a write method nobody
+ *  anticipated is still refused; it would merely be reported as an
+ *  allowlist gap rather than a violation. */
+const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
+
 const pub = createPublicClient({ transport: http(RPC) });
 
 // ---------------------------------------------------------------- chain
@@ -146,11 +171,34 @@ console.log(`site      ${SITE}`);
 console.log(`chain     ${CHAIN_ID} via ${RPC}`);
 console.log(`diamond   ${DIAMOND}`);
 
-const activeCount = await pub.readContract({
-  address: DIAMOND,
-  abi: DIAMOND_ABI_VIEM,
-  functionName: 'getActiveLoansCount',
-});
+/**
+ * Discovery and setup failures are BLOCKED, never FAIL.
+ *
+ * Exit 1 is reserved for assertions against pages we successfully
+ * observed. An unreachable or flaky RPC during discovery means we never
+ * got as far as observing anything — but an uncaught top-level rejection
+ * exits 1 regardless, so the batch would report a product regression for
+ * a network blip (#1529 review round 7).
+ */
+async function discovery(what, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(
+      `\nBLOCKED: ${what} failed, so nothing could be observed.` +
+        `\n  ${String(err).split('\n')[0].slice(0, 200)}`,
+    );
+    process.exit(2);
+  }
+}
+
+const activeCount = await discovery('reading the active-loan count', () =>
+  pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getActiveLoansCount',
+  }),
+);
 console.log(`active    ${activeCount} loan(s) on chain`);
 if (activeCount === 0n) {
   console.log('\nBLOCKED: no active loans on chain — nothing to observe, nothing verified.');
@@ -165,12 +213,14 @@ const PAGE = 25n;
 const ids = [];
 for (let offset = 0n; offset < activeCount; offset += PAGE) {
   const remaining = activeCount - offset;
-  const page = await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getActiveLoansPaginated',
-    args: [offset, remaining < PAGE ? remaining : PAGE],
-  });
+  const page = await discovery(`reading active loans from offset ${offset}`, () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getActiveLoansPaginated',
+      args: [offset, remaining < PAGE ? remaining : PAGE],
+    }),
+  );
   if (page.length === 0) break;
   ids.push(...page);
 }
@@ -223,11 +273,13 @@ function defaultGraceSeconds(durationDays) {
 
 let graceBucketsCache;
 async function graceSecondsFor(durationDays) {
-  graceBucketsCache ??= await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getGraceBuckets',
-  });
+  graceBucketsCache ??= await discovery('reading the grace buckets', () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getGraceBuckets',
+    }),
+  );
   const buckets = graceBucketsCache;
   if (buckets.length > 0) {
     for (const b of buckets) {
@@ -285,16 +337,20 @@ async function borrowerAuthorityOf(loan) {
 // Chain time, not the local clock — the grace comparison the app makes is
 // chain-anchored, and a skewed sandbox clock would misclassify loans near
 // the boundary.
-const chainNow = (await pub.getBlock({ blockTag: 'latest' })).timestamp;
+const chainNow = await discovery('reading chain time', () =>
+  pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+);
 
 const loans = [];
 for (const id of ids) {
-  const d = await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getLoanDetails',
-    args: [id],
-  });
+  const d = await discovery(`reading loan ${id}`, () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getLoanDetails',
+      args: [id],
+    }),
+  );
   const loan = {
     id,
     borrower: d.borrower,
@@ -381,11 +437,13 @@ if (mine.length === 0) {
 }
 
 // -------------------------------------------------------------- browser
-const browser = await chromium.launch({
-  headless: process.env.OBSERVE_HEADED !== '1',
-  args: ['--no-sandbox'],
-  ...(process.env.LIVE_CHROMIUM_PATH ? { executablePath: process.env.LIVE_CHROMIUM_PATH } : {}),
-});
+const browser = await discovery('launching the browser', () =>
+  chromium.launch({
+    headless: process.env.OBSERVE_HEADED !== '1',
+    args: ['--no-sandbox'],
+    ...(process.env.LIVE_CHROMIUM_PATH ? { executablePath: process.env.LIVE_CHROMIUM_PATH } : {}),
+  }),
+);
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
 
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
@@ -405,6 +463,7 @@ await ctx.route('**/*', async (route) => {
     // a non-RPC POST, or RPC naming a method we did not sanction — is
     // refused and named.
     let why = `${method} (non-RPC mutating request)`;
+    let badMethod = null;
     let allowed = false;
     const body = req.postData();
     if (body) {
@@ -414,14 +473,22 @@ await ctx.route('**/*', async (route) => {
         if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
           const bad = calls.find((c) => !ALLOWED_RPC.has(c.method));
           allowed = bad === undefined;
-          if (bad) why = `json-rpc ${bad.method} (not allowlisted)`;
+          if (bad) {
+            badMethod = bad.method;
+            why = `json-rpc ${bad.method} (not allowlisted)`;
+          }
         }
       } catch {
         /* not JSON — refuse with the default reason */
       }
     }
     if (!allowed) {
-      blockedHttp.push(`${why} → ${req.url().slice(0, 120)}`);
+      // Keep the METHOD, not just a sentence: the exit-code decision
+      // below applies the same write-vs-allowlist-gap split the injected
+      // provider uses. Labelling every refused POST a mutation reported a
+      // harness omission (e.g. an unlisted `eth_getProof`) as a product
+      // FAIL (#1529 review round 7).
+      blockedHttp.push({ why, method: badMethod, url: req.url().slice(0, 120) });
       await route.abort('accessdenied').catch(() => {});
       return;
     }
@@ -586,13 +653,58 @@ async function visit(path, { expectChooser = false } = {}) {
   return out;
 }
 
+/**
+ * Discovery happens up front, but each detail page can take the better
+ * part of a minute — so by the time a candidate is visited, minutes may
+ * have passed. In that window a loan can gain an offset lock, cross its
+ * grace deadline, or have its borrower NFT transferred, and the page will
+ * correctly evaluate the NEWER state and hide the chooser while this
+ * drive still holds a stale candidate. Reporting that as a regression
+ * would be a race in the harness, not a defect in the app (#1529 review
+ * round 7).
+ *
+ * So the volatile gates are re-read immediately before each visit. A
+ * candidate that has changed is SKIPPED, not failed — nothing was
+ * observed about it either way.
+ */
+async function stillEligible(loan) {
+  const [lockedNow, authorityNow, now] = await Promise.all([
+    offsetLockedOn(loan.borrowerTokenId),
+    borrowerAuthorityOf(loan),
+    pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+  ]);
+  if (lockedNow) return 'offset started since discovery';
+  if (authorityNow === null) return 'borrower token burned since discovery';
+  if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
+    return 'position transferred since discovery';
+  }
+  const grace = await graceSecondsFor(loan.durationDays);
+  if (now > loan.startTime + loan.durationDays * 86_400n + grace) {
+    return 'crossed its grace deadline since discovery';
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- drive
 const visited = [];
+const racedOut = [];
 visited.push(await visit('/positions'));
 for (const l of mine.slice(0, MAX_POSITIONS)) {
+  const changed = await stillEligible(l);
+  if (changed) {
+    racedOut.push(`${l.id} (${changed})`);
+    continue;
+  }
   visited.push(await visit(`/positions/${l.id}`, { expectChooser: true }));
 }
 await browser.close();
+
+if (racedOut.length) {
+  console.log(
+    `\nskipped mid-run, chain state moved: ${racedOut.join(', ')}` +
+      `\n  → not a failure; nothing was observed about these.`,
+  );
+}
 
 // --------------------------------------------------------------- report
 let failures = 0;
@@ -647,7 +759,6 @@ for (const v of visited) {
 // non-zero — as a REGRESSION when the page tried to mutate, and as
 // BLOCKED when it is our own allowlist that is too narrow, because those
 // have different remedies.
-const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
 const pageTriedToWrite = [...new Set(refusedRpc)].filter((m) => WRITE_SHAPED.test(m));
 const allowlistTooNarrow = [...new Set(refusedRpc)].filter((m) => !WRITE_SHAPED.test(m));
 
@@ -668,9 +779,21 @@ if (allowlistTooNarrow.length) {
       ` ALLOWED_RPC and re-run.`,
   );
 }
-if (blockedHttp.length) {
-  console.log(`\nmutating HTTP refused: ${blockedHttp.length}`);
-  blockedHttp.slice(0, 8).forEach((b) => console.log(`  ${b}`));
+// Same split as the provider path: a refused WRITE is a finding about the
+// page; a refused non-write is our allowlist being too narrow.
+const httpWrites = blockedHttp.filter((b) => b.method === null || WRITE_SHAPED.test(b.method));
+const httpGaps = blockedHttp.filter((b) => b.method !== null && !WRITE_SHAPED.test(b.method));
+if (httpWrites.length) {
+  console.log(`\nREAD-ONLY VIOLATION — mutating HTTP refused: ${httpWrites.length}`);
+  httpWrites.slice(0, 8).forEach((b) => console.log(`  ${b.why} → ${b.url}`));
+}
+if (httpGaps.length) {
+  console.log(
+    `\nALLOWLIST TOO NARROW — refused non-write RPC over HTTP:` +
+      ` ${[...new Set(httpGaps.map((b) => b.method))].join(', ')}` +
+      `\n  → the page may have rendered with less than it asked for.` +
+      ` Add these to ALLOWED_RPC and re-run.`,
+  );
 }
 
 const holds = visited.filter((v) => v.holdCard);
@@ -684,6 +807,14 @@ console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 // A page-initiated write attempt is a regression in the app; a
 // too-narrow allowlist means this run simply cannot be trusted. Neither
 // may exit 0.
-if (failures || pageTriedToWrite.length || blockedHttp.length) process.exit(1);
-if (allowlistTooNarrow.length) process.exit(2);
+if (failures || pageTriedToWrite.length || httpWrites.length) process.exit(1);
+if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
+// Every candidate moved out from under us: the list route alone proves
+// nothing about the chooser, so this run verified nothing.
+if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
+  console.log(
+    '\nBLOCKED: no position detail page was observed — nothing verified.',
+  );
+  process.exit(2);
+}
 process.exit(0);

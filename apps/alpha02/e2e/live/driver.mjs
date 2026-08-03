@@ -66,6 +66,33 @@ const WALLETS = Array.isArray(WALLETS_RAW)
   ? Object.fromEntries(WALLETS_RAW.map((w) => [w.role ?? w.name, w]))
   : WALLETS_RAW;
 
+/**
+ * The ONE accessor for a role's key, so a missing credential is BLOCKED
+ * wherever it is discovered.
+ *
+ * A readable-but-incomplete wallet file is just as much a missing
+ * precondition as an absent one — an empty `{}` parses fine and then
+ * `WALLETS[role].privateKey` throws deep inside `launch`, which exits 1
+ * and reads as a product regression (#1529 review round 7). The file
+ * check alone was not enough; the check has to be per ROLE, at the point
+ * of use.
+ */
+function walletFor(role) {
+  const w = WALLETS?.[role];
+  const key = w?.privateKey;
+  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+    const roles = Object.keys(WALLETS ?? {});
+    console.error(
+      `\nBLOCKED: the dev wallet file has no usable key for role "${role}".` +
+        `\n  path:  ${WALLETS_PATH}` +
+        `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
+        `\n  → each role needs { address, privateKey } with a 32-byte key.`,
+    );
+    process.exit(2);
+  }
+  return w;
+}
+
 export const CHAINS = {
   84532: {
     chain: baseSepolia,
@@ -129,13 +156,13 @@ export function clientsFor(chainId) {
       createWalletClient({
         chain,
         transport: http(rpc),
-        account: privateKeyToAccount(WALLETS[role].privateKey),
+        account: privateKeyToAccount(walletFor(role).privateKey),
       }),
   };
 }
 
 export function addressOf(role) {
-  return WALLETS[role].address;
+  return walletFor(role).address;
 }
 
 export async function launch({
@@ -177,7 +204,7 @@ export async function launch({
   // represent a first visit (Codex #1181 P2).
   freshProfile = false,
 } = {}) {
-  const account = privateKeyToAccount(WALLETS[role].privateKey);
+  const account = privateKeyToAccount(walletFor(role).privateKey);
   let chainId = startChainId;
   let authorized = preAuthorized;
 
