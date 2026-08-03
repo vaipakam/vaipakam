@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { ensureConnected, launch, SITE } from './driver.mjs';
+import { clientsFor, ensureConnected, launch, SITE } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIAMOND = JSON.parse(
@@ -27,6 +27,7 @@ const READ_ABI = parseAbi([
   'function getEffectiveRiskTier(address) view returns (uint8)',
   'function getRiskStrictMode(address) view returns (bool)',
 ]);
+const WRITE_ABI = parseAbi(['function setVaultRiskTier(uint8 level)']);
 const pub = createPublicClient({
   transport: http(process.env.BASE_SEPOLIA_RPC ?? 'https://sepolia.base.org'),
 });
@@ -44,10 +45,21 @@ const tierOf = () =>
  *  to mine AND to surface through the page's post-receipt reread. */
 async function pollUntil(label, fn, { timeoutMs = 150000, everyMs = 3000 } = {}) {
   const until = Date.now() + timeoutMs;
+  let lastErr = null;
   for (;;) {
-    if (await fn()) return true;
+    // A transient RPC error or momentarily-unavailable locator must
+    // RETRY until the deadline, not convert an infrastructure blip
+    // into a product failure (Codex #1539 r2).
+    try {
+      if (await fn()) return true;
+    } catch (e) {
+      lastErr = e;
+    }
     if (Date.now() > until) {
-      console.log(`poll timed out: ${label}`);
+      console.log(
+        `poll timed out: ${label}` +
+          (lastErr ? ` (last error: ${String(lastErr).slice(0, 140)})` : ''),
+      );
       return false;
     }
     await new Promise((r) => setTimeout(r, everyMs));
@@ -91,6 +103,11 @@ check('strict card withheld-enable posture', /isn’t offered here yet/i.test(bo
 check('no strict switch while OFF', (await page.getByRole('switch').count()) === 0);
 await assertSelectionMatchesChain('pre-write');
 
+// Mutation phase runs under try/finally (Codex #1539 r2): whatever
+// throws mid-flight, the persistent production wallet is restored to
+// Blue-chip (chain-confirmed, direct-write fallback) and the browser
+// context is closed.
+try {
 // 2. Normalize to Blue-chip FIRST (rerunnable after an aborted run;
 // also guarantees the next step is genuinely a raise).
 if (Number(await rawTierOf()) !== 0) {
@@ -131,7 +148,42 @@ check(
   (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'getRiskStrictMode', args: [who] })) === false,
 );
 
-await done();
+} finally {
+  try {
+    if (Number(await rawTierOf()) !== 0) {
+      console.log('cleanup: restoring Blue-chip');
+      try {
+        await page
+          .getByRole('radio', { name: /Blue-chip only/i })
+          .click({ timeout: 10000 });
+      } catch {
+        /* page may be wedged — the direct write below still restores */
+      }
+      const restored = await pollUntil(
+        'cleanup lower',
+        async () => Number(await rawTierOf()) === 0,
+        { timeoutMs: 60000 },
+      );
+      if (!restored) {
+        // Best-effort direct write with the role's own key — the
+        // cleanup contract is CHAIN state, not UI reachability.
+        const w = clientsFor(84532).wallet('borrower');
+        const hash = await w.writeContract({
+          address: DIAMOND,
+          abi: WRITE_ABI,
+          functionName: 'setVaultRiskTier',
+          args: [0],
+        });
+        await pub.waitForTransactionReceipt({ hash });
+        console.log('cleanup: restored via direct write');
+      }
+    }
+  } catch (e) {
+    console.log('cleanup failed:', String(e).slice(0, 200));
+  } finally {
+    await done();
+  }
+}
 if (fails.length) {
   console.log('FAILED checks:', fails.join(' | '));
   process.exit(1);
