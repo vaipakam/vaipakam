@@ -15,29 +15,37 @@ place to get it wrong.
 
 ---
 
-## 0. How to run the blocks below
+## 0. About the commands in this document
 
-Every command block in this document is **self-contained**: it starts from the
-repository root, sets nothing it does not also use, and wraps any directory
-change in a subshell so the working directory never leaks into the next block.
+**There are deliberately few, and that is the second attempt at getting this
+right.** An earlier structure spelled out every step as copy-paste shell and
+accumulated a defect per round for three rounds: a variable used before
+assignment, a `cd` leaking into the next block, a bare `npx` from a directory
+with no wrangler, and — in the very commit that declared the class closed — a
+`curl` using `CF_ACCOUNT_ID` and `CF_API_TOKEN` that nothing ever assigns.
 
-Run this once per shell, before anything else:
+The cause was not carelessness in any one line. It was writing a large
+surface of shell that nobody executes. So the surface is now small: this
+document states **what to do, in what order, and how to know it worked**, and
+defers the exact invocations to procedures that already exist and are already
+verified —
 
-```bash
-cd /path/to/vaipakam            # repository root
-SOURCE_DB=vaipakam-archive      # being retired
-TARGET_DB=vaipakam-warm         # being cut over to
-```
+- `docs/ops/OffChainRestore.md` §1 for wrangler forms, including the
+  `"triggers": { "crons": [] }` shape and the trigger-aware readback;
+- `docs/ops/DeploymentRunbook.md` for the per-Worker deploy commands;
+- `apps/keeper/README.md` for the kill-switch and its confirmation.
 
-`npx wrangler` is invoked from inside a workspace that depends on it — the
-repository root has no wrangler dependency, so `npx` there would attempt an
-unpinned registry download. That is why every block reads
-`(cd apps/indexer && npx wrangler …)` rather than a bare `npx wrangler`.
+Where a command does appear here it is marked **[run]** if that exact form
+was executed against the live account on 2026-08-03, or **[unrun]** if it was
+written but not executed. That distinction is the honest one, and it is the
+one the defect history above argues for: treat an unrun line as a description
+of intent to check against the canonical runbook, not as something to paste
+into a terminal during an irreversible operation.
 
-Earlier revisions of this document got each of those wrong at least once:
-a variable used before assignment, a `cd` that leaked into the following
-step, and a bare `npx` from the root. They are structural mistakes, so the
-structure fixes them rather than another round of patches.
+Note also that `ops/offchain-data-warm` is **outside the pnpm workspace** — a
+root install does not populate its `node_modules`, so `npx wrangler` there is
+an unpinned download. Use the form `DeploymentRunbook.md` uses for that
+Worker rather than inventing one.
 
 ## 1. What is being discarded, deliberately
 
@@ -55,7 +63,7 @@ describe contracts that will no longer exist:
 | `signed_offers` | 5 | address-bound to the old contracts; all cancelled |
 | `liquidity_confidence` | 6 | streak state, rebuilt by observation |
 | `market_summary` / `protocol_config` / `reward_loop_totals` | 5 / 3 / 3 | derived; recomputed |
-| `user_thresholds` / `notify_state` | 1 / 1 | thresholds on loans that will not exist |
+| `notify_state` | 1 | dedupe state for notifications about old loans |
 | `telegram_links` | 0 | already empty |
 
 > **Taken 2026-08-03.** Both a standalone `support_tickets` export and a
@@ -66,13 +74,30 @@ describe contracts that will no longer exist:
 > `sqlite_sequence`; filter both if it is ever imported into a database that
 > already has its own.
 
-**One exception, called out so it is a choice rather than an oversight:**
+**Two exceptions, called out so they are choices rather than oversights.**
+
+`user_thresholds` (1 row) is **not** obsoleted by a redeploy — an earlier
+revision of this table said it was. It is per-wallet, per-chain alert
+configuration with no loan identifier, and the same row carries the user's
+Telegram chat id. A redeploy changes which contracts it watches, not the
+user's stated preference. It is one row today; export it with the tickets if
+that user's settings are worth keeping.
+
+And the born-off-chain set is larger than this table shows: the classifier
+also names `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`,
+`pre_grace_notify_state`, `telegram_links` and `recycle_day_backfill`. All
+are empty today. **Re-run the counts across all nine on the day** — this
+table is a dated observation, not a property, and a legal hold or a
+diagnostic recorded between now and execution would not be visible in it.
+
+
 `support_tickets` holds **4 rows, all `status=open`**. A support ticket is a
 person waiting for a reply, and a contract redeploy does not change that. If
 those are real, export that one table before starting:
 
 ```bash
-install -m 700 -d ~/vaipakam-cutover        # private directory FIRST
+install -m 700 -d ~/vaipakam-cutover        # [run] private directory FIRST
+# [run]
 (cd apps/indexer && npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --table support_tickets --output ~/vaipakam-cutover/tickets.sql -y)
 chmod 600 ~/vaipakam-cutover/tickets.sql
@@ -145,6 +170,7 @@ had a clearing step; the no-migration rewrite removed it, which would have
 left those stale rows to be adopted as live state.
 
 ```bash
+# [unrun] — verify against OffChainRestore.md §1 before pasting
 (cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
   "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;")
 ```
@@ -164,6 +190,7 @@ preparation and execution, the Workers will come up against a database
 missing its schema.
 
 ```bash
+# [run] — this exact form was used on the source today
 (cd apps/indexer && npx wrangler d1 migrations apply "$TARGET_DB" --remote)
 (cd apps/indexer && npx wrangler d1 migrations list "$TARGET_DB" --remote)   # expect none pending
 ```
@@ -195,7 +222,8 @@ its last deploy predates several merges.
 
 ```bash
 pnpm --filter @vaipakam/agent exec wrangler deploy
-(cd ops/offchain-data-warm && npx wrangler deploy)
+# ops/offchain-data-warm is OUTSIDE the pnpm workspace — use the deploy
+# form in DeploymentRunbook.md for it, not a bare npx from here.
 ```
 
 Do this in the same sitting as the merge. Until it is done, **agent reads and
@@ -257,17 +285,13 @@ empty, its emptiness is the discriminator:
   touches D1 at all. It tells you the pass ran, not where it wrote.
 
   The honest fallback is the control plane, labelled as such — a
-  configuration check, not a behaviour one:
+  configuration check, not a behaviour one: read the Worker's D1 binding in
+  the Cloudflare dashboard (*Settings → Bindings*), or via the API if you
+  already have credentials to hand. It shows the bound database id, so it
+  cannot be satisfied by the wrong database.
 
-  ```bash
-  curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/vaipakam-keeper/settings" \
-    -H "Authorization: Bearer $CF_API_TOKEN" \
-    | jq '.result.bindings[] | select(.type=="d1")'
-  ```
-
-  It returns the bound `id` directly, so it cannot be satisfied by the wrong
-  database. Use it when no observable write is available, and prefer the
-  write when one is.
+  Use it when no observable write is available, and prefer the write when one
+  is.
 - **agent** — perform one threshold write through the API, then read it back
   from `$TARGET_DB` directly. If it landed in the source instead, its manual
   deploy did not take.
@@ -299,10 +323,16 @@ Workers write to the new database, forward is the only direction.**
 
 Order matters here, and this plan does not own all of it:
 
-- [ ] **The old backup Worker is retired first (#1551).** It binds the source
-      as `DB_ARCHIVE`. Deleting the database while that Worker is still
-      scheduled leaves a live cron pointed at a database that no longer
-      exists — a nightly failure with a confusing cause.
+- [ ] **The old backup Worker is retired (#1551) — and #1551 has its own
+      gate that comes first.** Its order is: the NEW Worker completes a
+      nightly whose alert names the new bucket, *then* the old Worker is
+      deleted. Only after that is the source database safe to delete, since
+      the old Worker binds it as `DB_ARCHIVE` and would otherwise be left
+      with a live cron pointed at nothing.
+
+      An earlier revision of this checklist said "retired first" while
+      listing the target's nightly verification two entries below, which
+      inverted #1551's own sequence.
 - [ ] All four Workers confirmed on the target by a **discriminating** probe.
 - [ ] One nightly backup completed against the target, verified by content.
 - [ ] `support_tickets` exported (§1) or consciously abandoned.
@@ -313,7 +343,8 @@ Order matters here, and this plan does not own all of it:
       not be. Re-run the count before deleting; do not trust this table.
 
 ```bash
-(cd apps/indexer && npx wrangler d1 delete "$SOURCE_DB")    # irreversible
+# [unrun] — irreversible; confirm the form before running
+(cd apps/indexer && npx wrangler d1 delete "$SOURCE_DB")
 ```
 
 > **Why a variable.** Once the bindings move, `check-d1-name-consistency` — a
