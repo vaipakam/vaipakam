@@ -39,28 +39,38 @@ on, so subtracting it would refuse claims their own money. Its place in the
 underlying rule says the platform must be *holding* it, not that a payout may
 not touch it. That distinction was implicit before and is now stated.
 
-### A second owner of the same balance — found in review, and now reserved
+### Four more owners of the same holding — and why none of them are reserved here
 
-Review then found the same shape with a different owner, and this one **is**
-fixed here rather than deferred.
+Review kept finding the same shape with different owners. In total five were
+identified: the recycled reserve, borrower fee custody on grandfathered loans,
+the per-party tariff (already safe — it credits the recycled reserve),
+treasury revenue where the platform holds its own, and the keeper reward
+budget. Each round of review produced another one.
 
-Where the platform acts as its own treasury, fee revenue is recorded as owed
-to the treasury and physically sits in the same holding. Nothing marked it as
-spoken for, so it read as spare — meaning a reward payout could transfer
-tokens the treasury was owed, leaving the treasury's own recorded balance
-untouched and a later withdrawal short. Those tokens are now subtracted along
-with the recycled reserve.
+One of them **was** reserved during this work, and that change has been
+**withdrawn**. Two reasons, and the second is the more instructive.
 
-Where the treasury is a separate address, no such balance is ever recorded, so
-the subtraction is inert there and exact where it applies.
+First, the count. Five owners across four rounds, with no sign of the rate
+falling, says the approach itself is wrong: permitting a payout up to
+"everything we hold, minus the claims we remembered to write down" needs that
+list to be complete forever, and a missing entry causes no visible failure —
+which is exactly how each of these went unnoticed.
 
-**The lesson is the count, not the fix.** Two rounds of review surfaced two
-different unreserved owners of one balance. That says the approach — allow a
-payout up to "everything we hold, minus the claims we remembered to list" — is
-the wrong instrument, because it requires the list to be complete forever and
-a missing entry is silent. Bounding payouts by *funding delivered for rewards*
-needs no list at all. That is now recorded as the durable fix, and the same
-one the outstanding cross-chain work needs.
+Second, patching it made things worse. Reserving that one owner immediately
+put the payout rule out of step with the separate rule governing when an
+unclaimed reward expires, which still measured the holding the old way. The
+result: expiry clocks kept running while every payout was refused, so an
+entitlement could lapse without its holder ever having had a usable window to
+claim it. A fix that creates a fresh way to lose user value is the point to
+stop patching and change approach.
+
+So the remaining owners are recorded as **known and unreserved** rather than
+half-addressed, and the figure is documented as an upper bound on genuinely
+free tokens — on every deployment, not just unusual ones. Bounding payouts by
+*funding delivered for rewards* needs no list at all, covers every owner at
+once, and is the same bound the outstanding cross-chain work needs. That is
+now the tracked remedy, and new custody should wait for it rather than be
+added to a subtraction that cannot be completed.
 
 ### One half of the first finding is fixed; the other is now stated plainly as open
 

@@ -377,15 +377,16 @@ library LibVpfiRecycle {
      * @param  s Diamond storage.
      * @return vpfiBalance The Diamond's live VPFI balance (all labels).
      * @return bucket      VPFI wei labelled as recycled reward runway.
-     * @return unearmarked `vpfiBalance − bucket − treasuryBalances[vpfi]`,
-     *         floored at zero — the balance available to fresh/scheduled
-     *         payout without eating recycle backing OR treasury-owned VPFI.
-     *         Zero means fully consumed OR in breach; read it with
-     *         `vpfiBalance` and `bucket` to tell those apart. NOTE the
-     *         treasury term is subtracted but NOT returned, so
-     *         `unearmarked != vpfiBalance − bucket` on a Diamond-as-treasury
-     *         deployment; that is deliberate (see the body) and callers must
-     *         not re-derive it from the other two returns.
+     * @return unearmarked `vpfiBalance − bucket`, floored at zero — the
+     *         balance available to fresh/scheduled payout without eating
+     *         recycle backing. Zero means fully consumed OR in breach; read
+     *         it with `vpfiBalance` and `bucket` to tell those apart.
+     *
+     *         **This is an UPPER BOUND on genuinely free tokens, on every
+     *         deployment.** Four other owners of this balance are known and
+     *         unsubtracted — see the body for why enumerating them was
+     *         abandoned and what replaces it (#1498). Do not read a healthy
+     *         value here as "these tokens are free to pay out".
      */
     function backingPosition(LibVaipakam.Storage storage s)
         internal
@@ -402,21 +403,35 @@ library LibVpfiRecycle {
         if (token == address(0)) revert RecycleBackingTokenUnset();
         vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
-        // #1555 r3 — TREASURY-OWNED VPFI is a second earmark and must come
-        // out too. On a Diamond-as-treasury deployment
-        // ({LibFacet.recordTreasuryAccrual} credits `treasuryBalances[asset]`
-        // exactly when `s.treasury == address(this)`), fee cuts land in THIS
-        // balance and credit no bucket. Without this subtraction a reward
-        // payout could transfer treasury-owned tokens while
-        // `treasuryBalances[vpfi]` stayed unchanged, leaving a later
-        // `claimTreasuryFees` / conversion / payroll draw underfunded — the
-        // same shape as #1460, a different owner.
+        // #1555 r4 — this subtracts the BUCKET ONLY, and that is now a
+        // DELIBERATE stopping point rather than an oversight. An r3 revision
+        // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
+        // full, because the reasoning is the useful part:
         //
-        // Off-deployment this reads zero (an external treasury address means
-        // the accrual never increments the mapping), so the subtraction is
-        // inert where it does not apply and exact where it does.
-        uint256 earmarked = bucket + s.treasuryBalances[token];
-        unearmarked = vpfiBalance > earmarked ? vpfiBalance - earmarked : 0;
+        // Four review rounds surfaced FIVE distinct owners of this one
+        // balance — the bucket, borrower-LIF rebate custody (grandfathered),
+        // the Full tariff's `C*` (covered, it credits the bucket),
+        // `treasuryBalances[vpfi]`, and `keeperRewardBudget`. Each round
+        // produced another and the rate did not fall. A bound of the form
+        // "balance minus the owners we remembered to list" cannot be made
+        // sound: completeness is unverifiable and a miss is SILENT.
+        //
+        // Worse, patching it compounds. The r3 treasury subtraction
+        // immediately diverged this from the RL-3 expiry predicates
+        // (`sweepExpiredEntry` / `_entryExecutableNow`), which still test
+        // `balanceOf >= fundingNeed` — so horizon clocks accrued while claims
+        // reverted and an entry could expire without ever having an
+        // executable notice window. A fix that manufactures a new defect is
+        // the signal to stop patching (#1499 tracks that divergence).
+        //
+        // So the remaining claimants stay KNOWN-UNRESERVED and are recorded
+        // as such rather than half-fixed. #1498 carries the durable remedy:
+        // bound a reward payout by funding DELIVERED FOR REWARDS, which needs
+        // no enumeration and closes every owner at once — the same bound
+        // #1434 prerequisite 1 needs for the cross-chain axis.
+        //
+        // Do NOT add a sixth subtraction here. Land that bound.
+        unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
     }
 
     /**
