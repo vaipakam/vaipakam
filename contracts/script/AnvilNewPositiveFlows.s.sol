@@ -1329,9 +1329,11 @@ contract AnvilNewPositiveFlows is Script {
     ///        6. `claimAsBorrower` therefore pays no VPFI rebate; there
     ///           is no rebate slot to pay.
     ///
-    ///      **Required assertion: `vpfiHeld == 0` after acceptance.**
-    ///      That is the point of this scenario now — it fails if the
-    ///      retired peg-custody origination path is ever re-wired.
+    ///      **Required assertion: `vpfiHeld == 0` after acceptance** — the
+    ///      observable end state of a HoldOnly loan. It is NOT a guard
+    ///      against reconnecting the peg-custody path; see the long note at
+    ///      the assertion for why three attempts to make it one failed and
+    ///      where that guard actually lives.
     ///
     ///      #1555 r2 — this natspec previously described acceptance as
     ///      calling `tryApplyBorrowerLif`, moving VPFI into custody and
@@ -1412,13 +1414,38 @@ contract AnvilNewPositiveFlows is Script {
         // reason; this drive must too.
         vm.warp(block.timestamp + 4 days);
 
-        // Prove the fixture is LIVE before asserting the property: a non-zero
-        // effective discount means the borrower genuinely qualifies for the
-        // path that would have taken custody.
+        // #1555 r4 — READ THIS BEFORE CALLING THE CHECK BELOW A GUARD.
+        //
+        // I have now claimed three times that N10's `vpfiHeld == 0` assertion
+        // is non-vacuous, and been wrong three times. The claim is therefore
+        // WITHDRAWN rather than made a fourth time, and what the assertion
+        // actually establishes is stated instead.
+        //
+        // Round 2: added the assertion, ignoring that tier is gated.
+        // Round 3: added the four-day warp, ignoring that
+        //   `getVPFIDiscountTier` returns the RAW vault-balance tier and
+        //   bypasses the effective history/cache gates the retired
+        //   `quote()` path actually consulted.
+        // Round 4: `anvil-bootstrap.sh` never sets `isCanonicalVpfiChain`
+        //   and N10 only calls `setVPFIToken`, so the mirror-tier cache is
+        //   empty and a reconnected `tryApplyBorrowerLif` would return
+        //   `(false, 0)` regardless — leaving `vpfiHeld == 0` for the wrong
+        //   reason.
+        //
+        // So: this asserts the OBSERVABLE END STATE (no custody receipt on a
+        // HoldOnly loan), which is worth pinning and is true. It is NOT a
+        // guard against reconnecting the peg-custody path — that guard is
+        // `testAcceptOfferWithVPFIDiscountApplied`, which runs against a
+        // fully-configured diamond. Making it one here requires configuring
+        // the canonical/cache state this drive does not set up, and asserting
+        // `getEffectiveDiscount` or the full borrower quote rather than the
+        // raw tier.
         (, , uint256 dBorrowerN10) = VPFIDiscountFacet(diamond)
             .getVPFIDiscountTier(borrower);
-        require(dBorrowerN10 > 0, "N10: tier gate not cleared - assertion would be vacuous");
-        console.log("Effective borrower discount bps (fixture live):", dBorrowerN10);
+        console.log(
+            "Raw vault-balance tier bps (NOT the effective gate):",
+            dBorrowerN10
+        );
 
         // Step 4: take a loan. The borrower is now tier-eligible with consent
         // enabled on a liquid lending asset — i.e. exactly the state the
