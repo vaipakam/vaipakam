@@ -34,8 +34,13 @@ cd ops/offchain-data-archive
 export BACKBLAZE_KEY_ID=...  BACKBLAZE_APP_KEY=...   # see the modes above
 #
 # Do NOT source the repo `.env` here, which an earlier revision of this block
-# told you to do (#1471 r9). That file is the MASTER key's home — the same two
-# variable names, a different and far more dangerous key — so sourcing it either
+# told you to do (#1471 r9). Since the credential split, `.env`'s
+# BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY hold the bucket-scoped READ key and the
+# master lives under BACKBLAZE_MASTER_* — so sourcing it silently gives `apply`
+# a key that cannot write, failing mid-run rather than at the check. (This
+# warning previously said `.env` was the master key's home under these same
+# names. That was true when written and stopped being true at the split; the
+# advice survived, its reason did not.) Sourcing it either
 # supplies nothing (step 7 below has you revoke it after setup) or silently runs
 # these commands as the master key, against the capability split this section
 # spends a page justifying. One variable pair carries three different keys with
@@ -203,10 +208,14 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    and the two scoped Application Keys (write-only + read-only):
 
    ```bash
-   # Master B2 Application Key is read from the repo `.env` —
-   # BACKBLAZE_KEY_ID + BACKBLAZE_APP_KEY. After this script runs,
-   # the master key only needs to come back out for explicit
-   # rotation events; the Worker uses the scoped keys.
+   # The MASTER B2 Application Key is read from the repo `.env` as
+   # BACKBLAZE_MASTER_KEY_ID + BACKBLAZE_MASTER_APP_KEY — deliberately
+   # NOT the BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY pair, which holds the
+   # scoped READ key (listBuckets + listFiles + readFiles) used by
+   # read-only tooling. Only this script needs account-wide authority:
+   # it creates buckets, mints application keys and writes lifecycle
+   # rules. After it runs, the master key only comes back out for
+   # explicit rotation events; the Worker uses the scoped keys.
    cd ops/offchain-data-archive
    node scripts/setup-backblaze.mjs
    ```
@@ -283,9 +292,19 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    "Trigger" button on the cron, or wait for the first 03:17 UTC
    tick. The Telegram alert lands either way.
 
-7. **Revoke the master key from `.env`** once everything is verified.
-   It only needed to be there for the one-time setup; keeping it on
-   disk is one accidental `git add` away from a leak.
+7. **Remove `BACKBLAZE_MASTER_KEY_ID` + `BACKBLAZE_MASTER_APP_KEY` from
+   `.env`** once everything is verified — those two lines and no others.
+   They were only needed for the one-time setup, and an account-wide key
+   on disk is one accidental `git add` away from a leak.
+
+   > Leave `BACKBLAZE_KEY_ID` / `BACKBLAZE_APP_KEY` in place: since the
+   > credential split those hold the **scoped read key**, not the master.
+   > An earlier revision of this step said "revoke the master key" while
+   > the setup step above pointed at that same pair — so following both
+   > literally deleted the read key and left the actual account master
+   > sitting on disk, which is precisely backwards. Check what a variable
+   > holds before removing it; the names moved and the instructions did
+   > not.
 
 ## Restore
 

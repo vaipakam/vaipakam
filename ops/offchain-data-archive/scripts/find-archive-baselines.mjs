@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 // The SAME validator the healthcheck uses. Re-deriving "is this a real
 // period" here would let the two disagree, and this script's whole output
 // is a period the operator is asked to commit.
-import { isRealPeriod } from '../src/tiers.ts';
+import { isRealPeriod, validateBaseline } from '../src/tiers.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..', '..');
@@ -53,13 +53,20 @@ const BUCKET = process.env.BUCKET_NAME || 'vaipakam-offchain-data-archive';
 const FAMILIES = [
   {
     env: 'ARCHIVE_FIRST_MONTHLY',
-    prefix: 'manifests-monthly/',
+    // BOTH halves of the pair. A cut writes a manifest AND an archive; if
+    // the oldest loses only its manifest, scanning `manifests-*` alone
+    // advances the reported baseline past it and the operator commits a
+    // value that permanently masks the deletion — while the bucket still
+    // holds the archive proving that period existed. Deriving the
+    // baseline from the survivors of ONE family is the same circularity
+    // the baseline exists to break, one level down.
+    prefixes: ['manifests-monthly/', 'archives-monthly/'],
     tier: 'monthly',
     label: 'monthly (written on the 1st)',
   },
   {
     env: 'ARCHIVE_FIRST_YEARLY',
-    prefix: 'manifests-yearly/',
+    prefixes: ['manifests-yearly/', 'archives-yearly/'],
     tier: 'yearly',
     label: 'yearly (written on Jan 1)',
   },
@@ -266,20 +273,41 @@ console.log(`\nBucket: ${BUCKET}\n`);
 const toSet = [];
 
 for (const fam of FAMILIES) {
-  const { periods, files } = await periodsUnder(auth, bucketId, fam.prefix, fam.tier);
+  const seen = new Set();
+  let files = 0;
+  for (const prefix of fam.prefixes) {
+    const r = await periodsUnder(auth, bucketId, prefix, fam.tier);
+    for (const p of r.periods) seen.add(p);
+    files += r.files;
+  }
+  const periods = [...seen].sort();
   console.log(`── ${fam.label}`);
-  console.log(`   prefix:  ${fam.prefix}`);
-  console.log(`   objects: ${files}`);
+  console.log(`   prefixes: ${fam.prefixes.join(' + ')}`);
+  console.log(`   objects:  ${files}`);
   if (periods.length === 0) {
-    console.log(`   periods: NONE — nothing written yet.`);
+    console.log(`   periods:  NONE — nothing written yet.`);
     console.log(`   → leave ${fam.env} UNSET. The healthcheck reports`);
     console.log(`     COVERAGE DEGRADED for this tier until one exists, which`);
     console.log(`     is the honest state rather than a fault.\n`);
     continue;
   }
-  console.log(`   periods: ${periods.length} (${periods[0]} … ${periods[periods.length - 1]})`);
-  console.log(`   → ${fam.env}=${periods[0]}\n`);
-  toSet.push(`${fam.env}=${periods[0]}`);
+  console.log(`   periods:  ${periods.length} (${periods[0]} … ${periods[periods.length - 1]})`);
+  // Run the value through the SAME gate the healthcheck will. I imported
+  // `isRealPeriod` and stopped there, which is half the validation: a
+  // validly shaped FUTURE key (`manifests-yearly/2999/x`, stray or
+  // planted) sorts first, would be reported as the baseline, and
+  // `validateBaseline` would then reject it on every run — after the
+  // operator had committed it.
+  const earliest = periods[0];
+  const check = validateBaseline({ [fam.tier]: earliest }, Date.now());
+  if (!check.ok) {
+    console.log(`   ✗ earliest period ${earliest} is NOT a usable baseline:`);
+    for (const e of check.errors) console.log(`     ${e}`);
+    console.log(`     Investigate that object before setting ${fam.env}.\n`);
+    continue;
+  }
+  console.log(`   → ${fam.env}=${earliest}\n`);
+  toSet.push(`${fam.env}=${earliest}`);
 }
 
 if (toSet.length === 0) {

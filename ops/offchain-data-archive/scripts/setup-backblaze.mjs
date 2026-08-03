@@ -345,8 +345,15 @@ async function main() {
   // distinguishable at a glance, so the one script that legitimately wants
   // account-wide authority asks for it by name and every other script can
   // keep refusing it.
-  const keyId = env.BACKBLAZE_MASTER_KEY_ID ?? env.BACKBLAZE_KEY_ID;
-  const appKey = env.BACKBLAZE_MASTER_APP_KEY ?? env.BACKBLAZE_APP_KEY;
+  // Select the PAIR atomically. Two independent `??` fallbacks combine an
+  // ID from one credential with a secret from the other whenever a `.env`
+  // is half-migrated — and B2 then answers with an opaque
+  // invalid-credentials error instead of either working or saying what is
+  // missing.
+  const [keyId, appKey] =
+    env.BACKBLAZE_MASTER_KEY_ID && env.BACKBLAZE_MASTER_APP_KEY
+      ? [env.BACKBLAZE_MASTER_KEY_ID, env.BACKBLAZE_MASTER_APP_KEY]
+      : [env.BACKBLAZE_KEY_ID, env.BACKBLAZE_APP_KEY];
   if (!keyId || !appKey) {
     fail(
       'BACKBLAZE_MASTER_KEY_ID and BACKBLAZE_MASTER_APP_KEY must both be set\n' +
