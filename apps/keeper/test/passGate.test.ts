@@ -308,9 +308,16 @@ describe('the key is constructed in exactly one place', () => {
     );
     expect(importers).toEqual(['keeper.ts']);
 
+    // EVERY matching declaration, not the first one found (#1540 r11).
+    // `.find` validated only the existing import, so an ADDITIVE second
+    // declaration — `import { privateKeyToAccount as makeAccount } …` — kept
+    // `importers` at ['keeper.ts'] and left the original spelling intact for
+    // the call scan, reopening the path. Asserting over a sample instead of
+    // the whole set is the same mistake in miniature.
     const src = readFileSync(new URL('keeper.ts', srcDir), 'utf8');
-    const line = src.split('\n').find((l) => l.includes('viem/accounts'));
-    expect(line).toBeDefined();
+    const decls = src.split('\n').filter((l) => l.includes('viem/accounts'));
+    expect(decls).toHaveLength(1);
+    const [line] = decls;
     // Named, unaliased, no `* as`.
     expect(line).not.toMatch(/\*\s+as\s/);
     expect(line).not.toMatch(/privateKeyToAccount\s+as\s/);
