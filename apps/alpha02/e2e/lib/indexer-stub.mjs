@@ -61,7 +61,18 @@ const n = (v) => Number(v ?? 0);
 // still reads open), so status must come from getOfferState, exactly
 // like the real indexer's derivation. Unknown enum values throw (500)
 // rather than guess.
-const OFFER_STATE = ['active', 'accepted', 'cancelled', 'consumed_by_sale'];
+// Index 4 (Expired) landed with the #1503/#1505 lender-sale listing
+// contracts: getOfferState now reports GTT expiry as a first-class
+// state, and the LIVE testnet holds offers in it — a map missing it
+// 500s /offers/active and empties the whole book (the post-redeploy
+// fork-tier outage of 2026-08-03).
+const OFFER_STATE = [
+  'active',
+  'accepted',
+  'cancelled',
+  'consumed_by_sale',
+  'expired',
+];
 
 // The FORK's clock, not the host's: evm_increaseTime moves
 // block.timestamp far from wall time, and the facets judge expiry

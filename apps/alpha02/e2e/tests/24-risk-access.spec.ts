@@ -131,7 +131,11 @@ test('strict mode: enable is honestly withheld, disable works against real chain
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
 
     await toggle.click();
-    await expect(page.getByText(/strict mode is off\./i)).toBeVisible({
+    // The unambiguous OFF observable: the switch leaves the page (the
+    // withheld-enable posture has no switch). Asserting the "off" copy
+    // by text was flaky — the status paragraph AND the disable-linger
+    // banner can both say "Strict mode is off." at once.
+    await expect(page.getByRole('switch')).toHaveCount(0, {
       timeout: 60_000,
     });
     // Back to the withheld-enable posture.
