@@ -62,7 +62,22 @@ const n = (v) => Number(v ?? 0);
 // still reads open), so status must come from getOfferState, exactly
 // like the real indexer's derivation. Unknown enum values throw (500)
 // rather than guess.
-const OFFER_STATE = ['active', 'accepted', 'cancelled', 'consumed_by_sale'];
+// Index-aligned with LibMetricsTypes.OfferState
+// { Open, Accepted, Cancelled, ConsumedBySale, Expired }. `Expired`
+// (4) arrived with the 2026-08-02 facet refresh; before it, the chain
+// reported an elapsed offer as Open and the clock overlay below did
+// the deriving. Both paths now coexist on purpose: the chain reports
+// Expired once something writes, while an offer that merely elapsed
+// (very common on a time-travelled fork, where evm_increaseTime moves
+// the clock without touching storage) still reads Open and needs the
+// overlay.
+const OFFER_STATE = [
+  'active',
+  'accepted',
+  'cancelled',
+  'consumed_by_sale',
+  'expired',
+];
 
 // The FORK's clock, not the host's: evm_increaseTime moves
 // block.timestamp far from wall time, and the facets judge expiry
@@ -94,7 +109,28 @@ async function mapOffer(id, chainNowSec) {
   const nowSec = Math.floor(Date.now() / 1000);
   let status = OFFER_STATE[n(stateRaw)];
   if (status === undefined) {
-    throw new Error(`unknown OfferState ${stateRaw} for offer ${id}`);
+    // Drop THIS offer, loudly — do not take the book down with it.
+    //
+    // This used to throw. The intent was sound (never guess at an
+    // unknown state), but the blast radius was not: mapOffer runs
+    // inside a Promise.all over the whole book, so one offer in a
+    // state this file has not heard of emptied the ENTIRE served book
+    // and every spec that needs to find an offer failed on a timeout
+    // naming the book, never the cause. That has now happened twice
+    // for two different reasons — a widened struct (#1518) and this
+    // enum gaining `Expired` — and cost about two weeks each time.
+    //
+    // Still no guessing: the offer is omitted rather than assigned a
+    // status. But the failure is now proportional to the fact, and it
+    // says exactly which value it did not recognise.
+    console.warn(
+      `[indexer-stub] UNKNOWN OfferState ${stateRaw} on offer ${id} — omitting ` +
+        `it from the book. This checkout's OFFER_STATE table is behind the ` +
+        `deployed contracts' LibMetricsTypes.OfferState enum; add the new ` +
+        `value there. Specs that expect this offer will fail; the rest of ` +
+        `the book is unaffected.`,
+    );
+    return null;
   }
   // GTT expiry overlay on an Open row — judged on the FORK's
   // block.timestamp with the facets' own >= boundary
