@@ -94,6 +94,13 @@ async function assertSelectionMatchesChain(context) {
   check(`${context}: selected radio matches chain raw tier`, ok);
 }
 
+// Mutation bookkeeping for cleanup: a raise TRANSACTION can still be
+// pending in the mempool when its bounded poll gives up — the
+// confirmed tier then still reads 0 and a naive cleanup would certify
+// clean right before the raise mines (Codex #1539 r7).
+let raiseClicked = false;
+let lowerConfirmed = false;
+
 // EVERYTHING after launch runs under the cleanup boundary (Codex
 // #1539 r5): a throw during strict normalization, navigation, connect
 // or the read-path assertions must still restore the wallet and close
@@ -161,6 +168,7 @@ if (Number(await rawTierOf()) !== 0) {
 
 // 3. Raise to Broad through the real flow — the tier radios SUBMIT on
 // click (live-revalidated write; the driver wallet auto-approves).
+raiseClicked = true;
 await page.getByRole('radio', { name: /Broad liquid/i }).click();
 check(
   'raise landed on-chain (effective Broad)',
@@ -178,10 +186,11 @@ await assertSelectionMatchesChain('post-raise');
 
 // 4. Lower back to Blue-chip; vault must end at the safest tier.
 await page.getByRole('radio', { name: /Blue-chip only/i }).click();
-check(
-  'lower landed on-chain (effective Blue-chip)',
-  await pollUntil('lower to 0', async () => Number(await tierOf()) === 0),
+lowerConfirmed = await pollUntil(
+  'lower to 0',
+  async () => Number(await tierOf()) === 0,
 );
+check('lower landed on-chain (effective Blue-chip)', lowerConfirmed);
 check(
   'strict mode still OFF on-chain',
   (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'getRiskStrictMode', args: [who] })) === false,
@@ -202,6 +211,22 @@ check(
     }
     // Unreadable after retries → attempt restoration anyway; the
     // chain-confirmed check below is the arbiter.
+    if (cleanupTier === 0 && raiseClicked && !lowerConfirmed) {
+      // The confirmed tier reads clean, but a broadcast raise may
+      // still be pending. A direct lowering write from the same
+      // account takes the NEXT nonce — it orders AFTER any pending
+      // raise and guarantees the terminal state (Codex #1539 r7). If
+      // nothing was actually pending this is a same-tier no-op write.
+      console.log('cleanup: nonce-ordered lowering behind a possibly-pending raise');
+      const w = clientsFor(84532).wallet('borrower');
+      const hash = await w.writeContract({
+        address: DIAMOND,
+        abi: WRITE_ABI,
+        functionName: 'setVaultRiskTier',
+        args: [0],
+      });
+      await pub.waitForTransactionReceipt({ hash });
+    }
     if (cleanupTier !== 0) {
       console.log('cleanup: restoring Blue-chip');
       try {
