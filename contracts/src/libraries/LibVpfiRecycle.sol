@@ -322,9 +322,9 @@ library LibVpfiRecycle {
      *           omitting the aggregate. Codex #1555 r1.)
      *
      *         **The invariant's three classes are NOT the whole list, and
-     *         that is the real lesson here.** FIVE owners of this one balance
-     *         were identified across FOUR review rounds, and **only the first
-     *         is subtracted**:
+     *         that is the real lesson here.** SIX owners of this one balance
+     *         have been identified across FIVE review rounds, and **only the
+     *         first is subtracted**:
      *
      *           1. `recycleBucket` — SUBTRACTED (see the body).
      *           2. borrower-LIF rebate custody — grandfathered loans only;
@@ -332,17 +332,29 @@ library LibVpfiRecycle {
      *           3. Full-tariff `C*` — covered, it credits the bucket.
      *           4. `treasuryBalances[vpfi]` — {LibFacet.recordTreasuryAccrual}
      *              on a Diamond-as-treasury deployment. **NOT subtracted.**
-     *           5. `keeperRewardBudget` — {LibTreasuryBuyback._routePriority}.
+     *           5. `rewardEmissionsBudget` — {LibTreasuryBuyback._routePriority}
+     *              step 1, credited ahead of the keeper budget once the
+     *              buyback targets are enabled. Read-only thereafter (nothing
+     *              decrements it), so a reward payout can spend the tokens
+     *              behind it while the published counter stands still.
+     *              **NOT subtracted.**
+     *           6. `keeperRewardBudget` — the same routing function, step 2.
      *              **NOT subtracted.**
      *
-     *         4 and 5 are KNOWN-UNRESERVED. An r3 revision did subtract 4 and
+     *         **This list is not claimed to be complete, and treating it as
+     *         complete is the failure mode.** Entry 5 was found in the round
+     *         AFTER a sweep that presented entries 1-4 (then 1-5) as swept —
+     *         twice. Each round I have declared the enumeration finished, and
+     *         each round it has grown.
+     *
+     *         4, 5 and 6 are KNOWN-UNRESERVED. An r3 revision did subtract 4 and
      *         it was REVERTED in r4 — the body records why. (This paragraph
      *         still said "it is now subtracted" after that revert, and said
      *         "two rounds, two claimants" after the count reached five. Both
      *         are corrected here; reverting a change is itself a sweep, and
      *         treating it as a single edit is what left them. Codex #1555 r7.)
      *
-     *         Five owners over four rounds, with the rate not falling, is what
+     *         Six owners over five rounds, with the rate not falling, is what
      *         says the enumeration is the wrong instrument: a payout bounded
      *         by BALANCE must know every owner of that balance, forever, and
      *         a missed one is silent. The durable fix is to bound payout by
@@ -428,7 +440,7 @@ library LibVpfiRecycle {
         // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
         // full, because the reasoning is the useful part:
         //
-        // Four review rounds surfaced FIVE distinct owners of this one
+        // Five review rounds surfaced SIX distinct owners of this one
         // balance — the bucket, borrower-LIF rebate custody (grandfathered),
         // the Full tariff's `C*` (covered, it credits the bucket),
         // `treasuryBalances[vpfi]`, and `keeperRewardBudget`. Each round
