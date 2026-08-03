@@ -120,6 +120,23 @@ function loadCreds() {
   // delete BACKBLAZE_MASTER_* believing the remaining pair was safe. A
   // verification that can succeed without inspecting the thing it certifies
   // is not a verification.
+  // A HALF-WRITTEN disk pair must not be silently skipped. Filtering to
+  // complete pairs first meant a missing or partial `.env` credential left
+  // only the exported one, the run succeeded, and step 7 read that success
+  // as proof about what is ON DISK — after which the master is removed and
+  // local tooling has no working persisted credential at all.
+  const diskPartial =
+    (file.BACKBLAZE_KEY_ID || file.BACKBLAZE_APP_KEY) &&
+    !(file.BACKBLAZE_KEY_ID && file.BACKBLAZE_APP_KEY);
+  if (diskPartial) {
+    fail(
+      'the repo-root .env has only ONE half of BACKBLAZE_KEY_ID /\n' +
+        '  BACKBLAZE_APP_KEY. Refusing to fall back to another credential:\n' +
+        '  this command is used to certify the pair ON DISK, so a partial\n' +
+        '  one must fail rather than be quietly bypassed.',
+    );
+  }
+
   const distinct = [...new Set(pairs.map(([, id]) => id))];
   if (distinct.length > 1) {
     fail(
@@ -237,32 +254,29 @@ async function b2(auth, endpoint, body) {
 }
 
 async function resolveBucketId(auth) {
-  // A bucket-scoped key can only ever see its own bucket. Returning that
-  // id blindly meant a mistyped BUCKET_NAME, or a key copied from another
-  // deployment, scanned one bucket while the output named another — and
-  // those dates would then be committed as baselines for the wrong
-  // bucket. Confirm the name matches before trusting the scope.
-  if (auth.allowedBucketId) {
-    if (auth.allowedBucketName && auth.allowedBucketName !== BUCKET) {
-      fail(
-        `this key is scoped to bucket "${auth.allowedBucketName}" but ` +
-          `BUCKET_NAME is "${BUCKET}" — refusing to report one bucket's ` +
-          `periods under another's name`,
-      );
-    }
-    return auth.allowedBucketId;
+  // BUCKET SCOPE IS REQUIRED, not merely honoured when present. The old
+  // fallback resolved the configured bucket through `b2_list_buckets` for
+  // an unscoped key — so routine discovery could run on a credential able
+  // to list and read every bucket in the account, which is the same
+  // least-authority failure as accepting the master, one notch quieter.
+  // A read key for ONE bucket is the documented posture; anything wider
+  // is a different key than the one this command is meant to certify.
+  if (!auth.allowedBucketId) {
+    fail(
+      'this key is not bucket-scoped — it can reach every bucket in the\n' +
+        '  account. Use the read key scoped to the backup bucket alone.',
+    );
   }
-  if (!auth.accountId) fail('authorize returned no accountId and no bucket scope');
-  const data = await b2(auth, 'b2_list_buckets', {
-    accountId: auth.accountId,
-    bucketName: BUCKET,
-  });
-  const found = (data.buckets ?? []).find((b) => b.bucketName === BUCKET);
-  if (!found) fail(`bucket ${BUCKET} not visible to this key`);
-  return found.bucketId;
+  if (auth.allowedBucketName && auth.allowedBucketName !== BUCKET) {
+    fail(
+      `this key is scoped to bucket "${auth.allowedBucketName}" but ` +
+        `BUCKET_NAME is "${BUCKET}" — refusing to report one bucket's ` +
+        `periods under another's name`,
+    );
+  }
+  return auth.allowedBucketId;
 }
 
-/** Every period segment present under a prefix, plus the object count. */
 const PAGE_CAP = 500;
 
 async function periodsUnder(auth, bucketId, prefix, tier) {

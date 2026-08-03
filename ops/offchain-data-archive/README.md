@@ -326,16 +326,28 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    BACKBLAZE_APP_KEY=<read application key from step 2>
    ```
 
-   Then remove `BACKBLAZE_MASTER_KEY_ID` + `BACKBLAZE_MASTER_APP_KEY` —
-   those two lines and no others. They were needed only for this one-time
-   setup, and an account-wide key on disk is one accidental `git add`
-   away from a leak.
-
-   Verify the result before you delete anything:
+   **Verify BEFORE removing anything** — this check gates the deletion, so
+   it has to run while the working master is still in place:
 
    ```bash
-   npm run archive:baselines   # refuses a master key; succeeds on the read key
+   npm run archive:baselines
    ```
+
+   It refuses a master key by capability, refuses an unscoped one, and
+   refuses a half-written pair — so success means the credential now on
+   disk is genuinely the scoped read key. Print order matters: the first
+   line names the credential source it used, and it must be
+   `.env BACKBLAZE_KEY_ID/APP_KEY`. If anything fails, fix the pasted key
+   and re-run; the master is still there and nothing is lost.
+
+   **Only once that passes**, remove `BACKBLAZE_MASTER_KEY_ID` +
+   `BACKBLAZE_MASTER_APP_KEY` — those two lines and no others. They were
+   needed only for this one-time setup, and an account-wide key on disk is
+   one accidental `git add` away from a leak.
+
+   > An earlier revision put this check AFTER the removal while telling
+   > you to "verify before you delete anything" — so a mistyped read key
+   > was discovered only once the working credential was already gone.
 
    > Two revisions of this step said "revoke the master key" while the
    > setup step above pointed at `BACKBLAZE_KEY_ID` — so following both
