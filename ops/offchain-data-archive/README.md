@@ -33,14 +33,38 @@ cd ops/offchain-data-archive
 #
 export BACKBLAZE_KEY_ID=...  BACKBLAZE_APP_KEY=...   # see the modes above
 #
+# ── THE TWO CREDENTIAL SETS IN `.env` ────────────────────────────────
+#
+#   BACKBLAZE_MASTER_KEY_ID / BACKBLAZE_MASTER_APP_KEY
+#     The account MASTER key. Account-wide: writeBuckets, deleteBuckets,
+#     writeKeys, deleteKeys, writeFiles, deleteFiles, bypassGovernance.
+#     Used by ONE script — setup-backblaze.mjs — because provisioning
+#     creates buckets, mints keys and writes lifecycle rules. Removed
+#     from `.env` after setup (step 7).
+#
+#   BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY
+#     The bucket-scoped READ-ONLY key: exactly listBuckets + listFiles +
+#     readFiles. Stays in `.env`. Used by read tooling such as
+#     `find-archive-baselines.mjs`, which REFUSES anything holding more.
+#
+# The names differ on purpose. They previously did not, and a single pair
+# carrying keys with opposite authority is what made the instructions
+# below contradict each other for two revisions.
+# ─────────────────────────────────────────────────────────────────────
+
 # Do NOT source the repo `.env` here, which an earlier revision of this block
-# told you to do (#1471 r9). That file is the MASTER key's home — the same two
-# variable names, a different and far more dangerous key — so sourcing it either
-# supplies nothing (step 7 below has you revoke it after setup) or silently runs
-# these commands as the master key, against the capability split this section
-# spends a page justifying. One variable pair carries three different keys with
-# opposite requirements; nothing at runtime can tell them apart, so the choice
-# has to be made here, deliberately, per mode.
+# told you to do (#1471 r9). Since the credential split, `.env`'s
+# BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY hold the bucket-scoped READ key and the
+# master lives under BACKBLAZE_MASTER_*. Sourcing it therefore gives `apply`
+# a key that CANNOT write, so the run fails partway rather than at the check —
+# and gives `print` / `check` exactly what they want, which is the trap: the
+# same command block behaves correctly in two modes and wrongly in the third.
+# Export the key the MODE needs, per the list above.
+#
+# (This warning previously said `.env` was the master key's home under these
+# same names, and concluded that sourcing it would run these commands AS the
+# master. Both were true before the credential split and neither is now. The
+# advice survived; its reasoning did not — see the two-sets block above.)
 npm run bucket:lifecycle:print   # what B2 currently has
 npm run bucket:lifecycle:check   # does live match the declaration?
 npm run bucket:lifecycle:apply   # make live match the declaration
@@ -203,10 +227,14 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    and the two scoped Application Keys (write-only + read-only):
 
    ```bash
-   # Master B2 Application Key is read from the repo `.env` —
-   # BACKBLAZE_KEY_ID + BACKBLAZE_APP_KEY. After this script runs,
-   # the master key only needs to come back out for explicit
-   # rotation events; the Worker uses the scoped keys.
+   # The MASTER B2 Application Key is read from the repo `.env` as
+   # BACKBLAZE_MASTER_KEY_ID + BACKBLAZE_MASTER_APP_KEY — deliberately
+   # NOT the BACKBLAZE_KEY_ID / BACKBLAZE_APP_KEY pair, which holds the
+   # scoped READ key (listBuckets + listFiles + readFiles) used by
+   # read-only tooling. Only this script needs account-wide authority:
+   # it creates buckets, mints application keys and writes lifecycle
+   # rules. After it runs, the master key only comes back out for
+   # explicit rotation events; the Worker uses the scoped keys.
    cd ops/offchain-data-archive
    node scripts/setup-backblaze.mjs
    ```
@@ -283,9 +311,51 @@ Both paths report to Telegram (`TG_OPS_CHAT_ID`).
    "Trigger" button on the cron, or wait for the first 03:17 UTC
    tick. The Telegram alert lands either way.
 
-7. **Revoke the master key from `.env`** once everything is verified.
-   It only needed to be there for the one-time setup; keeping it on
-   disk is one accidental `git add` away from a leak.
+7. **Put the generated READ key into `.env`**, then remove the master.
+
+   Step 2 prints a bucket-scoped read-only key (listBuckets + listFiles
+   + readFiles) which step 4 stores as the Worker's `B2_READ_*` secrets.
+   Local read tooling — `find-archive-baselines.mjs` — needs it too, and
+   nothing until now put it on disk:
+
+   ```bash
+   # In the repo-root .env, SET these to the READ key from step 2 output.
+   # On an existing deployment they currently hold the pre-split master;
+   # overwrite them.
+   BACKBLAZE_KEY_ID=<read key id from step 2>
+   BACKBLAZE_APP_KEY=<read application key from step 2>
+   ```
+
+   **Verify BEFORE removing anything** — this check gates the deletion, so
+   it has to run while the working master is still in place:
+
+   ```bash
+   npm run archive:baselines
+   ```
+
+   It refuses a master key by capability, refuses an unscoped one, and
+   refuses a half-written pair — so success means the credential now on
+   disk is genuinely the scoped read key. Print order matters: the first
+   line names the credential source it used, and it must be
+   `.env BACKBLAZE_KEY_ID/APP_KEY`. If anything fails, fix the pasted key
+   and re-run; the master is still there and nothing is lost.
+
+   **Only once that passes**, remove `BACKBLAZE_MASTER_KEY_ID` +
+   `BACKBLAZE_MASTER_APP_KEY` — those two lines and no others. They were
+   needed only for this one-time setup, and an account-wide key on disk is
+   one accidental `git add` away from a leak.
+
+   > An earlier revision put this check AFTER the removal while telling
+   > you to "verify before you delete anything" — so a mistyped read key
+   > was discovered only once the working credential was already gone.
+
+   > Two revisions of this step said "revoke the master key" while the
+   > setup step above pointed at `BACKBLAZE_KEY_ID` — so following both
+   > literally deleted the read key and left the actual account master on
+   > disk, which is precisely backwards. The names moved at the credential
+   > split and the instructions did not. `npm run archive:baselines` is
+   > the cheap check: it refuses a master key by capability, so if it
+   > succeeds, what is on disk is genuinely read-only.
 
 ## Restore
 

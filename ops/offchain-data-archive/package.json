@@ -11,7 +11,8 @@
     "build": "npm ci --ignore-scripts && ./node_modules/.bin/tsc --noEmit",
     "bucket:lifecycle:check": "node scripts/apply-bucket-lifecycle.mjs --check",
     "bucket:lifecycle:print": "node scripts/apply-bucket-lifecycle.mjs --print-live",
-    "bucket:lifecycle:apply": "node scripts/apply-bucket-lifecycle.mjs --apply"
+    "bucket:lifecycle:apply": "node scripts/apply-bucket-lifecycle.mjs --apply",
+    "archive:baselines": "node scripts/find-archive-baselines.mjs"
   },
   "dependencies": {},
   "devDependencies": {
