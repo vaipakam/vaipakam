@@ -301,8 +301,19 @@ await ctx.addInitScript(() => {
   announce();
 });
 
-/** Load a route and report everything that went wrong on it. */
-async function visit(path) {
+/**
+ * Load a route and report everything that went wrong on it.
+ *
+ * `expectChooser` makes the settle CONDITIONAL rather than a fixed sleep.
+ * A fixed wait is wrong in both directions against a live chain: too
+ * short and a slow RPC round-trip reads as "the chooser is missing",
+ * failing the drive for a defect that isn't there; too long and every
+ * run pays for the worst case. Waiting for the thing being asserted
+ * resolves as soon as it appears, and only spends the full timeout in
+ * the case where the answer is genuinely negative — where spending it is
+ * exactly right, because that is the claim the drive would be making.
+ */
+async function visit(path, { expectChooser = false } = {}) {
   const page = await ctx.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -314,8 +325,21 @@ async function visit(path) {
   try {
     const resp = await page.goto(SITE + path, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     http = resp?.status() ?? null;
-    // The chain reads behind this page are real RPC round-trips.
-    await page.waitForTimeout(9_000);
+    if (expectChooser) {
+      // The chain reads behind this page are real RPC round-trips, so
+      // wait for the assertion's own subject. A timeout here is NOT an
+      // error to propagate — absence is a legitimate observation, and
+      // the reporting below is what decides whether it is a failure.
+      await page
+        .locator('section.card')
+        .filter({ hasText: /Ways to repay or exit early/i })
+        .first()
+        .waitFor({ state: 'visible', timeout: 45_000 })
+        .catch(() => {});
+    }
+    // Short settle regardless: lets the cards below the chooser (the
+    // hold card among them) finish their own reads before we scrape.
+    await page.waitForTimeout(4_000);
   } catch (e) {
     await page.close();
     return { path, nav: String(e).replace(/\s+/g, ' ').slice(0, 180), pageErrors, consoleErrors };
@@ -347,7 +371,9 @@ async function visit(path) {
 // ---------------------------------------------------------------- drive
 const visited = [];
 visited.push(await visit('/positions'));
-for (const l of mine.slice(0, MAX_POSITIONS)) visited.push(await visit(`/positions/${l.id}`));
+for (const l of mine.slice(0, MAX_POSITIONS)) {
+  visited.push(await visit(`/positions/${l.id}`, { expectChooser: true }));
+}
 await browser.close();
 
 // --------------------------------------------------------------- report
