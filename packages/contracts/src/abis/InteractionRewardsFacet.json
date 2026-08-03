@@ -1058,6 +1058,11 @@
   },
   {
     "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecycledShareExceedsDelivery",
     "inputs": [
       {
