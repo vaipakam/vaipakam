@@ -305,3 +305,127 @@ test('a processed-but-unreadable recovery stays locked across a reload', async (
     page.getByText(/your recovery attempt went through/i),
   ).toHaveCount(0);
 });
+
+/**
+ * Cross-tab RELEASE of an unresolved card (Codex #1547 r13).
+ *
+ * Every tab open on one wallet shares a single record of the
+ * outstanding attempt. When another tab settles or CANCELS that attempt
+ * it removes the record — and a tab still showing the unresolved card
+ * used to keep showing it. Worst case is a signature the user declined
+ * before anything was sent: there is no transaction for "check again"
+ * to find, so the card sat there until the signed deadline expired.
+ *
+ * The release is deliberately narrow, and all three rules are pinned
+ * here: a removal naming a DIFFERENT attempt leaves the card alone, a
+ * removal naming THIS attempt returns the tab to a usable form, and a
+ * SETTLED verdict (the executed lock) survives a removal untouched.
+ *
+ * Driven by dispatching the same `storage` event the browser delivers
+ * to every other tab of the origin — a second real tab is what fires it
+ * in production, but the handler under test is identical, and the fork
+ * rig runs one context per wallet. The oracle is installed benign so
+ * the released state is the real FORM rather than the availability
+ * block; the finally restores the exact snapshot.
+ */
+test('a record another tab removes releases only the matching unresolved card', async ({
+  launchWallet,
+}) => {
+  const { page, account } = await launchWallet('borrower');
+  const originalOracle = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getSanctionsOracle',
+  })) as Address;
+  try {
+    await anvilRpc('anvil_setCode', [MOCK_ORACLE, ALWAYS_FALSE_CODE]);
+    await setSanctionsOracle(MOCK_ORACLE);
+
+    await page.goto('/recover', { waitUntil: 'domcontentloaded' });
+    await connectWallet(page);
+
+    const storageKey = `alpha02.recoverPending.${CHAIN_ID}.${account.address.toLowerCase()}`;
+    // An UNRESOLVED attempt (no `settled` flag) — the shape a broadcast
+    // whose receipt was never read leaves behind.
+    const pendingRecord = JSON.stringify({
+      txHash: `0x${'22'.repeat(32)}`,
+      attemptId: 'attempt-one',
+      declaredSource: account.address,
+      amount: '1500000000000000000',
+      symbol: 'MOCK',
+      decimals: 18,
+      recoveryNonce: '0',
+      deadline: '1',
+    });
+    await page.evaluate(
+      ([key, value]) => window.localStorage.setItem(key, value),
+      [storageKey, pendingRecord] as const,
+    );
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(
+      page.getByText(/transaction submitted — result unconfirmed/i),
+    ).toBeVisible({ timeout: 30_000 });
+
+    /** The event the browser delivers to every OTHER tab on a removal. */
+    const removeFromAnotherTab = (oldValue: string | null) =>
+      page.evaluate(
+        ([key, previous]) => {
+          window.localStorage.removeItem(key);
+          window.dispatchEvent(
+            new StorageEvent('storage', {
+              key,
+              oldValue: previous,
+              newValue: null,
+              storageArea: window.localStorage,
+            }),
+          );
+        },
+        [storageKey, oldValue] as const,
+      );
+
+    // (1) A removal naming a DIFFERENT attempt must not touch this card
+    // — that is another tab tidying up an older record, not news about
+    // the attempt on screen.
+    await removeFromAnotherTab(
+      JSON.stringify({ ...JSON.parse(pendingRecord), attemptId: 'attempt-two' }),
+    );
+    await expect(
+      page.getByText(/transaction submitted — result unconfirmed/i),
+    ).toBeVisible();
+
+    // (2) A removal naming THIS attempt releases the card — back to a
+    // usable form, not a card describing something that no longer
+    // exists.
+    await removeFromAnotherTab(pendingRecord);
+    await expect(
+      page.getByText(/transaction submitted — result unconfirmed/i),
+    ).toHaveCount(0);
+    await expect(page.getByLabel(/token contract address/i)).toBeVisible();
+
+    // (3) A SETTLED verdict survives the same removal: the processed-
+    // attempt lock is something the user still has to read, and another
+    // tab clearing storage must never wipe it off this screen.
+    const settledRecord = JSON.stringify({
+      ...JSON.parse(pendingRecord),
+      settled: 'executed',
+    });
+    await page.evaluate(
+      ([key, value]) => window.localStorage.setItem(key, value),
+      [storageKey, settledRecord] as const,
+    );
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(
+      page.getByText(/your recovery attempt went through/i),
+    ).toBeVisible({ timeout: 30_000 });
+    await removeFromAnotherTab(settledRecord);
+    await expect(
+      page.getByText(/your recovery attempt went through/i),
+    ).toBeVisible();
+  } finally {
+    await setSanctionsOracle(originalOracle);
+    await page.evaluate(
+      (key) => window.localStorage.removeItem(key),
+      `alpha02.recoverPending.${CHAIN_ID}.${account.address.toLowerCase()}`,
+    );
+  }
+});

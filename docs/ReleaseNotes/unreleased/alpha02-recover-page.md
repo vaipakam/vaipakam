@@ -292,3 +292,34 @@ that exists. Their first step pointed at a path that is not a page on
 the guide's site, so a reader who followed the app's link out to the
 guide had no way back into the flow. Every language edition of the
 guide now links to the recovery page's real address on the app site.
+
+An outcome card now belongs to the wallet and network it was produced
+for. The cards that report how a recovery ended — it worked, it was
+refused because the declared sender is flagged, or its outcome could not
+be read — are shown ahead of every other check on the page, so that a
+wallet flagged BY its own recovery still gets the explanation rather
+than a generic block. That ordering meant switching directly from one
+account to another (or from one network to another) briefly redrew the
+previous wallet's outcome card, and the transaction link on it was built
+from the network that had just been selected — a real transaction
+pointed at the wrong network's explorer. Each card now records the
+account and network it describes, and a card that does not match the
+connected wallet is dropped the moment the page redraws: the user lands
+on the ordinary starting state for the wallet they just switched to, and
+the transaction link is always built from the network the card itself
+belongs to.
+
+A pending card is also released when another tab abandons the attempt.
+Recovery is deliberately limited to one attempt per wallet, and every
+tab open on that wallet shares one remembered record of it. When another
+tab settles or cancels that attempt it removes the shared record, but a
+tab still showing the "we're waiting to see what happened" card kept
+showing it. That was worst for an attempt the user declined in the
+wallet before it was ever sent: there is no transaction for "check
+again" to find, so the card stayed put until the signed thirty-minute
+window ran out. A tab now notices the removal and returns to a fresh
+form — but only if the card it was showing describes the attempt that
+was removed, and only when that card is still an unresolved one. A newer
+attempt is left alone, and a settled verdict the user still needs to
+read — it worked, it was refused, or an attempt was processed — is never
+cleared out from under them.

@@ -48,6 +48,7 @@ import {
 } from 'viem';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
+import { getSupportedChain } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
@@ -281,7 +282,19 @@ function readPendingRecovery(
   chainId: number,
   account: string,
 ): PendingRecoveryRecord | null {
-  const raw = pendingRecoveryStore.read(chainId, account.toLowerCase());
+  return parsePendingRecovery(
+    pendingRecoveryStore.read(chainId, account.toLowerCase()),
+  );
+}
+
+/** The same parse + validation over a RAW value (Codex #1547 r13) — a
+ *  cross-tab `storage` event carries the removed record in
+ *  `event.oldValue`, which is no longer in storage to be read back, and
+ *  identifying WHICH attempt another tab dropped is what keeps this tab
+ *  from clearing a newer one. */
+function parsePendingRecovery(
+  raw: string | null,
+): PendingRecoveryRecord | null {
   if (raw === null) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -776,6 +789,30 @@ interface SubmittedContext {
   deadline?: bigint;
 }
 
+/**
+ * The (account, chain) a TERMINAL card belongs to (Codex #1547 r13).
+ *
+ * Terminal outcome cards render AHEAD of every account/oracle gate (the
+ * r2 rule — a ban refetches sanctions, and the generic flagged-wallet
+ * gate would otherwise swallow the receipt-specific card). That
+ * ordering made the passive identity reset too late: a direct
+ * account → account switch on the same chain, or a chain → chain
+ * switch, re-renders BEFORE the reset effect runs, so the previous
+ * wallet's outcome card painted for one frame — with an explorer link
+ * built from the NEWLY selected chain's explorer base, pointing a
+ * real hash at the wrong network's scanner.
+ *
+ * Tagging the card with the identity it describes lets the render
+ * suppress a mismatched one SYNCHRONOUSLY, so the reset effect is only
+ * ever housekeeping, never the thing standing between a wallet switch
+ * and someone else's receipt.
+ */
+interface StepOwner {
+  /** LOWERCASED — every comparison is case-insensitive by construction. */
+  address: string;
+  chainId: number;
+}
+
 type Step =
   | { kind: 'form' }
   | { kind: 'review' }
@@ -789,13 +826,21 @@ type Step =
    *  attempt's symbol/decimals applied to someone else's amount. */
   | {
       kind: 'success';
+      /** The identity this card describes (Codex #1547 r13). */
+      owner: StepOwner;
       txHash: Hex;
       amount: bigint;
       symbol: string;
       decimals: number;
       unknownToken?: string;
     }
-  | { kind: 'banned'; txHash: Hex; declaredSource: string }
+  | {
+      kind: 'banned';
+      /** The identity this card describes (Codex #1547 r13). */
+      owner: StepOwner;
+      txHash: Hex;
+      declaredSource: string;
+    }
   /** TERMINAL (Codex #1547 r3): the tx receipt was a success but no
    *  outcome event decoded — the recovery may already have completed,
    *  so the flow must never re-arm the sign button from here.
@@ -827,6 +872,8 @@ type Step =
    *  absent AND its signature has expired). */
   | {
       kind: 'unknownOutcome';
+      /** The identity this card describes (Codex #1547 r13). */
+      owner: StepOwner;
       /** NULL for a signed attempt the wallet never acknowledged
        *  (Codex #1547 r8) — the card renders without an explorer link
        *  rather than linking a hash that does not exist. */
@@ -837,10 +884,32 @@ type Step =
       ctx?: SubmittedContext;
     };
 
+/** The identity a TERMINAL card belongs to, or NULL for the steps that
+ *  render behind the gates and are covered by the reset effect alone
+ *  (Codex #1547 r13). The three variants listed here are exactly the
+ *  ones that render AHEAD of the account/oracle gates. */
+function terminalStepOwner(step: Step): StepOwner | null {
+  return step.kind === 'success' ||
+    step.kind === 'banned' ||
+    step.kind === 'unknownOutcome'
+    ? step.owner
+    : null;
+}
+
+/** The identity tag for a card built for a given wallet + chain (Codex
+ *  #1547 r13). Lowercases once, here, so no comparison has to. */
+function stepOwnerOf(address: string, chainId: number): StepOwner {
+  return { address: address.toLowerCase(), chainId };
+}
+
 /**
  * The card a PERSISTED record rehydrates to. Shared by the identity
  * effect, the cross-tab `storage` listener and the pre-sign re-read
  * (Codex #1547 r8) so all three land on exactly the same state.
+ *
+ * `owner` (Codex #1547 r13) is the identity the record was READ for —
+ * a rehydrated card is tagged exactly like a freshly-built one, so the
+ * render-time identity check treats both the same.
  *
  * A record marked `settled: 'executed'` rehydrates as the TERMINAL
  * locked card, not as a pending one (Codex #1547 r7) — the verdict "an
@@ -848,7 +917,10 @@ type Step =
  * would hand the user a fresh form over a recovery that may have moved
  * only part of the surplus.
  */
-function stepFromRecord(stored: PendingRecoveryRecord): Step {
+function stepFromRecord(
+  stored: PendingRecoveryRecord,
+  owner: StepOwner,
+): Step {
   const ctx: SubmittedContext = {
     ...(stored.attemptId === undefined ? {} : { attemptId: stored.attemptId }),
     ...(stored.token === undefined ? {} : { token: stored.token }),
@@ -864,11 +936,18 @@ function stepFromRecord(stored: PendingRecoveryRecord): Step {
   return stored.settled === 'executed'
     ? {
         kind: 'unknownOutcome',
+        owner,
         txHash: stored.txHash,
         receiptless: 'executed',
         ctx,
       }
-    : { kind: 'unknownOutcome', txHash: stored.txHash, pending: true, ctx };
+    : {
+        kind: 'unknownOutcome',
+        owner,
+        txHash: stored.txHash,
+        pending: true,
+        ctx,
+      };
 }
 
 /**
@@ -964,12 +1043,16 @@ function outcomeStepFrom(
   decoded: DecodedRecoveryOutcome,
   txHash: Hex,
   ctx: SubmittedContext | undefined,
+  /** The identity the card belongs to (Codex #1547 r13) — the account
+   *  and chain the receipt was read for, never whatever is connected by
+   *  the time the card renders. */
+  owner: StepOwner,
 ): Step | null {
   if (decoded.kind === 'banned') {
     const declaredSource = decoded.declaredSource ?? ctx?.declaredSource;
     return declaredSource === undefined
       ? null
-      : { kind: 'banned', txHash, declaredSource };
+      : { kind: 'banned', owner, txHash, declaredSource };
   }
   const amount = decoded.amount ?? ctx?.amount;
   if (amount === undefined) return null;
@@ -984,6 +1067,7 @@ function outcomeStepFrom(
       ? null
       : {
           kind: 'success',
+          owner,
           txHash,
           amount,
           symbol: shortAddress(decoded.token),
@@ -993,6 +1077,7 @@ function outcomeStepFrom(
   }
   return {
     kind: 'success',
+    owner,
     txHash,
     amount,
     symbol: ctx.symbol,
@@ -1011,7 +1096,11 @@ export function Recover() {
   const [sourceInput, setSourceInput] = useState('');
   const [amountInput, setAmountInput] = useState('');
   const [confirmInput, setConfirmInput] = useState('');
-  const [step, setStep] = useState<Step>({ kind: 'form' });
+  // RAW step state (Codex #1547 r13): what the flow last committed,
+  // which may belong to a wallet/chain that is no longer connected. The
+  // `step` the render consumes is DERIVED from it below, after the
+  // identity check — nothing outside that derivation reads this.
+  const [rawStep, setStep] = useState<Step>({ kind: 'form' });
   const [error, setError] = useState<string | null>(null);
   // Reconcile state for the PENDING terminal card (Codex #1547 r5).
   // Its failure line is SEPARATE from `error` on purpose: the shared
@@ -1073,8 +1162,11 @@ export function Recover() {
   // switching away merely hides it, and switching back — or reloading
   // the page — REHYDRATES the pending card instead of presenting a
   // blank form over a transaction that may still be mining.
-  useEffect(() => {
-    genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
+  /** Back to a blank form with every derived banner cleared — the state
+   *  an identity change lands on, and the state the explicit start-over
+   *  actions land on. Deliberately does NOT touch the persisted record;
+   *  each caller decides whether that record is theirs to drop. */
+  const clearToFreshForm = () => {
     setTokenInput('');
     setSourceInput('');
     setAmountInput('');
@@ -1083,14 +1175,60 @@ export function Recover() {
     setReconcileError(null);
     setExecutedAcked(false);
     setPersistFailed(false);
+    setStep({ kind: 'form' });
+  };
+
+  useEffect(() => {
+    genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
+    clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
     const chainId = walletChain?.chainId;
     const stored =
       address && chainId !== undefined
         ? readPendingRecovery(chainId, address)
         : null;
-    setStep(stored === null ? { kind: 'form' } : stepFromRecord(stored));
+    // A rehydrated card is TAGGED with the identity it was read for
+    // (Codex #1547 r13), exactly like a freshly-built one.
+    if (stored !== null && address && chainId !== undefined) {
+      setStep(stepFromRecord(stored, stepOwnerOf(address, chainId)));
+    }
   }, [address, walletChain?.chainId]);
+
+  // The step the RENDER consumes (Codex #1547 r13). A terminal card is
+  // tagged with the account + chain it describes, and a card whose tag
+  // no longer matches the connected wallet is suppressed HERE —
+  // synchronously, in the same render that first sees the new identity
+  // — instead of waiting for the passive reset effect above.
+  //
+  // Why it can't wait: the terminal cards render AHEAD of every
+  // account/oracle gate (the r2 rule), so on a direct account → account
+  // switch (or chain → chain) React paints once with the previous
+  // wallet's outcome card still committed, and its explorer link is
+  // built from the newly-selected chain's explorer base — a real hash
+  // pointed at the wrong network's scanner. Suppressing it reads as
+  // "there is no terminal step": the render falls through to the same
+  // form / probing states a fresh identity starts from, and the reset
+  // effect then does the state housekeeping a beat later.
+  const stepOwner = terminalStepOwner(rawStep);
+  const step: Step =
+    stepOwner !== null &&
+    !(
+      address !== undefined &&
+      walletChain !== null &&
+      stepOwner.address === address.toLowerCase() &&
+      stepOwner.chainId === walletChain.chainId
+    )
+      ? { kind: 'form' }
+      : rawStep;
+
+  // Mirror of the committed step for event listeners (Codex #1547 r13):
+  // the `storage` handler below has to know what this tab is showing
+  // WITHOUT re-subscribing on every step change, and it needs the raw
+  // step (tag included) to decide whether a removal concerns it.
+  const stepRef = useRef<Step>(rawStep);
+  useEffect(() => {
+    stepRef.current = rawStep;
+  }, [rawStep]);
 
   // CROSS-TAB rehydrate (Codex #1547 r8): a second tab on the same
   // wallet must not sit on a blank form while the first tab has a
@@ -1099,20 +1237,68 @@ export function Recover() {
   // written. Only a form/review state is replaced: a card that already
   // describes an attempt (or an in-flight signature) is never
   // overwritten by a background event.
+  //
+  // The REMOVAL case matters just as much (Codex #1547 r13). Another
+  // tab drops the shared record when it rejects the signature, or when
+  // it reads a definitive receipt — at which point this tab's pending
+  // card describes an attempt that no longer exists. Left alone it
+  // stayed there: for a rejected HASHLESS reservation there is no
+  // transaction for "check again" to find, so the card sat locked until
+  // the signed 30-minute deadline expired, over a send that was never
+  // made. So a removal releases the card — but only a pending one, and
+  // only when the record that went away is the one this card describes.
   useEffect(() => {
     const chainId = walletChain?.chainId;
     if (!address || chainId === undefined) return;
+    const owner = stepOwnerOf(address, chainId);
     const ownKey = pendingRecoveryStore.key(chainId, address.toLowerCase());
     const onStorage = (event: StorageEvent) => {
       // `key === null` is a whole-storage clear, which also concerns us.
       if (event.key !== null && event.key !== ownKey) return;
       const stored = readPendingRecovery(chainId, address);
-      if (stored === null) return;
-      setStep((current) =>
-        current.kind === 'form' || current.kind === 'review'
-          ? stepFromRecord(stored)
-          : current,
-      );
+      if (stored !== null) {
+        setStep((current) =>
+          current.kind === 'form' || current.kind === 'review'
+            ? stepFromRecord(stored, owner)
+            : current,
+        );
+        return;
+      }
+      // Nothing in storage for this identity any more — the removal
+      // path. Only an UNRESOLVED card is released: a settled one
+      // (success, banned, the executed lock, "nothing was processed")
+      // is a verdict the user still has to read, and another tab
+      // tidying storage must never wipe it off this screen.
+      const current = stepRef.current;
+      if (
+        current.kind !== 'unknownOutcome' ||
+        current.pending !== true ||
+        current.owner.address !== owner.address ||
+        current.owner.chainId !== owner.chainId
+      ) {
+        return;
+      }
+      // Whose attempt was removed? `event.oldValue` still carries it,
+      // and matching on it is what stops a card belonging to a NEWER
+      // attempt (this tab re-submitted after the other tab settled)
+      // from being cleared by a stale removal. When the browser gives
+      // no oldValue — a whole-storage clear, or an event shape without
+      // it — the only safe reading left is the weaker one: this card is
+      // pending and no record exists for it at all, so it is stale
+      // either way.
+      const removed = parsePendingRecovery(event.oldValue);
+      if (
+        removed !== null &&
+        !pendingRecoveryMatches(
+          removed,
+          current.txHash,
+          current.ctx?.recoveryNonce.toString(),
+          current.ctx?.attemptId,
+        )
+      ) {
+        return;
+      }
+      clearToFreshForm();
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -1442,6 +1628,12 @@ export function Recover() {
     // later comparison.
     const replacement: { reason: 'repriced' | 'cancelled' | 'replaced' | null } =
       { reason: null };
+    // The identity every terminal card this flow builds is TAGGED with
+    // (Codex #1547 r13) — the wallet and chain the recovery was signed
+    // for, not whoever is connected by the time a card renders. Assigned
+    // the moment the connection is known; the catch below reads it, and
+    // it is still NULL only on the paths where nothing was ever signed.
+    let cardOwner: StepOwner | null = null;
     setError(null);
     try {
       if (!walletClient || !publicClient || !address || !walletChain) {
@@ -1454,6 +1646,8 @@ export function Recover() {
         throw new Error(copy.recover.errSurplusMoved);
       }
       const diamond = walletChain.diamondAddress;
+      const owner = stepOwnerOf(address, walletChain.chainId);
+      cardOwner = owner;
       const token = snapshot.token as `0x${string}`;
       const declaredSource = sourceInput as `0x${string}`;
       const amount = amountWei;
@@ -1713,7 +1907,7 @@ export function Recover() {
         // back to review. Same message either way — one attempt at a
         // time per wallet is the rule being enforced.
         if (claim.existing !== null) {
-          setStep(stepFromRecord(claim.existing));
+          setStep(stepFromRecord(claim.existing, owner));
           setError(copy.recover.errAttemptInFlight);
         } else {
           abortToReview(copy.recover.errAttemptInFlight);
@@ -1895,7 +2089,12 @@ export function Recover() {
       const outcome: Step | null =
         decodedOutcome === null
           ? null
-          : outcomeStepFrom(decodedOutcome, minedHash, submittedCtx ?? undefined);
+          : outcomeStepFrom(
+              decodedOutcome,
+              minedHash,
+              submittedCtx ?? undefined,
+              owner,
+            );
       // The receipt was READ, so this transaction's fate is settled
       // whichever branch runs below — drop the persisted record
       // (Codex #1547 r6) so a later mount doesn't rehydrate a pending
@@ -1946,6 +2145,7 @@ export function Recover() {
         // outcome-unknown card.
         setStep({
           kind: 'unknownOutcome',
+          owner,
           txHash: minedHash,
           replaced: replacement.reason === 'cancelled',
         });
@@ -1985,7 +2185,12 @@ export function Recover() {
         setError(captureTxError(err));
         return;
       }
-      if (submittedTxHash !== null || attemptSigned) {
+      // `cardOwner` is set the moment the connection is validated, so it
+      // is never null on a path that got as far as signing (Codex #1547
+      // r13) — the check is what lets the card be TAGGED without an
+      // assertion, and its false arm falls through to the pre-broadcast
+      // handling below.
+      if ((submittedTxHash !== null || attemptSigned) && cardOwner !== null) {
         publishReceiptInvalidation(queryClient);
         if (genRef.current !== gen) return;
         // Carry the submitted context (Codex #1547 r5) so the pending
@@ -1993,6 +2198,7 @@ export function Recover() {
         // card once the receipt becomes readable.
         setStep({
           kind: 'unknownOutcome',
+          owner: cardOwner,
           txHash: submittedTxHash,
           pending: true,
           ctx: submittedCtx ?? undefined,
@@ -2040,6 +2246,9 @@ export function Recover() {
     const diamond = walletChain.diamondAddress;
     const chainId = walletChain.chainId;
     const account = address;
+    // The identity every card this read produces is tagged with (Codex
+    // #1547 r13) — the wallet the receipt is being read FOR.
+    const owner = stepOwnerOf(account, chainId);
     // Identity-matched clear (Codex #1547 r8) — never delete a NEWER
     // record another tab wrote for this wallet.
     const forgetPending = () =>
@@ -2082,6 +2291,7 @@ export function Recover() {
           gen,
           chainId,
           account,
+          owner,
           forgetPending,
         });
         return;
@@ -2134,7 +2344,9 @@ export function Recover() {
       // and an event that names a token the record doesn't know is
       // rendered in that token's own terms instead of this one's.
       const outcome =
-        decoded === null ? null : outcomeStepFrom(decoded, minedHash, ctx);
+        decoded === null
+          ? null
+          : outcomeStepFrom(decoded, minedHash, ctx, owner);
       if (outcome) {
         setStep(outcome);
         return;
@@ -2142,7 +2354,7 @@ export function Recover() {
       // Receipt read but no outcome event decoded — the NON-pending
       // unknown-outcome card, which does offer a fresh start because
       // the transaction's fate is now settled.
-      setStep({ kind: 'unknownOutcome', txHash: minedHash });
+      setStep({ kind: 'unknownOutcome', owner, txHash: minedHash });
     } catch {
       // Still unreadable — stay exactly where we are, hash intact.
       if (genRef.current !== gen) return;
@@ -2217,10 +2429,13 @@ export function Recover() {
       gen: number;
       chainId: number;
       account: `0x${string}`;
+      /** The identity every card this verdict produces is tagged with
+       *  (Codex #1547 r13). */
+      owner: StepOwner;
       forgetPending: () => void;
     },
   ) {
-    const { gen, chainId, account, forgetPending } = scope;
+    const { gen, chainId, account, owner, forgetPending } = scope;
     if (!publicClient || !walletChain) {
       setReconcileError(copy.recover.reconcileStillPending);
       return;
@@ -2286,7 +2501,13 @@ export function Recover() {
       if (!locked && genRef.current === gen) setPersistFailed(true);
       publishReceiptInvalidation(queryClient, ['sanctions']);
       if (genRef.current !== gen) return;
-      setStep({ kind: 'unknownOutcome', txHash, receiptless: 'executed', ctx });
+      setStep({
+        kind: 'unknownOutcome',
+        owner,
+        txHash,
+        receiptless: 'executed',
+        ctx,
+      });
       return;
     }
     if (liveNonce < ctx.recoveryNonce) {
@@ -2371,11 +2592,30 @@ export function Recover() {
     // publish, and starting over is genuinely safe.
     forgetPending();
     if (genRef.current !== gen) return;
-    setStep({ kind: 'unknownOutcome', txHash, receiptless: 'never' });
+    setStep({ kind: 'unknownOutcome', owner, txHash, receiptless: 'never' });
   }
 
-  const explorerTx = (txHash: Hex) =>
-    `${walletChain?.blockExplorer}/tx/${txHash}`;
+  /** Explorer link for a terminal card, built from the chain the card is
+   *  TAGGED with (Codex #1547 r13) — never from whatever chain happens
+   *  to be connected when it renders. Those are the same chain by the
+   *  time a card survives the identity check above; sourcing the base
+   *  from the tag is what makes that true by construction rather than
+   *  by ordering. NULL for a chain the registry doesn't describe, which
+   *  the render treats as "no link" instead of a half-built URL. */
+  const explorerTx = (txHash: Hex, owner: StepOwner): string | null => {
+    const base = getSupportedChain(owner.chainId)?.blockExplorer;
+    return base === undefined ? null : `${base}/tx/${txHash}`;
+  };
+
+  /** The explorer anchor, or nothing when no link can be built. */
+  const txLink = (txHash: Hex, owner: StepOwner, label: string) => {
+    const href = explorerTx(txHash, owner);
+    return href === null ? null : (
+      <a href={href} target="_blank" rel="noreferrer noopener">
+        {label}
+      </a>
+    );
+  };
 
   // The review card stays mounted through 'signing' and 'submitting'
   // with every control locked (Codex #1547 r1) — unmounting it would
@@ -2406,15 +2646,7 @@ export function Recover() {
         step.ctx?.attemptId,
       );
     }
-    setTokenInput('');
-    setSourceInput('');
-    setAmountInput('');
-    setConfirmInput('');
-    setError(null);
-    setReconcileError(null);
-    setExecutedAcked(false);
-    setPersistFailed(false);
-    setStep({ kind: 'form' });
+    clearToFreshForm();
   };
 
   return (
@@ -2473,9 +2705,7 @@ export function Recover() {
                   step.symbol,
                 )}
             <br />
-            <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
-              {copy.recover.viewTx}
-            </a>
+            {txLink(step.txHash, step.owner, copy.recover.viewTx)}
           </span>
         </div>
       ) : step.kind === 'banned' ? (
@@ -2487,9 +2717,7 @@ export function Recover() {
             {copy.recover.bannedBody(shortAddress(step.declaredSource))}{' '}
             {copy.recover.bannedAutoUnlock}
             <br />
-            <a href={explorerTx(step.txHash)} target="_blank" rel="noreferrer noopener">
-              {copy.recover.viewTx}
-            </a>
+            {txLink(step.txHash, step.owner, copy.recover.viewTx)}
           </span>
         </div>
       ) : step.kind === 'unknownOutcome' ? (
@@ -2548,19 +2776,15 @@ export function Recover() {
                 r6). When the wallet never returned a hash at ALL there
                 is nothing to link (Codex #1547 r8) — say so instead of
                 rendering a dead explorer URL. */}
-            {step.txHash === null ? (
-              copy.recover.noTxLink
-            ) : (
-              <a
-                href={explorerTx(step.txHash)}
-                target="_blank"
-                rel="noreferrer noopener"
-              >
-                {step.receiptless
-                  ? copy.recover.viewOriginalTx
-                  : copy.recover.viewTx}
-              </a>
-            )}
+            {step.txHash === null
+              ? copy.recover.noTxLink
+              : txLink(
+                  step.txHash,
+                  step.owner,
+                  step.receiptless
+                    ? copy.recover.viewOriginalTx
+                    : copy.recover.viewTx,
+                )}
             <br />
             {step.pending ? (
               // NO plain "start over" on the pending variant (Codex
