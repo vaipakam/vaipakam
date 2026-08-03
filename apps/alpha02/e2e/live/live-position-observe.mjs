@@ -42,12 +42,15 @@
  * Exit codes — a batch run must never read a drive that verified nothing
  * as a pass:
  *   0  observed and clean
- *   1  a regression: a route crashed, or the chooser is missing from an
- *      active loan
- *   2  BLOCKED — could not observe (no active loans on chain, or the
- *      requested address holds none). Nothing was verified, so this is
+ *   1  a regression: a route crashed, the chooser (or one of its two new
+ *      paths) is missing from an eligible loan, or the PAGE tried to sign
+ *      / send / POST something a read-only surface should never ask for
+ *   2  BLOCKED — could not observe, or could not trust what it observed:
+ *      no eligible loans on chain, the requested address holds none, or
+ *      our own allowlist refused a read the app needed (which may have
+ *      rendered a degraded page). Nothing was verified, so this is
  *      deliberately not 0: `run-live-batch.mjs` would otherwise print
- *      PASS for a drive that made no assertions at all.
+ *      PASS for a drive that made no trustworthy assertions at all.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -98,9 +101,11 @@ const DIAMOND_ABI_VIEM = loadDiamondAbi();
  * and refuses everything else, which makes an omission a false REFUSAL —
  * visible in the report and easy to fix — rather than a silent send.
  *
- * Every refusal is recorded and printed, so an allowlist that turns out
- * to be too narrow shows up as a named refusal instead of a mysteriously
- * degraded page.
+ * Every refusal is recorded, printed AND ends the run non-zero. Printing
+ * alone was not enough: the app can catch a refused read and render a
+ * degraded page that still contains the chooser, so the drive would have
+ * reported clean while observing something less than the real surface
+ * (#1529 review round 5). See the exit-code contract at the top.
  */
 const ALLOWED_RPC = new Set([
   // Reads. eth_call and eth_estimateGas change no state.
@@ -152,12 +157,24 @@ if (activeCount === 0n) {
   process.exit(2);
 }
 
-const ids = await pub.readContract({
-  address: DIAMOND,
-  abi: DIAMOND_ABI_VIEM,
-  functionName: 'getActiveLoansPaginated',
-  args: [0n, activeCount > 25n ? 25n : activeCount],
-});
+// Walk the WHOLE set, a page at a time. The underlying list is a
+// swap-and-pop array, so it is not ordered by eligibility — a first-page
+// cap would miss the only eligible loan (or the requested address's) on a
+// busy chain and then report BLOCKED, claiming none exists (#1529 review).
+const PAGE = 25n;
+const ids = [];
+for (let offset = 0n; offset < activeCount; offset += PAGE) {
+  const remaining = activeCount - offset;
+  const page = await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getActiveLoansPaginated',
+    args: [offset, remaining < PAGE ? remaining : PAGE],
+  });
+  if (page.length === 0) break;
+  ids.push(...page);
+}
+console.log(`fetched   ${ids.length} loan id(s) across ${Math.ceil(Number(activeCount) / 25)} page(s)`);
 
 // LoanStatus.Active — `getActiveLoansPaginated` also returns
 // FallbackPending (4), and AssetType.ERC20 — an NFT-rental row is not a
@@ -516,15 +533,34 @@ for (const v of visited) {
   (v.consoleErrors ?? []).slice(0, 4).forEach((e) => console.log(`      c ${e}`));
 }
 
-// Refusals are printed rather than counted as failures: the drive is
-// SUPPOSED to refuse writes. They matter because a refusal that is
-// actually a too-narrow allowlist would otherwise present as a
-// mysteriously degraded page, so the list must always be visible.
-if (refusedRpc.length) {
+// A refusal is never just informational. Printing it while the exit code
+// says PASS is precisely the silent-pass shape the BLOCKED verdict exists
+// to prevent: the app can catch a refused read, render a degraded page
+// that still happens to contain the chooser, and the drive would report
+// clean (#1529 review round 5). Zero refusals is the established
+// expectation from a real run, so any refusal at all ends the run
+// non-zero — as a REGRESSION when the page tried to mutate, and as
+// BLOCKED when it is our own allowlist that is too narrow, because those
+// have different remedies.
+const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
+const pageTriedToWrite = [...new Set(refusedRpc)].filter((m) => WRITE_SHAPED.test(m));
+const allowlistTooNarrow = [...new Set(refusedRpc)].filter((m) => !WRITE_SHAPED.test(m));
+
+if (pageTriedToWrite.length) {
   console.log(
-    `\nwallet RPC refused (watch-only): ${[...new Set(refusedRpc)].join(', ')}` +
-      `\n  → if any of these is a READ the app legitimately needs,` +
-      ` add it to ALLOWED_RPC rather than reading past this line.`,
+    `\nREAD-ONLY VIOLATION — the page asked to sign or send:` +
+      ` ${pageTriedToWrite.join(', ')}` +
+      `\n  → refused, so nothing was sent, but a read-only surface should` +
+      ` never have asked. This is a finding, not a harness gap.`,
+  );
+}
+if (allowlistTooNarrow.length) {
+  console.log(
+    `\nALLOWLIST TOO NARROW — refused non-write method(s):` +
+      ` ${allowlistTooNarrow.join(', ')}` +
+      `\n  → the page may have rendered with less than it asked for, so` +
+      ` this run's observations are not trustworthy. Add these to` +
+      ` ALLOWED_RPC and re-run.`,
   );
 }
 if (blockedHttp.length) {
@@ -539,4 +575,10 @@ console.log(
 );
 
 console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
-process.exit(failures ? 1 : 0);
+
+// A page-initiated write attempt is a regression in the app; a
+// too-narrow allowlist means this run simply cannot be trusted. Neither
+// may exit 0.
+if (failures || pageTriedToWrite.length || blockedHttp.length) process.exit(1);
+if (allowlistTooNarrow.length) process.exit(2);
+process.exit(0);

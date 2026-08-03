@@ -36,17 +36,36 @@ const SPENDER = '0xcccccccccccccccccccccccccccccccccccccccc' as const;
 function harness(opts: {
   allowance: bigint;
   rejectApproveOf?: (value: bigint) => boolean;
-  /** Simulates a concurrent actor: called after each approve mines with
-   *  the value just written; a returned bigint becomes the new live
-   *  allowance, as if another tab wrote it in that window. */
+  /** Simulates a concurrent actor whose write has MINED: called after
+   *  each approve with the value just written; a returned bigint becomes
+   *  the new live allowance, as if another tab landed it in that
+   *  window. */
   afterWrite?: (value: bigint) => bigint | undefined;
+  /** Simulates a concurrent transaction still IN FLIGHT — invisible to
+   *  an allowance read, which answers from mined state. Modelled the way
+   *  a chain reports it: pending nonce ahead of the mined one. A
+   *  predicate so a test can have one APPEAR partway through a
+   *  two-transaction sequence. */
+  pendingTx?: () => boolean;
+  /** Receipt observation fails (timeout / lost RPC) for this value,
+   *  AFTER the transaction has been submitted and taken effect. */
+  loseReceiptOf?: (value: bigint) => boolean;
+  /** Nonce reads themselves fail. */
+  nonceReadThrows?: boolean;
 }) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
 
   const publicClient = {
     readContract: vi.fn(async () => allowance),
-    waitForTransactionReceipt: vi.fn(async () => ({ status: 'success' as const })),
+    getTransactionCount: vi.fn(async ({ blockTag }: { blockTag?: string }) => {
+      if (opts.nonceReadThrows) throw new Error('rpc down');
+      return blockTag === 'pending' && opts.pendingTx?.() ? 8 : 7;
+    }),
+    waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: string }) => {
+      if (hash === '0xlost') throw new Error('receipt timeout');
+      return { status: 'success' as const };
+    }),
   } as unknown as PublicClient;
 
   const walletClient = {
@@ -55,10 +74,12 @@ function harness(opts: {
       const value = args[1] as bigint;
       if (opts.rejectApproveOf?.(value)) throw new Error('user rejected');
       writes.push(value);
+      // Submitted AND took effect on chain — whether or not we get to
+      // observe the receipt.
       allowance = value;
       const raced = opts.afterWrite?.(value);
       if (raced !== undefined) allowance = raced;
-      return '0xdead' as `0x${string}`;
+      return (opts.loseReceiptOf?.(value) ? '0xlost' : '0xdead') as `0x${string}`;
     }),
   } as unknown as WalletClient;
 
@@ -192,6 +213,88 @@ describe('ensureAllowance onObserved', () => {
     expect(tx).toBeNull();
     expect(observed).toBe(5_000n);
     expect(h.writes).toEqual([]);
+  });
+});
+
+describe('restoreAllowance — a transaction in flight means abstain', () => {
+  it('abstains when the wallet has a pending transaction', async () => {
+    // The allowance still reads as ours, but another tab has an approve
+    // SUBMITTED and unlanded. Queueing our restore behind it would let
+    // theirs mine first and ours overwrite it at the next nonce — the
+    // same clobber, displaced one block (#1529 review round 5).
+    const h = harness({ allowance: 1_000n, pendingTx: () => true });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([]);
+  });
+
+  it('abstains when the pending state cannot be read at all', async () => {
+    // Fail closed: an unwind is a best-effort courtesy, and guessing
+    // wrong costs somebody their standing grant.
+    const h = harness({ allowance: 1_000n, nonceReadThrows: true });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([]);
+  });
+
+  it('abstains when a transaction appears mid-sequence, after the reset', async () => {
+    // Nothing in flight at the outset, so the reset proceeds — and only
+    // THEN does a competing transaction appear. The pre-flight probe
+    // cannot have caught this one, which is why the post-reset re-check
+    // has to probe pending state as well as the mined allowance.
+    let resetDone = false;
+    const h = harness({
+      allowance: 1_000n,
+      pendingTx: () => resetDone,
+      afterWrite: (v) => {
+        if (v === 0n) resetDone = true;
+        return undefined;
+      },
+    });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    // The reset went out; the restore behind it did not.
+    expect(h.writes).toEqual([0n]);
+    expect(h.allowance).toBe(0n);
+  });
+});
+
+describe('ensureAllowance — a lost receipt still reports the write', () => {
+  it('reports a write whose receipt is never observed', async () => {
+    // The approve MINED; waitForTransactionReceipt timed out before
+    // seeing it. A caller told nothing would leave the grant standing —
+    // or, on the zero-first path, leave the prior grant erased (#1529
+    // review round 5).
+    // Scoped to the 1000 write: the unwind's own approve(0) must still be
+    // observable, or the test would be exercising two failures at once.
+    const h = harness({ allowance: 0n, loseReceiptOf: (v) => v === 1_000n });
+    let wrote: bigint | null = null;
+    await expect(
+      ensureAllowance({
+        ...base(h),
+        amount: 1_000n,
+        onWrote: (v) => {
+          wrote = v;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(wrote).toBe(1_000n);
+    expect(h.allowance).toBe(1_000n);
+
+    // …and the unwind, told that, takes the grant back down.
+    await restoreAllowance({ ...base(h), previous: 0n, wrote });
+    expect(h.allowance).toBe(0n);
+  });
+
+  it('reconciles to a no-op when the reported write never landed', async () => {
+    // The optimistic report is not treated as fact: restoreAllowance
+    // re-reads, and a submission that never took effect simply does not
+    // match, so nothing is written.
+    const h = harness({ allowance: 500n });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([]);
+    expect(h.allowance).toBe(500n);
   });
 });
 

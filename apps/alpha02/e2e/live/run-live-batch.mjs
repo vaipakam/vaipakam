@@ -11,12 +11,25 @@
  * Scripts are independent processes: one failure doesn't stop the
  * batch, and the runner exits non-zero if ANY script failed.
  *
- * Three verdicts, not two. Exit 2 from a script means BLOCKED — it ran
- * but could not verify anything (a precondition the live chain didn't
- * offer, a missing credential). That is reported distinctly from FAIL
- * because the remedy is different: a FAIL is a regression to fix, a
- * BLOCKED is a review that still needs running. Both keep the batch
- * exit non-zero, so neither can be mistaken for a clean release gate.
+ * Three verdicts, not two:
+ *
+ *   0  PASS
+ *   1  FAIL     — a regression the drive found, or one it hit itself
+ *   2  BLOCKED  — it ran but could not verify anything (a precondition
+ *                 the live chain didn't offer, a missing credential)
+ *
+ * FAIL and BLOCKED are reported distinctly because the remedy differs: a
+ * FAIL is a defect to fix, a BLOCKED is a review that still needs
+ * running. Both keep the batch exit non-zero, so neither can pass for a
+ * clean release gate.
+ *
+ * This meaning is a CONTRACT every driver has to share, not a convention
+ * layered on afterwards. `live-ux-sweep.mjs` used to exit 2 for
+ * page-initiated write attempts, so the first version of this table
+ * summarised that safety regression as "verified nothing" — the wrong
+ * cause and the wrong remedy for a drive that had verified plenty and
+ * found a defect. It exits 1 for that now (#1529 review round 5). A new
+ * driver must pick from the three above rather than inventing a code.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -37,15 +50,22 @@ for (const script of scripts) {
     stdio: 'inherit',
     env: process.env,
   });
+  // Anything other than the three contract codes is a FAIL: a driver
+  // that crashed outright, or one inventing a code, must never read as
+  // clean just because its number wasn't recognised.
   results.push({
     script,
     verdict: res.status === 0 ? 'PASS' : res.status === 2 ? 'BLOCKED' : 'FAIL',
+    code: res.status,
   });
 }
 
 console.log('\n━━━ live batch summary ━━━');
 for (const r of results) {
-  console.log(`${r.verdict.padEnd(7)}  ${r.script}`);
+  console.log(
+    `${r.verdict.padEnd(7)}  ${r.script}` +
+      (r.verdict === 'FAIL' && r.code !== 1 ? `  (exit ${r.code})` : ''),
+  );
 }
 const blocked = results.filter((r) => r.verdict === 'BLOCKED');
 if (blocked.length) {

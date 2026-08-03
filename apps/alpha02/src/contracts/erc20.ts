@@ -94,12 +94,24 @@ export async function ensureAllowance(opts: {
    *  twice on the zero-first reset path) — drives the "step x of y"
    *  submit-progress label (#1037). */
   onPrompt?: () => void;
-  /** Called after EACH approve mines, with the value now on-chain.
+  /** Called as soon as EACH approve is SUBMITTED, with the value it
+   *  sets — deliberately before the receipt, not after.
+   *
    *  Callers that unwind on failure need this rather than the return
    *  value: when the zero-first reset succeeds and the second approve
    *  then throws, this function never returns, yet the allowance HAS
    *  been changed — to 0 — and an unwind keyed on the return value
-   *  would walk away leaving the prior grant destroyed. */
+   *  would walk away leaving the prior grant destroyed.
+   *
+   *  Reporting at submission rather than on the receipt covers the case
+   *  where the approve MINES but `waitForTransactionReceipt` times out
+   *  or loses the RPC before observing it: the allowance changed on
+   *  chain, and a caller told nothing would leave a live grant standing
+   *  (or, on the zero-first path, leave the user's prior grant erased).
+   *  Reporting optimistically is safe because it is not treated as
+   *  fact — `restoreAllowance` re-reads and acts only if the allowance
+   *  really does equal this value, so a submission that never landed
+   *  reconciles to a no-op on its own (#1529 review). */
   onWrote?: (value: bigint) => void;
   /** Called once with the allowance THIS function observed, before it
    *  changes anything. Unwinding callers must take `previous` from here
@@ -131,11 +143,13 @@ export async function ensureAllowance(opts: {
       account: owner,
       chain: walletClient.chain,
     });
+    // Report BEFORE waiting — see onWrote's contract. A revert or a
+    // lost receipt both reconcile in restoreAllowance's re-read.
+    onWrote?.(value);
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== 'success') {
       throw new Error(`Token approval failed (${hash})`);
     }
-    onWrote?.(value);
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
     // not diamond.ts, so they feed the same centralized receipt floor
     // (standingApprovals / funding-watch roots ride push+focus+net
@@ -188,6 +202,43 @@ export async function restoreAllowance(opts: {
     opts;
   // This attempt changed nothing, so it has nothing to put back.
   if (wrote === null || wrote === previous) return null;
+
+  /**
+   * True when this wallet has a transaction IN FLIGHT.
+   *
+   * An allowance read answers from mined state, so it cannot see an
+   * approve another tab has submitted but that has not landed yet. Read
+   * "the allowance is still ours", queue a restore behind that pending
+   * transaction, and the other grant mines first — our restore overwrites
+   * it at the next nonce, which is the clobber this function exists to
+   * prevent, just displaced by one block (#1529 review).
+   *
+   * The signal is coarse on purpose: it cannot tell an unrelated pending
+   * transaction from a competing approve, so an unrelated one also
+   * abstains. That direction is the right one to be wrong in. Abstaining
+   * leaves the allowance where this flow last put it — and on the
+   * zero-first path that is zero, which every spender reads as "no
+   * permission" and the user can re-approve. Proceeding instead risks
+   * silently re-granting spending authority over a decision someone else
+   * has already made.
+   *
+   * Our own transactions never trip it: each approve here is awaited to
+   * its receipt, so by the time this runs it is mined state, not pending.
+   */
+  const ownerHasPendingTx = async (): Promise<boolean> => {
+    try {
+      const [pending, mined] = await Promise.all([
+        publicClient.getTransactionCount({ address: owner, blockTag: 'pending' }),
+        publicClient.getTransactionCount({ address: owner, blockTag: 'latest' }),
+      ]);
+      return pending !== mined;
+    } catch {
+      // Cannot tell — treat as in-flight and abstain. An unwind is a
+      // best-effort courtesy; guessing wrong costs someone their grant.
+      return true;
+    }
+  };
+
   const current = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -196,6 +247,7 @@ export async function restoreAllowance(opts: {
   });
   // Someone else owns the current value now — leave it alone.
   if (current !== wrote) return null;
+  if (await ownerHasPendingTx()) return null;
 
   const approve = async (value: bigint): Promise<`0x${string}`> => {
     const hash = await walletClient.writeContract({
@@ -232,7 +284,11 @@ export async function restoreAllowance(opts: {
       functionName: 'allowance',
       args: [owner, spender],
     });
+    // Both checks again: a competing approve may have MINED in this
+    // window (visible here) or merely been SUBMITTED (invisible to the
+    // read, which is what the pending probe is for).
     if (afterReset !== 0n) return null;
+    if (await ownerHasPendingTx()) return null;
   }
   return approve(previous);
 }
