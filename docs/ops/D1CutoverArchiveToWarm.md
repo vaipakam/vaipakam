@@ -152,9 +152,32 @@ propagation window (**up to 15 minutes**) before treating the writers as
 stopped; the keeper runs every minute, so a readback alone is not the
 confirmation. Its EOA nonce going quiet is.
 
-`apps/agent` also serves HTTP, so it can still write from a user action. On a
-pre-live platform, note the time and move quickly rather than engineering
-around it.
+**`apps/agent` also serves HTTP, and emptying its cron does not stop that.**
+A user submitting a threshold, linking or unlinking Telegram, or filing a
+support ticket writes to the source after the export — and that row is
+irrecoverable. "Move quickly" is not a quiesce, and an earlier revision of
+this plan said so as though it were.
+
+Take its write routes out of service for the window: unbind the route, or
+deploy a build that returns `503` on the mutating endpoints. Reads may stay
+up.
+
+Then **verify rather than trust it**, because this is the one step whose
+failure is silent. Immediately after the export, re-count the born-off-chain
+tables in the source:
+
+```bash
+for t in user_thresholds notify_state support_tickets telegram_links \
+         pre_grace_notify_state diag_errors diag_legal_holds \
+         diag_legal_hold_audit recycle_day_backfill; do
+  npx wrangler d1 execute "$SOURCE_DB" --remote --command \
+    "SELECT '$t' t, COUNT(*) n FROM $t"
+done
+```
+
+Any count that differs from the export means a write landed inside the
+window: discard the export and start step 3 again. Cheap, and it converts an
+assumption into a check.
 
 **Step 2 — clear the target.**
 
@@ -183,21 +206,47 @@ npx wrangler d1 execute "$TARGET_DB" --remote --command \
 
 Confirm every table in `$TARGET_DB` is empty before importing.
 
-**Step 3 — export everything, data-only.**
+**Step 3 — export everything, data-only, minus the migration ledger.**
 
 ```bash
 npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
-  --output /tmp/d1-cutover.sql -y
+  --output /tmp/d1-cutover.raw.sql -y
+grep -v 'INSERT INTO "d1_migrations"' /tmp/d1-cutover.raw.sql > /tmp/d1-cutover.sql
 ```
 
-Omitting `--table` takes every table. Keep this file — until the old database
-is deleted it is a second copy, and after deletion it is the only one.
+**The filter is not optional.** `--no-schema` still exports `d1_migrations`
+rows, and the target already holds its own 49 — identical primary keys, so
+the import aborts on collision. Filtering rather than enumerating `--table`
+keeps the property that matters: no list to maintain means no table can be
+forgotten. The target's ledger is already correct for its own schema and
+must not be overwritten.
 
 **Step 4 — import.**
 
 ```bash
 npx wrangler d1 execute "$TARGET_DB" --remote --file /tmp/d1-cutover.sql
 ```
+
+> ⚠️ **This file is plaintext personal data.** It contains Telegram chat IDs
+> and link codes, support-ticket message bodies with any email addresses
+> they carry, user alert thresholds, and diagnostic captures — everything
+> the nightly backup protects with AES-256-GCM, in the clear.
+>
+> An earlier revision of this plan told the operator to archive it durably.
+> That would have created an indefinite, unencrypted second store of user
+> data outside every control the project has built for exactly this content.
+>
+> So: keep it only for the duration of the cutover, and when the checklist in
+> §6 is satisfied, destroy it —
+>
+> ```bash
+> shred -u /tmp/d1-cutover.raw.sql /tmp/d1-cutover.sql
+> ```
+>
+> If a copy must outlive the window, encrypt it first (`age` or `gpg`) with a
+> key held offline, and store it where the legal-vault content lives — not on
+> a laptop and not in cloud sync. The nightly backup remains the durable
+> copy; this file is a working artefact, not an archive.
 
 **Step 5 — verify by counting, per table, both sides.** Every table must
 match exactly. A mismatch here is the signal to stop, not to patch.
@@ -242,15 +291,23 @@ npx wrangler d1 delete "$SOURCE_DB"     # irreversible
 
 ## 7. Rollback
 
-Available at any point before §6's deletion, and cheap: revert the binding
-PR. Indexer and keeper auto-deploy back; agent and the backup Worker need the
-same manual deploy as in §4 step 2. The old database still holds every row,
-which is exactly why §3 comes first — the thing you roll back to should be
-healthy before you need it.
+**Free until step 7 restarts the writers.** Up to that point nothing has
+written to the target, the source is byte-current, and rollback is a straight
+revert of the binding PR — plus the same manual deploys for `apps/agent` and
+`ops/offchain-data-warm`, which do not auto-deploy.
 
-After deletion there is no rollback. That is the line.
+**After the crons restart, it stops being free.** Thresholds, notification
+state, cursors and keeper bookkeeping now exist only in the target, so
+reverting the bindings would point every Worker back at state that is stale
+by however long the new database has been live. An earlier revision of this
+plan offered rollback "at any point before deletion", which was wrong for
+exactly the same reason the original delta-reconciliation was wrong.
 
----
+So past that line, rolling back is itself a cutover: quiesce, export the
+target, import into the source, then revert. Plan it that way or do not plan
+to roll back.
+
+After deletion there is no rollback at all. That is the line.
 
 ## 8. What this buys, stated honestly
 
