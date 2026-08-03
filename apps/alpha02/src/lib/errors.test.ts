@@ -91,6 +91,29 @@ describe('isContractAnswered — optional-read fallback discriminator', () => {
     expect(isContractAnswered(execError(decodeFailure))).toBe(true);
   });
 
+  it('accepts decoder failures by pattern, including names no list had', () => {
+    // r15 missed IntegerOutOfRangeError; r16's explicit list then missed
+    // PositionOutOfBoundsError (a zero-word dynamic-string offset). The
+    // pattern covers the family rather than chasing names one round at a
+    // time — that enumeration was provably incomplete twice.
+    for (const name of [
+      'PositionOutOfBoundsError',
+      'SliceOffsetOutOfBoundsError',
+      'AbiDecodingDataSizeTooSmallError',
+      'AbiDecodingZeroDataError',
+      'IntegerOutOfRangeError',
+      'InvalidBytesBooleanError',
+      'SizeOverflowError',
+    ]) {
+      expect(
+        isContractAnswered({
+          name: 'ContractFunctionExecutionError',
+          cause: { name },
+        }),
+      ).toBe(true);
+    }
+  });
+
   it('accepts the contract-level absences (revert / zero data)', () => {
     expect(
       isContractAnswered(

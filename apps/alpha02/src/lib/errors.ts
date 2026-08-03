@@ -142,13 +142,19 @@ export function captureTxError(
 const CONTRACT_ANSWERED_NAMES = new Set([
   'ContractFunctionRevertedError',
   'ContractFunctionZeroDataError',
-  'AbiDecodingZeroDataError',
-  'AbiDecodingDataSizeTooSmallError',
-  'AbiDecodingDataSizeInvalidError',
-  'IntegerOutOfRangeError',
-  'InvalidBytesBooleanError',
-  'SizeOverflowError',
 ]);
+
+/** Decoder-failure names: the node returned bytes, the ABI decoder
+ *  couldn't read them. Matched by PATTERN rather than enumerated,
+ *  because enumerating them is provably incomplete — r15 missed
+ *  `IntegerOutOfRangeError`, r16's explicit list then missed
+ *  `PositionOutOfBoundsError` (Codex #1547 r17). The pattern covers
+ *  viem's decode families (AbiDecoding*, *OutOfBounds*, *OutOfRange*,
+ *  *Overflow*, InvalidBytes*, *DataSize*) and cannot collide with the
+ *  node-failure names, which are vetoed before this is consulted and
+ *  are all either transport classes or `*RpcError`. */
+const DECODER_FAILURE_PATTERN =
+  /(AbiDecoding|OutOfBounds|OutOfRange|Overflow|InvalidBytes|DataSize|SliceOffset)/;
 
 /** viem error names that mean the request never got an answer out of the
  *  node — transport failures AND node-side JSON-RPC failures (rate
@@ -189,6 +195,14 @@ const NODE_FAILURE_NAMES = new Set([
  * positively recognised as a contract answer must fail the read and
  * let the user retry.
  *
+ * The two halves are shaped differently ON PURPOSE. Node failures are
+ * a BOUNDED, stable set (transport classes + `*RpcError`), so they are
+ * enumerated. Decoder failures are NOT bounded — two rounds of review
+ * each found a name the previous list had missed — so they are matched
+ * by pattern. The asymmetry follows the risk: being too strict costs a
+ * recoverable token an honest "couldn't read its details, retry",
+ * while being too permissive misreads an amount the user then signs.
+ *
  * Detection mirrors `isUserRejection`: viem's stable error `name`
  * walked down the cause chain, never `instanceof`, because a pnpm
  * workspace can resolve more than one physical copy of viem.
@@ -203,7 +217,12 @@ export function isContractAnswered(err: unknown): boolean {
       // A node failure anywhere in the chain vetoes outright — even if
       // an outer wrapper looks contract-shaped.
       if (NODE_FAILURE_NAMES.has(o.name)) return false;
-      if (CONTRACT_ANSWERED_NAMES.has(o.name)) answered = true;
+      if (
+        CONTRACT_ANSWERED_NAMES.has(o.name) ||
+        DECODER_FAILURE_PATTERN.test(o.name)
+      ) {
+        answered = true;
+      }
     }
     node = o.cause;
   }
