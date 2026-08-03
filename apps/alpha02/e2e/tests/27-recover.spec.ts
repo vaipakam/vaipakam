@@ -29,6 +29,7 @@ import { test, expect } from '../lib/wallet-fixture';
 import { connectWallet } from '../lib/wallet-fixture';
 import {
   ADMIN,
+  CHAIN_ID,
   DIAMOND,
   DIAMOND_ABI_VIEM,
   MOCKS,
@@ -204,10 +205,89 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
     args: [account.address],
   })) as bigint;
   expect(walletBalAfter - walletBalBefore).toBe(dust);
+
+  // The settled submission must be FORGOTTEN (Codex #1547 r6/r7): a
+  // reload here has to land on a fresh form, never rehydrate an
+  // unresolved-submission card — or the terminal 'executed' lock —
+  // over a recovery that has already completed. A record left behind
+  // would also leak straight into the next run of this spec.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByLabel(/token contract address/i)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page.getByText(/result unconfirmed|recovery attempt went through/i),
+  ).toHaveCount(0);
   } finally {
     // Restore the EXACT pre-test oracle (Codex #1547 r4) — on the
     // retail fork that's the unset default, but a configured-oracle
     // deployment must get its own value back, not a forced zero.
     await setSanctionsOracle(originalOracle);
   }
+});
+
+/**
+ * Codex #1547 r7 — the receipt-less "an attempt WAS processed" verdict
+ * (the on-chain recovery counter advanced while the transaction itself
+ * stayed unreadable) is a TERMINAL LOCK: that attempt may have moved
+ * only part of the surplus, so the card must not offer a plain start
+ * over, and a lock a page reload clears is not a lock at all.
+ *
+ * Reaching the verdict itself has no fork trigger (anvil mines
+ * instantly, so a receipt is always readable), but the PERSISTENCE and
+ * the two-step way out are pure app behaviour over the stored record —
+ * so this drives them from a seeded record across a real reload, which
+ * is exactly the state the rehydrate path reads. No oracle is touched:
+ * terminal outcome cards render ahead of the availability gate.
+ */
+test('a processed-but-unreadable recovery stays locked across a reload', async ({
+  launchWallet,
+}) => {
+  const { page, account } = await launchWallet('borrower');
+  await page.goto('/recover', { waitUntil: 'domcontentloaded' });
+  await connectWallet(page);
+
+  // The exact shape signAndSubmit persists, plus the r7 settled flag.
+  const storageKey = `alpha02.recoverPending.${CHAIN_ID}.${account.address.toLowerCase()}`;
+  const record = JSON.stringify({
+    txHash: `0x${'11'.repeat(32)}`,
+    declaredSource: account.address,
+    amount: '1500000000000000000',
+    symbol: 'MOCK',
+    decimals: 18,
+    recoveryNonce: '0',
+    deadline: '1',
+    settled: 'executed',
+  });
+  await page.evaluate(
+    ([key, value]) => window.localStorage.setItem(key, value),
+    [storageKey, record] as const,
+  );
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  await expect(
+    page.getByText(/your recovery attempt went through/i),
+  ).toBeVisible({ timeout: 30_000 });
+  // No plain start-over on this card — withholding it IS the lock, and
+  // the explicit new-recovery action stays hidden behind the first step.
+  await expect(
+    page.getByRole('button', { name: /^start over$/i }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: /start a new recovery/i }),
+  ).toHaveCount(0);
+
+  // Two-step way out: acknowledge having checked the wallet, THEN the
+  // explicit "this is a separate recovery" action.
+  await page.getByRole('button', { name: /checked my wallet/i }).click();
+  await page.getByRole('button', { name: /start a new recovery/i }).click();
+  await expect(
+    page.getByText(/your recovery attempt went through/i),
+  ).toHaveCount(0);
+
+  // …and the release is persisted too — the lock must not come back.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(
+    page.getByText(/your recovery attempt went through/i),
+  ).toHaveCount(0);
 });

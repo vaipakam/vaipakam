@@ -43,12 +43,16 @@ Help explainer — now link straight to that section rather than leaving
 the reader to find it.
 
 Three post-submission cases are handled with the same care as the rest
-of the flow. If the wallet replaces the transaction (a speed-up or a
-cancel), the page follows the replacement, so every result and every
-block-explorer link names the transaction that actually went through;
-and if that replacement performed no recovery, the page says exactly
-that — nothing was recovered — rather than leaving the outcome
-ambiguous. If the transaction was sent but its confirmation could not
+of the flow. If the wallet replaces the transaction, the page follows the
+replacement, so every result and every block-explorer link names the
+transaction that actually went through — and it now pays attention to
+what kind of replacement it was. A cancellation, or a replacement
+carrying different instructions, that goes through without recovering
+anything is reported as exactly that: nothing was recovered. A plain fee
+bump is not the same thing — it re-sends the very same instructions at a
+higher price, so it is still the recovery, and a result the page can't
+read off it is reported as an unknown outcome rather than as a recovery
+that never happened. If the transaction was sent but its confirmation could not
 be read, the page no longer offers a plain "start over" that would
 throw the transaction away: it offers a "check the transaction again"
 action instead, because a transaction that quietly went through would
@@ -69,10 +73,25 @@ replaced the transaction. Looking for the original transaction can never
 succeed in that case, so the page instead asks the network whether a
 recovery was processed for the account at all. If one was, it says so
 plainly and stops there — without claiming to know which of the two
-possible results it had, since it cannot read that. If none was, and the
-transaction is genuinely no longer waiting to be processed, the page says
-nothing was recovered and offers a fresh start; anything it cannot read
-leaves the transaction pending rather than guessing.
+possible results it had, since it cannot read that. If none was, the page
+only says "nothing was recovered" once it can prove it, and never on a
+failed reading: the network has to positively answer that it doesn't hold
+the transaction, and the approval the user signed has to have expired, at
+which point that transaction can never be accepted again. Until both are
+true the page keeps the transaction pending and tells the user roughly
+how long until it can give a definite answer — a momentary network
+problem no longer reads as "it's gone", which would have handed back a
+blank form over a recovery still waiting in the queue.
+
+The "an attempt was processed" verdict is now a lasting lock rather than
+a notice that vanishes on the next page view. That attempt may have moved
+only part of the stuck balance, so the page remembers the verdict for the
+same wallet and network and shows it again after a reload, instead of
+letting a refresh hand back a fresh form. There is still an honest way
+out, but it takes two deliberate steps: first confirm you've checked your
+wallet, then confirm again on copy that spells out that the earlier
+attempt already used up its approval and that what follows is a new,
+separate recovery limited to whatever is still sitting in your vault.
 
 Smart-contract wallets (a Safe and similar) are now told up front that
 recovery can't be used from them. Recovery has to be authorised by a
@@ -85,9 +104,17 @@ from "we couldn't reach it to find out". The first is permanent and is
 still stated as such; the second says a check didn't answer, retries by
 itself a few times, and offers a manual retry — so a passing network
 problem no longer reads as a permanent verdict, or needs a page reload
-to clear.
+to clear. That same distinction now holds for the last-moment re-check
+the page makes just before asking for a signature: neither answer lets a
+signature go ahead, but a check that simply didn't answer is reported as
+a retryable problem with the retry route open, rather than as a verdict
+that recovery will never work on this network.
 
 An automated end-to-end test drives the real contract on a forked
 network: dust is minted straight into a vault, the Help explainer's
 link is followed, and the recovery round-trips with the tokens
-verified back in the wallet.
+verified back in the wallet — after which a reload has to show a clean
+form, proving a completed recovery leaves nothing behind to come back.
+A second test seeds a remembered "an attempt was processed" verdict and
+confirms it survives a reload, refuses to offer a plain start-over, and
+only releases after both steps of the acknowledgement.

@@ -1472,6 +1472,15 @@ const copySource = {
     reconciling: 'Checking…',
     reconcileStillPending:
       'Still no confirmation for this transaction — it may not have been mined yet. Wait a moment and check again, or open the transaction link to follow it on the block explorer. Do not start a new recovery until this one resolves.',
+    // The transaction is positively ABSENT from the network but the
+    // approval it carries has not expired yet (Codex #1547 r7) — so
+    // "it never went through" is not yet a fact: a wallet can still
+    // re-broadcast it, and it would still be accepted. Say when we
+    // WILL be able to answer instead of guessing now.
+    reconcileAwaitingDeadline: tmpl(
+      'We can’t find this transaction on the network right now, and nothing has been recovered for your wallet yet — but the approval you signed stays usable for about another {{minutes}} minutes, so it could still be sent and go through. Don’t start a new recovery: check again after that and we’ll be able to say for certain.',
+      ['minutes'],
+    ),
     // Receipt-less landings (Codex #1547 r6). A transaction the wallet
     // REPLACED can never be found by its original hash, so the check
     // falls back to the account's own recovery counter on-chain: it
@@ -1482,6 +1491,19 @@ const copySource = {
     recoveryLandedTitle: 'Your recovery attempt went through',
     recoveryLandedBody:
       'We still can’t read the transaction itself, but the network shows your attempt was processed — so do not sign again. Check your wallet: if the tokens arrived, you’re done. If they didn’t, the sender you declared was on the sanctions list, which blocks your wallet from new positions until that address is de-listed; existing loans can still be repaid or closed.',
+    // TERMINAL LOCK (Codex #1547 r7): a processed attempt must NOT
+    // unlock a fresh recovery from this card. We can't read how much
+    // of the surplus it moved, so a blind second attempt over whatever
+    // is left is exactly the double recovery this whole flow exists to
+    // prevent. The lock is remembered per wallet + network, so a
+    // reload can't step around it; the only way out is the two-step
+    // acknowledgement below.
+    executedLockNote:
+      'Starting another recovery from here is switched off on purpose: the attempt that was processed used up the approval you signed, and we can’t read how much it moved. Check your wallet before you do anything else.',
+    executedAck: 'I’ve checked my wallet',
+    executedAckPrompt:
+      'One more tap to confirm. This begins a completely separate recovery — a new declaration, a new signature, and it can only move what is still sitting in your vault. The earlier attempt stays done; nothing here undoes or repeats it.',
+    executedAckConfirm: 'Start a new recovery',
     // Receipt-less "never ran" landing (Codex #1547 r6): the counter
     // has NOT moved, so the attempt was never processed. Whether the
     // wallet replaced the transaction or it was simply dropped from
@@ -1489,8 +1511,13 @@ const copySource = {
     // which is used only when a replacement was actually OBSERVED —
     // this states the outcome without asserting a cause.
     notProcessedTitle: 'This recovery never went through',
+    // Only stated once the evidence is POSITIVE (Codex #1547 r7): the
+    // transaction is genuinely absent from the network, nothing has
+    // been recovered for the wallet, AND the approval it carried has
+    // expired — so it can never be sent again. Until all three hold
+    // the card stays pending instead of claiming this.
     notProcessedBody:
-      'The network shows this recovery attempt was never processed — your wallet either replaced the transaction or dropped it. Nothing was recovered and your tokens stayed exactly where they were. It’s safe to start over below: even if the original transaction turns up later, only one recovery can ever go through for it.',
+      'The network shows this recovery attempt was never processed — your wallet either replaced the transaction or dropped it — and the approval you signed has since expired, so that transaction can no longer go through. Nothing was recovered and your tokens stayed exactly where they were. It’s safe to start over below.',
     // Labels the STORED hash honestly on the receipt-less cards: it is
     // what the user submitted, which is not necessarily what mined.
     viewOriginalTx: 'View the transaction you submitted (your wallet may have replaced it)',
@@ -1512,6 +1539,18 @@ const copySource = {
       'The declaration text this network expects doesn’t match the one this app shows, so signing is blocked — nothing was sent. Reload the app; if this keeps happening, the app needs an update.',
     errDomainDrift:
       'This network’s signing configuration doesn’t match what the app expects, so signing is blocked — nothing was sent. Reload the app; if this keeps happening, the app needs an update.',
+    // The last-moment re-check of the screening service, in its two
+    // DISTINCT shapes (Codex #1547 r7). Both block the signature, but
+    // "confirmed not configured here" is a permanent property of the
+    // network while "we couldn't reach it" is a passing read failure
+    // the user can retry out of — collapsing them into one message
+    // told someone on a flaky connection that recovery would never
+    // work on this network. Short on purpose: the blocked-state card
+    // that appears alongside carries the full explanation.
+    errOracleUnset:
+      'Nothing was signed and nothing was sent: the screening service this recovery depends on isn’t configured on this network, so a recovery’s outcome couldn’t be decided.',
+    errOracleUnreachable:
+      'Nothing was signed and nothing was sent: the check that decides whether recovery can run here didn’t answer just now. Try the check again in a moment.',
     // Shown INSTEAD of the recovery form when the connected wallet
     // itself is flagged by the sanctions oracle (Codex #1547 r1) —
     // recovery is a fund-moving Tier-1 surface, so a flagged wallet
