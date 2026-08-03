@@ -59,6 +59,12 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // write that settles the loan) must flip the hold card promptly in
   // every tab.
   'saleListingHold',
+  // Risk-access page (#671/#728 port, Codex #1517 r1): tier / strict
+  // writes need the delayed second read — a lagging public RPC can
+  // serve the pre-write snapshot to the immediate refetch, and a user
+  // re-clicking the apparently-unchanged tier would RESTART its
+  // cooldown. Own-wallet state, cheap, active-only.
+  'riskAccess',
   // Codex #1228 r1 — desk views: the flows' surface-specific desk
   // invalidations are LOCAL to the acting tab, so the cross-tab floor
   // must carry them or a second tab on Rate Desk misses an own fill
@@ -106,8 +112,11 @@ export const PATCHED_ROOTS: ReadonlySet<string> = new Set([
 /** ~2× Base/OP block time. The second re-read exists for public RPCs
  *  that serve the parent block for a few seconds after the receipt —
  *  by two block times the read layer has caught up everywhere we've
- *  measured (#RPC-diet live notes). */
-const SECOND_READ_DELAY_MS = 5_000;
+ *  measured (#RPC-diet live notes). Exported for flows that must hold
+ *  their controls LOCKED through this window (risk-access tier writes,
+ *  Codex #1517 r7 — re-enabling on the immediate refetch lets a click
+ *  against the same lagging RPC re-submit and restart a cooldown). */
+export const SECOND_READ_DELAY_MS = 5_000;
 
 const CHANNEL_NAME = 'vaipakam-receipt-sync-v1';
 const STORAGE_PING_KEY = 'vaipakam-receipt-sync-ping-v1';

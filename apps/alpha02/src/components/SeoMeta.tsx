@@ -15,7 +15,8 @@
  *   4. `<meta name="robots">`      — `noindex` on wallet-gated,
  *                                    per-user surfaces (positions,
  *                                    claims, vault, activity,
- *                                    settings, faucet). Backed up by
+ *                                    settings, risk-access, faucet).
+ *                                    Backed up by
  *                                    X-Robots-Tag rules in
  *                                    `public/_headers` so even a
  *                                    JS-less crawler sees the policy.
@@ -92,6 +93,7 @@ function metaForPath(rawPathname: string): RouteMeta {
   if (pathname === '/vault') return { ...seo.vault, index: false };
   if (pathname === '/activity') return { ...seo.activity, index: false };
   if (pathname === '/settings') return { ...seo.settings, index: false };
+  if (pathname === '/risk-access') return { ...seo.riskAccess, index: false };
   if (pathname === '/faucet') return { ...seo.faucet, index: false };
   return { ...seo.notFound, index: false };
 }

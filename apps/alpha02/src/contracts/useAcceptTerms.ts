@@ -264,17 +264,59 @@ export function useAcceptTermsSigning() {
       // enforces; a transport failure fails CLOSED (retrying is free,
       // a wasted approval is not).
       try {
+        // Both previews pinned to ONE block (Codex #1517 r6): a
+        // creator tier change / terms bump mining between them could
+        // pair a creator-caused code 1 with creator code 0 and
+        // misattribute the block to the acceptor (or vice versa).
+        const gateProbeBlock = await publicClient.getBlockNumber();
         const gateBlock = (await publicClient.readContract({
           address: diamondAddr,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'previewOfferAcceptBlock',
           args: [input.offerId, address],
+          blockNumber: gateProbeBlock,
         })) as number | bigint;
         if (Number(gateBlock) !== 0 && Number(gateBlock) !== 4) {
+          // Codex #1517 r4 — the combined preview reports the CREATOR's
+          // block first (RiskPreviewFacet.previewOfferAcceptBlock), so
+          // disambiguate with the creator-only preview before wording
+          // the failure: a creator-side gap must read as the creator's
+          // requirement, and an ACCEPTOR tier shortfall (code 1) is
+          // recoverable on /risk-access — say so instead of the generic
+          // "can't collect" dead end. An UNKNOWN creator preview
+          // (absent selector / failed read) keeps the neutral generic
+          // message — attributing a possibly-creator-caused code 1 to
+          // the acceptor would send them to raise a tier that cannot
+          // unblock the offer (r5).
+          let creatorBlock: number | null = null;
+          try {
+            creatorBlock = Number(
+              await publicClient.readContract({
+                address: diamondAddr,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'previewCreatorBlock',
+                args: [input.offerId],
+                blockNumber: gateProbeBlock,
+              }),
+            );
+          } catch {
+            creatorBlock = null; // unknown — stay neutral
+          }
+          if (creatorBlock !== null && creatorBlock !== 0) {
+            throw new Error(copy.match.riskGateCreatorBlocked);
+          }
+          if (creatorBlock === 0 && Number(gateBlock) === 1) {
+            throw new Error(copy.match.riskGateTierTooLow);
+          }
           throw new Error(copy.match.riskGateBlocked);
         }
       } catch (e) {
-        if (e instanceof Error && e.message === copy.match.riskGateBlocked) {
+        if (
+          e instanceof Error &&
+          (e.message === copy.match.riskGateBlocked ||
+            e.message === copy.match.riskGateTierTooLow ||
+            e.message === copy.match.riskGateCreatorBlocked)
+        ) {
           throw e;
         }
         if (!isMissingSelectorError(e)) throw e;

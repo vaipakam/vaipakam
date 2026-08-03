@@ -15,6 +15,7 @@ import {
   Languages,
   Moon,
   MonitorCog,
+  ShieldCheck,
   Sun,
 } from 'lucide-react';
 import { useTheme, type ThemePreference } from '../app/ThemeContext';
@@ -167,6 +168,14 @@ export function Settings() {
               <span className="row-title">{copy.chrome.nav.activity}</span>
               <br />
               <span className="row-sub">{copy.settingsPage.more.activitySub}</span>
+            </span>
+          </Link>
+          <Link to="/risk-access" className="item-row">
+            <ShieldCheck aria-hidden size={18} />
+            <span className="row-main">
+              <span className="row-title">{copy.riskAccess.title}</span>
+              <br />
+              <span className="row-sub">{copy.settingsPage.more.riskAccessSub}</span>
             </span>
           </Link>
           <Link to="/help" className="item-row">
