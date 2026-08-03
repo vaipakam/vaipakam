@@ -294,6 +294,41 @@ describe('the key is constructed in exactly one place', () => {
       .sort();
   }
 
+  /** Source with comments removed — a prose mention of the helper is not a
+   *  reference to it, and the counting assertion below must not see one. */
+  function code(file: string): string {
+    return readFileSync(new URL(file, srcDir), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .map((l) => l.replace(/\/\/.*$/, ''))
+      .join('\n');
+  }
+
+  it('the identifier appears exactly twice, and only in keeper.ts', () => {
+    // The last hole a text test can close (#1540 r12): a LOCAL alias —
+    // `const makeAccount = privateKeyToAccount; makeAccount(key)` — leaves
+    // the import canonical and the call-text scan seeing one site, while
+    // the aliased construction sits outside the guarded try.
+    //
+    // Counting REFERENCES rather than call spellings closes that: the name
+    // may occur exactly twice in `keeper.ts` — the import, and the guarded
+    // call — so any third mention, including binding it to a local, fails.
+    //
+    // LIMIT, stated because a check believed to cover more than it does
+    // stops people looking: this is lexical. It cannot follow a reference
+    // through a property (`accounts.privateKeyToAccount`), a re-export, or
+    // a dynamic import, and it does not know scope. It is the ceiling of
+    // what a text-level test expresses here; a lint rule with real scope
+    // analysis is the next step up if this invariant needs to be airtight.
+    const occurrences = (src: string) =>
+      (src.match(/\bprivateKeyToAccount\b/g) ?? []).length;
+
+    expect(occurrences(code('keeper.ts'))).toBe(2);
+    for (const f of srcFiles().filter((f) => f !== 'keeper.ts')) {
+      expect({ file: f, n: occurrences(code(f)) }).toEqual({ file: f, n: 0 });
+    }
+  });
+
   it('only keeper.ts can reach viem/accounts, and unaliased', () => {
     // Scanning for the call TEXT is only sound if the spelling is pinned.
     // `import { privateKeyToAccount as makeAccount }`, or a namespace
