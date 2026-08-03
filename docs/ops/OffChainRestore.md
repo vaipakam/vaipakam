@@ -1552,23 +1552,41 @@ caught at the cheapest stage.
    # Wait for one tick.
    ```
 
-   **One tick now resolves all three flags** (#1475). Every pass emits exactly
-   one line per tick, whichever way its gate goes, and the skip line names the
-   specific binding that stopped it:
+   **One tick now resolves all three flags** (#1475). Every *gated* pass emits
+   exactly one line per tick, whichever way its gate goes, and the skip line
+   names each binding that stopped it:
 
    - Armed and running: `[keeper] <pass> start`.
-   - Stopped by the keeper-level gate: `[keeper] <pass> skipped: KEEPER_ENABLED
-     unset`, `… KEEPER_ENABLED not true (got "ture")`, or `… KEEPER_PRIVATE_KEY
-     unset`. Those are three separate causes that used to arrive as one
-     ambiguous "keeper disabled" — worth reading closely, because the fix
-     differs.
-   - Stopped by a pass flag: `[keeper] rewardBudgetRemit skipped:
-     REWARD_REMIT_ENABLED not true (got "True")`.
+   - Stopped: `[keeper] <pass> skipped: <BINDING> <what is wrong>`, one clause
+     per blocker, separated by `; `. For example:
 
-   The raw value is echoed **quoted**, which is the whole point: `"true"`,
-   `"true\n"` and `" true"` are indistinguishable unquoted, and all three are
-   ways an operator has already got this wrong. The signing key is reported
-   only as present or absent — its value is never printed.
+     ```
+     [keeper] rewardBudgetRemit start
+     [keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED wrong case — these flags require lowercase `true`
+     [keeper] remitAck skipped: KEEPER_ENABLED unset; KEEPER_PRIVATE_KEY unset
+     ```
+
+   **No value is ever printed — only the form of the mistake**: `unset`,
+   `empty`, `wrong case`, `has surrounding whitespace`, or
+   `unrecognised (N chars)`. That is deliberate. These are `secret_text`
+   bindings, and the case this diagnostic exists for is the value being
+   *wrong* — which is exactly how a pasted credential arrives. Echoing it
+   would copy that credential into the Worker logs at the moment the binding's
+   no-readback protection matters most. The character count still tells you
+   whether you are looking at a four-letter typo or something long that does
+   not belong there. `KEEPER_PRIVATE_KEY` is reported only as present or
+   absent.
+
+   **Every blocker appears on the one line.** If three bindings are wrong, one
+   line names all three — you are never fixing one and waiting a tick to
+   discover the next.
+
+   The six gated passes are `matcher`, `liquidator`, `autoLifecycle`,
+   `rewardBudgetRemit`, `remitAck` and `commitmentReport`. `watcher`,
+   `dailyOracleSnapshot` and `preGraceWatcher` have no binding of their own,
+   and `liquidityConfidence` always runs and consults the gate only to decide
+   whether to submit — **absent lines from those four are normal**, not a
+   failed tick.
 
    If you see a `skipped:` line, the named binding is the one to re-enter —
    but **the two kinds of binding take different commands**, and using the
@@ -1577,10 +1595,15 @@ caught at the cheapest stage.
    | binding | how it is bound | command |
    |---|---|---|
    | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` | per-Worker `secret_text` | `wrangler secret put <NAME>` |
-   | `KEEPER_PRIVATE_KEY` | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY` |
+   | `KEEPER_PRIVATE_KEY` | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
 
    `wrangler secret put` creates a secret **for a Worker**;
    `wrangler secrets-store secret create` creates one **within a store**.
+   `--scopes workers` is required by wrangler, and `--remote` defaults to
+   `false` — without it the secret is written to local persistence and the
+   deployed Worker never sees it. This is the same form §1 step 6 uses; note
+   that neither command takes the value as an argument, so it is prompted for
+   and never enters shell history.
    Running the former for `KEEPER_PRIVATE_KEY` does not populate the store
    entry the Worker actually reads — it creates a second, conflicting
    binding of the same name, and every signing pass stays disarmed.

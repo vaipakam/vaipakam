@@ -24,7 +24,7 @@ Six of the keeper's ten periodic jobs have a switch of their own and now report 
 
 The master switch accepts `True` and `TRUE`; the two reward switches accept only lowercase `true`. So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` does not, which is a genuinely surprising trap.
 
-We deliberately did not make them agree here. Doing so would switch **on** a fund-moving job on any deployment that currently has it set that way and believes it is off — a behaviour change smuggled in under a logging improvement. Instead the log now reports `not true (got "True")`, which turns an invisible trap into a legible one. Using lowercase everywhere avoids it entirely.
+We deliberately did not make them agree here. Doing so would switch **on** a fund-moving job on any deployment that currently has it set that way and believes it is off — a behaviour change smuggled in under a logging improvement. Instead the log now reports `wrong case — these flags require lowercase \`true\``, which turns an invisible trap into a legible one without repeating the value back. Using lowercase everywhere avoids it entirely.
 
 ### Operator-facing
 
