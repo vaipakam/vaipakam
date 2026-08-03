@@ -731,11 +731,91 @@ export async function maybeAutonomousLiquidate(
   }
 }
 
-export function isKeeperEnabled(env: Env): boolean {
-  if (!env.KEEPER_ENABLED) return false;
+/**
+ * Env keys that arm an individual periodic pass, on top of `KEEPER_ENABLED`.
+ *
+ * A union rather than `string` on purpose. The call sites this replaces each
+ * reached their flag through
+ * `(env as unknown as Record<string, string | undefined>)[key]` — a cast to
+ * reach a field `Env` already declares. That cast bought nothing and cost
+ * the compiler's help: a mistyped key compiled cleanly and read `undefined`
+ * forever, leaving the pass permanently dark. Which is the same failure this
+ * module's logging exists to expose, one layer down.
+ */
+export type PassArmingFlag = 'REWARD_REMIT_ENABLED' | 'REWARD_COMMIT_ENABLED';
+
+/**
+ * Why the keeper as a whole is not running, or `null` if it is.
+ *
+ * Split out because `isKeeperEnabled` collapses two independent causes into
+ * one boolean — the flag being off, and the signing key being absent. Both
+ * are held as secrets whose values cannot be read back, so an operator who
+ * cannot tell the two apart cannot tell which one to fix.
+ */
+function keeperGateReason(env: Env): string | null {
+  if (env.KEEPER_ENABLED === undefined) return 'KEEPER_ENABLED unset';
   const v = env.KEEPER_ENABLED.toLowerCase();
-  if (v !== 'true' && v !== '1') return false;
-  return !!env.KEEPER_PRIVATE_KEY;
+  if (v !== 'true' && v !== '1') {
+    return `KEEPER_ENABLED not true (got ${JSON.stringify(env.KEEPER_ENABLED)})`;
+  }
+  if (!env.KEEPER_PRIVATE_KEY) return 'KEEPER_PRIVATE_KEY unset';
+  return null;
+}
+
+/**
+ * Unchanged in behaviour — delegates so the boolean and the reason cannot
+ * drift apart. A future cause added to one is a cause in the other.
+ */
+export function isKeeperEnabled(env: Env): boolean {
+  return keeperGateReason(env) === null;
+}
+
+/**
+ * Gate a periodic pass, and say so — exactly one line per pass per tick,
+ * whichever way it goes.
+ *
+ * WHY (#1475). A pass whose arming flag read false and a pass that ran and
+ * found nothing to do used to produce byte-identical output: silence. The
+ * arming flags are `secret_text` bindings, so their values cannot be read
+ * back from the API or the dashboard either. Between the two there was no
+ * way at all to confirm a flag was set correctly — not by readback, not by
+ * observation — and a typo (`ture`, a trailing newline) left the pass dark
+ * and looking perfectly healthy. For reward remittance and commitment
+ * reporting that is the worst case, because a silent stall looks exactly
+ * like a quiet period.
+ *
+ * The skip line names the specific binding that stopped the pass and echoes
+ * its raw value quoted, so wrong casing and trailing whitespace are visible
+ * rather than merely suspected. `KEEPER_PRIVATE_KEY` is reported only as
+ * present or absent — its value is never echoed.
+ *
+ * One `wrangler tail` cycle now resolves every gate the keeper has.
+ */
+export function passIsArmed(
+  env: Env,
+  pass: string,
+  flag?: PassArmingFlag,
+): boolean {
+  const blocked = keeperGateReason(env);
+  if (blocked !== null) {
+    console.log(`[keeper] ${pass} skipped: ${blocked}`);
+    return false;
+  }
+  if (flag !== undefined) {
+    // Deliberately NOT lowercased, matching the behaviour this replaces.
+    // `KEEPER_ENABLED` accepts `True`; these flags do not. Making them agree
+    // would arm a fund-moving pass on a deploy that currently has it off, so
+    // the asymmetry is surfaced in the log rather than silently resolved.
+    const raw = env[flag];
+    if (raw !== 'true' && raw !== '1') {
+      const detail =
+        raw === undefined ? 'unset' : `not true (got ${JSON.stringify(raw)})`;
+      console.log(`[keeper] ${pass} skipped: ${flag} ${detail}`);
+      return false;
+    }
+  }
+  console.log(`[keeper] ${pass} start`);
+  return true;
 }
 
 export function buildKeeperContext(

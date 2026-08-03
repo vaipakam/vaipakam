@@ -60,6 +60,27 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 
 See [`CLAUDE.md` § "Deployments sync"](../../CLAUDE.md) for the full secret list and rotation cadence.
 
+### Confirming a flag actually took (#1475)
+
+Secrets cannot be read back — the API and dashboard return names only. So
+every periodic pass emits exactly one line per tick, whichever way its gate
+goes, and one `wrangler tail` cycle resolves all of them:
+
+```
+[keeper] rewardBudgetRemit start
+[keeper] commitmentReport skipped: REWARD_COMMIT_ENABLED not true (got "True")
+[keeper] remitAck skipped: KEEPER_PRIVATE_KEY unset
+```
+
+The skip line names the **specific** binding that stopped the pass and echoes
+its raw value quoted, so `"true"`, `" true"` and `"true\n"` are told apart
+rather than guessed at. `KEEPER_PRIVATE_KEY` is reported only as present or
+absent — never echoed.
+
+Note the example above: `KEEPER_ENABLED` accepts `True`, the two reward flags
+do not. Use lowercase `true` everywhere and the asymmetry never arises; if it
+already has, the log now says so instead of the pass simply staying dark.
+
 ### D1 — shared `vaipakam-archive` (staging)
 
 The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-archive`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. The same db is **shared** with `apps/indexer` and `apps/agent`.

@@ -1552,27 +1552,34 @@ caught at the cheapest stage.
    # Wait for one tick.
    ```
 
-   **This works for `KEEPER_ENABLED` and NOT for the two reward flags** — a
-   distinction worth stating, because an earlier version of this step claimed
-   it covered all three:
+   **One tick now resolves all three flags** (#1475). Every pass emits exactly
+   one line per tick, whichever way its gate goes, and the skip line names the
+   specific binding that stopped it:
 
-   - `KEEPER_ENABLED`: `runAutoLifecycle` logs
-     `autoLifecycle skipped: keeper disabled` on the false branch, so a tick
-     distinguishes armed from mis-typed. If you see that line, the flag is
-     present and wrong — re-enter it with
-     `wrangler secret put KEEPER_ENABLED` and watch another tick.
-   - `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED`: **not observable this
-     way.** `runRewardBudgetRemit`, `runRemitAck` and `runCommitmentReport`
-     each `return` at their flag guard with no log at all, so an armed pass
-     with nothing to do and a pass reading its flag as false produce
-     byte-identical output — silence. Nothing outside the Worker can tell
-     them apart. Closing that is #1475 (a pass-start line per pass); until it
-     lands, treat these two as **write-only**: re-enter the value rather than
-     verifying it, and take the first successful remittance or commitment
-     report as the confirmation.
+   - Armed and running: `[keeper] <pass> start`.
+   - Stopped by the keeper-level gate: `[keeper] <pass> skipped: KEEPER_ENABLED
+     unset`, `… KEEPER_ENABLED not true (got "ture")`, or `… KEEPER_PRIVATE_KEY
+     unset`. Those are three separate causes that used to arrive as one
+     ambiguous "keeper disabled" — worth reading closely, because the fix
+     differs.
+   - Stopped by a pass flag: `[keeper] rewardBudgetRemit skipped:
+     REWARD_REMIT_ENABLED not true (got "True")`.
+
+   The raw value is echoed **quoted**, which is the whole point: `"true"`,
+   `"true\n"` and `" true"` are indistinguishable unquoted, and all three are
+   ways an operator has already got this wrong. The signing key is reported
+   only as present or absent — its value is never printed.
+
+   If you see a `skipped:` line, the named binding is the one to re-enter
+   (`wrangler secret put <NAME>`); watch another tick to confirm.
+
+   > Earlier versions of this step said first that a tick verified all three
+   > flags (it did not), and then that the two reward flags were **write-only**
+   > and could only be confirmed by waiting for a successful remittance. Both
+   > are now obsolete. If you are reading a stale copy, prefer this one.
 
    Do not conclude the restore is complete until a tick has been observed
-   doing work for every flag where that is possible.
+   for every pass, and every line reads the way you intended.
 
    Confirm each flag you intended is present and, where the value is
    visible, reads what you meant.
@@ -1582,7 +1589,7 @@ caught at the cheapest stage.
    | | accepts | rejects |
    |---|---|---|
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
-   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` (`flagOn`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
    So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is
    silently off. Use lowercase `true` for all three and the asymmetry

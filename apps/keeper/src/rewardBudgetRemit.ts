@@ -28,7 +28,7 @@ import {
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
-import { buildKeeperContext, isKeeperEnabled, type KeeperContext } from './keeper';
+import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
@@ -56,11 +56,6 @@ const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
  */
 const ARMED_BACKSCAN_DAYS = 90;
 
-function flagOn(env: Env, key: string): boolean {
-  const v = (env as unknown as Record<string, string | undefined>)[key];
-  return v === 'true' || v === '1';
-}
-
 function readNumber(env: Env, key: string, fallback: number): number {
   const raw = (env as unknown as Record<string, string | undefined>)[key];
   if (!raw) return fallback;
@@ -86,8 +81,7 @@ function readBigint(env: Env, key: string, fallback: bigint): bigint {
 }
 
 export async function runRewardBudgetRemit(env: Env): Promise<void> {
-  if (!isKeeperEnabled(env)) return;
-  if (!flagOn(env, 'REWARD_REMIT_ENABLED')) return;
+  if (!passIsArmed(env, 'rewardBudgetRemit', 'REWARD_REMIT_ENABLED')) return;
 
   for (const chain of getChainConfigs(env)) {
     try {
