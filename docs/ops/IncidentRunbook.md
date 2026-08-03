@@ -222,9 +222,22 @@ manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
 running) or `KEEPER_ENABLED=false` (stops the six GATED passes — **not**
 `runDailyOracleSnapshot`, which signs on `KEEPER_PRIVATE_KEY` alone and
 keeps broadcasting; owner decision 2026-08-03 leaves it that way, see
-#1466). To stop everything, empty the Worker's cron list
-(`"triggers": { "crons": [] }`). Then redeploy the
-Worker. The pass is idempotent and bounds its receipt waits, so stopping it never
+#1466). Then redeploy the Worker.
+
+**To stop everything, including the snapshot**, empty the Worker's cron list
+(`"triggers": { "crons": [] }`) and follow the full procedure in
+[`apps/keeper/README.md`](../../apps/keeper/README.md) §"What the kill-switch
+does and does not stop" — do not stop at the redeploy. Two steps there are
+load-bearing in an incident and neither is obvious:
+
+- the readback must be **trigger-aware** (Trigger Events pane or the
+  schedules API), because a mistyped or wrongly-nested key leaves the
+  committed cron running while the deploy reports success; and
+- an empty schedules response is the control plane accepting the change, not
+  the ticks having stopped — Cloudflare documents **up to 15 minutes** of
+  propagation, and this Worker runs every minute, so roughly a dozen further
+  ticks can still sign. Confirm from the keeper EOA's nonce, not the
+  dashboard. The pass is idempotent and bounds its receipt waits, so stopping it never
 strands funds — any in-flight day simply re-evaluates on the next armed tick or
 via the manual procedure above.
 

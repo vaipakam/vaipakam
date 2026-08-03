@@ -98,7 +98,21 @@ then `npx wrangler deploy` (or `wrangler triggers deploy`) from
 a mistyped or wrongly-nested key leaves the committed cron in place. Check
 the Worker's *Settings → Trigger Events* pane or query its schedules
 directly; `wrangler tail` showing no tick only tells you none has fired
-*yet*. Same hazard and same remedy as `OffChainRestore.md` §1 step 3.
+*yet*. Same hazard and same remedy as `OffChainRestore.md` §1 **step 9**.
+
+**Then wait out the propagation window before calling it stopped.** An empty
+schedules response confirms the control plane accepted the change; Cloudflare
+documents that Cron Trigger updates can take **up to 15 minutes** to reach
+every location. This keeper runs `* * * * *` — every minute — so on the order
+of a dozen more ticks can still be dispatched after a successful readback,
+each able to sign.
+
+During an incident that gap is the whole question, so verify it from the
+chain rather than the dashboard: watch the keeper EOA's nonce. It stopping is
+the ground truth that the Worker stopped; an empty trigger list is only the
+instruction to stop. Keep `wrangler tail vaipakam-keeper` open across the
+window too — the absence of ticks *after* it elapses is the confirmation,
+not the absence immediately after the deploy.
 
 **Do not reach for the signing key to achieve this.** `KEEPER_PRIVATE_KEY`
 is bound via `secrets_store_secrets`, so `wrangler secret put` /
