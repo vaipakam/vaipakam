@@ -79,16 +79,26 @@ in the oracle series whenever the keeper is disabled for an unrelated reason.
 The practical consequence, which is the reason this section exists: **flipping
 the kill-switch is not a way to stop the keeper spending gas entirely.**
 
-Stopping the snapshot too means the Worker must have no usable signing key —
-and that is a **Secrets Store** operation, not a per-Worker one.
-`KEEPER_PRIVATE_KEY` is bound via `secrets_store_secrets`, so
-`wrangler secret put` / `secret delete` writes or removes a per-Worker value
-**this Worker ignores**: you would see a successful command and a keeper that
-kept signing. The procedure — including the store/secret-id lookup — is in
-[`docs/ops/AdminKeysAndPause.md`](../../docs/ops/AdminKeysAndPause.md) under
-the `KEEPER_PRIVATE_KEY` row; it is rotation-grade and is deliberately not
-inlined here. Confirm on the next tick that every gated pass reports
-`KEEPER_PRIVATE_KEY unset`.
+**Stop the schedule, not the key.** This Worker has no HTTP surface — every
+pass runs from `scheduled()`. Removing its cron trigger stops all of them,
+snapshot included, with nothing to restore afterwards but the trigger:
+
+```bash
+npx wrangler triggers deploy --cwd apps/keeper   # after clearing "triggers"
+                                                 # in wrangler.jsonc
+```
+
+Confirm with `npx wrangler tail vaipakam-keeper` that no tick arrives.
+
+**Do not reach for the signing key to achieve this.** `KEEPER_PRIVATE_KEY`
+is bound via `secrets_store_secrets`, so `wrangler secret put` /
+`secret delete` writes or removes a per-Worker value **this Worker ignores** —
+a successful-looking command and a keeper that keeps signing
+(`docs/ops/AdminKeysAndPause.md` says exactly this for exactly this key). And
+the store entry is shared: removing it is rotation-grade, affects every
+binder, and the repository documents rotation but **no removal procedure** —
+so it is not a step to improvise during an incident. Stopping the schedule
+achieves the same outcome and is reversible in one command.
 
 `liquidityConfidence` also always runs, and the gate is narrower than it
 looks: it decides whether to **submit on-chain**. The pass still reads, and
