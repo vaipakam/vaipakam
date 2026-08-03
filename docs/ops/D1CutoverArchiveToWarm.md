@@ -15,6 +15,30 @@ place to get it wrong.
 
 ---
 
+## 0. How to run the blocks below
+
+Every command block in this document is **self-contained**: it starts from the
+repository root, sets nothing it does not also use, and wraps any directory
+change in a subshell so the working directory never leaks into the next block.
+
+Run this once per shell, before anything else:
+
+```bash
+cd /path/to/vaipakam            # repository root
+SOURCE_DB=vaipakam-archive      # being retired
+TARGET_DB=vaipakam-warm         # being cut over to
+```
+
+`npx wrangler` is invoked from inside a workspace that depends on it — the
+repository root has no wrangler dependency, so `npx` there would attempt an
+unpinned registry download. That is why every block reads
+`(cd apps/indexer && npx wrangler …)` rather than a bare `npx wrangler`.
+
+Earlier revisions of this document got each of those wrong at least once:
+a variable used before assignment, a `cd` that leaked into the following
+step, and a bare `npx` from the root. They are structural mistakes, so the
+structure fixes them rather than another round of patches.
+
 ## 1. What is being discarded, deliberately
 
 A contract redeploy obsoletes almost all of it by definition — the rows
@@ -48,7 +72,6 @@ person waiting for a reply, and a contract redeploy does not change that. If
 those are real, export that one table before starting:
 
 ```bash
-cd apps/indexer
 install -m 700 -d ~/vaipakam-cutover        # private directory FIRST
 (cd apps/indexer && npx wrangler d1 export "$SOURCE_DB" --remote --no-schema \
   --table support_tickets --output ~/vaipakam-cutover/tickets.sql -y)
@@ -121,26 +144,10 @@ during #1537's preparation — `user_thresholds` 1, `notify_state` 1,
 had a clearing step; the no-migration rewrite removed it, which would have
 left those stale rows to be adopted as live state.
 
-Set both names once, at the top of the shell you will use for the whole
-procedure — every block below assumes them, and an earlier revision assigned
-only `SOURCE_DB`, leaving the first copy-paste to fail on a missing
-positional:
-
-```bash
-cd /path/to/vaipakam            # repo root; each block cd's from here
-SOURCE_DB=vaipakam-archive      # being retired
-TARGET_DB=vaipakam-warm         # being cut over to
-```
-
 ```bash
 (cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
   "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;")
 ```
-
-Every block is wrapped in a subshell so the working directory does not leak
-between steps — a later `cd ops/offchain-data-warm` after an unwrapped
-`cd apps/indexer` resolves to a path that does not exist, and the backup
-Worker silently never gets deployed.
 
 **Then confirm the domain tables are empty.** Not *every* table: `d1_migrations`
 necessarily holds 49 rows — that is what "prepared through `0048`" means — and
@@ -188,7 +195,7 @@ its last deploy predates several merges.
 
 ```bash
 pnpm --filter @vaipakam/agent exec wrangler deploy
-cd ops/offchain-data-warm && npx wrangler deploy
+(cd ops/offchain-data-warm && npx wrangler deploy)
 ```
 
 Do this in the same sitting as the merge. Until it is done, **agent reads and
@@ -231,10 +238,9 @@ Use checks that can only be true of the new database. Since the target starts
 empty, its emptiness is the discriminator:
 
 ```bash
-cd apps/indexer
 # Before restoring traffic: the new database has zero rows in these.
-npx wrangler d1 execute "$TARGET_DB" --remote --command \
-  "SELECT (SELECT COUNT(*) FROM offers) o, (SELECT COUNT(*) FROM activity_events) a"
+(cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
+  "SELECT (SELECT COUNT(*) FROM offers) o, (SELECT COUNT(*) FROM activity_events) a")
 ```
 
 - **indexer** — after its first tick, `indexer_cursor` gains a row in
@@ -245,15 +251,32 @@ npx wrangler d1 execute "$TARGET_DB" --remote --command \
   deployment `liquidity_confidence` may legitimately stay empty
   (`runLiquidityConfidence` returns before its upsert when there are no
   active collateral assets) and `hf_band_state` needs a loan to band. If
-  neither can be provoked, fall back to the tick's own log line — the
-  `[keeper] <pass> start` / `skipped:` output added in #1540 confirms which
-  database the Worker resolved, without needing a row to appear.
+  neither can be provoked, **do not fall back to the tick's log line** — an
+  earlier revision suggested that, and it is wrong: `passIsArmed` builds
+  those lines purely from arming flags and logs `start` before the pass
+  touches D1 at all. It tells you the pass ran, not where it wrote.
+
+  The honest fallback is the control plane, labelled as such — a
+  configuration check, not a behaviour one:
+
+  ```bash
+  curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/vaipakam-keeper/settings" \
+    -H "Authorization: Bearer $CF_API_TOKEN" \
+    | jq '.result.bindings[] | select(.type=="d1")'
+  ```
+
+  It returns the bound `id` directly, so it cannot be satisfied by the wrong
+  database. Use it when no observable write is available, and prefer the
+  write when one is.
 - **agent** — perform one threshold write through the API, then read it back
   from `$TARGET_DB` directly. If it landed in the source instead, its manual
   deploy did not take.
-- **backup Worker** — its next nightly must be verified by content, not
-  completion: the manifest's table list should reflect the new database's
-  (near-empty) state, not the old one's ~1,100 rows.
+- **backup Worker** — verified by **row counts**, not by the table list. It
+  exports a fixed set of tables from whichever database it is bound to, so
+  both manifests name the same tables and an earlier revision's "check the
+  table list" would have passed either way. The manifest carries a
+  `rowCount` per table: against the target those are ~0, against the source
+  they are the old ~1,100. That is the discriminator.
 
 ## 4. Rollback
 
@@ -290,8 +313,7 @@ Order matters here, and this plan does not own all of it:
       not be. Re-run the count before deleting; do not trust this table.
 
 ```bash
-SOURCE_DB=vaipakam-archive
-npx wrangler d1 delete "$SOURCE_DB"     # irreversible
+(cd apps/indexer && npx wrangler d1 delete "$SOURCE_DB")    # irreversible
 ```
 
 > **Why a variable.** Once the bindings move, `check-d1-name-consistency` — a
