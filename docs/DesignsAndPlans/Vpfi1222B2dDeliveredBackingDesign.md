@@ -942,14 +942,36 @@ any such field, establish which side of that line it is on. Three separate
 findings across #1556 and this section were the same mistake.
 
 
-### One thing that already behaves correctly, recorded so it is not "fixed"
+### The manual-budget path is USUALLY counted — and the exception is a constraint
 
-The manual-budget path lands **counted** in P1-a's delivered-fresh figure: it
-is fresh-only by construction and only ever targets `remitIneligible` days,
-which are armed. So the zeroed-day compensation flow is **inside** the
-delivered-fresh figure, not outside it. A future reader reasoning that "manual
-top-ups bypass the delivered accounting" would be wrong, and acting on it
-would double-count.
+An earlier revision recorded this as "one thing that already behaves
+correctly": the manual-budget path lands **counted** in P1-a's delivered-fresh
+figure, being fresh-only by construction and targeting only `remitIneligible`
+days, which are armed. **That is over-stated** (Codex #1565 r4 P1), and the
+exception is exactly the case P2 exists for.
+
+`_armedAttributableDelivery` requires `governorCommitArmedFromDay != 0` **on
+the mirror**. For the FIRST armed zeroed day, the compensation can overtake the
+broadcast that installs `D*` — CCIP orders neither — and then the ingress books
+the whole amount to `rewardBudgetFreshUncounted`, not to
+`rewardBudgetArmedFreshReceived`. The tokens are present and the day is
+compensated, but the mirror's delivered-fresh budget never rose, so P1-b would
+defer a payout that is fully funded.
+
+So, as constraint 16:
+
+16. Compensation that **overtakes the arming broadcast** must still be
+    attributable. Either the ingress can re-attribute an uncounted delivery
+    once `D*` installs, or armed attribution travels authenticated on the
+    delivery itself rather than being inferred from local arming state. This is
+    the same ordering gap P1-a documented on `_armedAttributableDelivery` —
+    P2 is where it stops being acceptable, because the compensation path is
+    precisely where a funded-but-uncounted day is most likely.
+
+What remains true, and worth keeping so it is not "fixed" the wrong way: when
+the mirror IS armed at ingress, the manual path is **inside** the delivered-
+fresh accounting. A reader concluding "manual top-ups bypass it entirely" would
+be wrong, and adding a second accounting path would double-count.
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
