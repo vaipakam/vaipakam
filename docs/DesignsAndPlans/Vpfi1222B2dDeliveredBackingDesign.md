@@ -802,6 +802,27 @@ evolution takes a **NEW TAG**, never another rung on the offset ladder. The
 natural carrier is the day broadcast, since that is what writes the stamp, and
 the natural home is a field on `ChainDayFunding` set alongside it.
 
+**A1. The suppression must be a `_dayPoolHalves` HALT, and §2g's pin against
+that is satisfied rather than overridden** (Codex #1565 r2 P1). §2g pins that a
+backing refusal should defer at the pool-budget layer, never halt. For *this*
+case the pool-budget layer is **too late**, and the reason is mechanical:
+`advanceCumLenderThrough` folds each day's halves into a **stored** cumulative
+(`s.cumLenderRpn18[d] = next`) and advances its frontier, and the only thing
+that stops the fold is `if (halt) break;` on `_dayPoolHalves`. Once a zero
+stamp has been folded, replacing the halves later does not recompute it —
+nothing walks backwards. A pool-budget deferral cannot unwind a cumulative that
+has already absorbed the zero.
+
+This is not a licence to ignore the pin. The pin's actual test is *"can the
+condition that stopped it always be satisfied?"*, and it forbade halts because
+a halt keyed on a message that may never be sent is permanent. **The
+permissionless lapse is what satisfies that test**: the halt now has a
+guaranteed terminal, reachable by anyone, on a bounded clock. So the halt
+becomes legitimate here for precisely the reason the pin would demand — and the
+pin still stands, unchanged, for any refusal that lacks such a terminal. Record
+it that way rather than as a carve-out, or the next reader will treat the pin
+as advisory.
+
 **B. A repricing vehicle.** The compensation must carry, or authorise, the
 per-side funding figures that replace the zero stamp, so the day becomes
 priceable at the operator-sized amount. Whatever writes that stamp is a
@@ -837,14 +858,28 @@ compensation path would make the genuine, delayed broadcast fail its
 field-match replay check and never install its consensus data.
 
 So the day's funding stamp needs an explicit state, not a struct that the last
-writer wins:
+writer wins. **A first attempt wrote that state as one linear chain —
+`unstamped → zeroed-pending-compensation → (compensated | lapsed-to-zero)` —
+and that is self-contradictory** (Codex #1565 r2 P1): it permits compensation
+only *after* the pending marker exists, while the very hazard above requires
+compensation to be able to land while the mirror is still `unstamped`. An
+implementation following that chain has no legal state in which to hold
+delivered halves awaiting consensus fields.
 
-`unstamped → zeroed-pending-compensation → (compensated | lapsed-to-zero)`
+The two things are **orthogonal**, and modelling them as one axis is what
+produced the contradiction. Broadcast progress and funding progress each get
+their own:
 
-with the transitions monotonic — a broadcast arriving after a compensation
-installs its consensus fields but must **not** reset the funding halves or the
-state; a replayed broadcast is a no-op; and neither terminal state can be
-re-entered. Delayed and replayed broadcast behaviour is part of the spec, not
+| | `funding: pending` | `funding: compensated` | `funding: lapsed` |
+| --- | --- | --- | --- |
+| **`broadcast: absent`** | initial | compensation arrived first — halves held, consensus fields still owed | — |
+| **`broadcast: installed`** | zeroed, awaiting compensation or lapse | priceable at the compensated amount | priceable at zero |
+
+Rules, all monotonic: a broadcast installs its consensus fields **without**
+touching the funding axis; a compensation writes the funding halves **without**
+claiming the broadcast arrived; a replayed broadcast is a no-op; and neither
+funding terminal can be re-entered. A day is priceable only once **both** axes
+are settled. Delayed and replayed broadcast behaviour is part of the spec, not
 an implementation detail, because it is exactly where the whole-struct
 assignment currently in the tree does the wrong thing.
 
@@ -883,17 +918,47 @@ the shape the rest of this system already uses for exactly this problem: RL-3's
 claim-horizon sweep is permissionless for the same reason, and the keeper
 heartbeat that drives it is available here too.
 
-**What this does to the open question.** The earlier draft asked the owner
-whether "confirm zero" lives on Base or on the mirror. With a permissionless
-lapse the discretionary act disappears and the fork largely dissolves: the
-resolution is deterministic and time-derived, so a mirror-local implementation
-cannot diverge from a sibling on the same day the way a discretionary local
-admin act could. What remains for the owner is a **parameter**, not an
-architecture: how long the compensation window is, measured against how quickly
-an operator can realistically size and dispatch a manual budget after a
-grace/force finalization. Under-size it and legitimate compensation loses a
-race it should win; over-size it and every mirror claim behind a zeroed day
-waits that long.
+**The window needs an AUTHENTICATED start, which nothing currently carries**
+(Codex #1565 r2 P1). "A bounded window from the day's finalization" is not
+enforceable at the reviewed tree: `RewardBroadcastV2` has no timestamp field
+and neither does `ChainDayFunding`. The two available substitutes are both
+wrong — starting at local broadcast receipt makes the deadline a function of
+CCIP delay, and deriving it from the nominal day boundary lets a late
+grace/force finalization arrive already expired and lapse on the spot. So the
+new tag must carry an **authenticated `finalizedAt` (or an explicit canonical
+expiry)**, and no claim may depend on the timeout until it does.
+
+**Retraction: r2 claimed the permissionless lapse "largely dissolves" the
+Base-vs-mirror question. It does not** (Codex #1565 r2 P1). The lapse removes
+the *liveness* dependence on operator discretion, and that part holds. What it
+does not remove is a race the window cannot close:
+
+> An admin dispatches `remitManualBudget` **before** expiry; its CCIP delivery
+> lands **after** someone has lapsed the day. Base has already closed and
+> reserved that day, the mirror's entries have retired for zero, and the
+> terminal-state rule forbids the arriving compensation from repricing
+> anything. The tokens are on the mirror with nowhere to go.
+
+**A longer window cannot fix this** — cross-chain delivery latency is not
+bounded by anything the window is measured in. The choice of *who lapses*
+therefore comes back, for a new and better reason than r1's: **only Base knows
+whether a compensation is in flight**, because Base holds the reservation. A
+mirror-local lapse is blind to it by construction. So the fork is re-opened,
+now as a genuine trade:
+
+- **Base-authoritative lapse** — Base can refuse to lapse a day with a pending
+  send, which prevents the race rather than recovering from it. Costs a
+  broadcast and re-introduces a canonical round-trip into the liveness path.
+- **Mirror-local permissionless lapse + explicit recovery** — cheaper and
+  strictly live, but the race is *accepted* and must be handled: a
+  late-arriving compensation lands un-earmarked (it cannot reprice a retired
+  day), so it needs a defined path back — M4 C2's batched repatriation for the
+  tokens, and `releaseRemitReservation` for Base's reservation.
+
+**Both are viable and this is the owner's call.** Neither is free, and the
+second is only acceptable if the recovery path is specified as part of P2
+rather than assumed — an un-earmarked balance sitting on a mirror with no
+owner is exactly the class #1498 exists to close.
 
 ### Ride the same tag — two things that would otherwise need their own
 
@@ -927,6 +992,20 @@ rather than each buying a tag later:
    is pre-clamp. It is a new term on the send path, cheap to add, but it is an
    addition rather than a plumbing job.
 
+   **And it must be SCALED AT RECEIPT like every other component** (Codex
+   #1565 r2 P1). The receiver explicitly supports `actualReceived <
+   declaredTotal`. Crediting a face-value armed-fresh figure against a short
+   delivery would push `rewardBudgetArmedFreshReceived` above the fresh VPFI
+   that actually landed — recreating the exact overstatement this field exists
+   to remove. Two requirements, matching what `recycledShare` and `freshShare`
+   already do: scale by `actualReceived / declaredTotal`, and enforce that the
+   scaled armed figure does not exceed the scaled `freshShare` before it is
+   accounted. **Three of the findings across this section's two review rounds
+   are the same omission** — a new component added without the short-delivery
+   scaling and the joint bound that every existing component already carries.
+   Any future component of a delivery inherits both by default; state the
+   exception if one genuinely does not.
+
    **The general rule this is the third instance of today:** a field named for
    an *obligation* (`armedFreshFull`, `EntrySplit.armedFresh`,
    `outstandingCommitFresh`) is not the amount that *moved*, and the two
@@ -934,6 +1013,27 @@ rather than each buying a tag later:
    or subtracting any such field, check which side of that line it is on.
 2. **The per-side compensation figures** from (B) above, which are the same
    shape as the halves the broadcast already carries.
+
+### Scope signal — P2 is not one slice
+
+Two adversarial rounds on this section produced nine P1s, every one confirmed
+against the tree. That rate is not a drafting problem; it is the section
+discovering that prerequisite 2 is **several interacting mechanisms**, not one:
+
+1. a wire evolution (the zeroed marker, an authenticated `finalizedAt`, the
+   armed-fresh-dispatched figure, the per-side compensation figures);
+2. a two-axis monotonic state machine over the funding stamp, with delayed and
+   replayed delivery behaviour;
+3. a permissionless lapse with a bounded clock, plus arbitration or recovery
+   for compensation in flight at lapse;
+4. a halt at `_dayPoolHalves` (not the pool-budget layer), justified by (3);
+5. conservation bounds and receipt-time scaling on every new component.
+
+Each has its own failure mode and its own tests. Cutting them as one PR would
+reproduce exactly the shape that made P1-a need a full rework — a design whose
+parts are individually plausible and jointly unsound. **Plan P2 as a sequence,
+with the wire evolution last**, so the tag is cut once against a settled model
+rather than amended per discovery.
 
 ### One thing that already behaves correctly, recorded so it is not "fixed"
 
