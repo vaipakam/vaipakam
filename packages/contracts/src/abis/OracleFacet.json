@@ -695,6 +695,22 @@
   },
   {
     "type": "error",
+    "name": "FreshShareExceedsDelivery",
+    "inputs": [
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "FullTariffMaxCStarRequired",
     "inputs": []
   },

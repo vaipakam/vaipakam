@@ -38,6 +38,24 @@
   },
   {
     "type": "function",
+    "name": "getDeliveredFreshPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "counted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "uncounted",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getReceivedRemit",
     "inputs": [
       {
@@ -420,6 +438,11 @@
       },
       {
         "name": "recycledShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshShare",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -922,6 +945,18 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1313,6 +1348,22 @@
     "type": "error",
     "name": "FeeEntitlementRequiresCanonicalVpfiChain",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FreshShareExceedsDelivery",
+    "inputs": [
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

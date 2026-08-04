@@ -45,6 +45,11 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
     /// @dev B2-d5 — the recycled component the receiver forwarded, already
     ///      scaled to what physically landed.
     uint256 public lastRecycledShare;
+    /// @dev #1434 P1-a — the FRESH component the receiver forwarded. Zero
+    ///      whenever the decoded wire generation did not carry the split, so
+    ///      asserting on it is how the tests pin the "unknown composition ⇒
+    ///      no fresh" rule to the receiver rather than to the Diamond.
+    uint256 public lastFreshShare;
 
     function onRewardBudgetReceived(
         address token,
@@ -53,7 +58,8 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
-        uint256 recycledShare
+        uint256 recycledShare,
+        uint256 freshShare
     ) external override {
         require(token == vpfi, "ingress: token");
         lastAmount = amount;
@@ -62,6 +68,7 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         lastRemitId = remitId;
         lastRemitter = remitter;
         lastRecycledShare = recycledShare;
+        lastFreshShare = freshShare;
         callCount++;
     }
 }
@@ -169,6 +176,10 @@ contract RewardRemittanceReceiverTest is Test {
         // B2-d5 — a d2-shaped payload states no recycled share, so the
         // mirror relocates no custody: the pre-d5 behaviour exactly.
         assertEq(diamond.lastRecycledShare(), 0, "d2 shape relocates nothing");
+        // #1434 P1-a — and it states no FRESH share either. The two zeros
+        // mean different things and both are correct: nothing is known, so
+        // nothing is claimed in either direction.
+        assertEq(diamond.lastFreshShare(), 0, "d2 shape declares no fresh");
     }
 
     /// @dev #1222 M3 B2-d5 — the THIRD payload layout, discriminated by a
@@ -201,10 +212,20 @@ contract RewardRemittanceReceiverTest is Test {
         assertEq(
             diamond.lastRecycledShare(), 120e18, "recycled share surfaced"
         );
+        // #1434 P1-a — the fresh component is the declared remainder, and it
+        // is stated rather than left for the Diamond to infer.
+        assertEq(diamond.lastFreshShare(), 380e18, "fresh share surfaced");
 
         // Legacy 0x40 on the same receiver: still decodes, still zero.
         _deliver(10e18, 10e18);
         assertEq(diamond.lastRecycledShare(), 0, "legacy shape stays zero");
+        // #1434 P1-a — THE defect this parameter exists to prevent. Inferring
+        // `amount - recycledShare` in the Diamond would make this 10e18: a
+        // delivery of entirely unknown composition booked as entirely fresh.
+        // The receiver is the only party that knows the wire carried no
+        // split, so the receiver is where the honest zero comes from.
+        assertEq(diamond.lastFreshShare(), 0, "legacy declares no fresh");
+        assertEq(diamond.lastAmount(), 10e18, "the delivery itself is intact");
     }
 
     /// @dev B2-d5 — the declared recycled share is a component of the
@@ -241,6 +262,63 @@ contract RewardRemittanceReceiverTest is Test {
             diamond.lastRecycledShare(),
             diamond.lastAmount(),
             "scaled share can never exceed the delivery"
+        );
+        // #1434 P1-a — the fresh share scales the same way and also FLOORS.
+        // 300 × 250/500 = 150. Pre-P1-a the rounding dust rode along with
+        // fresh (it was whatever remained); now that the Diamond bounds fresh
+        // explicitly, letting it round up would make it the one term that can
+        // over-state. Both flooring means the two can sum to LESS than the
+        // delivery, never more.
+        assertEq(
+            diamond.lastFreshShare(), 150e18, "fresh share scaled and floored"
+        );
+        assertLe(
+            diamond.lastFreshShare() + diamond.lastRecycledShare(),
+            diamond.lastAmount(),
+            "the two components never over-claim the delivery"
+        );
+    }
+
+    /// @dev The fixture above scales by an exact half, where flooring the
+    ///      fresh share and letting it take the remainder give the SAME
+    ///      answer — so it cannot tell the two apart, and on its own the
+    ///      "both floor" claim would be unverified.
+    ///
+    ///      This one uses a ratio whose floors actually bite. 5 of a declared
+    ///      7 land; the declared split is 3 recycled / 4 fresh.
+    ///        - recycled: floor(3 x 5 / 7) = 2
+    ///        - fresh, FLOORED: floor(4 x 5 / 7) = 2  <- what ships
+    ///        - fresh, as the remainder: 5 - 2 = 3    <- one wei richer
+    ///      Flooring both leaves 1 wei attributed to neither, which the
+    ///      Diamond records as uncounted. Taking the remainder would make
+    ///      fresh the one term that rounds UP, on the exact figure the
+    ///      Diamond treats as an upper bound on payable reward funding.
+    ///      A wei is not the point; the direction is.
+    function test_Deliver_FreshShareFloorsRatherThanTakingTheRemainder()
+        public
+    {
+        vpfi.mint(address(receiver), 5);
+        messenger.relay(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            abi.encode(
+                RemitWire.REMIT_WIRE_TAG_D5,
+                _days(1, 2),
+                uint256(7),
+                uint256(78),
+                address(0xD1A),
+                uint256(3)
+            ),
+            _tokens(address(vpfi), 7)
+        );
+        assertEq(diamond.lastAmount(), 5, "5 of the declared 7 landed");
+        assertEq(diamond.lastRecycledShare(), 2, "recycled floors to 2");
+        assertEq(diamond.lastFreshShare(), 2, "fresh floors to 2, not 3");
+        assertLt(
+            diamond.lastFreshShare() + diamond.lastRecycledShare(),
+            diamond.lastAmount(),
+            "a wei is deliberately attributed to neither"
         );
     }
 

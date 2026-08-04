@@ -5990,6 +5990,77 @@ library LibVaipakam {
         ///      raw tier + anchor still moves the nonce and reverts the
         ///      stale write (Codex #1528 r1).
         mapping(address => uint64) riskTierMutation;
+        // `rewardBudgetArmedFreshReceived` + `rewardBudgetFreshUncounted`
+        //   (#1434 P1-a) — APPENDED AT THE TAIL, same in-place-upgrade rule.
+        //
+        /// @dev ARMED-ATTRIBUTABLE DELIVERED-FRESH cumulative on this chain:
+        ///      Σ of the fresh component of every reward-budget delivery that
+        ///      BOTH arrived with its fresh/recycled composition established
+        ///      on the wire AND covers only days at or after this chain's
+        ///      `governorCommitArmedFromDay`. Anything failing either test
+        ///      contributes nothing here and lands in
+        ///      `rewardBudgetFreshUncounted` instead.
+        ///
+        ///      Exists because `poolRemaining()` is NOT a delivered-funding
+        ///      bound on a mirror: it is the GLOBAL 69M cap less LOCAL
+        ///      payouts, so every mirror independently believes it owns the
+        ///      whole pool. What actually limits a mirror is what Base sent
+        ///      it. #1497's claim-time gate bounds payout by un-earmarked
+        ///      BALANCE, which is strictly better than nothing but still
+        ///      lets stray VPFI (a donation, an operator top-up meant for
+        ///      something else) be paid out as fresh reward without Base's
+        ///      `rewardBudgetRemittedGlobal` ever seeing it.
+        ///
+        ///      WHY BOTH TESTS, and why neither is a baseline (Codex #1556
+        ///      r1 P1 ×2): the first shape of this counter was a lifetime
+        ///      receipt cumulative that a later subtraction netted against a
+        ///      payout snapshot taken at arming. Baselining ONE side of a
+        ///      subtraction is what made it unsound — funding delivered AND
+        ///      spent before arming had its spend erased by the snapshot
+        ///      while its receipt survived, reporting spent tokens as
+        ///      reusable headroom. Counting only armed-attributable flow
+        ///      needs no baseline on either side and cannot develop that
+        ///      skew, because the pre-arming delivery never enters.
+        ///
+        ///      DELIBERATELY CONSERVATIVE at the cutover boundary. A remit
+        ///      may cover armed and unarmed days together — `_planDay`
+        ///      decides armedness per day and the batch carries one summed
+        ///      amount — and the wire does not break the total down by day.
+        ///      Such a batch is counted as ZERO fresh rather than
+        ///      apportioned, which UNDER-states this chain's funding. That
+        ///      direction defers a claim until more funding lands
+        ///      (recoverable, and visible in `rewardBudgetFreshUncounted`);
+        ///      the other direction would let a chain pay fresh nobody sent
+        ///      it. Making it exact needs Base to put its per-remit armed
+        ///      fresh on the wire, which rides the #1434 §2f.4 tag
+        ///      evolution P2 already requires — not a second tag for this.
+        ///
+        ///      WRITTEN but not yet READ — P1-a is the accounting slice. The
+        ///      bound it feeds (delivered fresh less armed fresh PAID) needs
+        ///      the paid side, which the splits do not report today: a
+        ///      loan-side-capped split keeps `armedFresh` whole for
+        ///      commitment retirement while `total` sheds the capped-off
+        ///      part, so no combination of the returned fields is the amount
+        ///      actually paid. That lands with P1-b, which consumes it, and
+        ///      which is itself blocked behind P2 lifting the mirror
+        ///      armed-day pricing halt (#1434 §2g): while that halt stands,
+        ///      armed mirror days never price and there is nothing to bound.
+        uint256 rewardBudgetArmedFreshReceived;
+        /// @dev The reconciliation counterpart: Σ of the fresh-looking
+        ///      amount of every delivery this chain declined to count above.
+        ///      Per delivery that is `amount − recycledShare` — the whole
+        ///      delivery for a legacy/d2 payload, whose recycled share was
+        ///      never transmitted.
+        ///
+        ///      Not decorative. Both exclusions are silent by construction:
+        ///      an uncounted delivery moves real VPFI into this Diamond and
+        ///      changes no other figure, so without this counter the only
+        ///      symptom would be armed claims deferring for funding the
+        ///      operator can see arriving. Read the pair together —
+        ///      `{RewardRemittanceFacet.getDeliveredFreshPosition}` returns
+        ///      both — and a non-zero value here is the signal that this
+        ///      chain's counted funding understates what Base actually sent.
+        uint256 rewardBudgetFreshUncounted;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

@@ -2060,7 +2060,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](29);
+        selectors = new bytes4[](30);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2093,6 +2093,8 @@ contract HelperTest {
         // an answer that is not the published figure.
         selectors[28] =
             RewardRemittanceFacet.getReleasedRemitStrandedSeedState.selector;
+        selectors[29] =
+            RewardRemittanceFacet.getDeliveredFreshPosition.selector;
         selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
         selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
         selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;

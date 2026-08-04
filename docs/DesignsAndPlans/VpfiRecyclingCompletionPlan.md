@@ -904,6 +904,34 @@ GovernanceRunbook gains a recycling section, executed in order:
    drifted on the prose, which is what produced the stale claim.
    **The `BACKING --> ARM` edge in §4 stays** — it is discharged, not
    deleted; arming still requires this closed.
+
+   > **#1434 P1-a (delivered-fresh RECEIPTS) — design record.** The first
+   > attempt built the bound out of two lifetime cumulatives and ONE baseline
+   > (a payout snapshot taken at arming) and was **withdrawn**: baselining one
+   > side of a subtraction let funding delivered AND spent before arming read
+   > as reusable headroom — an OVER-statement, the one direction the design
+   > had claimed impossible. What ships instead counts only
+   > **armed-attributable, composition-known** deliveries, with no baseline on
+   > either side, and publishes an `uncounted` companion so every exclusion is
+   > visible rather than silent.
+   >
+   > Two consequences worth carrying forward:
+   >
+   > 1. **The wire must eventually carry the per-remit ARMED FRESH figure.**
+   >    `_planDay` decides armedness per day but a remit carries one summed
+   >    amount, so a batch straddling `D*` cannot be apportioned at the
+   >    receiving end and is refused whole (a deliberate under-count). Base
+   >    already computes the figure (`st.armedFresh`) and stores it on the
+   >    reservation; it simply is not transmitted. Put it on the **§2f.4 tag
+   >    evolution P2 already requires** — not a second tag for this.
+   > 2. **The PAID side is not derivable from the splits today**, which is why
+   >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
+   >    whole (so the full commitment retires) while `total` sheds the
+   >    capped-off part, so no combination of the returned fields is the armed
+   >    fresh actually paid. `interactionPoolPaidOut` is not a substitute — it
+   >    mixes legacy-schedule and armed payouts, and no baseline separates two
+   >    sources inside one cumulative. P1-b lands it at the payment site,
+   >    where the figure exists.
    *The forensic account below is retained as the historical record of the
    defect and of how its framing was corrected twice (r17 → r19/r20). It
    describes the PRE-FIX code.*
