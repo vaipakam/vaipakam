@@ -29,7 +29,7 @@ reviewable PR. The pieces, and why they couple:
 | **P2 Mirror commitment-on-arrival + two-sided netting** *(this row said "consume-on-arrival / mirror debits its own bucket" while the slice was being planned; §2e.1 superseded that before implementation — recorded here because a planning table that outlives its own correction reads as shipped behaviour)* | mirror RESERVES the locally-funded slice into its own `outstandingCommitRecycled`; the bucket drains later, pro-rata, at claim/remit. Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
-| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g |
+| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
 | **P6 Third credit class (#1331)** | Ā-**excluded** custody-credit for remitted-recycled forfeit/expiry; provenance tag at remit arrival; `VpfiRecycled` discriminator | needs P4's provenance signal |
 | **P7 Keeper + indexer** | keeper drives the mirror→Base report send; out-of-window reconciled-day rediscovery via the `CommitmentRemitEligibilityReconciled` hook; indexer handlers + D1 | needs P1/P4 to exist first |
 
@@ -761,6 +761,108 @@ the other not:
 
 So the test is not "does it stop the cursor" — both do — but "can the condition
 that stopped it always be satisfied".
+
+## 2h. P2 scope — the zeroed-day signal and its repricing vehicle (#1434)
+
+§2g states the two prerequisites. Prerequisite 1's **receipt** half shipped as
+P1-a (#1556, `41d4538a4`); its paid half and the deferral semantics are P1-b.
+This section scopes **prerequisite 2**, which is what actually gates lifting
+the halt. It is a scope, not a ratified design — the open question at the end
+is load-bearing and is the reason this is written down before any code.
+
+### The mechanism, traced (verified against the tree at `41d4538a4`)
+
+1. A mirror's per-(day, chain) funding stamp is written **at broadcast
+   arrival**, in `RewardReporterFacet`, as a whole-struct assignment with
+   `stamped: true` — including its per-side fresh and recycled halves.
+2. For a chain excluded from the day's interest report at grace/force
+   finalization, those halves are **all zero**. The stamp is still `stamped`.
+3. `_dayPoolHalves` gates only on `f.stamped`. A stamped all-zero day is
+   therefore **priceable at zero**, not halted — the halt that currently saves
+   it is the blanket `isMirrorRewardChain` one, which is what P2 removes.
+4. Zero halves ⇒ zero RPN delta ⇒ `rawPay == 0`, which `processUserSideDay`
+   treats as terminal progress: it persists the cursor and retires the day's
+   entries. For zero.
+5. `remitManualBudget` later sends the operator-sized compensation. It is
+   **fresh-only by construction** (`r.fresh = amount`, `recycledShare: 0`),
+   carries exactly the one `dayId`, and goes through the ordinary
+   `_sendRemitPayload`/d5 path. `onRewardBudgetReceived` **never writes
+   `chainDayRecycledFunding`** — so after compensation the stamp is still
+   all-zero, the day still prices at zero, and the tokens have no path into
+   the claim math.
+
+So the tokens arrive and the entries are already gone. Both halves of §2g's
+prerequisite 2 are needed: a signal, *and* a vehicle that rewrites the stamp.
+
+### What P2 must build
+
+**A. A mirror-observable distinction** between "this day's pool is genuinely
+zero" and "this day was zeroed pending compensation". Per §2f.4 a wire
+evolution takes a **NEW TAG**, never another rung on the offset ladder. The
+natural carrier is the day broadcast, since that is what writes the stamp, and
+the natural home is a field on `ChainDayFunding` set alongside it.
+
+**B. A repricing vehicle.** The compensation must carry, or authorise, the
+per-side funding figures that replace the zero stamp, so the day becomes
+priceable at the operator-sized amount. Whatever writes that stamp is a
+fund-moving, operator-driven path into pricing and needs d2's evidence
+discipline — the figures must be bound to the delivery that funds them, not
+settable independently.
+
+### The crux, and why A alone is a trap
+
+Suppressing the day stops it being *burned*; it does not make it *payable*.
+And the obvious suppression — halt the day until compensation arrives —
+**re-creates exactly what killed the arrival marker** (§2g pin): a stop keyed
+on a message that may never be sent is permanent, and because
+`advanceCumLenderThrough` does `if (halt) break;` it takes every later day on
+that mirror with it. A compensation remit is an *operator decision*. Nothing
+in the protocol obliges it to happen.
+
+The pin's own test is the one to apply: *can the condition that stopped it
+always be satisfied?* For a zeroed day the honest answer today is **no** —
+which means the suppression cannot be a one-way wait on compensation. It needs
+a terminal resolution available in **both** directions:
+
+- **compensate** — the vehicle in (B) writes real halves, the day prices, the
+  entries pay; or
+- **confirm zero** — an explicit operator act that converts the day from
+  "zeroed pending compensation" to "genuinely zero", after which it prices at
+  zero and retires exactly as it does today.
+
+With both available the wait always has an end, and the choice of end is a
+recorded operator action rather than a silence. **Open, and the reason this is
+a scope rather than a design:** whether "confirm zero" belongs on Base (a
+broadcast that clears the marker, keeping every mirror's state a function of
+canonical decisions) or on the mirror (a local admin act, which is cheaper but
+lets two mirrors diverge on the same day). This wants the owner's call, and it
+should be made before the wire is cut, because the answer changes what the new
+tag carries.
+
+### Ride the same tag — two things that would otherwise need their own
+
+P2 is already paying for a wire evolution. Two known gaps should land on it
+rather than each buying a tag later:
+
+1. **Base's per-remit ARMED FRESH figure.** P1-a counts a delivery only when
+   every day it covers is at or after `D*`, because `_planDay` decides
+   armedness per day while the remit carries one summed amount — so a batch
+   straddling the cutover is refused whole (a deliberate, visible under-count;
+   see `rewardBudgetFreshUncounted`). Base **already computes** the figure —
+   `st.armedFresh`, accumulated from `p.armedFreshFull` and stored on the
+   reservation as `r.armedFreshFull` — and simply does not transmit it.
+   Transmitting it removes the under-count outright.
+2. **The per-side compensation figures** from (B) above, which are the same
+   shape as the halves the broadcast already carries.
+
+### One thing that already behaves correctly, recorded so it is not "fixed"
+
+The manual-budget path lands **counted** in P1-a's delivered-fresh figure: it
+is fresh-only by construction and only ever targets `remitIneligible` days,
+which are armed. So the zeroed-day compensation flow is **inside** the
+delivered-fresh figure, not outside it. A future reader reasoning that "manual
+top-ups bypass the delivered accounting" would be wrong, and acting on it
+would double-count.
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
