@@ -107,8 +107,20 @@ export function orderLike(source: Bundle, subject: Bundle): Bundle {
  *  dropping the suffix changes the rendered output just as surely as
  *  dropping the name. */
 export function placeholders(value: string): string[] {
-  return [...value.matchAll(/{{([^}]*)}}/g)].map((m) => m[1].trim());
+  return [...value.matchAll(PLACEHOLDER_RE)].map((m) => m[1].trim());
 }
+
+/**
+ * `[^{}]` — excluding the OPENING brace as well as the closing one — is
+ * load-bearing, not tidiness. With `[^}]*` the leading `{{` and the body
+ * both match `{`, so the engine has many ways to split a run of braces
+ * and backtracks over them: CodeQL flags `{{{{|{{{{|…` as polynomial
+ * blowup, and these strings come from locale files a translation model
+ * or an outside contributor wrote. Excluding `{` makes the split unique
+ * and the scan linear, and it costs nothing: an i18next token can't
+ * contain a brace anyway.
+ */
+const PLACEHOLDER_RE = /\{\{([^{}]*)\}\}/g;
 
 /** One leaf whose interpolation tokens don't match the source's. */
 export interface PlaceholderDrift {
@@ -186,6 +198,93 @@ export function placeholderDrift(
       }
     } else if (typeof counterpart === 'string') {
       compare(path, value, counterpart);
+    }
+  }
+  return out;
+}
+
+/** One leaf whose VALUE SHAPE doesn't match the source's. */
+export interface LeafTypeDrift {
+  path: string;
+  expected: string;
+  actual: string;
+}
+
+const shapeOf = (v: unknown): string => {
+  if (Array.isArray(v)) return 'array';
+  if (v === null) return 'null';
+  if (isBranch(v)) return 'object';
+  return typeof v;
+};
+
+/**
+ * Leaves that `subject` HAS but at the wrong shape — an English string
+ * answered with an object, an array, a number, or null.
+ *
+ * `missingSubtree` deliberately cannot see these: the key is present,
+ * so by its definition the locale covers it. But i18next does not
+ * render a non-string — it logs `key 'x (fr)' returned an object
+ * instead of string` and shows nothing — so a coverage check that only
+ * counts keys reports a locale complete while a sentence renders empty.
+ * A translation model returning a nested object where the template had
+ * a string, or a hand-authored patch pasting one level too deep, both
+ * land here (Codex #1563 r1).
+ *
+ * Reported separately from "missing" because the fix differs: a missing
+ * key needs translating, a drifted one needs correcting.
+ */
+export function leafTypeDrift(
+  source: Bundle,
+  subject: Bundle,
+  prefix = '',
+): LeafTypeDrift[] {
+  const out: LeafTypeDrift[] = [];
+  for (const [key, value] of Object.entries(source)) {
+    const counterpart = subject[key];
+    if (counterpart === undefined) continue; // absent → missingSubtree's job
+    const path = `${prefix}${key}`;
+    if (isBranch(value) && isBranch(counterpart)) {
+      out.push(...leafTypeDrift(value, counterpart, `${path}.`));
+      continue;
+    }
+    const expected = shapeOf(value);
+    const actual = shapeOf(counterpart);
+    if (expected !== actual) {
+      out.push({ path, expected, actual });
+      continue;
+    }
+    // Same shape, but an array of strings must stay an array OF STRINGS.
+    if (Array.isArray(value) && Array.isArray(counterpart)) {
+      counterpart.forEach((entry, i) => {
+        if (typeof entry !== 'string') {
+          out.push({ path: `${path}[${i}]`, expected: 'string', actual: shapeOf(entry) });
+        }
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Paths `subject` has that `source` does not — a typo, a stale key, or
+ * a section that has since been renamed.
+ *
+ * Without this a mistyped patch key is silently ACCEPTED: the wrong key
+ * lands in the bundle, the real one stays missing, and the merge still
+ * reports success. If that section happens to sit in the coverage
+ * guard's known-backlog allowlist, CI passes too, and the string keeps
+ * falling back to English with nothing anywhere saying so (Codex #1563
+ * r1). Cheap to detect, and a typo has no legitimate reading.
+ */
+export function unknownKeys(source: Bundle, subject: Bundle, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(subject)) {
+    const counterpart = source[key];
+    const path = `${prefix}${key}`;
+    if (counterpart === undefined) {
+      out.push(path);
+    } else if (isBranch(value) && isBranch(counterpart)) {
+      out.push(...unknownKeys(counterpart, value, `${path}.`));
     }
   }
   return out;

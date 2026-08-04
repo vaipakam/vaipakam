@@ -39,7 +39,8 @@ CLDR category set (`_zero` / `_one` / `_two` / `_few` / `_many` /
 the placeholder tokens intact in every one.
 
 Placeholder sets are validated at build time by
-`src/i18n/localeCoverage.test.ts` (#1362): introducing a token the
+`scripts/check-locale-coverage.ts` — run by `pnpm typecheck`, or on
+its own with `pnpm i18n:coverage` (#1362): introducing a token the
 English doesn't have always fails, and dropping one fails unless the
 locale is listed in that file's `ALLOWED_OMISSIONS` with a linguistic
 reason (Arabic's dual `_two` forms are the standing example — the noun
@@ -73,7 +74,7 @@ pnpm --filter @vaipakam/i18n merge-patch -- \
 ```
 
 Both report what each locale is still missing rather than reporting a
-clean success, and `src/i18n/localeCoverage.test.ts` fails the build if
+clean success, and `scripts/check-locale-coverage.ts` fails the build if
 a locale in `TRANSLATED_LOCALES` falls behind `en.json` outside its
 recorded backlog.
 

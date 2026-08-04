@@ -64,7 +64,7 @@ a bundle whose order has already drifted rewrites most of it, which is
 worth doing as its own mechanical commit but never alongside content.
 Each consuming app should also carry a coverage test that fails when a
 locale in its `TRANSLATED_LOCALES` falls behind `en.json` — see
-`apps/alpha02/src/i18n/localeCoverage.test.ts`.
+`apps/alpha02/scripts/check-locale-coverage.ts`.
 
 Review the diff before committing — the glossary check flags missing
 verbatim terms as warnings, not failures. Hand-authored translations

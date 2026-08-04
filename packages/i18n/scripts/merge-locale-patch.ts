@@ -28,8 +28,10 @@ import { SUPPORTED_LOCALES, LOCALE_NAMES, type LocaleCode } from '../src/glossar
 import {
   deepMerge,
   leafPaths,
+  leafTypeDrift,
   missingSubtree,
   orderLike,
+  unknownKeys,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -88,12 +90,37 @@ for (const file of patchFiles) {
   }
 
   const targetPath = path.join(LOCALES_DIR, `${code}.json`);
-  const existing: Bundle = fs.existsSync(targetPath)
-    ? (JSON.parse(fs.readFileSync(targetPath, 'utf8')) as Bundle)
-    : {};
+  // Read-and-catch rather than exists-then-read: the two-step form is a
+  // TOCTOU race (the file can vanish between the check and the read) and
+  // CodeQL flags it as one.
+  let existing: Bundle = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as Bundle;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
   const patch = JSON.parse(
     fs.readFileSync(path.join(PATCHES_DIR, file), 'utf8'),
   ) as Bundle;
+
+  // Validate BEFORE writing anything. A patch key the template doesn't
+  // have is a typo or a stale key, and merging it is worse than
+  // rejecting it: the wrong key lands, the real one stays missing, and
+  // the run still prints a ✓. Same for a leaf whose shape doesn't match
+  // — i18next renders nothing for a non-string and only logs.
+  const strayKeys = unknownKeys(enJson, patch);
+  const drifted = leafTypeDrift(enJson, patch);
+  if (strayKeys.length > 0 || drifted.length > 0) {
+    console.error(`✗ ${code}: patch rejected, nothing written`);
+    for (const key of strayKeys.slice(0, 10)) {
+      console.error(`    not in en.json: ${key}`);
+    }
+    for (const { path: p, expected, actual } of drifted.slice(0, 10)) {
+      console.error(`    ${p}: expected ${expected}, got ${actual}`);
+    }
+    failures += 1;
+    continue;
+  }
 
   const before = missingSubtree(enJson, existing);
   const spliced = deepMerge(existing, patch);

@@ -35,6 +35,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   leafPaths,
+  leafTypeDrift,
   missingSubtree,
   placeholderDrift,
   type Bundle,
@@ -78,20 +79,77 @@ const KNOWN_GAPS: ReadonlyArray<{ prefix: string; issue: string }> = [
 
 /**
  * Leaves where a locale legitimately omits an interpolation token the
- * English carries. Keyed `<locale>:<path>`, and every entry needs a
- * linguistic reason — not just "it fails".
+ * English carries. Keyed `<locale>:<path>`, and every entry names the
+ * EXACT token it excuses plus a linguistic reason.
  *
- * Introducing an UNKNOWN token has no escape hatch: i18next has nothing
- * to substitute, so the user sees literal braces.
+ * Binding to the token, not just the leaf, is the point (Codex #1563
+ * r1): a bare leaf-level exemption would keep passing if the English
+ * string later gained a SECOND live value and the locale dropped that
+ * one too — silently deleting a real value from the sentence under an
+ * exemption granted for something else.
+ *
+ * Introducing an UNKNOWN token has no escape hatch at all: i18next has
+ * nothing to substitute, so the user sees literal braces.
  */
-const ALLOWED_OMISSIONS: Readonly<Record<string, string>> = {
+const ALLOWED_OMISSIONS: Readonly<
+  Record<string, { tokens: readonly string[]; reason: string }>
+> = {
   // Arabic has a grammatical dual: the `_two` form already means "two
   // days" in the noun itself ("يومان"), so restating {{count}} would
   // render "2 يومان" — "2 two-days".
-  'ar:copy.units.durationDay_two': 'Arabic dual encodes the count in the noun',
-  'ar:copy.units.durationMonth_two': 'Arabic dual encodes the count in the noun',
-  'ar:copy.units.durationYear_two': 'Arabic dual encodes the count in the noun',
+  'ar:copy.units.durationDay_two': {
+    tokens: ['count, number'],
+    reason: 'Arabic dual encodes the count in the noun',
+  },
+  'ar:copy.units.durationMonth_two': {
+    tokens: ['count, number'],
+    reason: 'Arabic dual encodes the count in the noun',
+  },
+  'ar:copy.units.durationYear_two': {
+    tokens: ['count, number'],
+    reason: 'Arabic dual encodes the count in the noun',
+  },
 };
+
+/** Is every dropped token covered by this leaf's exemption? */
+function omissionAllowed(code: string, leafPath: string, dropped: string[]): boolean {
+  const exemption = ALLOWED_OMISSIONS[`${code}:${leafPath}`];
+  if (!exemption) return false;
+  return dropped.every((token) => exemption.tokens.includes(token));
+}
+
+/**
+ * Strings that must survive translation VERBATIM because the app
+ * compares user input against them, keyed by their catalog path.
+ *
+ * The glossary the translation prompt carries is guidance, and
+ * `verifyGlossaryPreserved` downgrades a loss to a warning — neither
+ * can stop a locale shipping with this broken, and the coverage checks
+ * above look only at keys and interpolation tokens (Codex #1563 r1).
+ *
+ * `CONFIRM` is the live case: `Recover.tsx` compares the user's typed
+ * input against the English literal `CONFIRM_WORD`. A locale that
+ * translated the prompt would tell the user to type a word that can
+ * never match, permanently disabling signing on the recovery page for
+ * every speaker of that language — a dead end with no error message,
+ * because from the app's side the user simply hasn't typed it yet.
+ */
+const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> = {
+  'copy.recover.confirmPrompt': ['CONFIRM'],
+};
+
+/** Read a dot-path leaf, or undefined. */
+function leafAt(bundle: Bundle, dotted: string): unknown {
+  return dotted
+    .split('.')
+    .reduce<unknown>(
+      (node, key) =>
+        node && typeof node === 'object' && !Array.isArray(node)
+          ? (node as Record<string, unknown>)[key]
+          : undefined,
+      bundle,
+    );
+}
 
 const read = (code: string): Bundle =>
   JSON.parse(
@@ -128,10 +186,32 @@ for (const code of translated) {
         `${code}: ${key} introduces {{${unknown.join('}}, {{')}}} — not in the English`,
       );
     }
-    if (dropped.length > 0 && ALLOWED_OMISSIONS[`${code}:${key}`] === undefined) {
+    if (dropped.length > 0 && !omissionAllowed(code, key, dropped)) {
       problems.push(
         `${code}: ${key} drops {{${dropped.join('}}, {{')}}} present in the English`,
       );
+    }
+  }
+
+  // A leaf that is present but not a string renders as NOTHING in
+  // i18next (it only logs), so a key-count check calls the locale
+  // complete while the sentence is blank.
+  for (const { path: key, expected, actual } of leafTypeDrift(en, bundle)) {
+    problems.push(`${code}: ${key} is ${actual}, expected ${expected}`);
+  }
+
+  // Typed-confirmation words must survive verbatim or the gate they
+  // guard becomes unpassable in that language.
+  for (const [key, literals] of Object.entries(REQUIRED_LITERALS)) {
+    const value = leafAt(bundle, key);
+    if (typeof value !== 'string') continue; // absent/drifted — reported above
+    for (const literal of literals) {
+      if (!value.includes(literal)) {
+        problems.push(
+          `${code}: ${key} must contain the literal "${literal}" — the app ` +
+            'compares typed input against it, so a translated word can never match',
+        );
+      }
     }
   }
 }

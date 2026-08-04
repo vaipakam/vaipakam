@@ -13,8 +13,11 @@ export {
   leafPaths,
   placeholders,
   placeholderDrift,
+  leafTypeDrift,
+  unknownKeys,
   type Bundle,
   type PlaceholderDrift,
+  type LeafTypeDrift,
 } from './bundleOps';
 export {
   RTL_LOCALES,

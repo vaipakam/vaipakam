@@ -50,8 +50,10 @@ import {
 import {
   deepMerge,
   leafPaths,
+  leafTypeDrift,
   missingSubtree,
   orderLike,
+  unknownKeys,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -264,6 +266,21 @@ async function main() {
       const prompt = buildPrompt(source, code);
       const responseText = await callClaude(prompt);
       const translated = extractJson(responseText) as Bundle;
+      // The model's reply is untrusted input that is about to be
+      // committed into the app's locale bundle, so validate its SHAPE
+      // against what was asked for before it can reach disk. A
+      // hallucinated key would land beside the real one (which stays
+      // missing), and a non-string leaf renders as nothing in i18next
+      // while only logging (Codex #1563 r1).
+      const strayKeys = unknownKeys(source, translated);
+      const drifted = leafTypeDrift(source, translated);
+      if (strayKeys.length > 0 || drifted.length > 0) {
+        const detail = [
+          ...strayKeys.slice(0, 5).map((k) => `not requested: ${k}`),
+          ...drifted.slice(0, 5).map((d) => `${d.path}: expected ${d.expected}, got ${d.actual}`),
+        ].join('; ');
+        throw new Error(`response shape rejected — ${detail}`);
+      }
       const warnings = verifyGlossaryPreserved(translated, sourceText);
       // Merge in place. Re-ordering against the template is opt-in
       // (`--reorder`): on a bundle whose order has already drifted it
