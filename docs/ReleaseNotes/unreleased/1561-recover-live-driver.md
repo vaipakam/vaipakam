@@ -42,6 +42,23 @@ And where the page correctly withholds the recovery form because the connected
 wallet is flagged or has an unresolved attempt outstanding, that is now reported
 as a skip rather than a deployment failure.
 
+The anchor mechanism was also only ever installed on the user guide, even though
+the same stable-link promise covers the overview and whitepaper — an author
+adding one of those anchors to either document would have found it silently did
+nothing. It now applies to all three. And the marker the browser actually scrolls
+to had no allowance for the fixed header, so even once the anchor existed the
+link would have landed with the section's own title hidden behind the navbar; it
+now clears it by the same margin the headings use.
+
+Five further checks in the driver were tightened in a second review round. The
+Help deep link is now required to point at this app's own recovery route rather
+than merely a path that looks like one — a link redirected to another site would
+otherwise have been reported as the working entry point. The Settings scan waits
+for that page to actually render, because it loads lazily and its placeholder has
+no links at all, which made a deployment that *had* added the forbidden link look
+clean. And the separately-opened guide page now reports its own errors, which the
+run's closing claim about uncaught errors did not previously cover.
+
 The guide fix needs a marketing-site deploy before the link is correct in
 production; the driver was verified against a local production build of the site
 in the meantime.

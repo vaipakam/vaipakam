@@ -65,6 +65,8 @@ const GUIDE_URL = 'https://vaipakam.com/help/advanced#stuck-recovery.what';
 const GUIDE_ANCHOR_ID = 'stuck-recovery.what';
 
 const fails = [];
+/** Console/page errors from the separately-opened guide page. */
+const guideErrors = [];
 const check = (label, ok) => {
   console.log(`${ok ? 'ok ' : 'FAIL'} ${label}`);
   if (!ok) fails.push(label);
@@ -103,15 +105,35 @@ async function settledPosture(page, timeoutMs = 45_000) {
   return null;
 }
 
-/** Hrefs of every anchor on the page that targets `/recover`, absolute
- *  or relative. Destination-based, so a relabelled or icon-only link
- *  cannot slip past. */
+/** Hrefs of every anchor on the page that targets a `/recover` path,
+ *  absolute or relative. Destination-based, so a relabelled or
+ *  icon-only link cannot slip past.
+ *
+ *  Deliberately origin-AGNOSTIC: this feeds the FORBIDDEN-link check,
+ *  where any link pointing at a recovery route — including one on
+ *  another host — is worth failing on rather than quietly allowing. */
 async function recoverLinkHrefs(page) {
   return page.$$eval('a[href]', (as) =>
     as
       .map((a) => a.getAttribute('href') ?? '')
       .filter((href) => /(^|\/)recover(\/|$|[?#])/.test(href)),
   );
+}
+
+/** Does `href` resolve to THIS app's own `/recover` route?
+ *
+ *  Origin matters here in a way it doesn't for the forbidden-link scan:
+ *  a Help link changed to `https://attacker.example/recover` satisfies
+ *  any path-shaped test while sending users off-site from the one
+ *  entry point the safety gate funnels them through (Codex #1561 r2).
+ *  Resolved against SITE, so a relative href keeps working. */
+function isOwnRecoverRoute(href) {
+  try {
+    const url = new URL(href, SITE);
+    return url.origin === new URL(SITE).origin && /^\/recover\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 const { page, ctx, done, blockedRequests, consoleErrors } = await launch({
@@ -146,14 +168,21 @@ try {
     // The deep link must POINT AT /recover, not merely be labelled as
     // if it does — a wrong href makes the only in-app path to the
     // safety-gated flow dead while the label still reads correctly.
-    const deepLinkHref = await explainer
+    const explainerHrefs = await explainer
       .locator('a[href], [role="link"][href]')
-      .evaluateAll((as) =>
-        as
-          .map((a) => a.getAttribute('href') ?? '')
-          .find((href) => /(^|\/)recover(\/|$|[?#])/.test(href)) ?? null,
-      );
-    check(`help links the recovery flow (href ${deepLinkHref ?? 'MISSING'})`, Boolean(deepLinkHref));
+      .evaluateAll((as) => as.map((a) => a.getAttribute('href') ?? ''));
+    const deepLinkHref = explainerHrefs.find((href) => isOwnRecoverRoute(href)) ?? null;
+    const offSiteRecover = explainerHrefs.filter(
+      (href) => /(^|\/)recover(\/|$|[?#])/.test(href) && !isOwnRecoverRoute(href),
+    );
+    check(
+      `help links this app's own /recover (href ${deepLinkHref ?? 'MISSING'})`,
+      Boolean(deepLinkHref),
+    );
+    check(
+      `no off-site recovery link in the explainer${offSiteRecover.length ? ` (${offSiteRecover.join(', ')})` : ''}`,
+      offSiteRecover.length === 0,
+    );
 
     // The guide the signed declaration attests to must be linked AND
     // land on the real section.
@@ -169,6 +198,14 @@ try {
       // status check cannot tell a real section from a NotFound page.
       // Open it and require the anchored element to exist.
       const guidePage = await ctx.newPage();
+      // `driver.mjs` attaches its console/pageerror listeners to the
+      // ORIGINAL page only, so anything this page throws would never
+      // reach the final assertion that claims uncaught errors fail the
+      // run (Codex #1561 r2). Wire up an equivalent pair here.
+      guidePage.on('console', (m) => {
+        if (m.type() === 'error') guideErrors.push(m.text());
+      });
+      guidePage.on('pageerror', (e) => guideErrors.push('PAGEERROR: ' + e.message));
       try {
         const res = await guidePage.goto(guideHref, {
           waitUntil: 'domcontentloaded',
@@ -195,8 +232,19 @@ try {
   //    around it (the nav renders on every route).
   await page.goto(SITE + '/settings', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await ensureConnected(page);
-  await page.waitForTimeout(2500);
-  const settingsRecoverLinks = await recoverLinkHrefs(page);
+  // Settings is `React.lazy` like Help, so a fixed sleep can scan the
+  // Suspense fallback — which has no links at all, making a deployment
+  // that DID add the forbidden link look clean (Codex #1561 r2). Wait
+  // for the page itself, and fail loudly if it never renders rather
+  // than reporting a link-free page.
+  const settingsReady = await page
+    .getByRole('heading', { name: /settings/i })
+    .first()
+    .waitFor({ state: 'visible', timeout: 45_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('settings page renders (required before the link scan is meaningful)', settingsReady);
+  const settingsRecoverLinks = settingsReady ? await recoverLinkHrefs(page) : ['<settings never rendered>'];
   check(
     `no Settings/nav link targets /recover${
       settingsRecoverLinks.length ? ` (found ${settingsRecoverLinks.join(', ')})` : ''
@@ -271,10 +319,11 @@ if (blockedRequests.length) {
 // console.error noise on a live page (a rate-limited RPC, a third-party
 // asset) is reported but not fatal — it is not evidence about this
 // surface.
-const pageErrors = consoleErrors.filter((e) => e.startsWith('PAGEERROR:'));
-if (consoleErrors.length) {
-  console.log(`\n${consoleErrors.length} console error(s):`);
-  for (const e of consoleErrors.slice(0, 10)) console.log(`  ${e.slice(0, 200)}`);
+const allConsoleErrors = [...consoleErrors, ...guideErrors];
+const pageErrors = allConsoleErrors.filter((e) => e.startsWith('PAGEERROR:'));
+if (allConsoleErrors.length) {
+  console.log(`\n${allConsoleErrors.length} console error(s) (app + guide page):`);
+  for (const e of allConsoleErrors.slice(0, 12)) console.log(`  ${e.slice(0, 200)}`);
 }
 if (pageErrors.length) fails.push(`${pageErrors.length} uncaught page error(s)`);
 

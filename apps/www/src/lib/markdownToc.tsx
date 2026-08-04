@@ -188,10 +188,16 @@ interface HeadingProps {
  */
 function explicitAnchor(id: string | undefined, slug: string): ReactNode {
   if (!id || id === slug) return null;
-  // `scroll-margin-top` on the heading is what handles sticky-header
-  // offset elsewhere; this marker sits immediately before it, so the
-  // browser lands in the same place.
-  return <span id={id} aria-hidden="true" />;
+  // The marker is what the browser (and UserGuide's own hash handler)
+  // SCROLLS TO, so it needs the same sticky-header clearance the
+  // headings have — the pages' `scroll-margin-top` rules are written
+  // against `h1…h4` only, so an inline span would have landed at the
+  // very top of the viewport, underneath the fixed navbar and the
+  // mobile role bar, hiding the section title the link named
+  // (Codex #1561 r2). `.doc-anchor` in global.css carries the same
+  // 132px / 96px offsets, and `display:block` gives it a box to apply
+  // them to.
+  return <span className="doc-anchor" id={id} aria-hidden="true" />;
 }
 
 /**
