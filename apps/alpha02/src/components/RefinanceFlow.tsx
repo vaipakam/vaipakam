@@ -274,6 +274,10 @@ export function RefinanceFlow({
     // Hash of that write, so the unwind can settle a still-pending
     // approve instead of reading it as somebody else's change.
     let wroteAllowanceTx: `0x${string}` | null = null;
+    // The last value the approve helper CONFIRMED. Needed when a later
+    // approve's revert is only discovered by the unwind, after the helper
+    // has thrown on a timeout and can no longer correct its own report.
+    let confirmedAllowance: bigint | null = null;
     // Hash of the createOffer transaction once submitted. The unwind
     // needs it because creating the request does NOT consume the payoff
     // approval — the later acceptance does. So unlike the handover flow,
@@ -447,6 +451,9 @@ export function RefinanceFlow({
           wroteAllowance = value;
           wroteAllowanceTx = hash;
         },
+        onConfirmed: (value) => {
+          confirmedAllowance = value;
+        },
       });
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
         rateBpsMax: rateBps,
@@ -477,6 +484,7 @@ export function RefinanceFlow({
                 previous: priorAllowance,
                 wrote: wroteAllowance,
                 wroteTxHash: wroteAllowanceTx,
+                confirmed: confirmedAllowance,
               });
             } catch {
               // Leave the block message as the surfaced outcome.
@@ -540,6 +548,7 @@ export function RefinanceFlow({
             previous: priorAllowance,
             wrote: wroteAllowance,
             wroteTxHash: wroteAllowanceTx,
+            confirmed: confirmedAllowance,
           });
         } catch {
           // Leave the submit error as the surfaced failure.

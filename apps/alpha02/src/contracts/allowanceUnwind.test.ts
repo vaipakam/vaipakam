@@ -65,6 +65,11 @@ function harness(opts: {
    *  sequence this exists for — ensureAllowance's own wait times out on a
    *  still-pending approve, and the unwind's retry then resolves it. */
   receiptThrowsFirst?: number;
+  /** Receipt waits at these ZERO-BASED indices throw, others resolve.
+   *  Needed when only a LATER wait must fail: `receiptThrowsFirst` is a
+   *  prefix, so it cannot express "the reset confirmed, the second
+   *  approve's wait timed out". */
+  receiptThrowsAt?: number[];
 }) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
@@ -80,7 +85,11 @@ function harness(opts: {
     }),
     waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: string }) => {
       if (opts.receiptAlwaysThrows) throw new Error('receipt timeout');
-      if (receiptWaits++ < (opts.receiptThrowsFirst ?? 0)) {
+      const waitIndex = receiptWaits++;
+      if (waitIndex < (opts.receiptThrowsFirst ?? 0)) {
+        throw new Error('receipt timeout');
+      }
+      if (opts.receiptThrowsAt?.includes(waitIndex)) {
         throw new Error('receipt timeout');
       }
       if (hash === '0xlost') throw new Error('receipt timeout');
@@ -248,6 +257,59 @@ describe('ensureAllowance — a REVERT retracts the optimistic report', () => {
     const tx = await restoreAllowance({ ...base(h), previous: 0n, wrote: seen.at(-1)! });
     expect(tx).toBeNull();
     expect(h.writes).toEqual([1_000n]);
+  });
+});
+
+describe('restoreAllowance — a revert discovered LATE still restores', () => {
+  it('falls back to the confirmed reset when the pending write turns out reverted', async () => {
+    // The sequence round 8's fix did not cover: approve(0) CONFIRMS,
+    // approve(1000) is submitted, and ensureAllowance's own receipt wait
+    // TIMES OUT — so its revert-correction never runs and `wrote` stays
+    // 1000. The unwind then waits on that hash itself, sees the revert,
+    // and would compare the real allowance (0) against the stale 1000,
+    // conclude the zero wasn't its doing, and leave the prior 500 erased
+    // (#1529 review round 9).
+    const h = harness({
+      allowance: 500n,
+      revertApproveOf: (v) => v === 1_000n,
+      // Wait 0 is the reset (confirms). Wait 1 is ensureAllowance's own
+      // wait on the second approve — it TIMES OUT, so the correction
+      // never runs. Wait 2 is the unwind's own wait on that same hash,
+      // which resolves and reveals the revert.
+      receiptThrowsAt: [1],
+    });
+    let wrote: bigint | null = null;
+    let wroteTx: `0x${string}` | null = null;
+    let confirmed: bigint | null = null;
+    await expect(
+      ensureAllowance({
+        ...base(h),
+        amount: 1_000n,
+        onWrote: (v, hsh) => {
+          wrote = v;
+          wroteTx = hsh;
+        },
+        onConfirmed: (v) => {
+          confirmed = v;
+        },
+      }),
+    ).rejects.toThrow();
+
+    // The stale optimistic value survived, because the correction could
+    // not run — this is exactly the state the fix has to cope with.
+    expect(wrote).toBe(1_000n);
+    expect(confirmed).toBe(0n);
+    expect(h.allowance).toBe(0n);
+
+    await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote,
+      wroteTxHash: wroteTx,
+      confirmed,
+    });
+    // The prior grant is back, rather than left at zero.
+    expect(h.allowance).toBe(500n);
   });
 });
 

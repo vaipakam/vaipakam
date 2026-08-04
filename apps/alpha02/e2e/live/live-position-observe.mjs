@@ -192,11 +192,16 @@ async function discovery(what, fn) {
   }
 }
 
+// One height for the whole discovery walk — see the pagination note.
+const snapshotBlock = await discovery('reading the chain head', () =>
+  pub.getBlockNumber(),
+);
 const activeCount = await discovery('reading the active-loan count', () =>
   pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'getActiveLoansCount',
+    blockNumber: snapshotBlock,
   }),
 );
 console.log(`active    ${activeCount} loan(s) on chain`);
@@ -209,6 +214,13 @@ if (activeCount === 0n) {
 // swap-and-pop array, so it is not ordered by eligibility — a first-page
 // cap would miss the only eligible loan (or the requested address's) on a
 // busy chain and then report BLOCKED, claiming none exists (#1529 review).
+// PINNED to one block. The list is swap-and-pop, so a loan settling
+// between page reads moves the former LAST id down into an offset already
+// fetched — and the walk, continuing from the next offset against a stale
+// count, never sees it. If that moved loan was the only eligible one the
+// drive would report BLOCKED with an observable position still on chain
+// (#1529 review round 9). Reading every page at a fixed height makes the
+// walk a consistent snapshot instead of a moving target.
 const PAGE = 25n;
 const ids = [];
 for (let offset = 0n; offset < activeCount; offset += PAGE) {
@@ -219,6 +231,7 @@ for (let offset = 0n; offset < activeCount; offset += PAGE) {
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getActiveLoansPaginated',
       args: [offset, remaining < PAGE ? remaining : PAGE],
+      blockNumber: snapshotBlock,
     }),
   );
   if (page.length === 0) break;
@@ -706,13 +719,21 @@ async function stillEligible(loan) {
 const visited = [];
 const racedOut = [];
 visited.push(await visit('/positions'));
-for (const l of mine.slice(0, MAX_POSITIONS)) {
+// Walk candidates until MAX_POSITIONS pages have actually been OBSERVED,
+// not merely attempted. A pre-slice let a raced-out candidate consume the
+// quota, so the drive silently verified fewer pages than asked for — and
+// if every sliced row raced out it reported BLOCKED while eligible
+// candidates sat untried behind the slice (#1529 review round 9).
+let observedDetails = 0;
+for (const l of mine) {
+  if (observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
   if (changed) {
     racedOut.push(`${l.id} (${changed})`);
     continue;
   }
   visited.push(await visit(`/positions/${l.id}`, { expectChooser: true }));
+  observedDetails += 1;
 }
 await browser.close();
 

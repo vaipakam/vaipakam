@@ -279,6 +279,10 @@ export function ObligationTransferFlow({
     // Hash of that write, so the unwind can settle a still-pending
     // approve instead of reading it as somebody else's change.
     let wroteAllowanceTx: `0x${string}` | null = null;
+    // The last value the approve helper CONFIRMED. Needed when a later
+    // approve's revert is only discovered by the unwind, after the helper
+    // has thrown on a timeout and can no longer correct its own report.
+    let confirmedAllowance: bigint | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // transferObligationViaOffer is Tier-1 — live re-screen first.
@@ -484,6 +488,9 @@ export function ObligationTransferFlow({
             wroteAllowance = value;
             wroteAllowanceTx = hash;
           },
+          onConfirmed: (value) => {
+            confirmedAllowance = value;
+          },
         });
       }
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
@@ -526,6 +533,7 @@ export function ObligationTransferFlow({
       const previous = priorAllowance;
       const wrote = wroteAllowance;
       const wroteTx = wroteAllowanceTx;
+      const confirmedVal = confirmedAllowance;
       priorAllowance = null;
       wroteAllowance = null;
       wroteAllowanceTx = null;
@@ -539,6 +547,7 @@ export function ObligationTransferFlow({
           previous,
           wrote,
           wroteTxHash: wroteTx,
+          confirmed: confirmedVal,
         });
       } catch {
         // Intentionally silent — see above.

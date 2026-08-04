@@ -131,9 +131,19 @@ export async function ensureAllowance(opts: {
    *  would "restore" a value that was never the one replaced (#1529
    *  review). One read, one truth. */
   onObserved?: (current: bigint) => void;
+  /** Called when an approve is CONFIRMED on chain. Distinct from
+   *  `onWrote`, which is optimistic: this is the value the caller can
+   *  fall back to when a later, still-unresolved approve turns out to
+   *  have reverted. The unwind needs both because the revert can be
+   *  discovered HERE (correction runs) or LATER by the unwind's own
+   *  receipt wait, after this function has already thrown on a timeout
+   *  and can no longer correct anything (#1529 review round 9). */
+  onConfirmed?: (value: bigint, hash: `0x${string}`) => void;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, amount, onPrompt, onWrote, onObserved } =
-    opts;
+  const {
+    publicClient, walletClient, token, owner, spender, amount,
+    onPrompt, onWrote, onObserved, onConfirmed,
+  } = opts;
   const current = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -173,6 +183,7 @@ export async function ensureAllowance(opts: {
       throw new Error(`Token approval failed (${hash})`);
     }
     confirmed = { value, hash };
+    onConfirmed?.(value, hash);
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
     // not diamond.ts, so they feed the same centralized receipt floor
     // (standingApprovals / funding-watch roots ride push+focus+net
@@ -226,9 +237,19 @@ export async function restoreAllowance(opts: {
    *  `current !== wrote`, and treating the first as the second walks away
    *  from a grant that is about to appear (#1529 review round 6). */
   wroteTxHash?: `0x${string}` | null;
+  /** The last value `ensureAllowance` CONFIRMED, when it got that far.
+   *  Used only if the awaited `wroteTxHash` turns out to have reverted:
+   *  the optimistic `wrote` then never took effect, and the truth is this
+   *  instead. `ensureAllowance` corrects `wrote` itself when it observes
+   *  the revert — but when its own receipt wait timed out first, the
+   *  revert surfaces here, after it has thrown and can correct nothing
+   *  (#1529 review round 9). */
+  confirmed?: bigint | null;
 }): Promise<`0x${string}` | null> {
-  const { publicClient, walletClient, token, owner, spender, previous, wrote, wroteTxHash } =
-    opts;
+  const {
+    publicClient, walletClient, token, owner, spender, previous, wroteTxHash, confirmed,
+  } = opts;
+  let { wrote } = opts;
   // This attempt changed nothing, so it has nothing to put back.
   if (wrote === null || wrote === previous) return null;
 
@@ -285,10 +306,19 @@ export async function restoreAllowance(opts: {
     // again. A revert lands here too and correctly leaves `current`
     // unequal, so the restore stands down.
     try {
-      await publicClient.waitForTransactionReceipt({
+      const r = await publicClient.waitForTransactionReceipt({
         hash: wroteTxHash,
         timeout: 60_000,
       });
+      if (r.status !== 'success') {
+        // It landed as a REVERT: the optimistic value never took effect,
+        // so what this attempt actually left behind is the confirmed one
+        // (on the zero-first path, the reset). Judging against the stale
+        // optimistic value here is what left a user's prior grant erased
+        // with the restore convinced the zero wasn't its doing.
+        wrote = confirmed ?? null;
+        if (wrote === null || wrote === previous) return null;
+      }
       current = await readAllowance();
     } catch {
       // Still unresolved — fall through and stand down below.
