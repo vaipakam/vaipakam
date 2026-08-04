@@ -29,7 +29,7 @@ reviewable PR. The pieces, and why they couple:
 | **P2 Mirror commitment-on-arrival + two-sided netting** *(this row said "consume-on-arrival / mirror debits its own bucket" while the slice was being planned; §2e.1 superseded that before implementation — recorded here because a planning table that outlives its own correction reads as shipped behaviour)* | mirror RESERVES the locally-funded slice into its own `outstandingCommitRecycled`; the bucket drains later, pro-rata, at claim/remit. Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
-| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g |
+| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
 | **P6 Third credit class (#1331)** | Ā-**excluded** custody-credit for remitted-recycled forfeit/expiry; provenance tag at remit arrival; `VpfiRecycled` discriminator | needs P4's provenance signal |
 | **P7 Keeper + indexer** | keeper drives the mirror→Base report send; out-of-window reconciled-day rediscovery via the `CommitmentRemitEligibilityReconciled` hook; indexer handlers + D1 | needs P1/P4 to exist first |
 
@@ -761,6 +761,267 @@ the other not:
 
 So the test is not "does it stop the cursor" — both do — but "can the condition
 that stopped it always be satisfied".
+
+## 2h. P2 scope — the zeroed-day signal and its repricing vehicle (#1434)
+
+§2g states the two prerequisites. Prerequisite 1's **receipt** half shipped as
+P1-a (#1556, `41d4538a4`); its paid half and the deferral semantics are P1-b.
+This section scopes **prerequisite 2**, which is what actually gates lifting
+the halt. It is a scope, not a ratified design — the open question at the end
+is load-bearing and is the reason this is written down before any code.
+
+### The mechanism, traced (verified against the tree at `41d4538a4`)
+
+1. A mirror's per-(day, chain) funding stamp is written **at broadcast
+   arrival**, in `RewardReporterFacet`, as a whole-struct assignment with
+   `stamped: true` — including its per-side fresh and recycled halves.
+2. For a chain excluded from the day's interest report at grace/force
+   finalization, those halves are **all zero**. The stamp is still `stamped`.
+3. `_dayPoolHalves` gates only on `f.stamped`. A stamped all-zero day is
+   therefore **priceable at zero**, not halted — the halt that currently saves
+   it is the blanket `isMirrorRewardChain` one, which is what P2 removes.
+4. Zero halves ⇒ zero RPN delta ⇒ `rawPay == 0`, which `processUserSideDay`
+   treats as terminal progress: it persists the cursor and retires the day's
+   entries. For zero.
+5. `remitManualBudget` later sends the operator-sized compensation. It is
+   **fresh-only by construction** (`r.fresh = amount`, `recycledShare: 0`),
+   carries exactly the one `dayId`, and goes through the ordinary
+   `_sendRemitPayload`/d5 path. `onRewardBudgetReceived` **never writes
+   `chainDayRecycledFunding`** — so after compensation the stamp is still
+   all-zero, the day still prices at zero, and the tokens have no path into
+   the claim math.
+
+So the tokens arrive and the entries are already gone. Both halves of §2g's
+prerequisite 2 are needed: a signal, *and* a vehicle that rewrites the stamp.
+
+### Why this section stops here — and what replaces it
+
+**Three adversarial rounds on this section produced SIXTEEN P1s, every one
+confirmed against the tree.** (Counted from the API, not from notifications —
+an earlier pass called round three "six" and missed one, which is the same
+class of error as several of the findings themselves.) Two of them retracted claims this section itself
+had made a round earlier. The rate never fell.
+
+That is not a drafting problem, and one more round would not fix it. It is the
+section discovering that prerequisite 2 is **a subsystem, not a slice** — and
+that authoring it inline, one review round at a time, is the wrong instrument.
+Each round I proposed a mechanism; each round review found the mechanism
+contradicted something already in the tree, or something written two paragraphs
+above it. A design that needs sixteen corrections to reach a first draft needs
+a different starting point, not a seventeenth correction.
+
+**So this section deliberately does NOT contain a design.** It contains the
+verified problem statement above, the constraint set below, and the decision
+that has to be made before any of it can be resolved. **The design is deferred
+to its own document, and that document starts from the owner's answer** — not
+from another revision here.
+
+What the withdrawn revisions got wrong is recorded, because each is a
+constraint the eventual design must satisfy and re-deriving them costs another
+review cycle.
+
+### Constraints the P2 design must satisfy — all verified against the tree
+
+**On suppression:**
+
+1. The suppression must be a `_dayPoolHalves` **HALT**, not a pool-budget
+   deferral. `advanceCumLenderThrough` folds each day's halves into a **stored**
+   cumulative (`s.cumLenderRpn18[d] = next`) and advances its frontier; only
+   `if (halt) break;` prevents the fold, and nothing walks backwards. A later
+   rewrite cannot unwind a cumulative that has already absorbed the zero.
+2. §2g's pin against halts is therefore **satisfied, not overridden** — but
+   only if the halt has a guaranteed terminal reachable without a privileged
+   actor. The pin's own test ("can the condition that stopped it always be
+   satisfied?") is what any proposal must pass.
+3. **Two operator-gated exits are one operator-gated exit.** A "compensate or
+   the operator confirms zero" pair does not bound the wait; both branches need
+   a transaction from the same discretionary party whose silence caused the
+   problem.
+
+**On the state model:**
+
+4. Broadcast progress and funding progress are **orthogonal**. A linear chain
+   is self-contradictory: compensation must be able to land while the mirror is
+   still `unstamped`, which a chain rooted at the pending marker forbids.
+5. The model must include the **ordinary, non-zeroed day** — where the funding
+   halves arrive in the canonical broadcast itself. A two-axis draft that halts
+   until "both axes settle" halts every ordinary day unless a
+   broadcast-funded terminal exists.
+6. Transitions must be monotonic, replay-safe, and delivery-order-independent
+   in both directions. The stamp is written today as a **whole-struct
+   assignment**, which is exactly where this breaks.
+
+**On the clock:**
+
+7. There is **no authenticated finalization time** anywhere today —
+   `RewardBroadcastV2` carries no timestamp and neither does `ChainDayFunding`.
+   Local receipt makes any deadline a function of CCIP delay; the nominal day
+   boundary lets a late grace/force finalization arrive already expired.
+8. Base must **refuse to dispatch** a manual compensation at or after the
+   authenticated expiry. Today `remitManualBudget` gates only on
+   `remitIneligible` and the close markers, so an admin can create a
+   compensation that is guaranteed never to be able to reprice anything.
+
+**On the in-flight race — and why NEITHER option is currently viable:**
+
+9. Compensation dispatched before expiry can be **delivered after** a lapse,
+   and no window length bounds cross-chain latency.
+10. The **Base-authoritative** branch, as sketched, loses bounded liveness:
+    both `finalizeRemitReservation` and `releaseRemitReservation` are
+    `onlyRole(ADMIN_ROLE)`, so if the admin becomes unavailable while a message
+    sits failed-but-re-executable, the reservation stays Pending and the day
+    never lapses. It needs a permissionless terminal backed by authenticated
+    non-delivery evidence, or it must be stated as sacrificing the invariant.
+11. The **mirror-local** branch's recovery, as sketched, was wrong:
+    `releaseRemitReservation` is for a send that can NEVER execute. A late
+    compensation *has* executed and its receipt ACKs the reservation, so the
+    release either reverts or violates its own precondition and re-opens the
+    day for a second manual remit after the first has landed. Recovery must
+    **finalize/ACK** the original reservation, keep the day closed, and
+    repatriate the stranded tokens through an explicit delivered-after-lapse
+    path.
+
+**On the wire — it is TWO evolutions, not one:**
+
+12. The zeroed marker and the authenticated finalization time are known at day
+    finalization and travel through `VaipakamRewardMessenger._encodeBroadcastV2`.
+    The armed-fresh-dispatched figure and the compensation halves are known at
+    token dispatch and travel through `RewardRemittanceFacet._sendRemitPayload`
+    → `RewardRemittanceReceiver`. **Independent messages, independent decoders,
+    independent rollout compatibility.** An earlier revision of this section
+    recommended putting all four on "the same tag"; that would leave one path
+    unversioned. Two versioned changes, each with its own rollout test.
+
+**On binding a component to its target:**
+
+15. The compensation halves must be bound to **exactly one** day. The new
+    remittance generation is shared with the ordinary batched path, whose
+    payload carries many `dayIds`, and a per-delivery sum bound does **not**
+    stop an implementation writing the same bounded pair into every listed
+    stamp — multiplying claimable funding by the batch length from one
+    transfer. Carry an explicit compensation-day discriminator, require it to
+    name a single manual-eligible day, and require the figures to be zero on
+    an ordinary multi-day batch, all before any stamp is rewritten.
+
+**On every new component of a delivery:**
+
+13. It inherits **short-delivery scaling** (`actualReceived / declaredTotal`)
+    and a **joint bound** against its siblings, by default — the burden is on
+    stating an exception. Several of the sixteen were this one omission
+    recurring on each newly-proposed field.
+14. The armed-fresh-dispatched figure is **not** `st.armedFresh` /
+    `r.armedFreshFull`: those are the PRE-clamp commitment retired at close,
+    and `RewardRemitLedgerTest` asserts `r.armedFreshFull > r.fresh` directly.
+    It needs a new accumulator over the post-clamp `p.fresh` on armed days —
+    **and `remitManualBudget` must populate it too**, since it builds its
+    dispatch directly and has no `p`. A default zero there would make the
+    compensation's own replacement halves priceable while never raising the
+    mirror's delivered-fresh budget, so P1-b would defer the very payout the
+    compensation funded.
+
+**On repricing actually making the day PAYABLE:**
+
+17. **Rewriting the stamp may not be sufficient.** The day's payout is
+    `perDayNumeraire18 × Δ_d`, and `Δ_d` divides the funding half by the
+    **global interest denominator frozen at finalization**. If the excluded
+    mirror supplied the only interest on a side, that denominator is **zero**
+    and the delta stays zero however the halves are rewritten. If it is
+    non-zero it contains only *other* chains' interest, so the compensated
+    day is scaled by an unrelated `localInterest / globalInterest` ratio
+    rather than by the operator-sized amount. The repricing vehicle needs a
+    mirror-specific denominator, a directly authenticated delta, or another
+    normalization — **not just replacement halves.** This is the constraint
+    most likely to change the vehicle's shape, so settle it early.
+
+18. **Do NOT scale the replacement halves themselves** — scale only the
+    backing credit. This is the one place constraint 13's default is wrong,
+    and the exception is exactly why 13 requires exceptions to be stated.
+    The halves become the day's **pricing obligation**: once the cumulative
+    folds reduced halves, `processUserSideDay` retires the entries at the
+    reduced payout, and the delivered-fresh budget exactly covers that
+    scaled claim — so §2g's deferral never fires, while the manual remit has
+    already closed the day against another ordinary compensation. A
+    fee-on-transfer shortfall would become **permanent user underpayment**
+    instead of recoverable back-pressure. Preserve the intended halves behind
+    the budget gate, or define a supplemental-funding transition before
+    pricing goes terminal.
+
+**On rollout:**
+
+19. **Legacy manual compensations must be drained or backfilled.** A d5
+    manual compensation that is pending, in flight, or already received when
+    P2 activates carries no compensation discriminator and no replacement
+    halves. The upgraded receiver still accepts that shape and its ACK closes
+    the Base day, but the mirror has no authenticated values to rewrite the
+    zero stamp with, and cannot request the ordinary manual path again — so
+    the day's only terminal is lapse-and-underpay. A rollout *test* does not
+    cover this. Activation must inventory and drain legacy manual
+    reservations/receipts, or specify an authenticated backfill.
+
+20. **Bind the broadcast to its originating Base deployment.** A delayed
+    packet from a retired deployment can install its zeroed marker and expiry
+    under the new era, then combine with compensation sent by the *new*
+    remitter for the same day. `CcipMessenger._ccipReceive` authenticates the
+    remote adapter but derives `sourceSender` from the current
+    `channelPeerOf`, and `VaipakamRewardMessenger.onCrossChainMessage`
+    ignores it. d2 already solved this for remit ACKs by carrying immutable
+    deployment identity **in the payload** and keying receipts on
+    `(remitter, remitId)`; the broadcast evolution must do the same, and both
+    state axes must bind to the same deployment/era.
+
+### ⛔ The decision that comes first
+
+**Who lapses a zeroed day, and how does the in-flight race resolve?** Every
+constraint above is downstream of it: it determines whether the clock is
+canonical or local, whether the wire carries a lapse instruction, and whether
+recovery is a prevention path or a repatriation path.
+
+Neither sketched option is currently viable as written — constraint 10 breaks
+the Base-authoritative one, constraint 11 breaks the mirror-local one — so this
+is not a menu to pick from. It is the question a P2 design document has to open
+with, and answering it is what unblocks writing one.
+
+### General rule earned here, applicable beyond P2
+
+**A field named for an OBLIGATION is not the amount that MOVED, and the two
+diverge exactly where a cap or clamp bites.** `EntrySplit.armedFresh` is kept
+whole for commitment retirement while `total` sheds the capped-off part;
+`interactionPoolPaidOut` mixes legacy-schedule and armed payouts;
+`armedFreshFull` is pre-clamp. Before transmitting, bounding, or subtracting
+any such field, establish which side of that line it is on. Three separate
+findings across #1556 and this section were the same mistake.
+
+
+### The manual-budget path is USUALLY counted — and the exception is a constraint
+
+An earlier revision recorded this as "one thing that already behaves
+correctly": the manual-budget path lands **counted** in P1-a's delivered-fresh
+figure, being fresh-only by construction and targeting only `remitIneligible`
+days, which are armed. **That is over-stated** (Codex #1565 r4 P1), and the
+exception is exactly the case P2 exists for.
+
+`_armedAttributableDelivery` requires `governorCommitArmedFromDay != 0` **on
+the mirror**. For the FIRST armed zeroed day, the compensation can overtake the
+broadcast that installs `D*` — CCIP orders neither — and then the ingress books
+the whole amount to `rewardBudgetFreshUncounted`, not to
+`rewardBudgetArmedFreshReceived`. The tokens are present and the day is
+compensated, but the mirror's delivered-fresh budget never rose, so P1-b would
+defer a payout that is fully funded.
+
+So, as constraint 16:
+
+16. Compensation that **overtakes the arming broadcast** must still be
+    attributable. Either the ingress can re-attribute an uncounted delivery
+    once `D*` installs, or armed attribution travels authenticated on the
+    delivery itself rather than being inferred from local arming state. This is
+    the same ordering gap P1-a documented on `_armedAttributableDelivery` —
+    P2 is where it stops being acceptable, because the compensation path is
+    precisely where a funded-but-uncounted day is most likely.
+
+What remains true, and worth keeping so it is not "fixed" the wrong way: when
+the mirror IS armed at ingress, the manual path is **inside** the delivered-
+fresh accounting. A reader concluding "manual top-ups bypass it entirely" would
+be wrong, and adding a second accounting path would double-count.
 
 ## 3. Delivery-ack binding — RESOLVED by plan §M3 (lines 348-351)
 
