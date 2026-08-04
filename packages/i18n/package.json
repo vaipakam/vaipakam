@@ -27,7 +27,8 @@
     }
   },
   "scripts": {
-    "translate": "tsx scripts/translate-i18n.ts"
+    "translate": "tsx scripts/translate-i18n.ts",
+    "merge-patch": "tsx scripts/merge-locale-patch.ts"
   },
   "dependencies": {
     "@vaipakam/lib": "workspace:*"

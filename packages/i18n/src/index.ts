@@ -7,6 +7,16 @@ export {
   type LocaleCode,
 } from './glossary';
 export {
+  missingSubtree,
+  deepMerge,
+  orderLike,
+  leafPaths,
+  placeholders,
+  placeholderDrift,
+  type Bundle,
+  type PlaceholderDrift,
+} from './bundleOps';
+export {
   RTL_LOCALES,
   isRtlLocale,
   applyDocumentDirection,

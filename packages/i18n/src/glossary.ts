@@ -120,6 +120,14 @@ export const GLOSSARY_KEEP_VERBATIM = [
   'LibVaipakam',
   'LibVPFIDiscount',
   'LibSwap',
+
+  // Typed-confirmation words. These are NOT prose — the app compares
+  // the user's typed input against this exact literal (see
+  // `CONFIRM_WORD` in alpha02's Recover page). A locale that
+  // translates the word renders a friction gate the user cannot
+  // pass: they type the translated word, it never matches, and the
+  // sign button stays disabled forever.
+  'CONFIRM',
 ];
 
 /** Style guidance passed to the translation engine alongside the

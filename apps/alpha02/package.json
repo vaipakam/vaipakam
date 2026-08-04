@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc -b --noEmit && node scripts/check-hardcoded-strings.mjs",
+    "typecheck": "tsc -b --noEmit && node scripts/check-hardcoded-strings.mjs && tsx scripts/check-locale-coverage.ts",
     "i18n:check": "node scripts/check-hardcoded-strings.mjs",
     "prebuild": "node scripts/generate-seo.mjs",
     "build": "tsc -b tsconfig.build.json && vite build",
@@ -18,7 +18,8 @@
     "e2e": "playwright test",
     "e2e:typecheck": "tsc -p e2e/tsconfig.json --noEmit",
     "i18n:template": "tsx scripts/export-i18n-template.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "i18n:coverage": "tsx scripts/check-locale-coverage.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.100.1",

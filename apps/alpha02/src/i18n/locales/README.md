@@ -36,8 +36,15 @@ grammar, but never rename, translate, or drop one, and keep the same set
 that appears in the English value. A count-plural key ships as its full
 CLDR category set (`_zero` / `_one` / `_two` / `_few` / `_many` /
 `_other`); fill each category your locale grammatically uses and leave
-the placeholder tokens intact in every one. (Automated placeholder-set
-validation for the machine-assisted flow is tracked in #1362.)
+the placeholder tokens intact in every one.
+
+Placeholder sets are validated at build time by
+`src/i18n/localeCoverage.test.ts` (#1362): introducing a token the
+English doesn't have always fails, and dropping one fails unless the
+locale is listed in that file's `ALLOWED_OMISSIONS` with a linguistic
+reason (Arabic's dual `_two` forms are the standing example — the noun
+already means "two days", so restating `{{count}}` would read
+"2 يومان").
 
 Machine-assisted alternative:
 
@@ -45,6 +52,30 @@ Machine-assisted alternative:
 ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
   --locales-dir apps/alpha02/src/i18n/locales es zh hi ja
 ```
+
+**After adding a new section to `copy.ts`**, top up the already-
+translated locales instead of re-running the whole bundle — the
+`--missing-only` mode translates ONLY what each locale lacks and merges
+it in, leaving reviewed strings untouched:
+
+```bash
+ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
+  --locales-dir apps/alpha02/src/i18n/locales --missing-only
+```
+
+If the translations arrive some other way (a translator's hand-back, a
+vendor delivery), drop one `<code>.json` partial bundle per locale into
+a directory and merge them the same way:
+
+```bash
+pnpm --filter @vaipakam/i18n merge-patch -- \
+  --locales-dir apps/alpha02/src/i18n/locales --patches path/to/patches
+```
+
+Both report what each locale is still missing rather than reporting a
+clean success, and `src/i18n/localeCoverage.test.ts` fails the build if
+a locale in `TRANSLATED_LOCALES` falls behind `en.json` outside its
+recorded backlog.
 
 Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map

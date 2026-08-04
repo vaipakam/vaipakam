@@ -13,6 +13,25 @@
  *                           missing OR is an empty placeholder `{}`.
  *   - Explicit codes      → just those (overwrites existing).
  *   - `--all`             → every non-English locale (overwrites).
+ *   - `--missing-only`    → translate ONLY the keys each locale lacks
+ *                           and merge them in, leaving every existing
+ *                           translation untouched. Combine with codes
+ *                           to narrow, or run bare to sweep every
+ *                           already-translated locale.
+ *   - `--reorder`         → with `--missing-only`, also normalise each
+ *                           bundle to en.json's key order. Off by
+ *                           default: on a drifted bundle it rewrites
+ *                           most of the file and buries the new
+ *                           translations in the diff.
+ *
+ * `--missing-only` is the mode to reach for after adding a new section
+ * to `copy.ts`. Without it there was no way to top a locale up: the
+ * default mode skips any bundle that isn't an empty placeholder, and
+ * `--all` re-translates the entire file to add a handful of keys —
+ * churning hundreds of reviewed strings and burying the new ones in an
+ * unreviewable diff. The gap that created (#1560: 291 keys missing
+ * across nine alpha02 locales, including a whole page) stayed invisible
+ * precisely because every bundle looked complete.
  *
  * What it does NOT do: auto-commit. Always review the diff before
  * pushing — machine translation, even with a glossary, occasionally
@@ -28,6 +47,13 @@ import {
   LOCALE_NAMES,
   type LocaleCode,
 } from '../src/glossary.ts';
+import {
+  deepMerge,
+  leafPaths,
+  missingSubtree,
+  orderLike,
+  type Bundle,
+} from '../src/bundleOps.ts';
 
 const args = process.argv.slice(2);
 
@@ -151,11 +177,19 @@ function isPlaceholderBundle(p: string): boolean {
   }
 }
 
+/** Parse a locale bundle from disk, or `{}` when it is absent. */
+function readBundle(p: string): Bundle {
+  if (!fs.existsSync(p)) return {};
+  return JSON.parse(fs.readFileSync(p, 'utf8')) as Bundle;
+}
+
 async function main() {
   const enPath = path.join(LOCALES_DIR, 'en.json');
   const enRaw = fs.readFileSync(enPath, 'utf8');
-  const enJson = JSON.parse(enRaw) as object;
+  const enJson = JSON.parse(enRaw) as Bundle;
 
+  const missingOnly = args.includes('--missing-only');
+  const reorder = args.includes('--reorder');
   const allFlag = args.includes('--all');
   const explicitCodes = args.filter(
     (a, i) => !a.startsWith('--') && args[i - 1] !== '--locales-dir',
@@ -173,6 +207,16 @@ async function main() {
     targets = explicitCodes;
   } else if (allFlag) {
     targets = SUPPORTED_LOCALES.filter((c) => c !== 'en');
+  } else if (missingOnly) {
+    // Sweep the locales that HAVE a bundle and are behind the template.
+    // Placeholders are excluded on purpose: an empty `{}` needs the
+    // full-bundle path (default mode), not a gap top-up.
+    targets = SUPPORTED_LOCALES.filter((c) => {
+      if (c === 'en') return false;
+      const p = path.join(LOCALES_DIR, `${c}.json`);
+      if (isPlaceholderBundle(p)) return false;
+      return missingSubtree(enJson, readBundle(p)) !== null;
+    });
   } else {
     // Default: only locales whose bundle is missing or a `{}` stub —
     // idempotent after a partial failure, and exactly what you want
@@ -183,7 +227,12 @@ async function main() {
   }
 
   if (targets.length === 0) {
+    if (missingOnly) {
+      console.log('Every translated locale already covers en.json. Nothing to fill.');
+      return;
+    }
     console.log('No locales to translate. Pass `--all` to retranslate everything,');
+    console.log('`--missing-only` to fill gaps in already-translated locales,');
     console.log('or list explicit codes (e.g. `-- es zh hi ja`).');
     return;
   }
@@ -196,13 +245,46 @@ async function main() {
   for (const code of targets) {
     process.stdout.write(`→ ${code} (${LOCALE_NAMES[code]})… `);
     try {
-      const prompt = buildPrompt(enJson, code);
-      const responseText = await callClaude(prompt);
-      const translated = extractJson(responseText);
-      const warnings = verifyGlossaryPreserved(translated, enRaw);
       const outPath = path.join(LOCALES_DIR, `${code}.json`);
-      fs.writeFileSync(outPath, JSON.stringify(translated, null, 2) + '\n');
+      const existing = missingOnly ? readBundle(outPath) : {};
+      // In gap-fill mode the model only ever sees the keys this locale
+      // lacks, so it cannot restate — let alone silently reword — a
+      // string a human already reviewed.
+      const source = missingOnly
+        ? (missingSubtree(enJson, existing) ?? {})
+        : enJson;
+      if (missingOnly && Object.keys(source).length === 0) {
+        console.log('already complete, skipped.');
+        continue;
+      }
+      const sourceText = JSON.stringify(source);
+      if (missingOnly) {
+        process.stdout.write(`(${leafPaths(source).length} missing) `);
+      }
+      const prompt = buildPrompt(source, code);
+      const responseText = await callClaude(prompt);
+      const translated = extractJson(responseText) as Bundle;
+      const warnings = verifyGlossaryPreserved(translated, sourceText);
+      // Merge in place. Re-ordering against the template is opt-in
+      // (`--reorder`): on a bundle whose order has already drifted it
+      // rewrites most of the file and buries the new translations.
+      const merged = missingOnly
+        ? reorder
+          ? orderLike(enJson, deepMerge(existing, translated))
+          : deepMerge(existing, translated)
+        : translated;
+      fs.writeFileSync(outPath, JSON.stringify(merged, null, 2) + '\n');
       console.log('done.');
+      // A gap-fill that comes back short leaves the locale still behind
+      // the template — say so rather than reporting a clean "done".
+      if (missingOnly) {
+        const stillMissing = missingSubtree(enJson, merged as Bundle);
+        if (stillMissing) {
+          console.log(
+            `    warn: ${leafPaths(stillMissing).length} key(s) still missing — re-run to finish`,
+          );
+        }
+      }
       for (const w of warnings) console.log(`    warn: ${w}`);
     } catch (err) {
       console.log('FAILED.');

@@ -482,7 +482,22 @@ Thin-market honesty rules apply.
   language/direction is applied before the first paint (no flash of
   wrong-direction layout).
 - Protocol-specific terms (VPFI, HF, LTV, asset and network names)
-  stay verbatim in every language.
+  stay verbatim in every language. So does any word the app asks the
+  user to TYPE BACK as a confirmation: a translated confirmation word
+  would be compared against the English one the app expects, leaving
+  the user unable to pass a gate they had typed correctly in their own
+  language.
+- A language offered as translated shows that language everywhere it is
+  offered. Falling back to English is the documented behaviour for a
+  language still being filled in — not for a page inside a language
+  already presented as available. A newly added surface is translated in
+  the same change that ships it, so a user never meets a page that
+  switches to English partway down.
+- Where a sentence embeds a live value, that value survives translation.
+  A translation may reorder the values to fit its grammar, and may leave
+  one out where the grammar already carries it (a dual form that means
+  "two days" in the noun itself), but it never invents a value slot the
+  English does not have.
 - The translation covers the whole displayed interface, not only the
   page chrome: the Activity feed's plain-language event labels, the
   loan-status badges shown on positions and history, the Claim Center's
