@@ -923,7 +923,10 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    receiving end and is refused whole (a deliberate under-count). Base
    >    already computes the figure (`st.armedFresh`) and stores it on the
    >    reservation; it simply is not transmitted. Put it on the **§2f.4 tag
-   >    evolution P2 already requires** — not a second tag for this.
+   >    evolution P2 already requires** — not a second tag for this. Scoped in
+   >    the design record's **§2h** (#1565), together with the zeroed-day
+   >    signal and the one open question that gates the wire: whether "confirm
+   >    zero" is a Base broadcast or a mirror-local admin act.
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the
