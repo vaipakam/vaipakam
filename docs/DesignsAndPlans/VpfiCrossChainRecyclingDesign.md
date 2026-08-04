@@ -264,6 +264,81 @@ Never: market operations, LP seeding from this bucket, or any automatic
 disposal — surplus movement is always a deliberate, bounded, protocol-
 internal transfer.
 
+### 3.6a Repatriation mechanics — TWO modes over one transport (#1568, added 2026-08-04)
+
+§3.6 ratified the *planned* case. Implementation scouting for **#1568**, and the
+**#1571** lapse decision, established that repatriation has a **second caller
+with different books**, and that conflating them corrupts the per-chain ledger.
+
+| | **Mode A — planned surplus** | **Mode B — stranded-delivery recovery** |
+| --- | --- | --- |
+| Trigger | Base-initiated (§3.6: operator triggers on Base) | **Mirror**-initiated — the mirror is where the stranded tokens land |
+| Source of tokens | the mirror's **recycle bucket** (`LibVpfiRecycle.consume`) | **un-earmarked** balance — a compensation delivered after its day lapsed (#1434 P2, R4) |
+| Was it in Base's `reported` availability? | **yes** | **no — never** |
+| `consumedCumulative[c]` | `+= amount`, **before** the send (§3.6) | **UNTOUCHED** |
+| Base-side reservation | n/a | **finalize/ACK** the original remit reservation |
+
+**Why Mode B must not touch `consumedCumulative`.** `availRecycled = reported +
+released − consumed`. A late compensation's tokens were never reported by the
+chain and never entered its availability, so charging them to `consumed` would
+subtract availability the chain never had — understating `availRecycled` by the
+recovered amount, permanently, on every recovery. The two modes share a
+transport and nothing else.
+
+**They therefore need an explicit MODE DISCRIMINATOR on the wire**, and Base
+must reject a payload whose mode does not match the ledger action it is about
+to take. This is the #1434 §2h constraint 15 lesson applied one layer up: a
+shared wire generation carrying two meanings, with only an aggregate bound
+between them, is how one transfer gets booked twice.
+
+#### The returned tokens do NOT restore interaction-pool headroom
+
+`rewardBudgetRemittedGlobal` is **append-only** — verified: it is written only
+with `+=`, and even `releaseRemitReservation` (a send that can *never* execute)
+does not restore it. That is load-bearing, not incidental: the claim path's
+truncate-and-consume rule is justified by `remaining = CAP − paidOut −
+remittedGlobal` being **monotone non-increasing**, so a trimmed remainder is
+unfundable forever and consuming the entry alongside it costs the claimant
+nothing. Decrementing it on repatriation would falsify that argument and turn
+every earlier truncation into a silent underpayment.
+
+So **neither mode decrements it.** Recovered VPFI lands in
+`rewardEmissionsBudget` — a *different* pool, the priority-1 sink in
+`LibTreasuryBuyback._routePriority`, which offsets fresh-mint inflation. The
+interaction pool stays reduced by the amount that was remitted.
+
+State that consequence plainly rather than leaving it to be discovered: a
+lapsed compensation **permanently shrinks the 69M interaction pool** by its
+amount, while the tokens themselves are repurposed to emissions offset. This is
+the same conservative treatment a released reservation already receives, which
+is why it is the architecturally consistent answer rather than a new exception.
+
+#### Transport — reuse `BuybackRemittanceReceiver`'s shape, not its instance
+
+That contract is already the mirror→Base direction and has the properties this
+needs: messenger-gated ingress, **exactly one** `TokenAmount` per delivery
+(multi-token rejected to avoid ambiguous accounting), payload/delivery token
+cross-validation, and tokens forwarded to the Diamond **before** the ingress
+call so the Diamond never reaches back for custody.
+
+A **separate receiver** rather than a new mode on that one: the buyback channel
+credits the buyback budget and this credits emissions, so sharing an instance
+would put two unrelated ledgers behind one authenticated ingress and one pause
+lever. Same shape, separate blast radius.
+
+#### Bounds every delivery inherits (#1434 §2h constraints 13, 15)
+
+- scale to `actualReceived` — the receiver explicitly supports a short receipt;
+- bound components **jointly**, never only individually;
+- bind to a **single target** — a mode-B recovery names exactly one reservation.
+
+#### Sequencing
+
+R4 makes this a **prerequisite of #1434 P2**, not a parallel track: P2's lapse
+has no exit for a late arrival without Mode B. Mode A can ship first — it is
+the §3.6 flow and needs none of P2 — but the transport and the discriminator
+should be designed for both at once, so the wire is cut once.
+
 ### 3.7 Failure modes
 
 | Failure | Behaviour | Why safe |
