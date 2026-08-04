@@ -51,31 +51,36 @@ const LOCALES_DIR = path.resolve(
 );
 
 /**
- * Sections known to be untranslated across every translated locale,
- * tracked as follow-up work. Each entry is a key PREFIX plus the issue
- * that will clear it.
+ * The exact `(key, locale)` pairs still untranslated, tracked as #1560
+ * follow-up. Generated — regenerate with `pnpm i18n:coverage --prune`,
+ * which can only REMOVE entries.
  *
- * Deliberately a per-SECTION allowlist rather than a global "allow N
- * missing" tolerance: a count silently absorbs the next regression,
- * while a named section has to be removed here when it is filled, and a
- * NEW untranslated section fails even though the total is unchanged.
+ * Per-PAIR, not per-section, and that precision is the point (Codex
+ * #1563 r2). A section-prefix allowlist stayed active until the LAST
+ * locale finished it, so during the ordinary window where one locale is
+ * done and the others aren't, deleting a key from the finished locale
+ * was still excused — the guard passed while that locale silently
+ * regressed to English. A pair excuses exactly one locale's one key and
+ * nothing else, so filling a section for `fr` immediately protects `fr`
+ * from losing it again, even while `ta` is still pending.
  *
- * Shrink this list — never grow it. A new section belongs in the
+ * Shrink it — never grow it. A newly shipped surface belongs in the
  * translation pass that ships it, not here.
  */
-const KNOWN_GAPS: ReadonlyArray<{ prefix: string; issue: string }> = [
-  { prefix: 'copy.offset.', issue: '#1560 follow-up' },
-  { prefix: 'copy.tariff.', issue: '#1560 follow-up' },
-  { prefix: 'copy.earlyRepay.', issue: '#1560 follow-up' },
-  { prefix: 'copy.transferOb.', issue: '#1560 follow-up' },
-  { prefix: 'copy.saleHold.', issue: '#1560 follow-up' },
-  { prefix: 'copy.loanSale.', issue: '#1560 follow-up' },
-  { prefix: 'copy.match.', issue: '#1560 follow-up' },
-  { prefix: 'copy.seo.', issue: '#1560 follow-up' },
-  { prefix: 'copy.errors.', issue: '#1560 follow-up' },
-  { prefix: 'copy.settingsPage.', issue: '#1560 follow-up' },
-  { prefix: 'contractError.', issue: '#1560 follow-up' },
-];
+const BASELINE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'src',
+  'i18n',
+  'untranslated-baseline.json',
+);
+const KNOWN_GAPS: Readonly<Record<string, readonly string[]>> = JSON.parse(
+  fs.readFileSync(BASELINE_PATH, 'utf8'),
+) as Record<string, string[]>;
+
+/** Is this locale's missing key one of the recorded, still-open gaps? */
+const isKnownGap = (code: string, key: string): boolean =>
+  KNOWN_GAPS[key]?.includes(code) ?? false;
 
 /**
  * Leaves where a locale legitimately omits an interpolation token the
@@ -138,6 +143,24 @@ const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> = {
   'copy.recover.confirmPrompt': ['CONFIRM'],
 };
 
+/**
+ * Does `value` contain `literal` as a STANDALONE token?
+ *
+ * Substring matching was not enough (Codex #1563 r2): Spanish
+ * "Escribe CONFIRMAR" and English "Type CONFIRMATION" both contain
+ * `CONFIRM` while instructing the user to type something that can
+ * never equal it — the exact dead end the check exists to prevent.
+ *
+ * The boundary is ASCII-alphanumeric only, deliberately. The failure
+ * mode is a Latin word EXTENDING the token (CONFIRMAR / CONFIRMATION);
+ * a locale that abuts it with its own script — Japanese
+ * "CONFIRMと入力" — is typing the right word and must pass.
+ */
+function containsToken(value: string, literal: string): boolean {
+  const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(value);
+}
+
 /** Read a dot-path leaf, or undefined. */
 function leafAt(bundle: Bundle, dotted: string): unknown {
   return dotted
@@ -170,7 +193,7 @@ for (const code of translated) {
 
   const missing = missingSubtree(en, bundle);
   const unexplained = (missing ? leafPaths(missing) : []).filter(
-    (key) => !KNOWN_GAPS.some(({ prefix }) => key.startsWith(prefix)),
+    (key) => !isKnownGap(code, key),
   );
   if (unexplained.length > 0) {
     problems.push(
@@ -180,7 +203,7 @@ for (const code of translated) {
     );
   }
 
-  for (const { path: key, unknown, dropped } of placeholderDrift(en, bundle)) {
+  for (const { path: key, unknown, dropped, malformed } of placeholderDrift(en, bundle)) {
     if (unknown.length > 0) {
       problems.push(
         `${code}: ${key} introduces {{${unknown.join('}}, {{')}}} — not in the English`,
@@ -189,6 +212,12 @@ for (const code of translated) {
     if (dropped.length > 0 && !omissionAllowed(code, key, dropped)) {
       problems.push(
         `${code}: ${key} drops {{${dropped.join('}}, {{')}}} present in the English`,
+      );
+    }
+    if (malformed.length > 0) {
+      problems.push(
+        `${code}: ${key} has malformed brace run(s) ${malformed.join(', ')} — ` +
+          'i18next renders these literally',
       );
     }
   }
@@ -206,31 +235,62 @@ for (const code of translated) {
     const value = leafAt(bundle, key);
     if (typeof value !== 'string') continue; // absent/drifted — reported above
     for (const literal of literals) {
-      if (!value.includes(literal)) {
+      if (!containsToken(value, literal)) {
         problems.push(
-          `${code}: ${key} must contain the literal "${literal}" — the app ` +
-            'compares typed input against it, so a translated word can never match',
+          `${code}: ${key} must contain the standalone token "${literal}" — the app ` +
+            'compares typed input against it, so a translated or extended word can never match',
         );
       }
     }
   }
 }
 
-// A gap every locale has since filled must leave KNOWN_GAPS, otherwise
-// the allowlist quietly re-opens that section to regression.
-const bundles = translated.map(read);
-for (const { prefix } of KNOWN_GAPS) {
-  const stillMissingSomewhere = bundles.some((bundle) => {
-    const missing = missingSubtree(en, bundle);
-    return (missing ? leafPaths(missing) : []).some((key) =>
-      key.startsWith(prefix),
-    );
-  });
-  if (!stillMissingSomewhere) {
-    problems.push(
-      `KNOWN_GAPS entry "${prefix}" is fully translated everywhere — remove it`,
-    );
+// A recorded gap a locale has since FILLED must leave the baseline, or
+// the exemption quietly re-opens that key to regression for that
+// locale. Checked per pair, so a section finished for one language is
+// protected there while it is still pending elsewhere.
+const stalePairs: string[] = [];
+for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
+  for (const code of codes) {
+    if (!translated.includes(code as (typeof translated)[number])) {
+      stalePairs.push(`${code}:${key} (not a translated locale)`);
+      continue;
+    }
+    const missing = missingSubtree(en, read(code));
+    const stillMissing = (missing ? leafPaths(missing) : []).includes(key);
+    if (!stillMissing) stalePairs.push(`${code}:${key}`);
   }
+}
+if (stalePairs.length > 0) {
+  problems.push(
+    `${stalePairs.length} baseline entr(y/ies) already translated — run ` +
+      `\`pnpm i18n:coverage --prune\`: ${stalePairs.slice(0, 6).join(', ')}` +
+      (stalePairs.length > 6 ? ', …' : ''),
+  );
+}
+
+// `--prune` rewrites the baseline with the still-missing pairs only. It
+// can only SHRINK: every pair it writes was independently observed
+// missing just now, so it cannot be used to paper over a regression the
+// way a hand-edited allowlist could.
+if (process.argv.includes('--prune')) {
+  const pruned: Record<string, string[]> = {};
+  for (const code of translated) {
+    const missing = missingSubtree(en, read(code));
+    for (const key of missing ? leafPaths(missing) : []) {
+      if (!isKnownGap(code, key)) continue; // a NEW gap is a failure, not a baseline entry
+      (pruned[key] ??= []).push(code);
+    }
+  }
+  const sorted = Object.fromEntries(
+    Object.keys(pruned)
+      .sort()
+      .map((k) => [k, pruned[k].sort()]),
+  );
+  fs.writeFileSync(BASELINE_PATH, JSON.stringify(sorted, null, 2) + '\n');
+  const pairs = Object.values(sorted).flat().length;
+  console.log(`[check-locale-coverage] pruned baseline → ${Object.keys(sorted).length} key(s), ${pairs} pair(s)`);
+  process.exit(0);
 }
 
 if (problems.length > 0) {

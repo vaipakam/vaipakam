@@ -31,6 +31,20 @@ const isBranch = (v: unknown): v is Bundle =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /**
+ * Read a key ONLY if the object owns it.
+ *
+ * A plain `obj[key]` resolves inherited names — `constructor`,
+ * `toString`, `hasOwnProperty` — so a patch or an API reply carrying
+ * one of those as a translation key looked like it matched the
+ * template and sailed through the shape validation that exists
+ * precisely to reject unrequested fields (Codex #1563 r2). Every
+ * lookup that asks "does the other side have this key?" goes through
+ * here.
+ */
+const own = (obj: Bundle, key: string): Bundle[string] | undefined =>
+  Object.hasOwn(obj, key) ? obj[key] : undefined;
+
+/**
  * The subtree of `source` whose leaves `target` does not have, keeping
  * the nesting shape. Returns `null` when nothing is missing — callers
  * use that to skip a locale entirely rather than spend a translation
@@ -45,7 +59,7 @@ const isBranch = (v: unknown): v is Bundle =>
 export function missingSubtree(source: Bundle, target: Bundle): Bundle | null {
   const out: Bundle = {};
   for (const [key, value] of Object.entries(source)) {
-    const counterpart = target[key];
+    const counterpart = own(target, key);
     if (isBranch(value)) {
       // A branch the target lacks entirely, or has as a non-branch
       // (shape drift), is missing wholesale.
@@ -67,7 +81,7 @@ export function missingSubtree(source: Bundle, target: Bundle): Bundle | null {
 export function deepMerge(base: Bundle, patch: Bundle): Bundle {
   const out: Bundle = { ...base };
   for (const [key, value] of Object.entries(patch)) {
-    const existing = out[key];
+    const existing = own(out, key);
     out[key] =
       isBranch(value) && isBranch(existing) ? deepMerge(existing, value) : value;
   }
@@ -91,7 +105,7 @@ export function deepMerge(base: Bundle, patch: Bundle): Bundle {
 export function orderLike(source: Bundle, subject: Bundle): Bundle {
   const out: Bundle = {};
   for (const [key, value] of Object.entries(source)) {
-    const counterpart = subject[key];
+    const counterpart = own(subject, key);
     if (counterpart === undefined) continue;
     out[key] =
       isBranch(value) && isBranch(counterpart)
@@ -107,7 +121,57 @@ export function orderLike(source: Bundle, subject: Bundle): Bundle {
  *  dropping the suffix changes the rendered output just as surely as
  *  dropping the name. */
 export function placeholders(value: string): string[] {
-  return [...value.matchAll(PLACEHOLDER_RE)].map((m) => m[1].trim());
+  return scanPlaceholders(value).tokens;
+}
+
+/**
+ * Brace runs that are NOT a well-formed i18next token — `{{{amount}}}`,
+ * `{{amount}}}`, a lone `{{`.
+ *
+ * These have to be surfaced separately because the naive scan is happy
+ * to find a valid token INSIDE a malformed run: in `{{{amount}}}` the
+ * match starting at the second brace yields `amount`, so a token-set
+ * comparison sees nothing wrong while i18next renders the string
+ * literally (and `{{amount}}}` renders as `42}`). The user gets raw
+ * braces on a sentence that was supposed to quote a value (Codex #1563
+ * r2).
+ */
+export function malformedPlaceholders(value: string): string[] {
+  return scanPlaceholders(value).malformed;
+}
+
+/**
+ * One pass over `value`, splitting brace runs into well-formed tokens
+ * and malformed remnants.
+ *
+ * A match only counts as a token when it is not FLANKED by another
+ * brace — `{{x}}` yes, `{{{x}}}` no. Anything else in a brace run is
+ * reported as malformed.
+ */
+function scanPlaceholders(value: string): { tokens: string[]; malformed: string[] } {
+  const tokens: string[] = [];
+  const malformed: string[] = [];
+  PLACEHOLDER_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let consumedTo = 0;
+  while ((match = PLACEHOLDER_RE.exec(value)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const flanked = value[start - 1] === '{' || value[end] === '}';
+    if (flanked) {
+      malformed.push(value.slice(Math.max(consumedTo, start - 1), end + 1));
+    } else {
+      tokens.push(match[1].trim());
+    }
+    consumedTo = end;
+  }
+  // A brace pair with no closing partner never matches at all, so scan
+  // for leftover `{{` / `}}` runs the token pass didn't consume.
+  const leftovers = value.replace(PLACEHOLDER_RE, '');
+  if (/\{\{|\}\}/.test(leftovers)) {
+    for (const run of leftovers.match(/\{\{+|\}\}+/g) ?? []) malformed.push(run);
+  }
+  return { tokens, malformed };
 }
 
 /**
@@ -137,6 +201,9 @@ export interface PlaceholderDrift {
    *  Reported separately so callers can allowlist those cases instead
    *  of being forced to choose between a false alarm and no check. */
   dropped: string[];
+  /** Brace runs in the translation that aren't well-formed tokens
+   *  (`{{{amount}}}`). Never legitimate — i18next renders them raw. */
+  malformed: string[];
 }
 
 /**
@@ -162,6 +229,7 @@ export function placeholderDrift(
   const compare = (path: string, expected: string, actual: string): void => {
     const before = placeholders(expected);
     const after = placeholders(actual);
+    const malformed = malformedPlaceholders(actual);
     const remaining = [...after];
     const dropped: string[] = [];
     for (const token of before) {
@@ -169,13 +237,13 @@ export function placeholderDrift(
       if (at === -1) dropped.push(token);
       else remaining.splice(at, 1);
     }
-    if (dropped.length > 0 || remaining.length > 0) {
-      out.push({ path, unknown: remaining, dropped });
+    if (dropped.length > 0 || remaining.length > 0 || malformed.length > 0) {
+      out.push({ path, unknown: remaining, dropped, malformed });
     }
   };
 
   for (const [key, value] of Object.entries(source)) {
-    const counterpart = subject[key];
+    const counterpart = own(subject, key);
     if (counterpart === undefined) continue;
     const path = `${prefix}${key}`;
     if (isBranch(value)) {
@@ -190,6 +258,7 @@ export function placeholderDrift(
           path,
           unknown: [`array length ${counterpart.length}, expected ${value.length}`],
           dropped: [],
+          malformed: [],
         });
       }
       const overlap = Math.min(value.length, counterpart.length);
@@ -240,7 +309,7 @@ export function leafTypeDrift(
 ): LeafTypeDrift[] {
   const out: LeafTypeDrift[] = [];
   for (const [key, value] of Object.entries(source)) {
-    const counterpart = subject[key];
+    const counterpart = own(subject, key);
     if (counterpart === undefined) continue; // absent → missingSubtree's job
     const path = `${prefix}${key}`;
     if (isBranch(value) && isBranch(counterpart)) {
@@ -253,8 +322,18 @@ export function leafTypeDrift(
       out.push({ path, expected, actual });
       continue;
     }
-    // Same shape, but an array of strings must stay an array OF STRINGS.
+    // Same shape, but an array must keep its LENGTH and stay an array
+    // OF STRINGS. Length is checked here rather than left to
+    // `missingSubtree`, which treats an array as one opaque leaf and so
+    // reads a three-bullet warning list answered with two as complete.
     if (Array.isArray(value) && Array.isArray(counterpart)) {
+      if (value.length !== counterpart.length) {
+        out.push({
+          path,
+          expected: `array of ${value.length}`,
+          actual: `array of ${counterpart.length}`,
+        });
+      }
       counterpart.forEach((entry, i) => {
         if (typeof entry !== 'string') {
           out.push({ path: `${path}[${i}]`, expected: 'string', actual: shapeOf(entry) });
@@ -279,7 +358,7 @@ export function leafTypeDrift(
 export function unknownKeys(source: Bundle, subject: Bundle, prefix = ''): string[] {
   const out: string[] = [];
   for (const [key, value] of Object.entries(subject)) {
-    const counterpart = source[key];
+    const counterpart = own(source, key);
     const path = `${prefix}${key}`;
     if (counterpart === undefined) {
       out.push(path);

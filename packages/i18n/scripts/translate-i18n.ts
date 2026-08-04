@@ -274,10 +274,19 @@ async function main() {
       // while only logging (Codex #1563 r1).
       const strayKeys = unknownKeys(source, translated);
       const drifted = leafTypeDrift(source, translated);
-      if (strayKeys.length > 0 || drifted.length > 0) {
+      // COMPLETENESS matters as much as shape, and only on this side:
+      // in the overwrite modes the reply REPLACES the whole locale
+      // file, so a truncated or `{}` answer silently deletes every
+      // existing translation. `unknownKeys` only inspects keys the
+      // reply has and `leafTypeDrift` skips absent ones, so neither
+      // notices (Codex #1563 r2). Apps without a locale-coverage
+      // command would never find out.
+      const short = missingSubtree(source, translated);
+      if (strayKeys.length > 0 || drifted.length > 0 || short !== null) {
         const detail = [
           ...strayKeys.slice(0, 5).map((k) => `not requested: ${k}`),
           ...drifted.slice(0, 5).map((d) => `${d.path}: expected ${d.expected}, got ${d.actual}`),
+          ...(short ? [`incomplete: ${leafPaths(short).length} key(s) missing, e.g. ${leafPaths(short).slice(0, 3).join(', ')}`] : []),
         ].join('; ');
         throw new Error(`response shape rejected — ${detail}`);
       }

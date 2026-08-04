@@ -78,6 +78,14 @@ clean success, and `scripts/check-locale-coverage.ts` fails the build if
 a locale in `TRANSLATED_LOCALES` falls behind `en.json` outside its
 recorded backlog.
 
+That backlog is `src/i18n/untranslated-baseline.json` — the exact
+`(key, locale)` pairs still untranslated, not a list of sections. When
+you fill some of them, run `pnpm i18n:coverage --prune` to drop the
+entries you closed; the check fails until you do, so the file can't
+drift stale. `--prune` only ever REMOVES pairs (each one it keeps was
+observed missing on that run), so it can't be used to wave through a
+key that regressed.
+
 Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map
 already covers every code.
