@@ -293,12 +293,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
         }
 
-        // ─── #1222 M3 B2-d5 — remit ingress widened 6 → 7 args ──────────────
+        // ─── remit ingress widened 6 → 7 (#1222 B2-d5) → 8 (#1434 P1-a) ────
         //
         // B2-d5 added `recycledShare` to `onRewardBudgetReceived`, so its
         // SELECTOR changed, and the remit payload grew a fifth head slot
-        // (0x80 → 0xA0). Two facts about this script make the un-migrated
-        // state SILENTLY WRONG rather than merely stale:
+        // (0x80 → 0xA0). #1434 P1-a then added `freshShare`, changing the
+        // selector again — the WIRE is untouched this time (the receiver
+        // derives the fresh component from the generation it already
+        // decodes), so only the Diamond-side ingress moved. Both retired
+        // selectors are handled by this one block: the receiver upgrade is
+        // the same upgrade either way, and doing it once keeps a single
+        // completion marker instead of two that can half-complete.
+        //
+        // Two facts about this script make the un-migrated state SILENTLY
+        // WRONG rather than merely stale:
         //
         //   1. it Replaces/Adds but never Removes (see the SCOPE note), so the
         //      retired 6-arg selector stays routed to the OLD facet bytecode;
@@ -313,6 +321,13 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // tokens land, no receipt is written, so no ack ever flows and Base's
         // reservation is stranded Pending; and no custody credit is applied, so
         // the exact accounting hole B2-d5 exists to close stays open. Silently.
+        //
+        // The 7-arg selector fails the same way for P1-a's hole. A receiver
+        // that predates it decodes d5 fine but calls the 7-arg ingress, whose
+        // stale code infers the fresh component as `amount − recycledShare` —
+        // the inference P1-a exists to remove, because on a legacy/d2 wire it
+        // books an unknown composition as entirely fresh. Again the delivery
+        // succeeds and the counter is quietly wrong.
         //
         // Fixed in two layers, deliberately not one:
         //
@@ -331,12 +346,19 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // and redoes both (re-upgrading to a fresh implementation is
         // idempotent in effect). Removing first would clear the marker while
         // the upgrade could still fail, permanently skipping it.
-        bytes4 oldRemitIngress = bytes4(
+        bytes4 oldRemitIngress6 = bytes4(
             keccak256(
                 "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address)"
             )
         );
-        if (loupe.facetAddress(oldRemitIngress) != address(0)) {
+        bytes4 oldRemitIngress7 = bytes4(
+            keccak256(
+                "onRewardBudgetReceived(address,uint256,uint256[],uint256,uint256,address,uint256)"
+            )
+        );
+        bool routed6 = loupe.facetAddress(oldRemitIngress6) != address(0);
+        bool routed7 = loupe.facetAddress(oldRemitIngress7) != address(0);
+        if (routed6 || routed7) {
             address remitReceiver = _readAddrOptional(".rewardRemittanceReceiver");
             (, , , bool isCanonicalReward, ) =
                 RewardReporterFacet(diamond).getRewardReporterConfig();
@@ -374,8 +396,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 );
             }
 
-            bytes4[] memory rmIngress = new bytes4[](1);
-            rmIngress[0] = oldRemitIngress;
+            // Only the selectors actually routed are Removed — a Diamond
+            // already past B2-d5 has no 6-arg selector, and asking the cut to
+            // Remove an unrouted one reverts, which would abort the whole
+            // refresh over a migration that had already happened.
+            bytes4[] memory rmIngress =
+                new bytes4[]((routed6 ? 1 : 0) + (routed7 ? 1 : 0));
+            uint256 k;
+            if (routed6) {
+                rmIngress[k] = oldRemitIngress6;
+                ++k;
+            }
+            if (routed7) rmIngress[k] = oldRemitIngress7;
             IDiamondCut.FacetCut[] memory rmIngressCut =
                 new IDiamondCut.FacetCut[](1);
             rmIngressCut[0] = IDiamondCut.FacetCut({
@@ -385,7 +417,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             });
             IDiamondCut(diamond).diamondCut(rmIngressCut, address(0), "");
             console.log(
-                "B2-d5 (#1222): removed retired 6-arg onRewardBudgetReceived selector"
+                "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a)"
             );
         }
 

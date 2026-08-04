@@ -24,6 +24,16 @@ import {
 ///      `recycledShare`: the RECYCLED component of `amount`, already scaled to
 ///      what physically landed. Zero for legacy/d2 layouts, which is the
 ///      pre-d5 behaviour.
+///
+///      #1434 P1-a adds `freshShare`, the other component — and it is passed
+///      rather than left for the Diamond to infer as `amount − recycledShare`
+///      precisely BECAUSE of the legacy/d2 zero above. On those wires a zero
+///      recycled share does not mean "none was recycled", it means "the split
+///      was never sent", and the difference is invisible from inside the
+///      Diamond. Deriving there recorded the whole of such a delivery as
+///      fresh (Codex #1556 r1 P1). This contract is the only party that knows
+///      which generation it decoded, so it is the only one that can answer,
+///      and for the two old generations the honest answer is ZERO.
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
         address token,
@@ -32,7 +42,8 @@ interface IRewardBudgetIngress {
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
-        uint256 recycledShare
+        uint256 recycledShare,
+        uint256 freshShare
     ) external;
 }
 
@@ -262,18 +273,54 @@ contract RewardRemittanceReceiver is
             diamondBalBefore;
         if (actualReceived == 0) revert ZeroAmount();
 
-        // B2-d5 — scale the declared recycled share to what ACTUALLY landed.
+        // #1434 P1-a — the FRESH component, decided HERE because this is the
+        // only place the wire generation is known. d5 carries the split, so
+        // fresh is the declared remainder; the two older layouts carry no
+        // split at all, and for them the answer is ZERO rather than "all of
+        // it". Their `recycledShare` is zero because nothing was transmitted,
+        // not because nothing was recycled, and treating that as a fully
+        // fresh delivery over-states delivered fresh precisely where the
+        // composition is unknown (Codex #1556 r1 P1). Unknown composition is
+        // therefore read as fully recycled for FRESH-counting purposes —
+        // while still crediting zero relocated custody, since neither figure
+        // is actually known. The delivery itself is unaffected: the tokens
+        // land, `rewardBudgetReceivedTotal` records them, and the Diamond
+        // books the whole amount as uncounted so the shortfall is visible.
+        //
+        // The `>` rather than a bare subtraction is deliberate: a malformed
+        // d5 payload declaring more recycled than it sends must fail on the
+        // Diamond's {RecycledShareExceedsDelivery} bound, which names the
+        // problem, not on an arithmetic panic here that names nothing.
+        uint256 freshShare =
+            head == RemitWire.REMIT_WIRE_TAG_D5 &&
+                declaredTotal > recycledShare
+                ? declaredTotal - recycledShare
+                : 0;
+
+        // B2-d5 — scale the declared shares to what ACTUALLY landed.
         // `recycledShare` is a component of `declaredTotal`, but the
         // fee-on-transfer path above can credit less than that, and crediting
         // the face value would relocate custody the Diamond never received —
         // {LibVpfiRecycle.creditCustodyRelocated} asserts physical backing and
-        // would revert the whole arrival. Floored, matching the claim path's
-        // convention that RECYCLED floors and fresh takes the remainder, so
-        // the scaled share can never exceed `actualReceived`. `declaredTotal`
-        // is non-zero here (it equals the non-zero `deliveredAmount`).
-        if (recycledShare != 0 && actualReceived != declaredTotal) {
-            recycledShare =
-                Math.mulDiv(recycledShare, actualReceived, declaredTotal);
+        // would revert the whole arrival. `declaredTotal` is non-zero here
+        // (it equals the non-zero `deliveredAmount`).
+        //
+        // BOTH shares floor. Pre-P1-a only the recycled share was scaled and
+        // fresh was whatever remained, so the rounding dust rode along with
+        // fresh; now that fresh is an explicit figure the Diamond bounds
+        // (`freshShare + recycledShare <= amount`), letting it absorb the dust
+        // would make it the one term that rounds UP. Flooring both instead
+        // leaves at most a wei or two attributed to neither, which the
+        // Diamond records as uncounted — the direction that defers.
+        if (actualReceived != declaredTotal) {
+            if (recycledShare != 0) {
+                recycledShare =
+                    Math.mulDiv(recycledShare, actualReceived, declaredTotal);
+            }
+            if (freshShare != 0) {
+                freshShare =
+                    Math.mulDiv(freshShare, actualReceived, declaredTotal);
+            }
         }
 
         IRewardBudgetIngress(diamond).onRewardBudgetReceived(
@@ -283,7 +330,8 @@ contract RewardRemittanceReceiver is
             sourceChainId,
             remitId,
             remitter,
-            recycledShare
+            recycledShare,
+            freshShare
         );
 
         emit RewardBudgetForwarded(

@@ -241,13 +241,31 @@ contract RewardRemittanceFacet is
     /// @param remitId       B2-d2 delivered-backing reservation id this
     ///                      delivery fulfils (0 = legacy pre-d2 message — no
     ///                      receipt record, no ack).
+    /// @param recycledShare #1434 P1-a — the delivery's declared RECYCLED
+    ///                      component, post-scaling.
+    /// @param freshShare    #1434 P1-a — its declared FRESH component,
+    ///                      post-scaling. Zero on a wire generation that
+    ///                      carried no split, which is NOT the same as
+    ///                      "nothing was fresh".
+    /// @dev    The two shares are the RAW INPUTS to the delivered-fresh
+    ///         attribution, deliberately not its outcome. Whether a delivery
+    ///         was counted is a function of these plus `dayIds` and the
+    ///         chain's `D*`, all of which a reader already has — so emitting
+    ///         the verdict as well would be a second source of the same
+    ///         truth, free to drift from the counters. What a reader could
+    ///         NOT previously reconstruct is `freshShare`: it depends on the
+    ///         wire generation, which never reaches this Diamond. Without it,
+    ///         a refused delivery is indistinguishable from a delivery that
+    ///         genuinely carried no fresh funding.
     /// @custom:event-category informational/reward-transport
     event RewardBudgetReceived(
         uint256 indexed sourceChainId,
         address indexed token,
         uint256 amount,
         uint256[] dayIds,
-        uint256 remitId
+        uint256 remitId,
+        uint256 recycledShare,
+        uint256 freshShare
     );
 
     /// @notice Emitted when the mirror-side receiver address is set/cleared.
@@ -796,6 +814,17 @@ contract RewardRemittanceFacet is
      *                      reservation for those). First delivery wins the
      *                      receipt slot; the ack content is later computed
      *                      from this record, never caller-supplied.
+     * @param recycledShare RECYCLED component of `amount`, already scaled to
+     *                      what physically landed. Zero on a legacy/d2
+     *                      payload, whose wire never carried the split.
+     * @param freshShare    #1434 P1-a — FRESH component of `amount`, likewise
+     *                      pre-scaled. The receiver derives it from the WIRE
+     *                      GENERATION it decoded and passes ZERO whenever the
+     *                      composition was not transmitted, so this ingress
+     *                      never has to infer a split from a payload that
+     *                      does not carry one. `freshShare + recycledShare`
+     *                      may be LESS than `amount` (both are floored) and
+     *                      may never exceed it.
      */
     function onRewardBudgetReceived(
         address token,
@@ -804,7 +833,8 @@ contract RewardRemittanceFacet is
         uint256 sourceChainId,
         uint256 remitId,
         address remitter,
-        uint256 recycledShare
+        uint256 recycledShare,
+        uint256 freshShare
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
@@ -813,21 +843,48 @@ contract RewardRemittanceFacet is
         if (token != s.vpfiToken) {
             revert RewardBudgetTokenMismatch(s.vpfiToken, token);
         }
+        // Both component bounds are enforced BEFORE either is used. The
+        // recycled bound was always here (it gates the custody credit
+        // below); the fresh bound is its twin, and checking it against the
+        // recycled REMAINDER rather than against `amount` is what makes the
+        // pair jointly sound — two individually-valid shares can still sum
+        // past the delivery.
+        if (recycledShare > amount) {
+            revert RecycledShareExceedsDelivery(recycledShare, amount);
+        }
+        uint256 freshLooking = amount - recycledShare;
+        if (freshShare > freshLooking) {
+            revert FreshShareExceedsDelivery(freshShare, freshLooking);
+        }
         s.rewardBudgetReceivedTotal += amount;
-        // #1434 P1-a — split out the FRESH component of this delivery.
-        // `recycledShare` is bounded against `amount` further down before it
-        // is used for the bucket credit; the same clamp is applied here so a
-        // malformed payload can only ever UNDERSTATE delivered fresh, never
-        // inflate it. Understating defers a claim until more funding lands
-        // (recoverable); overstating would let the chain pay fresh nobody
-        // sent it, which is the whole defect this counter exists to close.
+        // #1434 P1-a — record the ARMED-ATTRIBUTABLE fresh component.
         //
-        // Recorded on the canonical chain too, where it stays zero because
-        // Base receives no remits — {LibInteractionRewards
-        // .deliveredFreshAvailable} is documented as not applicable there.
-        unchecked {
-            s.rewardBudgetReceivedFresh +=
-                amount > recycledShare ? amount - recycledShare : 0;
+        // Two independent tests, and a delivery must pass BOTH:
+        //
+        //   1. COMPOSITION KNOWN — decided by the receiver, which is the only
+        //      party that saw the wire generation. A legacy/d2 payload never
+        //      carried the fresh/recycled split, so the receiver sends
+        //      `freshShare = 0` and the delivery contributes nothing. The
+        //      earlier shape of this code inferred `amount - recycledShare`
+        //      here, which recorded such a delivery as ENTIRELY fresh even
+        //      where the original remit was partly recycled — over-stating
+        //      exactly on the deliveries whose composition is unknown
+        //      (Codex #1556 r1 P1).
+        //   2. ARMED-ATTRIBUTABLE — every day this delivery covers is at or
+        //      after this chain's `D*`. A pre-arming delivery funds legacy
+        //      schedule days, which the delivered-fresh bound does not
+        //      govern; counting it would hand the chain headroom for payouts
+        //      that bound never owed.
+        //
+        // Whatever is not counted is recorded, not discarded — see
+        // `rewardBudgetFreshUncounted`. The two always sum to `freshLooking`,
+        // so an operator can reconcile a chain's counted funding against what
+        // Base actually sent without re-deriving anything.
+        uint256 counted =
+            _armedAttributableDelivery(s, dayIds) ? freshShare : 0;
+        if (counted != 0) s.rewardBudgetArmedFreshReceived += counted;
+        if (freshLooking > counted) {
+            s.rewardBudgetFreshUncounted += freshLooking - counted;
         }
         // #1222 M3 B2-d5 — the RECYCLED component of this delivery is
         // RELOCATED CUSTODY: the tokens are physically here and the claim
@@ -841,11 +898,9 @@ contract RewardRemittanceFacet is
         //
         // It is NOT absorption: {creditCustodyRelocated} keeps it out of the
         // Ā day-bucket AND out of the cumulative this chain reports to Base.
-        // Guarded so a malformed/hostile payload cannot claim more recycled
-        // backing than actually arrived.
-        if (recycledShare > amount) {
-            revert RecycledShareExceedsDelivery(recycledShare, amount);
-        }
+        // The guard against a malformed/hostile payload claiming more
+        // recycled backing than actually arrived now runs at the TOP of this
+        // function, alongside its fresh-share twin.
         LibVpfiRecycle.creditCustodyRelocated(remitId, recycledShare);
         // r4 — receipts key by (remitter, remitId): `remitter` comes from
         // the remit PAYLOAD (immutable, messenger-authenticated message
@@ -863,7 +918,10 @@ contract RewardRemittanceFacet is
                 rec.remitter = remitter;
             }
         }
-        emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId);
+        emit RewardBudgetReceived(
+            sourceChainId, token, amount, dayIds, remitId, recycledShare,
+            freshShare
+        );
     }
 
     /**
@@ -890,6 +948,49 @@ contract RewardRemittanceFacet is
         uint256 outFresh = s.outstandingCommitFresh;
         uint256 encumbered = outFresh > retires ? outFresh - retires : 0;
         remaining = remaining > encumbered ? remaining - encumbered : 0;
+    }
+
+    /**
+     * @dev #1434 P1-a — may this delivery's fresh component be counted as
+     *      ARMED funding on this chain?
+     *
+     *      True only when the chain has installed `D*` AND every day the
+     *      delivery covers is at or after it. Both halves are load-bearing:
+     *
+     *        - Unarmed chain ⇒ false. There is no armed regime to attribute
+     *          funding to yet, so nothing can be armed-attributable.
+     *        - ANY pre-`D*` day ⇒ false for the WHOLE delivery. `_planDay`
+     *          decides armedness per day and the remit carries one summed
+     *          amount for its whole day set, so a batch that straddles the
+     *          cutover cannot be apportioned from what arrives here. It is
+     *          refused entirely rather than split on a guess — under-stating
+     *          this chain's funding, which defers, instead of over-stating
+     *          it, which pays.
+     *
+     *      An empty day set is likewise false: a delivery that names no days
+     *      cannot be shown to fund armed ones.
+     *
+     *      A delivery for armed days that OVERTAKES the arming broadcast is
+     *      therefore uncounted too — the chain is still unarmed when it lands
+     *      and nothing re-attributes it afterwards. That ordering is not
+     *      guaranteed by CCIP, only made unlikely by the schedule (`D*` is a
+     *      future day at arming, and its funding cannot be planned until the
+     *      day finalizes). It is a real conservative gap, not an impossible
+     *      one, and `rewardBudgetFreshUncounted` is what surfaces it.
+     */
+    function _armedAttributableDelivery(
+        LibVaipakam.Storage storage s,
+        uint256[] calldata dayIds
+    ) private view returns (bool) {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom == 0) return false;
+        uint256 n = dayIds.length;
+        if (n == 0) return false;
+        for (uint256 i = 0; i < n; ) {
+            if (dayIds[i] < armedFrom) return false;
+            unchecked { ++i; }
+        }
+        return true;
     }
 
     /// @dev r4 — composite receipt key: remit ids are per-deployment.
@@ -1917,40 +2018,44 @@ contract RewardRemittanceFacet is
     }
 
     /**
-     * @notice #1434 P1-a — this chain's DELIVERED-FRESH position.
-     * @dev    Read together: `available` is the operative figure and the two
-     *         cumulatives behind it are returned so a zero can be told apart
-     *         from a fully-spent position (the same reason
-     *         {LibVpfiRecycle.backingPosition} returns its inputs).
+     * @notice #1434 P1-a — how much of the reward funding delivered to this
+     *         chain counts as ARMED FRESH, and how much did not.
+     * @dev    The two are returned together because either alone misleads.
+     *         `counted` on its own cannot be told apart from "nothing was
+     *         ever sent"; `uncounted` on its own does not say against what.
+     *         Read as a pair they answer the only operational question here:
+     *         is this chain's counted funding keeping up with what Base
+     *         actually sent it?
      *
-     *         `available` is NOT applicable on the canonical chain — Base
-     *         receives no remits, so `receivedFresh` stays zero there and the
-     *         figure reads zero regardless of how much Base may legitimately
-     *         pay. Callers on Base use {LibInteractionRewards.poolRemaining}.
+     *         NEITHER is a spendable balance, and neither is a bound. This
+     *         is a RECEIPT-side ledger: it says what arrived and how it was
+     *         attributed, not what remains. The bound it will feed — armed
+     *         fresh delivered LESS armed fresh paid — needs the paid side,
+     *         which lands with P1-b (see the storage docs for why the splits
+     *         cannot report it today). Do not subtract
+     *         `interactionPoolPaidOut` from `counted` and read the result as
+     *         headroom: that cumulative also counts legacy-schedule payouts
+     *         this funding never owed, and an earlier revision of this slice
+     *         was withdrawn for doing exactly that (Codex #1556 r1).
      *
-     *         Nothing enforces this yet. P1-a is the accounting slice; the
-     *         ShareOfPool walk applies it in P1-b, which is blocked behind
-     *         P2 (the mirror armed-day pricing halt — while it stands, armed
-     *         mirror days never price and there is nothing to bound).
-     * @return receivedFresh  Σ fresh component of every remit received here.
-     * @return spentSinceArming Fresh paid out since `D*` was installed.
-     * @return available      `receivedFresh − spentSinceArming`, floored.
+     *         Not applicable on the canonical chain — Base receives no
+     *         remits, so both figures stay zero there regardless of how much
+     *         it may legitimately pay. Base's own bound is
+     *         {LibInteractionRewards.poolRemaining}.
+     * @return counted   Σ fresh component of deliveries that were both
+     *                   composition-known and armed-attributable.
+     * @return uncounted Σ fresh-looking amount of every delivery that failed
+     *                   either test. Non-zero means this chain's counted
+     *                   funding UNDERSTATES what Base sent — the safe
+     *                   direction, but one an operator must see.
      */
     function getDeliveredFreshPosition()
         external
         view
-        returns (
-            uint256 receivedFresh,
-            uint256 spentSinceArming,
-            uint256 available
-        )
+        returns (uint256 counted, uint256 uncounted)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        receivedFresh = s.rewardBudgetReceivedFresh;
-        spentSinceArming = s.interactionPoolPaidOut
-            > s.interactionPaidOutFreshAtArming
-            ? s.interactionPoolPaidOut - s.interactionPaidOutFreshAtArming
-            : 0;
-        available = LibInteractionRewards.deliveredFreshAvailable(s);
+        counted = s.rewardBudgetArmedFreshReceived;
+        uncounted = s.rewardBudgetFreshUncounted;
     }
 }

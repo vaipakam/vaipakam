@@ -672,7 +672,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        );
+        , 0);
         LibVaipakam.ReceivedRemit memory rec =
             remit.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
@@ -698,7 +698,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        );
+        , 0);
         assertEq(
             remit.getReceivedRemit(address(0xBA5E), 0).receivedAt,
             0,
@@ -723,7 +723,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
-        );
+        , 0);
         // Owner rotates the canonical deployment.
         RewardReporterFacet(address(diamond)).setBaseChainId(999);
         vm.expectRevert(
@@ -773,10 +773,10 @@ contract RewardRemitLedgerTest is SetupTest {
         _configureMirror();
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0x01D), 0
-        );
+        , 0);
         remit.onRewardBudgetReceived(
             address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0
-        );
+        , 0);
         assertEq(
             remit.getReceivedRemit(address(0x01D), 42).amount,
             7e18,
@@ -790,7 +790,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // Per-key first-write-wins (a delayed duplicate cannot overwrite).
         remit.onRewardBudgetReceived(
             address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
-        );
+        , 0);
         assertEq(
             remit.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
@@ -880,7 +880,7 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        );
+        , 0);
 
         // Bucket grew by exactly the recycled share — the claim path is backed.
         assertEq(cfg.getRecycleBucket(), 63e18, "bucket takes the top-up");
@@ -924,7 +924,7 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 23e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        );
+        , 0);
         assertEq(cfg.getRecycleBucket(), 63e18, "backed");
 
         // The mirror's claims now consume the WHOLE recycled payout — the
@@ -957,7 +957,7 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             8e18
-        );
+        , 0);
     }
 
     /// @dev Backward-decodability: a delayed pre-d5 delivery arrives with a
@@ -970,7 +970,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         remit.onRewardBudgetReceived(
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
-        );
+        , 0);
 
         assertEq(cfg.getRecycleBucket(), 40e18, "bucket unchanged");
         (uint256 relocated, , ) = RewardAggregatorFacet(address(diamond))
@@ -1201,7 +1201,7 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.onRewardBudgetReceived(
             address(vpfiTok), 30e18, _days(3), CHAIN_BASE, 42, address(0xBA5E),
             23e18
-        );
+        , 0);
         (uint256 raw, , , uint256 relocated, uint256 bucket, , , ) =
             _composition();
         assertEq(relocated, 23e18, "fixture: custody relocated");
@@ -1898,144 +1898,257 @@ contract RewardRemitLedgerTest is SetupTest {
             .getInteractionCurrentDay();
     }
 
+    /// @dev Two-day batch, for the cutover-straddling case.
+    function _days2(uint256 a, uint256 b)
+        internal
+        pure
+        returns (uint256[] memory out)
+    {
+        out = new uint256[](2);
+        out[0] = a;
+        out[1] = b;
+    }
+
+    /// @dev Install `D*` through the CANONICAL setter (which is Base-only),
+    ///      then return to the mirror chain id the ingress tests run under.
+    ///      Deliberately not the raw mutator: the point of these tests is the
+    ///      attribution rule reading real arming state.
+    function _armFrom(uint256 dayId) internal {
+        vm.chainId(CHAIN_BASE);
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
+        RewardAggregatorFacet(address(diamond))
+            .setGovernorCommitArmedFromDay(dayId);
+        vm.chainId(CHAIN_ARB);
+        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
+    }
+
     // ─── #1434 P1-a — delivered-fresh accounting ──────────────────────────
     //
     // The counter exists because `poolRemaining()` is not a delivered-funding
     // bound on a mirror (it is the GLOBAL 69M cap less LOCAL payouts, so every
-    // mirror believes it owns the whole pool). Nothing CONSUMES this budget
-    // yet — P1-b does, once P2 lifts the armed-day pricing halt — so these
-    // assert the accounting itself.
+    // mirror believes it owns the whole pool).
+    //
+    // It counts ARMED-ATTRIBUTABLE, COMPOSITION-KNOWN deliveries only, and
+    // records everything else as `uncounted` rather than dropping it. There is
+    // no subtraction here and no baseline: the first shape of this slice
+    // netted a lifetime receipt cumulative against a payout snapshot taken at
+    // arming, and baselining one side of a subtraction is what made it
+    // unsound (Codex #1556 r1 P1 ×2). What these assert is the attribution
+    // rule; the bound that will consume it lands with P1-b, which needs the
+    // armed fresh PAID figure the splits do not report today.
 
-    /// @dev A delivery with no recycled component is entirely fresh.
-    function test_DeliveredFresh_AccruesFullAmountWhenNoRecycledShare() public {
+    /// @dev The counted case, and the non-vacuity anchor for every negative
+    ///      test below: an armed-day delivery whose composition arrived on
+    ///      the wire is counted in full.
+    function test_DeliveredFresh_CountsArmedAttributableDelivery() public {
         _configureMirror();
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
+
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
+            address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
+            address(0xBA5E), 0, 7e18
         );
-        (uint256 receivedFresh, , uint256 available) =
-            remit.getDeliveredFreshPosition();
-        assertEq(receivedFresh, 7e18, "whole delivery is fresh");
-        assertEq(available, 7e18, "nothing spent yet");
+
+        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 7e18, "armed-day delivery counts in full");
+        assertEq(uncounted, 0, "nothing was refused");
+    }
+
+    /// @dev **Finding (c).** A wire generation that never carried the split
+    ///      arrives with `freshShare == 0`, and the Diamond must NOT infer
+    ///      `amount - recycledShare`. The old code did, booking a delivery of
+    ///      unknown composition as entirely fresh — over-stating precisely
+    ///      where least is known.
+    ///
+    ///      Non-vacuous by construction: the same fixture, same chain, same
+    ///      armed day and same amount is counted in full by the test above.
+    ///      The ONLY difference is the declared fresh share.
+    function test_DeliveredFresh_UnknownCompositionCountsNothing() public {
+        _configureMirror();
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
+
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
+            address(0xBA5E), 0, 0
+        );
+
+        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 0, "unknown composition contributes no fresh");
+        assertEq(uncounted, 7e18, "and is recorded, not discarded");
+    }
+
+    /// @dev **Finding (b).** Funding delivered for PRE-`D*` days is not armed
+    ///      funding and must not enter. The withdrawn design counted it and
+    ///      then tried to net it out with a payout snapshot taken at arming —
+    ///      which erased the spend while keeping the receipt, so 100 VPFI
+    ///      delivered and spent before arming reported as 100 VPFI of
+    ///      reusable headroom. Never entering removes the whole class.
+    ///
+    ///      Both legs run in ONE test so the negative cannot pass vacuously:
+    ///      the armed-day delivery proves the fixture counts at all.
+    function test_DeliveredFresh_PreArmingDeliveryIsNotCounted() public {
+        _configureMirror();
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
+
+        // Armed day -> counted.
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42,
+            address(0xBA5E), 0, 3e18
+        );
+        (uint256 counted, ) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 3e18, "fixture counts armed deliveries");
+
+        // A day before the cutover -> refused, same everything else.
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 100e18, _days(dStar - 1), CHAIN_BASE, 43,
+            address(0xBA5E), 0, 100e18
+        );
+
+        uint256 uncounted;
+        (counted, uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 3e18, "pre-arming funding did not enter");
+        assertEq(uncounted, 100e18, "it is visible as uncounted");
+    }
+
+    /// @dev A batch straddling the cutover is refused WHOLE rather than
+    ///      apportioned. `_planDay` decides armedness per day but the remit
+    ///      carries one summed amount for its whole day set, so nothing that
+    ///      arrives here can split it; guessing a split would over-state on
+    ///      the guess. Documented as a deliberate under-count.
+    function test_DeliveredFresh_BatchStraddlingCutoverIsNotCounted() public {
+        _configureMirror();
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
+
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 8e18, _days2(dStar - 1, dStar), CHAIN_BASE, 42,
+            address(0xBA5E), 0, 8e18
+        );
+
+        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 0, "one unarmed day refuses the whole batch");
+        assertEq(uncounted, 8e18, "and the shortfall is visible");
+
+        // The all-armed pair IS counted — so the refusal above is the
+        // straddle, not merely "two days".
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43,
+            address(0xBA5E), 0, 8e18
+        );
+        (counted, ) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 8e18, "an all-armed batch counts");
+    }
+
+    /// @dev An unarmed chain has no armed regime to attribute funding to, and
+    ///      a delivery naming no days cannot be shown to fund armed ones.
+    ///      Both refuse; both stay visible.
+    function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCountNothing()
+        public
+    {
+        _configureMirror();
+
+        // Unarmed: `governorCommitArmedFromDay` is still 0.
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
+            address(0xBA5E), 0, 5e18
+        );
+        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 0, "unarmed chain counts nothing");
+        assertEq(uncounted, 5e18, "recorded");
+
+        // Armed, but the delivery names no days.
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 6e18, new uint256[](0), CHAIN_BASE, 43,
+            address(0xBA5E), 0, 6e18
+        );
+        (counted, uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 0, "empty day set counts nothing");
+        assertEq(uncounted, 11e18, "both refusals accumulate");
     }
 
     /// @dev Only the FRESH component accrues. The recycled component is
     ///      bounded separately — it credits the bucket as relocated custody
-    ///      (B2-d5) — so counting it here would double-count backing.
+    ///      (B2-d5) — so counting it here would double-count backing. The
+    ///      two counters still account for the whole non-recycled remainder.
     function test_DeliveredFresh_ExcludesRecycledComponent() public {
         _configureMirror();
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
         // Back the relocated-custody credit: {creditCustodyRelocated} asserts
         // `balance >= bucket + share`, so the tokens must really be here.
         vpfiTok.transfer(address(diamond), 10e18);
+
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 10e18, _days(3), CHAIN_BASE, 43, address(0xBA5E), 4e18
+            address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 43,
+            address(0xBA5E), 4e18, 6e18
         );
-        (uint256 receivedFresh, , uint256 available) =
-            remit.getDeliveredFreshPosition();
-        assertEq(receivedFresh, 6e18, "10 delivered, 4 recycled -> 6 fresh");
-        assertEq(available, 6e18, "available tracks the fresh component");
+
+        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        assertEq(counted, 6e18, "10 delivered, 4 recycled -> 6 fresh");
+        assertEq(uncounted, 0, "the remainder was fully attributed");
     }
 
-    /// @dev A recycled share at or above the amount yields ZERO fresh rather
-    ///      than underflowing or wrapping. The clamp is deliberately
-    ///      understate-only: understating defers a claim until more funding
-    ///      lands (recoverable); overstating would let the chain pay fresh
-    ///      nobody sent it, which is the defect the counter exists to close.
-    function test_DeliveredFresh_FullyRecycledDeliveryAddsNoFresh() public {
+    /// @dev The accounting identity the pair exists to support: across a
+    ///      counted delivery, a refused one, and one carrying recycled
+    ///      backing, `counted + uncounted` equals the summed NON-RECYCLED
+    ///      delivery. Nothing is invented and nothing is lost — which is what
+    ///      makes `uncounted` usable for reconciliation rather than a hint.
+    function test_DeliveredFresh_CountedPlusUncountedIsExhaustive() public {
         _configureMirror();
-        vpfiTok.transfer(address(diamond), 9e18);
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
+        vpfiTok.transfer(address(diamond), 4e18);
+
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 9e18, _days(3), CHAIN_BASE, 44, address(0xBA5E), 9e18
+            address(vpfiTok), 7e18, _days(dStar), CHAIN_BASE, 42,
+            address(0xBA5E), 0, 7e18
         );
-        (uint256 receivedFresh, , uint256 available) =
-            remit.getDeliveredFreshPosition();
-        assertEq(receivedFresh, 0, "no fresh component");
-        assertEq(available, 0, "nothing available");
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 5e18, _days(dStar - 2), CHAIN_BASE, 43,
+            address(0xBA5E), 0, 5e18
+        );
+        remit.onRewardBudgetReceived(
+            address(vpfiTok), 9e18, _days(dStar), CHAIN_BASE, 44,
+            address(0xBA5E), 4e18, 5e18
+        );
+
+        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        // 7 counted + 5 refused + 5 counted = 12 counted, 5 uncounted; the
+        // 4e18 recycled leg belongs to the bucket, not to either counter.
+        assertEq(counted, 12e18, "both armed deliveries counted");
+        assertEq(uncounted, 5e18, "the pre-arming one refused");
+        assertEq(
+            counted + uncounted,
+            (7e18) + (5e18) + (9e18 - 4e18),
+            "exhaustive over the non-recycled delivery"
+        );
     }
 
-    /// @dev **The test that distinguishes this design from the naive one.**
-    ///
-    ///      A plain `receivedFresh - interactionPoolPaidOut` would charge
-    ///      PRE-ARMING fresh payouts — drawn from the global schedule, funded
-    ///      by no remit — against delivered funding, and this fixture would
-    ///      report 0 available instead of 5e18. That is not a rounding
-    ///      difference: it would defer every armed day on the mirror until
-    ///      enough remits arrived to "repay" a debt delivered funding never
-    ///      owed, which is a livelock on a chain with any pre-arming history.
-    ///
-    ///      Non-vacuity: the fixture asserts the pre-arming payout is really
-    ///      on the books (`spentSinceArming == 0` while `paidOut` is 500e18)
-    ///      BEFORE asserting availability — otherwise a fixture that simply
-    ///      failed to set the counter would pass identically.
-    function test_DeliveredFresh_PreArmingPayoutsDoNotConsumeDeliveredBudget()
+    /// @dev The two shares are bounded JOINTLY. Each is individually no
+    ///      larger than the delivery here, and they still sum past it — the
+    ///      case a per-share bound would wave through, letting one delivery
+    ///      be booked as both relocated recycled custody and armed fresh.
+    function test_DeliveredFresh_RevertsWhenSharesJointlyExceedDelivery()
         public
     {
         _configureMirror();
-        // A pre-arming payout history, drawn from the global schedule.
-        mutator.setInteractionPoolPaidOut(500e18);
-        // Arm through the canonical setter so the real installer runs and
-        // takes its snapshot (NOT the raw mutator, which bypasses it).
-        vm.chainId(CHAIN_BASE);
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
-        RewardAggregatorFacet(address(diamond))
-            .setGovernorCommitArmedFromDay(_today() + 5);
-        vm.chainId(CHAIN_ARB);
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
+        uint256 dStar = _today() + 5;
+        _armFrom(dStar);
 
-        remit.onRewardBudgetReceived(
-            address(vpfiTok), 5e18, _days(3), CHAIN_BASE, 45, address(0xBA5E), 0
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.FreshShareExceedsDelivery.selector, 7e18, 6e18
+            )
         );
-
-        (uint256 receivedFresh, uint256 spentSinceArming, uint256 available) =
-            remit.getDeliveredFreshPosition();
-        // Fixture is live: the 500e18 really is recorded, and the snapshot
-        // is what makes it invisible here.
-        assertEq(spentSinceArming, 0, "pre-arming payouts are behind the snapshot");
-        assertEq(receivedFresh, 5e18, "delivery recorded");
-        assertEq(available, 5e18, "delivered fresh is NOT eaten by prior payouts");
-    }
-
-    /// @dev The complement: payouts made AFTER arming DO consume the
-    ///      delivered budget. Without this, the snapshot could be read as
-    ///      "ignore payouts entirely", which would leave the bound inert.
-    function test_DeliveredFresh_PostArmingPayoutsConsumeBudget() public {
-        _configureMirror();
-        mutator.setInteractionPoolPaidOut(500e18);
-        vm.chainId(CHAIN_BASE);
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
-        RewardAggregatorFacet(address(diamond))
-            .setGovernorCommitArmedFromDay(_today() + 5);
-        vm.chainId(CHAIN_ARB);
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
-
         remit.onRewardBudgetReceived(
-            address(vpfiTok), 10e18, _days(3), CHAIN_BASE, 46, address(0xBA5E), 0
+            address(vpfiTok), 10e18, _days(dStar), CHAIN_BASE, 45,
+            address(0xBA5E), 4e18, 7e18
         );
-        // 4e18 of fresh paid out after arming.
-        mutator.setInteractionPoolPaidOut(504e18);
-
-        (, uint256 spentSinceArming, uint256 available) =
-            remit.getDeliveredFreshPosition();
-        assertEq(spentSinceArming, 4e18, "post-arming spend is counted");
-        assertEq(available, 6e18, "10 delivered - 4 spent");
-    }
-
-    /// @dev Over-spend floors at zero rather than underflowing.
-    function test_DeliveredFresh_OverspendFloorsAtZero() public {
-        _configureMirror();
-        vm.chainId(CHAIN_BASE);
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
-        RewardAggregatorFacet(address(diamond))
-            .setGovernorCommitArmedFromDay(_today() + 5);
-        vm.chainId(CHAIN_ARB);
-        RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
-
-        remit.onRewardBudgetReceived(
-            address(vpfiTok), 2e18, _days(3), CHAIN_BASE, 47, address(0xBA5E), 0
-        );
-        mutator.setInteractionPoolPaidOut(99e18);
-
-        (, , uint256 available) = remit.getDeliveredFreshPosition();
-        assertEq(available, 0, "floored, not underflowed");
     }
 
     /// @dev Accept ETH refunds from the remit fee path.

@@ -1549,11 +1549,7 @@ contract RewardAggregatorFacet is
         if (dayId == 0 || dayId <= today) {
             revert GovernorArmingDayNotFuture(dayId, today);
         }
-        // #1434 P1-a — the shared installer also snapshots
-        // `interactionPoolPaidOut`, so the delivered-fresh bound measures
-        // only post-arming payouts. The one-shot revert above guarantees this
-        // is reached at most once, so the baseline can never move forward.
-        LibInteractionRewards.installArmedFromDay(s, dayId);
+        s.governorCommitArmedFromDay = dayId;
         emit GovernorCommitArmed(dayId);
     }
 

@@ -587,6 +587,17 @@ interface IVaipakamErrors {
     ///         malformed or hostile ingress.
     error RecycledShareExceedsDelivery(uint256 recycledShare, uint256 amount);
 
+    /// @notice #1434 P1-a — an arriving remit declared a FRESH share larger
+    ///         than the part of the delivery the recycled share left over.
+    ///         Twin of {RecycledShareExceedsDelivery}, and bounded against
+    ///         the REMAINDER rather than against the delivery: two shares can
+    ///         each be no larger than `amount` and still sum past it, which
+    ///         would let one delivery be counted as both relocated recycled
+    ///         custody and armed fresh funding.
+    /// @param freshShare  The declared fresh component.
+    /// @param freshRoom   `amount − recycledShare`, all that was left for it.
+    error FreshShareExceedsDelivery(uint256 freshShare, uint256 freshRoom);
+
     /// @notice #1222 M3 B2-d3 — `setExpectedSourceChainIds` was given the
     ///         same chain id twice. The per-chain funding resolution treats
     ///         each entry independently, so a duplicate would double-count
