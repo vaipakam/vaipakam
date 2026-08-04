@@ -969,17 +969,81 @@ review cycle.
     `(remitter, remitId)`; the broadcast evolution must do the same, and both
     state axes must bind to the same deployment/era.
 
-### ⛔ The decision that comes first
+### ✅ RATIFIED 2026-08-04 — the lapse decision, and what it settles
 
-**Who lapses a zeroed day, and how does the in-flight race resolve?** Every
-constraint above is downstream of it: it determines whether the clock is
-canonical or local, whether the wire carries a lapse instruction, and whether
-recovery is a prevention path or a repatriation path.
+The question this section opened with — *who lapses a zeroed day, and how does
+the in-flight compensation race resolve* — was **decided by the owner on
+2026-08-04** (#1571), together with a standing instruction to take the
+**architecturally clean** route where clean and expedient diverge.
 
-Neither sketched option is currently viable as written — constraint 10 breaks
-the Base-authoritative one, constraint 11 breaks the mirror-local one — so this
-is not a menu to pick from. It is the question a P2 design document has to open
-with, and answering it is what unblocks writing one.
+**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in four parts.**
+
+**R1. Repricing carries an AUTHENTICATED PER-SIDE DELTA, not replacement
+halves.** This is what makes constraint 17 tractable rather than fatal, and it
+is the clean route rather than the expedient one. Splitting 17 into its two
+cases shows why halves cannot be the vehicle:
+
+- *denominator > 0* — an operator could still reach an intended total by
+  solving for the half rather than setting it to the amount they mean to send.
+  Arithmetically possible; operationally a trap, because the number an operator
+  types stops being the number they intend.
+- *denominator = 0* — the excluded mirror supplied the only interest on that
+  side. **No half produces any payout, ever.** Entirely reachable on a young
+  mesh with few chains.
+
+A delta sidesteps the frozen denominator completely, and it removes the
+solve-for-the-half footgun in the same stroke. **Do not build the vehicle on
+halves.**
+
+**R2. The lapse is PERMISSIONLESS**, on the authenticated `finalizedAt` clock
+required by constraint 7. Anyone may resolve an expired zeroed day to
+genuinely-zero. This is what discharges §2g's pin: the halt required by
+constraint 1 now has a terminal reachable without any privileged actor.
+
+**R3. Base REFUSES TO DISPATCH compensation after a cutoff STRICTLY EARLIER
+than the lapse deadline.** Constraint 8 already requires *a* cutoff; making it
+strictly earlier turns the gap into an explicit **CCIP delivery budget**, so
+the exposed race shrinks from "the whole window" to "the delivery time of a
+last-moment dispatch". The gap is a parameter and should be sized from observed
+lane latency, not guessed.
+
+**R4. A late arrival recovers through M4 C2 (#1568)** — `finalize`/ACK the
+original reservation, because the tokens genuinely arrived, and repatriate.
+`releaseRemitReservation` is the wrong instrument and constraint 11 says why.
+This makes C2 a **prerequisite of P2**, not a parallel track.
+
+#### Why not Base-authoritative — recorded so it is not re-proposed
+
+It reads as the safer option and is not. It trades away **bounded liveness**,
+the one invariant here that must not be traded, and it *still* needs a
+permissionless terminal for the admin-unavailable case (constraint 10) — so it
+costs **more** new mechanism, not less. It also puts a canonical round-trip
+inside the liveness path, adding moving parts to precisely the flow that must
+never stall.
+
+#### The accepted cost — stated plainly, because it is a real one
+
+Under R1–R4, a compensation that arrives after the lapse means **those users
+are not paid for that day**: their entries retired at zero and the tokens
+return to Base. It is rare (it needs a near-deadline dispatch *and* a slow
+delivery), it is visible, and R3 shrinks it hard — but it is a user-facing loss
+caused by operator timing, and calling it anything else would be dishonest.
+
+**This was weighed and accepted.** A stalled mirror blocks every later day's
+claims for every user on that chain; the alternative harm is one day's rewards
+for the users of one excluded day. The asymmetry is what decided it.
+
+The rejected alternative, recorded so the trade is not silently revisited: a
+lapse that does **not** retire entries would avoid the underpayment, but it
+reopens terminal-state monotonicity (constraint 6) and is a substantially
+larger design.
+
+#### What remains open
+
+Two **parameters**, not architecture: the lapse window length, and the R3
+dispatch-cutoff gap. Both want sizing against observed operator and lane
+behaviour rather than a guess, and neither blocks starting the P2 design
+document.
 
 ### General rule earned here, applicable beyond P2
 
