@@ -14,12 +14,15 @@
  * precisely the kind of failure a build should catch instead of a user,
  * and it is invisible in review because every bundle looks complete.
  *
- * WHY A SCRIPT, NOT A VITEST. `pnpm -r test` is deliberately not wired
- * into the required-check workflow (apps/defi has pre-existing setup
- * failures — Issue #85), so a vitest guard would not actually gate
- * anything. `typecheck` IS a required check, and this hangs off it, the
- * same way `check-hardcoded-strings.mjs` does — which is the guardrail
- * for the sibling failure (a string never reaching the catalog at all).
+ * WHY A SCRIPT, NOT A VITEST. Both would gate — alpha02's vitest suite
+ * is blocking via `defi-vitest.yml` (#1111), and `typecheck` is a
+ * required check too. It is a script because it belongs next to
+ * `check-hardcoded-strings.mjs`, the guardrail for the sibling failure
+ * (a string never reaching the catalog at all): same command surface,
+ * same place to look, and one consolidated report across every locale
+ * instead of a per-locale assertion that stops at the first arm. It is
+ * also runnable on its own — `pnpm i18n:coverage` — which is what you
+ * want mid-translation, without booting a test runner.
  *
  * The `{}` placeholder bundles for locales OUTSIDE `TRANSLATED_LOCALES`
  * are deliberate and out of scope: they exist so URL routing and the
