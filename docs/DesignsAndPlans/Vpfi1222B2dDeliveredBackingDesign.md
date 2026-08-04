@@ -794,246 +794,140 @@ is load-bearing and is the reason this is written down before any code.
 So the tokens arrive and the entries are already gone. Both halves of §2g's
 prerequisite 2 are needed: a signal, *and* a vehicle that rewrites the stamp.
 
-### What P2 must build
+### Why this section stops here — and what replaces it
 
-**A. A mirror-observable distinction** between "this day's pool is genuinely
-zero" and "this day was zeroed pending compensation". Per §2f.4 a wire
-evolution takes a **NEW TAG**, never another rung on the offset ladder. The
-natural carrier is the day broadcast, since that is what writes the stamp, and
-the natural home is a field on `ChainDayFunding` set alongside it.
+**Three adversarial rounds on this section produced SIXTEEN P1s, every one
+confirmed against the tree.** Two of them retracted claims this section itself
+had made a round earlier. The rate never fell.
 
-**A1. The suppression must be a `_dayPoolHalves` HALT, and §2g's pin against
-that is satisfied rather than overridden** (Codex #1565 r2 P1). §2g pins that a
-backing refusal should defer at the pool-budget layer, never halt. For *this*
-case the pool-budget layer is **too late**, and the reason is mechanical:
-`advanceCumLenderThrough` folds each day's halves into a **stored** cumulative
-(`s.cumLenderRpn18[d] = next`) and advances its frontier, and the only thing
-that stops the fold is `if (halt) break;` on `_dayPoolHalves`. Once a zero
-stamp has been folded, replacing the halves later does not recompute it —
-nothing walks backwards. A pool-budget deferral cannot unwind a cumulative that
-has already absorbed the zero.
+That is not a drafting problem, and one more round would not fix it. It is the
+section discovering that prerequisite 2 is **a subsystem, not a slice** — and
+that authoring it inline, one review round at a time, is the wrong instrument.
+Each round I proposed a mechanism; each round review found the mechanism
+contradicted something already in the tree, or something written two paragraphs
+above it. A design that needs sixteen corrections to reach a first draft needs
+a different starting point, not a seventeenth correction.
 
-This is not a licence to ignore the pin. The pin's actual test is *"can the
-condition that stopped it always be satisfied?"*, and it forbade halts because
-a halt keyed on a message that may never be sent is permanent. **The
-permissionless lapse is what satisfies that test**: the halt now has a
-guaranteed terminal, reachable by anyone, on a bounded clock. So the halt
-becomes legitimate here for precisely the reason the pin would demand — and the
-pin still stands, unchanged, for any refusal that lacks such a terminal. Record
-it that way rather than as a carve-out, or the next reader will treat the pin
-as advisory.
+**So this section deliberately does NOT contain a design.** It contains the
+verified problem statement above, the constraint set below, and the decision
+that has to be made before any of it can be resolved. **The design is deferred
+to its own document, and that document starts from the owner's answer** — not
+from another revision here.
 
-**B. A repricing vehicle.** The compensation must carry, or authorise, the
-per-side funding figures that replace the zero stamp, so the day becomes
-priceable at the operator-sized amount. Whatever writes that stamp is a
-fund-moving, operator-driven path into pricing and needs d2's evidence
-discipline — the figures must be bound to the delivery that funds them, not
-settable independently.
+What the withdrawn revisions got wrong is recorded, because each is a
+constraint the eventual design must satisfy and re-deriving them costs another
+review cycle.
 
-**B1. Conservation — "bound to the delivery" is not a rule until it is
-arithmetic** (Codex #1565 r1 P1). The receiver explicitly supports a short
-receipt (fee-on-transfer / partial), and the split is operator-supplied, so a
-loose binding lets the two replacement halves *each* be sized at the full
-delivery — doubling the claimable pool from one delivery. Two concrete
-requirements:
+### Constraints the P2 design must satisfy — all verified against the tree
 
-- the replacement figures scale to `actualReceived`, exactly as
-  `recycledShare` and (since P1-a) `freshShare` already do at the receiver —
-  the Diamond must never see face values for a short delivery;
-- `freshLenderHalf + freshBorrowerHalf` must be **≤ the scaled delivered fresh**
-  before the stamp may be rewritten, enforced as a revert, not documented as an
-  expectation.
+**On suppression:**
 
-This is the same joint-bound shape P1-a landed for `freshShare` +
-`recycledShare`: two individually-valid components summing past the delivery is
-the failure mode, so the bound must be on the SUM.
+1. The suppression must be a `_dayPoolHalves` **HALT**, not a pool-budget
+   deferral. `advanceCumLenderThrough` folds each day's halves into a **stored**
+   cumulative (`s.cumLenderRpn18[d] = next`) and advances its frontier; only
+   `if (halt) break;` prevents the fold, and nothing walks backwards. A later
+   rewrite cannot unwind a cumulative that has already absorbed the zero.
+2. §2g's pin against halts is therefore **satisfied, not overridden** — but
+   only if the halt has a guaranteed terminal reachable without a privileged
+   actor. The pin's own test ("can the condition that stopped it always be
+   satisfied?") is what any proposal must pass.
+3. **Two operator-gated exits are one operator-gated exit.** A "compensate or
+   the operator confirms zero" pair does not bound the wait; both branches need
+   a transaction from the same discretionary party whose silence caused the
+   problem.
 
-**B2. The state transition must be monotonic and order-independent** (Codex
-#1565 r1 P1). The broadcast writes the mirror's funding stamp as a **whole-
-struct assignment**. CCIP does not order two independent deliveries, so a
-compensation that lands before a delayed day broadcast would have its real
-halves **overwritten back to zero** when the broadcast finally arrives. The
-mirror image is just as bad: marking the broadcast "applied" from the
-compensation path would make the genuine, delayed broadcast fail its
-field-match replay check and never install its consensus data.
+**On the state model:**
 
-So the day's funding stamp needs an explicit state, not a struct that the last
-writer wins. **A first attempt wrote that state as one linear chain —
-`unstamped → zeroed-pending-compensation → (compensated | lapsed-to-zero)` —
-and that is self-contradictory** (Codex #1565 r2 P1): it permits compensation
-only *after* the pending marker exists, while the very hazard above requires
-compensation to be able to land while the mirror is still `unstamped`. An
-implementation following that chain has no legal state in which to hold
-delivered halves awaiting consensus fields.
+4. Broadcast progress and funding progress are **orthogonal**. A linear chain
+   is self-contradictory: compensation must be able to land while the mirror is
+   still `unstamped`, which a chain rooted at the pending marker forbids.
+5. The model must include the **ordinary, non-zeroed day** — where the funding
+   halves arrive in the canonical broadcast itself. A two-axis draft that halts
+   until "both axes settle" halts every ordinary day unless a
+   broadcast-funded terminal exists.
+6. Transitions must be monotonic, replay-safe, and delivery-order-independent
+   in both directions. The stamp is written today as a **whole-struct
+   assignment**, which is exactly where this breaks.
 
-The two things are **orthogonal**, and modelling them as one axis is what
-produced the contradiction. Broadcast progress and funding progress each get
-their own:
+**On the clock:**
 
-| | `funding: pending` | `funding: compensated` | `funding: lapsed` |
-| --- | --- | --- | --- |
-| **`broadcast: absent`** | initial | compensation arrived first — halves held, consensus fields still owed | — |
-| **`broadcast: installed`** | zeroed, awaiting compensation or lapse | priceable at the compensated amount | priceable at zero |
+7. There is **no authenticated finalization time** anywhere today —
+   `RewardBroadcastV2` carries no timestamp and neither does `ChainDayFunding`.
+   Local receipt makes any deadline a function of CCIP delay; the nominal day
+   boundary lets a late grace/force finalization arrive already expired.
+8. Base must **refuse to dispatch** a manual compensation at or after the
+   authenticated expiry. Today `remitManualBudget` gates only on
+   `remitIneligible` and the close markers, so an admin can create a
+   compensation that is guaranteed never to be able to reprice anything.
 
-Rules, all monotonic: a broadcast installs its consensus fields **without**
-touching the funding axis; a compensation writes the funding halves **without**
-claiming the broadcast arrived; a replayed broadcast is a no-op; and neither
-funding terminal can be re-entered. A day is priceable only once **both** axes
-are settled. Delayed and replayed broadcast behaviour is part of the spec, not
-an implementation detail, because it is exactly where the whole-struct
-assignment currently in the tree does the wrong thing.
+**On the in-flight race — and why NEITHER option is currently viable:**
 
-### The crux, and why A alone is a trap
+9. Compensation dispatched before expiry can be **delivered after** a lapse,
+   and no window length bounds cross-chain latency.
+10. The **Base-authoritative** branch, as sketched, loses bounded liveness:
+    both `finalizeRemitReservation` and `releaseRemitReservation` are
+    `onlyRole(ADMIN_ROLE)`, so if the admin becomes unavailable while a message
+    sits failed-but-re-executable, the reservation stays Pending and the day
+    never lapses. It needs a permissionless terminal backed by authenticated
+    non-delivery evidence, or it must be stated as sacrificing the invariant.
+11. The **mirror-local** branch's recovery, as sketched, was wrong:
+    `releaseRemitReservation` is for a send that can NEVER execute. A late
+    compensation *has* executed and its receipt ACKs the reservation, so the
+    release either reverts or violates its own precondition and re-opens the
+    day for a second manual remit after the first has landed. Recovery must
+    **finalize/ACK** the original reservation, keep the day closed, and
+    repatriate the stranded tokens through an explicit delivered-after-lapse
+    path.
 
-Suppressing the day stops it being *burned*; it does not make it *payable*.
-And the obvious suppression — halt the day until compensation arrives —
-**re-creates exactly what killed the arrival marker** (§2g pin): a stop keyed
-on a message that may never be sent is permanent, and because
-`advanceCumLenderThrough` does `if (halt) break;` it takes every later day on
-that mirror with it. A compensation remit is an *operator decision*. Nothing
-in the protocol obliges it to happen.
+**On the wire — it is TWO evolutions, not one:**
 
-The pin's own test is the one to apply: *can the condition that stopped it
-always be satisfied?* For a zeroed day the honest answer today is **no** —
-which means the suppression cannot be a one-way wait on compensation.
+12. The zeroed marker and the authenticated finalization time are known at day
+    finalization and travel through `VaipakamRewardMessenger._encodeBroadcastV2`.
+    The armed-fresh-dispatched figure and the compensation halves are known at
+    token dispatch and travel through `RewardRemittanceFacet._sendRemitPayload`
+    → `RewardRemittanceReceiver`. **Independent messages, independent decoders,
+    independent rollout compatibility.** An earlier revision of this section
+    recommended putting all four on "the same tag"; that would leave one path
+    unversioned. Two versioned changes, each with its own rollout test.
 
-**A first revision of this section proposed two resolutions — compensate, or
-an explicit operator "confirm zero" — and that does NOT satisfy the test
-either** (Codex #1565 r1 P1). Both branches need a transaction from the same
-discretionary operator whose silence made waiting unsafe in the first place.
-Two operator-gated exits are one operator-gated exit wearing a hat: if nobody
-acts, the oldest pending day still blocks every later claim on that mirror
-forever. Offering a *choice* of ends is not the same as guaranteeing an end.
+**On every new component of a delivery:**
 
-**So the liveness guarantee has to be permissionless.** The resolution set is:
+13. It inherits **short-delivery scaling** (`actualReceived / declaredTotal`)
+    and a **joint bound** against its siblings, by default — the burden is on
+    stating an exception. Several of the sixteen were this one omission
+    recurring on each newly-proposed field.
+14. The armed-fresh-dispatched figure is **not** `st.armedFresh` /
+    `r.armedFreshFull`: those are the PRE-clamp commitment retired at close,
+    and `RewardRemitLedgerTest` asserts `r.armedFreshFull > r.fresh` directly.
+    It needs a new accumulator over the post-clamp `p.fresh` on armed days —
+    **and `remitManualBudget` must populate it too**, since it builds its
+    dispatch directly and has no `p`. A default zero there would make the
+    compensation's own replacement halves priceable while never raising the
+    mirror's delivered-fresh budget, so P1-b would defer the very payout the
+    compensation funded.
 
-- **compensate** — the vehicle in (B) writes real halves, the day prices, the
-  entries pay; **or**
-- **lapse to zero** — after a bounded window from the day's finalization,
-  *anyone* may resolve the day to genuinely-zero. No privileged actor, no
-  discretion, no transaction that only one party can send.
+### ⛔ The decision that comes first
 
-That is what makes the wait bounded rather than merely two-sided. It is also
-the shape the rest of this system already uses for exactly this problem: RL-3's
-claim-horizon sweep is permissionless for the same reason, and the keeper
-heartbeat that drives it is available here too.
+**Who lapses a zeroed day, and how does the in-flight race resolve?** Every
+constraint above is downstream of it: it determines whether the clock is
+canonical or local, whether the wire carries a lapse instruction, and whether
+recovery is a prevention path or a repatriation path.
 
-**The window needs an AUTHENTICATED start, which nothing currently carries**
-(Codex #1565 r2 P1). "A bounded window from the day's finalization" is not
-enforceable at the reviewed tree: `RewardBroadcastV2` has no timestamp field
-and neither does `ChainDayFunding`. The two available substitutes are both
-wrong — starting at local broadcast receipt makes the deadline a function of
-CCIP delay, and deriving it from the nominal day boundary lets a late
-grace/force finalization arrive already expired and lapse on the spot. So the
-new tag must carry an **authenticated `finalizedAt` (or an explicit canonical
-expiry)**, and no claim may depend on the timeout until it does.
+Neither sketched option is currently viable as written — constraint 10 breaks
+the Base-authoritative one, constraint 11 breaks the mirror-local one — so this
+is not a menu to pick from. It is the question a P2 design document has to open
+with, and answering it is what unblocks writing one.
 
-**Retraction: r2 claimed the permissionless lapse "largely dissolves" the
-Base-vs-mirror question. It does not** (Codex #1565 r2 P1). The lapse removes
-the *liveness* dependence on operator discretion, and that part holds. What it
-does not remove is a race the window cannot close:
+### General rule earned here, applicable beyond P2
 
-> An admin dispatches `remitManualBudget` **before** expiry; its CCIP delivery
-> lands **after** someone has lapsed the day. Base has already closed and
-> reserved that day, the mirror's entries have retired for zero, and the
-> terminal-state rule forbids the arriving compensation from repricing
-> anything. The tokens are on the mirror with nowhere to go.
+**A field named for an OBLIGATION is not the amount that MOVED, and the two
+diverge exactly where a cap or clamp bites.** `EntrySplit.armedFresh` is kept
+whole for commitment retirement while `total` sheds the capped-off part;
+`interactionPoolPaidOut` mixes legacy-schedule and armed payouts;
+`armedFreshFull` is pre-clamp. Before transmitting, bounding, or subtracting
+any such field, establish which side of that line it is on. Three separate
+findings across #1556 and this section were the same mistake.
 
-**A longer window cannot fix this** — cross-chain delivery latency is not
-bounded by anything the window is measured in. The choice of *who lapses*
-therefore comes back, for a new and better reason than r1's: **only Base knows
-whether a compensation is in flight**, because Base holds the reservation. A
-mirror-local lapse is blind to it by construction. So the fork is re-opened,
-now as a genuine trade:
-
-- **Base-authoritative lapse** — Base can refuse to lapse a day with a pending
-  send, which prevents the race rather than recovering from it. Costs a
-  broadcast and re-introduces a canonical round-trip into the liveness path.
-- **Mirror-local permissionless lapse + explicit recovery** — cheaper and
-  strictly live, but the race is *accepted* and must be handled: a
-  late-arriving compensation lands un-earmarked (it cannot reprice a retired
-  day), so it needs a defined path back — M4 C2's batched repatriation for the
-  tokens, and `releaseRemitReservation` for Base's reservation.
-
-**Both are viable and this is the owner's call.** Neither is free, and the
-second is only acceptable if the recovery path is specified as part of P2
-rather than assumed — an un-earmarked balance sitting on a mirror with no
-owner is exactly the class #1498 exists to close.
-
-### Ride the same tag — two things that would otherwise need their own
-
-P2 is already paying for a wire evolution. Two known gaps should land on it
-rather than each buying a tag later:
-
-1. **Base's per-remit ARMED FRESH DISPATCHED figure — which does not exist
-   yet, and is NOT `armedFreshFull`.** P1-a counts a delivery only when every
-   day it covers is at or after `D*`, because `_planDay` decides armedness per
-   day while the remit carries one summed amount — so a batch straddling the
-   cutover is refused whole (a deliberate, visible under-count; see
-   `rewardBudgetFreshUncounted`).
-
-   **A first revision of this section said Base "already computes the figure —
-   `st.armedFresh` / `r.armedFreshFull` — and simply does not transmit it".
-   That was wrong** (Codex #1565 r1 P1), and wrong in the direction that
-   matters: `armedFreshFull` is deliberately the **PRE-clamp commitment**
-   retired at close, not the fresh VPFI that shipped. `_planDay` sets
-   `p.armedFreshFull = sliceFresh` before the per-side liability clamp, while
-   the amount actually dispatched is the post-clamp `p.fresh`; the accumulators
-   are separate (`st.armedFresh += p.armedFreshFull` against
-   `st.fresh += p.fresh`), and `RewardRemitLedgerTest` **asserts the gap
-   directly** — `assertGt(r.armedFreshFull, r.fresh, "residual existed")`.
-   Transmitting it would over-state a mirror's delivered fresh by the clamp
-   residual, and P1-b's payout bound would then authorise tokens that never
-   arrived — the exact over-statement P1-a's rework was done to remove.
-
-   What the wire needs is a **separately accumulated armed subset of the
-   dispatched `p.fresh`** — the sum of `p.fresh` over ARMED days only. Neither
-   existing accumulator is it: `st.fresh` includes unarmed days, `st.armedFresh`
-   is pre-clamp. It is a new term on the send path, cheap to add, but it is an
-   addition rather than a plumbing job.
-
-   **And it must be SCALED AT RECEIPT like every other component** (Codex
-   #1565 r2 P1). The receiver explicitly supports `actualReceived <
-   declaredTotal`. Crediting a face-value armed-fresh figure against a short
-   delivery would push `rewardBudgetArmedFreshReceived` above the fresh VPFI
-   that actually landed — recreating the exact overstatement this field exists
-   to remove. Two requirements, matching what `recycledShare` and `freshShare`
-   already do: scale by `actualReceived / declaredTotal`, and enforce that the
-   scaled armed figure does not exceed the scaled `freshShare` before it is
-   accounted. **Three of the findings across this section's two review rounds
-   are the same omission** — a new component added without the short-delivery
-   scaling and the joint bound that every existing component already carries.
-   Any future component of a delivery inherits both by default; state the
-   exception if one genuinely does not.
-
-   **The general rule this is the third instance of today:** a field named for
-   an *obligation* (`armedFreshFull`, `EntrySplit.armedFresh`,
-   `outstandingCommitFresh`) is not the amount that *moved*, and the two
-   diverge exactly where a cap or clamp bites. Before transmitting, bounding,
-   or subtracting any such field, check which side of that line it is on.
-2. **The per-side compensation figures** from (B) above, which are the same
-   shape as the halves the broadcast already carries.
-
-### Scope signal — P2 is not one slice
-
-Two adversarial rounds on this section produced nine P1s, every one confirmed
-against the tree. That rate is not a drafting problem; it is the section
-discovering that prerequisite 2 is **several interacting mechanisms**, not one:
-
-1. a wire evolution (the zeroed marker, an authenticated `finalizedAt`, the
-   armed-fresh-dispatched figure, the per-side compensation figures);
-2. a two-axis monotonic state machine over the funding stamp, with delayed and
-   replayed delivery behaviour;
-3. a permissionless lapse with a bounded clock, plus arbitration or recovery
-   for compensation in flight at lapse;
-4. a halt at `_dayPoolHalves` (not the pool-budget layer), justified by (3);
-5. conservation bounds and receipt-time scaling on every new component.
-
-Each has its own failure mode and its own tests. Cutting them as one PR would
-reproduce exactly the shape that made P1-a need a full rework — a design whose
-parts are individually plausible and jointly unsound. **Plan P2 as a sequence,
-with the wire evolution last**, so the tag is cut once against a settled model
-rather than amended per discovery.
 
 ### One thing that already behaves correctly, recorded so it is not "fixed"
 

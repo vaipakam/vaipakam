@@ -932,9 +932,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    `st.fresh` includes unarmed days and `st.armedFresh` is pre-clamp.
    >    Transmitting `armedFreshFull` would over-state a mirror's backing by
    >    the clamp residual. Full correction in the design record's **§2h**
-   >    (#1565), which also scopes the zeroed-day signal, its repricing
-   >    vehicle, and the **permissionless lapse-to-zero** that is what
-   >    actually bounds the wait (two operator-gated exits do not).
+   >    (#1565), which — after three review rounds and SIXTEEN confirmed P1s —
+   >    deliberately holds the verified problem statement and a **constraint
+   >    set**, NOT a design. P2 is a subsystem, its wire is **two** evolutions
+   >    (broadcast and remit travel through different messengers), and it is
+   >    blocked on one owner decision: **who lapses a zeroed day, and how the
+   >    in-flight compensation race resolves.** Neither sketched option is
+   >    viable as written.
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the
