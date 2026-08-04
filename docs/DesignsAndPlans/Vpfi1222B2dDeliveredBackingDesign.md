@@ -767,8 +767,10 @@ that stopped it always be satisfied".
 §2g states the two prerequisites. Prerequisite 1's **receipt** half shipped as
 P1-a (#1556, `41d4538a4`); its paid half and the deferral semantics are P1-b.
 This section scopes **prerequisite 2**, which is what actually gates lifting
-the halt. It is a scope, not a ratified design — the open question at the end
-is load-bearing and is the reason this is written down before any code.
+the halt. **The lapse decision it opened with is now RATIFIED** (#1571,
+2026-08-04) and appears below as R1-R4; treat those as settled premises. What
+remains deferred is the detailed design, which belongs in its own document —
+so this section is a ratified premise plus a constraint set, not a design.
 
 ### The mechanism, traced (verified against the tree at `41d4538a4`)
 
@@ -811,10 +813,10 @@ above it. A design that needs sixteen corrections to reach a first draft needs
 a different starting point, not a seventeenth correction.
 
 **So this section deliberately does NOT contain a design.** It contains the
-verified problem statement above, the constraint set below, and the decision
-that has to be made before any of it can be resolved. **The design is deferred
-to its own document, and that document starts from the owner's answer** — not
-from another revision here.
+verified problem statement above, the constraint set below, and — since
+2026-08-04 — the **ratified answer** (R1-R4) to the decision that gated all of
+it. **The design is deferred to its own document, and that document starts from
+R1-R4** rather than from another revision here.
 
 What the withdrawn revisions got wrong is recorded, because each is a
 constraint the eventual design must satisfy and re-deriving them costs another
@@ -885,7 +887,7 @@ review cycle.
 
 12. The zeroed marker and the authenticated finalization time are known at day
     finalization and travel through `VaipakamRewardMessenger._encodeBroadcastV2`.
-    The armed-fresh-dispatched figure and the compensation halves are known at
+    The armed-fresh-dispatched figure and the compensation amount are known at
     token dispatch and travel through `RewardRemittanceFacet._sendRemitPayload`
     → `RewardRemittanceReceiver`. **Independent messages, independent decoders,
     independent rollout compatibility.** An earlier revision of this section
@@ -894,7 +896,8 @@ review cycle.
 
 **On binding a component to its target:**
 
-15. The compensation halves must be bound to **exactly one** day. The new
+15. The compensation figures — **the authenticated amount under R1**, not
+    halves — must be bound to **exactly one** day. The new
     remittance generation is shared with the ordinary batched path, whose
     payload carries many `dayIds`, and a per-delivery sum bound does **not**
     stop an implementation writing the same bounded pair into every listed
@@ -915,7 +918,7 @@ review cycle.
     It needs a new accumulator over the post-clamp `p.fresh` on armed days —
     **and `remitManualBudget` must populate it too**, since it builds its
     dispatch directly and has no `p`. A default zero there would make the
-    compensation's own replacement halves priceable while never raising the
+    compensation's own authenticated amount priceable while never raising the
     mirror's delivered-fresh budget, so P1-b would defer the very payout the
     compensation funded.
 
@@ -933,8 +936,8 @@ review cycle.
     normalization — **not just replacement halves.** This is the constraint
     most likely to change the vehicle's shape, so settle it early.
 
-18. **Do NOT scale the replacement halves themselves** — scale only the
-    backing credit. This is the one place constraint 13's default is wrong,
+18. **Do NOT scale the authenticated compensation amount itself** (halves in
+    the pre-R1 wording) — scale only the backing credit. This is the one place constraint 13's default is wrong,
     and the exception is exactly why 13 requires exceptions to be stated.
     The halves become the day's **pricing obligation**: once the cumulative
     folds reduced halves, `processUserSideDay` retires the entries at the
@@ -969,6 +972,16 @@ review cycle.
     `(remitter, remitId)`; the broadcast evolution must do the same, and both
     state axes must bind to the same deployment/era.
 
+> **READING THE CONSTRAINTS AFTER R1.** Constraints 13-19 were written while
+> the vehicle was still *replacement halves*. R1 retired that vehicle, and the
+> constraints have been reworded to match — but the RULES are unchanged and
+> each still binds: single-day binding (15), no scaling of the pricing
+> obligation (18), receipt-time scaling and joint bounds for every delivery
+> component (13), the manual path populating the armed-fresh accumulator (14),
+> and the legacy-drain requirement (19). A constraint that still reads in
+> halves terms is a **drafting miss, not an exemption** — apply it to the
+> authenticated amount (Codex #1573 r1 P1).
+
 ### ✅ RATIFIED 2026-08-04 — the lapse decision, and what it settles
 
 The question this section opened with — *who lapses a zeroed day, and how does
@@ -991,9 +1004,22 @@ cases shows why halves cannot be the vehicle:
   side. **No half produces any payout, ever.** Entirely reachable on a young
   mesh with few chains.
 
-A delta sidesteps the frozen denominator completely, and it removes the
-solve-for-the-half footgun in the same stroke. **Do not build the vehicle on
-halves.**
+A delta sidesteps the frozen denominator completely. **Do not build the vehicle
+on halves.**
+
+**R1a — a delta alone does NOT remove the operator solve; the conversion
+contract is part of R1** (Codex #1573 r1 P1). The payout is still
+`localInterest × Δ / 1e18`, so an operator targeting a VPFI *amount* would have
+to derive Δ from the mirror's own day interest — which **Base does not hold**.
+Left there, R1 merely renames solve-for-the-half to solve-for-the-delta, and
+lets the authenticated pricing obligation drift from the delivered backing.
+
+So the ratified shape is: **the wire carries an authenticated AMOUNT, and the
+MIRROR derives Δ locally from its own day interest.** The authenticated
+quantity is then the same number that physically arrives, the conversion
+happens where its input actually lives, and neither party solves for anything.
+Any alternative must pin an authenticated local denominator explicitly — an
+unpinned conversion is the footgun, not the delta.
 
 **R2. The lapse is PERMISSIONLESS**, on the authenticated `finalizedAt` clock
 required by constraint 7. Anyone may resolve an expired zeroed day to
@@ -1002,10 +1028,16 @@ constraint 1 now has a terminal reachable without any privileged actor.
 
 **R3. Base REFUSES TO DISPATCH compensation after a cutoff STRICTLY EARLIER
 than the lapse deadline.** Constraint 8 already requires *a* cutoff; making it
-strictly earlier turns the gap into an explicit **CCIP delivery budget**, so
-the exposed race shrinks from "the whole window" to "the delivery time of a
-last-moment dispatch". The gap is a parameter and should be sized from observed
-lane latency, not guessed.
+strictly earlier turns the gap into an explicit **CCIP delivery budget**.
+
+**What R3 does NOT do** (Codex #1573 r1 P1): it does not restrict late arrivals
+to last-moment dispatches, and an earlier draft of this section claimed it did.
+Constraint 9 is unconditional — *no* window bounds cross-chain latency — so a
+compensation dispatched **well before** the cutoff can sit failed-but-
+re-executable and still arrive after the lapse. R3 buys delivery budget for the
+common case; it does not bound the failure class. **Any in-flight dispatch can
+lapse**, and the recovery path must be sized and monitored on that basis rather
+than on a last-moment-only assumption.
 
 **R4. A late arrival recovers through M4 C2 (#1568)** — `finalize`/ACK the
 original reservation, because the tokens genuinely arrived, and repatriate.
