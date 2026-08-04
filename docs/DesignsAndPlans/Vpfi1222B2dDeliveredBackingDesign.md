@@ -919,6 +919,56 @@ review cycle.
     mirror's delivered-fresh budget, so P1-b would defer the very payout the
     compensation funded.
 
+**On repricing actually making the day PAYABLE:**
+
+17. **Rewriting the stamp may not be sufficient.** The day's payout is
+    `perDayNumeraire18 × Δ_d`, and `Δ_d` divides the funding half by the
+    **global interest denominator frozen at finalization**. If the excluded
+    mirror supplied the only interest on a side, that denominator is **zero**
+    and the delta stays zero however the halves are rewritten. If it is
+    non-zero it contains only *other* chains' interest, so the compensated
+    day is scaled by an unrelated `localInterest / globalInterest` ratio
+    rather than by the operator-sized amount. The repricing vehicle needs a
+    mirror-specific denominator, a directly authenticated delta, or another
+    normalization — **not just replacement halves.** This is the constraint
+    most likely to change the vehicle's shape, so settle it early.
+
+18. **Do NOT scale the replacement halves themselves** — scale only the
+    backing credit. This is the one place constraint 13's default is wrong,
+    and the exception is exactly why 13 requires exceptions to be stated.
+    The halves become the day's **pricing obligation**: once the cumulative
+    folds reduced halves, `processUserSideDay` retires the entries at the
+    reduced payout, and the delivered-fresh budget exactly covers that
+    scaled claim — so §2g's deferral never fires, while the manual remit has
+    already closed the day against another ordinary compensation. A
+    fee-on-transfer shortfall would become **permanent user underpayment**
+    instead of recoverable back-pressure. Preserve the intended halves behind
+    the budget gate, or define a supplemental-funding transition before
+    pricing goes terminal.
+
+**On rollout:**
+
+19. **Legacy manual compensations must be drained or backfilled.** A d5
+    manual compensation that is pending, in flight, or already received when
+    P2 activates carries no compensation discriminator and no replacement
+    halves. The upgraded receiver still accepts that shape and its ACK closes
+    the Base day, but the mirror has no authenticated values to rewrite the
+    zero stamp with, and cannot request the ordinary manual path again — so
+    the day's only terminal is lapse-and-underpay. A rollout *test* does not
+    cover this. Activation must inventory and drain legacy manual
+    reservations/receipts, or specify an authenticated backfill.
+
+20. **Bind the broadcast to its originating Base deployment.** A delayed
+    packet from a retired deployment can install its zeroed marker and expiry
+    under the new era, then combine with compensation sent by the *new*
+    remitter for the same day. `CcipMessenger._ccipReceive` authenticates the
+    remote adapter but derives `sourceSender` from the current
+    `channelPeerOf`, and `VaipakamRewardMessenger.onCrossChainMessage`
+    ignores it. d2 already solved this for remit ACKs by carrying immutable
+    deployment identity **in the payload** and keying receipts on
+    `(remitter, remitId)`; the broadcast evolution must do the same, and both
+    state axes must bind to the same deployment/era.
+
 ### ⛔ The decision that comes first
 
 **Who lapses a zeroed day, and how does the in-flight race resolve?** Every
