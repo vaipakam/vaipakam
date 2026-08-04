@@ -293,44 +293,105 @@ between them, is how one transfer gets booked twice.
 
 #### The returned tokens do NOT restore interaction-pool headroom
 
-`rewardBudgetRemittedGlobal` is **append-only** — verified: it is written only
-with `+=`, and even `releaseRemitReservation` (a send that can *never* execute)
-does not restore it. That is load-bearing, not incidental: the claim path's
-truncate-and-consume rule is justified by `remaining = CAP − paidOut −
-remittedGlobal` being **monotone non-increasing**, so a trimmed remainder is
-unfundable forever and consuming the entry alongside it costs the claimant
-nothing. Decrementing it on repatriation would falsify that argument and turn
-every earlier truncation into a silent underpayment.
+`rewardBudgetRemittedGlobal` is **append-only** — verified: written only with
+`+=`, and even `releaseRemitReservation` (a send that can *never* execute) does
+not restore it. That is load-bearing: the claim path's truncate-and-consume
+rule is justified by `remaining = CAP − paidOut − remittedGlobal` being
+**monotone non-increasing**, so a trimmed remainder is unfundable forever and
+consuming the entry alongside it costs the claimant nothing. Decrementing it on
+repatriation would falsify that argument and turn every earlier truncation into
+a silent underpayment. **Neither mode decrements it**, so a lapsed compensation
+permanently shrinks the interaction pool by its amount — the same conservative
+treatment a released reservation already receives.
 
-So **neither mode decrements it.** Recovered VPFI lands in
-`rewardEmissionsBudget` — a *different* pool, the priority-1 sink in
-`LibTreasuryBuyback._routePriority`, which offsets fresh-mint inflation. The
-interaction pool stays reduced by the amount that was remitted.
+#### Constraints — the mechanisms this section first proposed did NOT survive review
 
-State that consequence plainly rather than leaving it to be discovered: a
-lapsed compensation **permanently shrinks the 69M interaction pool** by its
-amount, while the tokens themselves are repurposed to emissions offset. This is
-the same conservative treatment a released reservation already receives, which
-is why it is the architecturally consistent answer rather than a new exception.
+An earlier revision named a sink, a debit primitive and a transport. **All three
+were falsified against the tree** (Codex #1574 r1), and the section now records
+what the design must satisfy rather than proposing a second set to be falsified
+in turn. The two-mode split above, and the append-only finding, were not
+challenged and stand.
 
-#### Transport — reuse `BuybackRemittanceReceiver`'s shape, not its instance
+**On the destination:**
 
-That contract is already the mirror→Base direction and has the properties this
-needs: messenger-gated ingress, **exactly one** `TokenAmount` per delivery
-(multi-token rejected to avoid ambiguous accounting), payload/delivery token
-cross-validation, and tokens forwarded to the Diamond **before** the ingress
-call so the Diamond never reaches back for custody.
+1. **`rewardEmissionsBudget` is TARGET-BOUNDED, so "credit it" is not a
+   design.** `LibTreasuryBuyback._routePriority` credits only
+   `min(delivered, cfgRewardEmissionsTopUpTarget − current)`, routes the
+   remainder to keepers, and **reverts if neither gap can absorb it**. A
+   repatriation larger than the rewards gap therefore lands somewhere else or
+   fails permanently. Pin one of: this ingress credits rewards directly despite
+   the target; each repatriation is capped to the live gap with the remainder
+   left on the mirror; or a dedicated overflow sink exists.
 
-A **separate receiver** rather than a new mode on that one: the buyback channel
-credits the buyback budget and this credits emissions, so sharing an instance
-would put two unrelated ledgers behind one authenticated ingress and one pause
-lever. Same shape, separate blast radius.
+**On the mirror-side debit:**
 
-#### Bounds every delivery inherits (#1434 §2h constraints 13, 15)
+2. **`LibVpfiRecycle.consume` is not a generic bucket withdrawal.** It also
+   reduces `outstandingCommitRecycled`, advances
+   `recycleCommitRetiredCumulative` and increments `paidOutRecycled`. Calling it
+   for a surplus repatriation while a mirror holds live claim commitments would
+   **retire those claims and record a reward payout that never happened**,
+   corrupting the retirement report and the composition metrics the watcher
+   checks. Mode A needs a distinct fundable-surplus debit, or an explicitly
+   created-and-retired repatriation commitment that leaves pre-existing claim
+   commitments alone.
 
-- scale to `actualReceived` — the receiver explicitly supports a short receipt;
-- bound components **jointly**, never only individually;
-- bind to a **single target** — a mode-B recovery names exactly one reservation.
+**On the transport:**
+
+3. **A separate Base receiver is not reachable from the mirror Diamond as the
+   messenger stands.** `CcipMessenger.registerChannel` enforces a one-to-one
+   handler→channel binding, and each mirror Diamond is **already** the handler
+   for `VPFI_BUYBACK_CHANNEL` — so any Diamond-originated send carries the
+   buyback channel and routes to `BuybackRemittanceReceiver`, and registering
+   the Diamond on a repatriation channel reverts `HandlerAlreadyBound`. Either
+   a separate mirror-side sender/escrow contract owns the outbound leg (with its
+   own custody and authorization flow), or the messenger gains explicit
+   authenticated channel selection. This is a **transport-layer** decision and
+   it gates both modes.
+
+**On reservations and ordering:**
+
+4. **A stranded compensation must be RESERVED on arrival, not left
+   un-earmarked.** `RewardClaimFacet` derives `backingRoom` from
+   `balance − recycleBucket`, so between arrival and reverse dispatch an
+   ordinary claim can spend those very tokens — after which Mode B either fails
+   or repatriates VPFI that is backing a different obligation. Needs a
+   dedicated stranded-recovery reservation excluded from claim backing and
+   retired exactly once, or an atomic forward-back from the inbound callback.
+5. **Mode A needs a terminal ledger for its instruction.** It charges
+   `consumedCumulative` before a cross-chain instruction but declares no
+   reservation: if the instruction never executes, the mirror's bucket is
+   intact while Base **permanently understates availability**, and without an
+   instruction id the Base ingress cannot prove an arriving Mode-A payload
+   corresponds to a prior charge. Record a chain/amount-bound pending
+   authorization, close it on successful return, and track a release that
+   restores availability when non-execution is proven.
+6. **ACK-first and recovery-first must converge.** A late delivery independently
+   produces the existing permissionless, re-sendable remit ACK, so the ACK and
+   the Mode-B return are unordered. Accepting only a pending/lapsed reservation
+   makes a legitimate return fail forever when the ACK wins; accepting an
+   already-ACKed one without a spent marker lets a second message credit the
+   same reservation twice. Needs an **amount-bounded recovery entitlement keyed
+   by `(remitter, remitId)`** that survives the ACK transition and is consumed
+   exactly once.
+
+**On scaling — and the exception the blanket rule needs:**
+
+7. **Only DESTINATION credits scale to `actualReceived`. Mode A's SOURCE debit
+   must not.** The mirror removed `amount` from its bucket; if a short receipt
+   scaled `consumedCumulative` down to what landed, the shortfall would be
+   re-offered as mirror availability for tokens that already left. Track any
+   delivery shortfall separately instead. (Constraint 13's default still holds
+   for every destination credit — this is the stated exception it demands.)
+
+**On the delivered-fresh counter:**
+
+8. **Repatriating Mode-B funds must net the received-fresh cumulative.** A
+   manual compensation is fresh-only, so its arrival advances
+   `rewardBudgetArmedFreshReceived` (#1556) — and sending the tokens back does
+   not undo that. Once P1-b bounds mirror payouts by delivered-fresh-minus-paid,
+   the mirror would treat **returned, no-longer-held** VPFI as funding for later
+   claims. Either add a clamped repatriated-fresh cumulative and net it, or
+   ensure an authenticated post-lapse arrival never enters the counter at all.
 
 #### Sequencing
 
