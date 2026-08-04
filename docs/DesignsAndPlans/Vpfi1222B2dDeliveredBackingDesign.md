@@ -809,6 +809,45 @@ fund-moving, operator-driven path into pricing and needs d2's evidence
 discipline — the figures must be bound to the delivery that funds them, not
 settable independently.
 
+**B1. Conservation — "bound to the delivery" is not a rule until it is
+arithmetic** (Codex #1565 r1 P1). The receiver explicitly supports a short
+receipt (fee-on-transfer / partial), and the split is operator-supplied, so a
+loose binding lets the two replacement halves *each* be sized at the full
+delivery — doubling the claimable pool from one delivery. Two concrete
+requirements:
+
+- the replacement figures scale to `actualReceived`, exactly as
+  `recycledShare` and (since P1-a) `freshShare` already do at the receiver —
+  the Diamond must never see face values for a short delivery;
+- `freshLenderHalf + freshBorrowerHalf` must be **≤ the scaled delivered fresh**
+  before the stamp may be rewritten, enforced as a revert, not documented as an
+  expectation.
+
+This is the same joint-bound shape P1-a landed for `freshShare` +
+`recycledShare`: two individually-valid components summing past the delivery is
+the failure mode, so the bound must be on the SUM.
+
+**B2. The state transition must be monotonic and order-independent** (Codex
+#1565 r1 P1). The broadcast writes the mirror's funding stamp as a **whole-
+struct assignment**. CCIP does not order two independent deliveries, so a
+compensation that lands before a delayed day broadcast would have its real
+halves **overwritten back to zero** when the broadcast finally arrives. The
+mirror image is just as bad: marking the broadcast "applied" from the
+compensation path would make the genuine, delayed broadcast fail its
+field-match replay check and never install its consensus data.
+
+So the day's funding stamp needs an explicit state, not a struct that the last
+writer wins:
+
+`unstamped → zeroed-pending-compensation → (compensated | lapsed-to-zero)`
+
+with the transitions monotonic — a broadcast arriving after a compensation
+installs its consensus fields but must **not** reset the funding halves or the
+state; a replayed broadcast is a no-op; and neither terminal state can be
+re-entered. Delayed and replayed broadcast behaviour is part of the spec, not
+an implementation detail, because it is exactly where the whole-struct
+assignment currently in the tree does the wrong thing.
+
 ### The crux, and why A alone is a trap
 
 Suppressing the day stops it being *burned*; it does not make it *payable*.
@@ -821,37 +860,78 @@ in the protocol obliges it to happen.
 
 The pin's own test is the one to apply: *can the condition that stopped it
 always be satisfied?* For a zeroed day the honest answer today is **no** —
-which means the suppression cannot be a one-way wait on compensation. It needs
-a terminal resolution available in **both** directions:
+which means the suppression cannot be a one-way wait on compensation.
+
+**A first revision of this section proposed two resolutions — compensate, or
+an explicit operator "confirm zero" — and that does NOT satisfy the test
+either** (Codex #1565 r1 P1). Both branches need a transaction from the same
+discretionary operator whose silence made waiting unsafe in the first place.
+Two operator-gated exits are one operator-gated exit wearing a hat: if nobody
+acts, the oldest pending day still blocks every later claim on that mirror
+forever. Offering a *choice* of ends is not the same as guaranteeing an end.
+
+**So the liveness guarantee has to be permissionless.** The resolution set is:
 
 - **compensate** — the vehicle in (B) writes real halves, the day prices, the
-  entries pay; or
-- **confirm zero** — an explicit operator act that converts the day from
-  "zeroed pending compensation" to "genuinely zero", after which it prices at
-  zero and retires exactly as it does today.
+  entries pay; **or**
+- **lapse to zero** — after a bounded window from the day's finalization,
+  *anyone* may resolve the day to genuinely-zero. No privileged actor, no
+  discretion, no transaction that only one party can send.
 
-With both available the wait always has an end, and the choice of end is a
-recorded operator action rather than a silence. **Open, and the reason this is
-a scope rather than a design:** whether "confirm zero" belongs on Base (a
-broadcast that clears the marker, keeping every mirror's state a function of
-canonical decisions) or on the mirror (a local admin act, which is cheaper but
-lets two mirrors diverge on the same day). This wants the owner's call, and it
-should be made before the wire is cut, because the answer changes what the new
-tag carries.
+That is what makes the wait bounded rather than merely two-sided. It is also
+the shape the rest of this system already uses for exactly this problem: RL-3's
+claim-horizon sweep is permissionless for the same reason, and the keeper
+heartbeat that drives it is available here too.
+
+**What this does to the open question.** The earlier draft asked the owner
+whether "confirm zero" lives on Base or on the mirror. With a permissionless
+lapse the discretionary act disappears and the fork largely dissolves: the
+resolution is deterministic and time-derived, so a mirror-local implementation
+cannot diverge from a sibling on the same day the way a discretionary local
+admin act could. What remains for the owner is a **parameter**, not an
+architecture: how long the compensation window is, measured against how quickly
+an operator can realistically size and dispatch a manual budget after a
+grace/force finalization. Under-size it and legitimate compensation loses a
+race it should win; over-size it and every mirror claim behind a zeroed day
+waits that long.
 
 ### Ride the same tag — two things that would otherwise need their own
 
 P2 is already paying for a wire evolution. Two known gaps should land on it
 rather than each buying a tag later:
 
-1. **Base's per-remit ARMED FRESH figure.** P1-a counts a delivery only when
-   every day it covers is at or after `D*`, because `_planDay` decides
-   armedness per day while the remit carries one summed amount — so a batch
-   straddling the cutover is refused whole (a deliberate, visible under-count;
-   see `rewardBudgetFreshUncounted`). Base **already computes** the figure —
-   `st.armedFresh`, accumulated from `p.armedFreshFull` and stored on the
-   reservation as `r.armedFreshFull` — and simply does not transmit it.
-   Transmitting it removes the under-count outright.
+1. **Base's per-remit ARMED FRESH DISPATCHED figure — which does not exist
+   yet, and is NOT `armedFreshFull`.** P1-a counts a delivery only when every
+   day it covers is at or after `D*`, because `_planDay` decides armedness per
+   day while the remit carries one summed amount — so a batch straddling the
+   cutover is refused whole (a deliberate, visible under-count; see
+   `rewardBudgetFreshUncounted`).
+
+   **A first revision of this section said Base "already computes the figure —
+   `st.armedFresh` / `r.armedFreshFull` — and simply does not transmit it".
+   That was wrong** (Codex #1565 r1 P1), and wrong in the direction that
+   matters: `armedFreshFull` is deliberately the **PRE-clamp commitment**
+   retired at close, not the fresh VPFI that shipped. `_planDay` sets
+   `p.armedFreshFull = sliceFresh` before the per-side liability clamp, while
+   the amount actually dispatched is the post-clamp `p.fresh`; the accumulators
+   are separate (`st.armedFresh += p.armedFreshFull` against
+   `st.fresh += p.fresh`), and `RewardRemitLedgerTest` **asserts the gap
+   directly** — `assertGt(r.armedFreshFull, r.fresh, "residual existed")`.
+   Transmitting it would over-state a mirror's delivered fresh by the clamp
+   residual, and P1-b's payout bound would then authorise tokens that never
+   arrived — the exact over-statement P1-a's rework was done to remove.
+
+   What the wire needs is a **separately accumulated armed subset of the
+   dispatched `p.fresh`** — the sum of `p.fresh` over ARMED days only. Neither
+   existing accumulator is it: `st.fresh` includes unarmed days, `st.armedFresh`
+   is pre-clamp. It is a new term on the send path, cheap to add, but it is an
+   addition rather than a plumbing job.
+
+   **The general rule this is the third instance of today:** a field named for
+   an *obligation* (`armedFreshFull`, `EntrySplit.armedFresh`,
+   `outstandingCommitFresh`) is not the amount that *moved*, and the two
+   diverge exactly where a cap or clamp bites. Before transmitting, bounding,
+   or subtracting any such field, check which side of that line it is on.
 2. **The per-side compensation figures** from (B) above, which are the same
    shape as the halves the broadcast already carries.
 

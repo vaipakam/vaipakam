@@ -917,16 +917,24 @@ GovernanceRunbook gains a recycling section, executed in order:
    >
    > Two consequences worth carrying forward:
    >
-   > 1. **The wire must eventually carry the per-remit ARMED FRESH figure.**
-   >    `_planDay` decides armedness per day but a remit carries one summed
-   >    amount, so a batch straddling `D*` cannot be apportioned at the
-   >    receiving end and is refused whole (a deliberate under-count). Base
-   >    already computes the figure (`st.armedFresh`) and stores it on the
-   >    reservation; it simply is not transmitted. Put it on the **§2f.4 tag
-   >    evolution P2 already requires** — not a second tag for this. Scoped in
-   >    the design record's **§2h** (#1565), together with the zeroed-day
-   >    signal and the one open question that gates the wire: whether "confirm
-   >    zero" is a Base broadcast or a mirror-local admin act.
+   > 1. **The wire must eventually carry the per-remit ARMED FRESH DISPATCHED
+   >    figure.** `_planDay` decides armedness per day but a remit carries one
+   >    summed amount, so a batch straddling `D*` cannot be apportioned at the
+   >    receiving end and is refused whole (a deliberate under-count). Put it
+   >    on the **§2f.4 tag evolution P2 already requires** — not a second tag.
+   >
+   >    **This row first said Base "already computes the figure
+   >    (`st.armedFresh`) and stores it on the reservation" — that is FALSE**
+   >    (Codex #1565 r1). `armedFreshFull` is the PRE-clamp commitment retired
+   >    at close, not what shipped: `RewardRemitLedgerTest` asserts
+   >    `r.armedFreshFull > r.fresh` directly. The wire needs a NEW
+   >    accumulator — the armed subset of the dispatched `p.fresh` — because
+   >    `st.fresh` includes unarmed days and `st.armedFresh` is pre-clamp.
+   >    Transmitting `armedFreshFull` would over-state a mirror's backing by
+   >    the clamp residual. Full correction in the design record's **§2h**
+   >    (#1565), which also scopes the zeroed-day signal, its repricing
+   >    vehicle, and the **permissionless lapse-to-zero** that is what
+   >    actually bounds the wait (two operator-gated exits do not).
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the
