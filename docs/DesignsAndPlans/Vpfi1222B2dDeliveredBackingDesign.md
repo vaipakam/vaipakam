@@ -797,7 +797,9 @@ prerequisite 2 are needed: a signal, *and* a vehicle that rewrites the stamp.
 ### Why this section stops here — and what replaces it
 
 **Three adversarial rounds on this section produced SIXTEEN P1s, every one
-confirmed against the tree.** Two of them retracted claims this section itself
+confirmed against the tree.** (Counted from the API, not from notifications —
+an earlier pass called round three "six" and missed one, which is the same
+class of error as several of the findings themselves.) Two of them retracted claims this section itself
 had made a round earlier. The rate never fell.
 
 That is not a drafting problem, and one more round would not fix it. It is the
@@ -889,6 +891,17 @@ review cycle.
     independent rollout compatibility.** An earlier revision of this section
     recommended putting all four on "the same tag"; that would leave one path
     unversioned. Two versioned changes, each with its own rollout test.
+
+**On binding a component to its target:**
+
+15. The compensation halves must be bound to **exactly one** day. The new
+    remittance generation is shared with the ordinary batched path, whose
+    payload carries many `dayIds`, and a per-delivery sum bound does **not**
+    stop an implementation writing the same bounded pair into every listed
+    stamp — multiplying claimable funding by the batch length from one
+    transfer. Carry an explicit compensation-day discriminator, require it to
+    name a single manual-eligible day, and require the figures to be zero on
+    an ordinary multi-day batch, all before any stamp is rewritten.
 
 **On every new component of a delivery:**
 
