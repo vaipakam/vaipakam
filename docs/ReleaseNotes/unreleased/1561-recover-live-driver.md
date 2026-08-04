@@ -59,6 +59,9 @@ no links at all, which made a deployment that *had* added the forbidden link loo
 clean. And the separately-opened guide page now reports its own errors, which the
 run's closing claim about uncaught errors did not previously cover.
 
-The guide fix needs a marketing-site deploy before the link is correct in
-production; the driver was verified against a local production build of the site
-in the meantime.
+The marketing site deploys automatically from the default branch, so the guide
+link starts working in production as soon as this lands — no separate release
+step. The fix was verified ahead of that on the branch's own preview deployment,
+built by the same pipeline that publishes the live site: the anchor is present,
+it sits immediately before the section it names, and the section title lands
+clear of the fixed header rather than behind it.
