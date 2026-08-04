@@ -1120,6 +1120,17 @@ const copySource = {
   },
 
   refinance: {
+    /** Shown when the request transaction was sent but its outcome could
+     *  not be observed. The spending approval is deliberately LEFT IN
+     *  PLACE here — if the request did land, a lender accepting it needs
+     *  that approval to collect the payoff, and revoking it would break
+     *  a commitment they are entitled to act on. */
+    postedButUnconfirmed:
+      'Your request was sent, but we could not confirm whether it went' +
+      ' through. Check your open requests before trying again — if it did' +
+      ' land, requesting a second time would create a duplicate. The' +
+      ' spending approval has been left in place, because a lender' +
+      ' accepting the request needs it to collect the payoff.',
     // Composed receipt lines (extracted from RefinanceFlow.tsx); catalog
     // refs (payoffNote, walletNote, guardrailNote, …) stay composed at
     // the call site.

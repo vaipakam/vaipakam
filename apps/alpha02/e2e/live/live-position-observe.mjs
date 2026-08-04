@@ -668,11 +668,28 @@ async function visit(path, { expectChooser = false } = {}) {
  * observed about it either way.
  */
 async function stillEligible(loan) {
-  const [lockedNow, authorityNow, now] = await Promise.all([
-    offsetLockedOn(loan.borrowerTokenId),
-    borrowerAuthorityOf(loan),
-    pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
-  ]);
+  // These reads are as much "could not inspect" as the discovery ones, so
+  // they go through the same wrapper: an RPC failure here must not escape
+  // and exit 1 as a product regression (#1529 review round 8).
+  const [lockedNow, authorityNow, now, live] = await discovery(
+    `re-reading loan ${loan.id} before visiting it`,
+    () =>
+      Promise.all([
+        offsetLockedOn(loan.borrowerTokenId),
+        borrowerAuthorityOf(loan),
+        pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+        pub.readContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [loan.id],
+        }),
+      ]),
+  );
+  // STATUS too, not just the volatile gates: a loan repaid, liquidated or
+  // defaulted between discovery and the visit correctly loses its
+  // chooser, and the minutes-old status would call that a regression.
+  if (Number(live.status) !== STATUS_ACTIVE) return 'no longer active';
   if (lockedNow) return 'offset started since discovery';
   if (authorityNow === null) return 'borrower token burned since discovery';
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {

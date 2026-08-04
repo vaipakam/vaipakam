@@ -619,7 +619,8 @@
       "pendingExpires": "아무도 accept하지 않으면 request는 {{date}}에 expires됩니다.",
       "receiptYouMayOwe": "이 loan을 pay off하기 위해 ~{{payoff}}, lender가 accept하면 자동으로 pull됩니다.",
       "walletNote": "lender가 accept하는 순간 payoff가 wallet에서 자동으로 pull됩니다. new loan money는 같은 transaction에서 들어오므로 request가 open된 동안 wallet에 약 {{topUp}} spare를 유지하세요(interest portion plus new loan initiation fee).",
-      "whenEndsComposed": "lender가 request를 accept할 때, 당신이 cancel할 때, 또는 {{branch}}."
+      "whenEndsComposed": "lender가 request를 accept할 때, 당신이 cancel할 때, 또는 {{branch}}.",
+      "postedButUnconfirmed": "요청이 전송되었지만 처리 여부를 확인하지 못했습니다. 다시 시도하기 전에 열려 있는 요청을 확인하세요. 이미 처리되었다면 다시 요청할 경우 중복이 생깁니다. 지출 승인은 의도적으로 유지했습니다. 요청을 수락하는 대출자가 상환금을 회수하려면 이 승인이 필요하기 때문입니다."
     },
     "approvals": {
       "title": "상시 토큰 승인",

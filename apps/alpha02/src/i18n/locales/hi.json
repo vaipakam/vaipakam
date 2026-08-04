@@ -619,7 +619,8 @@
       "pendingExpires": "यदि कोई accept न करे तो request {{date}} को expire होगी।",
       "receiptYouMayOwe": "इस loan को pay off करने के लिए ~{{payoff}}, lender accept करे तो automatically pulled।",
       "walletNote": "Lender accept करते ही payoff आपके wallet से automatically pulled होता है। New loan का पैसा उसी transaction में आता है, इसलिए request open रहते wallet में लगभग {{topUp}} spare रखें (interest portion plus new loan initiation fee)।",
-      "whenEndsComposed": "जब lender आपकी request accept करे, जब आप इसे cancel करें, या {{branch}}।"
+      "whenEndsComposed": "जब lender आपकी request accept करे, जब आप इसे cancel करें, या {{branch}}।",
+      "postedButUnconfirmed": "आपका अनुरोध भेज दिया गया, लेकिन हम पुष्टि नहीं कर सके कि वह पूरा हुआ या नहीं। दोबारा कोशिश करने से पहले अपने खुले अनुरोध देखें — अगर वह पहुँच गया था, तो दूसरी बार अनुरोध करने से डुप्लिकेट बन जाएगा। खर्च की स्वीकृति जानबूझकर बनी रहने दी गई है, क्योंकि अनुरोध स्वीकार करने वाले ऋणदाता को भुगतान वसूलने के लिए उसकी ज़रूरत होगी।"
     },
     "approvals": {
       "title": "स्थायी token approvals",

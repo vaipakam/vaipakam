@@ -52,6 +52,10 @@ function harness(opts: {
   loseReceiptOf?: (value: bigint) => boolean;
   /** Nonce reads themselves fail. */
   nonceReadThrows?: boolean;
+  /** The approve is mined but REVERTS — receipt status 'reverted', so the
+   *  value never takes effect. Distinct from a lost receipt, where it
+   *  does. */
+  revertApproveOf?: (value: bigint) => boolean;
   /** The write is SUBMITTED but does not take effect until its receipt is
    *  awaited — the pending window an allowance read cannot see. */
   pendingUntilReceipt?: (value: bigint) => boolean;
@@ -80,6 +84,7 @@ function harness(opts: {
         throw new Error('receipt timeout');
       }
       if (hash === '0xlost') throw new Error('receipt timeout');
+      if (hash.startsWith('0xrevert')) return { status: 'reverted' as const };
       // Awaiting the receipt is what lands a pending write.
       if (inFlight.has(hash)) {
         allowance = inFlight.get(hash)!;
@@ -95,6 +100,10 @@ function harness(opts: {
       const value = args[1] as bigint;
       if (opts.rejectApproveOf?.(value)) throw new Error('user rejected');
       writes.push(value);
+      if (opts.revertApproveOf?.(value)) {
+        // Submitted, mined, reverted — the allowance is untouched.
+        return `0xrevert${writes.length}` as `0x${string}`;
+      }
       if (opts.pendingUntilReceipt?.(value)) {
         // Submitted only — the chain does not show it yet.
         const hash = `0xpending${writes.length}` as `0x${string}`;
@@ -204,6 +213,41 @@ describe('restoreAllowance — the second transaction is guarded too', () => {
     await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
     expect(h.writes).toEqual([0n, 500n]);
     expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('ensureAllowance — a REVERT retracts the optimistic report', () => {
+  it('rolls the report back to the confirmed reset when the second approve reverts', async () => {
+    // Zero-first: approve(0) mines, approve(1000) is SUBMITTED (so it is
+    // reported optimistically) and then reverts. The allowance is 0, not
+    // 1000. Leaving the stale 1000 in place made restoreAllowance read
+    // "somebody else owns this" and walk away from a grant it had just
+    // erased itself (#1529 review round 8).
+    const h = harness({ allowance: 500n, revertApproveOf: (v) => v === 1_000n });
+    const seen: (bigint | null)[] = [];
+    await expect(
+      ensureAllowance({ ...base(h), amount: 1_000n, onWrote: (v) => seen.push(v) }),
+    ).rejects.toThrow();
+    // Optimistic 1000, then corrected back to the confirmed 0.
+    expect(seen).toEqual([0n, 1_000n, 0n]);
+    expect(h.allowance).toBe(0n);
+
+    // …and with the corrected value the unwind puts the 500 back.
+    await restoreAllowance({ ...base(h), previous: 500n, wrote: seen.at(-1)! });
+    expect(h.allowance).toBe(500n);
+  });
+
+  it('reports null when the FIRST approve reverts, since nothing landed', async () => {
+    const h = harness({ allowance: 0n, revertApproveOf: () => true });
+    const seen: (bigint | null)[] = [];
+    await expect(
+      ensureAllowance({ ...base(h), amount: 1_000n, onWrote: (v) => seen.push(v) }),
+    ).rejects.toThrow();
+    expect(seen).toEqual([1_000n, null]);
+    // null → the unwind correctly does nothing at all.
+    const tx = await restoreAllowance({ ...base(h), previous: 0n, wrote: seen.at(-1)! });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([1_000n]);
   });
 });
 
@@ -340,7 +384,7 @@ describe('restoreAllowance — our own pending write is not somebody else\'s', (
       // ensureAllowance's OWN wait times out while it is still pending.
       receiptThrowsFirst: 1,
     });
-    let submitted: { value: bigint; hash: `0x${string}` } | null = null;
+    let submitted: { value: bigint | null; hash: `0x${string}` | null } | null = null;
     await expect(
       ensureAllowance({
         ...base(h),
@@ -394,7 +438,7 @@ describe('ensureAllowance onWrote', () => {
 
   it('reports both writes on the zero-first path', async () => {
     const h = harness({ allowance: 500n });
-    const seen: bigint[] = [];
+    const seen: (bigint | null)[] = [];
     await ensureAllowance({
       ...base(h),
       amount: 1_000n,

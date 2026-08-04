@@ -57,15 +57,22 @@ review doesn't rebuild the tooling from scratch.
 
 ## Watch-only drives vs. signing drives
 
-Every driver above except `live-position-observe.mjs` needs
-`TESTNET_WALLETS_FILE`, because it signs. That is unavoidable for the
-write half of a review — but it made the READ half unrunnable too
+Two drivers need no `TESTNET_WALLETS_FILE` at all:
+
+- `live-desk-i18n-capture.mjs` — read-only locale capture of PUBLIC
+  surfaces, never connected to a wallet.
+- `live-position-observe.mjs` — observes a real address's real chain
+  state through an injected watch-only provider holding no key, so it
+  reaches CONNECTED surfaces (the position pages) that a public-only
+  capture cannot.
+
+Every other driver signs, and needs the file. That is unavoidable for
+the write half of a review — but it made the READ half unrunnable too
 whenever the funded-wallet secret wasn't to hand, and the read half is
-where a render crash, a missing card, or a mis-decoded chain value
-shows up. `live-position-observe.mjs` is the pattern for that half:
-observe a real address's real chain state with no key in the process at
-all, so the read-only guarantee is structural rather than a flag that
-could be passed wrong.
+where a render crash, a missing card, or a mis-decoded chain value shows
+up. `live-position-observe.mjs` is the pattern for closing that gap on a
+wallet-gated surface: the read-only guarantee is structural (no key
+exists in the process) rather than a flag that could be passed wrong.
 
 Prefer it when what you need to confirm is *what the deployed build
 renders for real on-chain state*. Reach for a signing driver only when

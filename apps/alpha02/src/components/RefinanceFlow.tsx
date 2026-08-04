@@ -274,6 +274,14 @@ export function RefinanceFlow({
     // Hash of that write, so the unwind can settle a still-pending
     // approve instead of reading it as somebody else's change.
     let wroteAllowanceTx: `0x${string}` | null = null;
+    // Hash of the createOffer transaction once submitted. The unwind
+    // needs it because creating the request does NOT consume the payoff
+    // approval — the later acceptance does. So unlike the handover flow,
+    // where a landed write eats the allowance and the restore no-ops by
+    // itself, here a lost receipt on a transaction that actually mined
+    // would strip the approval off a LIVE refinance offer, leaving one
+    // whose acceptance cannot collect the payoff (#1529 review round 8).
+    let createOfferTx: `0x${string}` | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // createOffer + the accept-time refinance are Tier-1 — live
@@ -477,7 +485,11 @@ export function RefinanceFlow({
           return;
         }
       }
-      const { receipt } = await write('createOffer', [payload]);
+      const { receipt } = await write('createOffer', [payload], {
+        onSubmitted: (hash) => {
+          createOfferTx = hash;
+        },
+      });
       const created = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
         logs: receipt.logs,
@@ -491,12 +503,33 @@ export function RefinanceFlow({
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
       setError(captureTxError(err));
-      // No offer was created but the payoff approval mined — unwind
-      // it so a rejected step 3 leaves no payoff-sized authorization
-      // behind a pristine form with nothing to cancel. Best-effort:
-      // a second rejection just leaves the wallet's approvals view
-      // as the remedy (the error banner already shows the failure).
-      if (priorAllowance !== null && approvalToken) {
+      // Unwind the payoff approval so a rejected step 3 leaves no
+      // payoff-sized authorization behind a pristine form with nothing to
+      // cancel. Best-effort: a second rejection just leaves the wallet's
+      // approvals view as the remedy (the error banner already shows the
+      // failure).
+      //
+      // But ONLY once it is established that no offer exists. `write`
+      // throws for three different reasons and they are not equivalent:
+      // never submitted (safe to unwind), submitted and reverted (safe),
+      // or submitted with the receipt lost — in which case the offer may
+      // be live on chain and its approval is load-bearing. Failing to
+      // unwind leaves a stale approval the user can revoke from the
+      // approvals view; unwinding wrongly breaks a commitment a
+      // counterparty is entitled to act on. Those are not symmetric, so
+      // an unknown outcome keeps the approval.
+      const offerMayExist = await (async () => {
+        if (createOfferTx === null) return false; // never submitted
+        try {
+          const r = await publicClient.getTransactionReceipt({ hash: createOfferTx });
+          return r.status === 'success';
+        } catch {
+          return true; // cannot tell — assume it landed and keep the approval
+        }
+      })();
+      if (offerMayExist) {
+        setError(copy.refinance.postedButUnconfirmed);
+      } else if (priorAllowance !== null && approvalToken) {
         try {
           await restoreAllowance({
             publicClient,

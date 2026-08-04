@@ -111,8 +111,18 @@ export async function ensureAllowance(opts: {
    *  Reporting optimistically is safe because it is not treated as
    *  fact — `restoreAllowance` re-reads and acts only if the allowance
    *  really does equal this value, so a submission that never landed
-   *  reconciles to a no-op on its own (#1529 review). */
-  onWrote?: (value: bigint, hash: `0x${string}`) => void;
+   *  reconciles to a no-op on its own (#1529 review).
+   *
+   *  MAY BE CALLED MORE THAN ONCE, and a later call SUPERSEDES an
+   *  earlier one. It reports the best current estimate of what this
+   *  function has put on chain, so an optimistic report is corrected
+   *  when the receipt comes back reverted: on the zero-first path the
+   *  reset has landed and the second approve has not, so the truth is
+   *  the reset value, not the amount. `null` means nothing is believed
+   *  to have landed at all. Leaving the stale optimistic value in place
+   *  made `restoreAllowance` read "somebody else owns this" and walk
+   *  away from a grant it had itself just erased (#1529 review round 8). */
+  onWrote?: (value: bigint | null, hash: `0x${string}` | null) => void;
   /** Called once with the allowance THIS function observed, before it
    *  changes anything. Unwinding callers must take `previous` from here
    *  rather than reading the allowance themselves: two separate reads
@@ -133,6 +143,10 @@ export async function ensureAllowance(opts: {
   onObserved?.(current);
   if (current >= amount) return null;
 
+  // The last write CONFIRMED on chain, so an optimistic report can be
+  // rolled back to the truth when a later approve reverts.
+  let confirmed: { value: bigint; hash: `0x${string}` } | null = null;
+
   const approve = async (value: bigint): Promise<`0x${string}`> => {
     onPrompt?.();
     const hash = await walletClient.writeContract({
@@ -149,8 +163,16 @@ export async function ensureAllowance(opts: {
     onWrote?.(value, hash);
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== 'success') {
+      // A REVERT is definitive: this value did not take effect. Correct
+      // the optimistic report back to whatever actually landed, or to
+      // null if nothing did. Without this the caller keeps believing the
+      // allowance is `value` while the chain says otherwise, and on the
+      // zero-first path that leaves the user's prior grant erased with
+      // the unwind convinced it isn't theirs to restore.
+      onWrote?.(confirmed?.value ?? null, confirmed?.hash ?? null);
       throw new Error(`Token approval failed (${hash})`);
     }
+    confirmed = { value, hash };
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
     // not diamond.ts, so they feed the same centralized receipt floor
     // (standingApprovals / funding-watch roots ride push+focus+net

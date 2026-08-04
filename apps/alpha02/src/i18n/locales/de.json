@@ -619,7 +619,8 @@
       "pendingExpires": "Die Anfrage läuft am {{date}} ab, wenn niemand akzeptiert.",
       "receiptYouMayOwe": "~{{payoff}} zur Ablösung dieses Kredits, automatisch gezogen, wenn ein Kreditgeber akzeptiert.",
       "walletNote": "Der Payoff wird automatisch aus Ihrer Wallet gezogen, sobald ein Kreditgeber akzeptiert. Das Geld des neuen Kredits kommt in derselben Transaktion an, halten Sie also etwa {{topUp}} frei in Ihrer Wallet (den Zinsanteil plus die Initialisierungsgebühr des neuen Kredits), solange die Anfrage offen ist.",
-      "whenEndsComposed": "Wenn ein Kreditgeber Ihre Anfrage akzeptiert, wenn Sie sie stornieren, oder {{branch}}."
+      "whenEndsComposed": "Wenn ein Kreditgeber Ihre Anfrage akzeptiert, wenn Sie sie stornieren, oder {{branch}}.",
+      "postedButUnconfirmed": "Deine Anfrage wurde gesendet, aber wir konnten nicht bestätigen, ob sie durchgegangen ist. Prüfe deine offenen Anfragen, bevor du es erneut versuchst — falls sie angekommen ist, würde eine zweite Anfrage ein Duplikat erzeugen. Die Ausgabe-Freigabe wurde bewusst beibehalten, weil ein Kreditgeber, der die Anfrage annimmt, sie zum Einzug der Ablösung benötigt."
     },
     "approvals": {
       "title": "Dauerhafte Token-Genehmigungen",

@@ -619,7 +619,8 @@
       "pendingExpires": "La solicitud expira el {{date}} si nadie acepta.",
       "receiptYouMayOwe": "~{{payoff}} para liquidar este préstamo, tomado automáticamente cuando un prestamista acepta.",
       "walletNote": "El payoff se toma automáticamente de tu wallet en el momento en que un prestamista acepta. El dinero del nuevo préstamo llega en la misma transacción, así que mantén unos {{topUp}} libres en tu wallet (la parte de intereses más la comisión de iniciación del nuevo préstamo) mientras la solicitud esté abierta.",
-      "whenEndsComposed": "Cuando un prestamista acepta tu solicitud, cuando la cancelas, o {{branch}}."
+      "whenEndsComposed": "Cuando un prestamista acepta tu solicitud, cuando la cancelas, o {{branch}}.",
+      "postedButUnconfirmed": "Tu solicitud se envió, pero no pudimos confirmar si se completó. Revisa tus solicitudes abiertas antes de volver a intentarlo: si sí llegó, solicitarlo otra vez crearía un duplicado. La aprobación de gasto se dejó activa, porque un prestamista que acepte la solicitud la necesita para cobrar la liquidación."
     },
     "approvals": {
       "title": "Aprobaciones permanentes de tokens",

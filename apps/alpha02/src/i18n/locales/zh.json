@@ -619,7 +619,8 @@
       "pendingExpires": "如果无人接受，请求将在 {{date}} 过期。",
       "receiptYouMayOwe": "约 {{payoff}} 用于还清此贷款，贷方接受时自动拉取。",
       "walletNote": "贷方接受时，payoff 会自动从你的钱包拉取。新贷款资金会在同一交易中到达，因此请求打开期间请在钱包中保留约 {{topUp}} 备用（利息部分加新贷款发起费）。",
-      "whenEndsComposed": "当贷方接受你的请求、你取消请求，或 {{branch}}。"
+      "whenEndsComposed": "当贷方接受你的请求、你取消请求，或 {{branch}}。",
+      "postedButUnconfirmed": "您的请求已发送，但我们无法确认它是否成功。再次尝试前请先查看您的未完成请求——如果它已经生效，再请求一次会产生重复。支出授权已特意保留，因为接受该请求的出借方需要它来收取还款。"
     },
     "approvals": {
       "title": "常设 token 批准",

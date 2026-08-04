@@ -619,7 +619,8 @@
       "pendingExpires": "La demande expire le {{date}} si personne ne l’accepte.",
       "receiptYouMayOwe": "~{{payoff}} pour rembourser ce prêt, prélevé automatiquement quand un prêteur accepte.",
       "walletNote": "Le remboursement final est prélevé automatiquement depuis votre wallet au moment où un prêteur accepte. L’argent du nouveau prêt arrive dans la même transaction ; gardez donc environ {{topUp}} disponibles dans votre wallet (la partie intérêts plus les frais d’initialisation du nouveau prêt) tant que la demande est ouverte.",
-      "whenEndsComposed": "Quand un prêteur accepte votre demande, quand vous l’annulez, ou {{branch}}."
+      "whenEndsComposed": "Quand un prêteur accepte votre demande, quand vous l’annulez, ou {{branch}}.",
+      "postedButUnconfirmed": "Votre demande a été envoyée, mais nous n’avons pas pu confirmer si elle a abouti. Vérifiez vos demandes ouvertes avant de réessayer : si elle est bien passée, une seconde demande créerait un doublon. L’autorisation de dépense a été laissée en place, car un prêteur qui accepte la demande en a besoin pour encaisser le remboursement."
     },
     "approvals": {
       "title": "Approbations permanentes de tokens",

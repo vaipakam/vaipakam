@@ -80,15 +80,35 @@ const WALLETS = Array.isArray(WALLETS_RAW)
 function walletFor(role) {
   const w = WALLETS?.[role];
   const key = w?.privateKey;
-  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+  const blocked = (why) => {
     const roles = Object.keys(WALLETS ?? {});
     console.error(
-      `\nBLOCKED: the dev wallet file has no usable key for role "${role}".` +
+      `\nBLOCKED: the dev wallet file has no usable credential for role` +
+        ` "${role}" — ${why}.` +
         `\n  path:  ${WALLETS_PATH}` +
         `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
-        `\n  → each role needs { address, privateKey } with a 32-byte key.`,
+        `\n  → each role needs { address, privateKey } with a 32-byte key,` +
+        ` and the address must be the one that key derives.`,
     );
     process.exit(2);
+  };
+
+  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+    blocked('no valid privateKey');
+  }
+  // The ADDRESS is a credential too, not decoration. `addressOf` is used
+  // BEFORE launch by several drivers, so a missing one crashes with exit 1
+  // rather than BLOCKED — and worse, an address belonging to a DIFFERENT
+  // key makes a drive inspect one wallet while injecting another, which
+  // fails in a way that looks like an app bug (#1529 review round 8).
+  if (typeof w.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(w.address)) {
+    blocked('no valid address');
+  }
+  const derived = privateKeyToAccount(key).address;
+  if (derived.toLowerCase() !== w.address.toLowerCase()) {
+    blocked(
+      `address ${w.address} is not the one its privateKey derives (${derived})`,
+    );
   }
   return w;
 }

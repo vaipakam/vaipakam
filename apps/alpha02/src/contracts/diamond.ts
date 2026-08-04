@@ -42,6 +42,13 @@ export function useDiamondWrite() {
     async (
       functionName: string,
       args: readonly unknown[],
+      /** `onSubmitted` fires the moment the transaction has a hash,
+       *  BEFORE the receipt wait. A caller that unwinds on failure needs
+       *  it to tell "never sent" from "sent, outcome unknown": the
+       *  receipt wait can time out on a transaction that mined perfectly
+       *  well, and undoing a side effect of a write that actually landed
+       *  is worse than leaving it (#1529 review round 8). */
+      opts?: { onSubmitted?: (hash: `0x${string}`) => void },
     ): Promise<DiamondWriteResult> => {
       if (!onSupportedChain || !walletChain || !walletClient || !address) {
         throw new Error(copy.errors.walletConnectFirst);
@@ -55,6 +62,7 @@ export function useDiamondWrite() {
         account: address,
         chain: walletClient.chain,
       });
+      opts?.onSubmitted?.(hash);
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== 'success') {
         throw new Error(`Transaction reverted (${hash})`);
