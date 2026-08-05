@@ -45,7 +45,7 @@ const flag = (name: string): string | undefined => {
 const localesDirArg = flag('--locales-dir');
 const patchesDirArg = flag('--patches');
 const reorder = args.includes('--reorder');
-const allowOmissions = args.includes('--allow-token-omissions');
+const allowedOmissions = collectAllowedOmissions(args);
 if (!localesDirArg || !patchesDirArg) {
   console.error('Usage: --locales-dir <path> --patches <path>');
   process.exit(1);
@@ -80,14 +80,19 @@ const enJson = JSON.parse(
  *
  * `unknown` and `malformed` are ALWAYS rejected: i18next has nothing to
  * substitute for an invented token, and renders a malformed brace run
- * literally. `dropped` is rejected by DEFAULT but can be downgraded to
- * a warning with `--allow-token-omissions`, because a small number of
- * omissions are grammatically correct (a dual form that already means
- * "two days" must not restate the count). That flag is for exactly
- * those deliveries, and the omission still has to be recorded in the
- * consuming app's coverage allowlist to survive its build.
+ * literally.
+ *
+ * `dropped` is rejected unless the EXACT `<locale>:<path>:<token>`
+ * triple was allowed on the command line. A blanket "allow omissions"
+ * switch was the first shape of this and it was too coarse (Codex
+ * #1563 r4): one legitimate omission — a dual form that already means
+ * "two days" and must not restate the count — licensed every other
+ * dropped placeholder in the same delivery, so an unrelated
+ * `{{amount}}` could vanish from a sentence under an exemption granted
+ * for something else. Naming the triple keeps the escape hatch exactly
+ * as wide as the case that needs it.
  */
-function interpolationProblems(source, candidate, allowOmissions) {
+function interpolationProblems(source, candidate, allowedOmissions, code) {
   const lines = [];
   for (const { path: key, unknown, dropped, malformed } of placeholderDrift(
     source,
@@ -95,13 +100,24 @@ function interpolationProblems(source, candidate, allowOmissions) {
   )) {
     if (unknown.length > 0) lines.push(`${key}: invents {{${unknown.join('}}, {{')}}}`);
     if (malformed.length > 0) lines.push(`${key}: malformed brace run(s) ${malformed.join(', ')}`);
-    if (dropped.length > 0 && !allowOmissions) {
+    for (const token of dropped) {
+      if (allowedOmissions.has(`${code}:${key}:${token}`)) continue;
       lines.push(
-        `${key}: drops {{${dropped.join('}}, {{')}}} (pass --allow-token-omissions if the grammar carries it)`,
+        `${key}: drops {{${token}}} (allow with --allow-omission ${code}:${key}:${token} ` +
+          'only if the grammar already carries it)',
       );
     }
   }
   return lines;
+}
+
+/** Collect repeatable `--allow-omission <locale>:<path>:<token>` args. */
+function collectAllowedOmissions(argv) {
+  const out = new Set();
+  argv.forEach((a, i) => {
+    if (a === '--allow-omission' && argv[i + 1]) out.add(argv[i + 1]);
+  });
+  return out;
 }
 
 const patchFiles = fs
@@ -150,7 +166,7 @@ for (const file of patchFiles) {
   // — i18next renders nothing for a non-string and only logs.
   const strayKeys = unknownKeys(enJson, patch);
   const drifted = leafTypeDrift(enJson, patch);
-  const interpolation = interpolationProblems(enJson, patch, allowOmissions);
+  const interpolation = interpolationProblems(enJson, patch, allowedOmissions, code);
   if (strayKeys.length > 0 || drifted.length > 0 || interpolation.length > 0) {
     console.error(`✗ ${code}: patch rejected, nothing written`);
     for (const key of strayKeys.slice(0, 10)) {

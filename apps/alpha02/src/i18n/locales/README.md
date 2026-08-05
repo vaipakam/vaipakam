@@ -91,10 +91,19 @@ non-zero for the rest.
 
 Both merge paths reject a translation that mangles an interpolation
 token before it can reach a file — an invented `{{token}}` or a
-malformed brace run always, and a DROPPED token unless you pass
-`--allow-token-omissions`. Use that flag only where the target grammar
-already carries the value (the Arabic dual case), and record the
-omission in `ALLOWED_OMISSIONS` as well or the build will still fail.
+malformed brace run always, and a DROPPED token unless you name that
+exact omission:
+
+```bash
+--allow-omission "ar:copy.units.durationDay_two:count, number"
+```
+
+The triple is `<locale>:<key>:<token>`, repeatable, and it excuses only
+itself — allowing the Arabic dual does not license an unrelated
+`{{amount}}` disappearing elsewhere in the same delivery. The rejection
+message prints the exact flag to paste. Use it only where the target
+grammar already carries the value, and record the omission in
+`ALLOWED_OMISSIONS` too or the build will still fail.
 
 Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map

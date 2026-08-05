@@ -181,14 +181,19 @@ function verifyGlossaryPreserved(translated: object, sourceText: string): string
  *
  * `unknown` and `malformed` are ALWAYS rejected: i18next has nothing to
  * substitute for an invented token, and renders a malformed brace run
- * literally. `dropped` is rejected by DEFAULT but can be downgraded to
- * a warning with `--allow-token-omissions`, because a small number of
- * omissions are grammatically correct (a dual form that already means
- * "two days" must not restate the count). That flag is for exactly
- * those deliveries, and the omission still has to be recorded in the
- * consuming app's coverage allowlist to survive its build.
+ * literally.
+ *
+ * `dropped` is rejected unless the EXACT `<locale>:<path>:<token>`
+ * triple was allowed on the command line. A blanket "allow omissions"
+ * switch was the first shape of this and it was too coarse (Codex
+ * #1563 r4): one legitimate omission — a dual form that already means
+ * "two days" and must not restate the count — licensed every other
+ * dropped placeholder in the same delivery, so an unrelated
+ * `{{amount}}` could vanish from a sentence under an exemption granted
+ * for something else. Naming the triple keeps the escape hatch exactly
+ * as wide as the case that needs it.
  */
-function interpolationProblems(source, candidate, allowOmissions) {
+function interpolationProblems(source, candidate, allowedOmissions, code) {
   const lines = [];
   for (const { path: key, unknown, dropped, malformed } of placeholderDrift(
     source,
@@ -196,13 +201,24 @@ function interpolationProblems(source, candidate, allowOmissions) {
   )) {
     if (unknown.length > 0) lines.push(`${key}: invents {{${unknown.join('}}, {{')}}}`);
     if (malformed.length > 0) lines.push(`${key}: malformed brace run(s) ${malformed.join(', ')}`);
-    if (dropped.length > 0 && !allowOmissions) {
+    for (const token of dropped) {
+      if (allowedOmissions.has(`${code}:${key}:${token}`)) continue;
       lines.push(
-        `${key}: drops {{${dropped.join('}}, {{')}}} (pass --allow-token-omissions if the grammar carries it)`,
+        `${key}: drops {{${token}}} (allow with --allow-omission ${code}:${key}:${token} ` +
+          'only if the grammar already carries it)',
       );
     }
   }
   return lines;
+}
+
+/** Collect repeatable `--allow-omission <locale>:<path>:<token>` args. */
+function collectAllowedOmissions(argv) {
+  const out = new Set();
+  argv.forEach((a, i) => {
+    if (a === '--allow-omission' && argv[i + 1]) out.add(argv[i + 1]);
+  });
+  return out;
 }
 
 /** A bundle counts as a placeholder (→ eligible for the default
@@ -231,7 +247,7 @@ async function main() {
 
   const missingOnly = args.includes('--missing-only');
   const reorder = args.includes('--reorder');
-  const allowOmissions = args.includes('--allow-token-omissions');
+  const allowedOmissions = collectAllowedOmissions(args);
   const allFlag = args.includes('--all');
   const explicitCodes = args.filter(
     (a, i) => !a.startsWith('--') && args[i - 1] !== '--locales-dir',
@@ -322,7 +338,7 @@ async function main() {
       // notices (Codex #1563 r2). Apps without a locale-coverage
       // command would never find out.
       const short = missingSubtree(source, translated);
-      const interpolation = interpolationProblems(source, translated, allowOmissions);
+      const interpolation = interpolationProblems(source, translated, allowedOmissions, code);
       if (
         strayKeys.length > 0 ||
         drifted.length > 0 ||
