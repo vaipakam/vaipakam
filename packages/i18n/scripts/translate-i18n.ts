@@ -203,8 +203,12 @@ function interpolationProblems(source, candidate, allowedOmissions, code) {
     if (malformed.length > 0) lines.push(`${key}: malformed brace run(s) ${malformed.join(', ')}`);
     for (const token of dropped) {
       if (allowedOmissions.has(`${code}:${key}:${token}`)) continue;
+      // The suggested flag is QUOTED: a formatted token carries a
+      // space (`count, number`), and unquoted the shell splits it in
+      // two — the operator pastes the line the tool printed and the
+      // merge still fails (Codex #1563 r5).
       lines.push(
-        `${key}: drops {{${token}}} (allow with --allow-omission ${code}:${key}:${token} ` +
+        `${key}: drops {{${token}}} (allow with --allow-omission "${code}:${key}:${token}" ` +
           'only if the grammar already carries it)',
       );
     }
@@ -249,8 +253,16 @@ async function main() {
   const reorder = args.includes('--reorder');
   const allowedOmissions = collectAllowedOmissions(args);
   const allFlag = args.includes('--all');
+  // Positional args are locale codes — but only the ones that aren't
+  // the VALUE of a flag. Skipping just `--locales-dir` meant
+  // `--allow-omission "ar:copy…:count, number"` was read as a locale
+  // and the run died with `Unknown locale codes:`, making the
+  // exemption unusable on the API path it was added for (Codex #1563
+  // r5). Listed centrally so a future value-taking flag can't
+  // reintroduce it silently.
+  const VALUE_FLAGS = new Set(['--locales-dir', '--allow-omission']);
   const explicitCodes = args.filter(
-    (a, i) => !a.startsWith('--') && args[i - 1] !== '--locales-dir',
+    (a, i) => !a.startsWith('--') && !VALUE_FLAGS.has(args[i - 1] ?? ''),
   ) as LocaleCode[];
 
   let targets: LocaleCode[];

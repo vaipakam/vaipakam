@@ -263,7 +263,16 @@ export function placeholderDrift(
       }
       const overlap = Math.min(value.length, counterpart.length);
       for (let i = 0; i < overlap; i += 1) {
-        compare(`${path}[${i}]`, value[i], counterpart[i] as string);
+        // Only compare entries that are actually strings. A same-length
+        // array holding a number or an object reaches here BEFORE
+        // `leafTypeDrift` gets to report it, and calling string methods
+        // on it threw `TypeError: value.replace is not a function` —
+        // aborting a whole merge batch with a stack trace instead of
+        // the intended per-locale rejection (Codex #1563 r5). The bad
+        // element is still reported, by the check that exists for it.
+        const theirs = counterpart[i];
+        if (typeof value[i] !== 'string' || typeof theirs !== 'string') continue;
+        compare(`${path}[${i}]`, value[i], theirs);
       }
     } else if (typeof counterpart === 'string') {
       compare(path, value, counterpart);

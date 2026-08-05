@@ -102,8 +102,12 @@ function interpolationProblems(source, candidate, allowedOmissions, code) {
     if (malformed.length > 0) lines.push(`${key}: malformed brace run(s) ${malformed.join(', ')}`);
     for (const token of dropped) {
       if (allowedOmissions.has(`${code}:${key}:${token}`)) continue;
+      // The suggested flag is QUOTED: a formatted token carries a
+      // space (`count, number`), and unquoted the shell splits it in
+      // two — the operator pastes the line the tool printed and the
+      // merge still fails (Codex #1563 r5).
       lines.push(
-        `${key}: drops {{${token}}} (allow with --allow-omission ${code}:${key}:${token} ` +
+        `${key}: drops {{${token}}} (allow with --allow-omission "${code}:${key}:${token}" ` +
           'only if the grammar already carries it)',
       );
     }
