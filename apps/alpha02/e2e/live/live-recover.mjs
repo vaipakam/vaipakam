@@ -376,30 +376,45 @@ try {
 }
 
 /**
- * Blocked requests that are EDGE TELEMETRY, not the app writing.
+ * Is this blocked request Cloudflare's Real User Monitoring beacon?
  *
- * `/cdn-cgi/` is Cloudflare's own reserved path — it is injected by the
- * edge into any page it serves, never routed by application code, and
- * `rum` is its Real User Monitoring beacon. Blocking it is correct (it
- * is a POST, and this run is read-only), but FAILING on it is not: it
- * says nothing about whether the surface under review tried to mutate
- * anything, and it fires on the marketing page the guide arm opens as
- * a second tab, which isn't even this app.
+ * `/cdn-cgi/` is Cloudflare's reserved path — injected by the edge into
+ * pages it serves, never routed by application code — and `rum` is the
+ * monitoring beacon specifically. Blocking it is correct (it is a POST
+ * and this run is read-only), but FAILING on it is not: it says nothing
+ * about whether the surface under review tried to mutate anything, and
+ * it fires on the marketing page the guide arm opens as a second tab,
+ * which isn't even this app.
  *
- * Kept as a narrow, reasoned exemption rather than relaxing the check.
- * A guard that reports a failure nobody can act on gets ignored, and
- * then the real violation it exists to catch gets ignored with it.
- * Anything else — an app write, a signing RPC, a backend call — still
- * fails the run.
+ * Matched by exact PATHNAME on a first-party host, not by substring.
+ * A `/cdn-cgi/` substring test would also have waved through a genuine
+ * mutating POST to something like `/cdn-cgi/upload`, or any external
+ * URL that merely contains the segment — turning a narrow carve-out
+ * into a hole in the one check that proves this review didn't write
+ * anything (Codex #1576 r1).
+ *
+ * Kept narrow deliberately. A guard that reports a failure nobody can
+ * act on gets ignored, and the real violation it exists to catch gets
+ * ignored with it — but a guard widened past its reason stops being a
+ * guard at all.
  */
-const EDGE_TELEMETRY = /\/cdn-cgi\//;
+function isCloudflareBeacon(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const firstParty =
+      url.hostname === 'vaipakam.com' || url.hostname.endsWith('.vaipakam.com');
+    return firstParty && url.pathname === '/cdn-cgi/rum';
+  } catch {
+    return false;
+  }
+}
 
 // 5. The read-only guard's own findings. A blocked request means the
 //    page attempted a signing RPC or a backend write during a review
 //    that claims to be read-only — that is a finding in its own right,
 //    not noise to discard under otherwise-green checks.
-const telemetry = blockedRequests.filter((b) => EDGE_TELEMETRY.test(b.url));
-const violations = blockedRequests.filter((b) => !EDGE_TELEMETRY.test(b.url));
+const telemetry = blockedRequests.filter((b) => isCloudflareBeacon(b.url));
+const violations = blockedRequests.filter((b) => !isCloudflareBeacon(b.url));
 if (telemetry.length) {
   console.log(
     `\nBlocked ${telemetry.length} edge-telemetry request(s) (expected, not a finding):`,
