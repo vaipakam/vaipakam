@@ -63,6 +63,11 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 // this check exists to catch.
 const GUIDE_URL = 'https://vaipakam.com/help/advanced#stuck-recovery.what';
 const GUIDE_ANCHOR_ID = 'stuck-recovery.what';
+/** apps/www's fixed navbar is 72px; anything landing above this is
+ *  behind it. The guide's own `scroll-margin-top` is 96px (desktop) /
+ *  132px (mobile, which also has a sticky role bar), so a correct
+ *  landing clears this comfortably. */
+const NAVBAR_CLEARANCE_PX = 72;
 
 const fails = [];
 /** Console/page errors from the separately-opened guide page. */
@@ -118,6 +123,24 @@ async function recoverLinkHrefs(page) {
       .map((a) => a.getAttribute('href') ?? '')
       .filter((href) => /(^|\/)recover(\/|$|[?#])/.test(href)),
   );
+}
+
+/**
+ * Does a robots value carry BOTH directives as complete tokens?
+ *
+ * Substring matching passed `noindexing, nofollowing` — values that
+ * contain the directive names but are not them, so a crawler receives
+ * neither and the run reports the policy green over a broken response
+ * (Codex #1561 r3). Split on commas and match exactly instead; the
+ * same helper covers the header and the meta tag so the two can't be
+ * checked to different standards.
+ */
+function hasRobotsDirectives(value) {
+  const tokens = (value ?? '')
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  return tokens.includes('noindex') && tokens.includes('nofollow');
 }
 
 /** Does `href` resolve to THIS app's own `/recover` route?
@@ -221,6 +244,39 @@ try {
             `#${GUIDE_ANCHOR_ID} ${anchored ? 'present' : 'ABSENT'})`,
           Boolean(res && res.ok()) && anchored,
         );
+
+        // Existence is not the property the user cares about — LANDING
+        // is. The marker can stay attached while losing `display:block`
+        // or its `scroll-margin-top`, which puts it at viewport top
+        // under the fixed navbar with the named heading inside the
+        // covered strip: the link "works" and the reader sees the wrong
+        // thing (Codex #1561 r3). Measure where the heading actually
+        // ends up after fragment navigation.
+        if (anchored) {
+          await guidePage.waitForTimeout(1500); // let the fragment scroll settle
+          const landing = await guidePage
+            .locator(`[id="${GUIDE_ANCHOR_ID}"]`)
+            .evaluate((el) => {
+              const heading = el.nextElementSibling;
+              const box = heading?.getBoundingClientRect();
+              return {
+                tag: heading?.tagName ?? null,
+                top: box ? Math.round(box.top) : null,
+                viewport: window.innerHeight,
+              };
+            })
+            .catch(() => null);
+          const isHeading = /^H[1-6]$/.test(landing?.tag ?? '');
+          const clearsChrome =
+            landing?.top != null &&
+            landing.top >= NAVBAR_CLEARANCE_PX &&
+            landing.top < landing.viewport;
+          check(
+            `attested section lands clear of the fixed chrome ` +
+              `(${landing?.tag ?? 'no heading'} at ${landing?.top ?? '?'}px, need >= ${NAVBAR_CLEARANCE_PX})`,
+            isHeading && clearsChrome,
+          );
+        }
       } finally {
         await guidePage.close();
       }
@@ -230,27 +286,40 @@ try {
   // 2. No nav/Settings entry anywhere — the gate is the whole point.
   //    Checked by destination on both the Settings page and the shell
   //    around it (the nav renders on every route).
-  await page.goto(SITE + '/settings', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await ensureConnected(page);
-  // Settings is `React.lazy` like Help, so a fixed sleep can scan the
-  // Suspense fallback — which has no links at all, making a deployment
-  // that DID add the forbidden link look clean (Codex #1561 r2). Wait
-  // for the page itself, and fail loudly if it never renders rather
-  // than reporting a link-free page.
-  const settingsReady = await page
-    .getByRole('heading', { name: /settings/i })
-    .first()
-    .waitFor({ state: 'visible', timeout: 45_000 })
-    .then(() => true)
-    .catch(() => false);
-  check('settings page renders (required before the link scan is meaningful)', settingsReady);
-  const settingsRecoverLinks = settingsReady ? await recoverLinkHrefs(page) : ['<settings never rendered>'];
-  check(
-    `no Settings/nav link targets /recover${
-      settingsRecoverLinks.length ? ` (found ${settingsRecoverLinks.join(', ')})` : ''
-    }`,
-    settingsRecoverLinks.length === 0,
-  );
+  // Scanned in BOTH experience modes. Advanced-only nav items and
+  // Settings cards are filtered by `isAdvanced`, so a forbidden link
+  // added to one of those simply would not be in the Basic DOM — and a
+  // persistent profile sitting in Basic would have certified the gate
+  // clean without ever rendering the thing that breaks it (Codex #1561
+  // r3). The mode is read from localStorage at boot, so it is set
+  // directly and the page reloaded rather than driven through the UI.
+  for (const mode of ['basic', 'advanced']) {
+    await page.goto(SITE + '/settings', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.evaluate((m) => localStorage.setItem('alpha02.mode', m), mode);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    await ensureConnected(page);
+    // Settings is `React.lazy` like Help, so a fixed sleep can scan the
+    // Suspense fallback — which has no links at all, making a
+    // deployment that DID add the forbidden link look clean (Codex
+    // #1561 r2). Wait for the page itself, and fail loudly if it never
+    // renders rather than reporting a link-free page.
+    const settingsReady = await page
+      .getByRole('heading', { name: /settings/i })
+      .first()
+      .waitFor({ state: 'visible', timeout: 45_000 })
+      .then(() => true)
+      .catch(() => false);
+    check(`settings renders in ${mode} mode (the link scan means nothing otherwise)`, settingsReady);
+    const settingsRecoverLinks = settingsReady
+      ? await recoverLinkHrefs(page)
+      : ['<settings never rendered>'];
+    check(
+      `no Settings/nav link targets /recover in ${mode} mode${
+        settingsRecoverLinks.length ? ` (found ${settingsRecoverLinks.join(', ')})` : ''
+      }`,
+      settingsRecoverLinks.length === 0,
+    );
+  }
 
   // 3. The route itself: deployed robots header, then the posture
   //    matching the live oracle.
@@ -263,28 +332,31 @@ try {
   const xRobots = recoverRes?.headers()['x-robots-tag'] ?? null;
   check(
     `X-Robots-Tag is noindex, nofollow (got ${xRobots ?? 'ABSENT'})`,
-    /noindex/i.test(xRobots ?? '') && /nofollow/i.test(xRobots ?? ''),
+    hasRobotsDirectives(xRobots),
   );
 
   await ensureConnected(page);
   const posture = await settledPosture(page);
   check(`/recover settles on a definite state (got ${posture ?? 'STILL PROBING'})`, posture !== null);
 
-  if (oracleSet) {
+  // WALLET-SPECIFIC postures are correct whatever the oracle says, and
+  // they render AHEAD of the availability state — a durable unresolved
+  // record locks the page before it ever asks about the oracle, and a
+  // flagged wallet is blocked either way. Judging them against the
+  // oracle branch made a correct page look like a deployment failure
+  // the moment the oracle was reset under a profile carrying a pending
+  // record (Codex #1561 r3). The driver can't clear either condition
+  // from a read-only run, so both are skips wherever they appear.
+  if (posture === 'sanctioned' || posture === 'pending') {
+    console.log(
+      `skip  this wallet is in the "${posture}" posture — the form is correctly ` +
+        'withheld regardless of the oracle setting; re-run with a clean, unflagged ' +
+        'wallet with no outstanding attempt to exercise the availability arms.',
+    );
+  } else if (oracleSet) {
     // Configured deployment: the form is the correct posture for a
-    // clean wallet with nothing outstanding. A flagged wallet or an
-    // unresolved attempt on record ALSO correctly withholds the form,
-    // so those are reported as skips, not failures (Codex #1561 r1) —
-    // the driver has no way to clear either from a read-only run.
-    if (posture === 'sanctioned' || posture === 'pending') {
-      console.log(
-        `skip  oracle configured, but this wallet is in the "${posture}" posture — ` +
-          'the form is correctly withheld; re-run with a clean, unflagged wallet ' +
-          'to exercise the form arm.',
-      );
-    } else {
-      check('oracle configured → form offered', posture === 'form');
-    }
+    // clean wallet with nothing outstanding.
+    check('oracle configured → form offered', posture === 'form');
   } else {
     // Shipped retail default: recovery must be presented as
     // unavailable, never as a form that could only produce a doomed
@@ -298,10 +370,7 @@ try {
     .locator('meta[name="robots"]')
     .getAttribute('content')
     .catch(() => null);
-  check(
-    `meta robots is noindex,nofollow (got ${robots})`,
-    /noindex/.test(robots ?? '') && /nofollow/.test(robots ?? ''),
-  );
+  check(`meta robots is noindex,nofollow (got ${robots})`, hasRobotsDirectives(robots));
 } finally {
   await done();
 }

@@ -9,10 +9,11 @@
     "prebuild": "node scripts/generate-sitemap.mjs && node scripts/generate-llms.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b --noEmit && node scripts/check-guide-anchor-parity.mjs",
     "prerender": "node scripts/prerender.mjs",
     "deploy": "npm run build && npm run prerender && wrangler deploy",
-    "sitemap": "node scripts/generate-sitemap.mjs"
+    "sitemap": "node scripts/generate-sitemap.mjs",
+    "check:anchors": "node scripts/check-guide-anchor-parity.mjs"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
