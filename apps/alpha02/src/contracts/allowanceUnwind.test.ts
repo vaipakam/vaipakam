@@ -70,6 +70,13 @@ function harness(opts: {
    *  prefix, so it cannot express "the reset confirmed, the second
    *  approve's wait timed out". */
   receiptThrowsAt?: number[];
+  /** The approve is submitted and then REPLACED in the wallet — cancelled
+   *  (a zero-value self-send at the same nonce) or sped up. The allowance
+   *  never moves, and viem's wait follows the replacement and resolves
+   *  with ITS receipt: `status: 'success'`, a DIFFERENT hash. The whole
+   *  point of round 11: a transaction that did nothing we asked for
+   *  presents exactly like one that did, unless the hash is checked. */
+  replaceTxOf?: (value: bigint) => boolean;
 }) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
@@ -93,13 +100,22 @@ function harness(opts: {
         throw new Error('receipt timeout');
       }
       if (hash === '0xlost') throw new Error('receipt timeout');
-      if (hash.startsWith('0xrevert')) return { status: 'reverted' as const };
+      if (hash.startsWith('0xrevert')) {
+        return { status: 'reverted' as const, transactionHash: hash };
+      }
+      if (hash.startsWith('0xreplaced')) {
+        // viem followed the replacement: a DIFFERENT transaction's
+        // receipt, and a successful one. Nothing we submitted took
+        // effect, and the status alone cannot say so.
+        return { status: 'success' as const, transactionHash: '0xcancel' };
+      }
       // Awaiting the receipt is what lands a pending write.
       if (inFlight.has(hash)) {
         allowance = inFlight.get(hash)!;
         inFlight.delete(hash);
       }
-      return { status: 'success' as const };
+      // The receipt of the transaction actually asked about.
+      return { status: 'success' as const, transactionHash: hash };
     }),
   } as unknown as PublicClient;
 
@@ -112,6 +128,11 @@ function harness(opts: {
       if (opts.revertApproveOf?.(value)) {
         // Submitted, mined, reverted — the allowance is untouched.
         return `0xrevert${writes.length}` as `0x${string}`;
+      }
+      if (opts.replaceTxOf?.(value)) {
+        // Submitted, then replaced — the allowance is untouched, and the
+        // wait will resolve successfully on somebody else's hash.
+        return `0xreplaced${writes.length}` as `0x${string}`;
       }
       if (opts.pendingUntilReceipt?.(value)) {
         // Submitted only — the chain does not show it yet.
@@ -529,6 +550,90 @@ describe('ensureAllowance onWrote', () => {
 
     // …and the unwind, told that, restores the grant.
     await restoreAllowance({ ...base(h), previous: 500n, wrote });
+    expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('a REPLACED transaction is not a successful one (round 11)', () => {
+  // viem's `waitForTransactionReceipt` follows replacements. Cancel a
+  // pending approve in the wallet — a zero-value self-send at the same
+  // nonce — and the wait does not fail: it resolves with the CANCEL's
+  // receipt, and that receipt reads `status: 'success'`. Every
+  // `status === 'success'` check in this codebase rested on that not
+  // happening. Round 10 found it in one approve; round 11 found the same
+  // unsound assumption in three more places. These pin the behaviour at
+  // both ends of the pair, so the class cannot quietly come back.
+
+  it('ensureAllowance rejects a cancelled approve rather than reporting it granted', async () => {
+    const h = harness({ allowance: 0n, replaceTxOf: (v) => v === 1_000n });
+    const seen: (bigint | null)[] = [];
+    await expect(
+      ensureAllowance({ ...base(h), amount: 1_000n, onWrote: (v) => seen.push(v) }),
+    ).rejects.toThrow();
+    // The allowance never moved…
+    expect(h.allowance).toBe(0n);
+    // …and the optimistic report was retracted to null, so the unwind is
+    // told there is nothing of ours to put back.
+    expect(seen).toEqual([1_000n, null]);
+    const tx = await restoreAllowance({ ...base(h), previous: 0n, wrote: seen.at(-1)! });
+    expect(tx).toBeNull();
+  });
+
+  it('restoreAllowance refuses to report a cancelled restore as done', async () => {
+    // The mirror case, and the one that costs the user: the flow took a
+    // 500 grant down, the unwind's put-back is cancelled in the wallet,
+    // and a receipt-only check would return a hash — telling the caller
+    // the grant is back while the allowance sits at zero.
+    const h = harness({ allowance: 1_000n, replaceTxOf: (v) => v === 500n });
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/cancelled or replaced/);
+    // The reset landed; the restore did not. Reported as a failure, which
+    // is the point — silence here reads as "your approval is back".
+    expect(h.writes).toEqual([0n, 500n]);
+    expect(h.allowance).toBe(0n);
+  });
+
+  it('restoreAllowance treats OUR replaced write like a revert, not like a stranger', async () => {
+    // `ensureAllowance` submitted 1000 and its own receipt wait timed out,
+    // so `wrote` stayed at the optimistic 1000. The transaction was then
+    // cancelled. The unwind waits on that hash itself: without the hash
+    // check it sees `status: 'success'`, concludes 1000 really landed,
+    // compares it against the live 0 and walks away — leaving the prior
+    // 500 erased. Treating a replacement exactly as it treats a revert is
+    // what puts the grant back.
+    const h = harness({
+      allowance: 500n,
+      replaceTxOf: (v) => v === 1_000n,
+      receiptThrowsAt: [1],
+    });
+    let wrote: bigint | null = null;
+    let wroteTx: `0x${string}` | null = null;
+    let confirmed: bigint | null = null;
+    await expect(
+      ensureAllowance({
+        ...base(h),
+        amount: 1_000n,
+        onWrote: (v, hsh) => {
+          wrote = v;
+          wroteTx = hsh;
+        },
+        onConfirmed: (v) => {
+          confirmed = v;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(wrote).toBe(1_000n);
+    expect(confirmed).toBe(0n);
+    expect(h.allowance).toBe(0n);
+
+    await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote,
+      wroteTxHash: wroteTx,
+      confirmed,
+    });
     expect(h.allowance).toBe(500n);
   });
 });

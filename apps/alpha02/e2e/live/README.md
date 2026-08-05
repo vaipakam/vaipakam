@@ -31,7 +31,13 @@ SITE_URL=https://<branch-preview>.workers.dev node live-dryrun-review.mjs
 - `SITE_URL` — defaults to `https://alpha02.vaipakam.com`.
 - `LIVE_PROXY_SETUP` — optional path to an egress-proxy shim module,
   for sandboxes whose gateway resets Chromium TLS (the driver then
-  routes page traffic through undici in-process).
+  routes page traffic through undici in-process). Honoured by
+  `driver.mjs` (so every signing drive), `live-desk-i18n-capture.mjs`
+  and `live-position-observe.mjs` — i.e. by every driver that pumps
+  page traffic through this process. A driver that documents the knob
+  but never imports it fails every routed request in such a sandbox
+  with no hint that the shim was ignored, so keep the import next to
+  the fetch capture when adding a new one.
 - `FAUCET_JSON` — optional deployments artifact for the faucet mock
   token addresses (defaults to the live Base Sepolia set).
 

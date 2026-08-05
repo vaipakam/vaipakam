@@ -14,6 +14,7 @@ import { copy } from '../content/copy';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import type { TransactionReceipt } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { assertSettled } from './ownReceipt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 
@@ -63,10 +64,15 @@ export function useDiamondWrite() {
         chain: walletClient.chain,
       });
       opts?.onSubmitted?.(hash);
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== 'success') {
-        throw new Error(`Transaction reverted (${hash})`);
-      }
+      // Not just "did a transaction succeed" but "did OURS": viem follows
+      // replacements, so a cancelled write resolves with the
+      // replacement's successful receipt and would otherwise be reported
+      // as a completed call (#1529 review round 11). This covers every
+      // Diamond write in the app, `createOffer` among them — where
+      // treating a cancel as success announced a refinance request that
+      // does not exist and left its payoff approval standing.
+      await assertSettled(publicClient, hash, `The ${functionName} transaction`);
+      const receipt = await publicClient.getTransactionReceipt({ hash });
       // RPC read-diet PR A (§4.1.4) — the centralized post-receipt
       // floor: every confirmed Diamond write dirties the standard
       // own-state set (here, in every other tab via broadcast, and

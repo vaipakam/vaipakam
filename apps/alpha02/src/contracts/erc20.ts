@@ -12,6 +12,7 @@ import { usePublicClient } from 'wagmi';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidationGlobal } from '../chain/receiptSync';
 import { idleAware } from '../lib/idle';
+import { settled } from './ownReceipt';
 
 export interface TokenMeta {
   address: `0x${string}`;
@@ -323,11 +324,11 @@ export async function restoreAllowance(opts: {
     // again. A revert lands here too and correctly leaves `current`
     // unequal, so the restore stands down.
     try {
-      const r = await publicClient.waitForTransactionReceipt({
-        hash: wroteTxHash,
-        timeout: 60_000,
-      });
-      if (r.status !== 'success') {
+      const r = await settled(publicClient, wroteTxHash);
+      // REPLACED counts the same as reverted here: either way the value
+      // this attempt submitted never took effect, so what it actually
+      // left behind is the confirmed one (#1529 review round 11).
+      if (!r.ok) {
         // It landed as a REVERT: the optimistic value never took effect,
         // so what this attempt actually left behind is the confirmed one
         // (on the zero-first path, the reset). Judging against the stale
@@ -354,10 +355,7 @@ export async function restoreAllowance(opts: {
       account: owner,
       chain: walletClient.chain,
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== 'success') {
-      throw new Error(`Token approval restore failed (${hash})`);
-    }
+    await publicClient.waitForTransactionReceipt({ hash });
     publishReceiptInvalidationGlobal();
     return hash;
   };
@@ -386,7 +384,28 @@ export async function restoreAllowance(opts: {
     if (afterReset !== 0n) return null;
     if (await ownerHasPendingTx()) return null;
   }
-  return approve(previous);
+  const hash = await approve(previous);
+  // Confirm the FINAL write on OBSERVED STATE, exactly as
+  // `ensureAllowance` does. A receipt only says "some transaction
+  // happened": cancel the restore in the wallet and viem follows the
+  // replacement, handing back `status: 'success'` for a transaction that
+  // put nothing back. Returning the hash then tells the caller the grant
+  // was restored when it was not (#1529 review round 11).
+  //
+  // Only the final write is asserted this way. The zero-first reset has
+  // its own, gentler handling above: a reset that did not stick means
+  // someone else moved the allowance in that window, and standing down is
+  // the correct response to that — not an error thrown at a user whose
+  // unwind is a courtesy in the first place.
+  const landed = await readAllowance();
+  if (landed !== previous) {
+    throw new Error(
+      `The allowance restore did not take effect — it may have been` +
+        ` cancelled or replaced (${hash}). Check the token approval for` +
+        ` this spender before retrying.`,
+    );
+  }
+  return hash;
 }
 
 /**
@@ -417,9 +436,18 @@ export async function revokeAllowance(opts: {
     account: owner,
     chain: walletClient.chain,
   });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== 'success') {
-    throw new Error(`Approval revoke failed (${hash})`);
+  // Same state-based confirmation: the point of a revoke is that the
+  // allowance IS zero, which a replaced transaction's receipt cannot
+  // establish (#1529 review round 11).
+  await publicClient.waitForTransactionReceipt({ hash });
+  const after = await publicClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, spender],
+  });
+  if (after !== 0n) {
+    throw new Error(`Approval revoke did not take effect (${hash})`);
   }
   // RPC read-diet PR A (§4.1.4) — same centralized floor as ensureAllowance.
   publishReceiptInvalidationGlobal();

@@ -40,3 +40,27 @@ including the awkward middle case where a two-step approval is
 interrupted after the first step — the point at which the wallet's
 earlier figure has already been cleared and genuinely does need
 restoring.
+
+One more assumption sat underneath all of this, and it was wrong
+everywhere the app used it. A wallet lets you cancel a transaction that
+is waiting to be mined, by sending a do-nothing one in its place. The
+app's way of asking "did my transaction go through?" was to wait for a
+result and check that it succeeded — and for a cancelled transaction
+that check passes, because the do-nothing replacement really did
+succeed. A transaction that did none of what was asked was therefore
+indistinguishable from one that did all of it.
+
+The consequences differed by where it happened. A cancelled approval
+was reported as granted, so the flow carried on to a step that could
+only fail. A cancelled withdrawal reported the earlier approval as put
+back when it was still cleared. A cancelled posting reported an offer
+as live when nothing had been posted.
+
+The app now checks that the result it is looking at belongs to the
+transaction it sent, rather than to whatever replaced it, and says so
+plainly when it does not. Where the intended effect is something the
+app can simply look at afterwards — an approval figure, for instance —
+it now confirms by looking at that instead, which is a better question
+to ask: it answers "did what I wanted happen?" rather than merely "did
+some transaction happen?", and so it also covers the chain reorganising
+or the wallet's data source being wrong.

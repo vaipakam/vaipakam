@@ -38,6 +38,7 @@
  *   node live-position-observe.mjs                  # auto-discovers a borrower
  *   OBSERVE_ADDRESS=0x… node live-position-observe.mjs
  *   SITE_URL=https://<preview>.workers.dev node live-position-observe.mjs
+ *   LIVE_PROXY_SETUP=./my-egress-shim.mjs node live-position-observe.mjs
  *
  * Exit codes — a batch run must never read a drive that verified nothing
  * as a pass:
@@ -59,6 +60,17 @@
  * The 1-vs-2 line is the important one: exit 1 must always mean "the app
  * did something wrong", never "the harness could not look properly".
  */
+// Sandbox egress shim (proxy CA + undici dispatcher) — optional, and the
+// SAME knob `driver.mjs` and `live-desk-i18n-capture.mjs` honour. Without
+// it this drive documented a setting it never read, so in a sandbox whose
+// gateway resets TLS every routed page request and every viem read failed
+// with no indication the shim had been ignored (#1529 review round 11).
+if (process.env.LIVE_PROXY_SETUP) {
+  await import(process.env.LIVE_PROXY_SETUP);
+}
+// Capture AFTER the shim, exactly as driver.mjs does: node's built-in
+// fetch is what both the page-route pump and viem's http transport ride.
+const ufetch = globalThis.fetch;
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -507,7 +519,7 @@ await ctx.route('**/*', async (route) => {
     }
   }
   try {
-    const resp = await fetch(req.url(), {
+    const resp = await ufetch(req.url(), {
       method: req.method(),
       headers: Object.fromEntries(
         Object.entries(await req.allHeaders()).filter(
