@@ -701,3 +701,24 @@ img { max-width: 100%; display: block; }
 .rescan-btn .spin {
   animation: rescan-btn-spin 1s linear infinite;
 }
+
+/* Hand-authored deep-link anchors inside long-form docs (User Guide,
+ * Overview, Whitepaper). These markers — not the heading — are what the
+ * browser scrolls to for an external `…#section` link, so they need the
+ * same clearance the headings get for the fixed navbar (72px) plus the
+ * mobile sticky role bar (~48px). Without it the link lands with the
+ * named section title hidden behind the chrome. `display:block` with
+ * zero height keeps the marker invisible and out of the text flow while
+ * still giving `scroll-margin-top` a box to act on. */
+.doc-anchor {
+  display: block;
+  height: 0;
+  scroll-margin-top: 132px;
+}
+
+@media (min-width: 1024px) {
+  /* Desktop has no sticky role bar above the content. */
+  .doc-anchor {
+    scroll-margin-top: 96px;
+  }
+}

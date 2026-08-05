@@ -19,6 +19,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
+import { remarkInlineAnchorToId } from '../lib/remarkInlineAnchorToId';
 import remarkGfm from 'remark-gfm';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
@@ -99,7 +100,7 @@ export default function Whitepaper() {
               </p>
             )}
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkInlineAnchorToId] as never}
               components={headingComps as never}
             >
               {text as ReactNode as string}

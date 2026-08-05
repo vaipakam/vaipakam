@@ -131,15 +131,73 @@ function nodeToText(node: ReactNode): string {
  */
 export function headingComponents() {
   return {
-    h2: ({ children }: { children?: ReactNode }) => {
-      const id = slugify(nodeToText(children));
-      return <h2 id={id}>{children}</h2>;
+    h2: ({ children, id }: HeadingProps) => {
+      const slug = slugify(nodeToText(children));
+      return (
+        <>
+          {explicitAnchor(id, slug)}
+          <h2 id={slug}>{children}</h2>
+        </>
+      );
     },
-    h3: ({ children }: { children?: ReactNode }) => {
-      const id = slugify(nodeToText(children));
-      return <h3 id={id}>{children}</h3>;
+    h3: ({ children, id }: HeadingProps) => {
+      const slug = slugify(nodeToText(children));
+      return (
+        <>
+          {explicitAnchor(id, slug)}
+          <h3 id={slug}>{children}</h3>
+        </>
+      );
     },
   };
+}
+
+interface HeadingProps {
+  children?: ReactNode;
+  /** Set by `remarkInlineAnchorToId` (UserGuide) from an
+   *  `<a id="…"></a>` marker preceding the heading in the markdown. */
+  id?: string;
+}
+
+/**
+ * Renders the STABLE, hand-authored anchor a guide file attaches to a
+ * heading — as its own zero-size element immediately before that
+ * heading, not on the heading itself.
+ *
+ * Both id schemes have to coexist, which is why this is a separate
+ * element rather than a prop on the `<h2>`/`<h3>`:
+ *
+ *  - The SLUG id (derived from the heading text) is what
+ *    `extractMarkdownToc` emits for the in-page TOC links, so the
+ *    heading must keep it or the guide's own contents list breaks.
+ *  - The EXPLICIT id (`stuck-recovery.what`) is what off-site deep
+ *    links target — the recovery declaration in the connected app
+ *    attests the user has read that section. It has to be stable
+ *    across locales, and it is: every localized guide carries the same
+ *    `stuck-recovery.*` markers, while the slug is derived from the
+ *    TRANSLATED heading and therefore differs per language.
+ *
+ * Before this, `headingComponents` unconditionally rewrote the heading
+ * with the slug, discarding the `id` react-markdown passed down from
+ * the remark plugin's `data.hProperties.id`. The plugin computed the
+ * anchor correctly and the rendered page then threw it away, so every
+ * explicit deep link silently landed at the top of a very long guide
+ * instead of its section — including the one the signed recovery
+ * declaration points at. Caught in production by
+ * `apps/alpha02/e2e/live/live-recover.mjs`.
+ */
+function explicitAnchor(id: string | undefined, slug: string): ReactNode {
+  if (!id || id === slug) return null;
+  // The marker is what the browser (and UserGuide's own hash handler)
+  // SCROLLS TO, so it needs the same sticky-header clearance the
+  // headings have — the pages' `scroll-margin-top` rules are written
+  // against `h1…h4` only, so an inline span would have landed at the
+  // very top of the viewport, underneath the fixed navbar and the
+  // mobile role bar, hiding the section title the link named
+  // (Codex #1561 r2). `.doc-anchor` in global.css carries the same
+  // 132px / 96px offsets, and `display:block` gives it a box to apply
+  // them to.
+  return <span className="doc-anchor" id={id} aria-hidden="true" />;
 }
 
 /**
