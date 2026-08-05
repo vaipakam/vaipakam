@@ -768,7 +768,7 @@ that stopped it always be satisfied".
 P1-a (#1556, `41d4538a4`); its paid half and the deferral semantics are P1-b.
 This section scopes **prerequisite 2**, which is what actually gates lifting
 the halt. **The lapse decision it opened with is now RATIFIED** (#1571,
-2026-08-04) and appears below as R1-R4; treat those as settled premises. What
+2026-08-04) and appears below as R1-R5; treat those as settled premises. What
 remains deferred is the detailed design, which belongs in its own document —
 so this section is a ratified premise plus a constraint set, not a design.
 
@@ -814,9 +814,9 @@ a different starting point, not a seventeenth correction.
 
 **So this section deliberately does NOT contain a design.** It contains the
 verified problem statement above, the constraint set below, and — since
-2026-08-04 — the **ratified answer** (R1-R4) to the decision that gated all of
+2026-08-04 — the **ratified answer** (R1-R5) to the decision that gated all of
 it. **The design is deferred to its own document, and that document starts from
-R1-R4** rather than from another revision here.
+R1-R5** rather than from another revision here.
 
 What the withdrawn revisions got wrong is recorded, because each is a
 constraint the eventual design must satisfy and re-deriving them costs another
@@ -991,7 +991,7 @@ the in-flight compensation race resolve* — was **decided by the owner on
 
 **Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in four parts.**
 
-**R1. Repricing carries an AUTHENTICATED PER-SIDE DELTA, not replacement
+**R1. Repricing carries TWO AUTHENTICATED PER-SIDE AMOUNTS, not replacement
 halves.** This is what makes constraint 17 tractable rather than fatal, and it
 is the clean route rather than the expedient one. Splitting 17 into its two
 cases shows why halves cannot be the vehicle:
@@ -1021,6 +1021,22 @@ happens where its input actually lives, and neither party solves for anything.
 Any alternative must pin an authenticated local denominator explicitly — an
 unpinned conversion is the footgun, not the delta.
 
+**R1b — it must be TWO amounts, one per side, jointly bounded by the delivery**
+(Codex #1573 r2 P1). A first draft of R1a authenticated a *single* amount while
+R1 still spoke of a *per-side* delta, and `remitManualBudget` carries one
+scalar total. Whenever lender and borrower local interest are both non-zero,
+one scalar does **not** determine `Δ_lender` and `Δ_borrower`: different splits
+pay different users off identical backing, and nothing on the wire says which
+split was intended.
+
+Two authenticated side amounts remove the ambiguity at the source rather than
+introducing an allocation rule that both domains must implement identically and
+neither can verify. It is also the shape everything adjacent already uses —
+`fundedLender`/`fundedBorrower`, `freshLenderHalf`/`freshBorrowerHalf`,
+`liabilityLender18`/`liabilityBorrower18` — so it adds no new concept. Their
+**sum** is bounded by the delivered amount (constraint 13's joint-bound rule;
+individually-valid components summing past the delivery is the failure mode).
+
 **R2. The lapse is PERMISSIONLESS**, on the authenticated `finalizedAt` clock
 required by constraint 7. Anyone may resolve an expired zeroed day to
 genuinely-zero. This is what discharges §2g's pin: the halt required by
@@ -1039,10 +1055,44 @@ common case; it does not bound the failure class. **Any in-flight dispatch can
 lapse**, and the recovery path must be sized and monitored on that basis rather
 than on a last-moment-only assumption.
 
-**R4. A late arrival recovers through M4 C2 (#1568)** — `finalize`/ACK the
-original reservation, because the tokens genuinely arrived, and repatriate.
-`releaseRemitReservation` is the wrong instrument and constraint 11 says why.
-This makes C2 a **prerequisite of P2**, not a parallel track.
+**R4. A late arrival recovers through a DEDICATED FRESH-RETURN path — NOT
+M4 C2.** It `finalize`/ACKs the original reservation, because the tokens
+genuinely arrived (`releaseRemitReservation` is the wrong instrument;
+constraint 11 says why), and returns the VPFI to Base.
+
+**A first draft routed this through C2, and that does not connect** (Codex
+#1573 r2 P1). C2 repatriates `availRecycled` out of the mirror's **recycle
+bucket** and debits `consumedCumulative`. A manual compensation is
+**fresh-only** by construction — `remitManualBudget` sets `r.fresh = amount`
+with `recycledShare = 0`, and the ingress books it in the fresh received /
+uncounted ledgers, never the bucket. No transition makes those tokens
+C2-eligible, so "finalize, then invoke C2" describes a path that does not
+exist.
+
+Returning a stranded compensation is logically **undoing a remit**, not
+disposing of surplus: different source ledger, different authorization,
+different bounds. It therefore gets its own authenticated path, which must also
+perform the corresponding **Base-side accounting reversal** and net the
+mirror's received-fresh counter (otherwise P1-b later treats returned,
+no-longer-held VPFI as funding — see the C2 constraint set in
+`VpfiCrossChainRecyclingDesign.md` §3.6a).
+
+**Consequence, correcting an earlier claim: C2 is NOT a prerequisite of P2.**
+The two are independent again.
+
+**R5. The per-day lapse SCHEDULE is authenticated in BOTH domains** (Codex
+#1573 r2 P1). Base enforces the R3 dispatch cutoff while the mirror enforces
+the R2 lapse, and the constraints authenticate only `finalizedAt` — so an
+independently rolled-out upgrade, or any later parameter change, lets a mirror
+on a shorter window lapse a day Base still considers dispatchable. That feeds
+compensation straight into the accepted underpayment path **that R3 exists to
+avoid**, silently and by configuration rather than by latency.
+
+So the expiry and the cutoff must be **authenticated and snapshotted per day**,
+not read from live config on either side — cleanest as a **versioned immutable
+schedule** both domains derive from, carried with the day. A parameter change
+then mints a new version and in-flight days keep the schedule they were
+finalized under.
 
 #### Why not Base-authoritative — recorded so it is not re-proposed
 
@@ -1055,11 +1105,17 @@ never stall.
 
 #### The accepted cost — stated plainly, because it is a real one
 
-Under R1–R4, a compensation that arrives after the lapse means **those users
+Under R1–R5, a compensation that arrives after the lapse means **those users
 are not paid for that day**: their entries retired at zero and the tokens
-return to Base. It is rare (it needs a near-deadline dispatch *and* a slow
-delivery), it is visible, and R3 shrinks it hard — but it is a user-facing loss
-caused by operator timing, and calling it anything else would be dishonest.
+return to Base. It is visible, and R3 improves the common case — but it is a
+user-facing loss, and calling it anything else would be dishonest.
+
+**It is NOT limited to near-deadline dispatches.** An earlier draft said so
+here even after R3 had been corrected two paragraphs above, which is exactly
+the kind of surviving claim that misleads: per constraint 9 *any* in-flight
+dispatch can sit failed-but-re-executable and arrive after the lapse, however
+early it was sent. **Size recovery capacity and monitoring against the full
+in-flight population**, not against a cutoff-adjacent slice.
 
 **This was weighed and accepted.** A stalled mirror blocks every later day's
 claims for every user on that chain; the alternative harm is one day's rewards
@@ -1072,10 +1128,15 @@ larger design.
 
 #### What remains open
 
-Two **parameters**, not architecture: the lapse window length, and the R3
-dispatch-cutoff gap. Both want sizing against observed operator and lane
-behaviour rather than a guess, and neither blocks starting the P2 design
-document.
+Two **parameters** — the lapse window length and the R3 dispatch-cutoff gap —
+both wanting sizing against observed operator and lane behaviour rather than a
+guess.
+
+**An earlier draft called that the whole remainder. It was not** (Codex #1573
+r2): R5's cross-chain schedule authentication is **architecture**, not a
+parameter, and R4's fresh-return path is a mechanism that does not exist yet.
+Both are now stated above as ratified requirements, and both belong in the P2
+design document — which they do not block, but do shape.
 
 ### General rule earned here, applicable beyond P2
 

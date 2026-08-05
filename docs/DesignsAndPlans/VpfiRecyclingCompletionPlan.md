@@ -934,11 +934,15 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    the clamp residual. Full correction in the design record's **§2h**
    >    (#1565), which — after three review rounds and SIXTEEN confirmed P1s —
    >    deliberately holds the verified problem statement and a **constraint
-   >    set**, NOT a design. P2 is a subsystem, its wire is **two** evolutions
-   >    (broadcast and remit travel through different messengers), and it is
-   >    blocked on one owner decision: **who lapses a zeroed day, and how the
-   >    in-flight compensation race resolves.** Neither sketched option is
-   >    viable as written.
+   >    set**, NOT a design. P2 is a subsystem and its wire is **two**
+   >    evolutions (broadcast and remit travel through different messengers).
+   >    **The lapse decision that gated it is RATIFIED** (#1571, 2026-08-04):
+   >    a mirror-local permissionless lapse, recorded in §2h as R1-R5 — two
+   >    authenticated per-side amounts with the mirror deriving Δ locally; a
+   >    permissionless lapse; a dispatch cutoff strictly earlier than it; a
+   >    **dedicated fresh-return** recovery (NOT M4 C2, which cannot reach a
+   >    fresh-booked compensation); and the per-day schedule authenticated in
+   >    BOTH domains.
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the
