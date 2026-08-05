@@ -79,6 +79,66 @@ export function useTokenBalance(tokenAddress: string | undefined) {
 }
 
 /**
+ * Was the allowance really set to `want`, judged only on evidence good
+ * enough to overturn our own successful receipt (#1529 review round 12)?
+ *
+ * A public RPC commonly answers a read taken immediately after a receipt
+ * from PRE-transaction state — the lag `receiptSync.ts` was written for.
+ * A single mismatched read is therefore not evidence of anything, and
+ * treating it as proof that a mined approve did not land is how the
+ * caller ends up retracting a write that really happened.
+ *
+ * The pinned read is what makes a NEGATIVE answer trustworthy: asking at
+ * the exact block our transaction mined in, a node that has the block
+ * answers about post-transaction state, and a node that does not have it
+ * errors rather than quietly answering about an earlier one. Only that
+ * form of disagreement returns `contradicted`.
+ *
+ * Everything else is `unknown` — genuinely unknown, and deliberately not
+ * called failure. A caller holding a successful own-call receipt should
+ * proceed on it rather than on a read that could not be taken.
+ */
+async function confirmAllowanceValue(
+  publicClient: PublicClient,
+  token: `0x${string}`,
+  owner: `0x${string}`,
+  spender: `0x${string}`,
+  want: bigint,
+  blockNumber: bigint,
+): Promise<'confirmed' | 'contradicted' | 'unknown'> {
+  const read = (at?: bigint) =>
+    publicClient.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [owner, spender],
+      ...(at === undefined ? {} : { blockNumber: at }),
+    });
+
+  // Pinned first: its answer is conclusive in BOTH directions.
+  try {
+    return (await read(blockNumber)) === want ? 'confirmed' : 'contradicted';
+  } catch {
+    // No archive depth, provider rejects the parameter, or the node has
+    // not reached the block yet. Fall through to the latest-state read.
+  }
+
+  // Unpinned, with a short backoff for the ordinary lag case. A match
+  // confirms; persistent mismatch does not refute, because we cannot
+  // tell a node that never caught up from a value someone changed after
+  // us — and those call for opposite responses.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
+    try {
+      if ((await read()) === want) return 'confirmed';
+    } catch {
+      /* keep trying */
+    }
+  }
+  return 'unknown';
+}
+
+/**
  * Ensure the Diamond may pull `amount` of `token` from the connected
  * wallet: read the live allowance, send `approve` only when short,
  * and wait for it to mine. Returns the approve tx hash, or null when
@@ -172,34 +232,53 @@ export async function ensureAllowance(opts: {
     // it so an unwind can tell "this has not landed YET" from "someone
     // else moved it", which an allowance read alone cannot distinguish.
     onWrote?.(value, hash);
-    await publicClient.waitForTransactionReceipt({ hash });
-    // CONFIRM ON OBSERVED STATE, not on the receipt's status.
+    // Two independent questions, and conflating them cost a round each.
     //
-    // A successful receipt does not mean this approve took effect. viem
-    // follows REPLACEMENTS: if the user cancels or speeds up the
-    // transaction, the wait resolves with the replacement's receipt —
-    // status 'success' for a cancel that set no allowance at all. Trusting
-    // that marked the value confirmed while the chain still read zero, and
-    // the unwind then compared zero against a value it had been told
-    // landed, concluded the zero was somebody else's doing, and left the
-    // user's prior grant erased (#1529 review round 10).
-    //
-    // Reading the allowance answers the only question that matters and
-    // subsumes every failure shape at once — replaced, cancelled,
-    // reverted, or reorged all show up the same way: the value is not
-    // there. There is no list of transaction outcomes to keep complete.
-    const landed = await publicClient.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [owner, spender],
-    });
-    if (landed !== value) {
+    // 1. DID OUR CALL RUN? A successful receipt does not say so: viem
+    //    follows replacements, so a cancel resolves with the
+    //    replacement's `status: 'success'` receipt having set no
+    //    allowance at all (round 10). `settled` answers this, and
+    //    answers it with a REASON — a cancel is positive evidence that
+    //    nothing happened, so the optimistic report can be safely
+    //    retracted. A Speed Up is our own call and passes.
+    const s = await settled(publicClient, hash);
+    if (!s.ok) {
       // Roll the optimistic report back to what IS on chain, or to null
-      // when this function has confirmed nothing at all.
+      // when this function has confirmed nothing at all. Safe precisely
+      // because the evidence is positive: this call did not execute.
       onWrote?.(confirmed?.value ?? null, confirmed?.hash ?? null);
       throw new Error(`Token approval did not take effect (${hash})`);
     }
+    // 2. IS THE VALUE THERE? Worth asking separately — it catches a
+    //    reorg, and a token whose approve does not do what its name
+    //    says. But a public RPC routinely answers the read immediately
+    //    after a receipt from PRE-transaction state (the lag
+    //    `receiptSync.ts` exists for), and round 11 read a single stale
+    //    answer as "it did not land" and retracted a write that HAD
+    //    landed — leaving the payoff approval standing with the catch
+    //    path told nothing was written (round 12).
+    //
+    //    So a disagreement is only believed when it comes from a node
+    //    that has demonstrably seen the block. Anything less is
+    //    unknown, and an unknown does not get to overturn our own
+    //    successful receipt.
+    const state = await confirmAllowanceValue(
+      publicClient, token, owner, spender, value, s.receipt.blockNumber,
+    );
+    if (state === 'contradicted') {
+      // A node that HAS our block says the value is not there. Our call
+      // still ran, so the optimistic report STAYS — the unwind needs to
+      // know we wrote in order to reason about the state at all.
+      throw new Error(
+        `Token approval did not take effect (${hash}) — the allowance` +
+          ` does not read back as approved.`,
+      );
+    }
+    // 'confirmed' or 'unknown'. An `approve(value)` call of ours that
+    // executed successfully DID set the allowance to `value` at its
+    // block; the read above is the cross-check for a reorg or a token
+    // that does not honour its own interface, not the primary evidence.
+    // When it could not be taken, the receipt stands.
     confirmed = { value, hash };
     onConfirmed?.(value, hash);
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
@@ -355,7 +434,22 @@ export async function restoreAllowance(opts: {
       account: owner,
       chain: walletClient.chain,
     });
-    await publicClient.waitForTransactionReceipt({ hash });
+    // Whether OUR call ran, not merely whether a transaction did. A
+    // cancelled reset otherwise returns here looking successful, and the
+    // guard below then reads the flow's own value still standing and
+    // interprets it as a competing grant to defer to — leaving the
+    // payoff-sized approval live behind a failed handover (#1529 review
+    // round 12). A Speed Up is our call and passes.
+    const r = await settled(publicClient, hash);
+    if (!r.ok) {
+      throw new Error(
+        r.reason === 'reverted'
+          ? `The allowance reset reverted (${hash}).`
+          : `The allowance reset was cancelled or replaced before it took` +
+            ` effect (${hash}). The earlier approval is still standing —` +
+            ` revoke it from your wallet's approvals view.`,
+      );
+    }
     publishReceiptInvalidationGlobal();
     return hash;
   };
@@ -378,6 +472,21 @@ export async function restoreAllowance(opts: {
       functionName: 'allowance',
       args: [owner, spender],
     });
+    // Standing down is right for a COMPETING grant and wrong for a
+    // reset that simply did not stick, and `afterReset === wrote` tells
+    // them apart: our own flow's value still sitting there means nothing
+    // else claimed the slot, so there is no third party's decision to
+    // defer to — only our own unwind having failed. Silently returning
+    // then leaves the payoff-sized approval live, which is the opposite
+    // of what this function was called to do. `approve` above catches
+    // the ordinary cancel directly; this covers the same outcome
+    // reaching us by another route, such as a reorg after its receipt.
+    if (afterReset === wrote) {
+      throw new Error(
+        `The allowance reset did not take effect — the earlier approval` +
+          ` is still standing. Revoke it from your wallet's approvals view.`,
+      );
+    }
     // Both checks again: a competing approve may have MINED in this
     // window (visible here) or merely been SUBMITTED (invisible to the
     // read, which is what the pending probe is for).

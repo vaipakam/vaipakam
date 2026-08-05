@@ -64,15 +64,25 @@ export function useDiamondWrite() {
         chain: walletClient.chain,
       });
       opts?.onSubmitted?.(hash);
-      // Not just "did a transaction succeed" but "did OURS": viem follows
-      // replacements, so a cancelled write resolves with the
+      // Not just "did a transaction succeed" but "did OUR CALL run":
+      // viem follows replacements, so a cancelled write resolves with the
       // replacement's successful receipt and would otherwise be reported
       // as a completed call (#1529 review round 11). This covers every
       // Diamond write in the app, `createOffer` among them — where
       // treating a cancel as success announced a refinance request that
       // does not exist and left its payoff approval standing.
-      await assertSettled(publicClient, hash, `The ${functionName} transaction`);
-      const receipt = await publicClient.getTransactionReceipt({ hash });
+      //
+      // A Speed Up is NOT such a case: viem classifies it `repriced` only
+      // when `to`, `value` and `input` all match, so it is this very call
+      // at a higher gas price and it succeeds normally. What it does
+      // change is the hash — so the receipt has to come back from the
+      // wait rather than be re-fetched by the submitted hash, which for a
+      // sped-up transaction has no receipt at all (#1529 review round 12).
+      const receipt = await assertSettled(
+        publicClient,
+        hash,
+        `The ${functionName} transaction`,
+      );
       // RPC read-diet PR A (§4.1.4) — the centralized post-receipt
       // floor: every confirmed Diamond write dirties the standard
       // own-state set (here, in every other tab via broadcast, and

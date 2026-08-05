@@ -48,6 +48,7 @@ import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
+import { TxNotSettledError } from '../contracts/ownReceipt';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -528,6 +529,16 @@ export function RefinanceFlow({
       // an unknown outcome keeps the approval.
       const offerMayExist = await (async () => {
         if (createOfferTx === null) return false; // never submitted
+        // A settlement failure is POSITIVE evidence, and it is the whole
+        // reason the error carries a reason at all. Cancelled or
+        // replaced: our call never executed, so no offer exists.
+        // Reverted: it executed and produced nothing. All three are safe
+        // to unwind, and none of them can be recovered from a receipt
+        // lookup — a cancelled transaction's own hash has no receipt, so
+        // asking for one throws and reads as "cannot tell", which kept
+        // the approval standing for a confirmed cancel (#1529 review
+        // round 12).
+        if (err instanceof TxNotSettledError) return false;
         try {
           const r = await publicClient.getTransactionReceipt({ hash: createOfferTx });
           return r.status === 'success';

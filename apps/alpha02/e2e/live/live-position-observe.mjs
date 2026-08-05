@@ -114,10 +114,36 @@ if (!Number.isInteger(MAX_POSITIONS) || MAX_POSITIONS < 1) {
   process.exit(2);
 }
 
-const deployment = JSON.parse(
-  fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
-)[String(CHAIN_ID)];
-if (!deployment) throw new Error(`no deployment for chain ${CHAIN_ID}`);
+// A mistyped OBSERVE_CHAIN_ID, or one this repo has no deployment for,
+// is a SETUP precondition — the same category as an absent wallet file
+// or an unreachable RPC. Throwing here exits 1, and the batch runner
+// then prints a product FAIL for a configuration mistake that stopped
+// the drive from observing anything at all, which is exactly the
+// mislabelling the three-verdict contract exists to prevent (#1529
+// review round 12).
+let deployment;
+try {
+  deployment = JSON.parse(
+    fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
+  )[String(CHAIN_ID)];
+} catch (err) {
+  console.error(
+    `\nBLOCKED: cannot read the deployments artifact.\n  ${err.message}`,
+  );
+  process.exit(2);
+}
+if (!deployment?.diamond) {
+  const known = JSON.parse(
+    fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
+  );
+  console.error(
+    `\nBLOCKED: no deployment for chain ${CHAIN_ID} in deployments.json.` +
+      `\n  known chains: ${Object.keys(known).join(', ')}` +
+      `\n  → set OBSERVE_CHAIN_ID to one of those, or re-export` +
+      ` deployments (contracts/script/exportFrontendDeployments.sh).`,
+  );
+  process.exit(2);
+}
 const DIAMOND = deployment.diamond;
 const DIAMOND_ABI_VIEM = loadDiamondAbi();
 

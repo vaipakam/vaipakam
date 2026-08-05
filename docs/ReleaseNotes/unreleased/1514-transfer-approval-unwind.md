@@ -64,3 +64,23 @@ it now confirms by looking at that instead, which is a better question
 to ask: it answers "did what I wanted happen?" rather than merely "did
 some transaction happen?", and so it also covers the chain reorganising
 or the wallet's data source being wrong.
+
+That check needed one correction of its own, worth recording because the
+first version of it broke something that had been working. Wallets offer
+two ways to interfere with a transaction that is waiting: cancelling it,
+and speeding it up. Both give it a new identity, but only cancelling
+stops it happening — a speed-up is the very same request, paid for more
+generously. Rejecting every change of identity therefore told users that
+a sped-up approval or offer had failed while it was going through
+perfectly well. The app now distinguishes the two, and only treats the
+cancelling kind as a failure.
+
+The same care applies to how the app decides an approval landed. Asking
+a public data provider what an approval is worth immediately after the
+transaction confirms often gets an answer from just before it — the
+provider has not caught up. Treating that as proof the approval never
+happened would retract something that did happen, and leave the very
+approval the app is trying to tidy up standing untouched. So a
+disagreement is now only believed when it comes from a provider that
+demonstrably has the relevant block; anything less is treated as not
+knowing, and not knowing never overrules the app's own confirmation.

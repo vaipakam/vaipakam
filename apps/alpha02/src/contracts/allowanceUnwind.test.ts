@@ -70,13 +70,29 @@ function harness(opts: {
    *  prefix, so it cannot express "the reset confirmed, the second
    *  approve's wait timed out". */
   receiptThrowsAt?: number[];
-  /** The approve is submitted and then REPLACED in the wallet — cancelled
-   *  (a zero-value self-send at the same nonce) or sped up. The allowance
-   *  never moves, and viem's wait follows the replacement and resolves
-   *  with ITS receipt: `status: 'success'`, a DIFFERENT hash. The whole
-   *  point of round 11: a transaction that did nothing we asked for
-   *  presents exactly like one that did, unless the hash is checked. */
+  /** The approve is submitted and then CANCELLED in the wallet — a
+   *  zero-value self-send at the same nonce. The allowance never moves,
+   *  and viem's wait follows the replacement and resolves with ITS
+   *  receipt: `status: 'success'`, a DIFFERENT hash. Round 11's point: a
+   *  transaction that did nothing we asked for presents exactly like one
+   *  that did, unless the replacement is detected. */
   replaceTxOf?: (value: bigint) => boolean;
+  /** The approve is submitted and then SPED UP — viem's `repriced`. The
+   *  hash changes, but viem classifies it that way only when `to`,
+   *  `value` and `input` all match, so it IS our call and the allowance
+   *  DOES move. Round 11's blanket hash check called this a failure and
+   *  told the user their approval had not happened while it sat on
+   *  chain; round 12 is the correction. */
+  repriceTxOf?: (value: bigint) => boolean;
+  /** The allowance read answers from PRE-transaction state for the first
+   *  N reads taken after a receipt — the public-RPC lag `receiptSync`
+   *  exists for. Distinct from a value another actor changed: it catches
+   *  up on its own. */
+  staleReadsAfterWrite?: number;
+  /** A read pinned to a block number fails (no archive depth, or the
+   *  provider rejects the parameter) — so the conclusive negative is
+   *  unavailable and the caller must fall back. */
+  pinnedReadThrows?: boolean;
 }) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
@@ -84,39 +100,76 @@ function harness(opts: {
   const inFlight = new Map<string, bigint>();
   let receiptWaits = 0;
 
+  /** Pre-transaction value a lagging node keeps serving, and how many
+   *  more reads it will serve it for. */
+  let stale: { value: bigint; left: number } | null = null;
+
   const publicClient = {
-    readContract: vi.fn(async () => allowance),
+    readContract: vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => {
+      if (blockNumber !== undefined) {
+        // A pinned read either has the block — in which case it answers
+        // about POST-transaction state, never the stale one — or fails.
+        if (opts.pinnedReadThrows) throw new Error('missing trie node');
+        return allowance;
+      }
+      if (stale && stale.left > 0) {
+        stale.left -= 1;
+        return stale.value;
+      }
+      return allowance;
+    }),
     getTransactionCount: vi.fn(async ({ blockTag }: { blockTag?: string }) => {
       if (opts.nonceReadThrows) throw new Error('rpc down');
       return blockTag === 'pending' && opts.pendingTx?.() ? 8 : 7;
     }),
-    waitForTransactionReceipt: vi.fn(async ({ hash }: { hash: string }) => {
-      if (opts.receiptAlwaysThrows) throw new Error('receipt timeout');
-      const waitIndex = receiptWaits++;
-      if (waitIndex < (opts.receiptThrowsFirst ?? 0)) {
-        throw new Error('receipt timeout');
-      }
-      if (opts.receiptThrowsAt?.includes(waitIndex)) {
-        throw new Error('receipt timeout');
-      }
-      if (hash === '0xlost') throw new Error('receipt timeout');
-      if (hash.startsWith('0xrevert')) {
-        return { status: 'reverted' as const, transactionHash: hash };
-      }
-      if (hash.startsWith('0xreplaced')) {
-        // viem followed the replacement: a DIFFERENT transaction's
-        // receipt, and a successful one. Nothing we submitted took
-        // effect, and the status alone cannot say so.
-        return { status: 'success' as const, transactionHash: '0xcancel' };
-      }
-      // Awaiting the receipt is what lands a pending write.
-      if (inFlight.has(hash)) {
-        allowance = inFlight.get(hash)!;
-        inFlight.delete(hash);
-      }
-      // The receipt of the transaction actually asked about.
-      return { status: 'success' as const, transactionHash: hash };
-    }),
+    waitForTransactionReceipt: vi.fn(
+      async ({
+        hash,
+        onReplaced,
+      }: {
+        hash: string;
+        onReplaced?: (r: { reason: string }) => void;
+      }) => {
+        if (opts.receiptAlwaysThrows) throw new Error('receipt timeout');
+        const waitIndex = receiptWaits++;
+        if (waitIndex < (opts.receiptThrowsFirst ?? 0)) {
+          throw new Error('receipt timeout');
+        }
+        if (opts.receiptThrowsAt?.includes(waitIndex)) {
+          throw new Error('receipt timeout');
+        }
+        if (hash === '0xlost') throw new Error('receipt timeout');
+        if (hash.startsWith('0xrevert')) {
+          return { status: 'reverted' as const, transactionHash: hash, blockNumber: 100n };
+        }
+        if (hash.startsWith('0xreplaced')) {
+          // viem followed a CANCEL: a different transaction's receipt,
+          // and a successful one. Nothing we submitted took effect, and
+          // the status alone cannot say so.
+          onReplaced?.({ reason: 'cancelled' });
+          return { status: 'success' as const, transactionHash: '0xcancel', blockNumber: 100n };
+        }
+        if (hash.startsWith('0xrepriced')) {
+          // A Speed Up. The hash differs, but it is OUR call — viem only
+          // says `repriced` when to/value/input all match — so the
+          // effect landed and this must NOT read as a failure.
+          onReplaced?.({ reason: 'repriced' });
+          const landed = inFlight.get(hash);
+          if (landed !== undefined) {
+            allowance = landed;
+            inFlight.delete(hash);
+          }
+          return { status: 'success' as const, transactionHash: '0xfaster', blockNumber: 100n };
+        }
+        // Awaiting the receipt is what lands a pending write.
+        if (inFlight.has(hash)) {
+          allowance = inFlight.get(hash)!;
+          inFlight.delete(hash);
+        }
+        // The receipt of the transaction actually asked about.
+        return { status: 'success' as const, transactionHash: hash, blockNumber: 100n };
+      },
+    ),
   } as unknown as PublicClient;
 
   const walletClient = {
@@ -130,9 +183,15 @@ function harness(opts: {
         return `0xrevert${writes.length}` as `0x${string}`;
       }
       if (opts.replaceTxOf?.(value)) {
-        // Submitted, then replaced — the allowance is untouched, and the
-        // wait will resolve successfully on somebody else's hash.
+        // Submitted, then cancelled — the allowance is untouched, and
+        // the wait will resolve successfully on somebody else's hash.
         return `0xreplaced${writes.length}` as `0x${string}`;
+      }
+      if (opts.repriceTxOf?.(value)) {
+        // Submitted, then sped up — same call, new hash, real effect.
+        const hash = `0xrepriced${writes.length}` as `0x${string}`;
+        inFlight.set(hash, value);
+        return hash;
       }
       if (opts.pendingUntilReceipt?.(value)) {
         // Submitted only — the chain does not show it yet.
@@ -142,7 +201,11 @@ function harness(opts: {
       }
       // Submitted AND took effect on chain — whether or not we get to
       // observe the receipt.
+      const before = allowance;
       allowance = value;
+      if (opts.staleReadsAfterWrite) {
+        stale = { value: before, left: opts.staleReadsAfterWrite };
+      }
       const raced = opts.afterWrite?.(value);
       if (raced !== undefined) allowance = raced;
       return (opts.loseReceiptOf?.(value) ? '0xlost' : '0xdead') as `0x${string}`;
@@ -635,5 +698,132 @@ describe('a REPLACED transaction is not a successful one (round 11)', () => {
       confirmed,
     });
     expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('a SPED UP transaction is our own (round 12)', () => {
+  // Round 11 fixed "the hash changed" by rejecting every hash change,
+  // and in doing so broke Speed Up. viem reports three replacement
+  // reasons and only two mean our call was lost: it classifies a
+  // replacement `repriced` only when `to`, `value` AND `input` all match
+  // the original, which makes it OUR call at a higher gas price. The
+  // effect happens. Treating it as failure told a user their approval
+  // had not gone through while it sat on chain — a regression introduced
+  // by the previous round's fix, which is why it is pinned here.
+
+  it('ensureAllowance accepts a sped-up approve', async () => {
+    const h = harness({ allowance: 0n, repriceTxOf: (v) => v === 1_000n });
+    const seen: (bigint | null)[] = [];
+    const tx = await ensureAllowance({
+      ...base(h),
+      amount: 1_000n,
+      onWrote: (v) => seen.push(v),
+    });
+    expect(tx).not.toBeNull();
+    expect(h.allowance).toBe(1_000n);
+    // Reported once, optimistically, and never retracted.
+    expect(seen).toEqual([1_000n]);
+  });
+
+  it('restoreAllowance accepts a sped-up put-back', async () => {
+    const h = harness({ allowance: 1_000n, repriceTxOf: (v) => v === 500n });
+    await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(h.writes).toEqual([0n, 500n]);
+    expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('a lagging RPC is not evidence that nothing landed (round 12)', () => {
+  // A public RPC routinely answers the allowance read taken immediately
+  // after a receipt from PRE-transaction state. Reading one stale answer
+  // as "the approve did not land" retracts a write that DID land — and
+  // the caller's unwind, told nothing was written, then leaves the
+  // approval standing. The two are not symmetric: an unknown must never
+  // overturn our own successful receipt.
+
+  it('retries past a stale read rather than retracting a mined approve', async () => {
+    const h = harness({
+      allowance: 0n,
+      staleReadsAfterWrite: 2,
+      // Force the fallback path: no conclusive pinned answer available.
+      pinnedReadThrows: true,
+    });
+    const seen: (bigint | null)[] = [];
+    const tx = await ensureAllowance({
+      ...base(h),
+      amount: 1_000n,
+      onWrote: (v) => seen.push(v),
+    });
+    expect(tx).not.toBeNull();
+    expect(seen).toEqual([1_000n]);
+    expect(h.allowance).toBe(1_000n);
+  });
+
+  it('an unresolvable read still lets the mined approve stand', async () => {
+    // The node never catches up within the budget. We hold a successful
+    // receipt for our own approve, so it stands — and crucially the
+    // optimistic report is NOT rolled back to null, since a later unwind
+    // has to know a write happened in order to reason about it.
+    const h = harness({
+      allowance: 0n,
+      staleReadsAfterWrite: 99,
+      pinnedReadThrows: true,
+    });
+    const seen: (bigint | null)[] = [];
+    const tx = await ensureAllowance({
+      ...base(h),
+      amount: 1_000n,
+      onWrote: (v) => seen.push(v),
+    });
+    expect(tx).not.toBeNull();
+    expect(seen).toEqual([1_000n]);
+  });
+
+  it('a node that HAS the block is believed when it disagrees', async () => {
+    // The conclusive case, and the reason the pinned read exists: asking
+    // at the block our transaction mined in, a node either answers about
+    // post-transaction state or errors. A disagreement there is real.
+    const h = harness({
+      allowance: 0n,
+      // Mined, then immediately moved by someone else — so the pinned
+      // read (which sees live state in this harness) disagrees.
+      afterWrite: (v) => (v === 1_000n ? 7n : undefined),
+    });
+    await expect(
+      ensureAllowance({ ...base(h), amount: 1_000n }),
+    ).rejects.toThrow(/does not read back as approved/);
+  });
+});
+
+describe('a cancelled zero-reset is not a competing grant (round 12)', () => {
+  it('reports the failure instead of standing down', async () => {
+    // The reset is cancelled, so the allowance stays at this flow's own
+    // `wrote` value. Round 11 read that as "somebody else owns this now"
+    // and returned quietly — leaving the payoff-sized approval live
+    // behind a failed handover, which is the opposite of what the unwind
+    // was called to do. Nothing else claimed the slot: the value sitting
+    // there is ours.
+    const h = harness({ allowance: 1_000n, replaceTxOf: (v) => v === 0n });
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/still standing/);
+    // The restore was never attempted — correctly, since a zero-first
+    // token would revert on it.
+    expect(h.writes).toEqual([0n]);
+    expect(h.allowance).toBe(1_000n);
+  });
+
+  it('still stands down for a genuine competing grant', async () => {
+    // The distinction that matters: here the reset DID land and another
+    // tab then granted 900. That is a third party's decision to defer
+    // to, and the unwind must not overwrite it.
+    const h = harness({
+      allowance: 1_000n,
+      afterWrite: (v) => (v === 0n ? 900n : undefined),
+    });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([0n]);
+    expect(h.allowance).toBe(900n);
   });
 });
