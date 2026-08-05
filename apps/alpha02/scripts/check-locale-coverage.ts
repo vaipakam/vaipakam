@@ -261,7 +261,10 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
     if (!stillMissing) stalePairs.push(`${code}:${key}`);
   }
 }
-if (stalePairs.length > 0) {
+const pruning = process.argv.includes('--prune');
+// In prune mode the stale pairs are about to be REMOVED, so they aren't
+// a problem — but every other problem still is (see below).
+if (stalePairs.length > 0 && !pruning) {
   problems.push(
     `${stalePairs.length} baseline entr(y/ies) already translated — run ` +
       `\`pnpm i18n:coverage --prune\`: ${stalePairs.slice(0, 6).join(', ')}` +
@@ -273,7 +276,7 @@ if (stalePairs.length > 0) {
 // can only SHRINK: every pair it writes was independently observed
 // missing just now, so it cannot be used to paper over a regression the
 // way a hand-edited allowlist could.
-if (process.argv.includes('--prune')) {
+if (pruning) {
   const pruned: Record<string, string[]> = {};
   for (const code of translated) {
     const missing = missingSubtree(en, read(code));
@@ -290,7 +293,13 @@ if (process.argv.includes('--prune')) {
   fs.writeFileSync(BASELINE_PATH, JSON.stringify(sorted, null, 2) + '\n');
   const pairs = Object.values(sorted).flat().length;
   console.log(`[check-locale-coverage] pruned baseline → ${Object.keys(sorted).length} key(s), ${pairs} pair(s)`);
-  process.exit(0);
+  // Deliberately NOT exiting here. Pruning fixes exactly one class of
+  // problem — stale baseline entries — and every other finding above
+  // (a new missing key, leaf-type drift, a malformed placeholder, a
+  // lost CONFIRM literal) is still real. Exiting 0 from the documented
+  // maintenance command would have reported a broken locale as healthy
+  // at precisely the moment someone is editing translations (Codex
+  // #1563 r3). Fall through to the normal verdict.
 }
 
 if (problems.length > 0) {

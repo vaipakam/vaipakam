@@ -53,6 +53,7 @@ import {
   leafTypeDrift,
   missingSubtree,
   orderLike,
+  placeholderDrift,
   unknownKeys,
   type Bundle,
 } from '../src/bundleOps.ts';
@@ -166,6 +167,44 @@ function verifyGlossaryPreserved(translated: object, sourceText: string): string
   return warnings;
 }
 
+
+/**
+ * Interpolation problems in a candidate bundle, as human-readable
+ * lines. Empty when the candidate is clean.
+ *
+ * The shape checks answer "is this the right key, holding the right
+ * kind of value" — they say nothing about the value's CONTENT. A patch
+ * that turns `"Paid {{amount}}"` into `"Pagado"` passes every one of
+ * them and writes a sentence that has silently lost the number it was
+ * about (Codex #1563 r3). Consumers without their own coverage command
+ * — `apps/www` today — would never find out.
+ *
+ * `unknown` and `malformed` are ALWAYS rejected: i18next has nothing to
+ * substitute for an invented token, and renders a malformed brace run
+ * literally. `dropped` is rejected by DEFAULT but can be downgraded to
+ * a warning with `--allow-token-omissions`, because a small number of
+ * omissions are grammatically correct (a dual form that already means
+ * "two days" must not restate the count). That flag is for exactly
+ * those deliveries, and the omission still has to be recorded in the
+ * consuming app's coverage allowlist to survive its build.
+ */
+function interpolationProblems(source, candidate, allowOmissions) {
+  const lines = [];
+  for (const { path: key, unknown, dropped, malformed } of placeholderDrift(
+    source,
+    candidate,
+  )) {
+    if (unknown.length > 0) lines.push(`${key}: invents {{${unknown.join('}}, {{')}}}`);
+    if (malformed.length > 0) lines.push(`${key}: malformed brace run(s) ${malformed.join(', ')}`);
+    if (dropped.length > 0 && !allowOmissions) {
+      lines.push(
+        `${key}: drops {{${dropped.join('}}, {{')}}} (pass --allow-token-omissions if the grammar carries it)`,
+      );
+    }
+  }
+  return lines;
+}
+
 /** A bundle counts as a placeholder (→ eligible for the default
  *  "fill in the gaps" run) when the file is absent or parses to an
  *  object with no keys. */
@@ -192,6 +231,7 @@ async function main() {
 
   const missingOnly = args.includes('--missing-only');
   const reorder = args.includes('--reorder');
+  const allowOmissions = args.includes('--allow-token-omissions');
   const allFlag = args.includes('--all');
   const explicitCodes = args.filter(
     (a, i) => !a.startsWith('--') && args[i - 1] !== '--locales-dir',
@@ -282,11 +322,18 @@ async function main() {
       // notices (Codex #1563 r2). Apps without a locale-coverage
       // command would never find out.
       const short = missingSubtree(source, translated);
-      if (strayKeys.length > 0 || drifted.length > 0 || short !== null) {
+      const interpolation = interpolationProblems(source, translated, allowOmissions);
+      if (
+        strayKeys.length > 0 ||
+        drifted.length > 0 ||
+        short !== null ||
+        interpolation.length > 0
+      ) {
         const detail = [
           ...strayKeys.slice(0, 5).map((k) => `not requested: ${k}`),
           ...drifted.slice(0, 5).map((d) => `${d.path}: expected ${d.expected}, got ${d.actual}`),
           ...(short ? [`incomplete: ${leafPaths(short).length} key(s) missing, e.g. ${leafPaths(short).slice(0, 3).join(', ')}`] : []),
+          ...interpolation.slice(0, 5),
         ].join('; ');
         throw new Error(`response shape rejected — ${detail}`);
       }

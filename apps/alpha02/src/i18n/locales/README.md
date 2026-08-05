@@ -84,7 +84,17 @@ you fill some of them, run `pnpm i18n:coverage --prune` to drop the
 entries you closed; the check fails until you do, so the file can't
 drift stale. `--prune` only ever REMOVES pairs (each one it keeps was
 observed missing on that run), so it can't be used to wave through a
-key that regressed.
+key that regressed. It also does NOT suppress other findings: if the
+locale has a genuinely new gap, a drifted leaf, a malformed placeholder
+or a lost `CONFIRM`, `--prune` fixes the stale entries and still exits
+non-zero for the rest.
+
+Both merge paths reject a translation that mangles an interpolation
+token before it can reach a file — an invented `{{token}}` or a
+malformed brace run always, and a DROPPED token unless you pass
+`--allow-token-omissions`. Use that flag only where the target grammar
+already carries the value (the Arabic dual case), and record the
+omission in `ALLOWED_OMISSIONS` as well or the build will still fail.
 
 Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map

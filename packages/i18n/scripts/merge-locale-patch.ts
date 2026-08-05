@@ -31,6 +31,7 @@ import {
   leafTypeDrift,
   missingSubtree,
   orderLike,
+  placeholderDrift,
   unknownKeys,
   type Bundle,
 } from '../src/bundleOps.ts';
@@ -44,6 +45,7 @@ const flag = (name: string): string | undefined => {
 const localesDirArg = flag('--locales-dir');
 const patchesDirArg = flag('--patches');
 const reorder = args.includes('--reorder');
+const allowOmissions = args.includes('--allow-token-omissions');
 if (!localesDirArg || !patchesDirArg) {
   console.error('Usage: --locales-dir <path> --patches <path>');
   process.exit(1);
@@ -63,6 +65,44 @@ for (const dir of [LOCALES_DIR, PATCHES_DIR]) {
 const enJson = JSON.parse(
   fs.readFileSync(path.join(LOCALES_DIR, 'en.json'), 'utf8'),
 ) as Bundle;
+
+
+/**
+ * Interpolation problems in a candidate bundle, as human-readable
+ * lines. Empty when the candidate is clean.
+ *
+ * The shape checks answer "is this the right key, holding the right
+ * kind of value" — they say nothing about the value's CONTENT. A patch
+ * that turns `"Paid {{amount}}"` into `"Pagado"` passes every one of
+ * them and writes a sentence that has silently lost the number it was
+ * about (Codex #1563 r3). Consumers without their own coverage command
+ * — `apps/www` today — would never find out.
+ *
+ * `unknown` and `malformed` are ALWAYS rejected: i18next has nothing to
+ * substitute for an invented token, and renders a malformed brace run
+ * literally. `dropped` is rejected by DEFAULT but can be downgraded to
+ * a warning with `--allow-token-omissions`, because a small number of
+ * omissions are grammatically correct (a dual form that already means
+ * "two days" must not restate the count). That flag is for exactly
+ * those deliveries, and the omission still has to be recorded in the
+ * consuming app's coverage allowlist to survive its build.
+ */
+function interpolationProblems(source, candidate, allowOmissions) {
+  const lines = [];
+  for (const { path: key, unknown, dropped, malformed } of placeholderDrift(
+    source,
+    candidate,
+  )) {
+    if (unknown.length > 0) lines.push(`${key}: invents {{${unknown.join('}}, {{')}}}`);
+    if (malformed.length > 0) lines.push(`${key}: malformed brace run(s) ${malformed.join(', ')}`);
+    if (dropped.length > 0 && !allowOmissions) {
+      lines.push(
+        `${key}: drops {{${dropped.join('}}, {{')}}} (pass --allow-token-omissions if the grammar carries it)`,
+      );
+    }
+  }
+  return lines;
+}
 
 const patchFiles = fs
   .readdirSync(PATCHES_DIR)
@@ -110,7 +150,8 @@ for (const file of patchFiles) {
   // — i18next renders nothing for a non-string and only logs.
   const strayKeys = unknownKeys(enJson, patch);
   const drifted = leafTypeDrift(enJson, patch);
-  if (strayKeys.length > 0 || drifted.length > 0) {
+  const interpolation = interpolationProblems(enJson, patch, allowOmissions);
+  if (strayKeys.length > 0 || drifted.length > 0 || interpolation.length > 0) {
     console.error(`✗ ${code}: patch rejected, nothing written`);
     for (const key of strayKeys.slice(0, 10)) {
       console.error(`    not in en.json: ${key}`);
@@ -118,6 +159,7 @@ for (const file of patchFiles) {
     for (const { path: p, expected, actual } of drifted.slice(0, 10)) {
       console.error(`    ${p}: expected ${expected}, got ${actual}`);
     }
+    for (const line of interpolation.slice(0, 10)) console.error(`    ${line}`);
     failures += 1;
     continue;
   }
