@@ -171,16 +171,33 @@ export async function ensureAllowance(opts: {
     // it so an unwind can tell "this has not landed YET" from "someone
     // else moved it", which an allowance read alone cannot distinguish.
     onWrote?.(value, hash);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    if (receipt.status !== 'success') {
-      // A REVERT is definitive: this value did not take effect. Correct
-      // the optimistic report back to whatever actually landed, or to
-      // null if nothing did. Without this the caller keeps believing the
-      // allowance is `value` while the chain says otherwise, and on the
-      // zero-first path that leaves the user's prior grant erased with
-      // the unwind convinced it isn't theirs to restore.
+    await publicClient.waitForTransactionReceipt({ hash });
+    // CONFIRM ON OBSERVED STATE, not on the receipt's status.
+    //
+    // A successful receipt does not mean this approve took effect. viem
+    // follows REPLACEMENTS: if the user cancels or speeds up the
+    // transaction, the wait resolves with the replacement's receipt —
+    // status 'success' for a cancel that set no allowance at all. Trusting
+    // that marked the value confirmed while the chain still read zero, and
+    // the unwind then compared zero against a value it had been told
+    // landed, concluded the zero was somebody else's doing, and left the
+    // user's prior grant erased (#1529 review round 10).
+    //
+    // Reading the allowance answers the only question that matters and
+    // subsumes every failure shape at once — replaced, cancelled,
+    // reverted, or reorged all show up the same way: the value is not
+    // there. There is no list of transaction outcomes to keep complete.
+    const landed = await publicClient.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [owner, spender],
+    });
+    if (landed !== value) {
+      // Roll the optimistic report back to what IS on chain, or to null
+      // when this function has confirmed nothing at all.
       onWrote?.(confirmed?.value ?? null, confirmed?.hash ?? null);
-      throw new Error(`Token approval failed (${hash})`);
+      throw new Error(`Token approval did not take effect (${hash})`);
     }
     confirmed = { value, hash };
     onConfirmed?.(value, hash);

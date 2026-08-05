@@ -708,8 +708,15 @@ async function stillEligible(loan) {
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
     return 'position transferred since discovery';
   }
-  const grace = await graceSecondsFor(loan.durationDays);
-  if (now > loan.startTime + loan.durationDays * 86_400n + grace) {
+  // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
+  // startTime and durationDays while the loan stays Active, so a stale
+  // term would judge an extended loan against its old deadline and skip a
+  // page that is correctly still chooser-eligible — and, if it was the
+  // only candidate, report BLOCKED (#1529 review round 10). The grace
+  // bucket follows the live duration too, since the bucket is chosen BY
+  // duration.
+  const grace = await graceSecondsFor(live.durationDays);
+  if (now > live.startTime + live.durationDays * 86_400n + grace) {
     return 'crossed its grace deadline since discovery';
   }
   return null;
