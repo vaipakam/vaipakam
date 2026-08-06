@@ -86,6 +86,34 @@ was well formed. The classifier is extracted to `rpc-verdict.mjs` with
 its own tests, for the reason `redact.mjs` was — a predicate verified by
 a throwaway script grows silent bypasses.
 
+Ask that same question of a RESOLVED response, not only of a thrown
+error. The page reaches the chain by two doors — the injected provider,
+whose failures throw, and the app's own HTTP transport, whose failures do
+not. A rate-limited or rejected call comes back through the second door
+as an ordinary response that `fetch` resolves happily, so a shim that
+classifies only its `catch` block sees nothing wrong. Handed on
+unjudged, that made a failed REQUIRED read look like a missing surface
+(a product FAIL) and let a failed OPTIONAL read pass at exit 0 on a page
+that was never fully served — the two outcomes the BLOCKED verdict
+exists to prevent.
+
+Two traps live in that check, and a naive "an error body means failure"
+rule falls into both. The shim serves the WHOLE site, so only traffic
+whose REQUEST is JSON-RPC may be judged by the RPC verdict — and the
+request is also the only reliable discriminator, because a rate-limited
+provider answers `429` with plain text that reveals nothing about what
+was asked. And an ordinary REVERT arrives as an HTTP 200 carrying a
+JSON-RPC error, so the same three-way split has to decide here too, with
+'answered' recorded as nothing at all; anything less exits non-zero on
+every healthy run. A batch is judged member by member and reported as
+ONE entry per verdict, because the count is of page requests.
+
+Test the WIRING, not just the predicate. A correct verdict filed into
+the wrong bucket is the same defect in a different coat, so the step
+that files a response into the malformed-vs-unreachable buckets is
+itself an exported, tested function rather than a few lines inline at
+the call site.
+
 The app-vs-infrastructure distinction only applies to PAGE traffic. A
 driver's own discovery reads stay a two-way question: a malformed
 request there is a defect in the driver, and "could not observe" is the

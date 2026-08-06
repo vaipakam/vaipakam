@@ -87,6 +87,7 @@ import {
   REVERT_BYTES,
   classifyRpcFailure,
   codedError,
+  recordRpcResponse,
 } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -786,6 +787,29 @@ const routeHandler = async (route) => {
       }
     });
     await route.fulfill({ status: resp.status, headers, body: buf });
+    // A resolved fetch is not the same as an answered call. The provider
+    // can hand back a JSON-RPC error, or a 429, over a perfectly healthy
+    // HTTP response — and passing that on without a verdict is how a
+    // rate-limited required read became a "missing chooser" product FAIL,
+    // and a rate-limited optional read an exit-0 pass on a page that was
+    // never fully served (#1529 review round 22).
+    //
+    // AFTER the fulfill, deliberately. The page gets the real response
+    // whatever we go on to conclude about it: this is observation, and a
+    // fault in our own judgement must not be able to turn a request the
+    // provider answered into an aborted one. Should this throw, the catch
+    // below files it as BLOCKED and the abort no-ops on an already-served
+    // route — the harmless direction.
+    recordRpcResponse(
+      {
+        status: resp.status,
+        body: buf,
+        requestBody: req.postData(),
+        // Redact BEFORE truncating, as the catch path does below.
+        url: redact(req.url()).slice(0, 160),
+      },
+      { malformed: malformedRpc, unreachable: routeFailures },
+    );
   } catch (err) {
     // The abort is still the only option — there is no response to serve
     // — but it must not pass silently: see `routeFailures`.
