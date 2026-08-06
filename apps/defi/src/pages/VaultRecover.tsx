@@ -610,7 +610,13 @@ function ReviewModal({
   status,
 }: ReviewModalProps) {
   const { t } = useTranslation();
-  const confirmReady = confirmInput.trim().toUpperCase() === RECOVERY_CONFIRM_WORD;
+  // BOTH sides normalised. Uppercasing only the input assumed the
+  // constant was already uppercase — and nothing enforced that, so a
+  // natural spelling like "Proceed" would make the gate unsatisfiable
+  // while the policy cross-check and every locale test stayed green,
+  // because they all consume the same spelling (Codex #1563 r23).
+  const confirmReady =
+    confirmInput.trim().toUpperCase() === RECOVERY_CONFIRM_WORD.toUpperCase();
   const inFlight = status.kind === 'signing' || status.kind === 'submitting';
   return (
     <div

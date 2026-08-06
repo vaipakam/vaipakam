@@ -487,6 +487,13 @@ async function main() {
       // reports the first cannot imply the second.
       const carried = carriedProblems(c, bundle);
       if (carried.length > 0) preExisting.set(c, carried);
+      // With --reorder, a bundle that is COMPLETE but merely out of
+      // order is still work: the flag normalises the FILE, and skipping
+      // it here left a bare `--missing-only --reorder` reporting "Every
+      // translated locale already covers en.json" while changing
+      // nothing (Codex #1563 r23). The no-API branch below does the
+      // reordering, so targeting it costs no API call.
+      if (reorder) return true;
       return missingSubtree(enJson, bundle) !== null;
     });
   } else {
@@ -569,17 +576,31 @@ async function main() {
         // the file byte-identical, silently doing nothing the operator
         // asked for (Codex #1563 r22). No API call is needed to sort
         // keys.
+        let finalBundle = existing;
         if (reorder) {
           const ordered = orderLike(enJson, existing);
           const before = JSON.stringify(existing, null, 2);
           const after = JSON.stringify(ordered, null, 2);
           if (before !== after) {
             writeFileAtomic(outPath, after + '\n');
+            finalBundle = ordered;
             console.log('already complete, reordered.');
-            continue;
+          } else {
+            console.log('already complete, skipped.');
           }
+        } else {
+          console.log('already complete, skipped.');
         }
-        console.log('already complete, skipped.');
+        // "Complete" is a statement about KEYS. An EXPLICITLY selected
+        // locale never goes through discovery, so this was the one path
+        // where a bundle holding every key but an invalid VALUE — a
+        // dropped {{amount}}, an empty string, a lost confirmation word
+        // — was reported complete and exited 0 (Codex #1563 r23). Same
+        // scan the sweep runs, so selecting a locale by name is not a
+        // way to be checked less.
+        const carried = carriedProblems(code, finalBundle);
+        if (carried.length > 0) preExisting.set(code, carried);
+        else preExisting.delete(code);
         continue;
       }
       const sourceText = JSON.stringify(source);

@@ -3178,7 +3178,7 @@ export function Recover() {
                 className="btn btn-primary"
                 disabled={
                   reviewBusy ||
-                  confirmInput.trim().toUpperCase() !== CONFIRM_WORD
+                  confirmInput.trim().toUpperCase() !== CONFIRM_WORD.toUpperCase()
                 }
                 onClick={() => void signAndSubmit()}
               >
