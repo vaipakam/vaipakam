@@ -88,6 +88,8 @@ import {
   classifyRpcFailure,
   codedError,
   recordRpcResponse,
+  rpcCallsFromBody,
+  rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
 
@@ -286,14 +288,17 @@ async function discovery(what, fn) {
   }
 }
 
-// The RPC has to BE the chain we say we are reviewing. Nothing else
-// checks it: the injected provider answers `eth_chainId` locally from
-// CHAIN_ID, and the page's own reads are forwarded to this same RPC — so
-// an OBSERVE_RPC pointed at a different supported network is consistent
-// end to end. With a Diamond at the same address there (deterministic
-// deploys make that ordinary, not exotic), the drive exits 0 having
-// reviewed a chain nobody asked about, and the report names the one they
-// did (#1529 review round 17).
+// The RPC has to BE the chain we say we are reviewing. The injected
+// provider answers `eth_chainId` locally from CHAIN_ID, so nothing else
+// checks OUR client: an OBSERVE_RPC pointed at a different supported
+// network is consistent end to end. With a Diamond at the same address
+// there (deterministic deploys make that ordinary, not exotic), the drive
+// exits 0 having reviewed a chain nobody asked about, and the report names
+// the one they did (#1529 review round 17).
+//
+// This covers the discovery client ONLY. The page's own reads go to the
+// RPC the deployed bundle was BUILT with, not to this one — `pageRpcChain`
+// probes those separately and the verdict block asserts them too.
 const servedChainId = await discovery('reading the RPC chain id', () =>
   pub.getChainId(),
 );
@@ -688,6 +693,49 @@ const ctx = await discovery('creating the browser context', () =>
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
 const refusedRpc = [];
 const blockedHttp = [];
+
+/**
+ * The chain each RPC endpoint THE PAGE uses actually serves, probed once
+ * per endpoint.
+ *
+ * The `OBSERVE_RPC` check near the top of this file is not enough on its
+ * own. It validates OUR client; the page's wagmi reads are neither
+ * forwarded to it nor rewritten to it — the route handler fetches each
+ * original `req.url()`, which is whatever RPC the deployed bundle was
+ * built with. So a site pointed at the wrong chain passes that check, and
+ * the surface it then fails to render gets blamed on the product; with
+ * deterministic deploys putting a Diamond at the same address on both
+ * chains it can even pass outright (#1529 review round 24).
+ *
+ * Fired in the background on first sighting so the probes overlap the
+ * drive rather than serialising the route handler, and awaited once at
+ * verdict time. `null` means "could not tell" — an endpoint may refuse a
+ * synthetic probe — and only a DEFINITE mismatch is allowed to block,
+ * keeping this loud-but-true rather than one more flaky exit.
+ *
+ * @type {Map<string, Promise<number|null>>}
+ */
+const pageRpcChain = new Map();
+function notePageRpcEndpoint(url) {
+  if (pageRpcChain.has(url)) return;
+  pageRpcChain.set(
+    url,
+    (async () => {
+      try {
+        const r = await ufetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+        });
+        if (!r.ok) return null;
+        const hex = (await r.json())?.result;
+        return typeof hex === 'string' ? Number(BigInt(hex)) : null;
+      } catch {
+        return null; // unreachable or non-JSON — not evidence of a wrong chain
+      }
+    })(),
+  );
+}
 /**
  * Page traffic this process could not fetch at all — the site, the RPC
  * endpoint or the sandbox proxy being briefly unreachable.
@@ -741,8 +789,16 @@ const routeHandler = async (route) => {
     if (body) {
       try {
         const parsed = JSON.parse(body);
-        const calls = Array.isArray(parsed) ? parsed : [parsed];
-        if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
+        // Validate the ENVELOPE before applying the allowlist. A body that
+        // is JSON but not a well-formed JSON-RPC request is a defect in the
+        // page, and `badMethod` stays null so it reports as one — an empty
+        // batch used to satisfy the allowlist vacuously and ride through,
+        // and a member with a non-string `method` used to be filed as a gap
+        // in our own allowlist (#1529 review round 24).
+        const calls = rpcRequestCalls(parsed);
+        if (!calls) {
+          why = `${method} (malformed json-rpc request)`;
+        } else {
           const denied = calls
             .filter((c) => !ALLOWED_RPC.has(c.method))
             .map((c) => String(c.method));
@@ -813,6 +869,9 @@ const routeHandler = async (route) => {
     // provider answered into an aborted one. Should this throw, the catch
     // below files it as BLOCKED and the abort no-ops on an already-served
     // route — the harmless direction.
+    // Which endpoints is the PAGE actually talking to? Only knowable from
+    // its own traffic — see `pageRpcChain`.
+    if (rpcCallsFromBody(req.postData())) notePageRpcEndpoint(req.url());
     recordRpcResponse(
       {
         status: resp.status,
@@ -1268,6 +1327,30 @@ if (routeFailures.length) {
   console.log(
     `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
       ` Nothing observed here can be trusted; re-run.`,
+  );
+  process.exit(2);
+}
+// Ahead of `failures`, because a wrong chain EXPLAINS a missing surface:
+// judged after it, a site built against another network would report as a
+// broken chooser (exit 1) instead of the deployment fault it is. See
+// `pageRpcChain` for why the OBSERVE_RPC check above cannot cover this.
+const pageChainWrong = [];
+for (const [url, probe] of pageRpcChain) {
+  const served = await probe;
+  if (served !== null && served !== CHAIN_ID) {
+    pageChainWrong.push({ url: redact(url).slice(0, 120), served });
+  }
+}
+if (pageChainWrong.length) {
+  console.log(
+    `\nBLOCKED: the page's own RPC endpoint(s) serve a different chain than` +
+      ` the requested ${CHAIN_ID}.`,
+  );
+  pageChainWrong.forEach((p) => console.log(`  chain ${p.served} → ${p.url}`));
+  console.log(
+    `  → the deployed site is built against the wrong network, so anything` +
+      ` missing here says nothing about the app. Fix the site's RPC config` +
+      ` or point this drive at chain ${pageChainWrong[0].served}.`,
   );
   process.exit(2);
 }

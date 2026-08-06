@@ -123,6 +123,27 @@ resolve POSITIONALLY — a dropped member does not merely yield
 unanswered request id is unreachable. And two calls in one batch can
 deserve different verdicts.
 
+Positional resolution cuts the other way too: a SURPLUS or duplicate
+member is worse than a missing one. Ask for ids 10 and 11, get back 9,
+10 and 11, and the sort hands the first call the id-9 result while every
+id asked for is present and looks answered — so an extra member poisons
+the whole batch, where an omission costs exactly one call and leaves the
+rest trustworthy. Nor is the absence of an error the same as success: a
+member carrying neither a `result` nor a usable error object makes the
+client hand the page `undefined`, which fails or renders degraded state
+while contributing no verdict at all. Require a result, and require the
+response ids to match the requested ids one for one.
+
+Validate the request ENVELOPE before applying the method allowlist, and
+share one definition of "is this JSON-RPC" between the gate and the
+response classifier so the two cannot disagree. An empty batch satisfies
+`every()` vacuously, so it rode through the gate and was then declined
+by the response side — an invalid request the page itself made vanished
+from the run. A member whose `method` is not a string failed the
+allowlist lookup like any unsanctioned method, reporting a malformed
+product request as a gap in OUR allowlist. Both are page defects and
+must report as such.
+
 A single attempt cannot settle any of it. The RPC client retries a
 failed read by default and the app wraps its transports in a fallback
 list, so the shim sees ATTEMPTS while the page experiences one logical
@@ -132,6 +153,27 @@ then died for good is a genuine failure, and letting an early success
 cancel it would hide exactly the mid-run degradation the drive exists to
 notice. The driver's OWN reads need no such reconciliation, because
 there the client exhausts its retries internally and throws once.
+
+That reconciliation has a known limit, tracked as issue #1583: method
+plus params is not invocation identity, so two independent reads that
+share both — a repeated `eth_blockNumber` poll, say — are treated as one
+logical call, and an unrelated later success can clear a failure that
+genuinely reached a page. There is no sound fix at this layer: the RPC
+client's retries are indistinguishable on the wire from independent
+calls (each retry carries a fresh id), concurrent duplicate requests are
+identical byte for byte, and no time threshold separates a retry chain
+from the next poll. Closing it means taking operation identity from the
+page rather than inferring it from the wire.
+
+Checking OUR client's chain is not checking the PAGE's. The injected
+provider answers `eth_chainId` locally, and the page's reads are neither
+forwarded to the discovery RPC nor rewritten to it — the route handler
+fetches each original request URL, which is whatever RPC the deployed
+bundle was BUILT with. So a site built against the wrong network passes
+the discovery check, and the surface it then fails to render is blamed
+on the product; with deterministic deploys putting the same address on
+both chains it can pass outright. Probe the endpoints the page actually
+uses, and let only a definite mismatch block.
 
 Test the WIRING, not just the predicate. A correct verdict filed into
 the wrong bucket is the same defect in a different coat, so the step

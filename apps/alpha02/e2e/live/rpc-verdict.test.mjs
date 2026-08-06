@@ -15,6 +15,7 @@ import {
   classifyRpcFailure,
   classifyRpcResponse,
   recordRpcResponse,
+  rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
 
@@ -277,6 +278,124 @@ describe('classifyRpcResponse', () => {
       );
       expect(verdicts(out)).toEqual(['ok', 'ok']);
     });
+  });
+});
+
+/**
+ * #1529 review round 24 — more ways a response can look answered without
+ * having answered, all of which used to record `ok`.
+ */
+describe('classifyRpcResponse — responses that only look answered', () => {
+  it('does not call a member with neither result nor error a success', () => {
+    // `{"jsonrpc":"2.0","id":1}` has no error to report, but viem reads
+    // `result` off it and hands the page `undefined`.
+    const out = classifyRpcResponse(200, JSON.stringify({ jsonrpc: '2.0', id: 1 }), rpcReq(call(1)));
+    expect(out).toEqual([
+      {
+        key: 'eth_call|[]',
+        method: 'eth_call',
+        verdict: 'unreachable',
+        why: 'neither result nor error',
+      },
+    ]);
+  });
+
+  it('treats an explicit null error with no result the same way', () => {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, error: null });
+    expect(verdicts(classifyRpcResponse(200, body, rpcReq(call(1))))).toEqual(['unreachable']);
+  });
+
+  it('still accepts a null error alongside a real result', () => {
+    // Belt-and-braces providers send both; the result is what matters.
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, error: null, result: '0x1' });
+    expect(verdicts(classifyRpcResponse(200, body, rpcReq(call(1))))).toEqual(['ok']);
+  });
+
+  it('accepts a null result — that is an answer, not an absence', () => {
+    // `eth_getTransactionReceipt` for an unmined hash answers with null.
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, result: null });
+    expect(verdicts(classifyRpcResponse(200, body, rpcReq(call(1))))).toEqual(['ok']);
+  });
+
+  it('rejects an error member that is not a JSON-RPC error object', () => {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, error: 'kaboom' });
+    expect(verdicts(classifyRpcResponse(200, body, rpcReq(call(1))))).toEqual(['unreachable']);
+  });
+
+  it('rejects a batch with a SURPLUS member, even when every id asked for is present', () => {
+    // viem sorts the members and resolves them positionally, so the extra
+    // id-9 member is handed to the call that asked for id 10, and id 10's
+    // answer goes to id 11. Both requested ids are present, and both used
+    // to record ok.
+    const out = classifyRpcResponse(
+      200,
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 9, result: '0x9' },
+        { jsonrpc: '2.0', id: 10, result: '0xa' },
+        { jsonrpc: '2.0', id: 11, result: '0xb' },
+      ]),
+      rpcReq(call(10), call(11)),
+    );
+    expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
+    expect(out[0].why).toMatch(/unexpected or duplicate member/);
+  });
+
+  it('rejects a batch carrying a DUPLICATE member', () => {
+    const out = classifyRpcResponse(
+      200,
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 1, result: '0x1' },
+        { jsonrpc: '2.0', id: 1, result: '0x2' },
+      ]),
+      rpcReq(call(1), call(2)),
+    );
+    expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
+  });
+
+  it('still reports an OMISSION per call rather than poisoning the batch', () => {
+    // The distinction that keeps the surplus rule from swallowing round
+    // 23's finding: an omission costs exactly one call, and the members
+    // that did come back are still trustworthy.
+    const out = classifyRpcResponse(
+      200,
+      JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+      rpcReq(call(1), call(2)),
+    );
+    expect(verdicts(out)).toEqual(['ok', 'unreachable']);
+    expect(out[1].why).toBe('omitted from batch response');
+  });
+
+  it('calls a batch answered with a single response unreachable for every call', () => {
+    const out = classifyRpcResponse(200, okBody(1), rpcReq(call(1), call(2)));
+    expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
+  });
+});
+
+describe('rpcRequestCalls', () => {
+  it('refuses an empty batch instead of passing it vacuously', () => {
+    // `[].every(...)` is true, which is how an app-generated invalid
+    // request rode through the route gate and then went unjudged.
+    expect(rpcRequestCalls([])).toBeUndefined();
+  });
+
+  it('refuses a member whose method is missing or not a string', () => {
+    expect(rpcRequestCalls({ jsonrpc: '2.0', id: 1 })).toBeUndefined();
+    expect(rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 42 })).toBeUndefined();
+    expect(rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: '' })).toBeUndefined();
+  });
+
+  it('refuses a non-object member and a non-RPC body', () => {
+    expect(rpcRequestCalls(['eth_call'])).toBeUndefined();
+    expect(rpcRequestCalls({ notRpc: true })).toBeUndefined();
+    expect(rpcRequestCalls(null)).toBeUndefined();
+  });
+
+  it('accepts the shapes viem actually sends', () => {
+    expect(rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] })).toHaveLength(
+      1,
+    );
+    expect(rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' })).toHaveLength(1);
+    expect(rpcRequestCalls([call(1), call(2)])).toHaveLength(2);
   });
 });
 

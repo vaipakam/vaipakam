@@ -96,18 +96,55 @@ function parseJson(body) {
 }
 
 /**
- * Is this request body JSON-RPC? The discriminator for the whole
+ * Is `parsed` a well-formed JSON-RPC request envelope, and if so what are
+ * its calls?
+ *
+ * Shared by the route gate (which decides whether a mutating POST may ride
+ * through) and the response classifier below, so the two cannot disagree
+ * about what counts as RPC. While they did, two app-generated malformed
+ * requests were misreported (#1529 review round 24):
+ *
+ *   - An EMPTY batch satisfies `every()` VACUOUSLY, so the gate allowed it
+ *     through; the response side then declined to judge it, and an invalid
+ *     request the page itself made vanished from the run entirely.
+ *   - A member whose `method` is missing or not a string failed the
+ *     allowlist lookup like any unsanctioned method, so a malformed
+ *     product request was filed as a gap in OUR allowlist (exit 2) rather
+ *     than as the page defect it is.
+ *
+ * Being strict here is safe in the direction that matters: the gate's
+ * default is to REFUSE and name what it refused, so a shape wrongly judged
+ * malformed is loud, where one wrongly waved through is silent.
+ *
+ * @returns {Array|undefined} the calls, or undefined if this is not a
+ *          well-formed JSON-RPC request.
+ */
+export function rpcRequestCalls(parsed) {
+  if (parsed === undefined || parsed === null) return undefined;
+  const calls = Array.isArray(parsed) ? parsed : [parsed];
+  if (!calls.length) return undefined;
+  const wellFormed = calls.every(
+    (c) =>
+      c &&
+      typeof c === 'object' &&
+      !Array.isArray(c) &&
+      typeof c.jsonrpc === 'string' &&
+      typeof c.method === 'string' &&
+      c.method.length > 0 &&
+      (c.params === undefined || typeof c.params === 'object'),
+  );
+  return wellFormed ? calls : undefined;
+}
+
+/**
+ * Is this request BODY JSON-RPC? The discriminator for the whole
  * response-side check, and it has to be the REQUEST rather than the
  * response: a rate-limited provider answers `429 Too Many Requests` with
  * a plain-text body, so the response alone cannot tell us an RPC call
  * just failed.
  */
-function rpcCalls(requestBody) {
-  const parsed = parseJson(requestBody);
-  if (parsed === undefined) return undefined;
-  const calls = Array.isArray(parsed) ? parsed : [parsed];
-  if (!calls.length) return undefined;
-  return calls.every((c) => c && typeof c.jsonrpc === 'string') ? calls : undefined;
+export function rpcCallsFromBody(requestBody) {
+  return rpcRequestCalls(parseJson(requestBody));
 }
 
 /**
@@ -191,6 +228,12 @@ function answersDespiteStatus(parsed) {
  *     way that read failed in the page and nothing recorded it.
  *   - Two calls in one batch can deserve different verdicts.
  *
+ * The same positional resolution makes two further shapes unsafe, both
+ * added in round 24: a SURPLUS or duplicate member shifts every answer
+ * along by one even though each requested id is present, and a member
+ * carrying neither a `result` nor a usable `error` is not a success just
+ * because it has no error to report.
+ *
  * What this must NOT do, and a naive "an error body means failure" rule
  * gets both wrong: the shim serves the WHOLE site, so only traffic whose
  * REQUEST is JSON-RPC is judged here; and an ordinary REVERT arrives as
@@ -206,7 +249,7 @@ function answersDespiteStatus(parsed) {
  *                  why?: string}>}
  */
 export function classifyRpcResponse(status, body, requestBody) {
-  const calls = rpcCalls(requestBody);
+  const calls = rpcCallsFromBody(requestBody);
   if (!calls) return [];
 
   const parsed = parseJson(body);
@@ -237,18 +280,69 @@ export function classifyRpcResponse(status, body, requestBody) {
     );
   }
 
-  const byId = new Map(
-    members.filter((m) => m && m.id !== null && m.id !== undefined).map((m) => [m.id, m]),
-  );
+  // What one member says about its call. An `error` decides on its own;
+  // otherwise the member has to actually CARRY a result.
+  const memberOutcome = (c, member) => {
+    const err = member?.error;
+    if (err !== null && err !== undefined) {
+      // Present but not a JSON-RPC error object. viem reads `code` and
+      // `message` off it, so there is nothing here the page can act on and
+      // nothing we can classify.
+      if (typeof err.code !== 'number') return out(c, 'unreachable', 'malformed json-rpc error');
+      const verdict = classifyRpcFailure(err);
+      return out(c, verdict === 'answered' ? 'ok' : verdict, `json-rpc ${err.code}`);
+    }
+    // Neither a result nor a usable error — `{"jsonrpc":"2.0","id":1}`, or
+    // a member whose only error field is `null`. Absence of an error is
+    // NOT success: viem destructures `result` off the member and hands the
+    // page `undefined`, so the read fails or renders degraded state while
+    // this ledger contributes no verdict at all (#1529 review round 24).
+    if (!member || !Object.prototype.hasOwnProperty.call(member, 'result')) {
+      return out(c, 'unreachable', 'neither result nor error');
+    }
+    return out(c, 'ok');
+  };
+
+  // A non-array response answers ONE call. viem hands `data` straight back
+  // without consulting the id, so the id is not load-bearing here — but a
+  // BATCH answered this way lost every member but one.
+  if (!Array.isArray(parsed)) {
+    if (calls.length === 1) return [memberOutcome(calls[0], members[0])];
+    return calls.map((c) => out(c, 'unreachable', 'batch answered with a single response'));
+  }
+
+  const wanted = new Set(calls.map((c) => c.id));
+  const byId = new Map();
+  let unattributable = false;
+  for (const m of members) {
+    const id = m?.id;
+    if (id === null || id === undefined || !wanted.has(id) || byId.has(id)) {
+      unattributable = true;
+      continue;
+    }
+    byId.set(id, m);
+  }
+
+  // A surplus or duplicate member poisons the WHOLE batch, not just its
+  // own call. viem SORTS the returned members and resolves them
+  // POSITIONALLY, so an extra member shifts every answer along by one: ask
+  // for ids 10 and 11, get back 9, 10 and 11, and the first call is handed
+  // the id-9 result while both requested ids are present and look fine.
+  // That is the difference from an OMISSION, which costs exactly one call
+  // and is still reported per call below — here there is no member left we
+  // can trust, so nothing may be recorded as ok (#1529 review round 24).
+  if (unattributable) {
+    return calls.map((c) =>
+      out(c, 'unreachable', 'unexpected or duplicate member in batch response'),
+    );
+  }
 
   return calls.map((c) => {
     const member = byId.get(c.id);
     // Nothing came back for this call. On a 200 that is a batch that
     // dropped a member — the read fails in the page, silently.
     if (member === undefined) return out(c, 'unreachable', 'omitted from batch response');
-    if (!member.error) return out(c, 'ok');
-    const verdict = classifyRpcFailure(member.error);
-    return out(c, verdict === 'answered' ? 'ok' : verdict, `json-rpc ${member.error?.code}`);
+    return memberOutcome(c, member);
   });
 }
 
