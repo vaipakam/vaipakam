@@ -383,7 +383,18 @@ for (const file of patchFiles) {
 
   const filled =
     (before ? leafPaths(before).length : 0) - (after ? leafPaths(after).length : 0);
-  fs.writeFileSync(targetPath, JSON.stringify(merged, null, 2) + '\n');
+  // Isolated like every other per-locale failure. A read-only file or a
+  // full disk otherwise threw out of the loop and every patch sorting
+  // AFTER this one was silently skipped — the same abort-the-batch
+  // shape already fixed for malformed patches and unreadable
+  // destinations, on the last unguarded operation (Codex #1563 r20).
+  try {
+    fs.writeFileSync(targetPath, JSON.stringify(merged, null, 2) + '\n');
+  } catch (err) {
+    console.error(`✗ ${code}: could not write ${code}.json — ${(err as Error).message}`);
+    failures += 1;
+    continue;
+  }
 
   const remaining = after ? leafPaths(after).length : 0;
   console.log(

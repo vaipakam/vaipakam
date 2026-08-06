@@ -81,12 +81,22 @@ const POLICY = JSON.parse(
 // actually compares against — and a policy still protecting the old
 // word would pass every check while the live gate wants the new one.
 // Cross-check rather than trust (Codex #1563 r19).
-if (!POLICY.requiredLiterals['vaultRecover.modalConfirmPrompt']?.includes(
-  RECOVERY_CONFIRM_WORD,
-)) {
+// EXACTLY this word, not merely "contains" it. `includes` proves the
+// new word was ADDED but not that the old one was removed, and
+// requiredLiteralProblems demands every listed token — so a policy
+// updated to ["CONFIRM", "PROCEED"] would pass this check and then
+// reject every correct prompt saying only "PROCEED", with nothing
+// explaining why (Codex #1563 r20). The gate compares against one
+// word, so the policy must name one word.
+const declaredLiterals = POLICY.requiredLiterals['vaultRecover.modalConfirmPrompt'] ?? [];
+if (
+  declaredLiterals.length !== 1 ||
+  declaredLiterals[0] !== RECOVERY_CONFIRM_WORD
+) {
   console.error(
-    `translation-policy.json requiredLiterals["vaultRecover.modalConfirmPrompt"] does ` +
-      `not list "${RECOVERY_CONFIRM_WORD}" — the word VaultRecover compares typed input against`,
+    `translation-policy.json requiredLiterals["vaultRecover.modalConfirmPrompt"] is ` +
+      `${JSON.stringify(declaredLiterals)}, expected exactly ["${RECOVERY_CONFIRM_WORD}"] — ` +
+      'the word VaultRecover compares typed input against',
   );
   process.exit(1);
 }

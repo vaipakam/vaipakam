@@ -224,14 +224,28 @@ const en = read('en');
 const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
 const problems: string[] = [];
 
+// What the bundles ACTUALLY do, so a policy exemption that no longer
+// corresponds to anything can be reported (see the stale-exemption
+// check below).
+const observedDropped = new Set<string>();
+const observedEmpty = new Set<string>();
+
 // The policy file is data, so it can drift from the constant the app
 // actually compares against. Cross-check rather than trust it: a guard
 // reading a stale literal is the same failure as a guard restating one
 // (Codex #1563 r14/r17).
-if (!REQUIRED_LITERALS['copy.recover.confirmPrompt']?.includes(CONFIRM_WORD)) {
+// EXACTLY this word, not merely "contains" it (Codex #1563 r20).
+// `includes` proves the live word was ADDED but not that a superseded
+// one was removed, and every listed token is REQUIRED — so a policy
+// left as ["CONFIRM", "PROCEED"] would pass here and then reject every
+// correct prompt saying only "PROCEED". The gate compares against one
+// word, so the policy must name one word.
+const declaredConfirm = REQUIRED_LITERALS['copy.recover.confirmPrompt'] ?? [];
+if (declaredConfirm.length !== 1 || declaredConfirm[0] !== CONFIRM_WORD) {
   problems.push(
-    'translation-policy.json requiredLiterals["copy.recover.confirmPrompt"] does not ' +
-      `list "${CONFIRM_WORD}" — the word Recover.tsx compares typed input against`,
+    'translation-policy.json requiredLiterals["copy.recover.confirmPrompt"] is ' +
+      `${JSON.stringify(declaredConfirm)}, expected exactly ["${CONFIRM_WORD}"] — ` +
+      'the word Recover.tsx compares typed input against',
   );
 }
 
@@ -271,7 +285,9 @@ for (const code of translated) {
     );
   }
 
+  for (const key of emptyTranslations(en, bundle)) observedEmpty.add(`${code}:${key}`);
   for (const { path: key, unknown, dropped, malformed } of placeholderDrift(en, bundle)) {
+    for (const token of dropped) observedDropped.add(`${code}:${key}:${token}`);
     if (unknown.length > 0) {
       problems.push(
         `${code}: ${key} introduces {{${unknown.join('}}, {{')}}} — not in the English`,
@@ -353,6 +369,45 @@ function checkRequiredLiterals(code: string, bundle: Bundle): void {
       }
     }
   }
+}
+
+// An exemption whose case has been FIXED must leave the policy, for the
+// same reason a filled baseline pair must leave the baseline: it is a
+// hole that stays open. Correct Arabic's dual to restore
+// {{count, number}} and the entry sits there armed — so if a later
+// patch or API response drops that token again, BOTH the ingestion
+// validators and this guard wave it through, and the regression is
+// invisible precisely where a human already decided the omission was
+// deliberate (Codex #1563 r20).
+//
+// Checked against what the bundles observably do, not against a
+// separate record, so it cannot drift in turn.
+const staleExemptions: string[] = [];
+for (const [pair, entry] of Object.entries(ALLOWED_OMISSIONS)) {
+  const [code] = pair.split(':');
+  // A locale whose file is unreadable or absent was never scanned —
+  // nothing observed there is evidence of anything.
+  if (!missingByLocale.has(code)) continue;
+  for (const token of entry.tokens) {
+    if (!observedDropped.has(`${pair}:${token}`)) {
+      staleExemptions.push(`omission ${pair}:${token} (the locale no longer drops it)`);
+    }
+  }
+}
+for (const pair of Object.keys(ALLOWED_EMPTY)) {
+  const [code] = pair.split(':');
+  if (!missingByLocale.has(code)) continue;
+  if (!observedEmpty.has(pair)) {
+    staleExemptions.push(`empty ${pair} (the locale no longer leaves it blank)`);
+  }
+}
+if (staleExemptions.length > 0) {
+  problems.push(
+    `${staleExemptions.length} stale exemption(s) in translation-policy.json — ` +
+      'delete them, or they stay armed for a future regression: ' +
+      staleExemptions.slice(0, 6).join(', ') +
+      (staleExemptions.length > 6 ? ', …' : ''),
+  );
 }
 
 // A recorded gap a locale has since FILLED must leave the baseline, or
