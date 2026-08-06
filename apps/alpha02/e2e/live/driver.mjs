@@ -104,7 +104,18 @@ function walletFor(role) {
   if (typeof w.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(w.address)) {
     blocked('no valid address');
   }
-  const derived = privateKeyToAccount(key).address;
+  // The regex proves 32 bytes of hex, not a usable key: secp256k1 also
+  // requires 1 <= k < n, so the all-zero placeholder and anything at or
+  // above the curve order pass the shape test and throw here. Letting
+  // that escape exits 1 from every signing driver, and the batch reports
+  // an unusable CREDENTIAL as a possible product FAIL — the precondition
+  // shape this file's `blocked()` exists for (#1529 review round 20).
+  let derived;
+  try {
+    derived = privateKeyToAccount(key).address;
+  } catch {
+    blocked('privateKey is 32 bytes of hex but not a valid secp256k1 key');
+  }
   if (derived.toLowerCase() !== w.address.toLowerCase()) {
     blocked(
       `address ${w.address} is not the one its privateKey derives (${derived})`,

@@ -74,6 +74,14 @@ Because the miss costs only a false BLOCKED, this kind of dead clause
 does not announce itself — it has to be measured against a responder
 that produces each shape.
 
+A credential the drivers cannot USE is a BLOCKED precondition, not a
+FAIL — and validating its shape is not the same as validating it. A
+32-byte hex string is not necessarily a valid secp256k1 key (the
+all-zero placeholder and anything at or above the curve order both pass
+a regex and fail derivation), so the derivation itself has to be inside
+the guarded path. Otherwise every signing driver exits 1 and the batch
+reports an unusable wallet file as a possible product defect.
+
 The three-verdict exit contract is only honoured by the drivers that
 implement it. The batch summary must say which those are rather than
 applying its vocabulary to every driver, or a row reading FAIL hides

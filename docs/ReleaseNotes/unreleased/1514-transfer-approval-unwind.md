@@ -154,6 +154,32 @@ situation and restores the earlier figure, while keeping the same
 protection as everywhere else: it goes ahead only if what is on chain is
 exactly what this attempt left there.
 
+Three more places where the tidy-up stayed quiet about an outcome the
+person needed. The rule they all break is the one already written down:
+saying nothing is a promise that nothing needs acting on, and it can
+only be made once that has actually been established.
+
+Two of them are the tidy-up declining to act because another transaction
+is in flight on the account. Declining is right — the other transaction
+could take effect first and ours would write straight over it — but the
+consequence is not nothing. Before the clearing step it means the
+payoff-sized approval is still standing; after it, it means the person's
+earlier grant is sitting erased and is not being put back. Both were
+reported as a clean tidy-up. The same applied when the app could not
+even find out whether anything was in flight, which is weaker ground for
+staying silent, not stronger.
+
+The third is the pair of checks that ask what the approval was left at.
+When neither could get a trustworthy answer — no archive depth on one
+side, an unreachable data source on the other — the app fell back to
+comparing against a figure it had no confidence in, concluded the
+approval was no longer its business, and reported success. What had
+actually happened is that it could not tell. It now says so. The
+deliberate exception is unchanged and still silent: where a data source
+that demonstrably has the relevant block reports that someone else has
+moved the approval, that is a real answer about a decision somebody
+made, and standing back from it needs no warning.
+
 A Spanish wording fix in the same area, found while checking one flagged
 line and turning out to affect six. The offset screens use one Spanish
 word, *cancelación*, for two different things: cancelling the offer, and

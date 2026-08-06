@@ -98,6 +98,12 @@ function harness(opts: {
    *  provider rejects the parameter) — so the conclusive negative is
    *  unavailable and the caller must fall back. */
   pinnedReadThrows?: boolean;
+  /** The HEAD read fails, so `confirmAllowanceStillLive` can never find a
+   *  node it can prove has our block and returns `unknown`. Distinct from
+   *  `pinnedReadThrows`, which leaves the head answerable: this is the
+   *  only way to reach "we could not establish the present at all", as
+   *  opposed to "the present disagrees with us". */
+  headReadThrows?: boolean;
   /** What a read PINNED TO THE RECEIPT BLOCK answers, when that differs
    *  from the value now. Models a third party moving the allowance after
    *  our write mined: history still says the value is ours, the present
@@ -143,9 +149,10 @@ function harness(opts: {
     }),
     // A node that has our receipt block. A concurrent change happened
     // after it, so the head sits one block later.
-    getBlockNumber: vi.fn(async () =>
-      opts.valueAtReceiptBlock !== undefined ? RECEIPT_BLOCK + 1n : RECEIPT_BLOCK,
-    ),
+    getBlockNumber: vi.fn(async () => {
+      if (opts.headReadThrows) throw new Error('rpc down');
+      return opts.valueAtReceiptBlock !== undefined ? RECEIPT_BLOCK + 1n : RECEIPT_BLOCK;
+    }),
     waitForTransactionReceipt: vi.fn(
       async ({
         hash,
@@ -457,32 +464,47 @@ describe('ensureAllowance onObserved', () => {
   });
 });
 
-describe('restoreAllowance — a transaction in flight means abstain', () => {
-  it('abstains when the wallet has a pending transaction', async () => {
-    // The allowance still reads as ours, but another tab has an approve
-    // SUBMITTED and unlanded. Queueing our restore behind it would let
-    // theirs mine first and ours overwrite it at the next nonce — the
-    // same clobber, displaced one block (#1529 review round 5).
+describe('restoreAllowance — a transaction in flight means abstain LOUDLY', () => {
+  /**
+   * Abstaining is right in every case here — a competing transaction
+   * would mine first and ours would overwrite it at the next nonce
+   * (#1529 review round 5). What changed in round 20 is that abstaining
+   * now THROWS rather than returning null.
+   *
+   * The two are not interchangeable to a caller: `ObligationTransferFlow`
+   * and `RefinanceFlow` both append `approvalCleanupFailed` on a throw
+   * and treat null as a clean cleanup. Returning null while the flow's
+   * payoff-sized approval is still live — or, after the reset, while the
+   * user's prior grant sits erased at zero — showed them only the generic
+   * transaction-failed banner for a wallet state they have to act on.
+   *
+   * The silent stand-down is retained exactly where the read is POSITIVE:
+   * see "leaves the allowance alone once someone else has moved it".
+   */
+  it('reports rather than hides an abstain for a pending transaction', async () => {
     const h = harness({ allowance: 1_000n, pendingTx: () => true });
-    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
-    expect(tx).toBeNull();
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/still standing/i);
     expect(h.writes).toEqual([]);
   });
 
-  it('abstains when the pending state cannot be read at all', async () => {
-    // Fail closed: an unwind is a best-effort courtesy, and guessing
-    // wrong costs somebody their standing grant.
+  it('reports an abstain when the pending state cannot be read at all', async () => {
+    // Fail closed on the WRITE, but not on the report: a failed nonce read
+    // is not even evidence of a pending transaction, so treating it as a
+    // clean cleanup is the least defensible version of this.
     const h = harness({ allowance: 1_000n, nonceReadThrows: true });
-    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
-    expect(tx).toBeNull();
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/still standing/i);
     expect(h.writes).toEqual([]);
   });
 
-  it('abstains when a transaction appears mid-sequence, after the reset', async () => {
+  it('reports an abstain when a transaction appears after the reset', async () => {
     // Nothing in flight at the outset, so the reset proceeds — and only
-    // THEN does a competing transaction appear. The pre-flight probe
-    // cannot have caught this one, which is why the post-reset re-check
-    // has to probe pending state as well as the mined allowance.
+    // THEN does a competing transaction appear. The prior grant is now
+    // cleared and not put back, which is the worst of the three to report
+    // as clean, and the message says so specifically.
     let resetDone = false;
     const h = harness({
       allowance: 1_000n,
@@ -492,8 +514,9 @@ describe('restoreAllowance — a transaction in flight means abstain', () => {
         return undefined;
       },
     });
-    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
-    expect(tx).toBeNull();
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/could not be restored/i);
     // The reset went out; the restore behind it did not.
     expect(h.writes).toEqual([0n]);
     expect(h.allowance).toBe(0n);
@@ -602,6 +625,57 @@ describe('restoreAllowance — our own pending write is not somebody else\'s', (
     // append their wallet-state warning only on a throw — so the user was
     // shown the generic transaction-failed banner while a payoff-sized
     // approval was still live and might yet mine (#1529 review round 17).
+  });
+});
+
+describe('restoreAllowance — "could not find out" is never "nothing to undo"', () => {
+  /**
+   * Round 17 established the rule for the lost-receipt case; round 20
+   * found the same conflation on the two reconciliation reads, which had
+   * been left on the old footing. In both, a null return would tell
+   * `ObligationTransferFlow` / `RefinanceFlow` the cleanup was clean.
+   *
+   * The line between these and the silent stand-downs is whether the
+   * answer is POSITIVE. `contradicted` — a node that demonstrably holds
+   * our block saying the value is someone else's now — stays silent, and
+   * the round-16 test above still pins that. `unknown` is not an answer.
+   */
+  it('reports when the write cannot be confirmed at its own block', async () => {
+    // Pinned read unavailable (no archive depth) and the live value never
+    // matches, so `confirmAllowanceValue` is `unknown`: our approve may
+    // or may not be standing, and we cannot tell.
+    const h = harness({ allowance: 500n, pinnedReadThrows: true });
+    await expect(
+      restoreAllowance({
+        ...base(h),
+        previous: 500n,
+        wrote: 1_000n,
+        wroteTxHash: '0xmined',
+      }),
+    ).rejects.toThrow(/could not confirm/i);
+    expect(h.writes).toEqual([]);
+  });
+
+  it('reports when the present cannot be established after a confirmed write', async () => {
+    // Our write IS confirmed at its block, but the head read fails, so
+    // `confirmAllowanceStillLive` cannot prove it asked a node holding
+    // that block. The live figure read at the outset (250) is not ours,
+    // and before round 20 that mismatch quietly returned null — while the
+    // payoff-sized approval might be exactly what is standing.
+    const h = harness({
+      allowance: 250n,
+      valueAtReceiptBlock: 1_000n,
+      headReadThrows: true,
+    });
+    await expect(
+      restoreAllowance({
+        ...base(h),
+        previous: 500n,
+        wrote: 1_000n,
+        wroteTxHash: '0xmined',
+      }),
+    ).rejects.toThrow(/could not confirm/i);
+    expect(h.writes).toEqual([]);
   });
 });
 

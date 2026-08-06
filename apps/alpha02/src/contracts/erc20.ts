@@ -497,10 +497,14 @@ export async function restoreAllowance(opts: {
         const landed = await confirmAllowanceValue(
           publicClient, token, owner, spender, wrote, r.receipt.blockNumber,
         );
-        // `unknown` keeps `current` as-is and stands down below — our own
-        // call ran, but without a trustworthy read we cannot rule out
-        // someone else having moved the allowance since, and abstaining
-        // is the safe direction for a courtesy unwind.
+        // Abstaining is the safe direction for a courtesy unwind, but it
+        // must not be SILENT. `unknown` here means our own call ran and we
+        // could not read what it left: the flow's payoff-sized approval is
+        // most likely live, and returning null below would tell the caller
+        // the cleanup was clean. That is the same conflation of "nothing
+        // to undo" with "could not find out" that round 17 fixed in the
+        // catch below — this branch, and the live re-read inside it, were
+        // left on the old footing (#1529 review round 20).
         if (landed === 'confirmed') {
           // Our write landed. That is HISTORY, and on its own it must not
           // overwrite the live read: pinned at our own receipt block the
@@ -516,10 +520,15 @@ export async function restoreAllowance(opts: {
           // block. Only a live match unblocks the unwind; `contradicted`
           // (someone moved it) and `unknown` (no trustworthy read) both
           // leave `current` alone and stand down below.
+          //
+          // `contradicted` is a POSITIVE answer — a node holding our block
+          // says someone else owns the value — so that one stands down
+          // quietly, as before. `unknown` is not an answer at all.
           const still = await confirmAllowanceStillLive(
             publicClient, token, owner, spender, wrote, r.receipt.blockNumber,
           );
           if (still === 'confirmed') current = wrote;
+          else if (still === 'unknown') unresolved = true;
         } else if (landed === 'contradicted') {
           // Our call ran, but a node that HAS its block says the value is
           // not there — so the optimistic `wrote` is not what this
@@ -540,6 +549,9 @@ export async function restoreAllowance(opts: {
           wrote = confirmed ?? null;
           if (wrote === null || wrote === previous) return null;
           current = await readAllowance();
+        } else {
+          // landed === 'unknown' — no node that has our block would answer.
+          unresolved = true;
         }
       }
     } catch {
@@ -562,9 +574,24 @@ export async function restoreAllowance(opts: {
         ` before retrying.`,
     );
   }
-  // Someone else owns the current value now — leave it alone.
+  // Someone else owns the current value now — leave it alone. This one is
+  // a positive read of the live allowance, so silence is right: there is
+  // genuinely nothing of ours left to undo.
   if (current !== wrote) return null;
-  if (await ownerHasPendingTx()) return null;
+  // Not standing down for the same reason. Here `current === wrote`, so
+  // the flow's payoff-sized approval IS live, and we are declining to
+  // clear it only because something else is in flight — or because the
+  // nonce read failed and `ownerHasPendingTx` fails closed, which is not
+  // even evidence of a pending transaction. Returning null told both
+  // callers the cleanup was clean and left that approval standing with no
+  // warning (#1529 review round 20). Abstain, but say so.
+  if (await ownerHasPendingTx()) {
+    throw new Error(
+      `The approval could not be cleaned up because another transaction is` +
+        ` in flight on this account. The earlier approval is still standing —` +
+        ` revoke it from your wallet's approvals view if you no longer want it.`,
+    );
+  }
 
   // `what` names the STEP, because this helper sends both of them and
   // the two failures need different sentences: a cancelled reset leaves
@@ -676,7 +703,22 @@ export async function restoreAllowance(opts: {
       );
     }
     // …or a competing approve was merely SUBMITTED, which no read can see.
-    if (await ownerHasPendingTx()) return null;
+    //
+    // Standing down is still right — theirs would mine first and ours
+    // would overwrite it at the next nonce — but the stakes here are the
+    // opposite of the pre-reset case, and worse: our reset has ALREADY
+    // landed, so the user's prior grant is sitting at zero and we are
+    // walking away without putting it back. Reporting that as a clean
+    // cleanup is the one outcome they cannot act on (#1529 review
+    // round 20). Same treatment as the `unknown` re-read just above,
+    // which is the same predicament reached by a different route.
+    if (await ownerHasPendingTx()) {
+      throw new Error(
+        `The earlier approval was cleared, but it could not be restored` +
+          ` because another transaction is in flight on this account.` +
+          ` Re-approve this spender from your wallet if you still need it.`,
+      );
+    }
   }
   const restored = await approve(previous, 'allowance restore');
   // Confirm on OBSERVED STATE as well, exactly as `ensureAllowance` does.

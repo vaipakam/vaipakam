@@ -878,7 +878,15 @@ Its intended behaviour, as the test oracle for this surface:
   withdrawal: the app stands back from an approval it cannot account
   for, and says that it could not account for it. A withdrawal that
   reports nothing is a promise that nothing needs acting on, and it
-  may only be made when that has actually been determined. Where the
+  may only be made when that has actually been determined. Standing
+  back because ANOTHER TRANSACTION IS IN FLIGHT on the account is the
+  same kind of outcome and is reported the same way: the withdrawal is
+  right not to queue behind a transaction whose effect it cannot yet
+  see — that one could mine first and be overwritten by ours — but the
+  approval it declined to clear is still standing, or, past the
+  clearing step, the person's earlier grant is still erased. Not being
+  able to tell whether anything is in flight counts here too: that is
+  weaker ground than knowing something is, not stronger. Where the
   withdrawal takes two steps — clearing an approval to zero before
   writing the earlier figure back — both the standing-back rule and
   the no-overwrite rule apply to the SECOND step as well as the
