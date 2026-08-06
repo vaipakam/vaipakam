@@ -209,9 +209,55 @@ const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
 
 const pub = createPublicClient({ transport: http(RPC) });
 
+/**
+ * A URL safe to PRINT. `OBSERVE_RPC` is routinely an authenticated
+ * provider endpoint — Alchemy and Infura both carry the key as a path
+ * segment, others use basic auth or a query parameter — and the
+ * live-review workflow says to paste a drive's output into the PR
+ * thread. Printing the URL verbatim therefore publishes the credential
+ * and hands over the account's quota (#1529 review round 19).
+ *
+ * Opaque segments are masked at 24+ characters with NO hyphen or dot,
+ * which is the shape of provider keys (Alchemy: 32 alphanumeric; Infura:
+ * 32 hex) and not the shape of a site path — real slugs are shorter or
+ * hyphenated, so route-failure output stays legible.
+ */
+const OPAQUE_SEGMENT = /^[A-Za-z0-9]{24,}$/;
+function redactUrl(raw) {
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password) {
+      u.username = '***';
+      u.password = '';
+    }
+    u.pathname = u.pathname
+      .split('/')
+      .map((s) => (OPAQUE_SEGMENT.test(s) ? '***' : s))
+      .join('/');
+    // Values only — the NAMES are useful and never secret.
+    for (const k of [...u.searchParams.keys()]) u.searchParams.set(k, '***');
+    return u.toString();
+  } catch {
+    // Never fall back to the raw string: unparseable is exactly when a
+    // credential is most likely to survive a naive redaction.
+    return '(unparseable url)';
+  }
+}
+
+/** The RPC's identity for logs: origin only. Which provider is being
+ *  used is all an operator needs from a status line, and it cannot leak
+ *  a key held in the path, the query or basic auth. */
+const rpcLabel = (() => {
+  try {
+    return new URL(RPC).origin;
+  } catch {
+    return '(invalid OBSERVE_RPC)';
+  }
+})();
+
 // ---------------------------------------------------------------- chain
 console.log(`site      ${SITE}`);
-console.log(`chain     ${CHAIN_ID} via ${RPC}`);
+console.log(`chain     ${CHAIN_ID} via ${rpcLabel}`);
 console.log(`diamond   ${DIAMOND}`);
 
 /**
@@ -680,7 +726,10 @@ await ctx.route('**/*', async (route) => {
       // provider uses. Labelling every refused POST a mutation reported a
       // harness omission (e.g. an unlisted `eth_getProof`) as a product
       // FAIL (#1529 review round 7).
-      blockedHttp.push({ why, method: badMethod, url: req.url().slice(0, 120) });
+      // Redacted at the SOURCE, not at the print site: this array is
+      // not printed today, and a future report line that started doing so
+      // should not be able to reintroduce the leak.
+      blockedHttp.push({ why, method: badMethod, url: redactUrl(req.url()).slice(0, 120) });
       await route.abort('accessdenied').catch(() => {});
       return;
     }
@@ -710,7 +759,9 @@ await ctx.route('**/*', async (route) => {
     // The abort is still the only option — there is no response to serve
     // — but it must not pass silently: see `routeFailures`.
     routeFailures.push({
-      url: req.url().slice(0, 160),
+      // Redact BEFORE truncating — slicing first can cut a URL mid-way
+      // and leave `redactUrl` unable to parse what it is handed.
+      url: redactUrl(req.url()).slice(0, 160),
       why: String(err).split('\n')[0].slice(0, 160),
     });
     await route.abort('failed').catch(() => {});
@@ -756,21 +807,34 @@ await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) 
     // the app swallows an optional read and the drive exits 0 on a page
     // that was never fully served (#1529 review round 18).
     //
-    // Told apart by whether the NODE answered, verified against the live
-    // chain rather than assumed:
+    // Told apart by POSITIVE evidence that the EVM answered — the same
+    // shape as `isRevert` above, and for the same reason. Round 18's
+    // version of this tested `code !== -32603`, which is a DENYLIST: it
+    // has to enumerate every operational code a provider might return,
+    // and the ones it missed are waved through as answers. Measured:
     //
-    //   revert       RpcRequestError   code=3          (an answer)
-    //   unreachable  HttpRequestError  code=undefined  (no answer)
-    //   HTTP 503     HttpRequestError  code=undefined  (no answer)
+    //   revert            RpcRequestError            code=3       ANSWER
+    //   rate limited      LimitExceededRpcError      code=-32005  no answer
+    //   unavailable       ResourceUnavailableRpcError code=-32002 no answer
+    //   internal          InternalRpcError           code=-32603  no answer
+    //   unreachable / 503 HttpRequestError           code=absent  no answer
     //
-    // A JSON-RPC code means the node responded and the page should see
-    // it. -32603 is excluded on round 15's evidence: it is the generic
-    // code providers return for an upstream outage, so it is not proof of
-    // an answer. Over-recording costs a false BLOCKED, which is loud and
-    // harmless; under-recording costs a false FAIL, which is not.
-    if (typeof e.code !== 'number' || e.code === -32603) {
+    // That is exactly the argument `ALLOWED_RPC` above is built on, and
+    // it applies here too: an allowlist turns an omission into a false
+    // BLOCKED, which is loud and harmless, where a denylist turns one
+    // into a false FAIL blamed on the app (#1529 review round 19).
+    //
+    // So: code 3 (EIP-1474 execution error) is an answer, and so are
+    // returned revert BYTES whatever code carried them — some providers
+    // label genuine reverts -32000. Everything else is recorded.
+    const answered =
+      e.code === EXECUTION_REVERTED ||
+      (typeof e.data === 'string' && REVERT_BYTES.test(e.data));
+    if (!answered) {
       routeFailures.push({
-        url: `wallet ${method} → ${RPC}`,
+        // Origin only — never the full RPC URL, which routinely carries
+        // the provider key.
+        url: `wallet ${method} → ${rpcLabel}`,
         why: String(e.shortMessage ?? e.message ?? e).split('\n')[0].slice(0, 160),
       });
     }

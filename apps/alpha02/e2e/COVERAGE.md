@@ -41,6 +41,23 @@ at re-check time: a value cached during discovery can have changed under
 it, and judging a page against a stale one turns a configuration change
 into a reported product regression.
 
+A live driver's output is pasted into the PR thread, so it is a
+PUBLICATION surface: never print an RPC URL, a request URL or anything
+else that can carry a provider key verbatim. Status lines get the origin
+only; recorded URLs are redacted where they are recorded, not where they
+are printed, so a later report line cannot reintroduce the leak.
+
+Classify transport-vs-answer by an ALLOWLIST of what counts as the chain
+answering, never a denylist of known failures — the same argument the
+read-only allowlist is built on. A missed operational code in a denylist
+becomes a product FAIL blamed on the app; a missed one in an allowlist
+becomes a BLOCKED, which is loud and harmless.
+
+The three-verdict exit contract is only honoured by the drivers that
+implement it. The batch summary must say which those are rather than
+applying its vocabulary to every driver, or a row reading FAIL hides
+that no infrastructure failure could have been distinguished.
+
 The transport rule covers EVERY way the page reaches the network, not
 just the one the driver proxies. Reads the app makes through an injected
 wallet do not travel the routed-fetch path, so a driver that records

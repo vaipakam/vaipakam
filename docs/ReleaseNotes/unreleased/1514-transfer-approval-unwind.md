@@ -153,3 +153,15 @@ our own confirmed step and never put back. It now recognises that
 situation and restores the earlier figure, while keeping the same
 protection as everywhere else: it goes ahead only if what is on chain is
 exactly what this attempt left there.
+
+A Spanish wording fix in the same area, found while checking one flagged
+line and turning out to affect six. The offset screens use one Spanish
+word, *cancelación*, for two different things: cancelling the offer, and
+the payoff that gets collected. In the banner shown after a cancellation
+the two meanings sat in the same sentence, so the line that warns "the
+spending approval you granted for the payoff is left in place" read as
+though the approval had been granted for the cancellation — understating
+what the approval can still be used to collect. The payoff sense is now
+*pago* throughout those screens, matching the wording the refinance
+screens already use; the one place the word genuinely means cancelling
+is unchanged. No other language had the problem.

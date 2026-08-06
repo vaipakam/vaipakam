@@ -38,6 +38,24 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * Drivers that actually IMPLEMENT the three-verdict contract above.
+ *
+ * The contract is aspirational for everything not in this set. Those
+ * drivers exit 1 for infrastructure failures — an unreachable site, a
+ * dead RPC, an absent wallet file — either by an explicit
+ * `process.exit(1)` or by letting the rejection reach the top level. So
+ * a BLOCKED row can only ever appear for a driver listed here, and a
+ * FAIL row from any other driver may or may not be a real regression.
+ *
+ * Naming that explicitly is the point. A summary that silently applied a
+ * three-verdict vocabulary to twelve drivers when one honours it reads
+ * as "no infrastructure failures occurred" when what actually happened
+ * is that none could be distinguished (#1529 review round 19). Migrating
+ * the rest is tracked separately; add each here as it lands.
+ */
+const THREE_VERDICT_DRIVERS = new Set(['live-position-observe.mjs']);
+
 const scripts = fs
   .readdirSync(HERE)
   .filter((f) => f.startsWith('live-') && f.endsWith('.mjs'))
@@ -62,9 +80,23 @@ for (const script of scripts) {
 
 console.log('\n━━━ live batch summary ━━━');
 for (const r of results) {
+  const unmigrated = r.verdict === 'FAIL' && !THREE_VERDICT_DRIVERS.has(r.script);
   console.log(
     `${r.verdict.padEnd(7)}  ${r.script}` +
-      (r.verdict === 'FAIL' && r.code !== 1 ? `  (exit ${r.code})` : ''),
+      (r.verdict === 'FAIL' && r.code !== 1 ? `  (exit ${r.code})` : '') +
+      // Do not let this row be read as a confirmed product defect.
+      (unmigrated ? '  (may be infrastructure — driver predates the contract)' : ''),
+  );
+}
+const unmigratedFails = results.filter(
+  (r) => r.verdict === 'FAIL' && !THREE_VERDICT_DRIVERS.has(r.script),
+);
+if (unmigratedFails.length) {
+  console.log(
+    `\n${unmigratedFails.length} FAIL(s) came from drivers that do not yet` +
+      ` distinguish BLOCKED from FAIL — an unreachable site or RPC looks` +
+      ` identical to a regression there. Read those drives' output before` +
+      ` treating them as defects.`,
   );
 }
 const blocked = results.filter((r) => r.verdict === 'BLOCKED');
