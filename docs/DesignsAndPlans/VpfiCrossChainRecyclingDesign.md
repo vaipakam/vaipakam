@@ -286,9 +286,21 @@ with different books**, and that conflating them corrupts the per-chain ledger.
 | Base-side ledger | a **pending authorization**, closed on return and released on proven non-execution (constraint 5) | a **one-shot recovery entitlement** that SURVIVES the original ACK and is consumed exactly once (constraint 6) — finalize/ACK alone is not enough |
 | Mirror-side precondition | the surplus flag / operator instruction | the day must have reached an **irreversible lapsed** terminal (constraint 9a) |
 
-**Why Mode B must not touch `consumedCumulative`.** Availability is
-`reported − (consumed − released)`, **saturating, subtraction-first** — the
-form `LibVpfiRecycle.mirrorAvailRecycled` actually implements. Writing it as
+**Availability must carry the repatriation terms** (Codex #1574 r5). Today it
+is `reported − (consumed − released)`, **saturating, subtraction-first** — the
+form `LibVpfiRecycle.mirrorAvailRecycled` actually implements. That formula alone is **not
+sufficient** once constraints 5/5a select a separate repatriation ledger: a
+successful Mode-A return leaves claim-side `consumed` untouched, so an
+unextended formula **re-offers the drained amount** to later broadcasts — while
+charging `consumedCumulative` instead (which an earlier revision of constraint
+5 directed, and no longer does) breaks the `outstanding + retired == consumed`
+identity 5a names. The
+design must therefore extend availability to
+`reported − (consumed − released) − (repatDebited − repatReleased)`, in the
+same saturating, subtraction-first shape, and **no direction anywhere may say
+"increment `consumedCumulative`" for a repatriation**.
+
+**Why Mode B must not touch the claim-side ledger at all.** Writing it as
 `reported + released − consumed` is not an equivalent rearrangement here: a
 mirror's reported lifetime cumulative is unbounded, so on a faulty or hostile
 report near `type(uint256).max` the addition overflows and reverts **before**
@@ -384,8 +396,9 @@ challenged and stand.
    or repatriates VPFI that is backing a different obligation. Needs a
    dedicated stranded-recovery reservation excluded from claim backing and
    retired exactly once, or an atomic forward-back from the inbound callback.
-5. **Mode A needs a terminal ledger for its instruction.** It charges
-   `consumedCumulative` before a cross-chain instruction but declares no
+5. **Mode A needs a terminal ledger for its instruction.** It takes its
+   availability debit — the **separate repatriation term** of 5a, never
+   `consumedCumulative` — before a cross-chain instruction, but declares no
    reservation: if the instruction never executes, the mirror's bucket is
    intact while Base **permanently understates availability**, and without an
    instruction id the Base ingress cannot prove an arriving Mode-A payload
@@ -442,6 +455,17 @@ challenged and stand.
    compensation day/remit before dispatch, and the Base entitlement must bind
    to that state.
 
+5c. **Releasing an authorization must be TERMINAL ON THE MIRROR, not merely
+   proven-unexecuted on Base** (Codex #1574 r5). Proof that an authorization
+   has not executed *yet* is not proof it will not: a non-execution report can
+   cross either a permissionless execution transaction or the delayed original
+   authorization, after which **Base releases availability while the mirror
+   still debits and sends** — and the return arrives with no pending record to
+   settle against. Requires a mirror-side **cancellation tombstone, mutually
+   exclusive with the execution marker** of 5b, and Base releasing only on an
+   authenticated **cancellation ACK** that also terminally records
+   authorization ids the mirror had never received.
+
 5b. **A pending authorization must be CONSUMED at the mirror before it sends,
    and be bound to the ISSUING DEPLOYMENT.** Two failure modes, both from
    round 4:
@@ -476,7 +500,7 @@ challenged and stand.
 
 7. **Only DESTINATION credits scale to `actualReceived`. Mode A's SOURCE debit
    must not.** The mirror removed `amount` from its bucket; if a short receipt
-   scaled `consumedCumulative` down to what landed, the shortfall would be
+   scaled the repatriation debit down to what landed, the shortfall would be
    re-offered as mirror availability for tokens that already left. Track any
    delivery shortfall separately instead. (Constraint 13's default still holds
    for every destination credit — this is the stated exception it demands.)
