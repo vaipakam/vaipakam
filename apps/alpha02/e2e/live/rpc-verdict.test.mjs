@@ -12,6 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
   recordRpcResponse,
@@ -396,6 +397,94 @@ describe('rpcRequestCalls', () => {
     );
     expect(rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' })).toHaveLength(1);
     expect(rpcRequestCalls([call(1), call(2)])).toHaveLength(2);
+  });
+
+  // Round 25: the predicate's own two loose clauses. Both let a malformed
+  // app request count as well formed, and a lenient provider answering it
+  // then produced a clean run.
+  it('refuses a version that is not exactly 2.0', () => {
+    expect(rpcRequestCalls({ jsonrpc: '1.0', id: 1, method: 'eth_call', params: [] })).toBeUndefined();
+    expect(rpcRequestCalls({ jsonrpc: '2', id: 1, method: 'eth_call', params: [] })).toBeUndefined();
+    expect(rpcRequestCalls({ id: 1, method: 'eth_call', params: [] })).toBeUndefined();
+  });
+
+  it('refuses null params, which typeof calls an object', () => {
+    expect(
+      rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: null }),
+    ).toBeUndefined();
+  });
+
+  it('still accepts both structured params shapes the spec allows', () => {
+    // An ARRAY is what viem sends; a by-name object is legal JSON-RPC and
+    // must not be swept up by the null fix.
+    expect(
+      rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: '0x1' }] }),
+    ).toHaveLength(1);
+    expect(
+      rpcRequestCalls({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: { to: '0x1' } }),
+    ).toHaveLength(1);
+  });
+});
+
+/**
+ * Round 25: which endpoint is serving the DEPLOYMENT.
+ *
+ * The chain check needs this because the page uses more than one network
+ * on purpose — an explicit chain-1 transport backs ENS reverse lookups —
+ * and asserting the review's chain against every endpoint the page touches
+ * reported a healthy site as built for the wrong network.
+ */
+describe('callsTargetContract', () => {
+  const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
+  const rpc = (method, params) => ({ jsonrpc: '2.0', id: 1, method, params });
+
+  it('matches an eth_call addressed to the contract, whatever the case', () => {
+    expect(callsTargetContract([rpc('eth_call', [{ to: DIAMOND.toLowerCase() }, 'latest'])], DIAMOND)).toBe(
+      true,
+    );
+    expect(callsTargetContract([rpc('eth_call', [{ to: DIAMOND.toUpperCase() }])], DIAMOND)).toBe(
+      true,
+    );
+  });
+
+  it('matches eth_getLogs whether address is one or many', () => {
+    expect(callsTargetContract([rpc('eth_getLogs', [{ address: DIAMOND }])], DIAMOND)).toBe(true);
+    expect(
+      callsTargetContract([rpc('eth_getLogs', [{ address: ['0xdead', DIAMOND] }])], DIAMOND),
+    ).toBe(true);
+  });
+
+  it('finds the contract anywhere in a batch, not only first', () => {
+    expect(
+      callsTargetContract(
+        [rpc('eth_blockNumber', []), rpc('eth_call', [{ to: DIAMOND }])],
+        DIAMOND,
+      ),
+    ).toBe(true);
+  });
+
+  // The whole point: an ENS lookup is an eth_call to a DIFFERENT contract
+  // on chain 1, and must not mark its endpoint as serving our deployment.
+  it('does not match another contract on another chain', () => {
+    expect(
+      callsTargetContract(
+        [rpc('eth_call', [{ to: '0xce01f8eee7E479C928F8919abD53E553a36CeF67' }, 'latest'])],
+        DIAMOND,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not match chain-agnostic traffic', () => {
+    expect(callsTargetContract([rpc('eth_blockNumber', []), rpc('eth_chainId', [])], DIAMOND)).toBe(
+      false,
+    );
+  });
+
+  it('is false rather than throwing on missing pieces', () => {
+    expect(callsTargetContract([rpc('eth_call', [])], DIAMOND)).toBe(false);
+    expect(callsTargetContract([rpc('eth_call')], DIAMOND)).toBe(false);
+    expect(callsTargetContract(undefined, DIAMOND)).toBe(false);
+    expect(callsTargetContract([rpc('eth_call', [{ to: DIAMOND }])], undefined)).toBe(false);
   });
 });
 

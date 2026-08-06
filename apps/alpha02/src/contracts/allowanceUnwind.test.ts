@@ -692,6 +692,51 @@ describe('restoreAllowance — "could not find out" is never "nothing to undo"',
   });
 });
 
+describe('restoreAllowance — the FINAL put-back is confirmed too (round 25)', () => {
+  /**
+   * The last site still treating `unknown` as success. Rounds 20 and 21
+   * settled the same shape on the two reconciliation reads; the write that
+   * actually restores the grant kept returning its hash whenever the
+   * confirmation could not be taken, so both flows reported a clean
+   * cleanup while the user's allowance might still be sitting at the zero
+   * this function put there.
+   *
+   * Reached with `wrote: 0n` — the real sequence behind it, and the one
+   * `ensureAllowance` produces when its zero-reset lands and the approve
+   * after it is rejected. No reset is needed on top, so the restore is the
+   * only write and its confirmation is the only thing standing between the
+   * user and a silently erased grant.
+   */
+  it('reports rather than returns when the restore cannot be confirmed', async () => {
+    const h = harness({
+      allowance: 0n,
+      // No archive depth for the pinned read...
+      pinnedReadThrows: true,
+      // ...and the head never shows our 500, so no read can settle it.
+      afterWrite: (v) => (v === 500n ? 250n : undefined),
+    });
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 0n, wroteTxHash: '0xmined' }),
+    ).rejects.toThrow(/could not.*be confirmed/i);
+    // The restore WAS attempted — this is the unconfirmable case, not an
+    // abstain, and the distinction is what the message has to carry.
+    expect(h.writes).toEqual([500n]);
+  });
+
+  it('still returns the hash when the put-back is confirmed', async () => {
+    // The neighbour that keeps the throw above from being over-broad.
+    const h = harness({ allowance: 0n });
+    const tx = await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote: 0n,
+      wroteTxHash: '0xmined',
+    });
+    expect(tx).not.toBeNull();
+    expect(h.allowance).toBe(500n);
+  });
+});
+
 describe('ensureAllowance onWrote', () => {
   it('reports nothing when the standing allowance already covers', async () => {
     const h = harness({ allowance: 1_000n });

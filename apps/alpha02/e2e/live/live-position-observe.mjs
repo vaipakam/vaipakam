@@ -85,6 +85,7 @@ import { redactUrl } from './redact.mjs';
 import {
   EXECUTION_REVERTED,
   REVERT_BYTES,
+  callsTargetContract,
   classifyRpcFailure,
   codedError,
   recordRpcResponse,
@@ -695,8 +696,8 @@ const refusedRpc = [];
 const blockedHttp = [];
 
 /**
- * The chain each RPC endpoint THE PAGE uses actually serves, probed once
- * per endpoint.
+ * The chain each RPC endpoint carrying the page's DEPLOYMENT reads
+ * actually serves, probed once per endpoint.
  *
  * The `OBSERVE_RPC` check near the top of this file is not enough on its
  * own. It validates OUR client; the page's wagmi reads are neither
@@ -707,6 +708,24 @@ const blockedHttp = [];
  * deterministic deploys putting a Diamond at the same address on both
  * chains it can even pass outright (#1529 review round 24).
  *
+ * DEPLOYMENT reads specifically, because the page talks to two networks by
+ * design: an explicit chain-1 transport backs ENS reverse lookups, and a
+ * connected page fires one per counterparty. Round 24's version probed
+ * every endpoint the page touched, so that ENS endpoint answered `1`,
+ * mismatched CHAIN_ID and exited 2 — a healthy site reported as built for
+ * the wrong network, on essentially every connected run (#1529 review
+ * round 25). `callsTargetContract` picks out the endpoints carrying calls
+ * addressed to the Diamond, which is what makes an endpoint the one under
+ * review; see its note for why that is positive evidence rather than an
+ * exclusion list.
+ *
+ * The residual, stated rather than papered over: a site built for another
+ * chain whose Diamond ALSO sits at a different address there is not
+ * attributed by this rule, so it is not chain-checked. That is the case
+ * round 24 could not see either — the one it did fix, and the one that can
+ * pass outright, is the deterministic-deploy shape where the address
+ * matches.
+ *
  * Fired in the background on first sighting so the probes overlap the
  * drive rather than serialising the route handler, and awaited once at
  * verdict time. `null` means "could not tell" — an endpoint may refuse a
@@ -716,8 +735,19 @@ const blockedHttp = [];
  * @type {Map<string, Promise<number|null>>}
  */
 const pageRpcChain = new Map();
-function notePageRpcEndpoint(url) {
-  if (pageRpcChain.has(url)) return;
+/**
+ * A probe that never answers must not become a probe that never returns.
+ * This promise is awaited unconditionally at verdict time, and
+ * `run-live-batch.mjs` spawns the driver with no timeout of its own, so an
+ * endpoint that serves the page normally but stalls on a synthetic POST —
+ * or on its response body — would hold the whole live-review batch instead
+ * of producing a verdict (#1529 review round 25). An expired probe settles
+ * as `null`, the same "could not tell" every other unanswerable probe
+ * produces.
+ */
+const CHAIN_PROBE_TIMEOUT_MS = 15_000;
+function notePageRpcEndpoint(url, calls) {
+  if (pageRpcChain.has(url) || !callsTargetContract(calls, DIAMOND)) return;
   pageRpcChain.set(
     url,
     (async () => {
@@ -726,15 +756,52 @@ function notePageRpcEndpoint(url) {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+          signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
         });
         if (!r.ok) return null;
         const hex = (await r.json())?.result;
         return typeof hex === 'string' ? Number(BigInt(hex)) : null;
       } catch {
-        return null; // unreachable or non-JSON — not evidence of a wrong chain
+        // Unreachable, non-JSON, or timed out — none of them evidence of a
+        // wrong chain.
+        return null;
       }
     })(),
   );
+}
+
+/**
+ * JSON-RPC the page sent over a WEBSOCKET, which this driver cannot judge.
+ *
+ * `ctx.route` intercepts HTTP only. When a deploy sets `VITE_*_WSS_URL`,
+ * `wagmi.ts` wraps `webSocket(c.wsUrl)` ahead of the HTTP transport, and
+ * every read that goes that way misses the allowlist, the response ledger
+ * and the chain probe alike — the page can be served a wrong-chain or
+ * half-answered result and this run would still exit 0 (#1529 review
+ * round 25).
+ *
+ * Instrumenting WS frames with the full three-way classifier is a much
+ * larger change to the thing under test; refusing to VOUCH for a run whose
+ * RPC we could not see is the same move the allowlist makes, and it is the
+ * honest one. So this records the bypass and the verdict block turns it
+ * into BLOCKED.
+ *
+ * Gated on frames that are actually JSON-RPC REQUESTS, via the same shared
+ * predicate the HTTP gate uses, for two reasons: a WalletConnect relay
+ * socket carries plenty of traffic that says nothing about chain reads,
+ * and a socket the sandbox resets before a single frame flows has bypassed
+ * nothing — viem's `fallback` simply dropped to HTTP, where every check
+ * above applies.
+ *
+ * @type {Set<string>}
+ */
+const wsRpcMethods = new Set();
+function watchWebSockets(page) {
+  page.on('websocket', (ws) => {
+    ws.on('framesent', ({ payload }) => {
+      for (const c of rpcCallsFromBody(payload) ?? []) wsRpcMethods.add(String(c.method));
+    });
+  });
 }
 /**
  * Page traffic this process could not fetch at all — the site, the RPC
@@ -869,9 +936,11 @@ const routeHandler = async (route) => {
     // provider answered into an aborted one. Should this throw, the catch
     // below files it as BLOCKED and the abort no-ops on an already-served
     // route — the harmless direction.
-    // Which endpoints is the PAGE actually talking to? Only knowable from
-    // its own traffic — see `pageRpcChain`.
-    if (rpcCallsFromBody(req.postData())) notePageRpcEndpoint(req.url());
+    // Which endpoints is the PAGE actually talking to, and which of those
+    // serve the deployment it is being reviewed against? Only knowable
+    // from its own traffic — see `pageRpcChain`.
+    const pageCalls = rpcCallsFromBody(req.postData());
+    if (pageCalls) notePageRpcEndpoint(req.url(), pageCalls);
     recordRpcResponse(
       {
         status: resp.status,
@@ -1041,6 +1110,9 @@ await discovery('installing the provider init script', () =>
  */
 async function visit(path, { expectChooser = false } = {}) {
   const page = await ctx.newPage();
+  // Before anything navigates: a socket opened during the first paint must
+  // not be missed — see `wsRpcMethods`.
+  watchWebSockets(page);
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).replace(/\s+/g, ' ').slice(0, 300)));
@@ -1327,6 +1399,26 @@ if (routeFailures.length) {
   console.log(
     `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
       ` Nothing observed here can be trusted; re-run.`,
+  );
+  process.exit(2);
+}
+// Ahead of `failures` for the same reason the chain check below is: RPC
+// this driver could not see is not a product observation. Every guarantee
+// in this file — the allowlist, the response ledger, the chain probe —
+// rides on `ctx.route`, which is HTTP-only, so a page reading over a
+// WebSocket has been judged on whatever it happened to ALSO fetch over
+// HTTP. Refusing to vouch beats a green run that verified less than it
+// claims (#1529 review round 25).
+if (wsRpcMethods.size) {
+  console.log(
+    `\nBLOCKED: the page made JSON-RPC calls over a WebSocket, which this` +
+      ` drive does not observe: ${[...wsRpcMethods].sort().join(', ')}`,
+  );
+  console.log(
+    `  → those reads bypassed the method allowlist, the response ledger and` +
+      ` the chain check, so this run cannot vouch for what the page was` +
+      ` served. Re-run against a build with no VITE_*_WSS_URL configured,` +
+      ` or extend this driver to classify WebSocket frames.`,
   );
   process.exit(2);
 }

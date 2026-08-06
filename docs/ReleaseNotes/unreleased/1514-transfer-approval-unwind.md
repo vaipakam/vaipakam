@@ -205,3 +205,16 @@ is no other decision to defer to — only the tidy-up having failed, with
 the payoff-sized approval still live and the person told everything was
 clean. The neighbouring check already drew this distinction; this one
 now does too, and a genuine competing grant still steps back quietly.
+
+Finally, the same honesty now applies to the last step of all. Having
+cleared the approval and written the earlier figure back, the app checks
+that the figure really is there — and until now, being unable to check
+was treated as success. Everywhere else in this flow that outcome is
+reported, for a reason that applies here most of all: at that point the
+person's approval has definitely been cleared and only might have been
+restored. If the putting-back was undone, or the token reported success
+without moving anything, they were told the tidy-up was clean while their
+approval sat at zero, with nothing to prompt them to look. Being unable
+to confirm is now reported alongside the original failure, in the same
+words the rest of the flow uses: check this token's approvals in your
+wallet.

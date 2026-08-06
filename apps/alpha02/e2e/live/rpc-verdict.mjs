@@ -116,6 +116,15 @@ function parseJson(body) {
  * default is to REFUSE and name what it refused, so a shape wrongly judged
  * malformed is loud, where one wrongly waved through is silent.
  *
+ * Two of its own checks were too loose to keep that promise, and round 25
+ * found both. `typeof c.jsonrpc === 'string'` accepts `"1.0"`, and
+ * `typeof c.params === 'object'` accepts `null` — so a regressed client
+ * emitting either still counted as well formed, a lenient provider
+ * answered it, and the run passed. Version and parameter shape are now
+ * held to what JSON-RPC 2.0 actually says: the version is exactly `"2.0"`,
+ * and `params`, when present, is a structured value — an array or a
+ * non-null object.
+ *
  * @returns {Array|undefined} the calls, or undefined if this is not a
  *          well-formed JSON-RPC request.
  */
@@ -128,12 +137,62 @@ export function rpcRequestCalls(parsed) {
       c &&
       typeof c === 'object' &&
       !Array.isArray(c) &&
-      typeof c.jsonrpc === 'string' &&
+      c.jsonrpc === '2.0' &&
       typeof c.method === 'string' &&
       c.method.length > 0 &&
-      (c.params === undefined || typeof c.params === 'object'),
+      (c.params === undefined || (typeof c.params === 'object' && c.params !== null)),
   );
   return wellFormed ? calls : undefined;
+}
+
+/**
+ * Where each RPC method carries the contract address it is aimed at.
+ *
+ * Only the read shapes the app actually uses against the Diamond. An
+ * omission here costs a chain check that would not have run before at all,
+ * so the list may grow; it may not be replaced by a guess that some
+ * unlisted method is "probably" ours.
+ */
+const CONTRACT_PARAM = new Map([
+  ['eth_call', (p) => [p?.[0]?.to]],
+  ['eth_estimateGas', (p) => [p?.[0]?.to]],
+  ['eth_getCode', (p) => [p?.[0]]],
+  [
+    'eth_getLogs',
+    (p) => (Array.isArray(p?.[0]?.address) ? p[0].address : [p?.[0]?.address]),
+  ],
+]);
+
+/**
+ * Is any of these calls addressed to `address`?
+ *
+ * Used to tell an endpoint serving the DEPLOYMENT chain apart from one the
+ * page uses for something else, which the chain check has to know and
+ * cannot get from the URL (#1529 review round 25).
+ *
+ * The page talks to more than one network on purpose: `wagmi.ts` registers
+ * an explicit chain-1 transport so ENS reverse lookups resolve, and
+ * `AddressName` fires one for every counterparty on a connected page. Those
+ * endpoints answer `eth_chainId` with 1 — correctly — so a check that
+ * asserts CHAIN_ID against every endpoint the page touches declares a
+ * healthy site to be built for the wrong network.
+ *
+ * Attribution is by POSITIVE evidence rather than by excluding known ENS
+ * URLs: the ENS endpoint comes from the deployed bundle's own env and this
+ * driver cannot enumerate it, so an exclusion list would be a guess that
+ * silently stops matching. A call addressed to the Diamond, by contrast, is
+ * proof that the endpoint carrying it is the one serving the app's
+ * deployment reads.
+ */
+export function callsTargetContract(calls, address) {
+  if (typeof address !== 'string' || !address) return false;
+  const want = address.toLowerCase();
+  return (calls ?? []).some((c) => {
+    const pick = CONTRACT_PARAM.get(c?.method);
+    return pick
+      ? pick(c.params).some((a) => typeof a === 'string' && a.toLowerCase() === want)
+      : false;
+  });
 }
 
 /**

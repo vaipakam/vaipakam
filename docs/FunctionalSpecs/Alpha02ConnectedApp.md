@@ -916,7 +916,12 @@ Its intended behaviour, as the test oracle for this surface:
   where that means the flow's own approval stays behind. Restoring an
   earlier figure over a deliberate change would hand the spender an
   authorisation the person had just taken away, which is worse than the
-  approval it was trying to tidy. The review states what is paid
+  approval it was trying to tidy. The cleanup also reports when it
+  cannot confirm its own last step: having cleared the approval and
+  written the earlier figure back, being unable to establish that the
+  figure is there is not the same as knowing it is, and it is said
+  aloud, because the person's approval is definitely cleared and only
+  might have been restored. The review states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and

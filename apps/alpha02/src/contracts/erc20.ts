@@ -776,6 +776,30 @@ export async function restoreAllowance(opts: {
         ` the token approval for this spender before retrying.`,
     );
   }
+  // `unknown` is not success here, and this was the last site still
+  // treating it as one (#1529 review round 25).
+  //
+  // Elsewhere in this file a caller holding its own receipt is told to
+  // proceed on it, and the reset above does exactly that — deliberately,
+  // because throwing there would SKIP the restore and erase the very grant
+  // it is protecting (round 13). Nothing comes after this write, so that
+  // reasoning does not reach it, and what is left is the shape rounds 20
+  // and 21 settled twice already: the user's grant has ALREADY been zeroed,
+  // and we cannot establish that the put-back is there. If it was reorged
+  // out, or the token's approve reported success without moving the
+  // allowance, returning the hash tells both flows the cleanup was clean
+  // while the grant sits at zero — the one outcome the user cannot act on,
+  // because nothing tells them to look.
+  //
+  // Both callers append `approvalCleanupFailed` on a throw, which is
+  // exactly the "check this token's approvals in your wallet" the
+  // unconfirmable case warrants.
+  if (landed === 'unknown') {
+    throw new Error(
+      `The allowance restore was submitted (${restored.hash}) but could not` +
+        ` be confirmed. Check the token approval for this spender.`,
+    );
+  }
   return restored.hash;
 }
 

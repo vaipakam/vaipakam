@@ -175,6 +175,41 @@ on the product; with deterministic deploys putting the same address on
 both chains it can pass outright. Probe the endpoints the page actually
 uses, and let only a definite mismatch block.
 
+"The endpoints the page uses" is not "every endpoint the page touches",
+though, and the first version of that check conflated them. The app talks
+to two networks on purpose — an explicit chain-1 transport backs ENS
+reverse lookups, one per counterparty on a connected page — so asserting
+the review's chain against every endpoint declared a healthy site to be
+built for the wrong network on essentially every connected run. Attribute
+by positive evidence instead: an endpoint carrying a call ADDRESSED to
+the Diamond is the one serving the deployment. Not by excluding known ENS
+URLs, which come from the deployed bundle's own env and cannot be
+enumerated from outside it — an exclusion list would be a guess that
+silently stops matching.
+
+A probe awaited at verdict time needs a deadline. The batch runner spawns
+each driver with no timeout of its own, so an endpoint that serves the
+page normally but stalls on a synthetic request would hold the whole live
+review rather than produce a verdict. Expiry settles as "could not tell",
+the same as any other unanswerable probe.
+
+Every guarantee in that driver rides on HTTP interception, so RPC over a
+WEBSOCKET bypasses all of it — the method allowlist, the response ledger
+and the chain probe alike. The app prefers a WebSocket transport whenever
+a deploy sets `VITE_*_WSS_URL` (none does today, and the live bundle was
+checked to confirm it). Rather than pass a run that verified less than it
+claims, the driver now watches for JSON-RPC frames on page sockets and
+reports BLOCKED if any flowed. Gated on frames that are actually JSON-RPC
+requests: a relay socket carrying other traffic says nothing about chain
+reads, and a socket reset before its first frame has bypassed nothing,
+because the fallback transport simply dropped to HTTP.
+
+Two claims that did NOT survive checking, recorded so they are not
+re-litigated. The production CSP is `script-src 'self'` with no
+third-party origin, and the live HTML carries no Cloudflare RUM injection
+at all — so there is no `POST /cdn-cgi/rum` beacon for the read-only gate
+to trip over, and an exemption for one would be a hole guarding nothing.
+
 Test the WIRING, not just the predicate. A correct verdict filed into
 the wrong bucket is the same defect in a different coat, so the step
 that turns the attempt ledger into the malformed-vs-unreachable buckets
