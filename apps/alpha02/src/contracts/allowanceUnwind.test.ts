@@ -27,6 +27,11 @@ const TOKEN = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
 const OWNER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
 const SPENDER = '0xcccccccccccccccccccccccccccccccccccccccc' as const;
 
+/** The block every mocked receipt reports. Named because the pinned-read
+ *  modelling turns on "is this read at or before the block our write
+ *  mined in". */
+const RECEIPT_BLOCK = 100n;
+
 /**
  * A pair of viem clients over a single mutable allowance figure.
  * `approve` calls are recorded in order so a test can assert the exact
@@ -93,6 +98,15 @@ function harness(opts: {
    *  provider rejects the parameter) — so the conclusive negative is
    *  unavailable and the caller must fall back. */
   pinnedReadThrows?: boolean;
+  /** What a read PINNED TO THE RECEIPT BLOCK answers, when that differs
+   *  from the value now. Models a third party moving the allowance after
+   *  our write mined: history still says the value is ours, the present
+   *  says otherwise. Without this the harness cannot tell the two
+   *  questions apart, because every pinned read answers with the live
+   *  figure — which is exactly the confusion round 16 found in the code.
+   *  Setting it also advances the head past the receipt block, since a
+   *  later change implies a later block. */
+  valueAtReceiptBlock?: bigint;
 }) {
   let allowance = opts.allowance;
   const writes: bigint[] = [];
@@ -110,6 +124,11 @@ function harness(opts: {
         // A pinned read either has the block — in which case it answers
         // about POST-transaction state, never the stale one — or fails.
         if (opts.pinnedReadThrows) throw new Error('missing trie node');
+        // Pinned to the RECEIPT block, it answers about that block, which
+        // is not the same question as "what is it now".
+        if (opts.valueAtReceiptBlock !== undefined && blockNumber <= RECEIPT_BLOCK) {
+          return opts.valueAtReceiptBlock;
+        }
         return allowance;
       }
       if (stale && stale.left > 0) {
@@ -122,6 +141,11 @@ function harness(opts: {
       if (opts.nonceReadThrows) throw new Error('rpc down');
       return blockTag === 'pending' && opts.pendingTx?.() ? 8 : 7;
     }),
+    // A node that has our receipt block. A concurrent change happened
+    // after it, so the head sits one block later.
+    getBlockNumber: vi.fn(async () =>
+      opts.valueAtReceiptBlock !== undefined ? RECEIPT_BLOCK + 1n : RECEIPT_BLOCK,
+    ),
     waitForTransactionReceipt: vi.fn(
       async ({
         hash,
@@ -847,5 +871,52 @@ describe('the two unwind steps report themselves distinctly', () => {
     // left behind is zero rather than the oversized grant.
     expect(h.writes).toEqual([0n, 500n]);
     expect(h.allowance).toBe(0n);
+  });
+});
+
+describe('history is not the present (round 16)', () => {
+  // The reconciliation confirms a pending write by reading PINNED to its
+  // receipt block. That answers "did our approve take effect when it
+  // mined" — and pinned at our own block the answer stays yes forever,
+  // whatever anyone does afterwards. Using it to overwrite the live read
+  // marched straight past the guard whose only job is to notice that
+  // somebody else owns the allowance now.
+
+  it('does not re-grant over an allowance another tab revoked', async () => {
+    // Our approve(1000) mined at the receipt block. Then the user
+    // revoked it to zero in another tab. The unwind must leave that
+    // alone: putting `previous` back would hand the spender an
+    // authorisation the user had just deliberately taken away.
+    const h = harness({
+      allowance: 0n, // revoked since
+      valueAtReceiptBlock: 1_000n, // but ours at the block it mined in
+    });
+    const tx = await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote: 1_000n,
+      wroteTxHash: '0xok',
+    });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([]);
+    expect(h.allowance).toBe(0n);
+  });
+
+  it('still unwinds when the live value IS ours — the lag case', async () => {
+    // The companion, and the reason this cannot simply stand down on any
+    // mismatch: here nobody else touched anything. The first read was
+    // merely taken before the node caught up, the value is still ours,
+    // and the unwind must proceed — otherwise the payoff-sized approval
+    // stays live behind a failed flow, which is the round-13 bug.
+    const h = harness({ allowance: 1_000n, staleReadsAfterWrite: 0 });
+    const tx = await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote: 1_000n,
+      wroteTxHash: '0xok',
+    });
+    expect(tx).not.toBeNull();
+    expect(h.writes).toEqual([0n, 500n]);
+    expect(h.allowance).toBe(500n);
   });
 });

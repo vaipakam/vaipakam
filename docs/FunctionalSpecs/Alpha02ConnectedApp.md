@@ -875,8 +875,15 @@ Its intended behaviour, as the test oracle for this surface:
   to act on, so that outcome is reported after the original failure
   rather than passed over in silence. An
   approval the wallet already held is never withdrawn — it was granted
-  for some other purpose and is not this flow's to revoke. The review
-  states what is paid
+  for some other purpose and is not this flow's to revoke. Nor does the
+  withdrawal act on an allowance that has changed hands since: if the
+  figure standing now is not the one this flow put there — because
+  another tab, or the person themselves, has raised, lowered or revoked
+  it in the meantime — the cleanup leaves it exactly as found, even
+  where that means the flow's own approval stays behind. Restoring an
+  earlier figure over a deliberate change would hand the spender an
+  authorisation the person had just taken away, which is worse than the
+  approval it was trying to tidy. The review states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and

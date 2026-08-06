@@ -139,6 +139,58 @@ async function confirmAllowanceValue(
 }
 
 /**
+ * Is the allowance STILL `want` right NOW — a different question from
+ * the one `confirmAllowanceValue` answers.
+ *
+ * That helper reads pinned to a receipt block, so it settles history:
+ * "did our write take effect when it mined". Necessary, but it cannot
+ * stand in for the present. An allowance another tab revoked a moment
+ * ago still reads as ours at our own block, forever.
+ *
+ * The distinction only matters where the CURRENT value is the thing
+ * being guarded — the reconciliation in `restoreAllowance`, whose whole
+ * job is deciding whether someone else owns the allowance now.
+ * `ensureAllowance` and `revokeAllowance` ask the historical question on
+ * purpose: their contract is about the effect of their own call, and a
+ * later third-party change is outside the window they speak for.
+ *
+ * `notBefore` is the receipt block our write mined in. Answering from a
+ * node that has not reached it would reproduce the very lag the pinned
+ * read exists to defeat, so the head is checked first and the read is
+ * pinned to the head that was verified — a load-balanced provider
+ * routing it to a laggard errors rather than quietly answering about an
+ * earlier state.
+ */
+async function confirmAllowanceStillLive(
+  publicClient: PublicClient,
+  token: `0x${string}`,
+  owner: `0x${string}`,
+  spender: `0x${string}`,
+  want: bigint,
+  notBefore: bigint,
+): Promise<'confirmed' | 'contradicted' | 'unknown'> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const head = await publicClient.getBlockNumber();
+      if (head >= notBefore) {
+        const live = await publicClient.readContract({
+          address: token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [owner, spender],
+          blockNumber: head,
+        });
+        return live === want ? 'confirmed' : 'contradicted';
+      }
+    } catch {
+      /* fall through to the backoff and ask again */
+    }
+    await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
+  }
+  return 'unknown';
+}
+
+/**
  * Ensure the Diamond may pull `amount` of `token` from the connected
  * wallet: read the live allowance, send `approve` only when short,
  * and wait for it to mine. Returns the approve tx hash, or null when
@@ -431,8 +483,26 @@ export async function restoreAllowance(opts: {
         // call ran, but without a trustworthy read we cannot rule out
         // someone else having moved the allowance since, and abstaining
         // is the safe direction for a courtesy unwind.
-        if (landed === 'confirmed') current = wrote;
-        else if (landed === 'contradicted') current = await readAllowance();
+        if (landed === 'confirmed') {
+          // Our write landed. That is HISTORY, and on its own it must not
+          // overwrite the live read: pinned at our own receipt block the
+          // answer is "ours" no matter what happened afterwards, so
+          // `current = wrote` here would march straight past the guard
+          // below whose entire job is to notice that somebody else owns
+          // the value now. The concrete loss is re-granting `previous`
+          // over an allowance another tab has just revoked to zero
+          // (#1529 review round 16).
+          //
+          // So the pinned answer settles only the pending-write question,
+          // and the present is asked separately, of a node that has our
+          // block. Only a live match unblocks the unwind; `contradicted`
+          // (someone moved it) and `unknown` (no trustworthy read) both
+          // leave `current` alone and stand down below.
+          const still = await confirmAllowanceStillLive(
+            publicClient, token, owner, spender, wrote, r.receipt.blockNumber,
+          );
+          if (still === 'confirmed') current = wrote;
+        } else if (landed === 'contradicted') current = await readAllowance();
       }
     } catch {
       // Still unresolved — fall through and stand down below.

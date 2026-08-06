@@ -381,9 +381,9 @@ async function graceSecondsFor(durationDays) {
  * Hence POSITIVE evidence is required, in either of the two forms a
  * genuine revert can take:
  *
- *   - returned revert data (a custom error or a reason string), which is
- *     conclusive whatever code the provider labelled it with — some
- *     return real reverts under -32603; and
+ *   - returned revert BYTES, which are conclusive whatever code the
+ *     provider labelled them with — some return real reverts under
+ *     -32603; and
  *   - failing that, the EVM's own `execution reverted` code 3, which
  *     covers a bare `revert()` that returns no data at all.
  *
@@ -391,13 +391,28 @@ async function graceSecondsFor(durationDays) {
  * asymmetry is deliberate: misjudging a revert as a failure costs one
  * false BLOCKED, which is loud and harmless, while misjudging a failure
  * as a revert costs a false PASS on a review that never happened.
+ *
+ * `raw` must be VALIDATED, not merely present — the round-16 trap. viem
+ * copies `error.data` through verbatim, and providers put arbitrary
+ * diagnostics there on an outage. Observed against fake responders:
+ *
+ *   -32603 data="upstream timeout"  ->  raw = "upstream timeout"
+ *   -32603 data="0x"                ->  raw = "0x"
+ *
+ * An existence check accepts both and we are back to calling a dead
+ * backend a revert. Real revert bytes are `0x` followed by a non-empty,
+ * even-length run of hex. An empty `0x` is not evidence either way — a
+ * bare revert produces it, but so does a provider filling the field with
+ * nothing — so it falls through to the code-3 test, which answers that
+ * case correctly.
  */
 const EXECUTION_REVERTED = 3;
+const REVERT_BYTES = /^0x([0-9a-fA-F]{2})+$/;
 
 function isRevert(err) {
   const reverted = err?.walk?.((e) => e instanceof ContractFunctionRevertedError);
   if (!reverted) return false;
-  if (reverted.raw !== undefined) return true; // the chain returned revert data
+  if (typeof reverted.raw === 'string' && REVERT_BYTES.test(reverted.raw)) return true;
   const coded = err.walk((e) => typeof e?.code === 'number');
   return coded?.code === EXECUTION_REVERTED;
 }
@@ -569,6 +584,19 @@ const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } }
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
 const refusedRpc = [];
 const blockedHttp = [];
+/**
+ * Page traffic this process could not fetch at all — the site, the RPC
+ * endpoint or the sandbox proxy being briefly unreachable.
+ *
+ * Recorded rather than merely aborted, because of what the abort turns
+ * into downstream: aborting the MAIN DOCUMENT surfaces as a navigation
+ * error, and aborting an RPC call surfaces as a page that renders
+ * without its chooser. Both then increment `failures` and exit 1 — the
+ * verdict this driver reserves for an app regression it actually
+ * observed. A flaky egress would be reported as a broken product
+ * (#1529 review round 16).
+ */
+const routeFailures = [];
 
 // Page traffic through this process (Chromium TLS is reset by the
 // sandbox gateway). Mutating non-RPC requests are refused: this drive
@@ -634,7 +662,13 @@ await ctx.route('**/*', async (route) => {
       }
     });
     await route.fulfill({ status: resp.status, headers, body: buf });
-  } catch {
+  } catch (err) {
+    // The abort is still the only option — there is no response to serve
+    // — but it must not pass silently: see `routeFailures`.
+    routeFailures.push({
+      url: req.url().slice(0, 160),
+      why: String(err).split('\n')[0].slice(0, 160),
+    });
     await route.abort('failed').catch(() => {});
   }
 });
@@ -959,7 +993,28 @@ console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 // A page-initiated write attempt is a regression in the app; a
 // too-narrow allowlist means this run simply cannot be trusted. Neither
 // may exit 0.
-if (failures || pageTriedToWrite.length || httpWrites.length) process.exit(1);
+//
+// Order matters here. A write attempt is a finding about the APP and
+// stands whatever the network did, so it is judged first. Everything
+// else that counted as a failure — a navigation error, a missing
+// chooser — is only meaningful if the page actually received what it
+// asked for, so unreachable page traffic downgrades those to BLOCKED
+// rather than reporting a flaky egress as a broken product.
+if (pageTriedToWrite.length || httpWrites.length) process.exit(1);
+if (routeFailures.length) {
+  console.log(
+    `\nBLOCKED: ${routeFailures.length} page request(s) could not be` +
+      ` fetched by this process, so the pages were not served what they` +
+      ` asked for.`,
+  );
+  routeFailures.slice(0, 6).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
+  console.log(
+    `  → the site, the RPC endpoint or the egress proxy was unreachable.` +
+      ` Nothing observed here can be trusted; re-run.`,
+  );
+  process.exit(2);
+}
+if (failures) process.exit(1);
 if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
 // Every candidate moved out from under us: the list route alone proves
 // nothing about the chooser, so this run verified nothing.
