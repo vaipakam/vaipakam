@@ -157,8 +157,11 @@ When Base finalizes day `D` it already computes each chain's reward budget
 `B[c][D]` (per-side ratios, per-day-cap trimmed). Two changes:
 
 1. **Netting:** the CCIP token remittance for `(c, D)` becomes
-   `max(0, B[c][D] − availRecycled[c])`, where `availRecycled[c] =
-   reportedCumulative[c] − consumedCumulative[c]` in Base's ledger.
+   `max(0, B[c][D] − availRecycled[c])`. **`availRecycled` has ONE definition
+   and it lives in §3.6a** — claim-side terms *and* the separate repatriation
+   debit/release terms, saturating and subtraction-first. Do not restate it
+   here or anywhere else; a partial restatement is what let the repatriation
+   terms go missing from three sections at once (Codex #1574 r6).
 2. **Consumption instruction:** the existing finalized-denominator broadcast
    (Base → mirror) gains a field `recycleConsume[c][D] = min(B[c][D],
    availRecycled[c])`. On arrival the mirror moves exactly that amount from
@@ -222,10 +225,9 @@ Invariants (test + transparency surface):
 
 The keeper-reward budget is per-chain already, and deep chains should fund
 their own housekeeping from local receipts — but a mirror must **never
-debit its recycle bucket unilaterally**, or §3.3's
-`availRecycled = reportedCumulative − consumedCumulative` view on Base
-drifts and Base can broadcast a `recycleConsume` the mirror can no longer
-fund (Codex round-1 finding). So keeper allocation flows through the same
+debit its recycle bucket unilaterally**, or Base's `availRecycled` view (one
+definition, §3.6a) drifts and Base can broadcast a `recycleConsume` the mirror
+can no longer fund (Codex round-1 finding). So keeper allocation flows through the same
 single authority as claim funding: at finalization Base computes an
 optional `keeperAllocate[c][D]`, carries it in the **same broadcast** as
 `recycleConsume`, and counts it into `consumedCumulative[c]`. The mirror
@@ -260,10 +262,11 @@ Disposition, in order of preference:
    reusing the #776 remittance machinery in reverse (bounded, quoted,
    retriable, lane-limit aware). Like every other bucket debit, the
    repatriation is **Base-authorized and Base-ledgered**: the operator
-   triggers it on Base, which records the amount into
-   `consumedCumulative[c]` *before* instructing the mirror send — so
-   `availRecycled` never overstates a bucket that has been drained by a
-   reverse remittance (Codex round-2 finding). Expected to be rare: only
+   triggers it on Base, which takes the **repatriation debit** (§3.6a
+   constraints 5/5a — *never* `consumedCumulative`, which would break the
+   `outstanding + retired == consumed` identity) *before* instructing the
+   mirror send, so `availRecycled` never overstates a bucket drained by a
+   reverse remittance (Codex round-2 finding; ledger corrected r5/r6). Expected to be rare: only
    structurally quiet chains or chain sunsets.
 3. Local keeper-budget credit (§3.5) where that budget is the binding need.
 
@@ -283,7 +286,7 @@ with different books**, and that conflating them corrupts the per-chain ledger.
 | Source of tokens | the mirror's **recycle bucket**, via a dedicated surplus debit — **not** `LibVpfiRecycle.consume` (constraint 2) | a **stranded-recovery RESERVATION** holding the late arrival — never plain un-earmarked balance (constraint 4) |
 | Was it in Base's `reported` availability? | **yes** | **no — never** |
 | Availability debit | a **separate repatriation debit term**, taken before the send under a releasable pending authorization — **not** a bare `chainConsumedRecycled += amount`, which breaks the `outstanding + retired == consumed` identity on the first repatriation (constraints 5, 5a) | **none** — these tokens were never in `reported` |
-| Base-side ledger | a **pending authorization**, closed on return and released on proven non-execution (constraint 5) | a **one-shot recovery entitlement** that SURVIVES the original ACK and is consumed exactly once (constraint 6) — finalize/ACK alone is not enough |
+| Base-side ledger | a **pending authorization**, closed on return and released **only on an authenticated cancellation ACK** (constraints 5, 5c — proven non-execution alone is NOT sufficient) | a **one-shot recovery entitlement** that SURVIVES the original ACK and is consumed exactly once (constraint 6) — finalize/ACK alone is not enough |
 | Mirror-side precondition | the surplus flag / operator instruction | the day must have reached an **irreversible lapsed** terminal (constraint 9a) |
 
 **Availability must carry the repatriation terms** (Codex #1574 r5). Today it
@@ -404,7 +407,10 @@ challenged and stand.
    instruction id the Base ingress cannot prove an arriving Mode-A payload
    corresponds to a prior charge. Record a chain/amount-bound pending
    authorization, close it on successful return, and track a release that
-   restores availability when non-execution is proven.
+   restores availability **only on the authenticated cancellation ACK of 5c** —
+   "non-execution is proven" is not a sufficient release condition and must not
+   appear as one anywhere, because proof it has not executed *yet* is not proof
+   it will not.
 5a. **`chainConsumedRecycled` is NOT a free-standing availability debit.**
    `LibMeshFunding` increments it **together with**
    `chainOutstandingRecycledCommit`, and the watcher enforces
@@ -465,6 +471,16 @@ challenged and stand.
    exclusive with the execution marker** of 5b, and Base releasing only on an
    authenticated **cancellation ACK** that also terminally records
    authorization ids the mirror had never received.
+
+   **And the tombstone must survive a MIRROR ROTATION** (Codex #1574 r6 P1). A
+   deployment-local marker does not make cancellation terminal:
+   `CcipMessenger._ccipReceive` resolves `handlerOf[channelId]` at **delivery
+   time**, so an old handler can tombstone and ACK a cancellation, Base can
+   release the debit, and the delayed original authorization then executes
+   against the **new** handler — which holds no tombstone. Bind the tombstone
+   to the authorization's issuing era (as 5b already requires of the record
+   itself) and carry it across rotation, or make a rotation itself terminal for
+   authorizations the outgoing handler had not executed.
 
 5b. **A pending authorization must be CONSUMED at the mirror before it sends,
    and be bound to the ISSUING DEPLOYMENT.** Two failure modes, both from
