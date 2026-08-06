@@ -410,6 +410,27 @@ export function emptyTranslations(source: Bundle, subject: Bundle, prefix = ''):
       counterpart.trim() === ''
     ) {
       out.push(path);
+    } else if (Array.isArray(value) && Array.isArray(counterpart)) {
+      // Array ELEMENTS need the same check as scalars. A blank entry in
+      // a bullet list — one of the recovery warnings, a help risk —
+      // passes `leafTypeDrift` (still a string) and `placeholderDrift`
+      // (no tokens either side), so it reached the UI as an empty
+      // bullet with every guard reporting the locale complete (Codex
+      // #1563 r7). Scalars were covered from the start; arrays were
+      // simply not looked into.
+      const overlap = Math.min(value.length, counterpart.length);
+      for (let i = 0; i < overlap; i += 1) {
+        const source = value[i];
+        const theirs = counterpart[i];
+        if (
+          typeof source === 'string' &&
+          typeof theirs === 'string' &&
+          source.trim() !== '' &&
+          theirs.trim() === ''
+        ) {
+          out.push(`${path}[${i}]`);
+        }
+      }
     }
   }
   return out;

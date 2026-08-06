@@ -21,7 +21,8 @@
  * (a string never reaching the catalog at all): same command surface,
  * same place to look, and one consolidated report across every locale
  * instead of a per-locale assertion that stops at the first arm. It is
- * also runnable on its own — `pnpm i18n:coverage` — which is what you
+ * also runnable on its own — `pnpm --filter @vaipakam/alpha02
+ * i18n:coverage` — which is what you
  * want mid-translation, without booting a test runner.
  *
  * The `{}` placeholder bundles for locales OUTSIDE `TRANSLATED_LOCALES`
@@ -53,7 +54,7 @@ const LOCALES_DIR = path.resolve(
 
 /**
  * The exact `(key, locale)` pairs still untranslated, tracked as #1560
- * follow-up. Generated — regenerate with `pnpm i18n:coverage --prune`,
+ * follow-up. Generated — regenerate with `pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune`,
  * which can only REMOVE entries.
  *
  * Per-PAIR, not per-section, and that precision is the point (Codex
@@ -296,7 +297,8 @@ const pruning = process.argv.includes('--prune');
 if (stalePairs.length > 0 && !pruning) {
   problems.push(
     `${stalePairs.length} baseline entr(y/ies) already translated — run ` +
-      `\`pnpm i18n:coverage --prune\`: ${stalePairs.slice(0, 6).join(', ')}` +
+      `\`pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune\`: ` +
+      `${stalePairs.slice(0, 6).join(', ')}` +
       (stalePairs.length > 6 ? ', …' : ''),
   );
 }
