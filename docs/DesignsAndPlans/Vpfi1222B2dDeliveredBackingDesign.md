@@ -883,16 +883,37 @@ review cycle.
     repatriate the stranded tokens through an explicit delivered-after-lapse
     path.
 
-**On the wire — it is TWO evolutions, not one:**
+**On the wire — it is THREE paths, not one and not two:**
 
-12. The zeroed marker and the authenticated finalization time are known at day
-    finalization and travel through `VaipakamRewardMessenger._encodeBroadcastV2`.
-    The armed-fresh-dispatched figure and the compensation amount are known at
-    token dispatch and travel through `RewardRemittanceFacet._sendRemitPayload`
-    → `RewardRemittanceReceiver`. **Independent messages, independent decoders,
-    independent rollout compatibility.** An earlier revision of this section
-    recommended putting all four on "the same tag"; that would leave one path
-    unversioned. Two versioned changes, each with its own rollout test.
+12. The zeroed marker, the authenticated `finalizedAt` and the R5 schedule
+    version are known at day finalization and travel through
+    `VaipakamRewardMessenger._encodeBroadcastV2`. The armed-fresh-dispatched
+    figure and the per-side compensation amounts are known at token dispatch
+    and travel through `RewardRemittanceFacet._sendRemitPayload` →
+    `RewardRemittanceReceiver`. **Independent messages, independent decoders,
+    independent rollout compatibility.** An earlier revision recommended
+    putting them all on "the same tag"; that would leave one path unversioned.
+
+12a. **R4's fresh-return is a THIRD wire path** (Codex #1573 r3 P1). Once R4
+    stopped routing through C2, the mirror→Base return became its own message —
+    it must carry enough authenticated identity to reverse the original remit
+    accounting, and R4 explicitly forbids reusing C2's. It therefore needs its
+    own payload kind, decoder and rollout compatibility. An earlier revision
+    kept saying "two evolutions" *after* making the change that created the
+    third, which would let a P2 implementation and rollout plan omit **the very
+    receiver that makes late arrivals recoverable**. Three versioned changes,
+    each with its own rollout test.
+
+12b. **Legacy zeroed-day broadcasts need an inventory/backfill or an activation
+    gate, not just a decoder test** (Codex #1573 r3 P1). At activation, a
+    zeroed day whose V2 broadcast has already landed — or is still in flight —
+    carries neither `finalizedAt` nor the R5 schedule version.
+    `broadcastV2Applied[dayId]` makes an applied day whole-day idempotent while
+    backward decoding still admits an old in-flight packet, so no rollout test
+    can populate the missing per-day clock afterwards. Treating the default as
+    valid **lapses the day immediately**; rejecting it **halts the cursor
+    indefinitely**. Constraint 19 migrates legacy *compensations* only — this is
+    the broadcast half, and it needs its own answer.
 
 **On binding a component to its target:**
 
@@ -1033,9 +1054,23 @@ Two authenticated side amounts remove the ambiguity at the source rather than
 introducing an allocation rule that both domains must implement identically and
 neither can verify. It is also the shape everything adjacent already uses —
 `fundedLender`/`fundedBorrower`, `freshLenderHalf`/`freshBorrowerHalf`,
-`liabilityLender18`/`liabilityBorrower18` — so it adds no new concept. Their
-**sum** is bounded by the delivered amount (constraint 13's joint-bound rule;
-individually-valid components summing past the delivery is the failure mode).
+`liabilityLender18`/`liabilityBorrower18` — so it adds no new concept.
+
+**Their sum is bounded against the DECLARED total, not against
+`actualReceived`** — and that distinction is load-bearing, because the naive
+reading contradicts constraint 18 (Codex #1573 r3 P1). Constraint 18 preserves
+both authenticated side amounts *unscaled* on a short delivery, scaling only
+the backing credit; if their sum were bounded against what actually landed,
+a fee-on-transfer receipt would leave an implementation with two ratified rules
+and no legal move — strand the delivery, or scale the pricing obligation and
+permanently underpay users.
+
+So the two rules divide cleanly: **the sum is validated against the declared
+total** (constraint 13's joint-bound rule — individually-valid components
+summing past the delivery is the failure mode), while **payment of those
+preserved obligations is separately gated on actual backing**, deferring to a
+supplemental-funding transition rather than being written down. A short receipt
+delays; it never silently reprices.
 
 **R2. The lapse is PERMISSIONLESS**, on the authenticated `finalizedAt` clock
 required by constraint 7. Anyone may resolve an expired zeroed day to
@@ -1079,6 +1114,18 @@ no-longer-held VPFI as funding — see the C2 constraint set in
 
 **Consequence, correcting an earlier claim: C2 is NOT a prerequisite of P2.**
 The two are independent again.
+
+**R4a — a late receipt must be QUARANTINED on arrival, not merely returned
+later** (Codex #1573 r3 P1). The ingress credits an arriving compensation into
+the chain-global delivered-fresh accounting immediately, so between arrival and
+the fresh-return running, **P1-b can let claims for other armed days consume
+that headroom**. The supposedly stranded VPFI is then already gone: decrementing
+the receipt counter under-backs claims that have already paid, and the return
+either reverts or draws from unrelated Diamond custody. Late receipts must stay
+**outside claimable fresh funding** until returned — or the accounting and the
+return must be **atomic at ingress**. This is the same rule §3.6a constraint 4
+states for the recovery reservation; it belongs here too because R4 is where
+the arrival is described.
 
 **R5. The per-day lapse SCHEDULE is authenticated in BOTH domains** (Codex
 #1573 r2 P1). Base enforces the R3 dispatch cutoff while the mirror enforces
@@ -1131,6 +1178,15 @@ larger design.
 Two **parameters** — the lapse window length and the R3 dispatch-cutoff gap —
 both wanting sizing against observed operator and lane behaviour rather than a
 guess.
+
+**The gap must also cover cross-domain CLOCK SKEW** (Codex #1573 r3 P2). Even
+with an identical authenticated schedule, Base evaluates the R3 cutoff against
+Base's `block.timestamp` while each mirror evaluates the R2 lapse against its
+own chain clock. A mirror whose clock leads Base by more than the gap can lapse
+permissionlessly while Base still considers dispatch valid — recreating exactly
+the race R5 exists to prevent, from clock drift rather than configuration. Size
+the gap against the supported chains' worst-case skew as well as lane latency,
+or derive both decisions from authenticated evidence in a single clock domain.
 
 **An earlier draft called that the whole remainder. It was not** (Codex #1573
 r2): R5's cross-chain schedule authentication is **architecture**, not a

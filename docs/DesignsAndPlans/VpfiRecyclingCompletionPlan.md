@@ -934,8 +934,9 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    the clamp residual. Full correction in the design record's **§2h**
    >    (#1565), which — after three review rounds and SIXTEEN confirmed P1s —
    >    deliberately holds the verified problem statement and a **constraint
-   >    set**, NOT a design. P2 is a subsystem and its wire is **two**
-   >    evolutions (broadcast and remit travel through different messengers).
+   >    set**, NOT a design. P2 is a subsystem and its wire is **three** paths
+   >    (the day broadcast, the remit, and R4's mirror→Base fresh-return —
+   >    independent messengers, decoders and rollouts).
    >    **The lapse decision that gated it is RATIFIED** (#1571, 2026-08-04):
    >    a mirror-local permissionless lapse, recorded in §2h as R1-R5 — two
    >    authenticated per-side amounts with the mirror deriving Δ locally; a
