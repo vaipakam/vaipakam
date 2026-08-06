@@ -329,8 +329,26 @@ they were maintained as independent sentences (Codex #1574 r6 P1), so:
   [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md)
   §7 #6 — the list `MeshLedger.invariant.t.sol` cites *by number*, corrected in
   the same change that added this paragraph;
-- everywhere else — §3.4, §3.5, the completion plan, a test docstring — **points
-  at one of those two.** A third restatement is the defect.
+- everywhere else **must point at one of those two.** A third restatement is
+  the defect.
+
+**The docs are swept; the CODE is NOT, and this is a scope statement rather
+than a claim of completeness** (Codex #1574 r9 P2 — an earlier revision listed
+"a test docstring" among the things that already point, which was false and is
+exactly the kind of overclaim that stops the next person looking). Still
+carrying stale forms, tracked in **#1577**:
+
+- `contracts/test/invariants/MeshLedger.invariant.t.sol` states the
+  overflow-prone **addition** form in its docstrings and in its function name
+  `invariant_ConsumedWithinReportedPlusReleased`, while its own code implements
+  the subtraction form and its inline comment explains why addition fails;
+- `contracts/test/GovernorDayPoolTest.t.sol` **asserts** the bare form under an
+  `"SS7 invariant"` label;
+- three NatSpec/comment mentions in `contracts/src/`.
+
+Those are a contracts change, not a docs one. Until #1577 lands, a reader of
+those files will find the wrong invariant stated authoritatively next to code
+that does the right thing.
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,
@@ -457,10 +475,22 @@ challenged and stand.
    repatriation** violate that identity on the spot — and a failure release
    cannot borrow the existing release cumulative either, because ingress clamps
    `released ≤ retired ≤ consumed` against mirror-reported claim retirement.
-   Either define **separate repatriation debit/release terms** inside
-   availability, or extend the outstanding/retired identity explicitly and
-   carry that extension through the reports and the watcher. Silently reusing
-   the claim-side terms is what breaks.
+   **Define separate repatriation debit/release terms inside availability.**
+
+   An earlier revision of this constraint offered a second option — extend the
+   outstanding/retired identity explicitly and carry that extension through the
+   reports and the watcher — and that alternative is now **removed, not merely
+   deprecated** (Codex #1574 r9 P1). The design has since *selected* the
+   separate terms: they are what the availability formula subtracts, what the
+   mode table specifies, and what "no direction anywhere may say 'increment
+   `consumedCumulative`' for a repatriation" forbids the alternative to. Leaving
+   both standing left an implementer a legal-looking route that either
+   contradicts those three, or — if followed alongside them — **double-charges
+   every Mode-A authorization in availability**, once through `consumed` and
+   once through `repatDebited`.
+
+   A constraint that lists options after the choice is made is not neutral: it
+   is a live path to a broken ledger.
 
 6. **ACK-first and recovery-first must converge.** A late delivery independently
    produces the existing permissionless, re-sendable remit ACK, so the ACK and
@@ -479,14 +509,33 @@ challenged and stand.
    unrecoverable. Require `sourceChainId == reservation.dstChainId` before
    consuming it — the existing ACK ingress (`onRemitAckReceived`) already
    performs exactly this check, so this is consistency, not a new idea.
-6a. **The recovery ingress needs the same delivery checks both existing
+6a. **BOTH modes' ingress needs the same delivery checks both existing
    receivers perform**, and the mode discriminator does not supply them
-   (Codex #1574 r2). Before `actualReceived` is used at all: exactly **one**
-   delivered token, that token **must be the local VPFI**, and the payload's
-   declared amount must bind to the transport-reported amount. Without them a
-   malformed or compromised mirror can deliver some other token while naming a
-   valid Mode-B entitlement — consuming the one-shot record and leaving the
-   stranded VPFI exactly where it was.
+   (Codex #1574 r2; scope corrected from Mode-B-only in r9 P1). Before
+   `actualReceived` is used at all: exactly **one** delivered token, that token
+   **must be the local VPFI**, the payload's declared amount must bind to the
+   transport-reported amount, and the actual receipt must be **non-zero**.
+   Without them a malformed or compromised mirror can deliver some other token
+   while naming a valid entitlement — consuming the one-shot record and leaving
+   the stranded VPFI exactly where it was.
+
+   **This was written for Mode B and is equally required for Mode A.** Mode A
+   traverses the *same* return transport and closes an equally one-shot record
+   — constraint 5's chain/amount-bound pending authorization. A mirror naming a
+   valid Mode-A authorization while delivering another token or a mismatched
+   amount would have Base **close the authorization without the VPFI arriving**:
+   the surplus stays where it was, the mirror's bucket is already debited, and
+   Base's books say the repatriation completed. Scoping these checks by mode was
+   an accident of the order the two modes were specified in, not a property of
+   either.
+
+   **Mode A additionally binds to its authorization amount.** Mode B's record is
+   an amount-bounded entitlement (constraint 6); Mode A's is an authorization
+   for a *specific* chain and amount, so its arrival must match that amount and
+   not merely be non-zero and well-formed. Note the interaction with constraint
+   7: Mode A's **source debit** must not scale to `actualReceived`, so a short
+   Mode-A return is a tracked shortfall against the authorization, never a
+   silently-resized settlement.
 
 9a. **Mode-B recovery must be gated on an IRREVERSIBLE LAPSE.** None of the
    entitlement checks proves the referenced day actually reached the lapsed

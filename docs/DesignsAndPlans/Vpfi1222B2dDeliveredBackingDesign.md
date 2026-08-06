@@ -1175,7 +1175,9 @@ per-side aggregate; Base ingress stores liabilities + `.complete`
 (no commitment input — §2b); zeroed-interest chain marked `remitIneligible`,
 reported chains not; unarmed/incomplete days unreportable; cursor + entry
 validation rejections; keeper send pass. d2: pending→ack→remitted lifecycle,
-lost-ack reconcile, clamp at 3 sites, quote==send. d3: `consumed ≤ reported`,
+lost-ack reconcile, clamp at 3 sites, quote==send. d3: the §7 #6 commitment
+bound (subtraction-first — a test written from the bare `consumed ≤ reported`
+rejects healthy post-B3 states),
 one-bucket-one-ledger, netting sum identity, idempotent
 commitment-on-arrival (a RESERVATION, not a bucket debit — §2e.1).
 **d4 (withdrawn): the halt is PINNED instead** — a mirror armed day prices
