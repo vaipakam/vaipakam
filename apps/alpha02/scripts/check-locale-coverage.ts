@@ -36,13 +36,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  containsToken,
   emptyTranslations,
   leafAt,
   leafPaths,
   leafTypeDrift,
   missingSubtree,
   placeholderDrift,
+  requiredLiteralProblems,
   type Bundle,
 } from '@vaipakam/i18n';
 import { TRANSLATED_LOCALES } from '../src/i18n/localeConfig.ts';
@@ -356,18 +356,24 @@ if (ackTextHash !== ACK_TEXT_TRANSLATED_AGAINST) {
  * verbatim. Extracted so the ENGLISH source runs the same check as the
  * translations — see the call site below the per-locale loop.
  */
+/**
+ * Delegates to the SHARED check rather than restating it.
+ *
+ * The local copy skipped an absent leaf, on the same "reported above"
+ * assumption the shared helper used to make — and here that assumption
+ * fails in a specific, quiet way: rename `confirmPrompt` in copy.ts
+ * while the policy keeps the old path, and the exact-word cross-check
+ * still passes (it compares the policy to CONFIRM_WORD, not to the
+ * catalog), the template test accepts the rename, and this function
+ * ignores the now-missing old leaf. Every alpha02 check green while the
+ * NEW prompt is unguarded and free to be translated (Codex #1563 r26).
+ *
+ * A stale policy path must fail loudly, so absence is reported. The
+ * bundles are COMPLETE here, so no `partial` exemption applies.
+ */
 function checkRequiredLiterals(code: string, bundle: Bundle): void {
-  for (const [key, literals] of Object.entries(REQUIRED_LITERALS)) {
-    const value = leafAt(bundle, key);
-    if (typeof value !== 'string') continue; // absent/drifted — reported above
-    for (const literal of literals) {
-      if (!containsToken(value, literal)) {
-        problems.push(
-          `${code}: ${key} must contain the standalone token "${literal}" — the app ` +
-            'compares typed input against it, so a translated or extended word can never match',
-        );
-      }
-    }
+  for (const line of requiredLiteralProblems(bundle, REQUIRED_LITERALS)) {
+    problems.push(`${code}: ${line}`);
   }
 }
 
