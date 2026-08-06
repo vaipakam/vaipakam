@@ -89,10 +89,25 @@ if (!fs.existsSync(LOCALES_DIR)) {
   process.exit(1);
 }
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-if (!ANTHROPIC_API_KEY) {
-  console.error('Missing ANTHROPIC_API_KEY env var.');
-  process.exit(1);
+/**
+ * Demanded at the point of the first actual request, not at startup.
+ *
+ * `--missing-only --reorder` over already-complete bundles does all of
+ * its work locally — sort keys, validate values — and makes no request
+ * at all, but an unconditional startup check exited before `main()`
+ * could get there, so the advertised no-API path was unusable without a
+ * credential it never spends (Codex #1563 r24).
+ */
+function requireApiKey(): string {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    console.error(
+      'Missing ANTHROPIC_API_KEY env var — needed to translate. ' +
+        '(A --reorder-only run over complete bundles does not need it.)',
+    );
+    process.exit(1);
+  }
+  return key;
 }
 
 // Bump when a stronger model shows up in the Anthropic model list and
@@ -127,7 +142,7 @@ async function callClaude(prompt: string): Promise<string> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
-      'x-api-key': ANTHROPIC_API_KEY as string,
+      'x-api-key': requireApiKey(),
       'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
     },

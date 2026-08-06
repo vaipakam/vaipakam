@@ -506,7 +506,24 @@ export function requiredLiteralProblems(
   const lines: string[] = [];
   for (const [key, literals] of Object.entries(required)) {
     const value = leafAt(candidate, key);
-    if (typeof value !== 'string') continue; // absent / drifted — reported elsewhere
+    // An ABSENT or non-string leaf is a failure of this check's own
+    // question — "does this bundle carry the literals it must" — and
+    // answering "yes" for a key that isn't there is the wrong default.
+    // It used to `continue` on the assumption the caller ran structural
+    // validation too; apps/defi's translator does not, so a response
+    // that omitted the confirmation prompt entirely was written and the
+    // run exited 0 while claiming to enforce it (Codex #1563 r24). A
+    // caller that also reports missing keys gets one extra line here,
+    // which is the safe direction to be wrong in.
+    if (typeof value !== 'string') {
+      lines.push(
+        value === undefined
+          ? `${key}: absent — the app compares typed input against a literal here`
+          : `${key}: is ${Array.isArray(value) ? 'an array' : typeof value}, expected a string ` +
+            'carrying the literal the app compares typed input against',
+      );
+      continue;
+    }
     for (const literal of literals) {
       if (containsToken(value, literal)) continue;
       lines.push(
