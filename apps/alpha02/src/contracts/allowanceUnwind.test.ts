@@ -582,18 +582,26 @@ describe('restoreAllowance — our own pending write is not somebody else\'s', (
     expect(h.allowance).toBe(0n);
   });
 
-  it('stands down when the pending write never resolves', async () => {
+  it('stands down LOUDLY when the pending write never resolves', async () => {
     const h = harness({ allowance: 500n, receiptAlwaysThrows: true });
-    const tx = await restoreAllowance({
-      ...base(h),
-      previous: 500n,
-      wrote: 1_000n,
-      wroteTxHash: '0xstillpending',
-    });
-    // Cannot confirm the grant is ours, so nothing is written.
-    expect(tx).toBeNull();
+    await expect(
+      restoreAllowance({
+        ...base(h),
+        previous: 500n,
+        wrote: 1_000n,
+        wroteTxHash: '0xstillpending',
+      }),
+    ).rejects.toThrow(/could not confirm/i);
+    // Standing down is still right — we cannot confirm the grant is ours,
+    // so nothing is written.
     expect(h.writes).toEqual([]);
     expect(h.allowance).toBe(500n);
+    // But it must not read as a CLEAN cleanup. Returning null here (the
+    // behaviour this test pinned until round 17) is the same value the
+    // function returns for "there was nothing to undo", and both callers
+    // append their wallet-state warning only on a throw — so the user was
+    // shown the generic transaction-failed banner while a payoff-sized
+    // approval was still live and might yet mine (#1529 review round 17).
   });
 });
 
@@ -745,8 +753,35 @@ describe('a SPED UP transaction is our own (round 12)', () => {
     });
     expect(tx).not.toBeNull();
     expect(h.allowance).toBe(1_000n);
-    // Reported once, optimistically, and never retracted.
-    expect(seen).toEqual([1_000n]);
+    // The VALUE is never retracted. It is re-reported once the receipt
+    // names the replacement, to correct the hash — see the round-17 case
+    // below — so the same figure appears twice and never becomes null.
+    expect(seen).toEqual([1_000n, 1_000n]);
+  });
+
+  it('hands the unwind the MINED hash, not the replaced one', async () => {
+    // A Speed Up mines under a different hash and providers stop serving
+    // the original. The unwind re-waits on whatever hash it was given, so
+    // reporting the submitted one leaves it waiting on a transaction the
+    // node will never return — it times out and abandons a live
+    // payoff-sized allowance (#1529 review round 17).
+    const h = harness({ allowance: 0n, repriceTxOf: (v) => v === 1_000n });
+    const wroteHashes: (string | null)[] = [];
+    let confirmedHash: string | null = null;
+    await ensureAllowance({
+      ...base(h),
+      amount: 1_000n,
+      onWrote: (_v, hsh) => {
+        wroteHashes.push(hsh);
+      },
+      onConfirmed: (_v, hsh) => {
+        confirmedHash = hsh;
+      },
+    });
+    // Last word wins: whatever the caller holds when the flow fails is
+    // what reaches `restoreAllowance` as `wroteTxHash`.
+    expect(wroteHashes.at(-1)).toBe('0xfaster');
+    expect(confirmedHash).toBe('0xfaster');
   });
 
   it('restoreAllowance accepts a sped-up put-back', async () => {

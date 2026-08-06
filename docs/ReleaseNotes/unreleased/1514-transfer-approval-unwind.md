@@ -101,3 +101,27 @@ needs to know about and act on. Previously only the original failure was
 shown and the cleanup problem was silent. Both are now reported: the
 original failure stays the headline, because it is what they were trying
 to do, with the cleanup problem added after it.
+
+Two last corrections, both about the tidy-up being honest rather than
+merely quiet.
+
+The tidy-up can reach a third outcome besides working and failing: it
+can be unable to find out what happened, when the approval it is chasing
+never resolves and the network cannot be re-read. That outcome was being
+reported as nothing-to-undo, which is the same thing the app says when
+an attempt genuinely left no approval behind — so the person saw only
+the original failure while an approval sized for a payoff might still be
+about to take effect, or an earlier standing figure might already have
+been cleared. Not knowing is now said out loud, alongside the original
+failure, because it is a wallet state they may need to act on. Standing
+back from the approval in that case is unchanged and still correct: what
+changes is that they are told.
+
+And a sped-up approval is now handed to the tidy-up under the identity
+the network recorded rather than the one the wallet first offered. A
+speed-up replaces the transaction, and data providers stop answering for
+the replaced one shortly afterwards — so the tidy-up was left waiting
+for something that would never come back, giving up on an approval that
+was standing the whole time. The success panels were corrected on this
+point earlier; this is the same correction on the path that cleans up
+after a failure.

@@ -301,6 +301,16 @@ export async function ensureAllowance(opts: {
       onWrote?.(confirmed?.value ?? null, confirmed?.hash ?? null);
       throw new Error(`Token approval did not take effect (${hash})`);
     }
+    // A Speed Up mines under a DIFFERENT hash, and the submitted one
+    // stops being served once its replacement lands. The unwind's whole
+    // job is to re-wait on this transaction, so handing it the dead hash
+    // means a viem wait that can never resolve — it times out and walks
+    // away from a live payoff-sized allowance. `restoreAllowance`'s own
+    // approve helper already returns the mined hash for exactly this
+    // reason; this is the same rule on the other write path (#1529
+    // review round 17).
+    const minedHash = s.receipt.transactionHash;
+    if (minedHash.toLowerCase() !== hash.toLowerCase()) onWrote?.(value, minedHash);
     // 2. IS THE VALUE THERE? Worth asking separately — it catches a
     //    reorg, and a token whose approve does not do what its name
     //    says. But a public RPC routinely answers the read immediately
@@ -322,7 +332,7 @@ export async function ensureAllowance(opts: {
       // still ran, so the optimistic report STAYS — the unwind needs to
       // know we wrote in order to reason about the state at all.
       throw new Error(
-        `Token approval did not take effect (${hash}) — the allowance` +
+        `Token approval did not take effect (${minedHash}) — the allowance` +
           ` does not read back as approved.`,
       );
     }
@@ -331,14 +341,19 @@ export async function ensureAllowance(opts: {
     // block; the read above is the cross-check for a reorg or a token
     // that does not honour its own interface, not the primary evidence.
     // When it could not be taken, the receipt stands.
-    confirmed = { value, hash };
-    onConfirmed?.(value, hash);
+    confirmed = { value, hash: minedHash };
+    onConfirmed?.(value, minedHash);
     // RPC read-diet PR A (§4.1.4) — approvals go through this helper,
     // not diamond.ts, so they feed the same centralized receipt floor
     // (standingApprovals / funding-watch roots ride push+focus+net
     // otherwise and would stay stale until the 180s net).
     publishReceiptInvalidationGlobal();
-    return hash;
+    // The MINED hash, matching `revokeAllowance` and `writeDiamond`. No
+    // caller links to it today (the one that keeps it only null-checks),
+    // but handing back a hash that never mined is the defect the other
+    // two write paths already fixed — leaving it here just waits for a
+    // caller to trip over it.
+    return minedHash;
   };
 
   // Zero-first: tokens like mainnet USDT revert on a non-zero→non-zero
@@ -447,6 +462,9 @@ export async function restoreAllowance(opts: {
     });
 
   let current = await readAllowance();
+  /** Set when the settle-wait below could not reach an answer at all —
+   *  distinct from "answered, and the value is not ours to put back". */
+  let unresolved = false;
   if (current !== wrote && wroteTxHash) {
     // Our own write may simply still be in flight — the caller reports at
     // submission precisely so a lost receipt is not mistaken for "nothing
@@ -505,8 +523,24 @@ export async function restoreAllowance(opts: {
         } else if (landed === 'contradicted') current = await readAllowance();
       }
     } catch {
-      // Still unresolved — fall through and stand down below.
+      // Still unresolved — stand down below, but NOT silently. Returning
+      // null here says "there was nothing to undo", and both callers read
+      // that as a clean cleanup and show only the generic
+      // transaction-failed banner. What actually happened is that we
+      // could not find out: the flow's approval may still mine into a
+      // live payoff-sized allowance, or a confirmed zero reset may have
+      // erased a grant the user had before. Either is a wallet state they
+      // have to act on, so the unresolved case has to reach them
+      // (#1529 review round 17).
+      unresolved = true;
     }
+  }
+  if (unresolved) {
+    throw new Error(
+      `Could not confirm what happened to this token approval` +
+        ` (${wroteTxHash}). Check this spender's approval in your wallet` +
+        ` before retrying.`,
+    );
   }
   // Someone else owns the current value now — leave it alone.
   if (current !== wrote) return null;

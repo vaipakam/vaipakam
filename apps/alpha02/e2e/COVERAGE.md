@@ -31,6 +31,16 @@ out", no "token burned" — because that hides a review it did not
 perform behind an exit 0. Only an on-chain answer (a revert) may become
 a domain verdict; anything else propagates to the BLOCKED path.
 
+Two corollaries of "could not trust what was observed". A driver must
+verify that the RPC it was pointed at actually serves the chain the
+report names — nothing else checks it, since the injected wallet answers
+the chain question locally, so a misdirected RPC otherwise reviews
+another network consistently and exits 0 under the requested chain's
+name. And every input to a pre-visit eligibility re-check must be read
+at re-check time: a value cached during discovery can have changed under
+it, and judging a page against a stale one turns a configuration change
+into a reported product regression.
+
 | Feature | Tier | Where | Live-only reason |
 | --- | --- | --- | --- |
 | Wallet connect + network gate | CI-Anvil | `tests/01-connect.spec.ts` | — |

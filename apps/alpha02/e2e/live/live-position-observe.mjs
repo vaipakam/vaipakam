@@ -235,6 +235,27 @@ async function discovery(what, fn) {
   }
 }
 
+// The RPC has to BE the chain we say we are reviewing. Nothing else
+// checks it: the injected provider answers `eth_chainId` locally from
+// CHAIN_ID, and the page's own reads are forwarded to this same RPC — so
+// an OBSERVE_RPC pointed at a different supported network is consistent
+// end to end. With a Diamond at the same address there (deterministic
+// deploys make that ordinary, not exotic), the drive exits 0 having
+// reviewed a chain nobody asked about, and the report names the one they
+// did (#1529 review round 17).
+const servedChainId = await discovery('reading the RPC chain id', () =>
+  pub.getChainId(),
+);
+if (servedChainId !== CHAIN_ID) {
+  console.error(
+    `\nBLOCKED: OBSERVE_RPC serves chain ${servedChainId}, not the` +
+      ` requested ${CHAIN_ID}.` +
+      `\n  → point OBSERVE_RPC at chain ${CHAIN_ID}, or set` +
+      ` OBSERVE_CHAIN_ID to ${servedChainId}.`,
+  );
+  process.exit(2);
+}
+
 // One height for the whole discovery walk — see the pagination note.
 const snapshotBlock = await discovery('reading the chain head', () =>
   pub.getBlockNumber(),
@@ -328,6 +349,19 @@ function defaultGraceSeconds(durationDays) {
 }
 
 let graceBucketsCache;
+/** Drop the memo so the next {@link graceSecondsFor} re-reads the chain.
+ *
+ *  The cache is right for a discovery sweep — one schedule, one pass over
+ *  the loan set. It is wrong at revalidation, whose entire contract is
+ *  "is this still true RIGHT NOW": every other input there is re-read
+ *  live, and an admin `setGraceBuckets` between discovery and the visit
+ *  would leave this one input minutes stale. The page reads the new
+ *  schedule on load, so a shortened window has the chooser correctly
+ *  hidden while the driver still demands it and exits 1 — a config change
+ *  reported as a product regression (#1529 review round 17). */
+function invalidateGraceBuckets() {
+  graceBucketsCache = undefined;
+}
 async function graceSecondsFor(durationDays) {
   graceBucketsCache ??= await discovery('reading the grace buckets', () =>
     pub.readContract({
@@ -619,11 +653,21 @@ await ctx.route('**/*', async (route) => {
         const parsed = JSON.parse(body);
         const calls = Array.isArray(parsed) ? parsed : [parsed];
         if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
-          const bad = calls.find((c) => !ALLOWED_RPC.has(c.method));
-          allowed = bad === undefined;
-          if (bad) {
-            badMethod = bad.method;
-            why = `json-rpc ${bad.method} (not allowlisted)`;
+          const denied = calls
+            .filter((c) => !ALLOWED_RPC.has(c.method))
+            .map((c) => String(c.method));
+          allowed = denied.length === 0;
+          if (denied.length) {
+            // A batch is judged by its WORST member, not its first. The
+            // route already refuses the whole batch either way, but the
+            // METHOD recorded here drives the verdict — and `find` kept
+            // only the first, so a batch whose unallowlisted read
+            // preceded an `eth_sendTransaction` was filed as an
+            // allowlist gap (exit 2) and the page's attempted write, the
+            // one thing this driver calls a product FAIL, never reached
+            // the report (#1529 review round 17).
+            badMethod = denied.find((m) => WRITE_SHAPED.test(m)) ?? denied[0];
+            why = `json-rpc ${denied.join(', ')} (not allowlisted)`;
           }
         }
       } catch {
@@ -855,7 +899,10 @@ async function stillEligible(loan) {
   // page that is correctly still chooser-eligible — and, if it was the
   // only candidate, report BLOCKED (#1529 review round 10). The grace
   // bucket follows the live duration too, since the bucket is chosen BY
-  // duration.
+  // duration — and the SCHEDULE is re-read here as well, not just the
+  // term. A memo from discovery is exactly the stale input this function
+  // exists to rule out.
+  invalidateGraceBuckets();
   const grace = await graceSecondsFor(live.durationDays);
   if (now > live.startTime + live.durationDays * 86_400n + grace) {
     return 'crossed its grace deadline since discovery';

@@ -873,7 +873,12 @@ Its intended behaviour, as the test oracle for this surface:
   withdrawal that clears the approval and then fails to put a prior
   standing grant back leaves that grant erased, which the person has
   to act on, so that outcome is reported after the original failure
-  rather than passed over in silence. An
+  rather than passed over in silence. Being UNABLE TO ESTABLISH what
+  the approval was left at counts as that same outcome, not as a clean
+  withdrawal: the app stands back from an approval it cannot account
+  for, and says that it could not account for it. A withdrawal that
+  reports nothing is a promise that nothing needs acting on, and it
+  may only be made when that has actually been determined. An
   approval the wallet already held is never withdrawn — it was granted
   for some other purpose and is not this flow's to revoke. Nor does the
   withdrawal act on an allowance that has changed hands since: if the
