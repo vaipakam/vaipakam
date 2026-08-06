@@ -57,6 +57,7 @@ import {
   unknownKeys,
   emptyTranslations,
   requiredLiteralProblems,
+  writeFileAtomic,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -561,6 +562,23 @@ async function main() {
         ? (missingSubtree(enJson, existing) ?? {})
         : enJson;
       if (missingOnly && Object.keys(source).length === 0) {
+        // Nothing to translate — but `--reorder` was asked for, and it
+        // is a normalisation of the FILE, not of the fill. Skipping it
+        // here meant `--missing-only --reorder es` on a complete but
+        // drifted bundle reported "already complete, skipped" and left
+        // the file byte-identical, silently doing nothing the operator
+        // asked for (Codex #1563 r22). No API call is needed to sort
+        // keys.
+        if (reorder) {
+          const ordered = orderLike(enJson, existing);
+          const before = JSON.stringify(existing, null, 2);
+          const after = JSON.stringify(ordered, null, 2);
+          if (before !== after) {
+            writeFileAtomic(outPath, after + '\n');
+            console.log('already complete, reordered.');
+            continue;
+          }
+        }
         console.log('already complete, skipped.');
         continue;
       }
@@ -627,7 +645,12 @@ async function main() {
           ? orderLike(enJson, deepMerge(existing, translated))
           : deepMerge(existing, translated)
         : translated;
-      fs.writeFileSync(outPath, JSON.stringify(merged, null, 2) + '\n');
+      // Atomic: writeFileSync truncates before writing, so a disk
+      // filling mid-write would leave a REVIEWED bundle empty or
+      // half-written while the catch below reported a tidy per-locale
+      // failure (Codex #1563 r22 — the merge path got this in r21 and
+      // this one was missed).
+      writeFileAtomic(outPath, JSON.stringify(merged, null, 2) + '\n');
       console.log('done.');
       // A gap-fill that comes back short leaves the locale still behind
       // the template — say so rather than reporting a clean "done".

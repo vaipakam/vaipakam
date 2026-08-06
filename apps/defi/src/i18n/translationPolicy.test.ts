@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { containsToken } from '@vaipakam/i18n';
 
 import { RECOVERY_CONFIRM_WORD } from '../lib/recoveryConfirm';
+import { TRANSLATED_LOCALES } from './glossary';
 import policy from './translation-policy.json';
 import en from './locales/en.json';
 import es from './locales/es.json';
@@ -32,6 +33,16 @@ import ar from './locales/ar.json';
 
 const PROMPT_KEY = 'vaultRecover.modalConfirmPrompt';
 
+/**
+ * Bound to TRANSLATED_LOCALES, not hand-listed. A static map would stay
+ * at today's ten while an eleventh locale was promoted and registered,
+ * so the blocking test would keep passing without ever looking at the
+ * new locale's recovery prompt — and a translated confirmation word
+ * could ship with that language's sign button permanently disabled
+ * (Codex #1563 r22). The identity assertion below is what makes the
+ * binding real rather than decorative: adding a locale to the registry
+ * without adding its bundle here fails immediately.
+ */
 const BUNDLES: Record<string, unknown> = { en, es, fr, de, ja, zh, hi, ta, ko, ar };
 
 function prompt(bundle: unknown): unknown {
@@ -41,6 +52,10 @@ function prompt(bundle: unknown): unknown {
 }
 
 describe('recovery confirmation word', () => {
+  it('checks every locale the app advertises as translated', () => {
+    expect([...Object.keys(BUNDLES)].sort()).toEqual([...TRANSLATED_LOCALES].sort());
+  });
+
   it('is named in the translation policy, exactly once', () => {
     // EXACTLY one entry, not merely "includes": every listed token is
     // REQUIRED, so a leftover second word would reject every correct
@@ -48,7 +63,7 @@ describe('recovery confirmation word', () => {
     expect(policy.requiredLiterals[PROMPT_KEY]).toEqual([RECOVERY_CONFIRM_WORD]);
   });
 
-  it.each(Object.keys(BUNDLES))(
+  it.each(TRANSLATED_LOCALES)(
     '%s keeps the word the gate compares against',
     (code) => {
       const value = prompt(BUNDLES[code]);

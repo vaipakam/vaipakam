@@ -19,6 +19,7 @@ export {
   containsToken,
   leafAt,
   requiredLiteralProblems,
+  writeFileAtomic,
   type Bundle,
   type PlaceholderDrift,
   type LeafTypeDrift,

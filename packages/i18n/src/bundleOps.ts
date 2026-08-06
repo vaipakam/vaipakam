@@ -23,6 +23,8 @@
  * that no source revision ever described.
  */
 
+import fs from 'node:fs';
+
 /** A locale bundle: nested objects bottoming out in strings or string
  *  arrays. Mirrors what `buildTemplate` emits. */
 export type Bundle = { [key: string]: string | string[] | Bundle };
@@ -515,4 +517,32 @@ export function requiredLiteralProblems(
     }
   }
   return lines;
+}
+
+/**
+ * Write `contents` to `target` without ever leaving it partially
+ * written: a temp file beside it, then an atomic same-directory rename.
+ * The temp file is removed if anything fails.
+ *
+ * Catching a write error is not enough on its own. `writeFileSync`
+ * TRUNCATES the destination before it writes, so a disk that fills
+ * mid-write leaves the locale empty or half-written while the caller
+ * reports a tidy failure over a bundle that has already lost its
+ * translations (Codex #1563 r21). Shared rather than per-script
+ * because both ingestion paths replace the same files and the second
+ * one was missed the first time (Codex #1563 r22).
+ */
+export function writeFileAtomic(target: string, contents: string): void {
+  const tmp = `${target}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, contents);
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* nothing to clean up */
+    }
+    throw err;
+  }
 }

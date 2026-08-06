@@ -35,6 +35,7 @@ import {
   unknownKeys,
   emptyTranslations,
   requiredLiteralProblems,
+  writeFileAtomic,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -195,25 +196,6 @@ function loadPolicy(file) {
 
 
 
-/**
- * Write `contents` to `target` without ever leaving it partially
- * written: a temp file beside it, then an atomic same-directory
- * rename. The temp file is cleaned up if anything fails.
- */
-function writeFileAtomic(target, contents) {
-  const tmp = `${target}.tmp-${process.pid}`;
-  try {
-    fs.writeFileSync(tmp, contents);
-    fs.renameSync(tmp, target);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      /* nothing to clean up */
-    }
-    throw err;
-  }
-}
 
 /** What a rejected patch root actually was, for the error line. */
 function describeRoot(value: unknown): string {
