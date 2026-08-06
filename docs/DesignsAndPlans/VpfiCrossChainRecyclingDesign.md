@@ -85,8 +85,15 @@ messages); tokens cross only when there is a genuine net deficit.
 
 - **Why recommended:** collapses two opposite token flows into bookkeeping.
   Cross-chain token sends shrink as usage grows (a busy chain becomes
-  self-funding). No new lanes, no new message types — two new fields in the
-  two §4a messages that already flow daily. Detailed in §3.
+  self-funding). For the **daily netting path**, no new lanes and no new
+  message types — two new fields in the two §4a messages that already flow
+  daily. Detailed in §3.
+
+  **This advantage is scoped to daily netting and does NOT cover Phase C**
+  (Codex #1574 r2). Repatriation needs a mode discriminator on the wire and, per
+  §3.6a constraint 3, may need a new authenticated channel plus sender/receiver
+  contracts — a real operational and audit surface that this bullet would
+  otherwise hide. Account for it separately when weighing Phase C.
 
 ### Option C — mirror-burn / canonical-remint (rejected)
 
@@ -273,13 +280,19 @@ with different books**, and that conflating them corrupts the per-chain ledger.
 | | **Mode A — planned surplus** | **Mode B — stranded-delivery recovery** |
 | --- | --- | --- |
 | Trigger | Base-initiated (§3.6: operator triggers on Base) | **Mirror**-initiated — the mirror is where the stranded tokens land |
-| Source of tokens | the mirror's **recycle bucket** (`LibVpfiRecycle.consume`) | **un-earmarked** balance — a compensation delivered after its day lapsed (#1434 P2, R4) |
+| Source of tokens | the mirror's **recycle bucket** (via a dedicated surplus debit — **not** `LibVpfiRecycle.consume`; see constraint 2) | **un-earmarked** balance — e.g. a compensation delivered after its day lapsed (#1434 P2, R4) |
 | Was it in Base's `reported` availability? | **yes** | **no — never** |
 | `consumedCumulative[c]` | `+= amount`, **before** the send (§3.6) | **UNTOUCHED** |
 | Base-side reservation | n/a | **finalize/ACK** the original remit reservation |
 
-**Why Mode B must not touch `consumedCumulative`.** `availRecycled = reported +
-released − consumed`. A late compensation's tokens were never reported by the
+**Why Mode B must not touch `consumedCumulative`.** Availability is
+`reported − (consumed − released)`, **saturating, subtraction-first** — the
+form `LibVpfiRecycle.mirrorAvailRecycled` actually implements. Writing it as
+`reported + released − consumed` is not an equivalent rearrangement here: a
+mirror's reported lifetime cumulative is unbounded, so on a faulty or hostile
+report near `type(uint256).max` the addition overflows and reverts **before**
+the subtraction, wedging the mesh finalization path. Record the
+subtraction-first form as the invariant. A late compensation's tokens were never reported by the
 chain and never entered its availability, so charging them to `consumed` would
 subtract availability the chain never had — understating `availRecycled` by the
 recovered amount, permanently, on every recovery. The two modes share a
@@ -374,6 +387,23 @@ challenged and stand.
    by `(remitter, remitId)`** that survives the ACK transition and is consumed
    exactly once.
 
+   **The key alone is not sufficient — bind the SOURCE CHAIN too** (Codex
+   #1574 r2). `(remitter, remitId)` does not say the return arrived from the
+   chain the reservation was for, so a return routed through *another*
+   registered mirror could consume the one-shot entitlement, net the accounting
+   on the wrong mirror, and leave the real stranded compensation permanently
+   unrecoverable. Require `sourceChainId == reservation.dstChainId` before
+   consuming it — the existing ACK ingress (`onRemitAckReceived`) already
+   performs exactly this check, so this is consistency, not a new idea.
+6a. **The recovery ingress needs the same delivery checks both existing
+   receivers perform**, and the mode discriminator does not supply them
+   (Codex #1574 r2). Before `actualReceived` is used at all: exactly **one**
+   delivered token, that token **must be the local VPFI**, and the payload's
+   declared amount must bind to the transport-reported amount. Without them a
+   malformed or compromised mirror can deliver some other token while naming a
+   valid Mode-B entitlement — consuming the one-shot record and leaving the
+   stranded VPFI exactly where it was.
+
 **On scaling — and the exception the blanket rule needs:**
 
 7. **Only DESTINATION credits scale to `actualReceived`. Mode A's SOURCE debit
@@ -385,20 +415,38 @@ challenged and stand.
 
 **On the delivered-fresh counter:**
 
-8. **Repatriating Mode-B funds must net the received-fresh cumulative.** A
-   manual compensation is fresh-only, so its arrival advances
-   `rewardBudgetArmedFreshReceived` (#1556) — and sending the tokens back does
-   not undo that. Once P1-b bounds mirror payouts by delivered-fresh-minus-paid,
-   the mirror would treat **returned, no-longer-held** VPFI as funding for later
-   claims. Either add a clamped repatriated-fresh cumulative and net it, or
-   ensure an authenticated post-lapse arrival never enters the counter at all.
+8. **Repatriating Mode-B funds must net the received-fresh cumulative — but
+   only where THAT receipt was credited to it.** A manual compensation is
+   fresh-only, so its arrival normally advances
+   `rewardBudgetArmedFreshReceived` (#1556), and sending the tokens back does
+   not undo it; once P1-b bounds mirror payouts by delivered-fresh-minus-paid,
+   the mirror would treat **returned, no-longer-held** VPFI as funding.
 
-#### Sequencing
+   **A blanket subtraction is wrong** (Codex #1574 r2): a compensation that
+   overtakes the arming broadcast is booked to `rewardBudgetFreshUncounted`,
+   **not** the armed counter (the §2h constraint-16 case). Netting every Mode-B
+   return against the armed cumulative would consume armed credit belonging to
+   **unrelated** deliveries and defer their properly-funded claims. Bind the
+   subtraction to whether *this specific receipt* was attributed — or ensure an
+   authenticated post-lapse arrival never enters the counter at all.
 
-R4 makes this a **prerequisite of #1434 P2**, not a parallel track: P2's lapse
-has no exit for a late arrival without Mode B. Mode A can ship first — it is
-the §3.6 flow and needs none of P2 — but the transport and the discriminator
-should be designed for both at once, so the wire is cut once.
+#### Ownership and sequencing
+
+**Corrected 2026-08-06.** An earlier revision made this a *prerequisite* of
+#1434 P2, on the basis that P2's lapse had no exit without Mode B. **P2's R4 no
+longer routes through C2** — a manual compensation is fresh-only and never
+enters the recycle bucket, so C2 could not reach it; R4 now specifies a
+dedicated fresh-return path (§2h). So:
+
+- **Mode A is C2 / #1568** — planned surplus out of the recycle bucket. It is
+  the §3.6 flow, needs nothing from P2, and is **independent** again.
+- **Mode B is P2 / #1434 R4** — the fresh-return of an un-earmarked stranded
+  delivery. Its mechanics are documented here because both modes are
+  mirror→Base token returns over one transport, but it ships with P2, not C2.
+
+What genuinely is shared, and should therefore be decided once rather than
+twice, is the **transport** (constraint 3) and the **mode discriminator** — so
+the wire is cut once even though the two modes ship on different cards.
 
 ### 3.7 Failure modes
 
