@@ -277,6 +277,33 @@ function readBundle(p: string): Bundle {
   return JSON.parse(fs.readFileSync(p, 'utf8')) as Bundle;
 }
 
+/**
+ * `readBundle`, but reporting damage instead of throwing it.
+ *
+ * A bundle whose JSON is malformed, or whose root is a valid-JSON
+ * non-object such as `null`, is not something this script can top up —
+ * and it must not be allowed to abort the run either. Discovery reads
+ * every locale before any translating happens, so one damaged file
+ * threw before the first healthy locale was ever attempted (Codex
+ * #1563 r11). `isPlaceholderBundle` cannot stand in for this check: it
+ * answers "is this an empty stub", and its own catch reports a
+ * malformed file as NON-placeholder, which is what routed the damage
+ * here in the first place.
+ */
+function readBundleOrDamaged(p: string): Bundle | null {
+  if (!fs.existsSync(p)) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed as Bundle;
+}
+
 async function main() {
   const enPath = path.join(LOCALES_DIR, 'en.json');
   const enRaw = fs.readFileSync(enPath, 'utf8');
@@ -315,12 +342,27 @@ async function main() {
     // Sweep the locales that HAVE a bundle and are behind the template.
     // Placeholders are excluded on purpose: an empty `{}` needs the
     // full-bundle path (default mode), not a gap top-up.
+    const damaged: string[] = [];
     targets = SUPPORTED_LOCALES.filter((c) => {
       if (c === 'en') return false;
       const p = path.join(LOCALES_DIR, `${c}.json`);
       if (isPlaceholderBundle(p)) return false;
-      return missingSubtree(enJson, readBundle(p)) !== null;
+      const bundle = readBundleOrDamaged(p);
+      if (bundle === null) {
+        // Isolated, not fatal: this locale needs a human, and the rest
+        // of the sweep has nothing to do with it.
+        damaged.push(c);
+        return false;
+      }
+      return missingSubtree(enJson, bundle) !== null;
     });
+    if (damaged.length > 0) {
+      console.error(
+        `⚠ skipped ${damaged.length} unreadable bundle(s): ${damaged.join(', ')} — ` +
+          'malformed JSON or a non-object root. Fix them by hand; ' +
+          'gap-filling cannot merge into a bundle it cannot parse.',
+      );
+    }
   } else {
     // Default: only locales whose bundle is missing or a `{}` stub —
     // idempotent after a partial failure, and exactly what you want

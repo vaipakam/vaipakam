@@ -530,7 +530,10 @@ Thin-market honesty rules apply.
   this purpose, and neither does a translated declaration under an
   English label: the label is what states which language the reader is
   being shown, so both halves have to be in their language or neither
-  is shown.
+  is shown. The aid is also kept honest over time: it explains one
+  specific declaration, so if that declaration is ever changed, the aid
+  cannot continue to be published in a form written for the previous
+  one.
 - The plain-language explanation shown when a transaction fails — the
   friendly cause a contract revert is decoded to ("Health factor too
   low", "This offer has expired", "Only the lender can perform this

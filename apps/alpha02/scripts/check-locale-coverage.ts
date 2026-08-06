@@ -31,6 +31,7 @@
  * documented behaviour there.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,7 @@ import {
   type Bundle,
 } from '@vaipakam/i18n';
 import { TRANSLATED_LOCALES } from '../src/i18n/localeConfig.ts';
+import { RECOVERY_ACK_TEXT } from '../src/lib/recoveryAck.ts';
 
 const LOCALES_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -164,6 +166,38 @@ const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * The recovery declaration this repo's nine translations were authored
+ * against, as a SHA-256 of `RECOVERY_ACK_TEXT`.
+ *
+ * `copy.recover.ackTextTranslation` is the reading aid shown beside the
+ * signed declaration, labelled as saying what that declaration says.
+ * Its English source IS the declaration (they share one definition now,
+ * so those two cannot drift) — but the nine translations are authored
+ * text, and nothing can derive them. Change the declaration to match a
+ * new on-chain `RECOVERY_ACK_TEXT_HASH` and every locale keeps its
+ * translation of the OLD one, still labelled as explaining what the
+ * user is signing. No other check sees this: the key is present, a
+ * string, non-empty, token-clean, and different from English, so
+ * coverage, type, placeholder and echo-back checks all pass (Codex
+ * #1563 r11).
+ *
+ * Pinning the source is what makes that unshippable rather than
+ * unnoticed. A build-time gate is deliberately stronger than a runtime
+ * one here: suppressing the aid at runtime would ship a page that
+ * quietly stops explaining the declaration, while this stops the
+ * release until someone re-translates it — one string in nine
+ * languages, against a contract change that is itself rare and
+ * deliberate.
+ *
+ * WHEN THIS FAILS: re-author `ackTextTranslation` in all nine locale
+ * bundles against the new declaration, then update this hash. Updating
+ * the hash alone silences the guard and reinstates exactly the bug it
+ * exists to catch.
+ */
+const ACK_TEXT_TRANSLATED_AGAINST =
+  '32457a8662663726ac9c701a5786520c82ed28e35aee3306218b9a75865f918f';
+
+/**
  * Does `value` contain `literal` as a STANDALONE token?
  *
  * Substring matching was not enough (Codex #1563 r2): Spanish
@@ -282,6 +316,22 @@ for (const code of translated) {
       }
     }
   }
+}
+
+// The declaration the nine reading-aid translations were authored
+// against — see ACK_TEXT_TRANSLATED_AGAINST.
+const ackTextHash = crypto
+  .createHash('sha256')
+  .update(RECOVERY_ACK_TEXT, 'utf8')
+  .digest('hex');
+if (ackTextHash !== ACK_TEXT_TRANSLATED_AGAINST) {
+  problems.push(
+    'the recovery declaration changed — every locale\'s ' +
+      'copy.recover.ackTextTranslation is now a translation of the OLD text ' +
+      'while the page labels it as saying what the user is signing. ' +
+      're-author it in all nine bundles, THEN set ' +
+      `ACK_TEXT_TRANSLATED_AGAINST to ${ackTextHash}`,
+  );
 }
 
 // A recorded gap a locale has since FILLED must leave the baseline, or

@@ -66,13 +66,29 @@ declaration sitting under an English label, since the label is what tells the
 reader which language they are being shown. Both halves are in the reader's
 language, or neither is displayed.
 
+Review then found that the English wording of that aid was a second, independent
+copy of the declaration itself, sitting in the copy catalog with nothing tying it
+to the one the page actually signs. Two copies of the same sentence can drift,
+and the drift would be silent: change the declaration to match a new contract and
+the aid keeps explaining the old one while still being labelled as saying what
+the user is signing. There is now one definition that both the page and the
+catalog read, so the English can no longer diverge at all. The nine translations
+cannot be derived from it, so the release gate pins the declaration's fingerprint
+instead — change the declaration and the build fails until the translations are
+re-authored. A stale reading aid is therefore not something that can ship.
+
 Review also caught three strings belonging to these two surfaces that this change
 had left for later: the browser-tab titles for the recovery and risk-access
 pages, and the one-line description beside the Risk access entry in Settings.
 They are translated now, so the two pages this release claims to finish are
 finished.
 
-Closes #1560. Follow-up: the remaining 163 keys (offset, tariff, early repay,
+Two translation-tooling scripts could also be stopped dead by a single damaged
+locale file: whichever one sorted first would abort the run before any healthy
+locale was reached, reporting a raw crash rather than naming the file. Both now
+name the bad file and carry on with the rest.
+
+Closes #1560. Follow-up: the remaining 160 keys (offset, tariff, early repay,
 transfer obligation, sale hold, loan sale and a few strays) are tracked
 separately; they are listed explicitly in the guard's allowlist and each entry
 has to be removed as it is filled.

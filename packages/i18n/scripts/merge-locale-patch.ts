@@ -194,11 +194,32 @@ for (const file of patchFiles) {
   // Read-and-catch rather than exists-then-read: the two-step form is a
   // TOCTOU race (the file can vanish between the check and the read) and
   // CodeQL flags it as one.
+  // The DESTINATION needs the same parse + root-shape validation as the
+  // patch, and for the same reason: a malformed or `null` bundle
+  // already on disk otherwise threw out of here (or later out of
+  // `missingSubtree`) and took the whole batch with it, leaving every
+  // locale sorting after this one unwritten under a raw stack trace
+  // (Codex #1563 r11). Absent is fine — that's a first translation.
   let existing: Bundle = {};
   try {
-    existing = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as Bundle;
+    const parsed: unknown = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.error(
+        `✗ ${code}: existing ${code}.json root is ${describeRoot(parsed)}, ` +
+          'expected an object — nothing written',
+      );
+      failures += 1;
+      continue;
+    }
+    existing = parsed as Bundle;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error(
+        `✗ ${code}: existing ${code}.json is not valid JSON — nothing written\n    ${(err as Error).message}`,
+      );
+      failures += 1;
+      continue;
+    }
   }
   // A patch file is untrusted input — hand-authored, or whatever a
   // vendor returned. Both the parse and the ROOT SHAPE have to be

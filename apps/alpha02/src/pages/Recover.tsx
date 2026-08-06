@@ -33,6 +33,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ownLocaleResource } from '../i18n/ownLocaleResource';
+import { RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Lock, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
@@ -88,30 +89,6 @@ const RECOVERY_DEADLINE_SECONDS = 30 * 60;
 /** UI friction constant, not copy — the user types this literal to
  *  arm the sign button (same untranslated rule as signing text). */
 const CONFIRM_WORD = 'CONFIRM';
-
-/**
- * The canonical recovery declaration — byte-for-byte the string whose
- * keccak256 is VaultFactoryFacet's RECOVERY_ACK_TEXT_HASH (the
- * concatenated literal at VaultFactoryFacet.sol ~line 717). Shown
- * verbatim on the review card so the user reads EXACTLY what the
- * signature commits to, and re-hashed against the live on-chain value
- * before every signature (Codex #1547 r1) — a mismatch blocks signing.
- *
- * DELIBERATELY NOT in the copy catalog: translating or rewording it
- * would break the hash equality, so it must stay contract-fixed
- * English in every locale.
- */
-const RECOVERY_ACK_TEXT =
-  // Segment boundaries mirror the Solidity literal one-for-one so a
-  // side-by-side diff against the contract is trivial. ASCII
-  // apostrophe ("protocol's"), NOT the typographic one the rest of
-  // the catalog uses — the hash is byte-sensitive.
-  'I am declaring that the source address belongs to a wallet I' +
-  ' control or authorized. If the source is later determined to' +
-  ' be on the sanctions list, my vault will be locked under the' +
-  " protocol's sanctions policy until the address is de-listed." +
-  ' I have read and understood the Advanced User Guide section' +
-  ' on stuck-token recovery.';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
