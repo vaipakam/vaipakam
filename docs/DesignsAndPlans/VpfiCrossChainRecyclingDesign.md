@@ -282,7 +282,7 @@ with different books**, and that conflating them corrupts the per-chain ledger.
 | Trigger | Base-initiated (§3.6: operator triggers on Base) | **Mirror**-initiated — the mirror is where the stranded tokens land |
 | Source of tokens | the mirror's **recycle bucket**, via a dedicated surplus debit — **not** `LibVpfiRecycle.consume` (constraint 2) | a **stranded-recovery RESERVATION** holding the late arrival — never plain un-earmarked balance (constraint 4) |
 | Was it in Base's `reported` availability? | **yes** | **no — never** |
-| `consumedCumulative[c]` | `+= amount`, **before** the send, under a releasable pending authorization (constraints 5, 5a) | **UNTOUCHED** |
+| Availability debit | a **separate repatriation debit term**, taken before the send under a releasable pending authorization — **not** a bare `chainConsumedRecycled += amount`, which breaks the `outstanding + retired == consumed` identity on the first repatriation (constraints 5, 5a) | **none** — these tokens were never in `reported` |
 | Base-side ledger | a **pending authorization**, closed on return and released on proven non-execution (constraint 5) | a **one-shot recovery entitlement** that SURVIVES the original ACK and is consumed exactly once (constraint 6) — finalize/ACK alone is not enough |
 | Mirror-side precondition | the surplus flag / operator instruction | the day must have reached an **irreversible lapsed** terminal (constraint 9a) |
 
@@ -442,6 +442,26 @@ challenged and stand.
    compensation day/remit before dispatch, and the Base entitlement must bind
    to that state.
 
+5b. **A pending authorization must be CONSUMED at the mirror before it sends,
+   and be bound to the ISSUING DEPLOYMENT.** Two failure modes, both from
+   round 4:
+
+   - *Replay.* In the two-step flow (Base authorizes, mirror executes
+     permissionlessly), nothing makes the executor one-shot: while the first
+     return is in flight the same authorization can be executed again —
+     debiting the bucket and bridging the surplus repeatedly — and Base then
+     settles only the first, leaving later deliveries with no live
+     authorization. Needs an authorization-id-bound **mirror-side execution
+     marker** written before the send, with CEI and retry semantics.
+   - *Era collision.* Authorization nonces are naturally per deployment, while
+     `CcipMessenger` derives `sourceSender` from delivery-time `channelPeerOf`.
+     After a Base or handler rotation a delayed old-era return can collide with
+     a same-numbered, same-chain authorization in the **new** era, close the
+     wrong record, and strand the genuine one. Carry the **immutable issuing
+     deployment (or an unambiguous era)** in both the instruction and the return
+     payload, and include it in the pending-record key — the same binding
+     remittance receipts already require via `(remitter, remitId)`.
+
 9b. **The mirror→Base return leg needs a FEE SOURCE.** A Base transaction
    cannot forward native value into a later mirror-originated send, and
    `CcipMessenger.sendMessage` is native-funded — it reverts unless its local
@@ -483,8 +503,18 @@ challenged and stand.
 **Corrected 2026-08-06.** An earlier revision made this a *prerequisite* of
 #1434 P2, on the basis that P2's lapse had no exit without Mode B. **P2's R4 no
 longer routes through C2** — a manual compensation is fresh-only and never
-enters the recycle bucket, so C2 could not reach it; R4 now specifies a
-dedicated fresh-return path (§2h). So:
+enters the recycle bucket, so C2 could not reach it; R4 specifies a dedicated
+fresh-return path instead.
+
+> **⚠️ That R4 revision is on an UNMERGED branch** (PR #1573). As this document
+> stands on `main`, §2h still reads as "contains no design" with the lapse
+> authority open, so a reader here cannot verify the state this section assigns
+> Mode B to — and the two changes were cross-referencing each other's unmerged
+> content (Codex #1574 r4). **#1573 lands first**; until it does, treat the
+> Mode-B ownership below as pending rather than settled. Mode A does not depend
+> on it and is unblocked either way.
+
+So:
 
 - **Mode A is C2 / #1568** — planned surplus out of the recycle bucket. It is
   the §3.6 flow, needs nothing from P2, and is **independent** again.
@@ -517,6 +547,14 @@ the wire is cut once even though the two modes ship on different cards.
   preserving this).
 - The finalization rules, grace windows, idempotency keys: untouched — two
   fields added to two existing messages.
+
+> **Scope of that last line: DAILY NETTING only** (Codex #1574 r4). Phase C
+> repatriation is **not** covered by it — §3.6a's mode discriminator is a new
+> wire shape, and constraint 3 may additionally require a new authenticated
+> channel plus a mirror-side sender and a Base-side receiver. Read as-is, this
+> bullet would let implementation and rollout planning omit the repatriation
+> transport entirely. The §2 Option-B advantage carries the same scoping note
+> for the same reason.
 
 ---
 
