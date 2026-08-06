@@ -324,7 +324,13 @@ for (const file of patchFiles) {
   // the gate unpassable for that language, and reverting it is manual.
   // (The merged bundle is checked too, further down, for a literal the
   // locale had already lost.)
-  const literals = requiredLiteralProblems(patch, policy.requiredLiterals);
+  // `partial: true` — a patch carries only the keys being supplied, so
+  // an untouched required path is not a finding here. The MERGED
+  // candidate below is checked without it, which is where absence
+  // genuinely means the bundle has lost the literal.
+  const literals = requiredLiteralProblems(patch, policy.requiredLiterals, {
+    partial: true,
+  });
   if (
     strayKeys.length > 0 ||
     drifted.length > 0 ||

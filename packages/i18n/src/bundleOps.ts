@@ -502,19 +502,25 @@ export function leafAt(bundle: Bundle, dotted: string): unknown {
 export function requiredLiteralProblems(
   candidate: Bundle,
   required: Record<string, readonly string[]>,
+  { partial = false }: { partial?: boolean } = {},
 ): string[] {
   const lines: string[] = [];
   for (const [key, literals] of Object.entries(required)) {
     const value = leafAt(candidate, key);
-    // An ABSENT or non-string leaf is a failure of this check's own
-    // question — "does this bundle carry the literals it must" — and
-    // answering "yes" for a key that isn't there is the wrong default.
-    // It used to `continue` on the assumption the caller ran structural
-    // validation too; apps/defi's translator does not, so a response
-    // that omitted the confirmation prompt entirely was written and the
-    // run exited 0 while claiming to enforce it (Codex #1563 r24). A
-    // caller that also reports missing keys gets one extra line here,
-    // which is the safe direction to be wrong in.
+    // On a COMPLETE bundle an absent leaf is a failure of this check's
+    // own question — "does this bundle carry the literals it must" —
+    // and answering "yes" for a key that isn't there is wrong. It used
+    // to `continue` unconditionally, so apps/defi's translator (which
+    // runs no structural validation) wrote a response that omitted the
+    // confirmation prompt and exited 0 (Codex #1563 r24).
+    //
+    // On a PARTIAL candidate absence means nothing at all: a patch or a
+    // gap-fill response carries ONLY the keys being supplied, so
+    // demanding an untouched key rejects every unrelated valid delivery
+    // — which is exactly what it did (Codex #1563 r25, P1). Partial
+    // callers pass `partial: true` and enforce the policy on the MERGED
+    // result instead, where absence is meaningful again.
+    if (value === undefined && partial) continue;
     if (typeof value !== 'string') {
       lines.push(
         value === undefined

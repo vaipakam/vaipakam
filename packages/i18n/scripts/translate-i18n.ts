@@ -650,9 +650,14 @@ async function main() {
       // and then complained (Codex #1563 r18). A prompt that lost the
       // literal makes the gate unpassable for that locale and undoing
       // it is manual, so it must never reach disk.
+      // In gap-fill mode the response covers only the missing subtree,
+      // so an untouched required path is expected; the merged bundle is
+      // checked below. A FULL response is the whole bundle, where an
+      // absent literal really is missing.
       const literals = requiredLiteralProblems(
         translated as Bundle,
         policy.requiredLiterals,
+        { partial: missingOnly },
       );
       if (
         strayKeys.length > 0 ||
