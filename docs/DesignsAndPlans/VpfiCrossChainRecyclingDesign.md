@@ -333,24 +333,24 @@ they were maintained as independent sentences (Codex #1574 r6 P1), so:
   at one of those two.** A third restatement is the defect.
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
-appear as a current claim anywhere.** Release exists precisely so a commitment
+appear as a current claim anywhere.** That is the one thing worth stating here,
+because it is why the invariant moved: release exists precisely so a commitment
 released un-spent can be committed again, so `consumed` is *deliberately*
-unbounded by `reported` in healthy states: report 100 → consume 100 → release
+unbounded by `reported` in healthy states. Report 100 → consume 100 → release
 100 → consume that same 100 again is valid at `consumed = 200, released = 100,
-reported = 100`. A test or transparency check written from the bare form
-**rejects a healthy B3 state.** The correct forms are
+reported = 100`, and a test or transparency check written from the bare form
+**rejects a healthy B3 state.**
 
-- **claim-side, implemented today:** `max(consumed − released, 0) ≤ reported`;
-- **with repatriation, what #1568 Mode A must establish:**
-  `max(consumed − released, 0) + max(repatDebited − repatReleased, 0) ≤ reported`
-  — the two draw ledgers are disjoint, so the bound is on their sum.
-
-Write it subtraction-first for the overflow reason the availability formula
-gives above, **not** as the algebraically-equal `consumed ≤ reported +
-released`: a mirror's reported cumulative is unbounded, so the addition form
-reverts on a hostile near-max report instead of failing the comparison. The two
-are equal over ℝ and different over `uint256`, which is the only arithmetic
-that runs.
+**The correct forms are in governor §7 #6 and are deliberately not reproduced
+here** (Codex #1574 r8 P2 — an earlier revision of this paragraph declared §7 #6
+the sole numbered statement and then restated both forms immediately below it,
+which is the defect this section had just named). Two properties of them are
+worth knowing without following the link, because they are the reasons the
+wording is load-bearing rather than stylistic: every term is formed by
+**saturating subtraction**, and the multi-ledger bound is **not written as a
+sum** — a reported cumulative is unbounded, so any addition on that side reverts
+on a hostile near-max report instead of failing the comparison. Equal over ℝ,
+different over `uint256`, and only one of those runs.
 
 **They therefore need an explicit MODE DISCRIMINATOR on the wire**, and Base
 must reject a payload whose mode does not match the ledger action it is about

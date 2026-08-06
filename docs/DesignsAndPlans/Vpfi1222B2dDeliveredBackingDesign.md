@@ -1138,11 +1138,12 @@ running sums land as new append-only tail fields.
   exactly one slice — **which is still outstanding.** d4 attempted it and was
   withdrawn, so the halt REMAINS in the tree and its two prerequisites are
   tracked on #1434 (§2g). None of this may be reordered.
-- **Per-chain commitment bound** (becomes real in d3): the numbered statement
-  is governor §7 #6 — `max(consumed − released, 0) ≤ reported`,
-  subtraction-first. Not the bare `chainConsumedRecycled[c] ≤
-  chainReportedRecycled[c]` an earlier revision wrote here: B3's release makes
-  a released commitment re-committable, so that form rejects healthy states.
+- **Per-chain commitment bound** (becomes real in d3): stated in governor
+  §7 #6 and **not reproduced here** — a copy is what let this line carry the
+  bare `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]` long after B3's
+  release falsified it. What matters at this level: it is a subtraction-first
+  bound, not that bare form, because a released commitment is legitimately
+  re-committable.
 - **One bucket, one ledger:** a mirror-local slice reserves into
   `chainOutstandingRecycledCommit[c]`; a Base-funded slice into the global
   `outstandingCommitRecycled` — never both.

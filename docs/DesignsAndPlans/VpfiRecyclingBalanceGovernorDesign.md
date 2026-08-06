@@ -633,10 +633,28 @@ sits at the single canonical point (Base finalization):
    from the bare form rejects a healthy state. Nor is it the algebraically
    equal `consumed ≤ reported + released`: a reported cumulative is
    unbounded, so the addition overflows on a hostile report and reverts
-   instead of comparing. Once #1568 repatriation lands the bound extends to
-   `max(consumed − released, 0) + max(repatDebited − repatReleased, 0) ≤
-   reported` — the two draw ledgers are disjoint. The availability formula
-   this mirrors is single-sourced in
+   instead of comparing.
+
+   **Once #1568 repatriation lands, the bound gains a second draw ledger —
+   and it must NOT be written as a sum either** (Codex #1574 r8 P1; the first
+   revision of this bullet wrote `claimNet + repatNet ≤ reported` two
+   sentences after explaining why `reported + released` overflows, which is
+   the same mistake in the same paragraph). Write it as two total
+   comparisons, each net term formed by saturating subtraction:
+
+   ```
+   claimNet = sat(consumed − released)
+   repatNet = sat(repatDebited − repatReleased)
+   claimNet ≤ reported   AND   repatNet ≤ reported − claimNet
+   ```
+
+   The second comparison is evaluated only once the first holds, so
+   `reported − claimNet` cannot underflow, and no intermediate can exceed
+   `reported`. The two draw ledgers are disjoint, which is what makes the
+   bound a joint one; totality is what makes it checkable under hostile
+   cumulative values.
+
+   The availability formula this mirrors is single-sourced in
    [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
    §3.6a; state it in neither place twice.
 7. Anti-gaming economic check (property test), **scoped to the coupled term**
