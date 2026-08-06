@@ -378,6 +378,43 @@ export function unknownKeys(source: Bundle, subject: Bundle, prefix = ''): strin
   return out;
 }
 
+/**
+ * Leaves where `subject` holds an EMPTY string but `source` does not.
+ *
+ * Invisible to every other check: `missingSubtree` sees the key as
+ * present, `leafTypeDrift` sees a valid string, and `placeholderDrift`
+ * finds no tokens to compare. Meanwhile i18next's `returnEmptyString`
+ * defaults to true, so an empty resource renders BLANK rather than
+ * falling back to English — a sentence silently disappears from the
+ * page for that language, and every guard reports the locale complete
+ * (Codex #1563 r6).
+ *
+ * Not always a defect, which is why this reports rather than decides:
+ * Japanese moves the verb to the end, so alpha02's consent sentence
+ * legitimately has an empty `prefix` with the agreement carried in
+ * `suffix`. Callers pair this with a narrow per-`<locale>:<path>`
+ * exemption.
+ */
+export function emptyTranslations(source: Bundle, subject: Bundle, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(source)) {
+    const counterpart = own(subject, key);
+    if (counterpart === undefined) continue;
+    const path = `${prefix}${key}`;
+    if (isBranch(value) && isBranch(counterpart)) {
+      out.push(...emptyTranslations(value, counterpart, `${path}.`));
+    } else if (
+      typeof value === 'string' &&
+      typeof counterpart === 'string' &&
+      value.trim() !== '' &&
+      counterpart.trim() === ''
+    ) {
+      out.push(path);
+    }
+  }
+  return out;
+}
+
 /** Every leaf path in `bundle`, dot-joined. For coverage reporting. */
 export function leafPaths(bundle: Bundle, prefix = ''): string[] {
   return Object.entries(bundle).flatMap(([key, value]) =>

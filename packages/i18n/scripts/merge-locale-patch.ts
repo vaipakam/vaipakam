@@ -33,6 +33,7 @@ import {
   orderLike,
   placeholderDrift,
   unknownKeys,
+  emptyTranslations,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -46,6 +47,7 @@ const localesDirArg = flag('--locales-dir');
 const patchesDirArg = flag('--patches');
 const reorder = args.includes('--reorder');
 const allowedOmissions = collectAllowedOmissions(args);
+const allowedEmpty = collectAllowedEmpty(args);
 if (!localesDirArg || !patchesDirArg) {
   console.error('Usage: --locales-dir <path> --patches <path>');
   process.exit(1);
@@ -115,13 +117,45 @@ function interpolationProblems(source, candidate, allowedOmissions, code) {
   return lines;
 }
 
-/** Collect repeatable `--allow-omission <locale>:<path>:<token>` args. */
-function collectAllowedOmissions(argv) {
+/** Collect repeatable `--flag <value>` args into a Set. */
+function collectFlagValues(argv, flag) {
   const out = new Set();
   argv.forEach((a, i) => {
-    if (a === '--allow-omission' && argv[i + 1]) out.add(argv[i + 1]);
+    if (a === flag && argv[i + 1]) out.add(argv[i + 1]);
   });
   return out;
+}
+
+// Function DECLARATIONS, not const arrows: both are called at module
+// top level, above where they sit in the file, and a const would be in
+// its temporal dead zone there (`ReferenceError: Cannot access ...
+// before initialization`).
+function collectAllowedOmissions(argv) {
+  return collectFlagValues(argv, '--allow-omission');
+}
+function collectAllowedEmpty(argv) {
+  return collectFlagValues(argv, '--allow-empty');
+}
+
+/**
+ * Leaves the candidate leaves EMPTY where the English is not.
+ *
+ * No other check sees these — the key is present, the value is a valid
+ * string, and there are no tokens to compare — while i18next renders an
+ * empty resource as BLANK instead of falling back, so the sentence
+ * silently disappears for that language (Codex #1563 r6). Legitimate
+ * cases exist (Japanese puts the verb last, leaving a sentence prefix
+ * empty), hence the same per-`<locale>:<path>` escape hatch shape the
+ * omission exemptions use.
+ */
+function emptyProblems(source, candidate, allowedEmpty, code) {
+  return emptyTranslations(source, candidate)
+    .filter((key) => !allowedEmpty.has(`${code}:${key}`))
+    .map(
+      (key) =>
+        `${key}: empty while the English is not (allow with --allow-empty "${code}:${key}" ` +
+        'only if the grammar genuinely leaves it blank)',
+    );
 }
 
 const patchFiles = fs
@@ -171,7 +205,13 @@ for (const file of patchFiles) {
   const strayKeys = unknownKeys(enJson, patch);
   const drifted = leafTypeDrift(enJson, patch);
   const interpolation = interpolationProblems(enJson, patch, allowedOmissions, code);
-  if (strayKeys.length > 0 || drifted.length > 0 || interpolation.length > 0) {
+  const empties = emptyProblems(enJson, patch, allowedEmpty, code);
+  if (
+    strayKeys.length > 0 ||
+    drifted.length > 0 ||
+    interpolation.length > 0 ||
+    empties.length > 0
+  ) {
     console.error(`✗ ${code}: patch rejected, nothing written`);
     for (const key of strayKeys.slice(0, 10)) {
       console.error(`    not in en.json: ${key}`);
@@ -180,6 +220,7 @@ for (const file of patchFiles) {
       console.error(`    ${p}: expected ${expected}, got ${actual}`);
     }
     for (const line of interpolation.slice(0, 10)) console.error(`    ${line}`);
+    for (const line of empties.slice(0, 10)) console.error(`    ${line}`);
     failures += 1;
     continue;
   }

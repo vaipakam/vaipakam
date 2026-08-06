@@ -40,7 +40,7 @@ the placeholder tokens intact in every one.
 
 Placeholder sets are validated at build time by
 `scripts/check-locale-coverage.ts` — run by `pnpm typecheck`, or on
-its own with `pnpm i18n:coverage` (#1362): introducing a token the
+its own with `pnpm --filter @vaipakam/alpha02 i18n:coverage` (#1362): introducing a token the
 English doesn't have always fails, and dropping one fails unless the
 locale is listed in that file's `ALLOWED_OMISSIONS` with a linguistic
 reason (Arabic's dual `_two` forms are the standing example — the noun
@@ -80,11 +80,15 @@ recorded backlog.
 
 That backlog is `src/i18n/untranslated-baseline.json` — the exact
 `(key, locale)` pairs still untranslated, not a list of sections. When
-you fill some of them, run `pnpm i18n:coverage --prune` to drop the
-entries you closed; the check fails until you do, so the file can't
-drift stale. `--prune` only ever REMOVES pairs (each one it keeps was
-observed missing on that run), so it can't be used to wave through a
-key that regressed. It also does NOT suppress other findings: if the
+you fill some of them, run this to drop the entries you closed:
+
+```bash
+pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune
+```
+
+The check fails until you do, so the file can't drift stale. `--prune`
+only ever REMOVES pairs (each one it keeps was observed missing on that
+run), so it can't be used to wave through a key that regressed. It also does NOT suppress other findings: if the
 locale has a genuinely new gap, a drifted leaf, a malformed placeholder
 or a lost `CONFIRM`, `--prune` fixes the stale entries and still exits
 non-zero for the rest.
@@ -104,6 +108,14 @@ itself — allowing the Arabic dual does not license an unrelated
 message prints the exact flag to paste. Use it only where the target
 grammar already carries the value, and record the omission in
 `ALLOWED_OMISSIONS` too or the build will still fail.
+
+An EMPTY translation is rejected the same way (`--allow-empty
+"<locale>:<key>"`), because no other check can see one: the key is
+present, the value is a valid string, and there are no tokens to
+compare — while i18next renders it blank instead of falling back to
+English, so the sentence just disappears for that language. Japanese
+is the standing legitimate case: the verb goes last, so the consent
+sentence's `prefix` is empty and `suffix` carries the agreement.
 
 Then promote the locale in `src/i18n/localeConfig.ts`
 (`TRANSLATED_LOCALES` + picker visibility) — the lazy loader map

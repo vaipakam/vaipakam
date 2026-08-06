@@ -34,6 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  emptyTranslations,
   leafPaths,
   leafTypeDrift,
   missingSubtree,
@@ -122,6 +123,24 @@ function omissionAllowed(code: string, leafPath: string, dropped: string[]): boo
   if (!exemption) return false;
   return dropped.every((token) => exemption.tokens.includes(token));
 }
+
+/**
+ * Leaves a locale may legitimately leave EMPTY while the English is
+ * not, keyed `<locale>:<path>` with the grammatical reason.
+ *
+ * An empty translation is invisible to every other check — the key is
+ * present, the value is a valid string, and there are no tokens to
+ * compare — while i18next's `returnEmptyString` default renders it
+ * BLANK rather than falling back to English. The sentence just
+ * disappears for that language (Codex #1563 r6).
+ *
+ * Japanese is the standing legitimate case: the verb goes at the end,
+ * so the consent sentence's `prefix` is empty and `suffix` carries
+ * "を理解し、同意します。" — the agreement the English states up front.
+ */
+const ALLOWED_EMPTY: Readonly<Record<string, string>> = {
+  'ja:copy.consentParts.prefix': 'Japanese puts the verb last; suffix carries the agreement',
+};
 
 /**
  * Strings that must survive translation VERBATIM because the app
@@ -227,6 +246,16 @@ for (const code of translated) {
   // complete while the sentence is blank.
   for (const { path: key, expected, actual } of leafTypeDrift(en, bundle)) {
     problems.push(`${code}: ${key} is ${actual}, expected ${expected}`);
+  }
+
+  // An empty translation renders as nothing at all, and no other check
+  // can see it.
+  for (const key of emptyTranslations(en, bundle)) {
+    if (ALLOWED_EMPTY[`${code}:${key}`] !== undefined) continue;
+    problems.push(
+      `${code}: ${key} is empty while the English is not — i18next renders ` +
+        'blank rather than falling back',
+    );
   }
 
   // Typed-confirmation words must survive verbatim or the gate they

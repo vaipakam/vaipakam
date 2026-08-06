@@ -15,6 +15,7 @@ export {
   placeholderDrift,
   leafTypeDrift,
   unknownKeys,
+  emptyTranslations,
   type Bundle,
   type PlaceholderDrift,
   type LeafTypeDrift,

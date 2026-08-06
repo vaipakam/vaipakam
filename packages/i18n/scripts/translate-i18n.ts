@@ -55,6 +55,7 @@ import {
   orderLike,
   placeholderDrift,
   unknownKeys,
+  emptyTranslations,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -216,13 +217,45 @@ function interpolationProblems(source, candidate, allowedOmissions, code) {
   return lines;
 }
 
-/** Collect repeatable `--allow-omission <locale>:<path>:<token>` args. */
-function collectAllowedOmissions(argv) {
+/** Collect repeatable `--flag <value>` args into a Set. */
+function collectFlagValues(argv, flag) {
   const out = new Set();
   argv.forEach((a, i) => {
-    if (a === '--allow-omission' && argv[i + 1]) out.add(argv[i + 1]);
+    if (a === flag && argv[i + 1]) out.add(argv[i + 1]);
   });
   return out;
+}
+
+// Function DECLARATIONS, not const arrows: both are called at module
+// top level, above where they sit in the file, and a const would be in
+// its temporal dead zone there (`ReferenceError: Cannot access ...
+// before initialization`).
+function collectAllowedOmissions(argv) {
+  return collectFlagValues(argv, '--allow-omission');
+}
+function collectAllowedEmpty(argv) {
+  return collectFlagValues(argv, '--allow-empty');
+}
+
+/**
+ * Leaves the candidate leaves EMPTY where the English is not.
+ *
+ * No other check sees these — the key is present, the value is a valid
+ * string, and there are no tokens to compare — while i18next renders an
+ * empty resource as BLANK instead of falling back, so the sentence
+ * silently disappears for that language (Codex #1563 r6). Legitimate
+ * cases exist (Japanese puts the verb last, leaving a sentence prefix
+ * empty), hence the same per-`<locale>:<path>` escape hatch shape the
+ * omission exemptions use.
+ */
+function emptyProblems(source, candidate, allowedEmpty, code) {
+  return emptyTranslations(source, candidate)
+    .filter((key) => !allowedEmpty.has(`${code}:${key}`))
+    .map(
+      (key) =>
+        `${key}: empty while the English is not (allow with --allow-empty "${code}:${key}" ` +
+        'only if the grammar genuinely leaves it blank)',
+    );
 }
 
 /** A bundle counts as a placeholder (→ eligible for the default
@@ -252,6 +285,7 @@ async function main() {
   const missingOnly = args.includes('--missing-only');
   const reorder = args.includes('--reorder');
   const allowedOmissions = collectAllowedOmissions(args);
+  const allowedEmpty = collectAllowedEmpty(args);
   const allFlag = args.includes('--all');
   // Positional args are locale codes — but only the ones that aren't
   // the VALUE of a flag. Skipping just `--locales-dir` meant
@@ -260,7 +294,7 @@ async function main() {
   // exemption unusable on the API path it was added for (Codex #1563
   // r5). Listed centrally so a future value-taking flag can't
   // reintroduce it silently.
-  const VALUE_FLAGS = new Set(['--locales-dir', '--allow-omission']);
+  const VALUE_FLAGS = new Set(['--locales-dir', '--allow-omission', '--allow-empty']);
   const explicitCodes = args.filter(
     (a, i) => !a.startsWith('--') && !VALUE_FLAGS.has(args[i - 1] ?? ''),
   ) as LocaleCode[];
@@ -351,17 +385,20 @@ async function main() {
       // command would never find out.
       const short = missingSubtree(source, translated);
       const interpolation = interpolationProblems(source, translated, allowedOmissions, code);
+      const empties = emptyProblems(source, translated, allowedEmpty, code);
       if (
         strayKeys.length > 0 ||
         drifted.length > 0 ||
         short !== null ||
-        interpolation.length > 0
+        interpolation.length > 0 ||
+        empties.length > 0
       ) {
         const detail = [
           ...strayKeys.slice(0, 5).map((k) => `not requested: ${k}`),
           ...drifted.slice(0, 5).map((d) => `${d.path}: expected ${d.expected}, got ${d.actual}`),
           ...(short ? [`incomplete: ${leafPaths(short).length} key(s) missing, e.g. ${leafPaths(short).slice(0, 3).join(', ')}`] : []),
           ...interpolation.slice(0, 5),
+          ...empties.slice(0, 5),
         ].join('; ');
         throw new Error(`response shape rejected — ${detail}`);
       }
