@@ -934,17 +934,27 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    the clamp residual. Full correction in the design record's **§2h**
    >    (#1565), which — after three review rounds and SIXTEEN confirmed P1s —
    >    deliberately holds the verified problem statement and a **constraint
-   >    set**, NOT a design. P2 is a subsystem and its wire is **three** paths
-   >    (the day broadcast, the remit, and R4's mirror→Base fresh-return —
-   >    independent messengers, decoders and rollouts).
+   >    set**, NOT a design. P2 is a subsystem whose wire is **at least three**
+   >    paths (the day broadcast, the remit, and R4's mirror→Base fresh-return
+   >    — independent messengers, decoders and rollouts). **Treat three as a
+   >    FLOOR, not a budget** (Codex #1573 r9 P2): §2h re-opened the
+   >    conversion's authenticated input, and its leading shape — a
+   >    mirror-authenticated quote — likely adds a fourth. Planning that
+   >    budgets exactly three would omit that transport.
    >    **The lapse decision that gated it is RATIFIED** (#1571, 2026-08-04):
    >    a mirror-local permissionless lapse, recorded in §2h as R1-R6 — two
-   >    authenticated per-side amounts with the mirror deriving Δ locally; a
-   >    permissionless lapse; a dispatch cutoff strictly earlier than it; a
-   >    **dedicated fresh-return** recovery (NOT M4 C2, which cannot reach a
-   >    fresh-booked compensation); the per-day schedule authenticated in
-   >    BOTH domains; and **R6**, a per-chain bound on how many compensations
-   >    can be stranded at once.
+   >    authenticated per-side amounts; a permissionless lapse; a dispatch
+   >    cutoff strictly earlier than it; a **dedicated fresh-return** recovery
+   >    (NOT M4 C2, which cannot reach a fresh-booked compensation); the
+   >    per-day schedule authenticated in BOTH domains; and **R6**, a per-chain
+   >    bound on how many compensations can be stranded at once.
+   >
+   >    **How the mirror obtains Δ is NOT settled** (Codex #1573 r9 P1). This
+   >    line previously said "with the mirror deriving Δ locally", which was
+   >    R1's original mechanism and is now **withdrawn** — dividing the
+   >    delivered amount by uncapped local interest prices against an
+   >    obligation the mirror will not pay. Two authenticated per-side amounts
+   >    remain ratified; the conversion's authenticated input is open in §2h.
    >
    >    **The operative rules of R6 and its sub-rules are NOT summarised here
    >    — read §2h** (Codex #1573 r8 P1 ×2). This summary previously carried

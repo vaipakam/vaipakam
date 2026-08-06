@@ -1059,34 +1059,65 @@ to derive Δ from the mirror's own day interest — which **Base does not hold**
 Left there, R1 merely renames solve-for-the-half to solve-for-the-delta, and
 lets the authenticated pricing obligation drift from the delivered backing.
 
-So the ratified shape is: **the wire carries an authenticated AMOUNT, and the
-MIRROR derives Δ locally from its own day interest.** That amount is the
+> ⚠️ **The specific mechanism below — "Base sends an amount, the mirror divides
+> by its own day interest" — is WITHDRAWN** (Codex #1573 r9 P1; r8 established
+> why, and this paragraph was left standing as a directive an implementer would
+> follow). It is kept, struck, because the *reasoning* that produced it is what
+> the replacement must preserve. **The stable, still-ratified part of R1 is
+> below it.**
+
+~~So the ratified shape is: the wire carries an authenticated AMOUNT, and the
+MIRROR derives Δ locally from its own day interest.~~ That amount is the
 **declared pricing obligation**, not a statement about what physically lands —
 R1b preserves it unscaled on a short receipt while backing is only
 `actualReceived`, so equating the two would either reject a valid short receipt
-or overstate backing (Codex #1573 r4). The conversion happens where its input
-actually lives, and neither party solves for anything.
+or overstate backing (Codex #1573 r4). ~~The conversion happens where its input
+actually lives, and neither party solves for anything.~~
 Any alternative must pin an authenticated local denominator explicitly — an
 unpinned conversion is the footgun, not the delta.
 
-**The conversion must be defined at its edges** (Codex #1573 r4).
-`Δ = amount × 1e18 / localInterest` is **undefined** for a non-zero side amount
-against **zero** local interest, and for non-dividing values **no integer Δ
-reproduces the amount exactly** — flooring silently underpays the preserved
-obligation, rounding up exceeds its backing and parks the day behind the budget
-gate. So, pinned rather than deferred (Codex #1573 r5 — an earlier revision said
-these "must be pinned" without pinning either, which leaves implementations
-free to floor and underpay or round up and overdraw):
+**What survives, and binds any replacement:**
+
+1. The wire carries **two authenticated per-side amounts** — not halves, not
+   one scalar (R1, R1b). Ratified, unchanged.
+2. Each amount is a **declared pricing obligation**, preserved unscaled on a
+   short receipt while backing is only `actualReceived` (R1b, constraint 18).
+3. The conversion is performed **where its inputs actually live**, and **neither
+   party solves for anything**. This is the principle; "mirror divides by local
+   interest" was one *implementation* of it, and r7/r8 showed that
+   implementation prices against an obligation the mirror will not pay.
+4. Whatever supplies the conversion's denominator must be **authenticated**, not
+   inferred from local state that may be absent or superseded.
+
+The mechanism satisfying all four is **open** — see the conversion discussion
+below, where a mirror-authenticated `(Δ, per-side amount)` quote is the leading
+shape. An implementer must not fall back to `amount / localInterest` because it
+appears earlier in this section.
+
+**The conversion must be defined at its edges** (Codex #1573 r4). These rules
+were derived against the now-withdrawn `amount / localInterest` mechanism, and
+**they survive it** — every one of them is a property any conversion must have,
+not a property of that division. Read them as requirements on the replacement.
+
+Concretely: a conversion is **undefined** for a non-zero side amount against a
+**zero** denominator, and for non-dividing values **no integer Δ reproduces the
+amount exactly** — flooring silently underpays the preserved obligation,
+rounding up exceeds its backing and parks the day behind the budget gate. So,
+pinned rather than deferred (Codex #1573 r5 — an earlier revision said these
+"must be pinned" without pinning either, which leaves implementations free to
+floor and underpay or round up and overdraw):
 
 - a **zero-interest side must carry a zero amount**; a non-zero amount against
   a *finalized* zero local interest is a malformed instruction and must be
   rejected, not coerced. **"Finalized" is load-bearing — see R1d**: an
   unstamped mirror cannot tell an authenticated zero from a not-yet-folded one,
   and rejecting on the latter destroys a valid compensation;
-- **Δ FLOORS.** `Δ = floor(amount × 1e18 / localInterest)`. Flooring underpays
+- **Δ FLOORS** — whatever the denominator turns out to be. Flooring underpays
   the declared obligation by sub-unit dust; rounding up would pay beyond the
   delivered backing, which is the one direction this design never takes — the
-  same reason the recycled side floors everywhere else;
+  same reason the recycled side floors everywhere else. (Stated as
+  `floor(amount × 1e18 / localInterest)` before the denominator was withdrawn;
+  the *direction* is the rule, not that expression);
 - the **residual is un-drawn backing**, not a debt. Nothing accrues it to a
   user and no supplemental transition is owed for it — but it needs a named
   ledger and a terminal, which the next paragraph is about. An earlier revision
@@ -1230,6 +1261,38 @@ required by constraint 7. Anyone may resolve an expired zeroed day to
 genuinely-zero. This is what discharges §2g's pin: the halt required by
 constraint 1 now has a terminal reachable without any privileged actor.
 
+**R2a — an unpermissioned CALLER is not a reachable TERMINAL if the EVIDENCE
+can fail to arrive** (Codex #1573 r9 P1). This is the sharpest correction in the
+section, because it lands on the rule the whole design rests on. R2's clock is
+the authenticated `finalizedAt`, and `finalizedAt` reaches the mirror **only**
+through the Base→mirror V2 broadcast (constraint 12). If that broadcast never
+executes — lane outage, or a permanently failed packet — the mirror holds
+neither the zeroed marker nor the clock, so **there is nobody who can call the
+lapse**, `_dayPoolHalves` stays halted, and every later day's claims on that
+chain stall indefinitely. That is precisely the unbounded stall constraint 2
+requires a terminal for and R2 claims to discharge.
+
+**R6 sharpens it rather than helping.** One might hope a compensation packet
+carries duplicate timing evidence — but R6 suppresses dispatch for every zeroed
+day after the first, so the later days receive no packet at all. The design's
+own stranding bound removes the redundant evidence path.
+
+So R2 needs one of: a **permissionlessly re-presentable proof of the finalized
+broadcast** — anyone can supply the authenticated evidence, decoupling the
+terminal from that one delivery — or an **independent, bounded, mirror-known
+terminal** that does not depend on cross-domain evidence at all. Which, and its
+safety argument, is open.
+
+> **The general rule, and it now has three instances — state it once.**
+> **A permissionless terminal requires permissionlessly OBTAINABLE evidence,
+> not merely an unpermissioned caller.** R2 here (the lapse needs
+> `finalizedAt`), R6b (the gate needs proof of consumption), and R6a (the loss
+> record needs a liability figure) are the same defect three times: each made
+> the *caller* open and left the *input* on a single delivery whose loss is
+> terminal. When adding any permissionless path to this design, name its inputs
+> and ask who can supply them if the lane carrying them is down. If the answer
+> is "nobody", the path is not permissionless — it is merely unpermissioned.
+
 **R3. Base REFUSES TO DISPATCH compensation after a cutoff STRICTLY EARLIER
 than the lapse deadline.** Constraint 8 already requires *a* cutoff; making it
 strictly earlier turns the gap into an explicit **CCIP delivery budget**.
@@ -1287,6 +1350,38 @@ So:
 - R4 adds a **separate receipt-bound RETURNED cumulative**, attributed to the
   same counter the original receipt was credited to;
 - spendable backing is the **difference**, derived at read time.
+
+**And the append-only discipline applies to the BASE side too — that is where
+it came from** (Codex #1573 r9 P1). The rule above was written for the mirror's
+receipt counters and left Base's 69M headroom with no instrument. R4 requires
+the authenticated Base inflow to reverse 69M usage, and `rewardBudgetRemittedGlobal`
+is append-only — so an implementation is left choosing between decrementing it,
+which destroys the gross-evidence semantics the whole rule exists to protect,
+and leaving recovered VPFI **permanently charged against the cap** even though
+the tokens came back. Neither is acceptable, and the fix is the same shape:
+
+- `rewardBudgetRemittedGlobal` stays **append-only** (gross remitted);
+- R4 adds a **receipt-bound BASE RECOVERED cumulative**;
+- net 69M usage is `gross remitted − recovered`, derived at read time.
+
+**⚠ This exposes a real tension the P2 design must settle, and it is on the
+open list.** The claim path's truncate-and-consume rule is justified by
+`remaining = CAP − paidOut − remittedGlobal` being **monotone non-increasing** —
+a trimmed remainder is unfundable forever, so consuming the entry alongside it
+costs the claimant nothing. If `recovered` feeds `remaining`, that monotonicity
+breaks: headroom can rise, and entries truncated before a recovery were retired
+against a bound that later loosened. If `recovered` does *not* feed `remaining`,
+the cap permanently under-counts a pool that genuinely still holds the tokens,
+and R4's reversal accomplishes nothing.
+
+The accounting shape above is right either way — a gross counter and a separate
+recovered counter — so it can be specified now. **What feeds `remaining` is the
+decision**, and it has a stated cost on both sides. Note this also touches
+#1568: `VpfiCrossChainRecyclingDesign.md` §3.6a decides the *repatriation* case
+in the conservative direction (neither mode decrements, so a lapsed compensation
+permanently shrinks the interaction pool). P2's fresh-return is a different path
+and may legitimately differ — but the two must be decided *together*, because
+they share the counter whose monotonicity the claim path relies on.
 
 **Two deltas, not one — the mirror's OUTFLOW and Base's INFLOW are different
 numbers** (Codex #1573 r8 P1). The paragraph above already establishes that the
@@ -1437,16 +1532,21 @@ clears and the chain is locked out of compensation permanently:
 | **Consumed on time** | mirror credited the delivery, users were paid, no reversal exists or ever will (r7 P1) | **consumption ACK** clears |
 | **Consumed on time but short** | all delivered tokens landed and were credited; the *day* awaits a top-up (R1c) | **consumption ACK** clears — see R6c |
 | **Delivered after lapse** | quarantined (R4a), fresh-returned, Base reverses | **return settlement** clears |
-| **Permanently undeliverable** | ingress rejects a malformed instruction; CCIP leaves it failed-but-re-executable and re-execution repeats the failure, so there is no ACK and no return (r7 P1) | **receipt-bound recovery settlement** clears. Cancellation alone does **not** — §2d leaves the tokens locked in the CCIP pool, so they are still stranded (r8 P1). See R6d |
-| **In flight, no evidence yet** | genuinely unknown | **holds the gate** — the only state that does |
+| **Permanently undeliverable** | ingress rejects a malformed instruction; CCIP leaves it failed-but-re-executable and re-execution repeats the failure, so there is no ACK and no return (r7 P1) | **HOLDS the gate.** Cancellation records the message's terminal state but does **not** clear it — §2d leaves the tokens locked in the CCIP pool (r8 P1). See R6d |
+| **Cancelled, recovery pending** | the dispatch is provably dead and cancelled, and the pool → Diamond recovery has not settled yet (r9 P1) | **HOLDS the gate** — the tokens are still stranded, which is the only thing R6 measures |
+| **Recovered** | the governance recovery settled and Base authenticated the inflow | **recovery settlement** clears |
+| **In flight, no evidence yet** | genuinely unknown | **HOLDS the gate** |
 
-So the rule is not "unknown vs known" but **"are these tokens still stranded?"**
-— the gate clears exactly when the delivery's VALUE is accounted for, whether
-that happened by being consumed or by coming back. Knowing an outcome is not
-enough: r8 showed that a *cancelled* delivery has a perfectly known outcome and
-is still stranded in the CCIP pool (R6d). The r6 point survives as its narrow
-form — an ACK that closes a reservation *in order to start a return* is not a
-terminal; a consumption ACK on a delivery the mirror actually credited is.
+**The gate's question is "are these tokens still stranded?" — never "is the
+outcome known?"** (r8, sharpened by r9 P1: an earlier revision of this table
+still called in-flight "the only state that holds the gate", which the
+cancellation row had already falsified in the same edit). The gate clears
+exactly when the delivery's VALUE is accounted for — consumed, or come back.
+Three distinct states hold it, and only one of them is an unknown: a cancelled
+delivery has a *perfectly* known outcome and is still stranded. The r6 point
+survives as its narrow form — an ACK that closes a reservation *in order to
+start a return* is not a terminal; a consumption ACK on a delivery the mirror
+actually credited is.
 
 **R6b — the EVIDENCE must be permissionlessly re-presentable, or an ACK-lane
 outage becomes a user-loss mechanism** (Codex #1573 r7 P1). Base learns of
@@ -1640,6 +1740,18 @@ count is a claim that goes stale faster than the list does.
 - **R6d's recovery settlement** (r8) — cancellation does not clear the gate;
   the pool → Diamond recovery that does is a governance op, and its evidence
   and clearing path are unspecified.
+- **R2a's evidence path** (r9) — the lapse cannot be invoked at all if the
+  broadcast carrying `finalizedAt` never executes. Needs either a
+  permissionlessly re-presentable proof of the finalized broadcast, or an
+  independent bounded mirror-known terminal. **This is the largest open item
+  in the section**: without it R2 does not actually discharge §2g's pin in the
+  case the pin was written for.
+- **What feeds `remaining` after a recovery** (r9) — the gross/recovered
+  counter split is settled; whether `recovered` reopens 69M headroom is not,
+  and it trades the claim path's truncate-and-consume justification against a
+  cap that permanently under-counts returned tokens. **Decide jointly with
+  #1568 §3.6a**, which settles the repatriation case conservatively — the two
+  share the counter.
 - **The residual's ledger and terminal** (r7) — floor dust plus cap-bound
   excess is delivered-but-unpayable VPFI. R1a says what it is *not* (a debt);
   what holds it and how it leaves is open.
