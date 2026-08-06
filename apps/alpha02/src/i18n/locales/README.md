@@ -61,8 +61,7 @@ it in, leaving reviewed strings untouched:
 
 ```bash
 ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
-  --locales-dir apps/alpha02/src/i18n/locales --missing-only \
-  --policy apps/alpha02/src/i18n/translation-policy.json
+  --locales-dir apps/alpha02/src/i18n/locales --missing-only
 ```
 
 If the translations arrive some other way (a translator's hand-back, a
@@ -71,17 +70,18 @@ a directory and merge them the same way:
 
 ```bash
 pnpm --filter @vaipakam/i18n merge-patch -- \
-  --locales-dir apps/alpha02/src/i18n/locales --patches path/to/patches \
-  --policy apps/alpha02/src/i18n/translation-policy.json
+  --locales-dir apps/alpha02/src/i18n/locales --patches path/to/patches
 ```
 
-Pass `--policy` on both. Each run validates the WHOLE merged bundle,
+Each run validates the WHOLE merged bundle,
 not just the incoming translations, so a value the locale had already
 lost — an `{{amount}}` that vanished in an earlier delivery, a leaf
 holding a number where English has a sentence — is reported instead of
-riding along under a clean "0 still missing". The exemptions file is
-what keeps that check honest: without it the standing linguistic cases
-below would fail every run, and a flag you always pass guards nothing.
+riding along under a clean "0 still missing". `src/i18n/translation-policy.json` is what keeps that check honest:
+without it the standing linguistic cases below would fail every run.
+Both scripts find it automatically at `<locales-dir>/../translation-policy.json`,
+so there is no flag to remember — a check you have to switch on is not a
+check. `--policy <path>` overrides it if you ever keep it elsewhere.
 
 Both report what each locale is still missing rather than reporting a
 clean success, and `scripts/check-locale-coverage.ts` fails the build if

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { RECOVERY_CONFIRM_WORD } from '../lib/recoveryConfirm';
 import { AlertTriangle, ShieldAlert, CheckCircle2, Lock } from 'lucide-react';
 import {
   parseAbi,
@@ -609,7 +610,7 @@ function ReviewModal({
   status,
 }: ReviewModalProps) {
   const { t } = useTranslation();
-  const confirmReady = confirmInput.trim().toUpperCase() === 'CONFIRM';
+  const confirmReady = confirmInput.trim().toUpperCase() === RECOVERY_CONFIRM_WORD;
   const inFlight = status.kind === 'signing' || status.kind === 'submitting';
   return (
     <div
@@ -691,7 +692,7 @@ function ReviewModal({
           type="text"
           value={confirmInput}
           onChange={(e) => setConfirmInput(e.target.value)}
-          placeholder="CONFIRM"
+          placeholder={RECOVERY_CONFIRM_WORD}
           style={{ width: '100%', padding: 8, marginBottom: 16, fontFamily: 'monospace' }}
           disabled={inFlight}
         />

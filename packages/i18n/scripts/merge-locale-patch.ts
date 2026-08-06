@@ -48,14 +48,6 @@ const localesDirArg = flag('--locales-dir');
 const patchesDirArg = flag('--patches');
 const reorder = args.includes('--reorder');
 const policyArg = flag('--policy');
-const policy = loadPolicy(
-  policyArg ? path.resolve(process.env.INIT_CWD ?? process.cwd(), policyArg) : undefined,
-);
-const allowedOmissions = new Set([
-  ...policy.omissions,
-  ...collectAllowedOmissions(args),
-]);
-const allowedEmpty = new Set([...policy.empty, ...collectAllowedEmpty(args)]);
 if (!localesDirArg || !patchesDirArg) {
   console.error('Usage: --locales-dir <path> --patches <path> [--policy <path>] [--reorder]');
   process.exit(1);
@@ -71,6 +63,17 @@ for (const dir of [LOCALES_DIR, PATCHES_DIR]) {
     process.exit(1);
   }
 }
+
+const policyPath = policyArg
+  ? path.resolve(base, policyArg)
+  : defaultPolicyPath(LOCALES_DIR);
+const policy = loadPolicy(policyPath);
+if (policyPath) console.log(`policy: ${policyPath}`);
+const allowedOmissions = new Set([
+  ...policy.omissions,
+  ...collectAllowedOmissions(args),
+]);
+const allowedEmpty = new Set([...policy.empty, ...collectAllowedEmpty(args)]);
 
 const enJson = JSON.parse(
   fs.readFileSync(path.join(LOCALES_DIR, 'en.json'), 'utf8'),
@@ -157,6 +160,23 @@ function collectAllowedEmpty(argv) {
  * (Arabic's dual, Japanese's trailing verb) records them once and every
  * ingestion path reads the same answers.
  */
+/**
+ * Where a repo's policy file lives when `--policy` is not given:
+ * `<locales-dir>/../translation-policy.json`.
+ *
+ * Convention rather than a required flag, because a check you have to
+ * REMEMBER to switch on is not a check. Every documented command shape
+ * would otherwise need the flag, and the one an operator pasted from
+ * somewhere older would silently run with `requiredLiterals` empty —
+ * writing a confirmation prompt that makes the gate unpassable and
+ * exiting 0 (Codex #1563 r19). `--policy` still overrides, for a repo
+ * that keeps it elsewhere.
+ */
+function defaultPolicyPath(localesDir) {
+  const guess = path.resolve(localesDir, '..', 'translation-policy.json');
+  return fs.existsSync(guess) ? guess : undefined;
+}
+
 function loadPolicy(file) {
   if (!file) {
     return { omissions: new Set(), empty: new Set(), requiredLiterals: {} };

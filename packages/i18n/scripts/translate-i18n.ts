@@ -250,6 +250,23 @@ function collectAllowedEmpty(argv) {
  * (Arabic's dual, Japanese's trailing verb) records them once and every
  * ingestion path reads the same answers.
  */
+/**
+ * Where a repo's policy file lives when `--policy` is not given:
+ * `<locales-dir>/../translation-policy.json`.
+ *
+ * Convention rather than a required flag, because a check you have to
+ * REMEMBER to switch on is not a check. Every documented command shape
+ * would otherwise need the flag, and the one an operator pasted from
+ * somewhere older would silently run with `requiredLiterals` empty —
+ * writing a confirmation prompt that makes the gate unpassable and
+ * exiting 0 (Codex #1563 r19). `--policy` still overrides, for a repo
+ * that keeps it elsewhere.
+ */
+function defaultPolicyPath(localesDir) {
+  const guess = path.resolve(localesDir, '..', 'translation-policy.json');
+  return fs.existsSync(guess) ? guess : undefined;
+}
+
 function loadPolicy(file) {
   if (!file) {
     return { omissions: new Set(), empty: new Set(), requiredLiterals: {} };
@@ -358,11 +375,11 @@ async function main() {
   const missingOnly = args.includes('--missing-only');
   const reorder = args.includes('--reorder');
   const policyArg = readFlagValue('--policy');
-  const policy = loadPolicy(
-    policyArg
-      ? path.resolve(process.env.INIT_CWD ?? process.cwd(), policyArg)
-      : undefined,
-  );
+  const policyPath = policyArg
+    ? path.resolve(process.env.INIT_CWD ?? process.cwd(), policyArg)
+    : defaultPolicyPath(LOCALES_DIR);
+  const policy = loadPolicy(policyPath);
+  if (policyPath) console.log(`policy: ${policyPath}`);
   const allowedOmissions = new Set([
     ...policy.omissions,
     ...collectAllowedOmissions(args),
@@ -487,14 +504,6 @@ async function main() {
     });
   }
 
-  for (const [code, lines] of preExisting) {
-    console.error(
-      `⚠ ${code}: ${lines.length} pre-existing problem(s) in this bundle — ` +
-        'NOT introduced by this run:',
-    );
-    for (const line of lines.slice(0, 10)) console.error(`      ${line}`);
-  }
-
   if (unreadable.length > 0) {
     console.error(
       `⚠ skipped ${unreadable.length} unreadable bundle(s): ${unreadable.join(', ')} — ` +
@@ -540,8 +549,6 @@ async function main() {
   console.log();
 
   const failed: LocaleCode[] = [];
-  /** Locales written successfully but left holding pre-existing damage. */
-  const carriedDamage: LocaleCode[] = [];
   for (const code of targets) {
     process.stdout.write(`→ ${code} (${LOCALE_NAMES[code]})… `);
     try {
@@ -648,17 +655,18 @@ async function main() {
           ...emptyProblems(enJson, merged, allowedEmpty, code),
           ...requiredLiteralProblems(merged as Bundle, policy.requiredLiterals),
         ];
+        // `--reorder` drops obsolete keys and the fill closes gaps, so a
+        // locale flagged at discovery can be CLEAN by the time it is
+        // written. Re-deriving from the final bundle rather than keeping
+        // the discovery verdict means a run that repaired everything it
+        // found does not still fail (Codex #1563 r19).
+        if (carried.length === 0) preExisting.delete(code);
         if (carried.length > 0) {
+          preExisting.set(code, carried);
           // The translation IS written — it is valid, and discarding it
           // over damage it did not cause would just lose the work. But
           // the bundle on disk is known-broken, so the run must not
           // report success.
-          console.error(
-            `    ⚠ ${carried.length} pre-existing problem(s) remain in this bundle ` +
-              '— NOT introduced by this fill:',
-          );
-          for (const line of carried.slice(0, 10)) console.error(`        ${line}`);
-          carriedDamage.push(code);
         }
       }
       for (const w of warnings) console.log(`    warn: ${w}`);
@@ -684,18 +692,16 @@ async function main() {
       `${unreadable.length} locale(s) skipped as unreadable: ${unreadable.join(', ')}`,
     );
   }
-  if (carriedDamage.length > 0) {
+  // Reported at the END, from the final state, so a problem the run
+  // repaired is not announced as if it survived.
+  for (const [code, lines] of preExisting) {
     console.error(
-      `${carriedDamage.length} locale(s) filled but still holding pre-existing ` +
-        `problems: ${carriedDamage.join(', ')}`,
+      `⚠ ${code}: ${lines.length} problem(s) remain in this bundle — ` +
+        'NOT introduced by this run:',
     );
+    for (const line of lines.slice(0, 10)) console.error(`      ${line}`);
   }
-  if (
-    failed.length > 0 ||
-    unreadable.length > 0 ||
-    carriedDamage.length > 0 ||
-    preExisting.size > 0
-  ) {
+  if (failed.length > 0 || unreadable.length > 0 || preExisting.size > 0) {
     process.exitCode = 1;
   }
 }
