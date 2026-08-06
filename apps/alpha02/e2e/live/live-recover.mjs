@@ -398,7 +398,19 @@ try {
  * ignored with it — but a guard widened past its reason stops being a
  * guard at all.
  */
-function isCloudflareBeacon(rawUrl) {
+function isCloudflareBeacon({ reason, url: rawUrl }) {
+  // The REASON has to match too, not just the URL. `readOnlyViolation`
+  // classifies by content: a JSON-RPC body carrying a write method is
+  // recorded as `json-rpc eth_sendTransaction`, whatever URL it was
+  // posted to. A URL-only filter would therefore have exempted a
+  // signing or broadcast attempt aimed at the beacon path — the single
+  // worst thing this check exists to catch (Codex #1576 r2).
+  //
+  // Only the plain mutating-request shape qualifies. Every `json-rpc *`
+  // and `wallet rpc *` reason falls through and stays fatal, as does
+  // any reason shape this doesn't recognise: unknown means fatal, which
+  // is the safe direction for a guard.
+  if (!/^[A-Z]+ \(non-RPC mutating request\)$/.test(reason ?? '')) return false;
   try {
     const url = new URL(rawUrl);
     const firstParty =
@@ -413,8 +425,8 @@ function isCloudflareBeacon(rawUrl) {
 //    page attempted a signing RPC or a backend write during a review
 //    that claims to be read-only — that is a finding in its own right,
 //    not noise to discard under otherwise-green checks.
-const telemetry = blockedRequests.filter((b) => isCloudflareBeacon(b.url));
-const violations = blockedRequests.filter((b) => !isCloudflareBeacon(b.url));
+const telemetry = blockedRequests.filter((b) => isCloudflareBeacon(b));
+const violations = blockedRequests.filter((b) => !isCloudflareBeacon(b));
 if (telemetry.length) {
   console.log(
     `\nBlocked ${telemetry.length} edge-telemetry request(s) (expected, not a finding):`,
