@@ -35,9 +35,9 @@ import {
   unknownKeys,
   emptyTranslations,
   requiredLiteralProblems,
-  writeFileAtomic,
   type Bundle,
 } from '../src/bundleOps.ts';
+import { writeFileAtomic } from './writeFileAtomic.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
