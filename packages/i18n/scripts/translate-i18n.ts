@@ -258,17 +258,33 @@ function emptyProblems(source, candidate, allowedEmpty, code) {
     );
 }
 
-/** A bundle counts as a placeholder (→ eligible for the default
- *  "fill in the gaps" run) when the file is absent or parses to an
- *  object with no keys. */
+/**
+ * A bundle counts as a placeholder (→ eligible for the default
+ * "fill in the gaps" run) when the file is absent, or parses to an
+ * OBJECT with no keys.
+ *
+ * The root-shape test is load-bearing, not defensive typing.
+ * `Object.keys` returns `[]` for `[]`, `0`, `false` and `""` just as it
+ * does for `{}`, so a key-count alone called every one of those an
+ * empty stub — and a stub is EXCLUDED from the `--missing-only` sweep
+ * before the damage check ever sees it. A locale set to `[]` therefore
+ * reported "Every translated locale already covers en.json" and exited
+ * 0 (Codex #1563 r13). Only `{}` is a stub; every other non-object root
+ * is damage, and returning false here routes it to
+ * `readBundleOrDamaged`, which reports it and fails the run.
+ */
 function isPlaceholderBundle(p: string): boolean {
   if (!fs.existsSync(p)) return true;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(fs.readFileSync(p, 'utf8')) as object;
-    return Object.keys(parsed).length === 0;
+    parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch {
-    return false; // malformed — leave alone, surface in review
+    return false; // malformed — damage, not a stub
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return false;
+  }
+  return Object.keys(parsed).length === 0;
 }
 
 /** Parse a locale bundle from disk, or `{}` when it is absent. */
@@ -367,37 +383,45 @@ async function main() {
       }
       return missingSubtree(enJson, bundle) !== null;
     });
-    if (unreadable.length > 0) {
-      console.error(
-        `⚠ skipped ${unreadable.length} unreadable bundle(s): ${unreadable.join(', ')} — ` +
-          'malformed JSON or a non-object root. Fix them by hand; ' +
-          'gap-filling cannot merge into a bundle it cannot parse.',
-      );
-    }
   } else {
     // Default: only locales whose bundle is missing or a `{}` stub —
     // idempotent after a partial failure, and exactly what you want
     // right after seeding placeholder files.
-    targets = SUPPORTED_LOCALES.filter(
-      (c) => c !== 'en' && isPlaceholderBundle(path.join(LOCALES_DIR, `${c}.json`)),
+    targets = SUPPORTED_LOCALES.filter((c) => {
+      if (c === 'en') return false;
+      const p = path.join(LOCALES_DIR, `${c}.json`);
+      if (isPlaceholderBundle(p)) return true;
+      // Not a stub — so either a real bundle (nothing to do in this
+      // mode) or damage. Damage is neither "missing" nor "a stub", so
+      // this mode would otherwise pass over it in silence.
+      if (readBundleOrDamaged(p) === null) unreadable.push(c);
+      return false;
+    });
+  }
+
+  if (unreadable.length > 0) {
+    console.error(
+      `⚠ skipped ${unreadable.length} unreadable bundle(s): ${unreadable.join(', ')} — ` +
+        'malformed JSON or a non-object root. Fix them by hand; this script ' +
+        'cannot classify, diff or merge into a bundle it cannot parse.',
     );
   }
 
   if (targets.length === 0) {
+    // Nothing to do AND something unreadable is not "nothing to do".
+    // Either mode's no-op message is a claim about every locale, and a
+    // bundle that could not be parsed was never examined — borrowing
+    // that line for it is the most misleading outcome the script has.
+    if (unreadable.length > 0) {
+      console.error(
+        `Nothing to translate among the readable locales, but ${unreadable.length} ` +
+          `bundle(s) could not be read: ${unreadable.join(', ')}. ` +
+          'Coverage is UNKNOWN for those.',
+      );
+      process.exitCode = 1;
+      return;
+    }
     if (missingOnly) {
-      // The unreadable case must NOT borrow this success line. "Every
-      // translated locale already covers en.json" is a claim about
-      // every locale, and a bundle that could not be parsed was never
-      // examined — reporting completion there is the most misleading
-      // outcome the script has.
-      if (unreadable.length > 0) {
-        console.error(
-          `No readable locale needed filling, but ${unreadable.length} bundle(s) ` +
-            `could not be read: ${unreadable.join(', ')}. Coverage is UNKNOWN for those.`,
-        );
-        process.exitCode = 1;
-        return;
-      }
       console.log('Every translated locale already covers en.json. Nothing to fill.');
       return;
     }
