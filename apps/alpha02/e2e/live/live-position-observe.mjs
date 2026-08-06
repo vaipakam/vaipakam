@@ -81,6 +81,7 @@ import {
   http,
   numberToHex,
 } from 'viem';
+import { redactUrl } from './redact.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -209,51 +210,34 @@ const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
 
 const pub = createPublicClient({ transport: http(RPC) });
 
+/** Origin of the configured RPC, or null if `OBSERVE_RPC` is unparseable.
+ *  Declared before `redactUrl` because that is where it is load-bearing. */
+const RPC_ORIGIN = (() => {
+  try {
+    return new URL(RPC).origin;
+  } catch {
+    return null;
+  }
+})();
+
 /**
  * A URL safe to PRINT. `OBSERVE_RPC` is routinely an authenticated
- * provider endpoint — Alchemy and Infura both carry the key as a path
- * segment, others use basic auth or a query parameter — and the
- * live-review workflow says to paste a drive's output into the PR
- * thread. Printing the URL verbatim therefore publishes the credential
- * and hands over the account's quota (#1529 review round 19).
+ * provider endpoint — Alchemy and Infura carry the key as a path
+ * segment, Blast and Chainstack as a hyphenated UUID, others via basic
+ * auth or a query parameter — and the live-review workflow says to paste
+ * a drive's output into the PR thread. Printing the URL verbatim
+ * therefore publishes the credential and hands over the account's quota
+ * (#1529 review round 19; the key-shape bypasses, round 20).
  *
- * Opaque segments are masked at 24+ characters with NO hyphen or dot,
- * which is the shape of provider keys (Alchemy: 32 alphanumeric; Infura:
- * 32 hex) and not the shape of a site path — real slugs are shorter or
- * hyphenated, so route-failure output stays legible.
+ * Implementation and rationale live in `redact.mjs`, where they are
+ * unit-tested — see `redact.test.mjs`.
  */
-const OPAQUE_SEGMENT = /^[A-Za-z0-9]{24,}$/;
-function redactUrl(raw) {
-  try {
-    const u = new URL(raw);
-    if (u.username || u.password) {
-      u.username = '***';
-      u.password = '';
-    }
-    u.pathname = u.pathname
-      .split('/')
-      .map((s) => (OPAQUE_SEGMENT.test(s) ? '***' : s))
-      .join('/');
-    // Values only — the NAMES are useful and never secret.
-    for (const k of [...u.searchParams.keys()]) u.searchParams.set(k, '***');
-    return u.toString();
-  } catch {
-    // Never fall back to the raw string: unparseable is exactly when a
-    // credential is most likely to survive a naive redaction.
-    return '(unparseable url)';
-  }
-}
+const redact = (raw) => redactUrl(raw, RPC_ORIGIN);
 
 /** The RPC's identity for logs: origin only. Which provider is being
  *  used is all an operator needs from a status line, and it cannot leak
  *  a key held in the path, the query or basic auth. */
-const rpcLabel = (() => {
-  try {
-    return new URL(RPC).origin;
-  } catch {
-    return '(invalid OBSERVE_RPC)';
-  }
-})();
+const rpcLabel = RPC_ORIGIN ?? '(invalid OBSERVE_RPC)';
 
 // ---------------------------------------------------------------- chain
 console.log(`site      ${SITE}`);
@@ -726,10 +710,11 @@ await ctx.route('**/*', async (route) => {
       // provider uses. Labelling every refused POST a mutation reported a
       // harness omission (e.g. an unlisted `eth_getProof`) as a product
       // FAIL (#1529 review round 7).
-      // Redacted at the SOURCE, not at the print site: this array is
-      // not printed today, and a future report line that started doing so
-      // should not be able to reintroduce the leak.
-      blockedHttp.push({ why, method: badMethod, url: redactUrl(req.url()).slice(0, 120) });
+      // Redacted at the SOURCE, not at the print site. Round 19 justified
+      // this as defence against a FUTURE report line; in fact the
+      // READ-ONLY VIOLATION block below already prints these URLs, so it
+      // is load-bearing right now.
+      blockedHttp.push({ why, method: badMethod, url: redact(req.url()).slice(0, 120) });
       await route.abort('accessdenied').catch(() => {});
       return;
     }
@@ -760,8 +745,8 @@ await ctx.route('**/*', async (route) => {
     // — but it must not pass silently: see `routeFailures`.
     routeFailures.push({
       // Redact BEFORE truncating — slicing first can cut a URL mid-way
-      // and leave `redactUrl` unable to parse what it is handed.
-      url: redactUrl(req.url()).slice(0, 160),
+      // and leave `redact` unable to parse what it is handed.
+      url: redact(req.url()).slice(0, 160),
       why: String(err).split('\n')[0].slice(0, 160),
     });
     await route.abort('failed').catch(() => {});
@@ -814,9 +799,12 @@ await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) 
     // and the ones it missed are waved through as answers. Measured:
     //
     //   revert            RpcRequestError            code=3       ANSWER
+    //   revert as -32000  InvalidInputRpcError       code=-32000  ANSWER (bytes)
     //   rate limited      LimitExceededRpcError      code=-32005  no answer
     //   unavailable       ResourceUnavailableRpcError code=-32002 no answer
     //   internal          InternalRpcError           code=-32603  no answer
+    //   internal + diag   InternalRpcError           data="upstream timeout"
+    //                                                             no answer
     //   unreachable / 503 HttpRequestError           code=absent  no answer
     //
     // That is exactly the argument `ALLOWED_RPC` above is built on, and
@@ -827,9 +815,19 @@ await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) 
     // So: code 3 (EIP-1474 execution error) is an answer, and so are
     // returned revert BYTES whatever code carried them — some providers
     // label genuine reverts -32000. Everything else is recorded.
+    //
+    // Both are read off the error CHAIN, not off the top-level object, as
+    // `isRevert` does. viem wraps the provider's error, so the code and
+    // the revert data usually sit on an inner cause; testing `e.code` and
+    // `e.data` directly — round 19's version, despite its comment
+    // claiming the same shape as `isRevert` — made the bytes clause
+    // effectively dead, and the -32000 case it names was never actually
+    // covered. That direction only ever costs a false BLOCKED, which is
+    // why it survived nineteen rounds unnoticed.
+    const coded = e?.walk?.((x) => typeof x?.code === 'number') ?? e;
+    const rawData = [e?.data, coded?.data, e?.cause?.data].find((d) => typeof d === 'string');
     const answered =
-      e.code === EXECUTION_REVERTED ||
-      (typeof e.data === 'string' && REVERT_BYTES.test(e.data));
+      coded?.code === EXECUTION_REVERTED || (rawData !== undefined && REVERT_BYTES.test(rawData));
     if (!answered) {
       routeFailures.push({
         // Origin only — never the full RPC URL, which routinely carries

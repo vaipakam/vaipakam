@@ -47,16 +47,42 @@ else that can carry a provider key verbatim. Status lines get the origin
 only; recorded URLs are redacted where they are recorded, not where they
 are printed, so a later report line cannot reintroduce the leak.
 
+Redact by HOST, not by the shape of the path. Deciding from the shape —
+"segments over 24 characters look like keys" — is a denylist for
+secrets: it has to anticipate every provider's key format, and the ones
+it misses print in full (Blast and Chainstack key on a hyphenated UUID;
+short hex keys fall under the length floor). The RPC's origin is known,
+so any URL on it prints as its origin with the path discarded unread,
+which covers a provider nobody has configured yet. Shape heuristics stay
+as second-line defence for other hosts, where a legible path is worth
+having. A redaction helper is only as good as its test: `redact.mjs` is
+extracted from the driver precisely so `redact.test.mjs` can pin each
+key shape in CI, rather than the guarantee resting on a throwaway script
+someone ran once.
+
 Classify transport-vs-answer by an ALLOWLIST of what counts as the chain
 answering, never a denylist of known failures — the same argument the
 read-only allowlist is built on. A missed operational code in a denylist
 becomes a product FAIL blamed on the app; a missed one in an allowlist
 becomes a BLOCKED, which is loud and harmless.
 
+Read that evidence off the error CHAIN, not the top-level error object.
+The RPC client wraps the provider's error, so the code and any revert
+bytes generally sit on an inner cause; a predicate that tests the outer
+object still works for the plain case and silently covers nothing else.
+Because the miss costs only a false BLOCKED, this kind of dead clause
+does not announce itself — it has to be measured against a responder
+that produces each shape.
+
 The three-verdict exit contract is only honoured by the drivers that
 implement it. The batch summary must say which those are rather than
 applying its vocabulary to every driver, or a row reading FAIL hides
-that no infrastructure failure could have been distinguished.
+that no infrastructure failure could have been distinguished. Naming
+them is not enough on its own: the runner must also CLASSIFY by that
+list, so an exit 2 from a driver outside it reads as FAIL rather than
+being promoted to BLOCKED. Otherwise the summary asserts "ran but
+verified nothing" about a driver that never agreed to mean that by
+exiting 2 — a claim about a surface nobody checked.
 
 The transport rule covers EVERY way the page reaches the network, not
 just the one the driver proxies. Reads the app makes through an injected
