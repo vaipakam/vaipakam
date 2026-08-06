@@ -1055,9 +1055,20 @@ unpinned conversion is the footgun, not the delta.
 against **zero** local interest, and for non-dividing values **no integer Δ
 reproduces the amount exactly** — flooring silently underpays the preserved
 obligation, rounding up exceeds its backing and parks the day behind the budget
-gate. So: a **zero-interest side must carry a zero amount** (or another stated
-terminal), and the rounding direction plus the residual's disposition must be
-pinned rather than left to the implementer.
+gate. So, pinned rather than deferred (Codex #1573 r5 — an earlier revision said
+these "must be pinned" without pinning either, which leaves implementations
+free to floor and underpay or round up and overdraw):
+
+- a **zero-interest side must carry a zero amount**; a non-zero amount against
+  zero local interest is a malformed instruction and must be rejected, not
+  coerced;
+- **Δ FLOORS.** `Δ = floor(amount × 1e18 / localInterest)`. Flooring underpays
+  the declared obligation by sub-unit dust; rounding up would pay beyond the
+  delivered backing, which is the one direction this design never takes — the
+  same reason the recycled side floors everywhere else;
+- the **residual is un-drawn backing**, not a debt. It stays with the protocol
+  and leaves by the ordinary return path; nothing accrues it to a user and no
+  supplemental transition is owed for it.
 
 **R1b — it must be TWO amounts, one per side, jointly bounded by the delivery**
 (Codex #1573 r2 P1). A first draft of R1a authenticated a *single* amount while
@@ -1147,9 +1158,19 @@ P1: the original declared total, the mirror's receipt and the amount finally
 returned can all differ when either leg lands short; reversing the declared
 total, or reversing before receipt, reopens 69M headroom for tokens that are
 still missing or were burned — with any residual tracked separately) — and net
-the mirror's received-fresh counter (otherwise P1-b later treats returned,
-no-longer-held VPFI as funding — see the C2 constraint set in
-`VpfiCrossChainRecyclingDesign.md` §3.6a).
+the mirror's received-fresh counter.
+
+**That netting rule, stated locally** — an earlier revision pointed at a
+section on an unmerged branch, and fixing one such pointer left this second one
+standing (Codex #1573 r5). The rule: a repatriated Mode-B return must decrement
+the mirror's received-fresh cumulative **only where that specific receipt was
+credited to it**. A compensation that overtook the arming broadcast was booked
+to `rewardBudgetFreshUncounted`, **not** `rewardBudgetArmedFreshReceived`, so
+netting every return against the armed cumulative would consume armed credit
+belonging to *unrelated* deliveries and defer their properly-funded claims.
+Bind the decrement to the receipt's own attribution, or keep an authenticated
+post-lapse arrival out of the counter entirely. Otherwise P1-b later treats
+returned, no-longer-held VPFI as funding.
 
 **Consequence, correcting an earlier claim: C2 is NOT a prerequisite of P2.**
 The two are independent again.
