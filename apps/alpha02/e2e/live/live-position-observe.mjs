@@ -359,9 +359,47 @@ async function graceSecondsFor(durationDays) {
  * could exit 0 — reporting a clean live review it had not performed
  * (#1529 review round 14). Only a revert is an answer; everything else
  * propagates to `discovery()` and reads BLOCKED.
+ *
+ * The error CLASS alone cannot decide this, which is the trap round 15
+ * caught. viem's `getContractError` wraps BOTH an EVM revert and a plain
+ * JSON-RPC internal error in `ContractFunctionRevertedError`:
+ *
+ *   [EXECUTION_REVERTED_ERROR_CODE, InternalRpcError.code].includes(code)
+ *     && (data || details || message || shortMessage)
+ *
+ * `InternalRpcError.code` is -32603 — the generic code a provider returns
+ * for an upstream outage or an overloaded backend. So an `instanceof`
+ * test calls a dead backend a revert, and the drive is right back to
+ * reporting a locked position or a burned token for a chain that never
+ * answered.
+ *
+ * Verified against both a live revert and a -32603 responder:
+ *
+ *   REAL REVERT  isRevertClass=true  code=3       raw=0x7e273289…
+ *   RPC -32603   isRevertClass=true  code=-32603  raw=undefined
+ *
+ * Hence POSITIVE evidence is required, in either of the two forms a
+ * genuine revert can take:
+ *
+ *   - returned revert data (a custom error or a reason string), which is
+ *     conclusive whatever code the provider labelled it with — some
+ *     return real reverts under -32603; and
+ *   - failing that, the EVM's own `execution reverted` code 3, which
+ *     covers a bare `revert()` that returns no data at all.
+ *
+ * A -32603 carrying neither is a transport failure and propagates. The
+ * asymmetry is deliberate: misjudging a revert as a failure costs one
+ * false BLOCKED, which is loud and harmless, while misjudging a failure
+ * as a revert costs a false PASS on a review that never happened.
  */
+const EXECUTION_REVERTED = 3;
+
 function isRevert(err) {
-  return Boolean(err?.walk?.((e) => e instanceof ContractFunctionRevertedError));
+  const reverted = err?.walk?.((e) => e instanceof ContractFunctionRevertedError);
+  if (!reverted) return false;
+  if (reverted.raw !== undefined) return true; // the chain returned revert data
+  const coded = err.walk((e) => typeof e?.code === 'number');
+  return coded?.code === EXECUTION_REVERTED;
 }
 
 async function offsetLockedOn(borrowerTokenId) {
