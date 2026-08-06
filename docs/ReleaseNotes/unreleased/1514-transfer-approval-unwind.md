@@ -125,3 +125,31 @@ for something that would never come back, giving up on an approval that
 was standing the whole time. The success panels were corrected on this
 point earlier; this is the same correction on the path that cleans up
 after a failure.
+
+Two more, both on the two-step version of the tidy-up — the one that has
+to clear an approval to zero before it can write the earlier figure back.
+
+The check that the clearing step had taken effect was asking about the
+moment it happened rather than about the present. If someone granted a
+fresh approval in the gap between the clearing and the putting-back —
+another tab, another device — that grant was invisible to the check, and
+the tidy-up wrote the old figure straight over a decision somebody had
+just made. The other guard that might have caught it, which looks for a
+transaction still waiting, cannot help here either: by then theirs has
+already gone through. The app now asks what the approval is worth right
+now, immediately before writing, and stands back if the answer is not
+the zero it left there. If it cannot get an answer at all it also stands
+back — and says so, because at that point the earlier approval has been
+cleared and the person is the only one who can decide whether to grant
+it again.
+
+The second is a case where the tidy-up did nothing when it was the one
+case it most needed to act. If the clearing step succeeded but the
+approval that followed it did not take effect, the tidy-up compared what
+was on chain against the figure that never happened, concluded the
+approval was no longer its business, and reported success. What had
+actually happened is that the person's earlier approval was cleared by
+our own confirmed step and never put back. It now recognises that
+situation and restores the earlier figure, while keeping the same
+protection as everywhere else: it goes ahead only if what is on chain is
+exactly what this attempt left there.

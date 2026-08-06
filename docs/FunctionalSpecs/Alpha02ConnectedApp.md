@@ -878,7 +878,17 @@ Its intended behaviour, as the test oracle for this surface:
   withdrawal: the app stands back from an approval it cannot account
   for, and says that it could not account for it. A withdrawal that
   reports nothing is a promise that nothing needs acting on, and it
-  may only be made when that has actually been determined. An
+  may only be made when that has actually been determined. Where the
+  withdrawal takes two steps — clearing an approval to zero before
+  writing the earlier figure back — both the standing-back rule and
+  the no-overwrite rule apply to the SECOND step as well as the
+  first: what matters is what the approval is worth at the moment of
+  writing, not what it was worth when the clearing step happened, so
+  a grant made by someone else in between is left alone. And a
+  clearing step that succeeded followed by an approval that did not
+  take effect is a case for putting the earlier figure BACK, not for
+  standing down — the person's approval was cleared by a step that
+  did work, and nothing else has claimed it. An
   approval the wallet already held is never withdrawn — it was granted
   for some other purpose and is not this flow's to revoke. Nor does the
   withdrawal act on an allowance that has changed hands since: if the

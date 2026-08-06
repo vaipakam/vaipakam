@@ -746,6 +746,34 @@ await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) 
       }
     }
   } catch (e) {
+    // The page's OWN reads come through here, and they do not travel the
+    // routed-fetch path — `pub.request` goes straight out on node fetch.
+    // So the round-16 rule (an egress failure must never be reported as a
+    // broken product) had a second door it did not cover: an `eth_call`
+    // the app made through the wallet, failing on transport, reaches the
+    // page as a plain provider error. The app handles it, renders without
+    // the chooser, and the drive calls that a product FAIL — or worse,
+    // the app swallows an optional read and the drive exits 0 on a page
+    // that was never fully served (#1529 review round 18).
+    //
+    // Told apart by whether the NODE answered, verified against the live
+    // chain rather than assumed:
+    //
+    //   revert       RpcRequestError   code=3          (an answer)
+    //   unreachable  HttpRequestError  code=undefined  (no answer)
+    //   HTTP 503     HttpRequestError  code=undefined  (no answer)
+    //
+    // A JSON-RPC code means the node responded and the page should see
+    // it. -32603 is excluded on round 15's evidence: it is the generic
+    // code providers return for an upstream outage, so it is not proof of
+    // an answer. Over-recording costs a false BLOCKED, which is loud and
+    // harmless; under-recording costs a false FAIL, which is not.
+    if (typeof e.code !== 'number' || e.code === -32603) {
+      routeFailures.push({
+        url: `wallet ${method} → ${RPC}`,
+        why: String(e.shortMessage ?? e.message ?? e).split('\n')[0].slice(0, 160),
+      });
+    }
     return { error: { code: e.code ?? -32603, message: e.shortMessage ?? e.message ?? 'error' } };
   }
 });

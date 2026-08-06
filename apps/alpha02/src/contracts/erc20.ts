@@ -520,7 +520,27 @@ export async function restoreAllowance(opts: {
             publicClient, token, owner, spender, wrote, r.receipt.blockNumber,
           );
           if (still === 'confirmed') current = wrote;
-        } else if (landed === 'contradicted') current = await readAllowance();
+        } else if (landed === 'contradicted') {
+          // Our call ran, but a node that HAS its block says the value is
+          // not there — so the optimistic `wrote` is not what this
+          // attempt left behind. `confirmed` is, exactly as on the
+          // `!r.ok` path above, and reconciling to it is what makes the
+          // zero-first case recoverable: the reset landed, the approve
+          // after it did not stick, and the truth on chain is the zero.
+          //
+          // Without this the guard below compares a live 0 against a
+          // stale `wrote` of the payoff amount, returns null, and both
+          // callers read that as a clean cleanup — while the user's prior
+          // grant sits erased by our own confirmed reset (#1529 review
+          // round 18).
+          //
+          // The re-read still guards: it proceeds only if the live value
+          // IS what we confirmed, so a third party who moved the
+          // allowance after us still stands the unwind down.
+          wrote = confirmed ?? null;
+          if (wrote === null || wrote === previous) return null;
+          current = await readAllowance();
+        }
       }
     } catch {
       // Still unresolved — stand down below, but NOT silently. Returning
@@ -629,7 +649,33 @@ export async function restoreAllowance(opts: {
       // A competing approve MINED in this window.
       if (afterReset !== 0n) return null;
     }
-    // …or one was merely SUBMITTED, which no read can see.
+    // The reset having landed is HISTORY, and history cannot clear the
+    // restore — the same trap round 16 found on the first write, here on
+    // its sibling. Pinned at the reset's own block the answer stays zero
+    // however much has mined since, so a grant another tab landed in this
+    // window is invisible to the check above and `approve(previous)`
+    // writes straight over it. The pending-nonce check below cannot cover
+    // it either: that transaction has MINED, so pending equals latest
+    // again (#1529 review round 18).
+    const stillZero = await confirmAllowanceStillLive(
+      publicClient, token, owner, spender, 0n, reset.blockNumber,
+    );
+    // Someone granted in this window — their decision is the current one.
+    if (stillZero === 'contradicted') return null;
+    if (stillZero === 'unknown') {
+      // This is the one place where standing down silently is the WORST
+      // option available. We have already cleared the user's grant, and
+      // we cannot establish what is there now: restoring blind risks
+      // writing over a fresh grant, while a silent null tells the caller
+      // the cleanup was clean and leaves them believing nothing needs
+      // doing while their allowance sits at zero. Stand down, and say so.
+      throw new Error(
+        `The earlier approval was cleared, but the allowance could not be` +
+          ` re-checked to restore it safely. Re-approve this spender from` +
+          ` your wallet if you still need it.`,
+      );
+    }
+    // …or a competing approve was merely SUBMITTED, which no read can see.
     if (await ownerHasPendingTx()) return null;
   }
   const restored = await approve(previous, 'allowance restore');

@@ -41,6 +41,13 @@ at re-check time: a value cached during discovery can have changed under
 it, and judging a page against a stale one turns a configuration change
 into a reported product regression.
 
+The transport rule covers EVERY way the page reaches the network, not
+just the one the driver proxies. Reads the app makes through an injected
+wallet do not travel the routed-fetch path, so a driver that records
+unreachable traffic in only one place still reports the other as a
+product FAIL. Wherever a page-initiated request can fail without an
+answer from the node, that has to reach the same BLOCKED verdict.
+
 | Feature | Tier | Where | Live-only reason |
 | --- | --- | --- | --- |
 | Wallet connect + network gate | CI-Anvil | `tests/01-connect.spec.ts` | — |

@@ -955,3 +955,48 @@ describe('history is not the present (round 16)', () => {
     expect(h.allowance).toBe(500n);
   });
 });
+
+describe('history cannot clear the restore, on EITHER write (round 18)', () => {
+  // Round 16 established the rule on the first write: a read pinned at
+  // our own receipt block answers about that block forever, so it can
+  // say "our write landed" but never "the value is still ours". These
+  // are the two sibling sites where the same confusion survived.
+
+  it('does not put back over a grant that mined after the reset', async () => {
+    const h = harness({
+      allowance: 1_000n,
+      // Another tab's approve MINES in the window between our reset and
+      // our restore. Invisible to a read pinned at the reset's own block,
+      // and invisible to the pending-nonce check too — it has mined, so
+      // pending equals latest again.
+      afterWrite: (v) => (v === 0n ? 777n : undefined),
+      valueAtReceiptBlock: 0n,
+    });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    // The reset went out; the put-back did NOT.
+    expect(h.writes).toEqual([0n]);
+    // Their grant survives untouched — the whole point.
+    expect(h.allowance).toBe(777n);
+  });
+
+  it('restores the reset when the approve after it did not stick', async () => {
+    // The zero-first reset landed and was confirmed; the approve after it
+    // returned a successful receipt whose value a node holding the block
+    // contradicts. `ensureAllowance` throws with `confirmed = 0`, leaving
+    // the user's prior grant erased by our own reset — so this is exactly
+    // the case the unwind exists for, and it was returning null (read as
+    // a clean cleanup by both callers) instead of putting the grant back.
+    const h = harness({ allowance: 0n });
+    const tx = await restoreAllowance({
+      ...base(h),
+      previous: 500n,
+      wrote: 1_000n,
+      wroteTxHash: '0xdead',
+      confirmed: 0n,
+    });
+    expect(tx).not.toBeNull();
+    expect(h.writes).toEqual([500n]);
+    expect(h.allowance).toBe(500n);
+  });
+});
