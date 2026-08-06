@@ -406,11 +406,14 @@ function isCloudflareBeacon({ reason, url: rawUrl }) {
   // signing or broadcast attempt aimed at the beacon path — the single
   // worst thing this check exists to catch (Codex #1576 r2).
   //
-  // Only the plain mutating-request shape qualifies. Every `json-rpc *`
-  // and `wallet rpc *` reason falls through and stays fatal, as does
-  // any reason shape this doesn't recognise: unknown means fatal, which
-  // is the safe direction for a guard.
-  if (!/^[A-Z]+ \(non-RPC mutating request\)$/.test(reason ?? '')) return false;
+  // POST specifically, not any method. The documented beacon is a POST;
+  // a PUT/PATCH/DELETE to the same path is an anomaly, and accepting
+  // the generic shape would have filed it as expected telemetry —
+  // contradicting the claim that everything else stays fatal (Codex
+  // #1576 r3). Every `json-rpc *` and `wallet rpc *` reason falls
+  // through and stays fatal too, as does any reason shape this doesn't
+  // recognise: unknown means fatal, the safe direction for a guard.
+  if (reason !== 'POST (non-RPC mutating request)') return false;
   try {
     const url = new URL(rawUrl);
     const firstParty =
