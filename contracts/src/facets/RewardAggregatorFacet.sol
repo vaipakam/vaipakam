@@ -748,6 +748,10 @@ contract RewardAggregatorFacet is
     ///         silently make the flag unreachable.
     error InvalidRecycleSurplusMultiple(uint16 multiple, uint16 maxAllowed);
 
+    /// @notice #1567 — the surplus flag is a MIRROR concept; asking it about
+    ///         the canonical chain is rejected rather than answered wrongly.
+    error SurplusFlagNotForCanonicalChain(uint32 chainId);
+
     /**
      * @notice #1222 M4 C1 (#1567) — set the surplus-flag multiple `N`: a
      *         chain is flagged operator-visible once its recycled
@@ -801,7 +805,29 @@ contract RewardAggregatorFacet is
      *         from "this chain budgeted nothing across the whole window",
      *         which are opposite situations. `multiple == 0` is dark, full
      *         stop — and it saves a second call to learn the knob's value.
-     * @param  chainId    The chain to inspect.
+     *
+     *         **The CANONICAL chain is REJECTED, not answered** (Codex #1579
+     *         r1 P2). Two independent reasons, either sufficient:
+     *
+     *         - The number would be WRONG. `mirrorAvailRecycled` states in
+     *           its own contract that Base is inert there — Base never
+     *           instructs itself, so `chainConsumedRecycled[Base]` stays 0
+     *           and the helper returns the LIFETIME `chainReportedRecycled`
+     *           cumulative rather than live availability. Once Base has paid
+     *           or reserved recycled rewards that overstates what it holds,
+     *           and would keep the flag raised for funds already spent.
+     *           Base's real position is its live fundable bucket net of
+     *           global commitments and keeper earmarks — a different
+     *           computation entirely.
+     *         - The flag would be ACTIONLESS. It exists to surface
+     *           repatriation candidates, and repatriation (C2/#1568) runs
+     *           mirror→Base. Base cannot repatriate to itself, so a Base
+     *           "surplus" names no possible disposition.
+     *
+     *         Base's own position is available through
+     *         `getRecycleCompositionPosition` and the backing reads, which
+     *         compute it correctly for the canonical chain.
+     * @param  chainId    The MIRROR chain to inspect.
      * @param  throughDay Inclusive last day of the trailing window.
      */
     function getChainSurplusPosition(uint32 chainId, uint256 throughDay)
@@ -815,11 +841,11 @@ contract RewardAggregatorFacet is
             bool flagged
         )
     {
-        return LibVpfiRecycle.chainSurplusPosition(
-            LibVaipakam.storageSlot(),
-            chainId,
-            throughDay
-        );
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (chainId == s.baseChainId) {
+            revert SurplusFlagNotForCanonicalChain(chainId);
+        }
+        return LibVpfiRecycle.chainSurplusPosition(s, chainId, throughDay);
     }
 
     /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has

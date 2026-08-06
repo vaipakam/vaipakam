@@ -2161,6 +2161,17 @@
   },
   {
     "type": "error",
+    "name": "SurplusFlagNotForCanonicalChain",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TreasuryTransferFailed",
     "inputs": []
   },

@@ -324,6 +324,55 @@ contract RecycleSurplusFlagTest is SetupTest {
         _agg().setRecycleSurplusMultiple(30);
     }
 
+    // ─── The canonical chain is rejected, not answered ───────────────────
+
+    /// Asking the surplus flag about Base must REVERT rather than return a
+    /// figure. `mirrorAvailRecycled` says in its own contract that Base is
+    /// inert there — `chainConsumedRecycled[Base]` stays 0 because Base never
+    /// instructs itself — so it would return the LIFETIME reported cumulative
+    /// as though it were live availability, and hold the flag up for funds
+    /// already spent.
+    ///
+    /// Pinned as a revert rather than "returns something conservative",
+    /// because a wrong number here is worse than no number: it is an operator
+    /// signal, and one that cannot be cleared teaches people to ignore it.
+    function test_CanonicalChain_IsRejectedNotAnswered() public {
+        _agg().setRecycleSurplusMultiple(10);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardAggregatorFacet.SurplusFlagNotForCanonicalChain.selector,
+                CHAIN_BASE
+            )
+        );
+        _agg().getChainSurplusPosition(CHAIN_BASE, THROUGH_DAY);
+
+        // A mirror on the same Diamond still answers normally, so the guard
+        // is scoped to the canonical chain and not a blanket disable.
+        (, , , uint16 multiple, ) = _pos();
+        assertEq(multiple, 10, "mirrors are unaffected by the Base guard");
+    }
+
+    /// The guard keys on the CONFIGURED canonical chain id, not on a
+    /// hardcoded value — so a deployment whose Base id differs is still
+    /// protected, and the mirror it happens to share an id with is not.
+    function test_CanonicalGuard_FollowsConfiguredBaseChainId() public {
+        // Re-point the canonical id at what was previously a mirror.
+        _rep().setBaseChainId(CHAIN_ARB);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardAggregatorFacet.SurplusFlagNotForCanonicalChain.selector,
+                CHAIN_ARB
+            )
+        );
+        _agg().getChainSurplusPosition(CHAIN_ARB, THROUGH_DAY);
+
+        // And the chain that WAS canonical now answers, because the guard
+        // tracks configuration rather than a constant.
+        _agg().getChainSurplusPosition(CHAIN_BASE, THROUGH_DAY);
+    }
+
     // ─── Read-only ───────────────────────────────────────────────────────
 
     /// C1 flags; it never moves value. Pinned because the design rests on
