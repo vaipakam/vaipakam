@@ -61,7 +61,8 @@ it in, leaving reviewed strings untouched:
 
 ```bash
 ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
-  --locales-dir apps/alpha02/src/i18n/locales --missing-only
+  --locales-dir apps/alpha02/src/i18n/locales --missing-only \
+  --exemptions apps/alpha02/src/i18n/translation-exemptions.json
 ```
 
 If the translations arrive some other way (a translator's hand-back, a
@@ -70,8 +71,17 @@ a directory and merge them the same way:
 
 ```bash
 pnpm --filter @vaipakam/i18n merge-patch -- \
-  --locales-dir apps/alpha02/src/i18n/locales --patches path/to/patches
+  --locales-dir apps/alpha02/src/i18n/locales --patches path/to/patches \
+  --exemptions apps/alpha02/src/i18n/translation-exemptions.json
 ```
+
+Pass `--exemptions` on both. Each run validates the WHOLE merged bundle,
+not just the incoming translations, so a value the locale had already
+lost — an `{{amount}}` that vanished in an earlier delivery, a leaf
+holding a number where English has a sentence — is reported instead of
+riding along under a clean "0 still missing". The exemptions file is
+what keeps that check honest: without it the standing linguistic cases
+below would fail every run, and a flag you always pass guards nothing.
 
 Both report what each locale is still missing rather than reporting a
 clean success, and `scripts/check-locale-coverage.ts` fails the build if
@@ -106,8 +116,14 @@ The triple is `<locale>:<key>:<token>`, repeatable, and it excuses only
 itself — allowing the Arabic dual does not license an unrelated
 `{{amount}}` disappearing elsewhere in the same delivery. The rejection
 message prints the exact flag to paste. Use it only where the target
-grammar already carries the value, and record the omission in
-`ALLOWED_OMISSIONS` too or the build will still fail.
+grammar already carries the value.
+
+For a STANDING exemption — one the locale will always need — record it
+in `src/i18n/translation-exemptions.json` instead. That file is the
+single record `check-locale-coverage.ts` and both merge paths read, so
+the exemption is stated once with its linguistic reason rather than
+restated on every command line. The `--allow-*` flags remain for a
+genuine one-off.
 
 An EMPTY translation is rejected the same way (`--allow-empty
 "<locale>:<key>"`), because no other check can see one: the key is

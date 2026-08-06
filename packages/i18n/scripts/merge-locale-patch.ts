@@ -46,10 +46,17 @@ const flag = (name: string): string | undefined => {
 const localesDirArg = flag('--locales-dir');
 const patchesDirArg = flag('--patches');
 const reorder = args.includes('--reorder');
-const allowedOmissions = collectAllowedOmissions(args);
-const allowedEmpty = collectAllowedEmpty(args);
+const exemptionsArg = flag('--exemptions');
+const fileExemptions = loadExemptions(
+  exemptionsArg ? path.resolve(process.env.INIT_CWD ?? process.cwd(), exemptionsArg) : undefined,
+);
+const allowedOmissions = new Set([
+  ...fileExemptions.omissions,
+  ...collectAllowedOmissions(args),
+]);
+const allowedEmpty = new Set([...fileExemptions.empty, ...collectAllowedEmpty(args)]);
 if (!localesDirArg || !patchesDirArg) {
-  console.error('Usage: --locales-dir <path> --patches <path>');
+  console.error('Usage: --locales-dir <path> --patches <path> [--exemptions <path>] [--reorder]');
   process.exit(1);
 }
 // pnpm --filter runs with cwd = the package dir; INIT_CWD is where the
@@ -136,6 +143,28 @@ function collectAllowedOmissions(argv) {
 function collectAllowedEmpty(argv) {
   return collectFlagValues(argv, '--allow-empty');
 }
+
+/**
+ * Load per-(locale, key) exemptions from a COMMITTED record, merged
+ * with any passed on the command line.
+ *
+ * The file is the primary channel and the flags are the escape hatch
+ * for a one-off. Repeating an exemption on every run is how it becomes
+ * a reflex, and a flag people always pass guards nothing (Codex #1563
+ * r16) — so a repo whose locales carry standing linguistic exemptions
+ * (Arabic's dual, Japanese's trailing verb) records them once and every
+ * ingestion path reads the same answers.
+ */
+function loadExemptions(file) {
+  if (!file) return { omissions: new Set(), empty: new Set() };
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const omissions = new Set();
+  for (const [pair, entry] of Object.entries(raw.omissions ?? {})) {
+    for (const token of entry.tokens ?? []) omissions.add(`${pair}:${token}`);
+  }
+  return { omissions, empty: new Set(Object.keys(raw.empty ?? {})) };
+}
+
 
 /** What a rejected patch root actually was, for the error line. */
 function describeRoot(value: unknown): string {
@@ -291,27 +320,24 @@ for (const file of patchFiles) {
   // without their own coverage command, `apps/www` today, have nothing
   // downstream to catch it.
   //
-  // Scoped to the categories with NO legitimate exemption. Dropped
-  // tokens and empty values are deliberately excluded: both have real
-  // linguistic cases — Arabic's dual encodes the count in the noun (3
-  // leaves today), Japanese puts the verb last leaving a sentence
-  // prefix empty (1 leaf) — which is why they have per-pair allowlists
-  // in the first place. Failing on them here would fail every merge
-  // into `ar` or `ja` unless the operator restated those exemptions,
-  // and a flag people pass reflexively guards nothing.
+  // The SAME validators the patch faces, applied to the whole merged
+  // result. An earlier cut excluded dropped tokens and empty values
+  // because both have real linguistic cases (Arabic's dual encodes the
+  // count in the noun; Japanese puts the verb last leaving a prefix
+  // empty) — but excluding the CATEGORY also hid a genuinely lost
+  // `{{amount}}`, which is the bug class the placeholder check exists
+  // for. The right instrument is the exemption that already exists and
+  // names the exact `<locale>:<path>:<token>` triple, so a legitimate
+  // omission is excused and nothing else is (Codex #1563 r16). Both
+  // helpers already honour those allowlists; the failure message
+  // prints the exact flag to paste.
   const carriedDamage = [
     ...unknownKeys(enJson, merged).map((k) => `not in en.json: ${k}`),
     ...leafTypeDrift(enJson, merged).map(
       ({ path: leaf, expected, actual }) => `${leaf}: expected ${expected}, got ${actual}`,
     ),
-    ...placeholderDrift(enJson, merged).flatMap(({ path: leaf, unknown, malformed }) => [
-      ...(unknown.length > 0
-        ? [`${leaf} introduces {{${unknown.join('}}, {{')}}} — not in the English`]
-        : []),
-      ...(malformed.length > 0
-        ? [`${leaf} has malformed brace run(s) ${malformed.join(', ')}`]
-        : []),
-    ]),
+    ...interpolationProblems(enJson, merged, allowedOmissions, code),
+    ...emptyProblems(enJson, merged, allowedEmpty, code),
   ];
 
   const filled =

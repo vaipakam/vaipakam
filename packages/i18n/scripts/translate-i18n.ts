@@ -238,6 +238,28 @@ function collectAllowedEmpty(argv) {
 }
 
 /**
+ * Load per-(locale, key) exemptions from a COMMITTED record, merged
+ * with any passed on the command line.
+ *
+ * The file is the primary channel and the flags are the escape hatch
+ * for a one-off. Repeating an exemption on every run is how it becomes
+ * a reflex, and a flag people always pass guards nothing (Codex #1563
+ * r16) — so a repo whose locales carry standing linguistic exemptions
+ * (Arabic's dual, Japanese's trailing verb) records them once and every
+ * ingestion path reads the same answers.
+ */
+function loadExemptions(file) {
+  if (!file) return { omissions: new Set(), empty: new Set() };
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const omissions = new Set();
+  for (const [pair, entry] of Object.entries(raw.omissions ?? {})) {
+    for (const token of entry.tokens ?? []) omissions.add(`${pair}:${token}`);
+  }
+  return { omissions, empty: new Set(Object.keys(raw.empty ?? {})) };
+}
+
+
+/**
  * Leaves the candidate leaves EMPTY where the English is not.
  *
  * No other check sees these — the key is present, the value is a valid
@@ -327,8 +349,17 @@ async function main() {
 
   const missingOnly = args.includes('--missing-only');
   const reorder = args.includes('--reorder');
-  const allowedOmissions = collectAllowedOmissions(args);
-  const allowedEmpty = collectAllowedEmpty(args);
+  const exemptionsArg = readFlagValue('--exemptions');
+  const fileExemptions = loadExemptions(
+    exemptionsArg
+      ? path.resolve(process.env.INIT_CWD ?? process.cwd(), exemptionsArg)
+      : undefined,
+  );
+  const allowedOmissions = new Set([
+    ...fileExemptions.omissions,
+    ...collectAllowedOmissions(args),
+  ]);
+  const allowedEmpty = new Set([...fileExemptions.empty, ...collectAllowedEmpty(args)]);
   const allFlag = args.includes('--all');
   // Positional args are locale codes — but only the ones that aren't
   // the VALUE of a flag. Skipping just `--locales-dir` meant
@@ -337,7 +368,12 @@ async function main() {
   // exemption unusable on the API path it was added for (Codex #1563
   // r5). Listed centrally so a future value-taking flag can't
   // reintroduce it silently.
-  const VALUE_FLAGS = new Set(['--locales-dir', '--allow-omission', '--allow-empty']);
+  const VALUE_FLAGS = new Set([
+    '--locales-dir',
+    '--allow-omission',
+    '--allow-empty',
+    '--exemptions',
+  ]);
   const BOOLEAN_FLAGS = new Set(['--missing-only', '--reorder', '--all']);
 
   // An unknown `--…` token USED to be ignored silently, and the default
@@ -458,6 +494,8 @@ async function main() {
   console.log();
 
   const failed: LocaleCode[] = [];
+  /** Locales written successfully but left holding pre-existing damage. */
+  const carriedDamage: LocaleCode[] = [];
   for (const code of targets) {
     process.stdout.write(`→ ${code} (${LOCALE_NAMES[code]})… `);
     try {
@@ -534,6 +572,34 @@ async function main() {
             `    warn: ${leafPaths(stillMissing).length} key(s) still missing — re-run to finish`,
           );
         }
+        // The checks above validate the API RESPONSE against the subtree
+        // that was requested — they say nothing about what the locale
+        // already held. A pre-existing invalid leaf, lost token or empty
+        // value therefore survived a gap-fill untouched and the run
+        // exited 0 (Codex #1563 r16). Same scan the merge-patch path
+        // does, honouring the same exact-triple exemptions, so a
+        // legitimate omission is excused and nothing else is.
+        const carried = [
+          ...unknownKeys(enJson, merged as Bundle).map((k) => `not in en.json: ${k}`),
+          ...leafTypeDrift(enJson, merged as Bundle).map(
+            ({ path: leaf, expected, actual }) =>
+              `${leaf}: expected ${expected}, got ${actual}`,
+          ),
+          ...interpolationProblems(enJson, merged, allowedOmissions, code),
+          ...emptyProblems(enJson, merged, allowedEmpty, code),
+        ];
+        if (carried.length > 0) {
+          // The translation IS written — it is valid, and discarding it
+          // over damage it did not cause would just lose the work. But
+          // the bundle on disk is known-broken, so the run must not
+          // report success.
+          console.error(
+            `    ⚠ ${carried.length} pre-existing problem(s) remain in this bundle ` +
+              '— NOT introduced by this fill:',
+          );
+          for (const line of carried.slice(0, 10)) console.error(`        ${line}`);
+          carriedDamage.push(code);
+        }
       }
       for (const w of warnings) console.log(`    warn: ${w}`);
     } catch (err) {
@@ -558,7 +624,13 @@ async function main() {
       `${unreadable.length} locale(s) skipped as unreadable: ${unreadable.join(', ')}`,
     );
   }
-  if (failed.length > 0 || unreadable.length > 0) {
+  if (carriedDamage.length > 0) {
+    console.error(
+      `${carriedDamage.length} locale(s) filled but still holding pre-existing ` +
+        `problems: ${carriedDamage.join(', ')}`,
+    );
+  }
+  if (failed.length > 0 || unreadable.length > 0 || carriedDamage.length > 0) {
     process.exitCode = 1;
   }
 }

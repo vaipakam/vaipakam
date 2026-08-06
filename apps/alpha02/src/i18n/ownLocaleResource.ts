@@ -98,7 +98,11 @@ export function ownLocaleResource(
  *
  * So normalise the things that vary without meaning — Unicode
  * composition, curly quotes and dashes, non-breaking and other exotic
- * spaces, runs of whitespace — and compare what is left. Deliberately
+ * spaces, runs of whitespace, and letter case — and compare what is
+ * left. Case belongs in that list for the same reason as the rest: a
+ * paragraph returned upper- or lower-cased contains no word of the
+ * target language, so case alone cannot make it a translation (Codex
+ * #1563 r16). Deliberately
  * conservative in one direction only: this can at worst hide a real
  * translation that differs from its source by nothing but punctuation,
  * which is not a translation of a paragraph. Showing English under a
@@ -121,5 +125,9 @@ function normalizeForEcho(text: string): string {
     // Every Unicode space separator (NBSP, thin, hair, …) → plain
     // space, then collapse runs.
     .replace(/[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/g, ' ')
-    .trim();
+    .trim()
+    // Locale-independent: this compares two texts to each other, not
+    // against any locale's casing rules, and `toLocaleLowerCase` would
+    // make the answer depend on the ambient locale (Turkish dotless i).
+    .toLowerCase();
 }

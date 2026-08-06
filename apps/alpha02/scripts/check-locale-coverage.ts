@@ -87,38 +87,44 @@ const isKnownGap = (code: string, key: string): boolean =>
   KNOWN_GAPS[key]?.includes(code) ?? false;
 
 /**
- * Leaves where a locale legitimately omits an interpolation token the
- * English carries. Keyed `<locale>:<path>`, and every entry names the
- * EXACT token it excuses plus a linguistic reason.
+ * Per-(locale, key) exemptions, read from the COMMITTED record at
+ * `src/i18n/translation-exemptions.json`.
  *
- * Binding to the token, not just the leaf, is the point (Codex #1563
- * r1): a bare leaf-level exemption would keep passing if the English
- * string later gained a SECOND live value and the locale dropped that
- * one too — silently deleting a real value from the sentence under an
- * exemption granted for something else.
+ * In a file rather than inline here because the shared `merge-patch`
+ * and `translate --missing-only` scripts need the same answers, and
+ * their only channel used to be repeated command-line flags. Restating
+ * an exemption on every run is how an escape hatch becomes a reflex —
+ * and a flag people always pass guards nothing (Codex #1563 r16). One
+ * committed record, every path into these bundles reads it.
  *
- * Introducing an UNKNOWN token has no escape hatch at all: i18next has
- * nothing to substitute, so the user sees literal braces.
+ * `omissions` binds to the EXACT `<locale>:<path>` → token list, not
+ * just the leaf (Codex #1563 r1): a leaf-level exemption would keep
+ * passing if the English later gained a SECOND live value and the
+ * locale dropped that one too, silently deleting a real value under an
+ * exemption granted for something else. Introducing an UNKNOWN token
+ * has no escape hatch at all — i18next has nothing to substitute, so
+ * the user sees literal braces.
+ *
+ * `empty` covers leaves i18next renders BLANK rather than falling back,
+ * which no other check can see: the key is present, the value is a
+ * valid string, and there are no tokens to compare.
  */
-const ALLOWED_OMISSIONS: Readonly<
-  Record<string, { tokens: readonly string[]; reason: string }>
-> = {
-  // Arabic has a grammatical dual: the `_two` form already means "two
-  // days" in the noun itself ("يومان"), so restating {{count}} would
-  // render "2 يومان" — "2 two-days".
-  'ar:copy.units.durationDay_two': {
-    tokens: ['count, number'],
-    reason: 'Arabic dual encodes the count in the noun',
-  },
-  'ar:copy.units.durationMonth_two': {
-    tokens: ['count, number'],
-    reason: 'Arabic dual encodes the count in the noun',
-  },
-  'ar:copy.units.durationYear_two': {
-    tokens: ['count, number'],
-    reason: 'Arabic dual encodes the count in the noun',
-  },
-};
+interface ExemptionRecord {
+  omissions: Record<string, { tokens: string[]; reason: string }>;
+  empty: Record<string, string>;
+}
+const EXEMPTIONS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'src',
+  'i18n',
+  'translation-exemptions.json',
+);
+const EXEMPTIONS = JSON.parse(
+  fs.readFileSync(EXEMPTIONS_PATH, 'utf8'),
+) as ExemptionRecord;
+const ALLOWED_OMISSIONS = EXEMPTIONS.omissions;
+const ALLOWED_EMPTY = EXEMPTIONS.empty;
 
 /** Is every dropped token covered by this leaf's exemption? */
 function omissionAllowed(code: string, leafPath: string, dropped: string[]): boolean {
@@ -126,24 +132,6 @@ function omissionAllowed(code: string, leafPath: string, dropped: string[]): boo
   if (!exemption) return false;
   return dropped.every((token) => exemption.tokens.includes(token));
 }
-
-/**
- * Leaves a locale may legitimately leave EMPTY while the English is
- * not, keyed `<locale>:<path>` with the grammatical reason.
- *
- * An empty translation is invisible to every other check — the key is
- * present, the value is a valid string, and there are no tokens to
- * compare — while i18next's `returnEmptyString` default renders it
- * BLANK rather than falling back to English. The sentence just
- * disappears for that language (Codex #1563 r6).
- *
- * Japanese is the standing legitimate case: the verb goes at the end,
- * so the consent sentence's `prefix` is empty and `suffix` carries
- * "を理解し、同意します。" — the agreement the English states up front.
- */
-const ALLOWED_EMPTY: Readonly<Record<string, string>> = {
-  'ja:copy.consentParts.prefix': 'Japanese puts the verb last; suffix carries the agreement',
-};
 
 /**
  * Strings that must survive translation VERBATIM because the app

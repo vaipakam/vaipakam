@@ -134,4 +134,14 @@ describe('ownLocaleResource', () => {
       ownLocaleResource(fakeI18n('es', { es: { [KEY]: es } }), KEY, "the protocol's policy"),
     ).toBe(es);
   });
+
+  it('sees through case-only differences in an English echo', () => {
+    const src = "the protocol's sanctions policy";
+    expect(
+      ownLocaleResource(fakeI18n('es', { es: { [KEY]: src.toUpperCase() } }), KEY, src),
+    ).toBeNull();
+    expect(
+      ownLocaleResource(fakeI18n('es', { es: { [KEY]: src.toLowerCase() } }), KEY, src),
+    ).toBeNull();
+  });
 });
