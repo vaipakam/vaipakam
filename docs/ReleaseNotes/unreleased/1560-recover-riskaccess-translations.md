@@ -59,6 +59,19 @@ under a label reading "in your language" would be a false statement made at the
 precise moment the user affirms they understood what they read, so in that state
 the aid is omitted entirely. It reappears by itself if the translation arrives.
 
+Text that merely repeats the English word for word does not count as a
+translation here either — a supplier can return the source text unchanged, and
+nothing about the string itself gives that away. Nor does a translated
+declaration sitting under an English label, since the label is what tells the
+reader which language they are being shown. Both halves are in the reader's
+language, or neither is displayed.
+
+Review also caught three strings belonging to these two surfaces that this change
+had left for later: the browser-tab titles for the recovery and risk-access
+pages, and the one-line description beside the Risk access entry in Settings.
+They are translated now, so the two pages this release claims to finish are
+finished.
+
 Closes #1560. Follow-up: the remaining 163 keys (offset, tariff, early repay,
 transfer obligation, sale hold, loan sale and a few strays) are tracked
 separately; they are listed explicitly in the guard's allowlist and each entry

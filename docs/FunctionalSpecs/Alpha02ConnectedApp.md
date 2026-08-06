@@ -525,7 +525,12 @@ Thin-market honesty rules apply.
   A label claiming a language the text is not written in would be a
   false statement made at the exact moment the user is affirming they
   understood what they read. Nothing else about the page changes; the
-  aid reappears on its own if the translation arrives.
+  aid reappears on its own if the translation arrives. Text that merely
+  repeats the English word for word does not count as a translation for
+  this purpose, and neither does a translated declaration under an
+  English label: the label is what states which language the reader is
+  being shown, so both halves have to be in their language or neither
+  is shown.
 - The plain-language explanation shown when a transaction fails — the
   friendly cause a contract revert is decoded to ("Health factor too
   low", "This offer has expired", "Only the lender can perform this

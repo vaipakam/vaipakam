@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "पेज नहीं मिला — Vaipakam"
+      },
+      "recover": {
+        "title": "अटके हुए टोकन वापस पाएं — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "जोखिम पहुँच — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "इस network पर हर open offer browse करें",
         "title": "More",
         "vaultSub": "आपके assets कहाँ हैं — totals, locked और free",
-        "vpfiSub": "Optional — VPFI hold करके protocol fees घटाएं"
+        "vpfiSub": "Optional — VPFI hold करके protocol fees घटाएं",
+        "riskAccessSub": "चुनें कि आपके सौदों की संपत्तियाँ कितनी जोखिम भरी हो सकती हैं"
       },
       "theme": {
         "dark": "Dark",

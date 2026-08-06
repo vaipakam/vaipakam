@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "ページが見つかりません — Vaipakam"
+      },
+      "recover": {
+        "title": "動かせなくなったトークンの回収 — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "リスクアクセス — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "このネットワーク上のすべての未決済オファーを見る",
         "title": "その他",
         "vaultSub": "資産の場所 — 合計、ロック済み、利用可能",
-        "vpfiSub": "任意 — VPFI を保有してプロトコル手数料を減らす"
+        "vpfiSub": "任意 — VPFI を保有してプロトコル手数料を減らす",
+        "riskAccessSub": "取引で扱う資産のリスク水準を選びます"
       },
       "theme": {
         "dark": "ダーク",

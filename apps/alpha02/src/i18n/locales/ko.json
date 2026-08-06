@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "페이지를 찾을 수 없습니다 — Vaipakam"
+      },
+      "recover": {
+        "title": "묶인 토큰 회수 — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "위험 등급 접근 — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "이 네트워크의 모든 열린 제안 둘러보기",
         "title": "더 보기",
         "vaultSub": "자산 위치 — 전체, 잠김, 사용 가능",
-        "vpfiSub": "선택 사항 — VPFI 보유로 프로토콜 수수료 절감"
+        "vpfiSub": "선택 사항 — VPFI 보유로 프로토콜 수수료 절감",
+        "riskAccessSub": "거래에 담기는 자산의 위험 수준을 선택하세요"
       },
       "theme": {
         "dark": "다크",

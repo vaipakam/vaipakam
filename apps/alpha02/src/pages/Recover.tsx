@@ -50,7 +50,7 @@ import {
   type PublicClient,
 } from 'viem';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { copy } from '../content/copy';
+import { copy, copySource } from '../content/copy';
 import { getSupportedChain } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
@@ -1092,10 +1092,23 @@ export function Recover() {
   // exactly what we render. `useTranslation` re-renders on the store's
   // `added` event, so a bundle that lands late switches this on by
   // itself.
+  //
+  // BOTH halves are checked, and both are rendered from the checked
+  // value. The label is what makes the claim ("in your language"), so
+  // an English label over a translated block states it in a language
+  // the reader may not read; a translated label over English text
+  // states something false. Either alone is worse than showing
+  // neither (Codex #1563 r10).
   const { i18n } = useTranslation();
   const localizedAckText = ownLocaleResource(
     i18n,
     'copy.recover.ackTextTranslation',
+    copySource.recover.ackTextTranslation,
+  );
+  const localizedAckLabel = ownLocaleResource(
+    i18n,
+    'copy.recover.ackTextTranslationLabel',
+    copySource.recover.ackTextTranslationLabel,
   );
 
   const [tokenInput, setTokenInput] = useState('');
@@ -3128,10 +3141,10 @@ export function Recover() {
                 only when the reader's own bundle really carries it —
                 see ownLocaleResource — and labelled so which of the
                 two is authoritative is never ambiguous. */}
-            {localizedAckText !== null && (
+            {localizedAckText !== null && localizedAckLabel !== null && (
               <>
                 <p className="muted" style={{ margin: 0, fontSize: '0.85em' }}>
-                  {copy.recover.ackTextTranslationLabel}
+                  {localizedAckLabel}
                 </p>
                 <blockquote
                   className="muted"

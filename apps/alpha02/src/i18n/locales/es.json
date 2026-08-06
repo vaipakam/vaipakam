@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "Página no encontrada — Vaipakam"
+      },
+      "recover": {
+        "title": "Recuperar tokens atascados — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "Acceso al riesgo — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "Explorar toda oferta abierta en esta red",
         "title": "Más",
         "vaultSub": "Dónde están tus activos — totales, bloqueados y libres",
-        "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI"
+        "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI",
+        "riskAccessSub": "Elige qué tan arriesgados pueden ser los activos de tus operaciones"
       },
       "theme": {
         "dark": "Oscuro",

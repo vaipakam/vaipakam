@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "页面未找到 — Vaipakam"
+      },
+      "recover": {
+        "title": "找回卡住的代币 — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "风险准入 — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "浏览此网络上的所有开放 offer",
         "title": "更多",
         "vaultSub": "您的资产所在位置 — 总额、锁定和可用",
-        "vpfiSub": "可选 — 持有 VPFI 以降低协议费用"
+        "vpfiSub": "可选 — 持有 VPFI 以降低协议费用",
+        "riskAccessSub": "选择你的交易中资产可以承受多大风险"
       },
       "theme": {
         "dark": "深色",

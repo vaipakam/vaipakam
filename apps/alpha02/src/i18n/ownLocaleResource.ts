@@ -35,12 +35,31 @@ import { normalizeToSupportedLocale } from '@vaipakam/i18n';
 
 /**
  * The value the ACTIVE locale's OWN bundle holds for `key`, or null
- * when it holds nothing usable — English active, no bundle registered,
- * key absent, or an empty string (which i18next renders blank rather
- * than falling back, so it is unusable rather than merely untranslated).
+ * when nothing there is usable as a translation. Null covers:
+ *
+ *   - English active — there is nothing to gloss.
+ *   - No bundle registered for the active locale, or the key absent
+ *     from it.
+ *   - An empty / whitespace-only value. i18next renders these BLANK
+ *     rather than falling back, so they are worse than missing.
+ *   - A value byte-identical to `englishSource`. Presence is not proof
+ *     of translation: neither ingestion path rejects a source-identical
+ *     leaf (they cannot in general — `Vaipakam`, `GTC`, `{{amount}}
+ *     {{symbol}}` are legitimately identical in every language), so a
+ *     vendor patch or an API reply that echoed the English back would
+ *     otherwise be presented AS the translation (Codex #1563 r10).
+ *     Caller-supplied rather than read back from i18next because the
+ *     English text is never registered as a resource — it lives in
+ *     copy.ts and reaches i18next only as a per-call `defaultValue`.
  *
  * Never consults the English fallback chain — that omission is the
  * whole point of the function.
+ *
+ * The comparison is deliberately one-directional and conservative:
+ * hiding a real translation that happens to match its source costs a
+ * reading aid, while showing English under a claim of another language
+ * costs the user's comprehension of what they are signing. Only the
+ * second is a correctness failure.
  *
  * Reads the ACTIVE language rather than `resolvedLanguage`, per
  * normalizeToSupportedLocale's contract: resolution reports 'en' for
@@ -55,9 +74,11 @@ import { normalizeToSupportedLocale } from '@vaipakam/i18n';
 export function ownLocaleResource(
   i18n: I18nInstance,
   key: string,
+  englishSource: string,
 ): string | null {
   const active = normalizeToSupportedLocale(i18n.language);
   if (active === 'en') return null;
   const value = i18n.getResource(active, 'translation', key);
-  return typeof value === 'string' && value.trim() !== '' ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return value.trim() === englishSource.trim() ? null : value;
 }

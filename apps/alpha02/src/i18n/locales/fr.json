@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "Page introuvable — Vaipakam"
+      },
+      "recover": {
+        "title": "Récupérer des jetons bloqués — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "Accès au risque — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "Parcourir toutes les offres ouvertes sur ce réseau",
         "title": "Plus",
         "vaultSub": "Où se trouvent vos actifs — totaux, verrouillés et disponibles",
-        "vpfiSub": "Optionnel — réduire les frais du protocole en détenant VPFI"
+        "vpfiSub": "Optionnel — réduire les frais du protocole en détenant VPFI",
+        "riskAccessSub": "Choisissez le niveau de risque des actifs de vos opérations"
       },
       "theme": {
         "dark": "Sombre",

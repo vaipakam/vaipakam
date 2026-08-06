@@ -137,6 +137,13 @@ function collectAllowedEmpty(argv) {
   return collectFlagValues(argv, '--allow-empty');
 }
 
+/** What a rejected patch root actually was, for the error line. */
+function describeRoot(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
 /**
  * Leaves the candidate leaves EMPTY where the English is not.
  *
@@ -193,9 +200,33 @@ for (const file of patchFiles) {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
-  const patch = JSON.parse(
-    fs.readFileSync(path.join(PATCHES_DIR, file), 'utf8'),
-  ) as Bundle;
+  // A patch file is untrusted input — hand-authored, or whatever a
+  // vendor returned. Both the parse and the ROOT SHAPE have to be
+  // checked here, because every validator below assumes an object and
+  // `Object.entries(null)` throws. An uncaught throw would abort the
+  // whole batch mid-run: one bad file and every locale sorting after it
+  // is silently left unwritten, with a raw stack trace in place of the
+  // per-locale rejection this loop exists to print (Codex #1563 r10).
+  let patch: Bundle;
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(PATCHES_DIR, file), 'utf8'),
+    );
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.error(
+        `✗ ${code}: patch root is ${describeRoot(parsed)}, expected an object — nothing written`,
+      );
+      failures += 1;
+      continue;
+    }
+    patch = parsed as Bundle;
+  } catch (err) {
+    console.error(
+      `✗ ${code}: patch is not valid JSON — nothing written\n    ${(err as Error).message}`,
+    );
+    failures += 1;
+    continue;
+  }
 
   // Validate BEFORE writing anything. A patch key the template doesn't
   // have is a typo or a stale key, and merging it is worse than

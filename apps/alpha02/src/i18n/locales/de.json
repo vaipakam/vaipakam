@@ -96,6 +96,12 @@
       },
       "notFound": {
         "title": "Seite nicht gefunden — Vaipakam"
+      },
+      "recover": {
+        "title": "Feststeckende Token zurückholen — Vaipakam"
+      },
+      "riskAccess": {
+        "title": "Risikozugang — Vaipakam"
       }
     },
     "home": {
@@ -1801,7 +1807,8 @@
         "offersSub": "Alle offenen Angebote in diesem Netzwerk durchsuchen",
         "title": "Mehr",
         "vaultSub": "Wo Ihre Assets liegen — gesamt, gesperrt und frei",
-        "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren"
+        "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren",
+        "riskAccessSub": "Lege fest, wie riskant die Assets in deinen Geschäften sein dürfen"
       },
       "theme": {
         "dark": "Dunkel",
