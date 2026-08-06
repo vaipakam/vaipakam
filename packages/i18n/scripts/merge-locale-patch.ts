@@ -194,6 +194,27 @@ function loadPolicy(file) {
 }
 
 
+
+/**
+ * Write `contents` to `target` without ever leaving it partially
+ * written: a temp file beside it, then an atomic same-directory
+ * rename. The temp file is cleaned up if anything fails.
+ */
+function writeFileAtomic(target, contents) {
+  const tmp = `${target}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, contents);
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* nothing to clean up */
+    }
+    throw err;
+  }
+}
+
 /** What a rejected patch root actually was, for the error line. */
 function describeRoot(value: unknown): string {
   if (value === null) return 'null';
@@ -383,13 +404,19 @@ for (const file of patchFiles) {
 
   const filled =
     (before ? leafPaths(before).length : 0) - (after ? leafPaths(after).length : 0);
-  // Isolated like every other per-locale failure. A read-only file or a
-  // full disk otherwise threw out of the loop and every patch sorting
-  // AFTER this one was silently skipped — the same abort-the-batch
-  // shape already fixed for malformed patches and unreadable
-  // destinations, on the last unguarded operation (Codex #1563 r20).
+  // Isolated like every other per-locale failure — a read-only file or
+  // a full disk otherwise threw out of the loop and silently skipped
+  // every patch sorting after this one (Codex #1563 r20).
+  //
+  // And written via a temp file + rename, because catching the error is
+  // not enough: `writeFileSync` TRUNCATES the destination before it
+  // writes, so a disk that fills mid-write leaves the locale empty or
+  // half-written and the catch reports a tidy failure over a bundle
+  // that has already lost its translations (Codex #1563 r21). Same
+  // directory, so the rename is a same-filesystem atomic replace rather
+  // than a copy that can fail halfway.
   try {
-    fs.writeFileSync(targetPath, JSON.stringify(merged, null, 2) + '\n');
+    writeFileAtomic(targetPath, JSON.stringify(merged, null, 2) + '\n');
   } catch (err) {
     console.error(`✗ ${code}: could not write ${code}.json — ${(err as Error).message}`);
     failures += 1;

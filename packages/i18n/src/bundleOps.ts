@@ -453,14 +453,23 @@ export function leafPaths(bundle: Bundle, prefix = ''): string[] {
  * CONTAIN `CONFIRM` while instructing the user to type something that
  * can never equal it — the exact dead end the check exists to prevent.
  *
- * The boundary is ASCII-alphanumeric only, deliberately. The failure
- * mode is a Latin word EXTENDING the token (CONFIRMAR / CONFIRMATION);
- * a locale that abuts it with its own script — Japanese "CONFIRMと入力"
- * — is typing the right word and must pass.
+ * The boundary is "not a LATIN letter, digit, combining mark or
+ * underscore", by Unicode property rather than by ASCII range. An
+ * ASCII-only boundary let every non-ASCII Latin letter act as a
+ * separator, so French "Tapez CONFIRMÉ" passed while instructing the
+ * user to type a word the gate can never accept — the same failure as
+ * CONFIRMAR, one accent away (Codex #1563 r21). `CONFIRM_` passed for
+ * the same reason.
+ *
+ * Latin specifically, not "any letter": a locale that abuts the token
+ * with its OWN script — Japanese "CONFIRMと入力", Arabic, Tamil — is
+ * typing the right word and must pass. Only a continuation in the
+ * token's own script can extend it into a different word.
  */
 export function containsToken(value: string, literal: string): boolean {
   const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(value);
+  const cont = '[\\p{Script=Latin}\\p{N}\\p{M}_]';
+  return new RegExp(`(?<!${cont})${escaped}(?!${cont})`, 'u').test(value);
 }
 
 /** Read a dot-path leaf from a bundle, or undefined. */
