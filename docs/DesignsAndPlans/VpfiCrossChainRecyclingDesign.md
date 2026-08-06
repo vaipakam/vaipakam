@@ -280,10 +280,11 @@ with different books**, and that conflating them corrupts the per-chain ledger.
 | | **Mode A — planned surplus** | **Mode B — stranded-delivery recovery** |
 | --- | --- | --- |
 | Trigger | Base-initiated (§3.6: operator triggers on Base) | **Mirror**-initiated — the mirror is where the stranded tokens land |
-| Source of tokens | the mirror's **recycle bucket** (via a dedicated surplus debit — **not** `LibVpfiRecycle.consume`; see constraint 2) | **un-earmarked** balance — e.g. a compensation delivered after its day lapsed (#1434 P2, R4) |
+| Source of tokens | the mirror's **recycle bucket**, via a dedicated surplus debit — **not** `LibVpfiRecycle.consume` (constraint 2) | a **stranded-recovery RESERVATION** holding the late arrival — never plain un-earmarked balance (constraint 4) |
 | Was it in Base's `reported` availability? | **yes** | **no — never** |
-| `consumedCumulative[c]` | `+= amount`, **before** the send (§3.6) | **UNTOUCHED** |
-| Base-side reservation | n/a | **finalize/ACK** the original remit reservation |
+| `consumedCumulative[c]` | `+= amount`, **before** the send, under a releasable pending authorization (constraints 5, 5a) | **UNTOUCHED** |
+| Base-side ledger | a **pending authorization**, closed on return and released on proven non-execution (constraint 5) | a **one-shot recovery entitlement** that SURVIVES the original ACK and is consumed exactly once (constraint 6) — finalize/ACK alone is not enough |
+| Mirror-side precondition | the surplus flag / operator instruction | the day must have reached an **irreversible lapsed** terminal (constraint 9a) |
 
 **Why Mode B must not touch `consumedCumulative`.** Availability is
 `reported − (consumed − released)`, **saturating, subtraction-first** — the
@@ -348,6 +349,19 @@ challenged and stand.
    created-and-retired repatriation commitment that leaves pre-existing claim
    commitments alone.
 
+2a. **The surplus debit needs its OWN accounting destination — it must not
+   reuse the reward-payout counter.** `creditedCumulative` derives its upgrade
+   floor from `recycleBucket + paidOutRecycled − relocated`, and the
+   `bucket-composition` watcher check enforces
+   `creditedRaw + relocated == bucket + paidOutRecycled + releasedRemitStranded`
+   within its stated slack. Decreasing only the bucket therefore makes **every
+   healthy repatriation** raise a CRITICAL over-credit finding, and on an
+   unseeded upgraded Diamond it can drive the next derived cumulative **below**
+   an earlier report. Specify a **seed-before-debit** step and a **monotonic
+   repatriated-outflow counter** carried in the composition and reporting
+   surfaces — not `paidOutRecycled`, which means "reward paid to users" and
+   would book a payout that never happened (constraint 2's error one level up).
+
 **On the transport:**
 
 3. **A separate Base receiver is not reachable from the mirror Diamond as the
@@ -378,6 +392,19 @@ challenged and stand.
    corresponds to a prior charge. Record a chain/amount-bound pending
    authorization, close it on successful return, and track a release that
    restores availability when non-execution is proven.
+5a. **`chainConsumedRecycled` is NOT a free-standing availability debit.**
+   `LibMeshFunding` increments it **together with**
+   `chainOutstandingRecycledCommit`, and the watcher enforces
+   `outstanding + retired == consumed`. Adding a Mode-A amount to the consumed
+   cumulative while holding its authorization separately makes **every healthy
+   repatriation** violate that identity on the spot — and a failure release
+   cannot borrow the existing release cumulative either, because ingress clamps
+   `released ≤ retired ≤ consumed` against mirror-reported claim retirement.
+   Either define **separate repatriation debit/release terms** inside
+   availability, or extend the outstanding/retired identity explicitly and
+   carry that extension through the reports and the watcher. Silently reusing
+   the claim-side terms is what breaks.
+
 6. **ACK-first and recovery-first must converge.** A late delivery independently
    produces the existing permissionless, re-sendable remit ACK, so the ACK and
    the Mode-B return are unordered. Accepting only a pending/lapsed reservation
@@ -403,6 +430,27 @@ challenged and stand.
    malformed or compromised mirror can deliver some other token while naming a
    valid Mode-B entitlement — consuming the one-shot record and leaving the
    stranded VPFI exactly where it was.
+
+9a. **Mode-B recovery must be gated on an IRREVERSIBLE LAPSE.** None of the
+   entitlement checks proves the referenced day actually reached the lapsed
+   terminal — `(remitter, remitId)`, the amount and the source chain are
+   equally valid for an **on-time** compensation. A mirror that dispatches
+   recovery before lapse returns *valid claim backing*, Base consumes the
+   one-shot entitlement, and because `rewardBudgetRemittedGlobal` is
+   append-only the intended claimant is left **permanently unfunded**. The
+   mirror-side handler must verify an irreversible lapsed state bound to that
+   compensation day/remit before dispatch, and the Base entitlement must bind
+   to that state.
+
+9b. **The mirror→Base return leg needs a FEE SOURCE.** A Base transaction
+   cannot forward native value into a later mirror-originated send, and
+   `CcipMessenger.sendMessage` is native-funded — it reverts unless its local
+   caller supplies the quoted CCIP fee. A "Base-initiated" flow is therefore
+   stuck at the return leg unless the mirror sender is deliberately prefunded
+   or a mirror-side caller supplies `msg.value`. Specify the execution and
+   refund model — **a two-step Base authorization followed by permissionless
+   mirror execution** is the shape that fits R2's liveness posture — rather
+   than leaving the return without a payer.
 
 **On scaling — and the exception the blanket rule needs:**
 
@@ -440,8 +488,9 @@ dedicated fresh-return path (§2h). So:
 
 - **Mode A is C2 / #1568** — planned surplus out of the recycle bucket. It is
   the §3.6 flow, needs nothing from P2, and is **independent** again.
-- **Mode B is P2 / #1434 R4** — the fresh-return of an un-earmarked stranded
-  delivery. Its mechanics are documented here because both modes are
+- **Mode B is P2 / #1434 R4** — the fresh-return of a stranded delivery, held
+  in the recovery reservation of constraint 4 from the moment it arrives (it is
+  never left as plain un-earmarked balance). Its mechanics are documented here because both modes are
   mirror→Base token returns over one transport, but it ships with P2, not C2.
 
 What genuinely is shared, and should therefore be decided once rather than
