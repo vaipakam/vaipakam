@@ -44,7 +44,7 @@ import {
   type Bundle,
 } from '@vaipakam/i18n';
 import { TRANSLATED_LOCALES } from '../src/i18n/localeConfig.ts';
-import { RECOVERY_ACK_TEXT } from '../src/lib/recoveryAck.ts';
+import { CONFIRM_WORD, RECOVERY_ACK_TEXT } from '../src/lib/recoveryAck.ts';
 
 const LOCALES_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -162,7 +162,12 @@ const ALLOWED_EMPTY: Readonly<Record<string, string>> = {
  * because from the app's side the user simply hasn't typed it yet.
  */
 const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> = {
-  'copy.recover.confirmPrompt': ['CONFIRM'],
+  // IMPORTED, never restated. A guard holding its own copy of the value
+  // it guards can go green while the gate has moved: change
+  // CONFIRM_WORD alone and every translated prompt would still say
+  // "CONFIRM" — which this check would happily confirm — while the page
+  // compares against the new word (Codex #1563 r14).
+  'copy.recover.confirmPrompt': [CONFIRM_WORD],
 };
 
 /**
@@ -233,6 +238,33 @@ const read = (code: string): Bundle =>
     fs.readFileSync(path.join(LOCALES_DIR, `${code}.json`), 'utf8'),
   ) as Bundle;
 
+/**
+ * `read`, but reporting damage instead of throwing it.
+ *
+ * This guard's whole promise is ONE consolidated report across every
+ * locale — that is why it is a script rather than a per-locale
+ * assertion that stops at its first arm. An unguarded parse breaks that
+ * promise in the worst way: the first damaged bundle aborts with a raw
+ * `Object.hasOwn` stack and every LATER locale's problems stay hidden,
+ * so the operator cannot get a complete repair list from a run (Codex
+ * #1563 r14). A damaged bundle is one problem among others, not a
+ * reason to stop looking.
+ */
+function readOrDamaged(code: string): Bundle | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      fs.readFileSync(path.join(LOCALES_DIR, `${code}.json`), 'utf8'),
+    );
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed as Bundle;
+}
+
 const en = read('en');
 const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
 const problems: string[] = [];
@@ -252,7 +284,14 @@ for (const code of translated) {
     problems.push(`${code}: locales/${code}.json is missing entirely`);
     continue;
   }
-  const bundle = read(code);
+  const bundle = readOrDamaged(code);
+  if (bundle === null) {
+    problems.push(
+      `${code}: locales/${code}.json is unreadable — malformed JSON or a ` +
+        'non-object root. Every other check for this locale is skipped.',
+    );
+    continue;
+  }
 
   const missing = missingSubtree(en, bundle);
   const missingKeys = new Set(missing ? leafPaths(missing) : []);

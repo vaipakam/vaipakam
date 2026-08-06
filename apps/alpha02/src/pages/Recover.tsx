@@ -33,7 +33,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ownLocaleResource } from '../i18n/ownLocaleResource';
-import { RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
+import { CONFIRM_WORD, RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Lock, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
@@ -85,10 +85,6 @@ const RECOVERY_TYPES = {
 } as const;
 
 const RECOVERY_DEADLINE_SECONDS = 30 * 60;
-
-/** UI friction constant, not copy — the user types this literal to
- *  arm the sign button (same untranslated rule as signing text). */
-const CONFIRM_WORD = 'CONFIRM';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 

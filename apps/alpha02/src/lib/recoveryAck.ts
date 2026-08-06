@@ -42,3 +42,22 @@ export const RECOVERY_ACK_TEXT =
   " protocol's sanctions policy until the address is de-listed." +
   ' I have read and understood the Advanced User Guide section' +
   ' on stuck-token recovery.';
+
+/**
+ * The word the user must type to arm the recovery sign button.
+ *
+ * UI friction, not copy: `Recover` compares the typed input against
+ * this literal, so it is untranslatable for the same reason the
+ * declaration is — a locale that translated the PROMPT would tell the
+ * user to type a word that can never match, permanently disabling
+ * signing for every speaker of that language, with no error message
+ * because from the app's side they simply haven't typed it yet.
+ *
+ * `check-locale-coverage.ts` enforces that every translated
+ * `copy.recover.confirmPrompt` still contains this token, and imports
+ * it from here rather than restating it. A guard holding its own copy
+ * of the value it guards can go green while the gate it protects has
+ * moved (Codex #1563 r14) — the same duplication that put the
+ * declaration in two places above.
+ */
+export const CONFIRM_WORD = 'CONFIRM';
