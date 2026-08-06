@@ -487,7 +487,46 @@ Invariants/tests: the B4 list, plus the governor §7 commitment
 invariants per chain and the no-double-count rule across
 fresh / remitted-recycled / locally-committed shares.
 
-### M4 — Phase C′ surplus tooling — #1222 tail (C1 + C2, unchanged)
+### M4 — Phase C′ surplus tooling — #1222 tail
+
+This section was an empty stub carrying only "(C1 + C2, unchanged)". C2 is no
+longer unchanged, and the reason matters enough that the plan must not send an
+implementer to §3.6 alone.
+
+**Design of record:**
+[`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) **§3.6a**
+(merged via #1574). §3.6 ratified the *planned* case only.
+
+- **C1 — surplus knob + operator flagging → #1567.** Buildable now, independent
+  of #1434. Flagging only: **nothing moves**. The substantive sub-problem is
+  which day series the "trailing average daily budget" averages — the funded
+  per-chain budget, what the chain consumed, or its claim demand. They flag
+  different populations, so the choice is recorded, not assumed. Note the
+  per-chain `ChainDayFunding.lenderHalfEquiv` / `borrowerHalfEquiv` fields are
+  **not** candidates: they are global-equivalent numerators scaled by `1/p_c`,
+  and the struct's own docs record that a thin chain legitimately produces
+  values far above the actual daily pool.
+- **C2 — batched repatriation → #1568. Mode A only.** §3.6a establishes that
+  repatriation is **two modes over one transport**: Mode A planned surplus
+  (Base-initiated, drawn from the mirror's recycle bucket, was in `reported`)
+  and Mode B stranded-delivery recovery (mirror-initiated, never in `reported`,
+  and it must not touch the claim-side ledger at all). They need an explicit
+  **mode discriminator on the wire**.
+
+  ⚠️ **The old one-line scope was wrong.** It read "Base-ledgered into
+  `consumedCumulative` before the mirror send". Charging `consumedCumulative`
+  for a repatriation breaks the `outstanding + retired == consumed` identity on
+  the **first** repatriation. C2 takes a **separate repatriation debit ledger**
+  under a releasable pending authorization.
+
+  Two canonical invariants must gain terms **with or before** Mode A, or they
+  fail against correct code: governor **§7 #8** needs `repatriatedOutCumulative`
+  in both bucket-composition directions and in the `creditedCumulative`
+  derivation, and governor **§7 #3** needs the stranded-recovery reservation as
+  a fourth balance owner (with `LibVpfiRecycle.backingPosition` following).
+  Tracked in **#1577**.
+- **C3 → #1569** (decide explicitly rather than by omission) · **C4 §9 spec →
+  #1570.**
 
 ### M5 — #1218 transparency dashboard completion
 
