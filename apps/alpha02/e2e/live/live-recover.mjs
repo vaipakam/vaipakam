@@ -69,6 +69,24 @@ const GUIDE_ANCHOR_ID = 'stuck-recovery.what';
  *  landing clears this comfortably. */
 const NAVBAR_CLEARANCE_PX = 72;
 
+/**
+ * The only origins this run actually loads a page from — so the only
+ * ones whose Cloudflare edge can legitimately emit a beacon.
+ *
+ * Derived from the driver's own targets rather than matched as
+ * `*.vaipakam.com`: a wildcard exempts hosts this run never visits, and
+ * a subdomain fronting a real backend rather than Cloudflare's edge
+ * would have its POST filed as expected telemetry (Codex #1576 r5).
+ * Derived rather than hardcoded so a `SITE_URL` override — a preview
+ * deploy — keeps the exemption and the thing being reviewed in step
+ * instead of silently exempting production's origin while driving a
+ * preview.
+ */
+const BEACON_ORIGINS = new Set([
+  new URL(SITE).origin,
+  new URL(GUIDE_URL).origin,
+]);
+
 const fails = [];
 /** Console/page errors from the separately-opened guide page. */
 const guideErrors = [];
@@ -421,13 +439,17 @@ function isCloudflareBeacon({ reason, url: rawUrl }) {
     // `https://vaipakam.com:8443/cdn-cgi/rum` (odd port) matched a
     // hostname test while being nothing Cloudflare's edge would emit
     // (Codex #1576 r4). `url.origin` folds scheme, host and non-default
-    // port into one comparable value, so the default HTTPS port is the
-    // only one that can match.
-    const firstPartyOrigin =
+    // port into one comparable value.
+    //
+    // The HTTPS check is kept even though every allowed origin is
+    // already HTTPS today: it makes "never exempt a cleartext write" a
+    // property of this function rather than of how SITE_URL happens to
+    // be set.
+    return (
       url.protocol === 'https:' &&
-      (url.hostname === 'vaipakam.com' || url.hostname.endsWith('.vaipakam.com')) &&
-      url.origin === `https://${url.hostname}`;
-    return firstPartyOrigin && url.pathname === '/cdn-cgi/rum';
+      BEACON_ORIGINS.has(url.origin) &&
+      url.pathname === '/cdn-cgi/rum'
+    );
   } catch {
     return false;
   }
