@@ -1473,7 +1473,8 @@
       "walletNotConnected": "Wallet nicht verbunden",
       "requiredAssetFallback": "das erforderliche Asset",
       "saleListingTooCloseToMaturity": "Dieser Kredit ist weniger als eine Stunde von seinem Fälligkeitsdatum entfernt — zu nah, als dass ein Verkaufsangebot seinen Mindestzeitraum einhalten könnte, daher kann er nicht mehr zum Verkauf angeboten werden. Es wurde nichts gesendet; der normale Anspruch bei Fälligkeit bleibt davon unberührt.",
-      "saleRelistCooldownActive": "Ein Verkaufsangebot für diesen Kredit ist kürzlich beendet worden, und ein erneutes Inserieren pausiert für das eintägige Handlungsfenster des Kreditnehmers. Diese Position kann nach {{time}} wieder inseriert werden. Es wurde nichts gesendet."
+      "saleRelistCooldownActive": "Ein Verkaufsangebot für diesen Kredit ist kürzlich beendet worden, und ein erneutes Inserieren pausiert für das eintägige Handlungsfenster des Kreditnehmers. Diese Position kann nach {{time}} wieder inseriert werden. Es wurde nichts gesendet.",
+      "approvalCleanupFailed": "Außerdem: Die für diesen Schritt erteilte Ausgabefreigabe konnte nicht zurückgesetzt werden. Prüfen Sie die Freigaben für diesen Token in Ihrer Wallet."
     },
     "fees": {
       "lateFee": "Bei verspäteter Rückzahlung kommen nach dem ersten Tag 1% des ausstehenden Betrags hinzu; der Aufschlag wächst um 0.5% pro Tag und ist bei 5% gedeckelt.",

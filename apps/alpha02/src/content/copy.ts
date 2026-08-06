@@ -2775,6 +2775,14 @@ const copySource = {
     // Fallback name for the {{asset}} slot in needMore(By) when the token's
     // on-chain symbol can't be read (preflights.ts).
     requiredAssetFallback: 'the required asset',
+    // #1529 review round 13 — a flow that failed AND could not tidy up
+    // the spending approval it had asked for. Two separate things went
+    // wrong and the second one leaves the wallet in a state the user has
+    // to act on, so it cannot be swallowed behind the first. Appended to
+    // the flow's own error rather than replacing it: the original failure
+    // is still what they were trying to do.
+    approvalCleanupFailed:
+      'Also: the spending approval this step asked for could not be put back. Check this token’s approvals in your wallet.',
     partialOverPrincipal:
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:

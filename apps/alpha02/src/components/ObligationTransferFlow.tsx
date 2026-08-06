@@ -523,10 +523,13 @@ export function ObligationTransferFlow({
 
     // Best-effort: no handover happened but the allowance mined, so
     // leave no spend authorization behind a form with nothing to
-    // cancel (#1514). A second rejection just leaves the wallet's
-    // approvals view as the remedy — the surfaced error already
-    // explains the failure, and overwriting it with a revoke error
-    // would hide the real one.
+    // cancel (#1514). The cleanup must not REPLACE the handover error —
+    // that is the thing the user was trying to do — but it must not be
+    // swallowed either. On the zero-first path the unwind can reset to
+    // zero and then fail to put the prior value back, which leaves the
+    // user's standing grant erased; showing only the handover error
+    // hides a state they have to act on (#1529 review round 13). So the
+    // cleanup failure is APPENDED.
     async function unwindApproval() {
       if (priorAllowance === null || !approvalToken) return;
       if (!publicClient || !walletClient || !address || !walletChain) return;
@@ -550,7 +553,11 @@ export function ObligationTransferFlow({
           confirmed: confirmedVal,
         });
       } catch {
-        // Intentionally silent — see above.
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
       }
     }
   }

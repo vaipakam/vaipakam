@@ -90,7 +90,14 @@ export function useDiamondWrite() {
       // ADDITIVE: flows keep their surface-specific invalidations on
       // top of this — the floor is what no future flow can forget.
       publishReceiptInvalidation(queryClient);
-      return { hash, receipt };
+      // The MINED hash, not the submitted one. On a Speed Up they differ,
+      // and callers put this straight into an explorer link on the
+      // success panel — the submitted hash never mined, so the link goes
+      // nowhere (#1529 review round 13). Callers that need the SUBMITTED
+      // hash for reconciliation (RefinanceFlow, deciding whether an offer
+      // might exist after a failure) take it from `onSubmitted`, which is
+      // exactly why that callback exists.
+      return { hash: receipt.transactionHash, receipt };
     },
     [
       onSupportedChain,

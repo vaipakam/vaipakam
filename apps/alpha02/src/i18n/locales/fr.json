@@ -1473,7 +1473,8 @@
       "walletNotConnected": "Wallet non connecté",
       "requiredAssetFallback": "l’actif requis",
       "saleListingTooCloseToMaturity": "Ce prêt est à moins d'une heure de son échéance — trop près pour qu'une annonce tienne sa fenêtre minimale, il ne peut donc plus être mis en vente. Rien n'a été envoyé ; la réclamation normale à l'échéance n'est pas affectée.",
-      "saleRelistCooldownActive": "Une annonce sur ce prêt s'est terminée récemment, et une nouvelle mise en vente est suspendue pendant la fenêtre d'action d'un jour de l'emprunteur. Cette position pourra être remise en vente après {{time}}. Rien n'a été envoyé."
+      "saleRelistCooldownActive": "Une annonce sur ce prêt s'est terminée récemment, et une nouvelle mise en vente est suspendue pendant la fenêtre d'action d'un jour de l'emprunteur. Cette position pourra être remise en vente après {{time}}. Rien n'a été envoyé.",
+      "approvalCleanupFailed": "De plus : l’autorisation de dépense demandée à cette étape n’a pas pu être rétablie. Vérifiez les autorisations de ce jeton dans votre portefeuille."
     },
     "fees": {
       "lateFee": "Un remboursement en retard ajoute 1% du montant restant dû après le premier jour, augmente de 0.5% par jour, avec un plafond à 5%.",

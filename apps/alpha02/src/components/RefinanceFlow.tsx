@@ -562,7 +562,16 @@ export function RefinanceFlow({
             confirmed: confirmedAllowance,
           });
         } catch {
-          // Leave the submit error as the surfaced failure.
+          // Append rather than replace: the submit failure is what the
+          // user was trying to do, but a cleanup that resets to zero and
+          // then fails to put the prior value back leaves their standing
+          // grant erased — a state they have to act on, and one that
+          // showing only the submit error hides (#1529 review round 13).
+          setError((prior) =>
+            prior
+              ? `${prior} ${copy.errors.approvalCleanupFailed}`
+              : copy.errors.approvalCleanupFailed,
+          );
         }
       }
     } finally {

@@ -1473,7 +1473,8 @@
       "walletNotConnected": "钱包未连接",
       "requiredAssetFallback": "所需资产",
       "saleListingTooCloseToMaturity": "本笔贷款距到期日已不足一小时——太接近，挂单无法满足其最短时长，因此不能再挂出出售。未发送任何内容；到期时的正常领取不受影响。",
-      "saleRelistCooldownActive": "本笔贷款的一个挂单刚刚结束，为借款人一天的操作窗口，重新挂出被暂停。此仓位可在 {{time}} 之后再次挂出。未发送任何内容。"
+      "saleRelistCooldownActive": "本笔贷款的一个挂单刚刚结束，为借款人一天的操作窗口，重新挂出被暂停。此仓位可在 {{time}} 之后再次挂出。未发送任何内容。",
+      "approvalCleanupFailed": "此外：此步骤申请的支出授权未能还原。请在钱包中检查该代币的授权。"
     },
     "fees": {
       "lateFee": "逾期还款会在第一天后增加未偿金额的 1%，每天增加 0.5%，上限 5%。",

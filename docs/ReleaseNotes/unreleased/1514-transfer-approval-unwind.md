@@ -84,3 +84,19 @@ approval the app is trying to tidy up standing untouched. So a
 disagreement is now only believed when it comes from a provider that
 demonstrably has the relevant block; anything less is treated as not
 knowing, and not knowing never overrules the app's own confirmation.
+
+Two further consequences of getting the confirmation right, both about
+telling the user the truth afterwards.
+
+A sped-up transaction genuinely has a new identity, and several success
+panels were still showing the old one — so a link meant to prove the
+thing happened pointed at a record that does not exist. Those panels now
+show the identity the network actually recorded.
+
+And when a step fails, the app tries to tidy up the spending approval it
+had asked for. That tidying can itself fail partway, in which case the
+approval is left cleared rather than restored — something the person
+needs to know about and act on. Previously only the original failure was
+shown and the cleanup problem was silent. Both are now reported: the
+original failure stays the headline, because it is what they were trying
+to do, with the cleanup problem added after it.

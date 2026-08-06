@@ -1473,7 +1473,8 @@
       "walletNotConnected": "Wallet connected नहीं",
       "requiredAssetFallback": "आवश्यक asset",
       "saleListingTooCloseToMaturity": "यह loan अपनी due date से एक घंटे से भी कम दूर है — इतना पास कि कोई listing अपनी न्यूनतम अवधि पूरी नहीं कर सकती, इसलिए इसे अब बिक्री के लिए list नहीं किया जा सकता। कुछ भी send नहीं हुआ; maturity पर सामान्य claim पर कोई असर नहीं।",
-      "saleRelistCooldownActive": "इस loan की एक listing हाल ही में ख़त्म हुई है, और Borrower की एक दिन की कार्रवाई-अवधि के लिए दोबारा list करना रोका गया है। इस position को {{time}} के बाद दोबारा list किया जा सकता है। कुछ भी send नहीं हुआ।"
+      "saleRelistCooldownActive": "इस loan की एक listing हाल ही में ख़त्म हुई है, और Borrower की एक दिन की कार्रवाई-अवधि के लिए दोबारा list करना रोका गया है। इस position को {{time}} के बाद दोबारा list किया जा सकता है। कुछ भी send नहीं हुआ।",
+      "approvalCleanupFailed": "साथ ही: इस चरण ने जो खर्च की अनुमति माँगी थी, उसे वापस नहीं किया जा सका। अपने वॉलेट में इस टोकन की अनुमतियाँ जाँचें।"
     },
     "fees": {
       "lateFee": "Late repayment day one के बाद outstanding amount का 1% जोड़ता है, 0.5% per day बढ़ता है, 5% cap के साथ।",

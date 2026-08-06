@@ -211,9 +211,11 @@ export function Faucet() {
         account: address,
         chain: walletClient.chain,
       });
-      await assertSettled(publicClient, hash, 'The faucet transaction');
+      // The MINED hash: on a Speed Up the submitted one never mined, and
+      // the success panel links straight to it (#1529 review round 13).
+      const receipt = await assertSettled(publicClient, hash, 'The faucet transaction');
       setDone({
-        hash,
+        hash: receipt.transactionHash,
         label: copy.faucet.mintedTokens(units, symbol),
         asset: { address: token, symbol },
       });
@@ -241,9 +243,9 @@ export function Faucet() {
         account: address,
         chain: walletClient.chain,
       });
-      await assertSettled(publicClient, hash, 'The faucet transaction');
+      const receipt = await assertSettled(publicClient, hash, 'The faucet transaction');
       setDone({
-        hash,
+        hash: receipt.transactionHash,
         label: copy.faucet.mintedNft,
         tokenId: tokenId.toString(),
       });

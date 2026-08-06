@@ -1473,7 +1473,8 @@
       "walletNotConnected": "Billetera no conectada",
       "requiredAssetFallback": "el activo requerido",
       "saleListingTooCloseToMaturity": "A este préstamo le queda menos de una hora para su vencimiento: demasiado cerca para que un anuncio cumpla su ventana mínima, así que ya no puede ponerse en venta. No se envió nada; la reclamación normal al vencimiento no se ve afectada.",
-      "saleRelistCooldownActive": "Un anuncio de este préstamo terminó hace poco, y volver a anunciarlo está pausado durante la ventana de actuación de un día del prestatario. Esta posición podrá anunciarse de nuevo después de {{time}}. No se envió nada."
+      "saleRelistCooldownActive": "Un anuncio de este préstamo terminó hace poco, y volver a anunciarlo está pausado durante la ventana de actuación de un día del prestatario. Esta posición podrá anunciarse de nuevo después de {{time}}. No se envió nada.",
+      "approvalCleanupFailed": "Además: no se pudo restablecer la autorización de gasto que pidió este paso. Revisa las autorizaciones de este token en tu billetera."
     },
     "fees": {
       "lateFee": "El pago atrasado añade 1% del monto pendiente después del primer día, crece 0.5% por día y tiene tope de 5%.",
