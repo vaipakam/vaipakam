@@ -474,23 +474,7 @@ export function RefinanceFlow({
           // already have MINED above — unwind it the same best-effort
           // way (Codex #1511 r11): a blocked submit must not leave a
           // payoff-sized authorization behind a pristine form.
-          if (priorAllowance !== null && approvalToken) {
-            try {
-              await restoreAllowance({
-                publicClient,
-                walletClient,
-                token: approvalToken,
-                owner: address,
-                spender: walletChain.diamondAddress,
-                previous: priorAllowance,
-                wrote: wroteAllowance,
-                wroteTxHash: wroteAllowanceTx,
-                confirmed: confirmedAllowance,
-              });
-            } catch {
-              // Leave the block message as the surfaced outcome.
-            }
-          }
+          await unwindApproval();
           return;
         }
       }
@@ -548,34 +532,56 @@ export function RefinanceFlow({
       })();
       if (offerMayExist) {
         setError(copy.refinance.postedButUnconfirmed);
-      } else if (priorAllowance !== null && approvalToken) {
-        try {
-          await restoreAllowance({
-            publicClient,
-            walletClient,
-            token: approvalToken,
-            owner: address,
-            spender: walletChain.diamondAddress,
-            previous: priorAllowance,
-            wrote: wroteAllowance,
-            wroteTxHash: wroteAllowanceTx,
-            confirmed: confirmedAllowance,
-          });
-        } catch {
-          // Append rather than replace: the submit failure is what the
-          // user was trying to do, but a cleanup that resets to zero and
-          // then fails to put the prior value back leaves their standing
-          // grant erased — a state they have to act on, and one that
-          // showing only the submit error hides (#1529 review round 13).
-          setError((prior) =>
-            prior
-              ? `${prior} ${copy.errors.approvalCleanupFailed}`
-              : copy.errors.approvalCleanupFailed,
-          );
-        }
+      } else {
+        await unwindApproval();
       }
     } finally {
       setBusy(false);
+    }
+
+    // ONE unwind, shared by every abandoning exit — the late-gate return
+    // above and the catch below it. They were duplicated inline, and the
+    // duplication did exactly what duplication does: round 13 taught the
+    // catch to surface a failed cleanup and the late-gate copy kept
+    // swallowing it, so a blocked submit could erase a standing grant and
+    // say nothing (#1529 review round 14). Mirrors the shape
+    // `ObligationTransferFlow` already uses, where a single helper is why
+    // that fix covered both of its paths at once.
+    //
+    // Best-effort by design: the cleanup must not REPLACE the reason the
+    // flow stopped — that is what the user was trying to do — but a reset
+    // to zero whose put-back then fails leaves their prior grant erased,
+    // which is state they have to act on. So the failure is APPENDED.
+    async function unwindApproval() {
+      if (priorAllowance === null || !approvalToken) return;
+      if (!publicClient || !walletClient || !address || !walletChain) return;
+      const previous = priorAllowance;
+      const wrote = wroteAllowance;
+      const wroteTx = wroteAllowanceTx;
+      const confirmedVal = confirmedAllowance;
+      // Cleared before the await so a second exit path cannot unwind twice.
+      priorAllowance = null;
+      wroteAllowance = null;
+      wroteAllowanceTx = null;
+      try {
+        await restoreAllowance({
+          publicClient,
+          walletClient,
+          token: approvalToken,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          previous,
+          wrote,
+          wroteTxHash: wroteTx,
+          confirmed: confirmedVal,
+        });
+      } catch {
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
+      }
     }
   }
 

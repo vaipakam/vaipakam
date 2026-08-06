@@ -75,7 +75,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { createPublicClient, http, numberToHex } from 'viem';
+import {
+  ContractFunctionRevertedError,
+  createPublicClient,
+  http,
+  numberToHex,
+} from 'viem';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -343,6 +348,22 @@ async function graceSecondsFor(durationDays) {
   return defaultGraceSeconds(durationDays);
 }
 
+/**
+ * A revert is the chain ANSWERING; a transport failure is the absence of
+ * an answer. The two must not collapse into the same value.
+ *
+ * Both chain-read helpers below used to catch everything and return a
+ * domain verdict, which meant an unreachable RPC was indistinguishable
+ * from a burned token or a locked position. `discovery()` never saw the
+ * rejection, so the candidate was filed as "raced out" and the drive
+ * could exit 0 — reporting a clean live review it had not performed
+ * (#1529 review round 14). Only a revert is an answer; everything else
+ * propagates to `discovery()` and reads BLOCKED.
+ */
+function isRevert(err) {
+  return Boolean(err?.walk?.((e) => e instanceof ContractFunctionRevertedError));
+}
+
 async function offsetLockedOn(borrowerTokenId) {
   try {
     const lock = await pub.readContract({
@@ -352,8 +373,9 @@ async function offsetLockedOn(borrowerTokenId) {
       args: [borrowerTokenId],
     });
     return Number(lock) === LOCK_PRECLOSE_OFFSET;
-  } catch {
-    // Unreadable — assume locked and skip the loan. Skipping costs one
+  } catch (err) {
+    if (!isRevert(err)) throw err; // no answer — BLOCKED, not a skip
+    // Reverted — assume locked and skip the loan. Skipping costs one
     // observation; a false regression costs trust in the whole drive.
     return true;
   }
@@ -370,7 +392,7 @@ async function offsetLockedOn(borrowerTokenId) {
  *
  * Falls back to the stored address only when the token read reverts —
  * i.e. the token is gone — which the eligibility filter then drops
- * anyway.
+ * anyway. A transport failure is NOT that: see `isRevert`.
  */
 async function borrowerAuthorityOf(loan) {
   try {
@@ -380,7 +402,8 @@ async function borrowerAuthorityOf(loan) {
       functionName: 'ownerOf',
       args: [loan.borrowerTokenId],
     });
-  } catch {
+  } catch (err) {
+    if (!isRevert(err)) throw err; // no answer — BLOCKED, not "burned"
     return null;
   }
 }
@@ -412,10 +435,18 @@ for (const id of ids) {
     startTime: d.startTime,
     durationDays: d.durationDays,
   };
-  loan.authority = await borrowerAuthorityOf(loan);
+  // Wrapped, because these two now propagate transport failures rather
+  // than swallowing them: unwrapped, such a rejection would reach the top
+  // level and exit 1 as a product regression — the round-7 bug, reached
+  // by a new route.
+  loan.authority = await discovery(`reading the borrower authority for loan ${id}`, () =>
+    borrowerAuthorityOf(loan),
+  );
   // Only worth the extra reads on loans that clear the cheap gates.
   if (loan.status === STATUS_ACTIVE && loan.assetType === ASSET_ERC20 && loan.authority) {
-    loan.offsetLocked = await offsetLockedOn(loan.borrowerTokenId);
+    loan.offsetLocked = await discovery(`reading the offset lock for loan ${id}`, () =>
+      offsetLockedOn(loan.borrowerTokenId),
+    );
     const grace = await graceSecondsFor(loan.durationDays);
     const graceDeadline = loan.startTime + loan.durationDays * 86_400n + grace;
     loan.graceOver = chainNow > graceDeadline;

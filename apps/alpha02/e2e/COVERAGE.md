@@ -21,6 +21,16 @@ existing one, stating WHERE it is verified.
 A feature may appear in both tiers (CI-Anvil for the flow mechanics,
 live for the deployed-service half).
 
+**What a live driver's exit code means** — 0 PASS, 1 FAIL (an assertion
+against a page actually observed), 2 BLOCKED (could not observe, or
+could not trust what was observed). The distinction is load-bearing for
+every "Live review DONE" claim below: a driver that cannot reach the
+chain must report BLOCKED, never PASS. So a driver must not convert an
+RPC or transport failure into a domain answer — no "candidate raced
+out", no "token burned" — because that hides a review it did not
+perform behind an exit 0. Only an on-chain answer (a revert) may become
+a domain verdict; anything else propagates to the BLOCKED path.
+
 | Feature | Tier | Where | Live-only reason |
 | --- | --- | --- | --- |
 | Wallet connect + network gate | CI-Anvil | `tests/01-connect.spec.ts` | — |

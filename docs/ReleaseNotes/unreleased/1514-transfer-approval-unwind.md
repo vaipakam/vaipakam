@@ -93,8 +93,9 @@ panels were still showing the old one — so a link meant to prove the
 thing happened pointed at a record that does not exist. Those panels now
 show the identity the network actually recorded.
 
-And when a step fails, the app tries to tidy up the spending approval it
-had asked for. That tidying can itself fail partway, in which case the
+And when a step fails — or is stopped by one of the last-moment checks
+that run after the approval — the app tries to tidy up the spending
+approval it had asked for. That tidying can itself fail partway, in which case the
 approval is left cleared rather than restored — something the person
 needs to know about and act on. Previously only the original failure was
 shown and the cleanup problem was silent. Both are now reported: the

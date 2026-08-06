@@ -865,9 +865,15 @@ Its intended behaviour, as the test oracle for this surface:
   handover simply fails once the approval has been given — the app
   withdraws the approval it just obtained, so a handover that never
   happened leaves no spending authorisation standing against a form
-  with nothing left to cancel. It is best-effort: if the withdrawal is
-  itself declined, the original failure remains the reported one
-  rather than being replaced by a second, more confusing error. An
+  with nothing left to cancel. This holds however the flow stopped —
+  whether it failed outright or was halted by one of those late
+  checks. It is best-effort: if the withdrawal is itself declined, the
+  original failure stays the headline rather than being replaced by a
+  second, more confusing error — but it is not the whole message. A
+  withdrawal that clears the approval and then fails to put a prior
+  standing grant back leaves that grant erased, which the person has
+  to act on, so that outcome is reported after the original failure
+  rather than passed over in silence. An
   approval the wallet already held is never withdrawn — it was granted
   for some other purpose and is not this flow's to revoke. The review
   states what is paid
