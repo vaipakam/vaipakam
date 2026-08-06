@@ -515,6 +515,23 @@ protocol-owned `recycleBucket` **ledger slice of its own VPFI balance**, with
 bucket-separation invariant
 `diamondVpfiBalance ≥ userLifCustody + unclaimedRewardBudget + recycleBucket`.
 
+> **⚠ This invariant gains a term when #1568 Mode B / #1434 R4a land** (Codex
+> #1574 r10 P1). A **stranded-recovery reservation** — a post-lapse
+> compensation held for return — is a *fourth* owner of this one balance. It
+> is not `unclaimedRewardBudget`: the day it belonged to has lapsed, so it is
+> no longer an unclaimed reward obligation. It is not the bucket: those tokens
+> were never reported as that chain's recycled availability. Left out, the
+> canonical checks pass while an **ordinary fresh claim spends the very tokens
+> Mode B exists to return** — the #1460 shape, one owner over.
+>
+> `LibVpfiRecycle.backingPosition` must follow: it subtracts the bucket only,
+> and its comment records that as a *deliberate* stopping point after review
+> kept surfacing further owners. That decision was about **user collateral**,
+> which is correctly excluded. A stranded-recovery reservation is
+> protocol-owned and earmarked, so it falls on the other side of that line and
+> must be subtracted. Extending the invariant without extending the read would
+> leave the check green and the spend reachable.
+
 One sharpening this redesign makes load-bearing: **recyclable VPFI receipt
 classes must terminate in Diamond custody, not an external treasury wallet.**
 `LibFacet.recordTreasuryAccrual` already only ledger-accrues when
@@ -670,9 +687,23 @@ sits at the single canonical point (Base finalization):
 
    - forward, EXACT: `recycleCreditedCumulative +
      recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
-     releasedRemitStranded`
+     releasedRemitStranded + repatriatedOutCumulative`
    - reverse, with its OWN slack: `recycleBucket + paidOutRecycled +
-     releasedRemitStranded ≤ (the same left side) + slack`
+     releasedRemitStranded + repatriatedOutCumulative ≤ (the same left side)
+     + slack`
+
+   **The `repatriatedOutCumulative` term is required the moment #1568 Mode A
+   ships, and omitting it breaks this invariant on the FIRST successful
+   repatriation** (Codex #1574 r10 P1). Mode A moves tokens out of the bucket
+   *without* advancing `paidOutRecycled` — deliberately, since no reward was
+   paid — so `recycleBucket` falls while every other term stays put and the
+   forward direction fails against a completely healthy transfer. A watcher or
+   test built from the un-extended form reports a CRITICAL over-credit, and
+   the derived `creditedCumulative` floor below regresses, on the first
+   correct Mode-A send. The term is a **counter of tokens that left the bucket
+   by repatriation**, and it belongs here rather than only in the #1568
+   constraint that introduced the outflow — an invariant stated without it is
+   not conservative, it is wrong.
 
    The reverse direction is load-bearing, not symmetry for its own sake: a
    custody arrival that credits `recycleBucket` while failing to advance
@@ -688,7 +719,11 @@ sits at the single canonical point (Base finalization):
    behind it and the relation is UNVERIFIABLE. That state is REPORTED, not
    assumed away, and it is distinguished by the seeded flag rather than by
    `recycleCreditedCumulative == 0`, which a fresh chain also satisfies, and `creditedCumulative` is reproducible from those
-   same slots as `max(raw, bucket + paidOut − relocated)`.
+   same slots as `max(raw, bucket + paidOut + repatriatedOut − relocated)`
+   — the repatriated-outflow term for the same reason the two directions
+   above carry it (Codex #1574 r10 P1): without it, the derived floor
+   **regresses on the first Mode-A send**, because the bucket has fallen and
+   nothing else in the expression accounts for where those tokens went.
 
    Both exist because invariant 6's per-chain commitment bound
    compares the reported cumulative against the canonical chain's accepted

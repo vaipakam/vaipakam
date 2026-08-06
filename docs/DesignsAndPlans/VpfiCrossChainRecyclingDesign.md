@@ -332,6 +332,17 @@ they were maintained as independent sentences (Codex #1574 r6 P1), so:
 - everywhere else **must point at one of those two.** A third restatement is
   the defect.
 
+**This is a RULE, not a claim that the repo currently satisfies it.** Three
+successive revisions asserted the sweep was complete and three were wrong — r7
+missed the governor's numbered invariant, r9 missed the test docstrings and a
+test plan, r10 missed five more sites including one in `B3` and one still
+carrying a pre-B3 `reported − consumed` form. A completeness claim is worth
+less than nothing here: it stops the next reader looking. What is recorded
+instead is the rule above, plus a dated observation — **a repo-wide sweep on
+2026-08-06 found and fixed seven doc restatements**; the code-side ones are
+tracked in **#1577** and are NOT done. Anyone who finds another has found a
+defect, not a counterexample to a claim.
+
 **The docs are swept; the CODE is NOT, and this is a scope statement rather
 than a claim of completeness** (Codex #1574 r9 P2 — an earlier revision listed
 "a test docstring" among the things that already point, which was false and is
@@ -407,6 +418,19 @@ challenged and stand.
    fails permanently. Pin one of: this ingress credits rewards directly despite
    the target; each repatriation is capped to the live gap with the remainder
    left on the mirror; or a dedicated overflow sink exists.
+
+1a. **If the live-gap option is chosen, the gap must be RESERVED, not merely
+   observed** (Codex #1574 r10 P2). A gap measured on Base *before* dispatch is
+   stale by the time the return arrives — an intervening buyback credit or a
+   downward `cfgRewardEmissionsTopUpTarget` change can fill or shrink it. The
+   promised rewards credit then reroutes to keepers or reverts outright,
+   **after the mirror has already debited its bucket**, which is the one
+   ordering this design cannot recover from: tokens gone from the source, no
+   defined home at the destination. So the pending authorization must either
+   **reserve that destination headroom** for its lifetime, or the ingress must
+   define an explicit **arrival-time overflow/cancellation path**. A
+   cross-chain-stale gap is not a stable cap, and treating it as one converts a
+   routing preference into a fund-safety bug.
 
 **On the mirror-side debit:**
 
@@ -509,6 +533,24 @@ challenged and stand.
    unrecoverable. Require `sourceChainId == reservation.dstChainId` before
    consuming it — the existing ACK ingress (`onRemitAckReceived`) already
    performs exactly this check, so this is consistency, not a new idea.
+
+   **"Amount-bounded" plus "consumed exactly once" is a DUST ATTACK, and 6a's
+   Mode-A fix exposed the asymmetry** (Codex #1574 r10 P1). A bound says the
+   return may not *exceed* the entitlement; it says nothing about a return far
+   below it. A malformed or compromised mirror returning **1 wei** passes every
+   transport check in 6a, and one-shot consumption then retires the whole
+   entitlement — permanently stranding the remainder, with no second return
+   possible because the record is spent. Mode A was given an exact-match rule
+   in r9 and Mode B kept the weaker bound purely because they were specified in
+   different rounds.
+
+   So: either **require the return to equal the entitlement amount**, or track
+   a **remaining amount** and consume the entitlement only when it reaches
+   zero. The second composes better with a short delivery — a fee-on-transfer
+   return leaves a genuine remainder that a later top-up can settle — but it
+   needs its own bounded terminal so a partially-returned entitlement is not a
+   new indefinite state. Whichever is chosen, "bounded above" is not a
+   settlement condition.
 6a. **BOTH modes' ingress needs the same delivery checks both existing
    receivers perform**, and the mode discriminator does not supply them
    (Codex #1574 r2; scope corrected from Mode-B-only in r9 P1). Before

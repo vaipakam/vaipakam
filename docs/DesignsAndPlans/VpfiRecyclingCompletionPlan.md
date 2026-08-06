@@ -1042,8 +1042,8 @@ GovernanceRunbook gains a recycling section, executed in order:
    > (#1434), a mirror can RESERVE what Base instructs but has no
    > user-reachable way to RETIRE it — claims, forfeits and expiry all
    > price through the halted path, so its settlement totals stay at
-   > zero. Base's spare-capacity figure for that chain
-   > (`reported − (consumed − released)`) is then **permanently lower, by
+   > zero. Base's spare-capacity figure for that chain (the §3.6a
+   > availability formula) is then **permanently lower, by
    > the accumulating stock of commitments that would have been RELEASED
    > un-spent but cannot be** — while the chain's bucket is untouched, and
    > the mesh degrades
@@ -1069,8 +1069,8 @@ GovernanceRunbook gains a recycling section, executed in order:
    > instruction. **An alert keyed on "availability fell" is wrong.**
    >
    > (c) **Only RELEASES restore capacity — not retirement generally.**
-   > `LibVpfiRecycle.mirrorAvailRecycled` is
-   > `reported − (consumed − released)` and never reads
+   > `LibVpfiRecycle.mirrorAvailRecycled` implements the §3.6a formula and
+   > never reads
    > `chainRetiredRecycledCommit`. A claim that CONSUMES its commitment
    > advances retirement while availability stays exactly as low, because
    > those tokens really left the bucket — pinned by

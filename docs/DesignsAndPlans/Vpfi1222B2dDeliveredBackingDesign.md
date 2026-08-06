@@ -1155,7 +1155,9 @@ running sums land as new append-only tail fields.
   (the Ā day-bucket) AND must not reach the **reported cumulative** — those
   tokens were Ā-counted once on Base at first absorption, and after d3 an
   inflated cumulative would also re-offer Base's own top-up as mirror-local
-  availability (`_mirrorAvailable = reported − consumed`) and widen the Ā
+  availability (the §3.6a formula — this line carried a `reported − consumed`
+  form that predates B3's release term and #1568's repatriation terms both)
+  and widen the Ā
   attribution headroom in `recordChainRecycled`. Because
   `creditedCumulative()` derives a floor of `recycleBucket + paidOutRecycled`,
   leaving `recycleCreditedCumulative` unwritten is NOT sufficient — the
