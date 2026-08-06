@@ -88,6 +88,7 @@ import {
   classifyRpcFailure,
   codedError,
   recordRpcResponse,
+  summariseRpcLedger,
 } from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -709,6 +710,18 @@ const routeFailures = [];
  */
 const malformedRpc = [];
 
+/**
+ * Every per-call outcome the routed shim observed, in attempt order.
+ *
+ * Not the two buckets above, because one HTTP attempt cannot settle the
+ * question: viem retries a failed read (`retryCount: 3`) and `wagmi.ts`
+ * wraps these transports in `fallback([...])`, so a transient 429 the
+ * page recovered from is indistinguishable, at this layer, from a dead
+ * endpoint. `summariseRpcLedger` reconciles the attempts once the run is
+ * over and fills the buckets then (#1529 review round 23).
+ */
+const rpcLedger = [];
+
 // Page traffic through this process (Chromium TLS is reset by the
 // sandbox gateway). Mutating non-RPC requests are refused: this drive
 // advertises itself as read-only and a page regression must not be able
@@ -808,7 +821,7 @@ const routeHandler = async (route) => {
         // Redact BEFORE truncating, as the catch path does below.
         url: redact(req.url()).slice(0, 160),
       },
-      { malformed: malformedRpc, unreachable: routeFailures },
+      rpcLedger,
     );
   } catch (err) {
     // The abort is still the only option — there is no response to serve
@@ -1152,6 +1165,19 @@ for (const v of visited) {
   // refuses the analytics beacon, and the sandbox proxy resets page
   // WebSockets. Neither is an app defect.
   (v.consoleErrors ?? []).slice(0, 4).forEach((e) => console.log(`      c ${e}`));
+}
+
+// Settle the routed-fetch attempts now that no more will arrive. Until
+// this point `rpcLedger` holds ATTEMPTS, not verdicts — a read viem
+// retried successfully, or reached through the fallback transport, must
+// not be reported as a failure just because its first try was refused
+// (#1529 review round 23). Merged into the same two buckets the wallet
+// path and the catch path already fill, so the report and the exit
+// contract below are unchanged.
+{
+  const settled = summariseRpcLedger(rpcLedger);
+  malformedRpc.push(...settled.malformed);
+  routeFailures.push(...settled.unreachable);
 }
 
 // A refusal is never just informational. Printing it while the exit code

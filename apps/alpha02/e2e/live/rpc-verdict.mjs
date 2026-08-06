@@ -111,93 +111,206 @@ function rpcCalls(requestBody) {
 }
 
 /**
- * Classify a JSON-RPC response the routed-fetch shim is about to hand
- * back to the page.
+ * Identity of a LOGICAL read: the same call retried on the same endpoint,
+ * or re-sent to a fallback endpoint, carries the same key.
+ *
+ * This is what makes a verdict survivable. The shim sees individual HTTP
+ * ATTEMPTS, and viem's default `retryCount` is 3 — plus `wagmi.ts` wraps
+ * the mainnet reads in `fallback([...])` and the chain reads in
+ * `fallback([webSocket, http])`. So a transient 429 that viem then
+ * retries successfully looks, at this layer, exactly like a permanent
+ * failure. Judging each attempt on its own made the drive exit 2 BLOCKED
+ * on a page that rendered perfectly (#1529 review round 23).
+ */
+function callKey(call) {
+  let params;
+  try {
+    params = JSON.stringify(call?.params ?? []);
+  } catch {
+    params = '?'; // circular / unserialisable — never match, never crash
+  }
+  return `${call?.method ?? '?'}|${params}`;
+}
+
+/**
+ * Does this error body still count as the provider ANSWERING, even though
+ * the HTTP status says otherwise?
+ *
+ * Mirrors viem's own test in `utils/rpc/http.js`, deliberately field for
+ * field, because what matters is what the PAGE experiences:
+ *
+ *   if (!response.ok) {
+ *     if (typeof data.error?.code === 'number' &&
+ *         typeof data.error?.message === 'string') return data
+ *     throw new HttpRequestError(...)
+ *   }
+ *
+ * Both fields are required, and `data` is the whole body — so a BATCH
+ * response never qualifies and always becomes a transport error however
+ * healthy its members look, because an array parsed from JSON has no
+ * `.error` of its own.
+ *
+ * The `Array.isArray` guard is therefore belt-and-braces rather than
+ * load-bearing: the `.error` lookup alone already rejects every array.
+ * It is kept because it states the rule the batch case turns on, but do
+ * not mistake it for the thing doing the work — the batch test below
+ * pins the BEHAVIOUR, and passes with this clause removed.
+ */
+function answersDespiteStatus(parsed) {
+  return (
+    !Array.isArray(parsed) &&
+    typeof parsed?.error?.code === 'number' &&
+    typeof parsed?.error?.message === 'string'
+  );
+}
+
+/**
+ * Classify a JSON-RPC response the routed-fetch shim is handing back to
+ * the page, ONE OUTCOME PER CALL in the request.
  *
  * `classifyRpcFailure` above covers the calls the page makes through the
  * injected wallet, which surface as THROWN errors. The app's wagmi HTTP
  * transport is a second door onto the same question and it does not
  * throw: the provider answers, `fetch` resolves, and a JSON-RPC error
- * body or a 429 rides back to the page as an ordinary response. Fulfilled
- * without a verdict, that made a rate-limited required read look like a
- * missing chooser (a product FAIL, exit 1) and let a rate-limited
- * OPTIONAL read pass silently at exit 0 — the two outcomes the BLOCKED
- * verdict exists to prevent (#1529 review round 22).
+ * body or a 429 rides back as an ordinary response. Handed on unjudged,
+ * that made a failed REQUIRED read look like a missing surface (a product
+ * FAIL) and let a failed OPTIONAL read pass at exit 0 (#1529 round 22).
  *
- * Two things this must NOT do, both of which a naive "an error body means
- * failure" rule gets wrong:
+ * Per CALL rather than per response, because three separate things go
+ * wrong when the HTTP envelope is treated as the unit (#1529 round 23):
  *
- *   - This shim serves the WHOLE site — HTML, JS, assets, the app's own
- *     API. Only traffic whose REQUEST is JSON-RPC is judged here;
- *     everything else is somebody else's verdict.
- *   - An ordinary REVERT is delivered as an HTTP 200 carrying a JSON-RPC
- *     error, and the app is expected to handle it. Treating those as
- *     failures would exit non-zero on every healthy run, so the same
- *     three-way `classifyRpcFailure` decides here and 'answered' is
- *     recorded as nothing at all.
+ *   - A non-2xx is not automatically "no answer". A provider returning
+ *     400 with a well-formed `-32602` has RECEIVED and rejected the
+ *     page's request, and viem passes that straight through to the app —
+ *     so it is a client fault, not a BLOCKED. Only a status the page
+ *     itself cannot see past ends the question.
+ *   - A batch response that OMITS a member answers every call but one.
+ *     viem resolves batches POSITIONALLY (`resolve([data[i], data])`
+ *     after sorting by id), so a dropped member does not merely yield
+ *     `undefined` — it can hand one call another call's answer. Either
+ *     way that read failed in the page and nothing recorded it.
+ *   - Two calls in one batch can deserve different verdicts.
  *
- * One entry per verdict per response, not per batch member: `routeFailures`
- * counts page REQUESTS, and a batch is one request.
+ * What this must NOT do, and a naive "an error body means failure" rule
+ * gets both wrong: the shim serves the WHOLE site, so only traffic whose
+ * REQUEST is JSON-RPC is judged here; and an ordinary REVERT arrives as
+ * an HTTP 200 carrying a JSON-RPC error, so it is an 'ok' outcome — the
+ * app is expected to handle it, and recording it would exit non-zero on
+ * every healthy run.
  *
  * @param {number} status HTTP status of the provider's response.
  * @param {Buffer|string|undefined} body Response body.
  * @param {string|undefined} requestBody The page's request body.
- * @returns {Array<{verdict: 'client-fault' | 'unreachable', why: string}>}
+ * @returns {Array<{key: string, method: string,
+ *                  verdict: 'ok' | 'client-fault' | 'unreachable',
+ *                  why?: string}>}
  */
 export function classifyRpcResponse(status, body, requestBody) {
   const calls = rpcCalls(requestBody);
   if (!calls) return [];
 
-  // A non-2xx ends it: whatever the body says, the endpoint did not
-  // answer the call. This is the 429 / 503 shape, and the one the
-  // response body alone could never have revealed.
-  if (status < 200 || status >= 300) {
-    return [{ verdict: 'unreachable', why: `HTTP ${status} to json-rpc request` }];
-  }
-
   const parsed = parseJson(body);
+  const statusOk = status >= 200 && status < 300;
+  const out = (c, verdict, why) => ({ key: callKey(c), method: String(c.method), verdict, why });
+
+  // A status the page cannot see past: every call in the request failed,
+  // whatever the body happens to contain. This is the plain-text 429 /
+  // 5xx shape, and — per `answersDespiteStatus` — every non-2xx batch.
+  if (!statusOk && !answersDespiteStatus(parsed)) {
+    return calls.map((c) => out(c, 'unreachable', `HTTP ${status}`));
+  }
   if (parsed === undefined) {
-    return [
-      { verdict: 'unreachable', why: `non-JSON response (HTTP ${status}) to json-rpc request` },
-    ];
+    return calls.map((c) => out(c, 'unreachable', `non-JSON response (HTTP ${status})`));
   }
 
-  // Name the method that failed, not just its code — in a batch the code
-  // alone does not say which call it belongs to.
-  const methodById = new Map(calls.map((c) => [c.id, c.method]));
-  const byVerdict = new Map();
-  for (const member of Array.isArray(parsed) ? parsed : [parsed]) {
-    const err = member?.error;
-    if (!err || typeof err.code !== 'number') continue;
-    const verdict = classifyRpcFailure(err);
-    if (verdict === 'answered') continue;
-    const method = methodById.get(member?.id);
-    const label = `${method ? `${method} ` : ''}${err.code}`;
-    if (!byVerdict.has(verdict)) byVerdict.set(verdict, new Set());
-    byVerdict.get(verdict).add(label);
+  const members = Array.isArray(parsed) ? parsed : [parsed];
+
+  // An error carrying no id answers the request AS A WHOLE — a parse
+  // error is the canonical case, since the server never got far enough to
+  // read the ids. Attributing it to every call beats also reporting each
+  // one as "omitted", which would be the same fact told twice.
+  const whole = members.find((m) => m?.error && (m.id === null || m.id === undefined));
+  if (whole) {
+    const verdict = classifyRpcFailure(whole.error);
+    return calls.map((c) =>
+      out(c, verdict === 'answered' ? 'ok' : verdict, `json-rpc ${whole.error?.code}`),
+    );
   }
 
-  return [...byVerdict].map(([verdict, labels]) => ({
-    verdict,
-    why: `json-rpc ${[...labels].join(', ')}`,
-  }));
+  const byId = new Map(
+    members.filter((m) => m && m.id !== null && m.id !== undefined).map((m) => [m.id, m]),
+  );
+
+  return calls.map((c) => {
+    const member = byId.get(c.id);
+    // Nothing came back for this call. On a 200 that is a batch that
+    // dropped a member — the read fails in the page, silently.
+    if (member === undefined) return out(c, 'unreachable', 'omitted from batch response');
+    if (!member.error) return out(c, 'ok');
+    const verdict = classifyRpcFailure(member.error);
+    return out(c, verdict === 'answered' ? 'ok' : verdict, `json-rpc ${member.error?.code}`);
+  });
 }
 
 /**
- * File a routed response's verdicts into the driver's two buckets.
+ * Append a routed response's per-call outcomes to the run's ledger.
  *
- * This exists as a tested function rather than four lines inline at the
- * call site on round 20's lesson: the predicate being right is not the
- * same as it being WIRED right, and sending a client fault to the
- * unreachable bucket would silently restore the exact bug round 22 fixed
- * — an app defect reported as "re-run, the network was flaky".
+ * A LEDGER rather than the two verdict buckets directly, because a single
+ * attempt cannot decide the question: see `callKey`. The buckets are
+ * filled once, at the end, by `summariseRpcLedger`.
  *
  * @param {{status: number, body: Buffer|string|undefined,
  *          requestBody: string|undefined, url: string}} response
- * @param {{malformed: Array, unreachable: Array}} buckets
+ * @param {Array} ledger
  */
-export function recordRpcResponse({ status, body, requestBody, url }, { malformed, unreachable }) {
-  for (const v of classifyRpcResponse(status, body, requestBody)) {
-    (v.verdict === 'client-fault' ? malformed : unreachable).push({ url, why: v.why });
+export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
+  for (const outcome of classifyRpcResponse(status, body, requestBody)) {
+    ledger.push({ ...outcome, url });
   }
+}
+
+/**
+ * Turn the attempt ledger into the two verdict buckets.
+ *
+ * A failed attempt is only a real failure if the same logical call did
+ * not go on to succeed. viem retries (`retryCount: 3`) and falls back to
+ * a second endpoint, and the page is unharmed when one of those works —
+ * reporting the first attempt would exit 2 BLOCKED on a page that
+ * rendered correctly.
+ *
+ * Only a LATER success clears a failure. An earlier one must not: a call
+ * that worked at first and then failed for good is a genuine failure, and
+ * letting the early success cancel it would hide exactly the kind of
+ * mid-run degradation this drive is meant to notice.
+ *
+ * The wallet path deliberately has no equivalent. There `pub.request` is
+ * our own viem client, which exhausts its retries internally and throws
+ * once — so what that path records is already a final answer.
+ *
+ * @returns {{malformed: Array<{url: string, why: string}>,
+ *            unreachable: Array<{url: string, why: string}>}}
+ */
+export function summariseRpcLedger(ledger) {
+  const lastOk = new Map();
+  ledger.forEach((e, i) => {
+    if (e.verdict === 'ok') lastOk.set(e.key, i);
+  });
+
+  const malformed = [];
+  const unreachable = [];
+  const seen = new Set();
+  ledger.forEach((e, i) => {
+    if (e.verdict === 'ok') return;
+    if ((lastOk.get(e.key) ?? -1) > i) return; // recovered on a later attempt
+    // One entry per (verdict, call, reason): a read retried three times
+    // and still dead is one problem, not three.
+    const dedupe = `${e.verdict}|${e.key}|${e.why}`;
+    if (seen.has(dedupe)) return;
+    seen.add(dedupe);
+    (e.verdict === 'client-fault' ? malformed : unreachable).push({
+      url: e.url,
+      why: `${e.method} — ${e.why}`,
+    });
+  });
+  return { malformed, unreachable };
 }

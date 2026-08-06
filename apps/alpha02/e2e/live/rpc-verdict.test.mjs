@@ -11,7 +11,12 @@
  * testing the top-level object is precisely the mistake round 20 found.
  */
 import { describe, expect, it } from 'vitest';
-import { classifyRpcFailure, classifyRpcResponse, recordRpcResponse } from './rpc-verdict.mjs';
+import {
+  classifyRpcFailure,
+  classifyRpcResponse,
+  recordRpcResponse,
+  summariseRpcLedger,
+} from './rpc-verdict.mjs';
 
 /** A viem-shaped wrapper: the useful fields sit on a cause, and `walk`
  *  is how viem exposes the chain. */
@@ -80,20 +85,22 @@ describe('classifyRpcFailure', () => {
 });
 
 /**
- * #1529 review round 22 — the same question asked of a RESOLVED response.
+ * #1529 review rounds 22 + 23 — the same question asked of a RESOLVED
+ * response, and asked PER CALL.
  *
- * The routed-fetch shim serves every page request, and a provider that
+ * The routed shim serves every page request, and a provider that
  * rate-limits or rejects a call answers over a perfectly ordinary HTTP
  * response. `fetch` resolves, so none of the error-path classification
  * above ever runs.
  */
-const rpcReq = (...calls) =>
-  JSON.stringify(
-    calls.length === 1 ? calls[0] : calls,
-  );
-const call = (id, method = 'eth_call') => ({ jsonrpc: '2.0', id, method, params: [] });
+const rpcReq = (...calls) => JSON.stringify(calls.length === 1 ? calls[0] : calls);
+const call = (id, method = 'eth_call', params = []) => ({ jsonrpc: '2.0', id, method, params });
 const okBody = (id, result = '0x1') => JSON.stringify({ jsonrpc: '2.0', id, result });
 const errBody = (id, error) => JSON.stringify({ jsonrpc: '2.0', id, error });
+/** viem only forgives a non-2xx when BOTH fields are present. */
+const rpcErr = (code, message = 'nope') => ({ code, message });
+
+const verdicts = (out) => out.map((o) => o.verdict);
 
 describe('classifyRpcResponse', () => {
   it('ignores traffic that is not JSON-RPC at all', () => {
@@ -105,139 +112,161 @@ describe('classifyRpcResponse', () => {
     expect(classifyRpcResponse(500, '{"detail":"nope"}', '{"notRpc":true}')).toEqual([]);
   });
 
-  it('records nothing for a successful call', () => {
-    expect(classifyRpcResponse(200, okBody(1), rpcReq(call(1)))).toEqual([]);
+  it('reports a successful call as ok', () => {
+    expect(verdicts(classifyRpcResponse(200, okBody(1), rpcReq(call(1))))).toEqual(['ok']);
   });
 
-  it('does not treat an ordinary revert as a failure', () => {
+  it('treats an ordinary revert as ok, not a failure', () => {
     // The load-bearing case. A revert is delivered as an HTTP 200 JSON-RPC
     // error and the app is expected to handle it; recording it would exit
     // non-zero on every healthy run.
-    expect(
-      classifyRpcResponse(200, errBody(1, { code: 3, message: 'execution reverted' }), rpcReq(call(1))),
-    ).toEqual([]);
+    const out = classifyRpcResponse(200, errBody(1, { code: 3, message: 'reverted' }), rpcReq(call(1)));
+    expect(verdicts(out)).toEqual(['ok']);
   });
 
-  it('does not treat a revert carried as -32000 as a failure', () => {
-    expect(
-      classifyRpcResponse(
-        200,
-        errBody(1, { code: -32000, message: 'reverted', data: '0x7e273289' }),
-        rpcReq(call(1)),
-      ),
-    ).toEqual([]);
+  it('treats a revert carried as -32000 as ok', () => {
+    const out = classifyRpcResponse(
+      200,
+      errBody(1, { code: -32000, message: 'reverted', data: '0x7e273289' }),
+      rpcReq(call(1)),
+    );
+    expect(verdicts(out)).toEqual(['ok']);
   });
 
   it('calls a rate-limited read unreachable, naming the method', () => {
-    // The reported shape: HTTP 200, fetch resolves, the read never happened.
-    const out = classifyRpcResponse(
-      200,
-      errBody(1, { code: -32005, message: 'rate limited' }),
-      rpcReq(call(1, 'eth_getLogs')),
-    );
-    expect(out).toEqual([{ verdict: 'unreachable', why: 'json-rpc eth_getLogs -32005' }]);
+    const out = classifyRpcResponse(200, errBody(1, rpcErr(-32005)), rpcReq(call(1, 'eth_getLogs')));
+    expect(out).toEqual([
+      { key: 'eth_getLogs|[]', method: 'eth_getLogs', verdict: 'unreachable', why: 'json-rpc -32005' },
+    ]);
   });
 
   it('calls malformed params a client fault', () => {
-    const out = classifyRpcResponse(
-      200,
-      errBody(1, { code: -32602, message: 'invalid params' }),
-      rpcReq(call(1)),
-    );
-    expect(out).toEqual([{ verdict: 'client-fault', why: 'json-rpc eth_call -32602' }]);
+    const out = classifyRpcResponse(200, errBody(1, rpcErr(-32602)), rpcReq(call(1)));
+    expect(verdicts(out)).toEqual(['client-fault']);
   });
 
   it('keeps method-not-found infrastructure on this path too', () => {
-    // Same reasoning as the error path: -32601 describes the SERVER.
-    const out = classifyRpcResponse(200, errBody(1, { code: -32601 }), rpcReq(call(1)));
-    expect(out).toEqual([{ verdict: 'unreachable', why: 'json-rpc eth_call -32601' }]);
+    const out = classifyRpcResponse(200, errBody(1, rpcErr(-32601)), rpcReq(call(1)));
+    expect(verdicts(out)).toEqual(['unreachable']);
   });
 
-  it.each([429, 500, 502, 503])('treats HTTP %i on an RPC call as unreachable', (status) => {
-    // The body is plain text here — the response alone could never have
-    // revealed this, which is why the REQUEST is the discriminator.
+  it.each([429, 500, 502, 503])('treats a plain-text HTTP %i as unreachable', (status) => {
+    // The body says nothing about what was asked, which is why the
+    // REQUEST is the discriminator.
     const out = classifyRpcResponse(status, 'Too Many Requests', rpcReq(call(1)));
-    expect(out).toEqual([{ verdict: 'unreachable', why: `HTTP ${status} to json-rpc request` }]);
+    expect(out).toEqual([
+      { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: `HTTP ${status}` },
+    ]);
   });
 
-  it('treats a non-JSON 200 answer to an RPC call as unreachable', () => {
+  it('treats a non-JSON 200 answer as unreachable', () => {
     const out = classifyRpcResponse(200, '<html>gateway</html>', rpcReq(call(1)));
-    expect(out).toEqual([
-      { verdict: 'unreachable', why: 'non-JSON response (HTTP 200) to json-rpc request' },
-    ]);
+    expect(verdicts(out)).toEqual(['unreachable']);
+    expect(out[0].why).toMatch(/non-JSON/);
   });
 
   it.each([
     ['Buffer', (s) => Buffer.from(s)],
     // A bare Uint8Array is the discriminating case: `JSON.parse` coerces a
     // Buffer to its utf8 text for free, so a Buffer alone would pass even
-    // with the decode removed. A Uint8Array stringifies to "123,34,..."
-    // and only parses if the decode is actually there.
+    // with the decode removed.
     ['Uint8Array', (s) => new Uint8Array(Buffer.from(s))],
   ])('decodes a %s body', (_label, wrap) => {
-    const out = classifyRpcResponse(200, wrap(errBody(1, { code: -32005 })), rpcReq(call(1)));
-    expect(out).toEqual([{ verdict: 'unreachable', why: 'json-rpc eth_call -32005' }]);
+    const out = classifyRpcResponse(200, wrap(errBody(1, rpcErr(-32005))), rpcReq(call(1)));
+    expect(verdicts(out)).toEqual(['unreachable']);
+  });
+
+  describe('a non-2xx that still carries an answer (round 23)', () => {
+    it('calls a 400 with a well-formed -32602 a client fault, not BLOCKED', () => {
+      // viem returns the body rather than throwing when it holds a valid
+      // JSON-RPC error, so the page really does see a malformed-request
+      // error. Filing it as "could not fetch" exits 2 and hides the defect.
+      const out = classifyRpcResponse(400, errBody(1, rpcErr(-32602, 'invalid params')), rpcReq(call(1)));
+      expect(verdicts(out)).toEqual(['client-fault']);
+    });
+
+    it('still calls a 500 carrying -32603 unreachable', () => {
+      const out = classifyRpcResponse(500, errBody(1, rpcErr(-32603, 'internal')), rpcReq(call(1)));
+      expect(verdicts(out)).toEqual(['unreachable']);
+      expect(out[0].why).toBe('json-rpc -32603');
+    });
+
+    it('requires a MESSAGE as well as a code, exactly as viem does', () => {
+      // viem throws HttpRequestError when either field is missing, so the
+      // page sees a transport failure, not a malformed-request error.
+      const out = classifyRpcResponse(400, errBody(1, { code: -32602 }), rpcReq(call(1)));
+      expect(verdicts(out)).toEqual(['unreachable']);
+      expect(out[0].why).toBe('HTTP 400');
+    });
+
+    it('never forgives a non-2xx BATCH, because viem cannot see past it', () => {
+      // `data.error` is undefined on an array body, so viem throws for the
+      // whole batch however well-formed the members look.
+      const out = classifyRpcResponse(
+        400,
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, error: rpcErr(-32602) }]),
+        rpcReq(call(1)),
+      );
+      expect(verdicts(out)).toEqual(['unreachable']);
+      expect(out[0].why).toBe('HTTP 400');
+    });
   });
 
   describe('batches', () => {
-    it('judges every member, not just the first', () => {
-      // Both verdicts are true at once — the app sent something invalid AND
-      // the provider is flaky. Recording both lets the exit block's existing
-      // ordering put the app defect ahead of the "re-run" verdict, which is
-      // exactly why that ordering exists.
+    it('judges every member independently', () => {
       const out = classifyRpcResponse(
         200,
         JSON.stringify([
-          { jsonrpc: '2.0', id: 1, error: { code: -32005 } },
-          { jsonrpc: '2.0', id: 2, error: { code: -32602 } },
+          { jsonrpc: '2.0', id: 1, error: rpcErr(-32005) },
+          { jsonrpc: '2.0', id: 2, error: rpcErr(-32602) },
         ]),
         rpcReq(call(1, 'eth_getLogs'), call(2, 'eth_call')),
       );
-      expect(out).toContainEqual({ verdict: 'unreachable', why: 'json-rpc eth_getLogs -32005' });
-      expect(out).toContainEqual({ verdict: 'client-fault', why: 'json-rpc eth_call -32602' });
+      expect(verdicts(out)).toEqual(['unreachable', 'client-fault']);
     });
 
-    it('does not let a healthy revert in a batch mask a real failure', () => {
+    it('does not let a healthy revert mask a sibling failure', () => {
       const out = classifyRpcResponse(
         200,
         JSON.stringify([
-          { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } },
-          { jsonrpc: '2.0', id: 2, error: { code: -32005 } },
+          { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'reverted' } },
+          { jsonrpc: '2.0', id: 2, error: rpcErr(-32005) },
         ]),
         rpcReq(call(1), call(2, 'eth_getBalance')),
       );
-      expect(out).toEqual([{ verdict: 'unreachable', why: 'json-rpc eth_getBalance -32005' }]);
+      expect(verdicts(out)).toEqual(['ok', 'unreachable']);
     });
 
-    it('groups distinct failures of one verdict into a single entry', () => {
-      // A batch is ONE page request, and `routeFailures` counts requests.
-      // Two different unreachable codes must not inflate the count to two.
+    it('records an OMITTED member as unreachable (round 23)', () => {
+      // viem resolves batches positionally, so a dropped member does not
+      // merely yield undefined — it can hand one call another's answer.
       const out = classifyRpcResponse(
         200,
-        JSON.stringify([
-          { jsonrpc: '2.0', id: 1, error: { code: -32005 } },
-          { jsonrpc: '2.0', id: 2, error: { code: -32603 } },
-        ]),
-        rpcReq(call(1, 'eth_getLogs'), call(2, 'eth_call')),
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+        rpcReq(call(1, 'eth_call'), call(2, 'eth_getBalance')),
       );
-      expect(out).toEqual([
-        { verdict: 'unreachable', why: 'json-rpc eth_getLogs -32005, eth_call -32603' },
-      ]);
+      expect(verdicts(out)).toEqual(['ok', 'unreachable']);
+      expect(out[1].why).toBe('omitted from batch response');
     });
 
-    it('does not repeat an identical failure label', () => {
+    it('records every member of a wholly empty batch response', () => {
+      const out = classifyRpcResponse(200, '[]', rpcReq(call(1), call(2)));
+      expect(verdicts(out)).toEqual(['unreachable', 'unreachable']);
+    });
+
+    it('attributes an id-less error to every call, once', () => {
+      // A parse error never got as far as reading the ids, so reporting
+      // each call as separately "omitted" would tell the same fact twice.
       const out = classifyRpcResponse(
         200,
-        JSON.stringify([
-          { jsonrpc: '2.0', id: 1, error: { code: -32005 } },
-          { jsonrpc: '2.0', id: 2, error: { code: -32005 } },
-        ]),
-        rpcReq(call(1, 'eth_call'), call(2, 'eth_call')),
+        JSON.stringify({ jsonrpc: '2.0', id: null, error: rpcErr(-32700, 'parse error') }),
+        rpcReq(call(1), call(2)),
       );
-      expect(out).toEqual([{ verdict: 'unreachable', why: 'json-rpc eth_call -32005' }]);
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+      expect(out.every((o) => o.why === 'json-rpc -32700')).toBe(true);
     });
 
-    it('records nothing when every member succeeded', () => {
+    it('reports nothing when every member succeeded', () => {
       const out = classifyRpcResponse(
         200,
         JSON.stringify([
@@ -246,70 +275,143 @@ describe('classifyRpcResponse', () => {
         ]),
         rpcReq(call(1), call(2)),
       );
-      expect(out).toEqual([]);
+      expect(verdicts(out)).toEqual(['ok', 'ok']);
     });
   });
 });
 
 /**
- * The WIRING, tested separately from the predicate.
+ * The LEDGER, tested separately from the predicate.
  *
  * Round 19 verified a classifier with a throwaway script and three
  * bypasses shipped anyway. A correct verdict filed into the wrong bucket
- * is the same defect wearing a different hat: `malformed` exits 1 as an
- * app finding, `unreachable` exits 2 as "re-run".
+ * is the same defect in a different coat: `malformed` exits 1 as an app
+ * finding, `unreachable` exits 2 as "re-run".
  */
-describe('recordRpcResponse', () => {
-  const buckets = () => ({ malformed: [], unreachable: [] });
+describe('recordRpcResponse + summariseRpcLedger', () => {
+  const ledgerOf = (...responses) => {
+    const l = [];
+    for (const r of responses) recordRpcResponse(r, l);
+    return l;
+  };
+  const attempt = (status, body, requestBody, url = 'https://rpc.example') => ({
+    status,
+    body,
+    requestBody,
+    url,
+  });
 
   it('files a client fault as an app finding, not as flaky egress', () => {
-    const b = buckets();
-    recordRpcResponse(
-      { status: 200, body: errBody(1, { code: -32602 }), requestBody: rpcReq(call(1)), url: 'https://rpc.example' },
-      b,
+    const out = summariseRpcLedger(
+      ledgerOf(attempt(200, errBody(1, rpcErr(-32602)), rpcReq(call(1)))),
     );
-    expect(b.malformed).toEqual([{ url: 'https://rpc.example', why: 'json-rpc eth_call -32602' }]);
-    expect(b.unreachable).toEqual([]);
+    expect(out.malformed).toEqual([
+      { url: 'https://rpc.example', why: 'eth_call — json-rpc -32602' },
+    ]);
+    expect(out.unreachable).toEqual([]);
   });
 
   it('files an unreachable provider as BLOCKED, not as an app finding', () => {
-    const b = buckets();
-    recordRpcResponse(
-      { status: 429, body: 'slow down', requestBody: rpcReq(call(1)), url: 'https://rpc.example' },
-      b,
-    );
-    expect(b.unreachable).toEqual([
-      { url: 'https://rpc.example', why: 'HTTP 429 to json-rpc request' },
+    const out = summariseRpcLedger(ledgerOf(attempt(429, 'slow down', rpcReq(call(1)))));
+    expect(out.unreachable).toEqual([
+      { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
     ]);
-    expect(b.malformed).toEqual([]);
-  });
-
-  it('splits a mixed batch across both buckets', () => {
-    const b = buckets();
-    recordRpcResponse(
-      {
-        status: 200,
-        body: JSON.stringify([
-          { jsonrpc: '2.0', id: 1, error: { code: -32005 } },
-          { jsonrpc: '2.0', id: 2, error: { code: -32602 } },
-        ]),
-        requestBody: rpcReq(call(1, 'eth_getLogs'), call(2, 'eth_call')),
-        url: 'https://rpc.example',
-      },
-      b,
-    );
-    expect(b.unreachable).toHaveLength(1);
-    expect(b.malformed).toHaveLength(1);
+    expect(out.malformed).toEqual([]);
   });
 
   it('records nothing for a healthy response, a revert, or a page asset', () => {
-    const b = buckets();
-    recordRpcResponse({ status: 200, body: okBody(1), requestBody: rpcReq(call(1)), url: 'u' }, b);
-    recordRpcResponse(
-      { status: 200, body: errBody(1, { code: 3 }), requestBody: rpcReq(call(1)), url: 'u' },
-      b,
+    const out = summariseRpcLedger(
+      ledgerOf(
+        attempt(200, okBody(1), rpcReq(call(1))),
+        attempt(200, errBody(1, { code: 3, message: 'reverted' }), rpcReq(call(1))),
+        attempt(200, '<!doctype html>', undefined),
+      ),
     );
-    recordRpcResponse({ status: 200, body: '<!doctype html>', requestBody: undefined, url: 'u' }, b);
-    expect(b).toEqual({ malformed: [], unreachable: [] });
+    expect(out).toEqual({ malformed: [], unreachable: [] });
+  });
+
+  describe('reconciliation across attempts (round 23)', () => {
+    it('clears a failure that a LATER attempt recovered', () => {
+      // viem retries, and wagmi wraps these transports in fallback([...]).
+      // The page got its answer, so the drive must not exit 2.
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(429, 'slow down', rpcReq(call(1, 'eth_getLogs'))),
+          attempt(200, okBody(1), rpcReq(call(1, 'eth_getLogs')), 'https://backup.example'),
+        ),
+      );
+      expect(out).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    it('clears a client fault the same way', () => {
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(400, errBody(1, rpcErr(-32602)), rpcReq(call(1))),
+          attempt(200, okBody(1), rpcReq(call(1))),
+        ),
+      );
+      expect(out).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    it('does NOT let an earlier success clear a later failure', () => {
+      // A read that worked and then died for good is a real failure;
+      // cancelling it would hide exactly the mid-run degradation this
+      // drive exists to notice.
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(200, okBody(1), rpcReq(call(1, 'eth_getLogs'))),
+          attempt(429, 'slow down', rpcReq(call(1, 'eth_getLogs'))),
+        ),
+      );
+      expect(out.unreachable).toHaveLength(1);
+    });
+
+    it('only clears the SAME logical call', () => {
+      // A different read succeeding says nothing about this one.
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(429, 'slow down', rpcReq(call(1, 'eth_getLogs'))),
+          attempt(200, okBody(2), rpcReq(call(2, 'eth_getBalance'))),
+        ),
+      );
+      expect(out.unreachable).toHaveLength(1);
+      expect(out.unreachable[0].why).toContain('eth_getLogs');
+    });
+
+    it('distinguishes the same method on different params', () => {
+      const a = rpcReq(call(1, 'eth_call', ['0xAAA']));
+      const b = rpcReq(call(2, 'eth_call', ['0xBBB']));
+      const out = summariseRpcLedger(
+        ledgerOf(attempt(429, 'slow down', a), attempt(200, okBody(2), b)),
+      );
+      expect(out.unreachable).toHaveLength(1);
+    });
+
+    it('collapses a read retried to death into one entry', () => {
+      const req = rpcReq(call(1, 'eth_getLogs'));
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(429, 'slow down', req),
+          attempt(429, 'slow down', req),
+          attempt(429, 'slow down', req),
+        ),
+      );
+      expect(out.unreachable).toHaveLength(1);
+    });
+
+    it('reports a batch sibling that never recovered while clearing one that did', () => {
+      const batch = rpcReq(call(1, 'eth_call'), call(2, 'eth_getLogs'));
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(200, JSON.stringify([
+            { jsonrpc: '2.0', id: 1, error: rpcErr(-32005) },
+            { jsonrpc: '2.0', id: 2, error: rpcErr(-32005) },
+          ]), batch),
+          attempt(200, okBody(1), rpcReq(call(1, 'eth_call'))),
+        ),
+      );
+      expect(out.unreachable).toHaveLength(1);
+      expect(out.unreachable[0].why).toContain('eth_getLogs');
+    });
   });
 });

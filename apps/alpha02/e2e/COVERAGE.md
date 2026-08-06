@@ -108,10 +108,35 @@ JSON-RPC error, so the same three-way split has to decide here too, with
 every healthy run. A batch is judged member by member and reported as
 ONE entry per verdict, because the count is of page requests.
 
+The unit of judgement is the CALL, not the HTTP envelope, and three
+things go wrong when the envelope is treated as the unit. A non-2xx is
+not automatically "no answer": a provider returning 400 with a
+well-formed JSON-RPC error has received and rejected the page's request,
+and the RPC client passes that straight through to the app — so it is a
+client fault, and only a status the page itself cannot see past ends the
+question. Mirror the client's own test for that exactly (both a numeric
+code and a string message, on a single non-array body), because what
+matters is what the PAGE experiences, not what seems reasonable. A batch
+response that OMITS a member answers every call but one, and batches
+resolve POSITIONALLY — a dropped member does not merely yield
+`undefined`, it can hand one call another call's answer — so an
+unanswered request id is unreachable. And two calls in one batch can
+deserve different verdicts.
+
+A single attempt cannot settle any of it. The RPC client retries a
+failed read by default and the app wraps its transports in a fallback
+list, so the shim sees ATTEMPTS while the page experiences one logical
+read. Judge per logical call — method plus params — and let a LATER
+success clear an earlier failure. Only later: a read that worked and
+then died for good is a genuine failure, and letting an early success
+cancel it would hide exactly the mid-run degradation the drive exists to
+notice. The driver's OWN reads need no such reconciliation, because
+there the client exhausts its retries internally and throws once.
+
 Test the WIRING, not just the predicate. A correct verdict filed into
 the wrong bucket is the same defect in a different coat, so the step
-that files a response into the malformed-vs-unreachable buckets is
-itself an exported, tested function rather than a few lines inline at
+that turns the attempt ledger into the malformed-vs-unreachable buckets
+is itself an exported, tested function rather than a few lines inline at
 the call site.
 
 The app-vs-infrastructure distinction only applies to PAGE traffic. A
