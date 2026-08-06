@@ -619,8 +619,26 @@ sits at the single canonical point (Base finalization):
    Holds by construction: each absorbed unit contributes at most `1/W` to each
    of the W following days' `Ā`, so its lifetime contribution to recycled
    budgets is at most `(1 − m)` of itself.
-6. Per-chain `consumedCumulative ≤ reportedCumulative`; duplicate broadcast is
-   a no-op; missed report self-heals (all carried over from the prior design).
+6. Per-chain commitment bound — `max(consumed − released, 0) ≤ reported`,
+   **subtraction-first**; duplicate broadcast is a no-op; missed report
+   self-heals (the latter two carried over from the prior design).
+
+   This invariant is what `MeshLedger.invariant.t.sol` cites as "§7 #6", so
+   the wording here is load-bearing. It is **not** the bare
+   `consumedCumulative ≤ reportedCumulative` an earlier revision stated:
+   B3's release makes a commitment released un-spent legitimately
+   re-committable, so `consumed` is deliberately unbounded by `reported`
+   (report 100 → consume 100 → release 100 → consume it again is valid at
+   `consumed = 200, released = 100, reported = 100`), and a check written
+   from the bare form rejects a healthy state. Nor is it the algebraically
+   equal `consumed ≤ reported + released`: a reported cumulative is
+   unbounded, so the addition overflows on a hostile report and reverts
+   instead of comparing. Once #1568 repatriation lands the bound extends to
+   `max(consumed − released, 0) + max(repatDebited − repatReleased, 0) ≤
+   reported` — the two draw ledgers are disjoint. The availability formula
+   this mirrors is single-sourced in
+   [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
+   §3.6a; state it in neither place twice.
 7. Anti-gaming economic check (property test), **scoped to the coupled term**
    (Codex #1257 r1): the *marginal* recycled budget attributable to a wash
    cycle's own absorption returns at most `(1 − m)` of what was absorbed —
@@ -654,7 +672,7 @@ sits at the single canonical point (Base finalization):
    `recycleCreditedCumulative == 0`, which a fresh chain also satisfies, and `creditedCumulative` is reproducible from those
    same slots as `max(raw, bucket + paidOut − relocated)`.
 
-   Both exist because invariant 6's per-chain `consumed ≤ reported`
+   Both exist because invariant 6's per-chain commitment bound
    compares the reported cumulative against the canonical chain's accepted
    COPY of it, and both are produced by the same helper — a regression in
    that helper inflates them together and the comparison stays green. These

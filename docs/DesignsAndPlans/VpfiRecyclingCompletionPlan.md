@@ -345,8 +345,10 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
 
 Kept from the parked plan verbatim: commitment semantics (broadcast
 *commits*; bucket debited pro-rata at claim/remit), whole-day idempotency
-stamp covering every bucket-touching field, `consumed ≤ reported` per
-chain, source-scoped netting with commitment-netted `availRecycled`,
+stamp covering every bucket-touching field, the per-chain commitment bound
+(governor §7 #6, subtraction-first — *not* the bare `consumed ≤ reported`,
+which B3's release falsifies), source-scoped netting with commitment-netted
+`availRecycled`,
 per-destination values with a **replay-stable binding**: alignment to
 the mutable `broadcastDestinationChainIds` list alone is NOT stable —
 a message built before a list reorder/add/remove would decode against

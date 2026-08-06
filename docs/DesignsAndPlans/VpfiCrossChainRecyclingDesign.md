@@ -213,7 +213,10 @@ Invariants (test + transparency surface):
   global cap (which the token enforces regardless). This is the accounting
   decision that makes "recycling extends the runway" literally true, and it
   needs an explicit TokenomicsTechSpec §4/§9 statement.
-- per chain: `consumedCumulative ≤ reportedCumulative`.
+- per chain: the **commitment invariant** — ONE statement, and it lives in
+  §3.6a alongside the availability formula it is the mirror image of. It is a
+  subtraction-first bound, *not* `consumedCumulative ≤ reportedCumulative`
+  (that form is false once a released commitment can be re-committed).
 - per day: `freshMint[D] + min(totalRecycledConsumed[D], dailyPool[D])
   == dailyPool[D]` — with any excess of `totalRecycledConsumed` over the
   pool equal to `recycledDust[D]` (the round-up overfund, bounded by
@@ -246,9 +249,9 @@ keeperAllocate[c][D] = min(reportedInflow[c][D] × keeperBps / 10_000,
 ```
 
 so `recycleConsume + keeperAllocate ≤ availRecycled` by construction and
-the `consumedCumulative ≤ reportedCumulative` invariant is preserved. A
-day whose claims exhaust the bucket simply funds no keeper allocation
-that day.
+the **commitment invariant** (§3.6a — one statement, subtraction-first) is
+preserved. A day whose claims exhaust the bucket simply funds no keeper
+allocation that day.
 
 ### 3.6 Surplus handling (the only place tokens still travel)
 
@@ -313,6 +316,41 @@ chain and never entered its availability, so charging them to `consumed` would
 subtract availability the chain never had — understating `availRecycled` by the
 recovered amount, permanently, on every recovery. The two modes share a
 transport and nothing else.
+
+#### The commitment invariant is this same formula read as a bound
+
+The availability formula and the per-chain commitment invariant are **one
+proposition**, not two. Availability is the quantity; the invariant is the
+statement that the quantity never had to saturate. They drifted apart because
+they were maintained as independent sentences (Codex #1574 r6 P1), so:
+
+- the **formula** is stated above, in this section, and nowhere else;
+- the **numbered invariant** is
+  [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md)
+  §7 #6 — the list `MeshLedger.invariant.t.sol` cites *by number*, corrected in
+  the same change that added this paragraph;
+- everywhere else — §3.4, §3.5, the completion plan, a test docstring — **points
+  at one of those two.** A third restatement is the defect.
+
+**The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
+appear as a current claim anywhere.** Release exists precisely so a commitment
+released un-spent can be committed again, so `consumed` is *deliberately*
+unbounded by `reported` in healthy states: report 100 → consume 100 → release
+100 → consume that same 100 again is valid at `consumed = 200, released = 100,
+reported = 100`. A test or transparency check written from the bare form
+**rejects a healthy B3 state.** The correct forms are
+
+- **claim-side, implemented today:** `max(consumed − released, 0) ≤ reported`;
+- **with repatriation, what #1568 Mode A must establish:**
+  `max(consumed − released, 0) + max(repatDebited − repatReleased, 0) ≤ reported`
+  — the two draw ledgers are disjoint, so the bound is on their sum.
+
+Write it subtraction-first for the overflow reason the availability formula
+gives above, **not** as the algebraically-equal `consumed ≤ reported +
+released`: a mirror's reported cumulative is unbounded, so the addition form
+reverts on a hostile near-max report instead of failing the comparison. The two
+are equal over ℝ and different over `uint256`, which is the only arithmetic
+that runs.
 
 **They therefore need an explicit MODE DISCRIMINATOR on the wire**, and Base
 must reject a payload whose mode does not match the ledger action it is about
