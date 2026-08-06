@@ -34,6 +34,7 @@ import {
   placeholderDrift,
   unknownKeys,
   emptyTranslations,
+  requiredLiteralProblems,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -46,17 +47,17 @@ const flag = (name: string): string | undefined => {
 const localesDirArg = flag('--locales-dir');
 const patchesDirArg = flag('--patches');
 const reorder = args.includes('--reorder');
-const exemptionsArg = flag('--exemptions');
-const fileExemptions = loadExemptions(
-  exemptionsArg ? path.resolve(process.env.INIT_CWD ?? process.cwd(), exemptionsArg) : undefined,
+const policyArg = flag('--policy');
+const policy = loadPolicy(
+  policyArg ? path.resolve(process.env.INIT_CWD ?? process.cwd(), policyArg) : undefined,
 );
 const allowedOmissions = new Set([
-  ...fileExemptions.omissions,
+  ...policy.omissions,
   ...collectAllowedOmissions(args),
 ]);
-const allowedEmpty = new Set([...fileExemptions.empty, ...collectAllowedEmpty(args)]);
+const allowedEmpty = new Set([...policy.empty, ...collectAllowedEmpty(args)]);
 if (!localesDirArg || !patchesDirArg) {
-  console.error('Usage: --locales-dir <path> --patches <path> [--exemptions <path>] [--reorder]');
+  console.error('Usage: --locales-dir <path> --patches <path> [--policy <path>] [--reorder]');
   process.exit(1);
 }
 // pnpm --filter runs with cwd = the package dir; INIT_CWD is where the
@@ -145,8 +146,9 @@ function collectAllowedEmpty(argv) {
 }
 
 /**
- * Load per-(locale, key) exemptions from a COMMITTED record, merged
- * with any passed on the command line.
+ * Load the per-repo translation POLICY from a COMMITTED record —
+ * required literals plus the narrow linguistic exemptions — merged with
+ * any exemptions passed on the command line.
  *
  * The file is the primary channel and the flags are the escape hatch
  * for a one-off. Repeating an exemption on every run is how it becomes
@@ -155,14 +157,20 @@ function collectAllowedEmpty(argv) {
  * (Arabic's dual, Japanese's trailing verb) records them once and every
  * ingestion path reads the same answers.
  */
-function loadExemptions(file) {
-  if (!file) return { omissions: new Set(), empty: new Set() };
+function loadPolicy(file) {
+  if (!file) {
+    return { omissions: new Set(), empty: new Set(), requiredLiterals: {} };
+  }
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   const omissions = new Set();
   for (const [pair, entry] of Object.entries(raw.omissions ?? {})) {
     for (const token of entry.tokens ?? []) omissions.add(`${pair}:${token}`);
   }
-  return { omissions, empty: new Set(Object.keys(raw.empty ?? {})) };
+  return {
+    omissions,
+    empty: new Set(Object.keys(raw.empty ?? {})),
+    requiredLiterals: raw.requiredLiterals ?? {},
+  };
 }
 
 
@@ -287,11 +295,19 @@ for (const file of patchFiles) {
   const drifted = leafTypeDrift(enJson, patch);
   const interpolation = interpolationProblems(enJson, patch, allowedOmissions, code);
   const empties = emptyProblems(enJson, patch, allowedEmpty, code);
+  // Checked on the PATCH, so a delivery that translates a typed-
+  // confirmation word is rejected outright rather than written and
+  // then reported: this is the one class where the written file makes
+  // the gate unpassable for that language, and reverting it is manual.
+  // (The merged bundle is checked too, further down, for a literal the
+  // locale had already lost.)
+  const literals = requiredLiteralProblems(patch, policy.requiredLiterals);
   if (
     strayKeys.length > 0 ||
     drifted.length > 0 ||
     interpolation.length > 0 ||
-    empties.length > 0
+    empties.length > 0 ||
+    literals.length > 0
   ) {
     console.error(`✗ ${code}: patch rejected, nothing written`);
     for (const key of strayKeys.slice(0, 10)) {
@@ -302,6 +318,7 @@ for (const file of patchFiles) {
     }
     for (const line of interpolation.slice(0, 10)) console.error(`    ${line}`);
     for (const line of empties.slice(0, 10)) console.error(`    ${line}`);
+    for (const line of literals.slice(0, 10)) console.error(`    ${line}`);
     failures += 1;
     continue;
   }
@@ -338,6 +355,10 @@ for (const file of patchFiles) {
     ),
     ...interpolationProblems(enJson, merged, allowedOmissions, code),
     ...emptyProblems(enJson, merged, allowedEmpty, code),
+    // A typed-confirmation word that did not survive translation. The
+    // prompt glossary cannot hold this — it is advisory, and this path
+    // never consulted it at all (Codex #1563 r17).
+    ...requiredLiteralProblems(merged, policy.requiredLiterals),
   ];
 
   const filled =

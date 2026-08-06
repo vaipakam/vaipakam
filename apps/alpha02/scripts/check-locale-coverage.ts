@@ -36,7 +36,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  containsToken,
   emptyTranslations,
+  leafAt,
   leafPaths,
   leafTypeDrift,
   missingSubtree,
@@ -88,7 +90,7 @@ const isKnownGap = (code: string, key: string): boolean =>
 
 /**
  * Per-(locale, key) exemptions, read from the COMMITTED record at
- * `src/i18n/translation-exemptions.json`.
+ * `src/i18n/translation-policy.json`.
  *
  * In a file rather than inline here because the shared `merge-patch`
  * and `translate --missing-only` scripts need the same answers, and
@@ -109,22 +111,23 @@ const isKnownGap = (code: string, key: string): boolean =>
  * which no other check can see: the key is present, the value is a
  * valid string, and there are no tokens to compare.
  */
-interface ExemptionRecord {
+interface PolicyRecord {
+  requiredLiterals: Record<string, string[]>;
   omissions: Record<string, { tokens: string[]; reason: string }>;
   empty: Record<string, string>;
 }
-const EXEMPTIONS_PATH = path.resolve(
+const POLICY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
   'src',
   'i18n',
-  'translation-exemptions.json',
+  'translation-policy.json',
 );
-const EXEMPTIONS = JSON.parse(
-  fs.readFileSync(EXEMPTIONS_PATH, 'utf8'),
-) as ExemptionRecord;
-const ALLOWED_OMISSIONS = EXEMPTIONS.omissions;
-const ALLOWED_EMPTY = EXEMPTIONS.empty;
+const POLICY = JSON.parse(
+  fs.readFileSync(POLICY_PATH, 'utf8'),
+) as PolicyRecord;
+const ALLOWED_OMISSIONS = POLICY.omissions;
+const ALLOWED_EMPTY = POLICY.empty;
 
 /** Is every dropped token covered by this leaf's exemption? */
 function omissionAllowed(code: string, leafPath: string, dropped: string[]): boolean {
@@ -149,14 +152,8 @@ function omissionAllowed(code: string, leafPath: string, dropped: string[]): boo
  * every speaker of that language — a dead end with no error message,
  * because from the app's side the user simply hasn't typed it yet.
  */
-const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> = {
-  // IMPORTED, never restated. A guard holding its own copy of the value
-  // it guards can go green while the gate has moved: change
-  // CONFIRM_WORD alone and every translated prompt would still say
-  // "CONFIRM" — which this check would happily confirm — while the page
-  // compares against the new word (Codex #1563 r14).
-  'copy.recover.confirmPrompt': [CONFIRM_WORD],
-};
+const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> =
+  POLICY.requiredLiterals;
 
 /**
  * The recovery declaration this repo's nine translations were authored
@@ -190,36 +187,6 @@ const REQUIRED_LITERALS: Readonly<Record<string, readonly string[]>> = {
 const ACK_TEXT_TRANSLATED_AGAINST =
   '32457a8662663726ac9c701a5786520c82ed28e35aee3306218b9a75865f918f';
 
-/**
- * Does `value` contain `literal` as a STANDALONE token?
- *
- * Substring matching was not enough (Codex #1563 r2): Spanish
- * "Escribe CONFIRMAR" and English "Type CONFIRMATION" both contain
- * `CONFIRM` while instructing the user to type something that can
- * never equal it — the exact dead end the check exists to prevent.
- *
- * The boundary is ASCII-alphanumeric only, deliberately. The failure
- * mode is a Latin word EXTENDING the token (CONFIRMAR / CONFIRMATION);
- * a locale that abuts it with its own script — Japanese
- * "CONFIRMと入力" — is typing the right word and must pass.
- */
-function containsToken(value: string, literal: string): boolean {
-  const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(value);
-}
-
-/** Read a dot-path leaf, or undefined. */
-function leafAt(bundle: Bundle, dotted: string): unknown {
-  return dotted
-    .split('.')
-    .reduce<unknown>(
-      (node, key) =>
-        node && typeof node === 'object' && !Array.isArray(node)
-          ? (node as Record<string, unknown>)[key]
-          : undefined,
-      bundle,
-    );
-}
 
 const read = (code: string): Bundle =>
   JSON.parse(
@@ -256,6 +223,17 @@ function readOrDamaged(code: string): Bundle | null {
 const en = read('en');
 const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
 const problems: string[] = [];
+
+// The policy file is data, so it can drift from the constant the app
+// actually compares against. Cross-check rather than trust it: a guard
+// reading a stale literal is the same failure as a guard restating one
+// (Codex #1563 r14/r17).
+if (!REQUIRED_LITERALS['copy.recover.confirmPrompt']?.includes(CONFIRM_WORD)) {
+  problems.push(
+    'translation-policy.json requiredLiterals["copy.recover.confirmPrompt"] does not ' +
+      `list "${CONFIRM_WORD}" — the word Recover.tsx compares typed input against`,
+  );
+}
 
 /** Missing-key paths per locale, computed ONCE in the validation loop
  *  below and reused by the stale-baseline check and `--prune`. Both of

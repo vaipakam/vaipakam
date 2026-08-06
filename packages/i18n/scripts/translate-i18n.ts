@@ -56,6 +56,7 @@ import {
   placeholderDrift,
   unknownKeys,
   emptyTranslations,
+  requiredLiteralProblems,
   type Bundle,
 } from '../src/bundleOps.ts';
 
@@ -238,8 +239,9 @@ function collectAllowedEmpty(argv) {
 }
 
 /**
- * Load per-(locale, key) exemptions from a COMMITTED record, merged
- * with any passed on the command line.
+ * Load the per-repo translation POLICY from a COMMITTED record —
+ * required literals plus the narrow linguistic exemptions — merged with
+ * any exemptions passed on the command line.
  *
  * The file is the primary channel and the flags are the escape hatch
  * for a one-off. Repeating an exemption on every run is how it becomes
@@ -248,14 +250,20 @@ function collectAllowedEmpty(argv) {
  * (Arabic's dual, Japanese's trailing verb) records them once and every
  * ingestion path reads the same answers.
  */
-function loadExemptions(file) {
-  if (!file) return { omissions: new Set(), empty: new Set() };
+function loadPolicy(file) {
+  if (!file) {
+    return { omissions: new Set(), empty: new Set(), requiredLiterals: {} };
+  }
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   const omissions = new Set();
   for (const [pair, entry] of Object.entries(raw.omissions ?? {})) {
     for (const token of entry.tokens ?? []) omissions.add(`${pair}:${token}`);
   }
-  return { omissions, empty: new Set(Object.keys(raw.empty ?? {})) };
+  return {
+    omissions,
+    empty: new Set(Object.keys(raw.empty ?? {})),
+    requiredLiterals: raw.requiredLiterals ?? {},
+  };
 }
 
 
@@ -349,17 +357,17 @@ async function main() {
 
   const missingOnly = args.includes('--missing-only');
   const reorder = args.includes('--reorder');
-  const exemptionsArg = readFlagValue('--exemptions');
-  const fileExemptions = loadExemptions(
-    exemptionsArg
-      ? path.resolve(process.env.INIT_CWD ?? process.cwd(), exemptionsArg)
+  const policyArg = readFlagValue('--policy');
+  const policy = loadPolicy(
+    policyArg
+      ? path.resolve(process.env.INIT_CWD ?? process.cwd(), policyArg)
       : undefined,
   );
   const allowedOmissions = new Set([
-    ...fileExemptions.omissions,
+    ...policy.omissions,
     ...collectAllowedOmissions(args),
   ]);
-  const allowedEmpty = new Set([...fileExemptions.empty, ...collectAllowedEmpty(args)]);
+  const allowedEmpty = new Set([...policy.empty, ...collectAllowedEmpty(args)]);
   const allFlag = args.includes('--all');
   // Positional args are locale codes — but only the ones that aren't
   // the VALUE of a flag. Skipping just `--locales-dir` meant
@@ -372,7 +380,7 @@ async function main() {
     '--locales-dir',
     '--allow-omission',
     '--allow-empty',
-    '--exemptions',
+    '--policy',
   ]);
   const BOOLEAN_FLAGS = new Set(['--missing-only', '--reorder', '--all']);
 
@@ -411,6 +419,17 @@ async function main() {
    * what is not true when a bundle was unreadable.
    */
   const unreadable: LocaleCode[] = [];
+  /** Readable bundles already holding invalid values, found at discovery. */
+  const preExisting = new Map<LocaleCode, string[]>();
+  const carriedProblems = (code: LocaleCode, bundle: Bundle): string[] => [
+    ...unknownKeys(enJson, bundle).map((k) => `not in en.json: ${k}`),
+    ...leafTypeDrift(enJson, bundle).map(
+      ({ path: leaf, expected, actual }) => `${leaf}: expected ${expected}, got ${actual}`,
+    ),
+    ...interpolationProblems(enJson, bundle, allowedOmissions, code),
+    ...emptyProblems(enJson, bundle, allowedEmpty, code),
+    ...requiredLiteralProblems(bundle, policy.requiredLiterals),
+  ];
 
   let targets: LocaleCode[];
   if (explicitCodes.length > 0) {
@@ -439,6 +458,17 @@ async function main() {
         unreadable.push(c);
         return false;
       }
+      // Scan EVERY readable bundle, not only the ones with gaps. A
+      // locale holding all of en.json's keys but an invalid VALUE — a
+      // dropped placeholder, an empty string, a wrong-typed leaf — has
+      // nothing to fill, so it never became a target and the
+      // post-merge check never ran: the sweep printed "Every
+      // translated locale already covers en.json" and exited 0 over a
+      // broken bundle (Codex #1563 r17). Coverage is about keys;
+      // this is about whether the values are usable, and a sweep that
+      // reports the first cannot imply the second.
+      const carried = carriedProblems(c, bundle);
+      if (carried.length > 0) preExisting.set(c, carried);
       return missingSubtree(enJson, bundle) !== null;
     });
   } else {
@@ -457,6 +487,14 @@ async function main() {
     });
   }
 
+  for (const [code, lines] of preExisting) {
+    console.error(
+      `⚠ ${code}: ${lines.length} pre-existing problem(s) in this bundle — ` +
+        'NOT introduced by this run:',
+    );
+    for (const line of lines.slice(0, 10)) console.error(`      ${line}`);
+  }
+
   if (unreadable.length > 0) {
     console.error(
       `⚠ skipped ${unreadable.length} unreadable bundle(s): ${unreadable.join(', ')} — ` +
@@ -470,6 +508,14 @@ async function main() {
     // Either mode's no-op message is a claim about every locale, and a
     // bundle that could not be parsed was never examined — borrowing
     // that line for it is the most misleading outcome the script has.
+    if (preExisting.size > 0) {
+      console.error(
+        `Nothing to fill, but ${preExisting.size} readable bundle(s) hold invalid ` +
+          `values: ${[...preExisting.keys()].join(', ')}. Coverage is not the same as health.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
     if (unreadable.length > 0) {
       console.error(
         `Nothing to translate among the readable locales, but ${unreadable.length} ` +
@@ -587,6 +633,7 @@ async function main() {
           ),
           ...interpolationProblems(enJson, merged, allowedOmissions, code),
           ...emptyProblems(enJson, merged, allowedEmpty, code),
+          ...requiredLiteralProblems(merged as Bundle, policy.requiredLiterals),
         ];
         if (carried.length > 0) {
           // The translation IS written — it is valid, and discarding it
@@ -630,7 +677,12 @@ async function main() {
         `problems: ${carriedDamage.join(', ')}`,
     );
   }
-  if (failed.length > 0 || unreadable.length > 0 || carriedDamage.length > 0) {
+  if (
+    failed.length > 0 ||
+    unreadable.length > 0 ||
+    carriedDamage.length > 0 ||
+    preExisting.size > 0
+  ) {
     process.exitCode = 1;
   }
 }

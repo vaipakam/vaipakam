@@ -62,7 +62,7 @@ it in, leaving reviewed strings untouched:
 ```bash
 ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
   --locales-dir apps/alpha02/src/i18n/locales --missing-only \
-  --exemptions apps/alpha02/src/i18n/translation-exemptions.json
+  --policy apps/alpha02/src/i18n/translation-policy.json
 ```
 
 If the translations arrive some other way (a translator's hand-back, a
@@ -72,10 +72,10 @@ a directory and merge them the same way:
 ```bash
 pnpm --filter @vaipakam/i18n merge-patch -- \
   --locales-dir apps/alpha02/src/i18n/locales --patches path/to/patches \
-  --exemptions apps/alpha02/src/i18n/translation-exemptions.json
+  --policy apps/alpha02/src/i18n/translation-policy.json
 ```
 
-Pass `--exemptions` on both. Each run validates the WHOLE merged bundle,
+Pass `--policy` on both. Each run validates the WHOLE merged bundle,
 not just the incoming translations, so a value the locale had already
 lost — an `{{amount}}` that vanished in an earlier delivery, a leaf
 holding a number where English has a sentence — is reported instead of
@@ -119,11 +119,22 @@ message prints the exact flag to paste. Use it only where the target
 grammar already carries the value.
 
 For a STANDING exemption — one the locale will always need — record it
-in `src/i18n/translation-exemptions.json` instead. That file is the
-single record `check-locale-coverage.ts` and both merge paths read, so
-the exemption is stated once with its linguistic reason rather than
-restated on every command line. The `--allow-*` flags remain for a
-genuine one-off.
+in `src/i18n/translation-policy.json` instead. That file is the single
+record `check-locale-coverage.ts` and both merge paths read, so the
+exemption is stated once with its linguistic reason rather than restated
+on every command line. The `--allow-*` flags remain for a genuine
+one-off.
+
+The same file carries `requiredLiterals`: strings the app compares TYPED
+USER INPUT against, like the `CONFIRM` a user must type to arm the
+recovery signature. A locale that translates one renders a gate nobody
+speaking that language can pass — they type the word the page asks for,
+it never matches, and the button stays disabled with no error. Both
+ingestion paths REJECT a delivery that breaks one, and the check is a
+standalone-token match, so `Escribe CONFIRMAR` fails while
+`CONFIRMと入力` passes. Enforced in the shared scripts rather than only
+in this app's guard, because the surfaces at risk include apps with no
+coverage command of their own.
 
 An EMPTY translation is rejected the same way (`--allow-empty
 "<locale>:<key>"`), because no other check can see one: the key is

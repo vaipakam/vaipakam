@@ -444,3 +444,66 @@ export function leafPaths(bundle: Bundle, prefix = ''): string[] {
       : [`${prefix}${key}`],
   );
 }
+
+/**
+ * Does `value` contain `literal` as a STANDALONE token?
+ *
+ * Substring matching is not enough for a typed-confirmation word:
+ * Spanish "Escribe CONFIRMAR" and English "Type CONFIRMATION" both
+ * CONTAIN `CONFIRM` while instructing the user to type something that
+ * can never equal it — the exact dead end the check exists to prevent.
+ *
+ * The boundary is ASCII-alphanumeric only, deliberately. The failure
+ * mode is a Latin word EXTENDING the token (CONFIRMAR / CONFIRMATION);
+ * a locale that abuts it with its own script — Japanese "CONFIRMと入力"
+ * — is typing the right word and must pass.
+ */
+export function containsToken(value: string, literal: string): boolean {
+  const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9])${escaped}([^A-Za-z0-9]|$)`).test(value);
+}
+
+/** Read a dot-path leaf from a bundle, or undefined. */
+export function leafAt(bundle: Bundle, dotted: string): unknown {
+  return dotted
+    .split('.')
+    .reduce<unknown>(
+      (node, key) =>
+        node && typeof node === 'object' && !Array.isArray(node)
+          ? (node as Record<string, unknown>)[key]
+          : undefined,
+      bundle,
+    );
+}
+
+/**
+ * Leaves whose value has lost a literal the app compares typed input
+ * against, as human-readable lines. Empty when the candidate is clean.
+ *
+ * Prompt guidance cannot hold this: the glossary is advisory, the API
+ * path's glossary check is warning-only AND substring-based, and the
+ * hand-patch path never consults it at all — so `Escribe CONFIRMAR`
+ * sailed through both (Codex #1563 r17). It has to be a rejection at
+ * ingestion, in the SHARED scripts, because the surfaces at risk
+ * include apps with no locale-coverage guard of their own:
+ * `apps/defi`'s recovery page compares typed input against the same
+ * literal and has nothing downstream to catch a translated prompt.
+ */
+export function requiredLiteralProblems(
+  candidate: Bundle,
+  required: Record<string, readonly string[]>,
+): string[] {
+  const lines: string[] = [];
+  for (const [key, literals] of Object.entries(required)) {
+    const value = leafAt(candidate, key);
+    if (typeof value !== 'string') continue; // absent / drifted — reported elsewhere
+    for (const literal of literals) {
+      if (containsToken(value, literal)) continue;
+      lines.push(
+        `${key}: must contain the standalone token "${literal}" — the app compares ` +
+          'typed input against it, so a translated or extended word can never match',
+      );
+    }
+  }
+  return lines;
+}
