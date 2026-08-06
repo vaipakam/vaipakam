@@ -203,6 +203,15 @@ const en = read('en');
 const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
 const problems: string[] = [];
 
+/** Missing-key paths per locale, computed ONCE in the validation loop
+ *  below and reused by the stale-baseline check and `--prune`. Both of
+ *  those used to re-read and re-scan the whole bundle per BASELINE PAIR
+ *  — 1,467 full parses and traversals of nine ~200 KB files on every
+ *  `typecheck`, for nine distinct answers (Codex #1563 r9). A locale
+ *  with NO entry here is one whose file is missing entirely: its
+ *  bundle was never read, so nothing is known about it. */
+const missingByLocale = new Map<string, ReadonlySet<string>>();
+
 for (const code of translated) {
   const file = path.join(LOCALES_DIR, `${code}.json`);
   if (!fs.existsSync(file)) {
@@ -212,9 +221,9 @@ for (const code of translated) {
   const bundle = read(code);
 
   const missing = missingSubtree(en, bundle);
-  const unexplained = (missing ? leafPaths(missing) : []).filter(
-    (key) => !isKnownGap(code, key),
-  );
+  const missingKeys = new Set(missing ? leafPaths(missing) : []);
+  missingByLocale.set(code, missingKeys);
+  const unexplained = [...missingKeys].filter((key) => !isKnownGap(code, key));
   if (unexplained.length > 0) {
     problems.push(
       `${code}: missing ${unexplained.length} key(s) — ${unexplained
@@ -286,9 +295,12 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
       stalePairs.push(`${code}:${key} (not a translated locale)`);
       continue;
     }
-    const missing = missingSubtree(en, read(code));
-    const stillMissing = (missing ? leafPaths(missing) : []).includes(key);
-    if (!stillMissing) stalePairs.push(`${code}:${key}`);
+    // No entry = the locale's file is missing (already reported above),
+    // so its gaps are unrefuted, not stale.
+    const missing = missingByLocale.get(code);
+    if (missing !== undefined && !missing.has(key)) {
+      stalePairs.push(`${code}:${key}`);
+    }
   }
 }
 const pruning = process.argv.includes('--prune');
@@ -310,8 +322,17 @@ if (stalePairs.length > 0 && !pruning) {
 if (pruning) {
   const pruned: Record<string, string[]> = {};
   for (const code of translated) {
-    const missing = missingSubtree(en, read(code));
-    for (const key of missing ? leafPaths(missing) : []) {
+    const missing = missingByLocale.get(code);
+    if (missing === undefined) {
+      // File missing entirely — nothing was observed, so carry this
+      // locale's baseline through untouched rather than pruning every
+      // pair on the strength of a bundle we never read.
+      for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
+        if (codes.includes(code)) (pruned[key] ??= []).push(code);
+      }
+      continue;
+    }
+    for (const key of missing) {
       if (!isKnownGap(code, key)) continue; // a NEW gap is a failure, not a baseline entry
       (pruned[key] ??= []).push(code);
     }

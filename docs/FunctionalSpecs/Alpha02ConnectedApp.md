@@ -517,6 +517,15 @@ Thin-market honesty rules apply.
   is a constraint on the SIGNED BYTES, not a licence to leave the
   person signing them without comprehension — an acknowledgement the
   user cannot read is not an acknowledgement.
+- That reading aid appears only when a translation genuinely exists for
+  the reader's language. Choosing a language the app does not yet
+  translate, or a translated language whose text fails to load, leaves
+  the page in English throughout — and in that state no aid is shown at
+  all, rather than English text presented as being "in your language".
+  A label claiming a language the text is not written in would be a
+  false statement made at the exact moment the user is affirming they
+  understood what they read. Nothing else about the page changes; the
+  aid reappears on its own if the translation arrives.
 - The plain-language explanation shown when a transaction fails — the
   friendly cause a contract revert is decoded to ("Health factor too
   low", "This offer has expired", "Only the lender can perform this

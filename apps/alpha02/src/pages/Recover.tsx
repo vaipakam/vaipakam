@@ -32,7 +32,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { normalizeToSupportedLocale } from '@vaipakam/i18n';
+import { ownLocaleResource } from '../i18n/ownLocaleResource';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Lock, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
@@ -1086,12 +1086,17 @@ export function Recover() {
   const { data: walletClient } = useWalletClient();
   const queryClient = useQueryClient();
   const sanctions = useSanctionsCheck();
-  // ACTIVE language, not resolvedLanguage — a locale whose bundle is
-  // still a placeholder resolves to English while the user has
-  // deliberately selected it, and they are exactly who the reading aid
-  // below the declaration is for (same rule LanguagePicker uses).
+  // The reading aid below the declaration is only honest if the
+  // reader's OWN bundle actually carries it, so it is gated on the
+  // resource rather than on the language code: what we check is
+  // exactly what we render. `useTranslation` re-renders on the store's
+  // `added` event, so a bundle that lands late switches this on by
+  // itself.
   const { i18n } = useTranslation();
-  const activeLocale = normalizeToSupportedLocale(i18n.language);
+  const localizedAckText = ownLocaleResource(
+    i18n,
+    'copy.recover.ackTextTranslation',
+  );
 
   const [tokenInput, setTokenInput] = useState('');
   const [sourceInput, setSourceInput] = useState('');
@@ -3119,10 +3124,11 @@ export function Recover() {
                 signed text cannot be translated — but rendering ONLY
                 English left a non-English reader attesting, in a
                 language they may not read, that they had understood
-                what they were attesting to (Codex #1563 r8). Shown for
-                non-English locales only, and labelled so which of the
+                what they were attesting to (Codex #1563 r8). Shown
+                only when the reader's own bundle really carries it —
+                see ownLocaleResource — and labelled so which of the
                 two is authoritative is never ambiguous. */}
-            {activeLocale !== 'en' && (
+            {localizedAckText !== null && (
               <>
                 <p className="muted" style={{ margin: 0, fontSize: '0.85em' }}>
                   {copy.recover.ackTextTranslationLabel}
@@ -3137,7 +3143,7 @@ export function Recover() {
                     fontSize: '0.9em',
                   }}
                 >
-                  {copy.recover.ackTextTranslation}
+                  {localizedAckText}
                 </blockquote>
               </>
             )}

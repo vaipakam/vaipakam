@@ -49,8 +49,15 @@ translating the signed bytes is impossible — and it was rendered in English
 only. A reader of another language was therefore attesting, in a language they
 might not read, that they had understood what they were attesting to. The signed
 text is unchanged; a translation of it now appears alongside, labelled so which
-of the two is authoritative is never in doubt. It shows only for readers who
-have chosen another language.
+of the two is authoritative is never in doubt.
+
+That aid appears only when a translation for the reader's language genuinely
+exists. Roughly three times as many languages can be selected as are currently
+translated, and a translated language's text can also fail to load on a bad
+connection; in both cases the page is English throughout. Presenting that English
+under a label reading "in your language" would be a false statement made at the
+precise moment the user affirms they understood what they read, so in that state
+the aid is omitted entirely. It reappears by itself if the translation arrives.
 
 Closes #1560. Follow-up: the remaining 163 keys (offset, tariff, early repay,
 transfer obligation, sale hold, loan sale and a few strays) are tracked
