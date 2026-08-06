@@ -416,9 +416,18 @@ function isCloudflareBeacon({ reason, url: rawUrl }) {
   if (reason !== 'POST (non-RPC mutating request)') return false;
   try {
     const url = new URL(rawUrl);
-    const firstParty =
-      url.hostname === 'vaipakam.com' || url.hostname.endsWith('.vaipakam.com');
-    return firstParty && url.pathname === '/cdn-cgi/rum';
+    // ORIGIN, not hostname: `hostname` ignores both scheme and port, so
+    // `http://alpha02.vaipakam.com/cdn-cgi/rum` (cleartext) and
+    // `https://vaipakam.com:8443/cdn-cgi/rum` (odd port) matched a
+    // hostname test while being nothing Cloudflare's edge would emit
+    // (Codex #1576 r4). `url.origin` folds scheme, host and non-default
+    // port into one comparable value, so the default HTTPS port is the
+    // only one that can match.
+    const firstPartyOrigin =
+      url.protocol === 'https:' &&
+      (url.hostname === 'vaipakam.com' || url.hostname.endsWith('.vaipakam.com')) &&
+      url.origin === `https://${url.hostname}`;
+    return firstPartyOrigin && url.pathname === '/cdn-cgi/rum';
   } catch {
     return false;
   }
