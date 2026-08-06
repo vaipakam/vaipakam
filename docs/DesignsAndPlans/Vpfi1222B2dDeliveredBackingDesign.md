@@ -1700,14 +1700,24 @@ per-chain view.
 > that follows rather than to the gate mechanics above, so the sub-rules of R6
 > run R6b … R6e, then R6a. Do not stop reading at R6e.
 
-**R6 does NOT cap the USER loss, and it must not be read as doing so.** The
-loss is a day lapsing at zero; that happens whether or not a compensation was
-dispatched, because a compensation dispatched into a dead lane does not arrive
-either way. R6 changes *those tokens were sent and came back* into *those
-tokens were never sent* — strictly better operationally, neutral for the user.
-An earlier framing of this bound as "capping the exposure" was wrong in exactly
-the way this section keeps having to correct, so it is stated in its narrow
-form here.
+**R6 does NOT cap the USER loss, and it must not be read as doing so.** In the
+case R6 was designed for — a dead lane — the loss is a day lapsing at zero, and
+that happens whether or not a compensation was dispatched, because a
+compensation sent into a dead lane does not arrive either way. There R6 changes
+*those tokens were sent and came back* into *those tokens were never sent*:
+strictly better operationally, neutral for the user. An earlier framing of this
+bound as "capping the exposure" was wrong in exactly the way this section keeps
+having to correct, so it is stated in its narrow form here.
+
+**But neutrality is NOT universal — R6b is a standing exception** (Codex #1573
+r11 P2). When the **forward lane is healthy and only the ACK lane is down**,
+the first compensation is delivered and consumed while Base cannot see it, so
+the gate suppresses later compensations that the working forward lane **would
+have delivered**. Those days lapse because of the gate, not because of the
+outage. That is R6-*induced* loss, and it is why R6b requires the clearing
+evidence to be permissionlessly re-presentable. Operators and implementers must
+not treat every R6 suppression as pre-existing outage loss: in the split-lane
+case it is new, and it is attributable to this design.
 
 **What WOULD cap the user loss, and why none is taken:**
 
