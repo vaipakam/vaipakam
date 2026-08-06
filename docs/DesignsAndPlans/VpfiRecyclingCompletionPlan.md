@@ -942,8 +942,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    authenticated per-side amounts with the mirror deriving Δ locally; a
    >    permissionless lapse; a dispatch cutoff strictly earlier than it; a
    >    **dedicated fresh-return** recovery (NOT M4 C2, which cannot reach a
-   >    fresh-booked compensation); and the per-day schedule authenticated in
-   >    BOTH domains.
+   >    fresh-booked compensation); the per-day schedule authenticated in
+   >    BOTH domains; and **R6** — no new manual compensation for a chain
+   >    while an earlier one is unresolved, where "unresolved" clears only on
+   >    authenticated recovered receipt and completed reversal, NOT on the
+   >    ACK. R6 bounds the STRANDING, not the user loss, and it suppresses the
+   >    deliveries the counters observe — so the lapse terminal must record
+   >    the loss itself.
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the

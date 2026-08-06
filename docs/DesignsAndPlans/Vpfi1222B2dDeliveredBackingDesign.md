@@ -1245,7 +1245,17 @@ side is materially larger than the original sentence implied.
 **R6. Bound the STRANDING: Base issues no new manual compensation for a chain
 while an earlier one for that chain is unresolved.** Owner-directed
 2026-08-06 (#1571). One compensation per chain may be in flight, so an outage
-strands at most one delivery rather than one per zeroed day — which removes the
+strands at most one delivery rather than one per zeroed day.
+
+**"Unresolved" means SETTLED, not ACKed** (Codex #1573 r6 P1). R4 has the
+mirror finalize/ACK the original reservation *before* starting the fresh-return,
+so treating that ACK as resolution would release the R6 gate while the tokens
+and the Base-side reversal are still outstanding. If the Base→mirror lane
+recovers while the mirror→Base return lane does not, Base would then dispatch
+another compensation and accumulate several quarantined/in-flight returns —
+contradicting the one-stranded-delivery bound R6 exists to create. The per-chain
+gate clears **only after Base authenticates the recovered receipt and completes
+the reversal** — which removes the
 operational pile-up, the repeated fresh-return traffic, and the repeated
 reversal accounting.
 
@@ -1270,9 +1280,22 @@ form here.
   correlated loss straight back for the stall.
 
 So the correlated user loss is **inherent to lapsing on a clock while a lane is
-down**. It is bounded by outage duration, capped by nothing, and the honest
-posture is to **detect and report it** — the uncounted/stranding counters make
-it visible — rather than to claim a bound that does not exist.
+down**. It is bounded by outage duration and capped by nothing.
+
+**R6a — and R6 makes it LESS observable, so the lapse must instrument itself**
+(Codex #1573 r6 P2). An earlier revision said the honest posture was
+detect-and-report, "the uncounted/stranding counters make it visible". **That
+was wrong, and R6 is what makes it wrong**: by suppressing dispatch for every
+zeroed day after the first, R6 ensures those days produce **no delivery at
+all** — and both `rewardBudgetFreshUncounted` and the stranding counters only
+ever observe tokens that were actually sent or received. The days R6 suppresses
+are precisely the bulk of the correlated loss, and they would move no counter.
+
+So the **permissionless lapse terminal must itself record the loss** — the day,
+the chain, and the unpaid amount it retired at zero — rather than relying on
+delivery-side counters that R6 guarantees will stay silent. Without that, the
+one part of this design that was honest about the accepted cost stops being
+able to see it.
 
 The rejected alternative, recorded so the trade is not silently revisited: a
 lapse that does **not** retire entries would avoid the underpayment, but it
