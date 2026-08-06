@@ -1,0 +1,17 @@
+{
+  "_readme": [
+    "Per-repo translation POLICY for apps/defi, read by the local",
+    "translate script.",
+    "",
+    "requiredLiterals — strings the app compares TYPED USER INPUT against.",
+    "  VaultRecover.tsx gates signing on the user typing this word, so a",
+    "  locale that translates the prompt renders a gate nobody speaking",
+    "  that language can pass: they type what the page asks for, it never",
+    "  matches, and the button stays disabled with no error."
+  ],
+  "requiredLiterals": {
+    "vaultRecover.modalConfirmPrompt": [
+      "CONFIRM"
+    ]
+  }
+}

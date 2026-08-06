@@ -582,12 +582,24 @@ async function main() {
       const short = missingSubtree(source, translated);
       const interpolation = interpolationProblems(source, translated, allowedOmissions, code);
       const empties = emptyProblems(source, translated, allowedEmpty, code);
+      // Checked BEFORE the write, in every mode. The carried-damage
+      // scan further down only runs for --missing-only and only AFTER
+      // the file lands, so full/default modes persisted a translated
+      // confirmation word and exited 0, and --missing-only wrote it
+      // and then complained (Codex #1563 r18). A prompt that lost the
+      // literal makes the gate unpassable for that locale and undoing
+      // it is manual, so it must never reach disk.
+      const literals = requiredLiteralProblems(
+        translated as Bundle,
+        policy.requiredLiterals,
+      );
       if (
         strayKeys.length > 0 ||
         drifted.length > 0 ||
         short !== null ||
         interpolation.length > 0 ||
-        empties.length > 0
+        empties.length > 0 ||
+        literals.length > 0
       ) {
         const detail = [
           ...strayKeys.slice(0, 5).map((k) => `not requested: ${k}`),
@@ -595,6 +607,7 @@ async function main() {
           ...(short ? [`incomplete: ${leafPaths(short).length} key(s) missing, e.g. ${leafPaths(short).slice(0, 3).join(', ')}`] : []),
           ...interpolation.slice(0, 5),
           ...empties.slice(0, 5),
+          ...literals.slice(0, 5),
         ].join('; ');
         throw new Error(`response shape rejected — ${detail}`);
       }

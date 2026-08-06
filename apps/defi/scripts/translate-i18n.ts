@@ -40,6 +40,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requiredLiteralProblems } from '@vaipakam/i18n';
 import {
   GLOSSARY_KEEP_VERBATIM,
   GLOSSARY_STYLE_NOTES,
@@ -49,6 +50,31 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = path.resolve(__dirname, '..', 'src', 'i18n', 'locales');
+
+/**
+ * Strings this app compares TYPED USER INPUT against — see
+ * src/i18n/translation-policy.json.
+ *
+ * `VaultRecover` gates signing on the user typing `CONFIRM`, and the
+ * glossary check below cannot protect it: it is warning-only, and it
+ * matches by SUBSTRING, so "Escribe CONFIRMAR" passes while instructing
+ * the user to type a word that can never equal the literal — the gate
+ * becomes unpassable for every speaker of that language, with no error
+ * because from the app's side they simply haven't typed it yet (Codex
+ * #1563 r18).
+ *
+ * This script is the pre-hoist original that packages/i18n was
+ * generalised FROM, so it does not yet share that script's validation.
+ * Migrating this command onto the shared guarded path is tracked in
+ * #1582; until then the literal is enforced here, because the surface
+ * is live either way.
+ */
+const POLICY = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, '..', 'src', 'i18n', 'translation-policy.json'),
+    'utf8',
+  ),
+) as { requiredLiterals: Record<string, string[]> };
 
 const LOCALE_NAMES: Record<LocaleCode, string> = {
   // Already translated
@@ -237,6 +263,16 @@ async function main() {
       const responseText = await callClaude(prompt);
       const translated = extractJson(responseText);
       const warnings = verifyGlossaryPreserved(translated, enRaw);
+      // Reject BEFORE writing. A written prompt that lost the literal
+      // makes the confirmation gate unpassable for that locale, and
+      // undoing it is manual.
+      const literals = requiredLiteralProblems(
+        translated as Record<string, unknown>,
+        POLICY.requiredLiterals,
+      );
+      if (literals.length > 0) {
+        throw new Error(`required literal lost — ${literals.join('; ')}`);
+      }
       const outPath = path.join(LOCALES_DIR, `${code}.json`);
       fs.writeFileSync(outPath, JSON.stringify(translated, null, 2) + '\n');
       console.log('done.');
