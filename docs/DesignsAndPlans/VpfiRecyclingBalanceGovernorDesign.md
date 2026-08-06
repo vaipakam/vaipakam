@@ -575,10 +575,18 @@ sits at the single canonical point (Base finalization):
   dropping the recycled add-on (Codex #1257 r1 P1). The netted CCIP remittance is **source-scoped** (Codex r3): netting
   applies only to the RECYCLED component of a chain's budget —
   `remit_recycled[c] = max(0, chainRecycledBudget[c] − availRecycled[c])`,
-  where `availRecycled[c]` is **commitment-netted** (reported cumulative −
-  consumed cumulative − that chain's outstanding recycled commitments —
-  Codex r4: the old reported-minus-consumed form would let one bucket
-  balance back two days' netting) —
+  where `availRecycled[c]` is the **single-sourced availability formula**
+  ([`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
+  §3.6a) — **not restated here** (Codex #1574 r11 P1). This line previously
+  carried `reported − consumed − outstanding`, which is wrong in three
+  independent ways against the current ledger: `consumed` **already
+  includes** the instructed commitments, so subtracting `outstanding` again
+  **double-counts** and underfunds a healthy mirror; it omits the `released`
+  term B3 added, so a commitment released un-spent never restores that
+  chain's availability; and it omits the repatriation terms, so after #1568
+  Mode A it re-offers tokens that already left. The r4 concern it was written
+  for — one bucket balance backing two days' netting — is what the
+  commitment ledger in the canonical formula handles. —
   while the fresh-floor component always remits from the fresh pool
   (`remit_fresh[c] = chainFreshBudget[c]`). A mirror's bucket can therefore
   never be spent on the fresh floor while the accumulators book those

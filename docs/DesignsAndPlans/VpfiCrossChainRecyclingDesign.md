@@ -132,12 +132,23 @@ Every Diamond (Base included) gains a protocol-owned **recycle bucket**:
   remainders, future service-bond slashes (#1219).
 - Event per credit: `VpfiRecycled(source, refId, amount, dayId)` — the
   indexer/transparency surface derives everything from these.
-- **Three-way tracked-balance separation** with an on-chain invariant:
+- **Tracked-balance separation** with an on-chain invariant:
   `diamond VPFI balance ≥ userLifCustody + unclaimedRewardBudget +
   recycleBucket`. The recycle bucket is protocol-owned; the other two are
   user-owed. No path may pay users from the bucket except the
   Base-authorized consumption below (this is the structural fix direction
   for the L13 commingling finding, extended cross-chain).
+
+  > **It becomes FOUR-way when §3.6a Mode B lands** (Codex #1574 r11 P1). A
+  > **stranded-recovery reservation** — a post-lapse compensation held for
+  > return — is a fourth owner of this balance: not `unclaimedRewardBudget`
+  > (its day lapsed), not the bucket (never reported as that chain's
+  > availability). Left out of this invariant, of
+  > `LibVpfiRecycle.backingPosition`, and of the watcher, the check stays
+  > green while an ordinary fresh claim spends the very tokens Mode B exists
+  > to return. Governor §7 #3 carries the same amendment — this bullet is the
+  > *narrative* statement of the same invariant, and an implementer reading
+  > §3.1 first would otherwise never reach it.
 
 ### 3.2 Reporting — one new field on an existing message
 
@@ -332,16 +343,20 @@ they were maintained as independent sentences (Codex #1574 r6 P1), so:
 - everywhere else **must point at one of those two.** A third restatement is
   the defect.
 
-**This is a RULE, not a claim that the repo currently satisfies it.** Three
-successive revisions asserted the sweep was complete and three were wrong — r7
-missed the governor's numbered invariant, r9 missed the test docstrings and a
-test plan, r10 missed five more sites including one in `B3` and one still
-carrying a pre-B3 `reported − consumed` form. A completeness claim is worth
-less than nothing here: it stops the next reader looking. What is recorded
-instead is the rule above, plus a dated observation — **a repo-wide sweep on
-2026-08-06 found and fixed seven doc restatements**; the code-side ones are
-tracked in **#1577** and are NOT done. Anyone who finds another has found a
-defect, not a counterexample to a claim.
+**This is a RULE. No claim is made about how many copies remain.** Four
+successive revisions asserted the sweep was complete and all four were wrong —
+r7 missed the governor's numbered invariant, r9 the test docstrings and a test
+plan, r10 five more sites, and r11 an **eighth** in the governor's §6 that was
+wrong in three independent ways at once (double-subtracting `outstanding` on
+top of `consumed`, omitting `released`, omitting the repatriation terms).
+
+**A count is itself a claim, and the r10 revision replaced "the sweep is
+complete" with "a sweep found seven" — which was stale within one round.** So
+no number is recorded here either. What is recorded is the rule above, the
+canonical locations, and the fact that the **code-side copies tracked in #1577
+are NOT done**. Anyone who finds another restatement has found a defect, not a
+counterexample to a claim — and should fix it here rather than adding to a
+tally.
 
 **The docs are swept; the CODE is NOT, and this is a scope statement rather
 than a claim of completeness** (Codex #1574 r9 P2 — an earlier revision listed
@@ -611,6 +626,24 @@ challenged and stand.
    itself) and carry it across rotation, or make a rotation itself terminal for
    authorizations the outgoing handler had not executed.
 
+   **The EXECUTION marker needs the same treatment, and fixing only the
+   tombstone made the asymmetry worse** (Codex #1574 r11 P1). 5b's execution
+   marker is equally terminal and was left deployment-local. If the outgoing
+   handler **executed** an authorization and its return is still in flight, a
+   retry or governance replay delivered after rotation reaches the replacement
+   handler with an **empty** marker — so it debits the bucket and bridges the
+   same surplus a second time. Base then settles the first return and has no
+   live authorization for the duplicate, which arrives as an unattributable
+   credit against a closed record.
+
+   Note the direction: the tombstone gap let a *cancelled* authorization
+   execute; this one lets an *executed* authorization execute **again**, which
+   moves real tokens twice. Both markers must be stored or migrated across
+   rotation together, **or** authorizations must be bound to a mirror era that
+   a replacement handler rejects outright — the second is the cleaner rule,
+   since it makes "did the previous handler already act on this?" a question
+   the replacement never has to answer from inherited state.
+
 5b. **A pending authorization must be CONSUMED at the mirror before it sends,
    and be bound to the ISSUING DEPLOYMENT.** Two failure modes, both from
    round 4:
@@ -704,7 +737,7 @@ the wire is cut once even though the two modes ship on different cards.
 | Broadcast (with `recycleConsume`) delayed/lost | Mirror doesn't consume; claims for that day wait exactly as they already do for the denominator; CCIP redelivery / governance replay as today | Consumption and denominator ride the same message — no new partial-state |
 | Remittance (shortfall send) fails | Existing #776 retriable path; claims revert on empty budget until funded — recoverable back-pressure | Unchanged from today |
 | Mirror reorg after report | Cumulative reporting self-heals; `(dayId, chainId)` idempotency unchanged | Same guarantees as §4a interest reports |
-| Bucket accounting bug suspected | The three-way balance invariant is watcher-monitored per chain; drift alarms before insolvency | Extends the existing supply-invariant watch |
+| Bucket accounting bug suspected | The tracked-balance invariant is watcher-monitored per chain; drift alarms before insolvency. **Must gain the stranded-recovery reservation with Mode B (§3.1, §3.6a) — a three-way check would not alarm on a fresh claim spending recovery-reserved tokens** | Extends the existing supply-invariant watch |
 
 ### 3.8 What does NOT change
 
