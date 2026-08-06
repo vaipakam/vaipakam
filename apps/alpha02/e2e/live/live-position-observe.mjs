@@ -82,6 +82,12 @@ import {
   numberToHex,
 } from 'viem';
 import { redactUrl } from './redact.mjs';
+import {
+  EXECUTION_REVERTED,
+  REVERT_BYTES,
+  classifyRpcFailure,
+  codedError,
+} from './rpc-verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -253,6 +259,14 @@ console.log(`diamond   ${DIAMOND}`);
  * exits 1 regardless, so the batch would report a product regression for
  * a network blip (#1529 review round 7).
  */
+/**
+ * Set as soon as the browser exists, so a BLOCKED exit taken after the
+ * launch does not leave a Chromium process behind. `discovery()` is the
+ * only route to that exit, which is why the cleanup lives there rather
+ * than at each call site.
+ */
+let liveBrowser = null;
+
 async function discovery(what, fn) {
   try {
     return await fn();
@@ -261,6 +275,11 @@ async function discovery(what, fn) {
       `\nBLOCKED: ${what} failed, so nothing could be observed.` +
         `\n  ${String(err).split('\n')[0].slice(0, 200)}`,
     );
+    try {
+      await liveBrowser?.close();
+    } catch {
+      /* exiting anyway — a close failure must not mask the real cause */
+    }
     process.exit(2);
   }
 }
@@ -470,15 +489,20 @@ async function graceSecondsFor(durationDays) {
  * nothing — so it falls through to the code-3 test, which answers that
  * case correctly.
  */
-const EXECUTION_REVERTED = 3;
-const REVERT_BYTES = /^0x([0-9a-fA-F]{2})+$/;
-
+// `EXECUTION_REVERTED` / `REVERT_BYTES` come from `rpc-verdict.mjs`, so
+// the two places that ask "did the EVM answer" cannot drift apart.
+//
+// This one stays a two-way predicate on purpose. It judges OUR OWN
+// discovery reads, where the app-vs-infrastructure distinction
+// `classifyRpcFailure` draws has no meaning: a malformed request here
+// would be a defect in THIS driver, and "the drive could not observe" is
+// the honest verdict for that too. Only page traffic can implicate the
+// product.
 function isRevert(err) {
   const reverted = err?.walk?.((e) => e instanceof ContractFunctionRevertedError);
   if (!reverted) return false;
   if (typeof reverted.raw === 'string' && REVERT_BYTES.test(reverted.raw)) return true;
-  const coded = err.walk((e) => typeof e?.code === 'number');
-  return coded?.code === EXECUTION_REVERTED;
+  return codedError(err)?.code === EXECUTION_REVERTED;
 }
 
 async function offsetLockedOn(borrowerTokenId) {
@@ -643,7 +667,21 @@ const browser = await discovery('launching the browser', () =>
     ...(process.env.LIVE_CHROMIUM_PATH ? { executablePath: process.env.LIVE_CHROMIUM_PATH } : {}),
   }),
 );
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+liveBrowser = browser;
+
+// Everything from here to the first navigation is SETUP, and a setup
+// failure is the same verdict as a failed discovery read: the browser
+// disconnected, the machine ran out of file descriptors, the context
+// could not be built — no page was ever observed, so there is nothing to
+// call a product defect. Left bare, these rejections reach the top level
+// and Node exits 1, which `run-live-batch.mjs` reports as a FAIL from a
+// driver that promises to distinguish the two (#1529 review round 21).
+//
+// Codex reported `newContext`; the other three are the same shape and
+// were still bare.
+const ctx = await discovery('creating the browser context', () =>
+  browser.newContext({ viewport: { width: 1280, height: 1000 } }),
+);
 
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
 const refusedRpc = [];
@@ -661,12 +699,20 @@ const blockedHttp = [];
  * (#1529 review round 16).
  */
 const routeFailures = [];
+/**
+ * Requests the PAGE sent that a reachable provider rejected as malformed.
+ *
+ * The opposite verdict to `routeFailures` despite arriving down the same
+ * code path: the endpoint answered, so this is the app asking for
+ * something invalid — a defect, judged as one (#1529 review round 21).
+ */
+const malformedRpc = [];
 
 // Page traffic through this process (Chromium TLS is reset by the
 // sandbox gateway). Mutating non-RPC requests are refused: this drive
 // advertises itself as read-only and a page regression must not be able
 // to POST to a backend while we scrape.
-await ctx.route('**/*', async (route) => {
+const routeHandler = async (route) => {
   const req = route.request();
   const method = req.method().toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -751,9 +797,9 @@ await ctx.route('**/*', async (route) => {
     });
     await route.abort('failed').catch(() => {});
   }
-});
+};
 
-await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) => {
+const watchRequestHandler = async (_src, { method, params = [] }) => {
   try {
     if (!ALLOWED_RPC.has(method)) {
       refusedRpc.push(method);
@@ -812,35 +858,32 @@ await ctx.exposeBinding('__watchRequest', async (_src, { method, params = [] }) 
     // BLOCKED, which is loud and harmless, where a denylist turns one
     // into a false FAIL blamed on the app (#1529 review round 19).
     //
-    // So: code 3 (EIP-1474 execution error) is an answer, and so are
-    // returned revert BYTES whatever code carried them — some providers
-    // label genuine reverts -32000. Everything else is recorded.
+    // The split is THREE-way, not two, and `classifyRpcFailure` owns it —
+    // extracted to `rpc-verdict.mjs` with its own tests, because round 19
+    // verified this predicate with a throwaway script and three bypasses
+    // shipped anyway.
     //
-    // Both are read off the error CHAIN, not off the top-level object, as
-    // `isRevert` does. viem wraps the provider's error, so the code and
-    // the revert data usually sit on an inner cause; testing `e.code` and
-    // `e.data` directly — round 19's version, despite its comment
-    // claiming the same shape as `isRevert` — made the bytes clause
-    // effectively dead, and the -32000 case it names was never actually
-    // covered. That direction only ever costs a false BLOCKED, which is
-    // why it survived nineteen rounds unnoticed.
-    const coded = e?.walk?.((x) => typeof x?.code === 'number') ?? e;
-    const rawData = [e?.data, coded?.data, e?.cause?.data].find((d) => typeof d === 'string');
-    const answered =
-      coded?.code === EXECUTION_REVERTED || (rawData !== undefined && REVERT_BYTES.test(rawData));
-    if (!answered) {
-      routeFailures.push({
-        // Origin only — never the full RPC URL, which routinely carries
-        // the provider key.
-        url: `wallet ${method} → ${rpcLabel}`,
-        why: String(e.shortMessage ?? e.message ?? e).split('\n')[0].slice(0, 160),
-      });
+    // The third outcome is round 21's: a provider answering `-32602`
+    // RECEIVED the page's request and rejected it as malformed. That is a
+    // working endpoint reporting an app defect, and filing it as "could
+    // not fetch" exited 2 — an infrastructure verdict for a bad request
+    // the PAGE generated, hiding exactly the regression class this drive
+    // exists to catch. It is a product FAIL.
+    const verdict = classifyRpcFailure(e);
+    const why = String(e.shortMessage ?? e.message ?? e).split('\n')[0].slice(0, 160);
+    // Origin only — never the full RPC URL, which routinely carries the
+    // provider key.
+    const where = `wallet ${method} → ${rpcLabel}`;
+    if (verdict === 'unreachable') {
+      routeFailures.push({ url: where, why });
+    } else if (verdict === 'client-fault') {
+      malformedRpc.push({ url: where, why });
     }
     return { error: { code: e.code ?? -32603, message: e.shortMessage ?? e.message ?? 'error' } };
   }
-});
+};
 
-await ctx.addInitScript(() => {
+const initScript = () => {
   if (window.ethereum?.__vaipakamWatch) return;
   const listeners = {};
   const provider = {
@@ -872,7 +915,21 @@ await ctx.addInitScript(() => {
     );
   window.addEventListener('eip6963:requestProvider', announce);
   announce();
-});
+};
+
+// The three registrations, each through the same BLOCKED wrapper as the
+// context creation above. They are hoisted to named handlers purely so
+// the wrapping is a one-line change per site rather than a re-indent of
+// three large bodies — the behaviour of each handler is untouched.
+await discovery('installing the request router', () =>
+  ctx.route('**/*', routeHandler),
+);
+await discovery('exposing the wallet binding', () =>
+  ctx.exposeBinding('__watchRequest', watchRequestHandler),
+);
+await discovery('installing the provider init script', () =>
+  ctx.addInitScript(initScript),
+);
 
 /**
  * Load a route and report everything that went wrong on it.
@@ -1138,6 +1195,19 @@ console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 // asked for, so unreachable page traffic downgrades those to BLOCKED
 // rather than reporting a flaky egress as a broken product.
 if (pageTriedToWrite.length || httpWrites.length) process.exit(1);
+// Judged with the write attempts, and ahead of `routeFailures`, for the
+// same reason they are: this is a finding about the APP that a reachable
+// provider positively established. Ordering it after the BLOCKED check
+// would let one unrelated flaky request bury a malformed-request defect
+// under "re-run" (#1529 review round 21).
+if (malformedRpc.length) {
+  console.log(
+    `\n${malformedRpc.length} page request(s) were rejected as malformed by` +
+      ` a reachable provider — the app asked for something invalid.`,
+  );
+  malformedRpc.slice(0, 6).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
+  process.exit(1);
+}
 if (routeFailures.length) {
   console.log(
     `\nBLOCKED: ${routeFailures.length} page request(s) could not be` +

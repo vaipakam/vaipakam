@@ -191,3 +191,17 @@ what the approval can still be used to collect. The payoff sense is now
 *pago* throughout those screens, matching the wording the refinance
 screens already use; the one place the word genuinely means cancelling
 is unchanged. No other language had the problem.
+
+One last place the tidy-up mistook its own unfinished work for somebody
+else's decision. After clearing the approval, the app checks what the
+value is now before putting the earlier grant back. Any figure other
+than zero was read as "someone else has since granted something here",
+and the app stepped back without a word — correct when it really is
+someone else's grant, and wrong when the figure it is looking at is its
+own. Our own value still standing means the clearing step did not hold
+after all: undone by a chain reorganisation, or a token that reported
+success without moving anything. Nothing else claimed the slot, so there
+is no other decision to defer to — only the tidy-up having failed, with
+the payoff-sized approval still live and the person told everything was
+clean. The neighbouring check already drew this distinction; this one
+now does too, and a genuine competing grant still steps back quietly.

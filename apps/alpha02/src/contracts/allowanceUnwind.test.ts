@@ -98,6 +98,14 @@ function harness(opts: {
    *  provider rejects the parameter) — so the conclusive negative is
    *  unavailable and the caller must fall back. */
   pinnedReadThrows?: boolean;
+  /** Only the read pinned to the RECEIPT block fails, while the head stays
+   *  readable — an ordinary non-archive node, which serves recent blocks
+   *  and the head but not older state. `pinnedReadThrows` cannot express
+   *  it: that one fails EVERY pinned read, including the head-pinned one
+   *  `confirmAllowanceStillLive` uses, so it can only ever produce
+   *  "the present is unestablished". This is the shape that reaches
+   *  `resetLanded === 'unknown'` with the live check still answering. */
+  receiptBlockReadThrows?: boolean;
   /** The HEAD read fails, so `confirmAllowanceStillLive` can never find a
    *  node it can prove has our block and returns `unknown`. Distinct from
    *  `pinnedReadThrows`, which leaves the head answerable: this is the
@@ -130,6 +138,9 @@ function harness(opts: {
         // A pinned read either has the block — in which case it answers
         // about POST-transaction state, never the stale one — or fails.
         if (opts.pinnedReadThrows) throw new Error('missing trie node');
+        if (opts.receiptBlockReadThrows && blockNumber <= RECEIPT_BLOCK) {
+          throw new Error('missing trie node');
+        }
         // Pinned to the RECEIPT block, it answers about that block, which
         // is not the same question as "what is it now".
         if (opts.valueAtReceiptBlock !== undefined && blockNumber <= RECEIPT_BLOCK) {
@@ -151,7 +162,9 @@ function harness(opts: {
     // after it, so the head sits one block later.
     getBlockNumber: vi.fn(async () => {
       if (opts.headReadThrows) throw new Error('rpc down');
-      return opts.valueAtReceiptBlock !== undefined ? RECEIPT_BLOCK + 1n : RECEIPT_BLOCK;
+      return opts.valueAtReceiptBlock !== undefined || opts.receiptBlockReadThrows
+        ? RECEIPT_BLOCK + 1n
+        : RECEIPT_BLOCK;
     }),
     waitForTransactionReceipt: vi.fn(
       async ({
@@ -1072,5 +1085,63 @@ describe('history cannot clear the restore, on EITHER write (round 18)', () => {
     expect(tx).not.toBeNull();
     expect(h.writes).toEqual([500n]);
     expect(h.allowance).toBe(500n);
+  });
+});
+
+describe('a reset that did not stick is not a competing grant (round 21)', () => {
+  // The rule round 17 established and round 20 spread to three more sites:
+  // an outcome we could not ESTABLISH is never reported as "nothing to
+  // undo". Here it is on the last branch still holding the old shape —
+  // the live re-check after the zero reset, which read any non-zero value
+  // as a third party's grant and stood down silently.
+
+  it('reports a reset undone after its own receipt confirmed it', async () => {
+    const h = harness({
+      // The reset mines and IS confirmed at its own block — then the
+      // allowance is back at our flow's value: reorged out, or a token
+      // whose approve returned success without moving anything. The live
+      // check is the first read positioned to see it.
+      allowance: 1_000n,
+      afterWrite: (v) => (v === 0n ? 1_000n : undefined),
+      valueAtReceiptBlock: 0n,
+    });
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/reset did not take effect/i);
+    // The put-back never went out, and the payoff-sized approval is still
+    // live — which is exactly why the caller has to be told.
+    expect(h.writes).toEqual([0n]);
+    expect(h.allowance).toBe(1_000n);
+  });
+
+  it('reports it on the unknown-pinned-read route too', async () => {
+    // Codex's reported route: the pinned confirmation is unavailable, so
+    // `resetLanded` is `unknown` and proceeds on our receipt alone —
+    // skipping the earlier re-read entirely. The live check then meets the
+    // same predicament with no prior branch having filtered it.
+    const h = harness({
+      allowance: 1_000n,
+      afterWrite: (v) => (v === 0n ? 1_000n : undefined),
+      receiptBlockReadThrows: true,
+    });
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/reset did not take effect/i);
+    expect(h.writes).toEqual([0n]);
+  });
+
+  it('still stands down silently for a genuine competing grant', async () => {
+    // The case this branch was written for has to keep working: a value
+    // that is NOT ours is a positive read of someone else's decision, and
+    // deferring to it quietly is right.
+    const h = harness({
+      allowance: 1_000n,
+      afterWrite: (v) => (v === 0n ? 777n : undefined),
+      valueAtReceiptBlock: 0n,
+    });
+    const tx = await restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n });
+    expect(tx).toBeNull();
+    expect(h.writes).toEqual([0n]);
+    expect(h.allowance).toBe(777n);
   });
 });

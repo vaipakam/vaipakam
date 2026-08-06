@@ -687,8 +687,42 @@ export async function restoreAllowance(opts: {
     const stillZero = await confirmAllowanceStillLive(
       publicClient, token, owner, spender, 0n, reset.blockNumber,
     );
-    // Someone granted in this window — their decision is the current one.
-    if (stillZero === 'contradicted') return null;
+    if (stillZero === 'contradicted') {
+      // "Not zero" is not the same claim as "someone else owns it", and
+      // this branch was treating them as one. The `resetLanded ===
+      // 'contradicted'` branch above already draws the distinction; round
+      // 20 applied it there and left this sibling on the old footing
+      // (#1529 review round 21).
+      //
+      // Our own flow's value still sitting there means the reset did not
+      // stick — reorged out after its receipt, or a token whose approve
+      // reported success without moving the allowance. There is no third
+      // party's decision to defer to, only our own unwind having failed,
+      // and returning null tells both callers the cleanup was clean while
+      // the payoff-sized approval stays live. That is the precise outcome
+      // this function is called to prevent.
+      //
+      // Reaching here with `resetLanded === 'unknown'` is the likeliest
+      // route, since that verdict proceeds on our receipt alone and so
+      // never runs the earlier re-read. But the gap is not conditional on
+      // it: a reset CONFIRMED at its own block can still be undone
+      // afterwards, and this live read is the first thing positioned to
+      // see that.
+      const afterReset = await readAllowance();
+      if (afterReset === wrote) {
+        throw new Error(
+          `The allowance reset did not take effect — the earlier approval` +
+            ` is still standing. Revoke it from your wallet's approvals view.`,
+        );
+      }
+      // Any OTHER non-zero value is a competing grant: a positive read of
+      // something that is not ours. Standing down silently is right for
+      // that — it is the case this branch was written for.
+      if (afterReset !== 0n) return null;
+      // A live zero: the contradiction was transient (a head that moved
+      // under the read, a race with our own reset settling). The allowance
+      // is where our reset left it, so the restore below is still ours.
+    }
     if (stillZero === 'unknown') {
       // This is the one place where standing down silently is the WORST
       // option available. We have already cleared the user's grant, and

@@ -74,6 +74,32 @@ Because the miss costs only a false BLOCKED, this kind of dead clause
 does not announce itself — it has to be measured against a responder
 that produces each shape.
 
+That allowlist is a THREE-way split, not two. Between "the chain
+answered" and "nothing answered" sits a reachable provider REJECTING the
+page's request as malformed — the JSON-RPC parse-error, invalid-request
+and invalid-params codes. Those are positive evidence the endpoint is
+working, and the fault is the page's, so they are a product FAIL. Filing
+them with the transport failures exits BLOCKED and hides an app defect
+behind a "re-run" verdict. Method-not-found is deliberately NOT in that
+set: it describes what the server implements, not whether the request
+was well formed. The classifier is extracted to `rpc-verdict.mjs` with
+its own tests, for the reason `redact.mjs` was — a predicate verified by
+a throwaway script grows silent bypasses.
+
+The app-vs-infrastructure distinction only applies to PAGE traffic. A
+driver's own discovery reads stay a two-way question: a malformed
+request there is a defect in the driver, and "could not observe" is the
+honest verdict for that too.
+
+Browser and context SETUP is BLOCKED, not FAIL, and every step of it
+belongs inside the same wrapper the discovery reads use — launching,
+creating the context, installing routes, bindings and init scripts. Left
+bare, the rejection reaches the top level and Node exits 1, which the
+batch reports as a product defect from a driver that promised to tell
+the two apart. No page was ever observed, so there is nothing to blame
+on the app. A BLOCKED exit taken after the launch must also close the
+browser.
+
 A credential the drivers cannot USE is a BLOCKED precondition, not a
 FAIL — and validating its shape is not the same as validating it. A
 32-byte hex string is not necessarily a valid secp256k1 key (the

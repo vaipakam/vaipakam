@@ -896,7 +896,17 @@ Its intended behaviour, as the test oracle for this surface:
   clearing step that succeeded followed by an approval that did not
   take effect is a case for putting the earlier figure BACK, not for
   standing down — the person's approval was cleared by a step that
-  did work, and nothing else has claimed it. An
+  did work, and nothing else has claimed it. The mirror case is the
+  CLEARING STEP itself not holding — undone by a chain reorganisation
+  after it was reported as done, or a token that reports success
+  without moving the approval. What the app then sees is its own
+  flow's figure still standing, which is not somebody else having
+  changed the approval and must not be treated as one: nothing has
+  claimed it, so there is no other decision to defer to, and the
+  approval this withdrawal exists to clear is still live. That is
+  reported, never passed over in silence. The distinction is between
+  a figure that is OURS and a figure that is not — never merely
+  between zero and non-zero. An
   approval the wallet already held is never withdrawn — it was granted
   for some other purpose and is not this flow's to revoke. Nor does the
   withdrawal act on an allowance that has changed hands since: if the
