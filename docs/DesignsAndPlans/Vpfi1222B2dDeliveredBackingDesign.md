@@ -1010,7 +1010,11 @@ the in-flight compensation race resolve* — was **decided by the owner on
 2026-08-04** (#1571), together with a standing instruction to take the
 **architecturally clean** route where clean and expedient diverge.
 
-**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in four parts.**
+**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in five parts (R1-R5), with
+the sub-rules R1a-R1c and R4a that review established as inseparable from
+them.** The count is stated because it has drifted before: R5 was added after
+the first draft said "four", and a reader trusting the header would have
+skipped the cross-chain schedule requirement entirely.
 
 **R1. Repricing carries TWO AUTHENTICATED PER-SIDE AMOUNTS, not replacement
 halves.** This is what makes constraint 17 tractable rather than fatal, and it
@@ -1036,11 +1040,23 @@ Left there, R1 merely renames solve-for-the-half to solve-for-the-delta, and
 lets the authenticated pricing obligation drift from the delivered backing.
 
 So the ratified shape is: **the wire carries an authenticated AMOUNT, and the
-MIRROR derives Δ locally from its own day interest.** The authenticated
-quantity is then the same number that physically arrives, the conversion
-happens where its input actually lives, and neither party solves for anything.
+MIRROR derives Δ locally from its own day interest.** That amount is the
+**declared pricing obligation**, not a statement about what physically lands —
+R1b preserves it unscaled on a short receipt while backing is only
+`actualReceived`, so equating the two would either reject a valid short receipt
+or overstate backing (Codex #1573 r4). The conversion happens where its input
+actually lives, and neither party solves for anything.
 Any alternative must pin an authenticated local denominator explicitly — an
 unpinned conversion is the footgun, not the delta.
+
+**The conversion must be defined at its edges** (Codex #1573 r4).
+`Δ = amount × 1e18 / localInterest` is **undefined** for a non-zero side amount
+against **zero** local interest, and for non-dividing values **no integer Δ
+reproduces the amount exactly** — flooring silently underpays the preserved
+obligation, rounding up exceeds its backing and parks the day behind the budget
+gate. So: a **zero-interest side must carry a zero amount** (or another stated
+terminal), and the rounding direction plus the residual's disposition must be
+pinned rather than left to the implementer.
 
 **R1b — it must be TWO amounts, one per side, jointly bounded by the delivery**
 (Codex #1573 r2 P1). A first draft of R1a authenticated a *single* amount while
@@ -1071,6 +1087,23 @@ summing past the delivery is the failure mode), while **payment of those
 preserved obligations is separately gated on actual backing**, deferring to a
 supplemental-funding transition rather than being written down. A short receipt
 delays; it never silently reprices.
+
+**R1c — "delays" needs a terminal, or it is a stall** (Codex #1573 r4 P1). A
+compensation arriving **before** expiry but **short** of the preserved
+obligations moves the day into supplemental-funding deferral — and the receipt's
+ACK closes the original manual remit, while R2 grants a lapse terminal only to
+an **expired zeroed** day. If installing the pricing amounts makes the day
+no-longer-zeroed, a supplement that never arrives leaves that oldest day
+blocking every later claim **indefinitely**, violating constraints 1-2 — the
+exact failure the whole lapse design exists to prevent. If instead lapse stays
+available, an on-time receipt can be discarded, contradicting "a short receipt
+merely delays".
+
+So the **partially-backed state must be pinned explicitly**, with a
+permissionless terminal of its own: top-up to full backing, or reopen, or lapse
+— reachable by anyone, on a bounded clock, exactly as R2 requires for the
+zeroed case. A state that only a supplement can leave is not a state this
+design may contain.
 
 **R2. The lapse is PERMISSIONLESS**, on the authenticated `finalizedAt` clock
 required by constraint 7. Anyone may resolve an expired zeroed day to
@@ -1107,8 +1140,13 @@ exist.
 Returning a stranded compensation is logically **undoing a remit**, not
 disposing of surplus: different source ledger, different authorization,
 different bounds. It therefore gets its own authenticated path, which must also
-perform the corresponding **Base-side accounting reversal** and net the
-mirror's received-fresh counter (otherwise P1-b later treats returned,
+perform the corresponding **Base-side accounting reversal — bounded by the
+amount Base ACTUALLY RECOVERS, on authenticated Base receipt** (Codex #1573 r4
+P1: the original declared total, the mirror's receipt and the amount finally
+returned can all differ when either leg lands short; reversing the declared
+total, or reversing before receipt, reopens 69M headroom for tokens that are
+still missing or were burned — with any residual tracked separately) — and net
+the mirror's received-fresh counter (otherwise P1-b later treats returned,
 no-longer-held VPFI as funding — see the C2 constraint set in
 `VpfiCrossChainRecyclingDesign.md` §3.6a).
 
@@ -1121,11 +1159,16 @@ the chain-global delivered-fresh accounting immediately, so between arrival and
 the fresh-return running, **P1-b can let claims for other armed days consume
 that headroom**. The supposedly stranded VPFI is then already gone: decrementing
 the receipt counter under-backs claims that have already paid, and the return
-either reverts or draws from unrelated Diamond custody. Late receipts must stay
-**outside claimable fresh funding** until returned — or the accounting and the
-return must be **atomic at ingress**. This is the same rule §3.6a constraint 4
-states for the recovery reservation; it belongs here too because R4 is where
-the arrival is described.
+either reverts or draws from unrelated Diamond custody. Late receipts must be
+held in a **dedicated stranded-recovery reservation, excluded from claim
+backing, retired exactly once on the return** — or the accounting and the
+return must be **atomic at ingress**.
+
+Stated in full here on purpose: an earlier revision cited it as a rule the
+repatriation design "already states", which is **not verifiable from this
+document's branch** — the C2 design carries a matching constraint but the two
+changes are unmerged and cross-referencing each other (Codex #1573 r4). This
+rule is P2's own and does not depend on that one landing.
 
 **R5. The per-day lapse SCHEDULE is authenticated in BOTH domains** (Codex
 #1573 r2 P1). Base enforces the R3 dispatch cutoff while the mirror enforces
@@ -1164,9 +1207,22 @@ dispatch can sit failed-but-re-executable and arrive after the lapse, however
 early it was sent. **Size recovery capacity and monitoring against the full
 in-flight population**, not against a cutoff-adjacent slice.
 
-**This was weighed and accepted.** A stalled mirror blocks every later day's
-claims for every user on that chain; the alternative harm is one day's rewards
-for the users of one excluded day. The asymmetry is what decided it.
+**This was weighed and accepted — but the asymmetry as first stated was
+OVERSTATED, and the correction matters** (Codex #1573 r4). The accepted harm is
+**not** "one day's rewards for the users of one excluded day": constraint 9 and
+R3 let *any* in-flight compensation outlive its deadline, so a prolonged lane
+or receiver outage can lapse **every zeroed day finalized and dispatched during
+that outage** — many consecutive days, largely for the **same** users on the
+same chain. The failure is **correlated**, not isolated.
+
+The direction of the trade survives — a stalled mirror is unbounded, blocking
+every later day's claims for every user on that chain indefinitely, while the
+correlated loss is bounded by the outage — but the magnitude on the accepted
+side is materially larger than the original sentence implied. **Escalated to
+the owner on #1571** rather than quietly restated, with a candidate bound:
+issue no new compensation/lapse cycle for a chain while an earlier remit for it
+is unresolved, capping the exposure at roughly one outage window instead of
+letting it accrue per day.
 
 The rejected alternative, recorded so the trade is not silently revisited: a
 lapse that does **not** retire entries would avoid the underpayment, but it
@@ -1191,8 +1247,19 @@ or derive both decisions from authenticated evidence in a single clock domain.
 **An earlier draft called that the whole remainder. It was not** (Codex #1573
 r2): R5's cross-chain schedule authentication is **architecture**, not a
 parameter, and R4's fresh-return path is a mechanism that does not exist yet.
-Both are now stated above as ratified requirements, and both belong in the P2
+Both are stated above as ratified requirements, and both belong in the P2
 design document — which they do not block, but do shape.
+
+**Two further items are genuinely OPEN as of r4, and neither is a parameter:**
+
+- **R1c's partially-backed state** — its pinned representation and its
+  permissionless terminal (top-up / reopen / lapse) are required but not yet
+  specified. Until they are, an on-time short receipt has no defined exit.
+- **The correlated-loss bound** — whether to cap multi-day lapse exposure by
+  refusing a new compensation/lapse cycle for a chain while an earlier remit
+  for it is unresolved. **Escalated to the owner on #1571**, because it changes
+  the magnitude of the cost the ratification accepted rather than merely how it
+  is worded.
 
 ### General rule earned here, applicable beyond P2
 
