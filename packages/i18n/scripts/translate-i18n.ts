@@ -338,6 +338,28 @@ async function main() {
   // r5). Listed centrally so a future value-taking flag can't
   // reintroduce it silently.
   const VALUE_FLAGS = new Set(['--locales-dir', '--allow-omission', '--allow-empty']);
+  const BOOLEAN_FLAGS = new Set(['--missing-only', '--reorder', '--all']);
+
+  // An unknown `--…` token USED to be ignored silently, and the default
+  // it fell back to is the expensive one: mistype `--missing-only` as
+  // `--missing-onyl` and the run quietly becomes a full-catalog
+  // translation of every placeholder bundle — 24 of them in alpha02's
+  // locales dir — instead of a gap top-up (Codex #1563 r15). Paid API
+  // calls and overwritten files are not a recoverable default, so
+  // anything unrecognised aborts before a single target is chosen.
+  const unknownFlags = args.filter(
+    // A bare `--` is pnpm's own argument separator and reaches us
+    // verbatim in the documented invocation — it is not an option.
+    (a) => a !== '--' && a.startsWith('--') && !VALUE_FLAGS.has(a) && !BOOLEAN_FLAGS.has(a),
+  );
+  if (unknownFlags.length > 0) {
+    console.error(`Unknown option(s): ${unknownFlags.join(', ')}`);
+    console.error(
+      `Recognised: ${[...BOOLEAN_FLAGS, ...VALUE_FLAGS].sort().join(', ')}`,
+    );
+    process.exit(1);
+  }
+
   const explicitCodes = args.filter(
     (a, i) => !a.startsWith('--') && !VALUE_FLAGS.has(args[i - 1] ?? ''),
   ) as LocaleCode[];

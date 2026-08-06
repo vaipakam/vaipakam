@@ -101,4 +101,37 @@ describe('ownLocaleResource', () => {
     const i18n = fakeI18n('es', { es: { [KEY]: `${EN} Y algo más.` } });
     expect(ownLocaleResource(i18n, KEY, EN)).toBe(`${EN} Y algo más.`);
   });
+
+  // A supplier can echo the source back while a word processor or model
+  // output "improves" the punctuation on the way. One curly apostrophe
+  // is not a translation.
+  it('sees through typographic punctuation in an English echo', () => {
+    const src = "the protocol's policy — see the guide...";
+    const echo = 'the protocol\u2019s policy \u2014 see the guide\u2026';
+    expect(ownLocaleResource(fakeI18n('es', { es: { [KEY]: echo } }), KEY, src)).toBeNull();
+  });
+
+  it('sees through non-breaking and exotic spaces in an English echo', () => {
+    const src = 'read and understood the guide';
+    const echo = 'read\u00A0and \u2009understood\u3000the  guide';
+    expect(ownLocaleResource(fakeI18n('es', { es: { [KEY]: echo } }), KEY, src)).toBeNull();
+  });
+
+  it('sees through Unicode composition differences', () => {
+    // Same word both ways: NFD "e + combining acute" vs NFC "\u00e9".
+    const nfd = 'prot\u0065\u0301ge';
+    const nfc = 'prot\u00E9ge';
+    expect(nfd).not.toBe(nfc); // genuinely different code points
+    expect(
+      ownLocaleResource(fakeI18n('es', { es: { [KEY]: nfd } }), KEY, nfc),
+    ).toBeNull();
+  });
+
+  it('still keeps a real translation that uses typographic punctuation', () => {
+    // Normalisation must not collapse DIFFERENT texts together.
+    const es = 'la pol\u00EDtica del protocolo \u2014 consulta la gu\u00EDa';
+    expect(
+      ownLocaleResource(fakeI18n('es', { es: { [KEY]: es } }), KEY, "the protocol's policy"),
+    ).toBe(es);
+  });
 });

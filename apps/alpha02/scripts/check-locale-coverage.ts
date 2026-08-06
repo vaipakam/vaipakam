@@ -341,21 +341,17 @@ for (const code of translated) {
     );
   }
 
-  // Typed-confirmation words must survive verbatim or the gate they
-  // guard becomes unpassable in that language.
-  for (const [key, literals] of Object.entries(REQUIRED_LITERALS)) {
-    const value = leafAt(bundle, key);
-    if (typeof value !== 'string') continue; // absent/drifted — reported above
-    for (const literal of literals) {
-      if (!containsToken(value, literal)) {
-        problems.push(
-          `${code}: ${key} must contain the standalone token "${literal}" — the app ` +
-            'compares typed input against it, so a translated or extended word can never match',
-        );
-      }
-    }
-  }
+  checkRequiredLiterals(code, bundle);
 }
+
+// ENGLISH TOO. The loop above walks `translated`, which excludes `en` —
+// so with the nine locales updated for a changed CONFIRM_WORD, the
+// English prompt could go on saying "Type CONFIRM" while the button
+// requires the new word, and both this guard and the en.json template
+// test would pass (Codex #1563 r15). English is the source every other
+// locale is translated FROM; it is the last place that should be
+// exempt from the literal it defines.
+checkRequiredLiterals('en', en);
 
 // The declaration the nine reading-aid translations were authored
 // against — see ACK_TEXT_TRANSLATED_AGAINST.
@@ -371,6 +367,26 @@ if (ackTextHash !== ACK_TEXT_TRANSLATED_AGAINST) {
       're-author it in all nine bundles, THEN set ' +
       `ACK_TEXT_TRANSLATED_AGAINST to ${ackTextHash}`,
   );
+}
+
+/**
+ * Report any `REQUIRED_LITERALS` entry this bundle fails to carry
+ * verbatim. Extracted so the ENGLISH source runs the same check as the
+ * translations — see the call site below the per-locale loop.
+ */
+function checkRequiredLiterals(code: string, bundle: Bundle): void {
+  for (const [key, literals] of Object.entries(REQUIRED_LITERALS)) {
+    const value = leafAt(bundle, key);
+    if (typeof value !== 'string') continue; // absent/drifted — reported above
+    for (const literal of literals) {
+      if (!containsToken(value, literal)) {
+        problems.push(
+          `${code}: ${key} must contain the standalone token "${literal}" — the app ` +
+            'compares typed input against it, so a translated or extended word can never match',
+        );
+      }
+    }
+  }
 }
 
 // A recorded gap a locale has since FILLED must leave the baseline, or

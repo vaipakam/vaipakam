@@ -80,5 +80,46 @@ export function ownLocaleResource(
   if (active === 'en') return null;
   const value = i18n.getResource(active, 'translation', key);
   if (typeof value !== 'string' || value.trim() === '') return null;
-  return value.trim() === englishSource.trim() ? null : value;
+  return sameText(value, englishSource) ? null : value;
+}
+
+/**
+ * Are these the same text, ignoring differences no translator would
+ * have made on purpose?
+ *
+ * An exact comparison was too literal to do its job. A supplier can
+ * echo the source back while a word processor or model output
+ * "improves" the punctuation on the way — the declaration contains
+ * `protocol's` with an ASCII apostrophe (it must, the on-chain hash is
+ * byte-sensitive), and a returned copy carrying `protocol’s` differs by
+ * one character while containing not one word of the target language.
+ * That copy would then be shown under the translated "in your language"
+ * label at signing time (Codex #1563 r15).
+ *
+ * So normalise the things that vary without meaning — Unicode
+ * composition, curly quotes and dashes, non-breaking and other exotic
+ * spaces, runs of whitespace — and compare what is left. Deliberately
+ * conservative in one direction only: this can at worst hide a real
+ * translation that differs from its source by nothing but punctuation,
+ * which is not a translation of a paragraph. Showing English under a
+ * claim of another language is the failure that matters.
+ */
+function sameText(a: string, b: string): boolean {
+  return normalizeForEcho(a) === normalizeForEcho(b);
+}
+
+function normalizeForEcho(text: string): string {
+  return text
+    .normalize('NFC')
+    // Curly single/double quotes and primes → ASCII.
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
+    // Dash family → hyphen (en/em/figure/minus).
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    // Ellipsis → three dots.
+    .replace(/\u2026/g, '...')
+    // Every Unicode space separator (NBSP, thin, hair, …) → plain
+    // space, then collapse runs.
+    .replace(/[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/g, ' ')
+    .trim();
 }

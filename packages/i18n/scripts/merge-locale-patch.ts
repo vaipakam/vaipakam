@@ -282,6 +282,38 @@ for (const file of patchFiles) {
   const merged = reorder ? orderLike(enJson, spliced) : spliced;
   const after = missingSubtree(enJson, merged);
 
+  // The MERGED candidate, not just the patch. Validating only the
+  // incoming patch trusted whatever nested damage the destination
+  // already held: an existing leaf holding a number where English has a
+  // string survived the merge untouched, and `missingSubtree` counts it
+  // as PRESENT — so the run printed "0 still missing" and exited 0 over
+  // a bundle that renders nothing there (Codex #1563 r15). Consumers
+  // without their own coverage command, `apps/www` today, have nothing
+  // downstream to catch it.
+  //
+  // Scoped to the categories with NO legitimate exemption. Dropped
+  // tokens and empty values are deliberately excluded: both have real
+  // linguistic cases — Arabic's dual encodes the count in the noun (3
+  // leaves today), Japanese puts the verb last leaving a sentence
+  // prefix empty (1 leaf) — which is why they have per-pair allowlists
+  // in the first place. Failing on them here would fail every merge
+  // into `ar` or `ja` unless the operator restated those exemptions,
+  // and a flag people pass reflexively guards nothing.
+  const carriedDamage = [
+    ...unknownKeys(enJson, merged).map((k) => `not in en.json: ${k}`),
+    ...leafTypeDrift(enJson, merged).map(
+      ({ path: leaf, expected, actual }) => `${leaf}: expected ${expected}, got ${actual}`,
+    ),
+    ...placeholderDrift(enJson, merged).flatMap(({ path: leaf, unknown, malformed }) => [
+      ...(unknown.length > 0
+        ? [`${leaf} introduces {{${unknown.join('}}, {{')}}} — not in the English`]
+        : []),
+      ...(malformed.length > 0
+        ? [`${leaf} has malformed brace run(s) ${malformed.join(', ')}`]
+        : []),
+    ]),
+  ];
+
   const filled =
     (before ? leafPaths(before).length : 0) - (after ? leafPaths(after).length : 0);
   fs.writeFileSync(targetPath, JSON.stringify(merged, null, 2) + '\n');
@@ -290,6 +322,20 @@ for (const file of patchFiles) {
   console.log(
     `✓ ${code} (${LOCALE_NAMES[code]}): filled ${filled}, ${remaining} still missing`,
   );
+
+  // The patch itself was valid and is written — refusing it over damage
+  // it did not cause would just strand a good translation. But the
+  // bundle on disk is now known-broken, so the run must not report
+  // success: "still missing" counts a wrong-typed leaf as present, and
+  // that number is exactly what an operator reads as "done".
+  if (carriedDamage.length > 0) {
+    console.error(
+      `  ⚠ ${code}: patch written, but ${carriedDamage.length} pre-existing problem(s) ` +
+        'remain in this bundle — NOT introduced by this patch, and not counted above:',
+    );
+    for (const line of carriedDamage.slice(0, 10)) console.error(`      ${line}`);
+    failures += 1;
+  }
 }
 
 if (failures > 0) process.exitCode = 1;
