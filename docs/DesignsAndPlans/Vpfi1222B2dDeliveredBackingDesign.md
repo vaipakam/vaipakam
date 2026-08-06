@@ -1464,11 +1464,38 @@ all** — and both `rewardBudgetFreshUncounted` and the stranding counters only
 ever observe tokens that were actually sent or received. The days R6 suppresses
 are precisely the bulk of the correlated loss, and they would move no counter.
 
-So the **permissionless lapse terminal must itself record the loss** — the day,
-the chain, and the unpaid amount it retired at zero — rather than relying on
-delivery-side counters that R6 guarantees will stay silent. Without that, the
-one part of this design that was honest about the accepted cost stops being
-able to see it.
+So the **permissionless lapse terminal must itself record the loss**, rather
+than relying on delivery-side counters that R6 guarantees will stay silent.
+Without that, the one part of this design that was honest about the accepted
+cost stops being able to see it.
+
+**But it must record a NON-BLOCKING observable, not the exact unpaid amount**
+(Codex #1573 r7 P1, correcting the r6 wording, which asked for "the day, the
+chain, and the unpaid amount"). The exact figure is the per-user capped
+liability of §2 — a keeper-fed, chunked accumulation — and a day is zeroed
+**precisely when that accumulation did not complete or did not reach Base**.
+So the one input the exact figure needs is the one the failure removed. Making
+its recording a *precondition* of retirement would either leave the terminal
+unsatisfiable, or make it depend on privileged data — reintroducing the
+unbounded, privileged stall that R2 exists to eliminate, inside the very
+mechanism that discharges it. This is the same fact as R1a's capped-liability
+correction, met from the other direction.
+
+So the shape is:
+
+- the lapse terminal emits an observable **status and identity** — the day, the
+  chain, that entries were retired at zero, and a count — plus any magnitude
+  that is derivable from **mirror-local state without privileged input**,
+  explicitly labelled as a **bound** rather than as the loss;
+- **nothing about that record may block retirement.** If a figure is
+  unavailable, the terminal still completes and the record says so;
+- if an exact loss figure is wanted, it is a **separate completion path** that
+  can attach it later and **cannot prevent retirement** — reconciliation, not a
+  gate.
+
+Observability was the point of R6a, and observability does not require
+exactness. A day that retired at zero, flagged as such and countable, is what
+makes the accepted cost visible; the precise number is reconciliation work.
 
 The rejected alternative, recorded so the trade is not silently revisited: a
 lapse that does **not** retire entries would avoid the underpayment, but it
@@ -1519,6 +1546,9 @@ count is a claim that goes stale faster than the list does.
   undeliverable, so ingress rejection is never unrecoverable.
 - **R6e's cross-epoch gate** (r7) — how unresolved compensations are inventoried
   and carried across a Base deployment rotation.
+- **R6a's exact-loss completion path** (r7) — the lapse terminal records a
+  non-blocking observable; whether an exact unpaid figure is attached later, and
+  by what path, is open. Whatever it is, it may not gate retirement.
 - ~~The correlated-loss bound~~ — **DECIDED 2026-08-06 (#1571)** and landed as
   **R6**: no new manual compensation for a chain while an earlier one is
   unresolved. Note what R6 does and does not do — it bounds the **stranding**,
