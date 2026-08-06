@@ -938,7 +938,7 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    (the day broadcast, the remit, and R4's mirror→Base fresh-return —
    >    independent messengers, decoders and rollouts).
    >    **The lapse decision that gated it is RATIFIED** (#1571, 2026-08-04):
-   >    a mirror-local permissionless lapse, recorded in §2h as R1-R5 — two
+   >    a mirror-local permissionless lapse, recorded in §2h as R1-R6 — two
    >    authenticated per-side amounts with the mirror deriving Δ locally; a
    >    permissionless lapse; a dispatch cutoff strictly earlier than it; a
    >    **dedicated fresh-return** recovery (NOT M4 C2, which cannot reach a

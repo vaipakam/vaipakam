@@ -768,7 +768,7 @@ that stopped it always be satisfied".
 P1-a (#1556, `41d4538a4`); its paid half and the deferral semantics are P1-b.
 This section scopes **prerequisite 2**, which is what actually gates lifting
 the halt. **The lapse decision it opened with is now RATIFIED** (#1571,
-2026-08-04) and appears below as R1-R5; treat those as settled premises. What
+2026-08-04) and appears below as R1-R6; treat those as settled premises. What
 remains deferred is the detailed design, which belongs in its own document —
 so this section is a ratified premise plus a constraint set, not a design.
 
@@ -814,9 +814,9 @@ a different starting point, not a seventeenth correction.
 
 **So this section deliberately does NOT contain a design.** It contains the
 verified problem statement above, the constraint set below, and — since
-2026-08-04 — the **ratified answer** (R1-R5) to the decision that gated all of
+2026-08-04 — the **ratified answer** (R1-R6) to the decision that gated all of
 it. **The design is deferred to its own document, and that document starts from
-R1-R5** rather than from another revision here.
+R1-R6** rather than from another revision here.
 
 What the withdrawn revisions got wrong is recorded, because each is a
 constraint the eventual design must satisfy and re-deriving them costs another
@@ -1010,11 +1010,12 @@ the in-flight compensation race resolve* — was **decided by the owner on
 2026-08-04** (#1571), together with a standing instruction to take the
 **architecturally clean** route where clean and expedient diverge.
 
-**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in five parts (R1-R5), with
+**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in six parts (R1-R6), with
 the sub-rules R1a-R1c and R4a that review established as inseparable from
-them.** The count is stated because it has drifted before: R5 was added after
-the first draft said "four", and a reader trusting the header would have
-skipped the cross-chain schedule requirement entirely.
+them.** The count is stated because it has drifted twice: the first draft said
+"four" before R5 was added, and said "five" before R6. A reader trusting a
+stale header would have skipped the cross-chain schedule requirement, then the
+stranding bound.
 
 **R1. Repricing carries TWO AUTHENTICATED PER-SIDE AMOUNTS, not replacement
 halves.** This is what makes constraint 17 tractable rather than fatal, and it
@@ -1195,7 +1196,7 @@ never stall.
 
 #### The accepted cost — stated plainly, because it is a real one
 
-Under R1–R5, a compensation that arrives after the lapse means **those users
+Under R1–R6, a compensation that arrives after the lapse means **those users
 are not paid for that day**: their entries retired at zero and the tokens
 return to Base. It is visible, and R3 improves the common case — but it is a
 user-facing loss, and calling it anything else would be dishonest.
@@ -1218,11 +1219,39 @@ same chain. The failure is **correlated**, not isolated.
 The direction of the trade survives — a stalled mirror is unbounded, blocking
 every later day's claims for every user on that chain indefinitely, while the
 correlated loss is bounded by the outage — but the magnitude on the accepted
-side is materially larger than the original sentence implied. **Escalated to
-the owner on #1571** rather than quietly restated, with a candidate bound:
-issue no new compensation/lapse cycle for a chain while an earlier remit for it
-is unresolved, capping the exposure at roughly one outage window instead of
-letting it accrue per day.
+side is materially larger than the original sentence implied.
+
+**R6. Bound the STRANDING: Base issues no new manual compensation for a chain
+while an earlier one for that chain is unresolved.** Owner-directed
+2026-08-06 (#1571). One compensation per chain may be in flight, so an outage
+strands at most one delivery rather than one per zeroed day — which removes the
+operational pile-up, the repeated fresh-return traffic, and the repeated
+reversal accounting.
+
+**R6 does NOT cap the USER loss, and it must not be read as doing so.** The
+loss is a day lapsing at zero; that happens whether or not a compensation was
+dispatched, because a compensation dispatched into a dead lane does not arrive
+either way. R6 changes *those tokens were sent and came back* into *those
+tokens were never sent* — strictly better operationally, neutral for the user.
+An earlier framing of this bound as "capping the exposure" was wrong in exactly
+the way this section keeps having to correct, so it is stated in its narrow
+form here.
+
+**What WOULD cap the user loss, and why none is taken:**
+
+- *Reopening a lapsed day* — the only mechanism that actually pays those users.
+  It is the alternative already rejected below: it reopens terminal-state
+  monotonicity (constraint 6) and is a substantially larger design.
+- *Extending the window while a lane is unhealthy* — reintroduces a wait on a
+  signal that may never arrive, which is what R2 exists to prevent.
+- *Not zeroing a chain whose lane is down* — grace/force finalization exists
+  precisely so a silent chain cannot block the day, so this trades the
+  correlated loss straight back for the stall.
+
+So the correlated user loss is **inherent to lapsing on a clock while a lane is
+down**. It is bounded by outage duration, capped by nothing, and the honest
+posture is to **detect and report it** — the uncounted/stranding counters make
+it visible — rather than to claim a bound that does not exist.
 
 The rejected alternative, recorded so the trade is not silently revisited: a
 lapse that does **not** retire entries would avoid the underpayment, but it
@@ -1255,11 +1284,13 @@ design document — which they do not block, but do shape.
 - **R1c's partially-backed state** — its pinned representation and its
   permissionless terminal (top-up / reopen / lapse) are required but not yet
   specified. Until they are, an on-time short receipt has no defined exit.
-- **The correlated-loss bound** — whether to cap multi-day lapse exposure by
-  refusing a new compensation/lapse cycle for a chain while an earlier remit
-  for it is unresolved. **Escalated to the owner on #1571**, because it changes
-  the magnitude of the cost the ratification accepted rather than merely how it
-  is worded.
+- ~~The correlated-loss bound~~ — **DECIDED 2026-08-06 (#1571)** and landed as
+  **R6**: no new manual compensation for a chain while an earlier one is
+  unresolved. Note what R6 does and does not do — it bounds the **stranding**,
+  not the **user loss**, and the correlated user loss remains *inherent* to
+  lapsing on a clock while a lane is down. It is bounded by outage duration,
+  capped by nothing short of reopening lapsed days, and is therefore a
+  **detect-and-report** exposure. Do not cite R6 as a cap on user harm.
 
 ### General rule earned here, applicable beyond P2
 
