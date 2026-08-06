@@ -1960,7 +1960,9 @@
         "body1": "Il arrive que des tokens atterrissent sur une adresse de Vault en dehors de l’app — un transfert direct par erreur, ou de la « poussière » envoyée par un inconnu. Ils ne font partie d’aucun accord et n’affectent jamais vos soldes ni vos positions.",
         "body2": "Si vous les avez envoyés vous-même (ou si l’expéditeur agissait pour vous), un parcours de récupération soigneux peut vous les renvoyer dans votre portefeuille. Si c’est un inconnu qui les a envoyés, laissez-les tranquilles : s’il s’avère que l’expéditeur que vous déclarez figure sur la liste des sanctions, votre portefeuille est signalé et toute action de nouvelle position est bloquée — créer ou accepter des offres, les dépôts, la récupération, etc. — jusqu’à ce que cette adresse soit retirée de la liste (les prêts existants peuvent toujours être remboursés ou clôturés). C’est un piège connu sous le nom d’empoisonnement par poussière.",
         "link": "Ouvrir le parcours de récupération"
-      }
+      },
+      "ackTextTranslationLabel": "Dans votre langue, pour que vous puissiez lire ce qui est écrit. Le texte anglais ci-dessus est le texte exact que vous signez :",
+      "ackTextTranslation": "Je déclare que l’adresse source appartient à un portefeuille que je contrôle ou que j’ai autorisé. S’il s’avère par la suite que la source figure sur la liste des sanctions, mon Vault sera verrouillé au titre de la politique de sanctions du protocole jusqu’à ce que l’adresse en soit retirée. J’ai lu et compris la section du Guide de l’utilisateur avancé consacrée à la récupération de tokens bloqués."
     },
     "riskAccess": {
       "title": "Accès au risque",

@@ -1960,7 +1960,9 @@
         "body1": "A veces llegan tokens a una dirección de Vault desde fuera de la app: una transferencia directa por error, o «polvo» que envió un desconocido. No forman parte de ningún acuerdo y nunca afectan a tus saldos ni a tus posiciones.",
         "body2": "Si los enviaste tú mismo (o el remitente actuó por ti), un flujo de recuperación cuidadoso puede devolverlos a tu billetera. Si los envió un desconocido, déjalos en paz: si resulta que el remitente que declares está en la lista de sanciones, tu billetera queda marcada y se bloquea toda acción de posición nueva (crear o aceptar ofertas, depósitos, recuperaciones y similares) hasta que esa dirección salga de la lista (los préstamos existentes se pueden seguir pagando o cerrando). Es una trampa conocida como envenenamiento por polvo.",
         "link": "Abrir el flujo de recuperación"
-      }
+      },
+      "ackTextTranslationLabel": "En tu idioma, para que puedas leer lo que dice. El texto en inglés de arriba es el texto exacto que firmas:",
+      "ackTextTranslation": "Declaro que la dirección de origen pertenece a una billetera que controlo o que autoricé. Si más adelante se determina que el origen está en la lista de sanciones, mi Vault quedará bloqueado bajo la política de sanciones del protocolo hasta que la dirección salga de la lista. He leído y entendido la sección de la Guía de usuario avanzado sobre la recuperación de tokens atascados."
     },
     "riskAccess": {
       "title": "Acceso al riesgo",

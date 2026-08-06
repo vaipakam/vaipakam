@@ -42,6 +42,16 @@ reviewer reading fluent Tamil does not see the `{{amount}}` that isn't there, an
 it surfaces at render time in one language only, often on the sentence quoting a
 number the user is about to sign for.
 
+Review then found the one place the page still switched languages at the worst
+possible moment. The declaration a user signs to recover tokens is fixed English
+by necessity — its hash has to match a value stored in the contract, so
+translating the signed bytes is impossible — and it was rendered in English
+only. A reader of another language was therefore attesting, in a language they
+might not read, that they had understood what they were attesting to. The signed
+text is unchanged; a translation of it now appears alongside, labelled so which
+of the two is authoritative is never in doubt. It shows only for readers who
+have chosen another language.
+
 Closes #1560. Follow-up: the remaining 163 keys (offset, tariff, early repay,
 transfer obligation, sale hold, loan sale and a few strays) are tracked
 separately; they are listed explicitly in the guard's allowlist and each entry

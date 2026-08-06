@@ -1421,6 +1421,22 @@ const copySource = {
     // must equal the on-chain RECOVERY_ACK_TEXT_HASH, so it must never
     // be translated or reworded (see RECOVERY_ACK_TEXT in Recover.tsx).
     ackTextIntro: 'You are signing this exact declaration:',
+    // The declaration itself is contract-fixed English — its keccak256
+    // must equal the on-chain RECOVERY_ACK_TEXT_HASH, so translating
+    // the signed bytes is impossible. Rendering ONLY English left a
+    // non-English reader attesting, in a language they may not read,
+    // that they understood what they were attesting to (Codex #1563
+    // r8). These two keys add a clearly-labelled reading aid beside it;
+    // the label must keep saying which of the two is authoritative.
+    ackTextTranslationLabel:
+      'In your language, so you can read what it says. The English above is the exact text you sign:',
+    ackTextTranslation:
+      'I am declaring that the source address belongs to a wallet I' +
+      ' control or authorized. If the source is later determined to' +
+      ' be on the sanctions list, my vault will be locked under the' +
+      " protocol's sanctions policy until the address is de-listed." +
+      ' I have read and understood the Advanced User Guide section' +
+      ' on stuck-token recovery.',
     // The declaration asserts the user has read the Advanced User
     // Guide's stuck-token section — so the review card (and the Help
     // explainer) must LINK it (Codex #1547 r5). Named exactly as the

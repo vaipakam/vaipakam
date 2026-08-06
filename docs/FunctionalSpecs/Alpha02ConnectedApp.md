@@ -509,6 +509,14 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- Where signing-critical text cannot be translated, the reader is not
+  simply left with a language they may not read. A declaration the user
+  must affirm they have understood is shown in their own language
+  alongside the exact text being signed, labelled so it is never
+  ambiguous which of the two is the authoritative one. Untranslatable
+  is a constraint on the SIGNED BYTES, not a licence to leave the
+  person signing them without comprehension — an acknowledgement the
+  user cannot read is not an acknowledgement.
 - The plain-language explanation shown when a transaction fails — the
   friendly cause a contract revert is decoded to ("Health factor too
   low", "This offer has expired", "Only the lender can perform this

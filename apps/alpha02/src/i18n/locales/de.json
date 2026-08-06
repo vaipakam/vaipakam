@@ -1960,7 +1960,9 @@
         "body1": "Manchmal landen Tokens außerhalb der App auf einer Vault-Adresse — eine versehentliche Direktüberweisung oder „Dust“, den ein Fremder geschickt hat. Sie gehören zu keinem Deal und wirken sich nie auf deine Guthaben oder Positionen aus.",
         "body2": "Hast du sie selbst geschickt (oder handelte der Absender für dich), kann ein sorgfältiger Rückholablauf sie an deine Wallet zurückschicken. Hat ein Fremder sie geschickt, lass sie liegen: Stellt sich der von dir angegebene Absender als sanktioniert heraus, wird deine Wallet markiert und jede Aktion für neue Positionen gesperrt — Angebote erstellen oder annehmen, Einzahlungen, Rückholungen und Ähnliches — bis diese Adresse von der Liste genommen wird (bestehende Kredite können weiterhin zurückgezahlt oder geschlossen werden). Das ist eine Falle, die als Dust Poisoning bekannt ist.",
         "link": "Rückholablauf öffnen"
-      }
+      },
+      "ackTextTranslationLabel": "In deiner Sprache, damit du lesen kannst, was dort steht. Der englische Text oben ist der genaue Text, den du signierst:",
+      "ackTextTranslation": "Ich erkläre, dass die Absenderadresse zu einer Wallet gehört, die ich kontrolliere oder autorisiert habe. Stellt sich später heraus, dass der Absender auf der Sanktionsliste steht, wird meine Vault nach der Sanktionsrichtlinie des Protokolls gesperrt, bis die Adresse von der Liste genommen wird. Ich habe den Abschnitt zur Rückholung feststeckender Tokens im Handbuch für fortgeschrittene Nutzer gelesen und verstanden."
     },
     "riskAccess": {
       "title": "Risikozugang",

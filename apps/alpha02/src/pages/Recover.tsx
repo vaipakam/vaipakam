@@ -31,6 +31,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { normalizeToSupportedLocale } from '@vaipakam/i18n';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Lock, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
@@ -1084,6 +1086,12 @@ export function Recover() {
   const { data: walletClient } = useWalletClient();
   const queryClient = useQueryClient();
   const sanctions = useSanctionsCheck();
+  // ACTIVE language, not resolvedLanguage — a locale whose bundle is
+  // still a placeholder resolves to English while the user has
+  // deliberately selected it, and they are exactly who the reading aid
+  // below the declaration is for (same rule LanguagePicker uses).
+  const { i18n } = useTranslation();
+  const activeLocale = normalizeToSupportedLocale(i18n.language);
 
   const [tokenInput, setTokenInput] = useState('');
   const [sourceInput, setSourceInput] = useState('');
@@ -3105,6 +3113,34 @@ export function Recover() {
             >
               {RECOVERY_ACK_TEXT}
             </blockquote>
+            {/* A reading aid beside the signed bytes, for locales that
+                aren't the one those bytes are written in. The
+                declaration's hash must equal the on-chain value, so the
+                signed text cannot be translated — but rendering ONLY
+                English left a non-English reader attesting, in a
+                language they may not read, that they had understood
+                what they were attesting to (Codex #1563 r8). Shown for
+                non-English locales only, and labelled so which of the
+                two is authoritative is never ambiguous. */}
+            {activeLocale !== 'en' && (
+              <>
+                <p className="muted" style={{ margin: 0, fontSize: '0.85em' }}>
+                  {copy.recover.ackTextTranslationLabel}
+                </p>
+                <blockquote
+                  className="muted"
+                  style={{
+                    margin: 0,
+                    padding: '8px 12px',
+                    border: '1px dashed var(--border)',
+                    borderRadius: 8,
+                    fontSize: '0.9em',
+                  }}
+                >
+                  {copy.recover.ackTextTranslation}
+                </blockquote>
+              </>
+            )}
             {/* The declaration asserts the user has READ the Advanced
                 User Guide section on stuck-token recovery — so link it
                 right here (Codex #1547 r5). Attesting to having read
