@@ -86,7 +86,11 @@ finished.
 Two translation-tooling scripts could also be stopped dead by a single damaged
 locale file: whichever one sorted first would abort the run before any healthy
 locale was reached, reporting a raw crash rather than naming the file. Both now
-name the bad file and carry on with the rest.
+name the bad file and carry on with the rest — and the gap-fill sweep reports the
+run as failed when it does, rather than finishing quietly. Skipping a file so one
+casualty cannot stop the batch is not the same as pretending it was fine: the
+sweep's whole claim is that every offered language now matches the template, and
+a bundle it could not read is one it never checked.
 
 Closes #1560. Follow-up: the remaining 160 keys (offset, tariff, early repay,
 transfer obligation, sale hold, loan sale and a few strays) are tracked

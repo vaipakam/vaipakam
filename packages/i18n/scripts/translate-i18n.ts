@@ -326,6 +326,18 @@ async function main() {
     (a, i) => !a.startsWith('--') && !VALUE_FLAGS.has(args[i - 1] ?? ''),
   ) as LocaleCode[];
 
+  /**
+   * Locales a `--missing-only` sweep could not read at all.
+   *
+   * Skipped so one damaged file cannot abort the whole batch, and
+   * counted as FAILURES so a partial sweep cannot exit 0 (Codex #1563
+   * r12). Those are different questions and the first answer does not
+   * imply the second: a caller that sees exit 0 is entitled to conclude
+   * every translated locale now covers the template, which is exactly
+   * what is not true when a bundle was unreadable.
+   */
+  const unreadable: LocaleCode[] = [];
+
   let targets: LocaleCode[];
   if (explicitCodes.length > 0) {
     const known = new Set<string>(SUPPORTED_LOCALES);
@@ -342,23 +354,22 @@ async function main() {
     // Sweep the locales that HAVE a bundle and are behind the template.
     // Placeholders are excluded on purpose: an empty `{}` needs the
     // full-bundle path (default mode), not a gap top-up.
-    const damaged: string[] = [];
     targets = SUPPORTED_LOCALES.filter((c) => {
       if (c === 'en') return false;
       const p = path.join(LOCALES_DIR, `${c}.json`);
       if (isPlaceholderBundle(p)) return false;
       const bundle = readBundleOrDamaged(p);
       if (bundle === null) {
-        // Isolated, not fatal: this locale needs a human, and the rest
-        // of the sweep has nothing to do with it.
-        damaged.push(c);
+        // Isolated from the SWEEP, but not from the VERDICT — see
+        // `unreadable`'s declaration.
+        unreadable.push(c);
         return false;
       }
       return missingSubtree(enJson, bundle) !== null;
     });
-    if (damaged.length > 0) {
+    if (unreadable.length > 0) {
       console.error(
-        `⚠ skipped ${damaged.length} unreadable bundle(s): ${damaged.join(', ')} — ` +
+        `⚠ skipped ${unreadable.length} unreadable bundle(s): ${unreadable.join(', ')} — ` +
           'malformed JSON or a non-object root. Fix them by hand; ' +
           'gap-filling cannot merge into a bundle it cannot parse.',
       );
@@ -374,6 +385,19 @@ async function main() {
 
   if (targets.length === 0) {
     if (missingOnly) {
+      // The unreadable case must NOT borrow this success line. "Every
+      // translated locale already covers en.json" is a claim about
+      // every locale, and a bundle that could not be parsed was never
+      // examined — reporting completion there is the most misleading
+      // outcome the script has.
+      if (unreadable.length > 0) {
+        console.error(
+          `No readable locale needed filling, but ${unreadable.length} bundle(s) ` +
+            `could not be read: ${unreadable.join(', ')}. Coverage is UNKNOWN for those.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
       console.log('Every translated locale already covers en.json. Nothing to fill.');
       return;
     }
@@ -482,6 +506,13 @@ async function main() {
     console.error(
       `\n${failed.length}/${targets.length} locale(s) failed: ${failed.join(', ')}`,
     );
+  }
+  if (unreadable.length > 0) {
+    console.error(
+      `${unreadable.length} locale(s) skipped as unreadable: ${unreadable.join(', ')}`,
+    );
+  }
+  if (failed.length > 0 || unreadable.length > 0) {
     process.exitCode = 1;
   }
 }
