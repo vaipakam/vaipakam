@@ -943,12 +943,24 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    permissionless lapse; a dispatch cutoff strictly earlier than it; a
    >    **dedicated fresh-return** recovery (NOT M4 C2, which cannot reach a
    >    fresh-booked compensation); the per-day schedule authenticated in
-   >    BOTH domains; and **R6** — no new manual compensation for a chain
-   >    while an earlier one is unresolved, where "unresolved" clears only on
-   >    authenticated recovered receipt and completed reversal, NOT on the
-   >    ACK. R6 bounds the STRANDING, not the user loss, and it suppresses the
-   >    deliveries the counters observe — so the lapse terminal must record
-   >    the loss itself.
+   >    BOTH domains; and **R6**, a per-chain bound on how many compensations
+   >    can be stranded at once.
+   >
+   >    **The operative rules of R6 and its sub-rules are NOT summarised here
+   >    — read §2h** (Codex #1573 r8 P1 ×2). This summary previously carried
+   >    R6's clearing condition and R6a's recording duty in full, and both
+   >    were corrected in §2h while these copies stayed as written — so the
+   >    summary told an implementer to lock the gate after the first
+   >    successful compensation, and to require an exact loss figure that is
+   >    unavailable by construction. A summary that restates operative rules
+   >    will be wrong one round after the rules move; this one now states
+   >    only what R6 is *for*.
+   >
+   >    Two properties of R6 are worth carrying at this level because they
+   >    are routinely misread: it bounds the **STRANDING, not the user
+   >    loss** — never cite it as a cap on user harm — and it *suppresses the
+   >    very deliveries the counters observe, so the lapse terminal has to
+   >    instrument itself* rather than relying on delivery-side counters.
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the
