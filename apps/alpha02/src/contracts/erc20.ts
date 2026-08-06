@@ -425,7 +425,13 @@ export async function restoreAllowance(opts: {
   if (current !== wrote) return null;
   if (await ownerHasPendingTx()) return null;
 
-  const approve = async (value: bigint): Promise<`0x${string}`> => {
+  // `what` names the STEP, because this helper sends both of them and
+  // the two failures need different sentences: a cancelled reset leaves
+  // the flow's own oversized approval standing, while a cancelled
+  // put-back leaves the allowance at zero. Telling a user their "reset"
+  // was cancelled when the restore was is a wrong instruction on a
+  // fund-adjacent error they are being asked to act on.
+  const approve = async (value: bigint, what: string): Promise<`0x${string}`> => {
     const hash = await walletClient.writeContract({
       address: token,
       abi: erc20Abi,
@@ -444,10 +450,10 @@ export async function restoreAllowance(opts: {
     if (!r.ok) {
       throw new Error(
         r.reason === 'reverted'
-          ? `The allowance reset reverted (${hash}).`
-          : `The allowance reset was cancelled or replaced before it took` +
-            ` effect (${hash}). The earlier approval is still standing —` +
-            ` revoke it from your wallet's approvals view.`,
+          ? `The ${what} reverted (${hash}).`
+          : `The ${what} was cancelled or replaced before it took effect` +
+            ` (${hash}). Check this spender's approval in your wallet` +
+            ` before retrying.`,
       );
     }
     publishReceiptInvalidationGlobal();
@@ -458,7 +464,7 @@ export async function restoreAllowance(opts: {
   // revert on a non-zero→non-zero approve, and this path is by
   // definition running against a non-zero current value.
   if (current > 0n && previous > 0n) {
-    await approve(0n);
+    await approve(0n, 'allowance reset');
     // The no-clobber guarantee has to hold across BOTH transactions, not
     // just before the first. Between the reset mining and this restore
     // being submitted, another tab can grant a fresh allowance — and
@@ -493,19 +499,19 @@ export async function restoreAllowance(opts: {
     if (afterReset !== 0n) return null;
     if (await ownerHasPendingTx()) return null;
   }
-  const hash = await approve(previous);
-  // Confirm the FINAL write on OBSERVED STATE, exactly as
-  // `ensureAllowance` does. A receipt only says "some transaction
-  // happened": cancel the restore in the wallet and viem follows the
-  // replacement, handing back `status: 'success'` for a transaction that
-  // put nothing back. Returning the hash then tells the caller the grant
-  // was restored when it was not (#1529 review round 11).
+  const hash = await approve(previous, 'allowance restore');
+  // Confirm on OBSERVED STATE as well, exactly as `ensureAllowance` does.
+  // `approve` has already established that OUR call ran; this catches
+  // what a receipt cannot — a reorg, or a token whose approve does not
+  // do what its name says. Returning the hash without it would tell the
+  // caller the grant was restored when it was not (#1529 review round 11).
   //
-  // Only the final write is asserted this way. The zero-first reset has
-  // its own, gentler handling above: a reset that did not stick means
-  // someone else moved the allowance in that window, and standing down is
-  // the correct response to that — not an error thrown at a user whose
-  // unwind is a courtesy in the first place.
+  // (An earlier version of this comment claimed the zero-first reset
+  // needed no such check because a reset that did not stick could only
+  // mean someone else moved the allowance. That premise was false — the
+  // other way it does not stick is our own cancel — and round 12 found
+  // the bug it licensed. Both writes are checked now; see the guard
+  // above for how the two failures are told apart.)
   const landed = await readAllowance();
   if (landed !== previous) {
     throw new Error(

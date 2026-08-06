@@ -804,9 +804,12 @@ describe('a cancelled zero-reset is not a competing grant (round 12)', () => {
     // was called to do. Nothing else claimed the slot: the value sitting
     // there is ours.
     const h = harness({ allowance: 1_000n, replaceTxOf: (v) => v === 0n });
+    // Named as the RESET, not the restore — the two failures leave the
+    // wallet in opposite states and the message is an instruction the
+    // user is being asked to act on.
     await expect(
       restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
-    ).rejects.toThrow(/still standing/);
+    ).rejects.toThrow(/allowance reset was cancelled or replaced/);
     // The restore was never attempted — correctly, since a zero-first
     // token would revert on it.
     expect(h.writes).toEqual([0n]);
@@ -825,5 +828,24 @@ describe('a cancelled zero-reset is not a competing grant (round 12)', () => {
     expect(tx).toBeNull();
     expect(h.writes).toEqual([0n]);
     expect(h.allowance).toBe(900n);
+  });
+});
+
+describe('the two unwind steps report themselves distinctly', () => {
+  // `restoreAllowance` sends up to two transactions and they fail into
+  // opposite states: a cancelled RESET leaves the flow's oversized
+  // approval standing, a cancelled RESTORE leaves the allowance at zero.
+  // The message is an instruction the user is being asked to act on, so
+  // a shared sentence naming the wrong step is a wrong instruction.
+
+  it('names the restore, not the reset, when the put-back is cancelled', async () => {
+    const h = harness({ allowance: 1_000n, replaceTxOf: (v) => v === 500n });
+    await expect(
+      restoreAllowance({ ...base(h), previous: 500n, wrote: 1_000n }),
+    ).rejects.toThrow(/allowance restore was cancelled or replaced/);
+    // The reset DID land — so unlike the cancelled-reset case, what is
+    // left behind is zero rather than the oversized grant.
+    expect(h.writes).toEqual([0n, 500n]);
+    expect(h.allowance).toBe(0n);
   });
 });
