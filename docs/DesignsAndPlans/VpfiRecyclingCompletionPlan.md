@@ -5,7 +5,7 @@
 | **Title** | VPFI Recycling — Completion Plan |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-18 |
-| **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch) |
+| **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch — that C1–C2 names the plan AS PARKED IN 2026-07; the Phase-C tail is now C1–C4, see §M4) |
 | **Cards** | Umbrella **#1349** · #1222 (Phase B′ mesh + Phase C′) · #1331 (folds into B2) · #1346 (Layer 0) · #1347 (Layer 2 — **D1 DECIDED (b)**, owner 2026-07-18; re-based to the formula doc) · #1218 (metric completion) · #1204 / #1219 (channels 3–4) · M2 card set (cut per §M2) |
 | **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) **pinned at rev 15 — the revision the owner's D1 decision (2026-07-18) approved** (adds ack-timed remitted accounting + reward-haircut snapshotting over the rev-8–14 freezes). A later formula-doc rev enters implementation scope ONLY after this completion plan is updated to adopt it (a conscious re-ratification step) — cards must never silently follow a mutable draft past the decided revision |
 
@@ -480,11 +480,12 @@ bucket → budget → expiry → bucket and manufacture repeat reward budget
 behind it). A distinct custody-relocation credit class carries this
 (e.g. a non-`Ā` flag on `VpfiRecycled` or a sibling event). Fresh-funded
 forfeit/expiry shares still credit `Ā` — those tokens enter the
-recycled economy for the first time. Phase C′ (C1 surplus knob, C2 batched
-repatriation) stays **sequenced last**, but is **no longer "unchanged" —
-read §M4** (Codex #1578 r1 P2). C2 in particular: §3.6a established that
-repatriation is two modes over one transport, and that the debit is a
-**separate repatriation ledger**, never `consumedCumulative`.
+recycled economy for the first time. Phase C′ is **C1–C4** (#1567–#1570), not
+the C1–C2 an earlier revision named (Codex #1578 r2 P2), and it stays
+**sequenced last** — but it is **no longer "unchanged": read §M4** (r1 P2).
+C2 in particular: §3.6a established that repatriation is two modes over one
+transport, and that the debit is a **separate repatriation ledger**, never
+`consumedCumulative`.
 
 Invariants/tests: the B4 list, plus the governor §7 commitment
 invariants per chain and the no-double-count rule across
@@ -535,9 +536,13 @@ implementer to §3.6 alone.
     terms**. This is the one an implementer is most likely to skip and the
     most damaging to skip: a successful Mode-A return leaves claim-side
     `consumed` untouched, so without it **the drained amount is offered again
-    to later broadcasts**. Note the bound is a two-comparison form, never a
-    sum — `claimNet ≤ reported AND repatNet ≤ reported − claimNet`, each net
-    term saturating.
+    to later broadcasts**. **Take the bound's exact form from §7 #6 — it is
+    not reproduced here** (Codex #1578 r2 P2): §3.6a designates that and the
+    availability formula the only canonical statements and calls any further
+    copy a defect, so restating it in the programme plan would have created
+    the third one, a single round after that rule was written. What a planner
+    needs at this level: the form is **overflow-sensitive** and has drifted
+    repeatedly, so it must be copied from §7 #6 rather than reconstructed.
   - governor **§7 #8**, bucket composition, needs `repatriatedOutCumulative`
     in both directions and in the `creditedCumulative` derivation. Mode A
     drains the bucket without advancing `paidOutRecycled`, so the forward
@@ -550,8 +555,29 @@ implementer to §3.6 alone.
     reservation as a **fourth balance owner**, with
     `LibVpfiRecycle.backingPosition` following. Mode B is what introduces
     that reservation, so #1568 must not be blocked on it.
-- **C3 → #1569** (decide explicitly rather than by omission) · **C4 §9 spec →
-  #1570.**
+- **C3 — local keeper-budget credit → #1569.** Decide explicitly rather than
+  by omission, and **it carries the same ledger defect C2 did** (Codex #1578
+  r2 P2). §3.5 directs Base to count `keeperAllocate` into
+  `chainConsumedRecycled`. But the watcher enforces
+  `outstanding + retired == consumed`, and the paired outstanding/retirement
+  books describe **claim commitments** — a keeper-budget credit reserves and
+  retires nothing through them. So the **first non-zero keeper allocation
+  breaks that CRITICAL identity**, exactly as charging a repatriation to
+  `consumedCumulative` would have.
+
+  C3 must therefore name its ledger choice rather than inherit §3.5's
+  sentence: either a **separate keeper debit/release pair** inside
+  availability (the shape §3.6a chose for repatriation), or keeper
+  allocations must **reserve and later retire through the mirror reports**
+  like claim commitments do. Not a decision an implementer should be left to
+  discover from a failing watcher alert.
+
+  Note the pattern, since it has now appeared three times: `consumedCumulative`
+  is **not a general-purpose availability debit**. It is one half of a paired
+  identity, and every new draw on the bucket needs its own ledger unless it
+  also participates in that pairing.
+- **C4 — TokenomicsTechSpec §9 edit for Phase-C surplus tooling → #1570.**
+  §9a already carries C1's flag; C4 is the broader disposition section.
 
 ### M5 — #1218 transparency dashboard completion
 
@@ -1371,7 +1397,9 @@ constituent cards below remain the working tickets.
    option (a) retired with a supersession note.
 2. **CONFIRMED (owner, 2026-07-27):** this plan is the **programme of
    record** (supersedes the Phase-B checklist in #1222's body; adopts the
-   parked B1–B4/C1–C2 cut with §M3's two corrections). It had been
+   parked B1–B4/C1–C2 cut with §M3's two corrections — that cut is the
+   2026-07 parked plan; the Phase-C tail has since grown to C1–C4 and C2's
+   scope changed, see §M4). It had been
    executed against as such since the plan merged — every M1/M2/M3 slice
    in §1a was scoped from it — so this marker records the standing
    practice rather than changing it.
