@@ -454,9 +454,11 @@ defers to it) states the correct rule verbatim: **"commitment semantics
    `availRecycled[c] = chainReportedRecycled[c] − chainConsumedRecycled[c]`,
    per the B1 comment — so the two books are not double-subtracted; the
    reservation ledger is what B3's netting retires once a mirror-consumption
-   signal exists (Base cannot observe mirror claims in d3). The §7 invariant
-   `consumed ≤ reported` binds non-trivially from this slice on, enforced by
-   the pass-1 availability cap.
+   signal exists (Base cannot observe mirror claims in d3). The §7 #6
+   commitment bound binds non-trivially from this slice on, enforced by
+   the pass-1 availability cap. (At d3 it read `consumed ≤ reported`; B3's
+   release later widened it to the subtraction-first form — see governor
+   §7 #6, which is the one place it is stated.)
    **Direction of any drift is conservative:** un-claimed mirror commitments
    leave Base counting more instructed than the mirror eventually spends, so
    Base UNDER-states that chain's availability and under-funds it — never the
@@ -1136,7 +1138,12 @@ running sums land as new append-only tail fields.
   exactly one slice — **which is still outstanding.** d4 attempted it and was
   withdrawn, so the halt REMAINS in the tree and its two prerequisites are
   tracked on #1434 (§2g). None of this may be reordered.
-- **`consumed ≤ reported` per chain** (becomes real in d3): `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]`.
+- **Per-chain commitment bound** (becomes real in d3): stated in governor
+  §7 #6 and **not reproduced here** — a copy is what let this line carry the
+  bare `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]` long after B3's
+  release falsified it. What matters at this level: it is a subtraction-first
+  bound, not that bare form, because a released commitment is legitimately
+  re-committable.
 - **One bucket, one ledger:** a mirror-local slice reserves into
   `chainOutstandingRecycledCommit[c]`; a Base-funded slice into the global
   `outstandingCommitRecycled` — never both.
@@ -1148,7 +1155,9 @@ running sums land as new append-only tail fields.
   (the Ā day-bucket) AND must not reach the **reported cumulative** — those
   tokens were Ā-counted once on Base at first absorption, and after d3 an
   inflated cumulative would also re-offer Base's own top-up as mirror-local
-  availability (`_mirrorAvailable = reported − consumed`) and widen the Ā
+  availability (the §3.6a formula — this line carried a `reported − consumed`
+  form that predates B3's release term and #1568's repatriation terms both)
+  and widen the Ā
   attribution headroom in `recordChainRecycled`. Because
   `creditedCumulative()` derives a floor of `recycleBucket + paidOutRecycled`,
   leaving `recycleCreditedCumulative` unwritten is NOT sufficient — the
@@ -1168,7 +1177,9 @@ per-side aggregate; Base ingress stores liabilities + `.complete`
 (no commitment input — §2b); zeroed-interest chain marked `remitIneligible`,
 reported chains not; unarmed/incomplete days unreportable; cursor + entry
 validation rejections; keeper send pass. d2: pending→ack→remitted lifecycle,
-lost-ack reconcile, clamp at 3 sites, quote==send. d3: `consumed ≤ reported`,
+lost-ack reconcile, clamp at 3 sites, quote==send. d3: the §7 #6 commitment
+bound (subtraction-first — a test written from the bare `consumed ≤ reported`
+rejects healthy post-B3 states),
 one-bucket-one-ledger, netting sum identity, idempotent
 commitment-on-arrival (a RESERVATION, not a bucket debit — §2e.1).
 **d4 (withdrawn): the halt is PINNED instead** — a mirror armed day prices

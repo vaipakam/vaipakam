@@ -345,8 +345,10 @@ is adopted as the implementation cut. Two corrections before B1 resumes:
 
 Kept from the parked plan verbatim: commitment semantics (broadcast
 *commits*; bucket debited pro-rata at claim/remit), whole-day idempotency
-stamp covering every bucket-touching field, `consumed ≤ reported` per
-chain, source-scoped netting with commitment-netted `availRecycled`,
+stamp covering every bucket-touching field, the per-chain commitment bound
+(governor §7 #6, subtraction-first — *not* the bare `consumed ≤ reported`,
+which B3's release falsifies), source-scoped netting with commitment-netted
+`availRecycled`,
 per-destination values with a **replay-stable binding**: alignment to
 the mutable `broadcastDestinationChainIds` list alone is NOT stable —
 a message built before a list reorder/add/remove would decode against
@@ -1040,8 +1042,8 @@ GovernanceRunbook gains a recycling section, executed in order:
    > (#1434), a mirror can RESERVE what Base instructs but has no
    > user-reachable way to RETIRE it — claims, forfeits and expiry all
    > price through the halted path, so its settlement totals stay at
-   > zero. Base's spare-capacity figure for that chain
-   > (`reported − (consumed − released)`) is then **permanently lower, by
+   > zero. Base's spare-capacity figure for that chain (the §3.6a
+   > availability formula) is then **permanently lower, by
    > the accumulating stock of commitments that would have been RELEASED
    > un-spent but cannot be** — while the chain's bucket is untouched, and
    > the mesh degrades
@@ -1067,8 +1069,8 @@ GovernanceRunbook gains a recycling section, executed in order:
    > instruction. **An alert keyed on "availability fell" is wrong.**
    >
    > (c) **Only RELEASES restore capacity — not retirement generally.**
-   > `LibVpfiRecycle.mirrorAvailRecycled` is
-   > `reported − (consumed − released)` and never reads
+   > `LibVpfiRecycle.mirrorAvailRecycled` implements the §3.6a formula and
+   > never reads
    > `chainRetiredRecycledCommit`. A claim that CONSUMES its commitment
    > advances retirement while availability stays exactly as low, because
    > those tokens really left the bucket — pinned by

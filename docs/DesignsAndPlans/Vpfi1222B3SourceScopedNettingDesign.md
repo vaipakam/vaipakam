@@ -107,8 +107,19 @@ never walk them back — and then:
 
 ```
 outstanding_c  ←  outstanding_c − Δretired            (floor 0)
-avail_c        =  reported_c − (consumed_c − released_c)  (both floored — see §2.3)
+avail_c        =  the availability formula — ONE definition, and it lives in
+                  VpfiCrossChainRecyclingDesign.md §3.6a (saturating,
+                  subtraction-first, and it gains repatriation terms with
+                  #1568 Mode A)
 ```
+
+> **Do not re-derive `avail_c` here.** This line previously carried
+> `reported_c − (consumed_c − released_c)` inline (Codex #1574 r10 P2). That
+> was correct when written and is now incomplete: once Mode A lands, a copy
+> without the repatriation debit **re-offers tokens that already left the
+> mirror**. B3's subject is the retirement half — how `outstanding_c` falls
+> and what a release restores — which is unaffected by where availability is
+> defined.
 
 The identity that makes one counter enough for the ledger is worth stating,
 because it is why B3 does not need to know *which* day a retirement belonged
@@ -136,8 +147,16 @@ That yields the load-bearing bound, by construction and independent of what
 any mirror sends:
 
 ```
-released_c ≤ consumed_c   ⟹   avail_c = reported_c − (consumed_c − released_c) ≤ reported_c
+released_c ≤ consumed_c   ⟹   avail_c ≤ reported_c        (the CEILING)
 ```
+
+The property being established is the **ceiling** — availability never exceeds
+what the chain reported — and it follows from the clamp `released_c ≤
+consumed_c` plus the fact that every term after `reported_c` is *subtracted*.
+That argument is why §3.6a requires the formula to stay subtraction-first, and
+it survives the repatriation terms unchanged: another subtracted term can only
+lower the ceiling. The formula itself is stated once, in §3.6a (Codex #1574
+r10 P2).
 
 **The availability read is arranged as a subtraction, never an addition**
 (Codex #1435 r1 P1). `reported_c + released_c − consumed_c` is mathematically
