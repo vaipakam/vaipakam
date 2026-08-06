@@ -915,6 +915,20 @@ review cycle.
     indefinitely**. Constraint 19 migrates legacy *compensations* only — this is
     the broadcast half, and it needs its own answer.
 
+12c. **The clean split above is not quite clean — R4b puts the applicable
+    expiry on the REMIT as well** (Codex #1573 r7 P1). Constraint 12 routes
+    `finalizedAt` exclusively through the broadcast, and constraint 4 requires
+    compensation to be able to land while the mirror is still unstamped. Those
+    two together leave an arriving compensation **unclassifiable at ingress**:
+    no expiry is present to compare against, so a late delivery is credited as
+    ordinary and can be consumed before the broadcast proves it should have
+    been returned. R4b closes it by carrying the bound day's authenticated
+    expiry on the remit itself. That duplicates a value across two paths, so
+    the R5 versioned schedule is what keeps them consistent — both sides derive
+    the expiry from the same authenticated schedule version rather than
+    carrying independently-set timestamps. **Still three paths**; one of them
+    gains a field.
+
 **On binding a component to its target:**
 
 15. The compensation figures — **the authenticated amount under R1**, not
@@ -1010,12 +1024,17 @@ the in-flight compensation race resolve* — was **decided by the owner on
 2026-08-04** (#1571), together with a standing instruction to take the
 **architecturally clean** route where clean and expedient diverge.
 
-**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in six parts (R1-R6), with
-the sub-rules R1a-R1c and R4a that review established as inseparable from
-them.** The count is stated because it has drifted twice: the first draft said
-"four" before R5 was added, and said "five" before R6. A reader trusting a
-stale header would have skipped the cross-chain schedule requirement, then the
-stranding bound.
+**Ratified: a MIRROR-LOCAL PERMISSIONLESS LAPSE, in six parts — R1 through
+R6.** Those six are the owner-ratified decision and are stable.
+
+**Each part also carries lettered sub-rules (R1a, R4b, R6c, …), and they are
+NOT enumerated here on purpose.** Review has added sub-rules in five separate
+rounds; every revision that listed them went stale in the next one, and a
+reader trusting a stale list skips exactly the requirement that was just found
+to be load-bearing. Read each part through to its last lettered sub-rule — they
+are inseparable from the part they hang off, not optional refinements of it.
+(The top-level count has drifted too: the first draft said "four" before R5 was
+added, and "five" before R6. Six is the ratified number.)
 
 **R1. Repricing carries TWO AUTHENTICATED PER-SIDE AMOUNTS, not replacement
 halves.** This is what makes constraint 17 tractable rather than fatal, and it
@@ -1066,9 +1085,43 @@ free to floor and underpay or round up and overdraw):
   the declared obligation by sub-unit dust; rounding up would pay beyond the
   delivered backing, which is the one direction this design never takes — the
   same reason the recycled side floors everywhere else;
-- the **residual is un-drawn backing**, not a debt. It stays with the protocol
-  and leaves by the ordinary return path; nothing accrues it to a user and no
-  supplemental transition is owed for it.
+- the **residual is un-drawn backing**, not a debt. Nothing accrues it to a
+  user and no supplemental transition is owed for it — but it needs a named
+  ledger and a terminal, which the next paragraph is about. An earlier revision
+  said it "leaves by the ordinary return path"; **there is no such path**
+  (Codex #1573 r7 P2). R4 is the only fresh-return mechanism in this design and
+  it is scoped to post-lapse late arrivals, so as written the residual could
+  neither leave nor be accounted as live backing.
+
+**The denominator is the CAPPED liability, and that is what makes the residual
+material rather than dust** (Codex #1573 r7 P1). `Δ = amount × 1e18 /
+localInterest` prices against the mirror's **uncapped** aggregate interest, but
+what the mirror actually owes is the per-user capped sum §2 already pins:
+`liability_side(d) = Σ_users min(rawPay_user, C_side − userSideDayPaidVpfi)`.
+The `− userSideDayPaidVpfi` term is per-user and does **not** factor out —
+`LibInteractionRewards`' `min(Δ_d, T_d)` factoring holds only because the §4
+threshold is entry-independent, which the *remaining* headroom is not. So
+whenever any user's cap binds, `Σ min(...) < localInterest × Δ / 1e18`: the
+operator delivers an amount sized to an obligation the mirror will not pay, and
+the shortfall is a **material portion of the delivery**, not sub-unit dust. The
+earlier framing treated the whole residual as a rounding artifact and is wrong
+by that margin.
+
+Two things follow, and the P2 design owes both:
+
+1. **Pin the conversion against the capped liability.** The mesh already
+   carries it — §2's report is exactly `liability_side(d)`, the residual capped
+   liability — so the operator can size against the mirror's own authenticated
+   evidence rather than against an aggregate that overstates it. The design must
+   name *which* authenticated figure the conversion divides by, and reconcile
+   that with the zeroed-day case, where the report Base would divide by may be
+   the very thing that failed to arrive.
+2. **Give the residual a ledger and a permissionless terminal.** Whatever the
+   conversion, floor dust plus any cap-bound excess remains delivered-but-
+   unpayable. It must be either retained as identified backing for a named
+   purpose or returnable through an authenticated path — and, per R6d, the
+   choice may not be "it sits there with no transition", because that is a
+   stranded balance with no terminal wearing a different name.
 
 **R1b — it must be TWO amounts, one per side, jointly bounded by the delivery**
 (Codex #1573 r2 P1). A first draft of R1a authenticated a *single* amount while
@@ -1117,6 +1170,13 @@ permissionless terminal of its own: top-up to full backing, or reopen, or lapse
 zeroed case. A state that only a supplement can leave is not a state this
 design may contain.
 
+**R6 does not block that top-up — see R6c** (Codex #1573 r7 P1). Read naively,
+R6's one-compensation-per-chain gate makes this terminal circularly
+unreachable: the top-up *is* a compensation. R6c resolves it by separating the
+two axes — the earlier compensation is *resolved* once its tokens are credited
+(nothing is stranded, which is all R6 bounds), while the *day* stays
+unresolved. Which terminal this state takes, and on what clock, is still open.
+
 **R2. The lapse is PERMISSIONLESS**, on the authenticated `finalizedAt` clock
 required by constraint 7. Anyone may resolve an expired zeroed day to
 genuinely-zero. This is what discharges §2g's pin: the halt required by
@@ -1157,20 +1217,36 @@ amount Base ACTUALLY RECOVERS, on authenticated Base receipt** (Codex #1573 r4
 P1: the original declared total, the mirror's receipt and the amount finally
 returned can all differ when either leg lands short; reversing the declared
 total, or reversing before receipt, reopens 69M headroom for tokens that are
-still missing or were burned — with any residual tracked separately) — and net
-the mirror's received-fresh counter.
+still missing or were burned — with any residual tracked separately) — and
+reduce the mirror's **spendable** delivered-fresh backing.
 
-**That netting rule, stated locally** — an earlier revision pointed at a
-section on an unmerged branch, and fixing one such pointer left this second one
-standing (Codex #1573 r5). The rule: a repatriated Mode-B return must decrement
-the mirror's received-fresh cumulative **only where that specific receipt was
-credited to it**. A compensation that overtook the arming broadcast was booked
-to `rewardBudgetFreshUncounted`, **not** `rewardBudgetArmedFreshReceived`, so
-netting every return against the armed cumulative would consume armed credit
-belonging to *unrelated* deliveries and defer their properly-funded claims.
-Bind the decrement to the receipt's own attribution, or keep an authenticated
-post-lapse arrival out of the counter entirely. Otherwise P1-b later treats
-returned, no-longer-held VPFI as funding.
+**Spendable, by SUBTRACTING A SECOND CUMULATIVE — never by decrementing the
+receipt cumulatives** (Codex #1573 r7 P2, correcting the r5 wording, which said
+"decrement … bound to the receipt's own attribution"). The receipt counters are
+**gross lifetime sums of deliveries** and the tree already depends on it:
+`RewardRemittanceFacet` writes both with `+=` only, and
+`RewardRemitLedgerTest.test_DeliveredFresh_CountedPlusUncountedIsExhaustive`
+asserts `counted + uncounted` reconciles **exhaustively** over every
+non-recycled delivery. A decrement makes those lifetime figures non-monotonic,
+breaks that reconciliation, and erases the returned receipt from operator
+reconstruction — the receipt *did* happen, and the ledger should still say so.
+
+So:
+
+- `rewardBudgetArmedFreshReceived` and `rewardBudgetFreshUncounted` stay
+  **append-only**, exactly as `rewardBudgetRemittedGlobal` already is, and for
+  the same reason: monotonicity is what makes them usable as evidence;
+- R4 adds a **separate receipt-bound RETURNED cumulative**, attributed to the
+  same counter the original receipt was credited to;
+- spendable backing is the **difference**, derived at read time.
+
+The r5 attribution point is preserved and still load-bearing — it just applies
+to which returned-cumulative the return lands in. A compensation that overtook
+the arming broadcast was booked to `rewardBudgetFreshUncounted`, **not**
+`rewardBudgetArmedFreshReceived`; netting its return against the armed side
+would consume armed credit belonging to *unrelated* deliveries and defer their
+properly-funded claims. Bind the return to its own receipt's attribution.
+Otherwise P1-b later treats returned, no-longer-held VPFI as funding.
 
 **Consequence, correcting an earlier claim: C2 is NOT a prerequisite of P2.**
 The two are independent again.
@@ -1191,6 +1267,37 @@ repatriation design "already states", which is **not verifiable from this
 document's branch** — the C2 design carries a matching constraint but the two
 changes are unmerged and cross-referencing each other (Codex #1573 r4). This
 rule is P2's own and does not depend on that one landing.
+
+**R4b — the arriving compensation must be CLASSIFIABLE at ingress, and today's
+wire split makes it not** (Codex #1573 r7 P1). R4a says late receipts are
+quarantined; that presumes the mirror can tell a late receipt from an on-time
+one when it arrives. It often cannot. Constraint 4 requires compensation to be
+able to land while the mirror is still **unstamped**, and constraint 12 puts
+`finalizedAt` and the lapse schedule in the **broadcast** — a separately
+delivered message, over a transport that orders nothing. A compensation that
+arrives after its true expiry but **before** that broadcast presents as
+perfectly ordinary: the mirror has no expiry to compare against, credits it
+normally, and claims can consume the funds before the broadcast later proves
+the delivery must be returned. That is R4a's own failure mode reintroduced
+through the classification gap rather than through timing.
+
+Two ways to close it, and this design takes the first:
+
+- **Authenticate the applicable expiry on the remit itself**, so the message is
+  self-classifying at ingress regardless of broadcast arrival. Constraint 15
+  already binds a compensation to **exactly one** day, so carrying that day's
+  expiry adds no ambiguity, and R5 already requires the schedule to be
+  authenticated in both domains — this is where the mirror's copy arrives for
+  the manual path. Preferred.
+- Quarantine **every** unstamped compensation until the broadcast installs the
+  schedule. Correct but strictly worse: it makes an on-time delivery's
+  availability depend on a second message, and quarantine-until-broadcast has
+  no terminal of its own if that broadcast never arrives — which is the same
+  unbounded-wait shape R2 exists to eliminate.
+
+This is the same ordering gap as constraint 16 (compensation overtaking the
+arming broadcast), one layer down: **any property the mirror must evaluate at
+ingress has to travel with the delivery, not alongside it.**
 
 **R5. The per-day lapse SCHEDULE is authenticated in BOTH domains** (Codex
 #1573 r2 P1). Base enforces the R3 dispatch cutoff while the mirror enforces
@@ -1247,17 +1354,83 @@ while an earlier one for that chain is unresolved.** Owner-directed
 2026-08-06 (#1571). One compensation per chain may be in flight, so an outage
 strands at most one delivery rather than one per zeroed day.
 
-**"Unresolved" means SETTLED, not ACKed** (Codex #1573 r6 P1). R4 has the
-mirror finalize/ACK the original reservation *before* starting the fresh-return,
-so treating that ACK as resolution would release the R6 gate while the tokens
-and the Base-side reversal are still outstanding. If the Base→mirror lane
-recovers while the mirror→Base return lane does not, Base would then dispatch
-another compensation and accumulate several quarantined/in-flight returns —
-contradicting the one-stranded-delivery bound R6 exists to create. The per-chain
-gate clears **only after Base authenticates the recovered receipt and completes
-the reversal** — which removes the
-operational pile-up, the repeated fresh-return traffic, and the repeated
-reversal accounting.
+**"Unresolved" means the OUTCOME IS UNKNOWN — and the terminals that resolve it
+must be ENUMERATED** (Codex #1573 r6 P1, then r7 P1 ×4 correcting the
+over-correction). This clearing rule has now been wrong in both directions, so
+it is stated as an exhaustive state machine rather than as a sentence.
+
+r6 established that a *post-lapse* ACK is not resolution: R4 has the mirror
+finalize/ACK the original reservation *before* starting the fresh-return, so
+releasing the gate there would free Base to dispatch again while the tokens and
+the reversal are still outstanding. That much stands.
+
+**The r6 wording then over-generalised it to "only a recovered receipt plus
+completed reversal clears the gate", and that breaks the ordinary path.**
+Several reachable states never produce a return at all — including the *most
+common* one, an ordinary on-time delivery — so under that rule the gate never
+clears and the chain is locked out of compensation permanently:
+
+| State | What actually happened | Terminal |
+| --- | --- | --- |
+| **Consumed on time** | mirror credited the delivery, users were paid, no reversal exists or ever will (r7 P1) | **consumption ACK** clears |
+| **Consumed on time but short** | all delivered tokens landed and were credited; the *day* awaits a top-up (R1c) | **consumption ACK** clears — see R6c |
+| **Delivered after lapse** | quarantined (R4a), fresh-returned, Base reverses | **return settlement** clears |
+| **Permanently undeliverable** | ingress rejects a malformed instruction; CCIP leaves it failed-but-re-executable and re-execution repeats the failure, so there is no ACK and no return (r7 P1) | **authenticated cancellation** clears — see R6d |
+| **In flight, no evidence yet** | genuinely unknown | **holds the gate** — the only state that does |
+
+So: **the gate holds only while the outcome is unknown, and clears on any
+authenticated terminal.** The r6 point survives as its narrow form — an ACK
+that closes a reservation *in order to start a return* is not a terminal; a
+consumption ACK on a delivery the mirror actually credited is.
+
+**R6b — the EVIDENCE must be permissionlessly re-presentable, or an ACK-lane
+outage becomes a user-loss mechanism** (Codex #1573 r7 P1). Base learns of
+consumption through the ACK. If the forward lane is healthy but the independent
+mirror→Base ACK lane is not, Base cannot distinguish "consumed" from "in
+flight", so the gate holds and R6 suppresses later compensations **that the
+working forward lane would have delivered**. That is new user loss created by
+the gate itself, not the pre-existing lapse exposure — and it is the one place
+R6 stops being user-neutral. Clearing must therefore be a **re-presentable
+proof of receipt**, submittable by anyone, not a one-shot message whose loss is
+terminal. This is R2's principle applied to the gate: a permissionless terminal
+on authenticated evidence.
+
+**R6c — compensation-resolution and DAY-resolution are different axes**
+(Codex #1573 r7 P1). R1c leaves a short-but-on-time receipt with the day
+partially backed and awaiting supplemental funding, while R6 forbids a new
+compensation for the chain. Read as one axis those are circular: the top-up is
+itself a compensation, so the terminal R1c requires is unreachable, and the only
+exits left are lapsing an on-time receipt or reopening — both of which R1c
+exists to avoid. They are not one axis. The *compensation* is resolved the
+moment its tokens are credited: nothing is stranded, which is the only thing R6
+bounds. The *day* remains unresolved. **A receipt-bound top-up to a day whose
+earlier compensation was consumed is therefore permitted by R6**, because it
+cannot create a second stranded delivery — the first one's tokens are already
+accounted for. What R6 forbids is a second *independent* dispatch while an
+earlier one's outcome is unknown.
+
+**R6d — ingress may not leave a token-bearing message with no terminal**
+(Codex #1573 r7 P1). R1a requires rejecting a non-zero amount against zero local
+interest, and Base structurally cannot pre-validate it: the mirror-local
+interest that would prove the instruction malformed is exactly what Base does
+not hold (that is why R1a exists). So the malformed case *reaches the receiver*.
+If the receiver reverts, CCIP records a failed-but-re-executable message —
+re-execution replays the same payload and fails identically, producing neither
+ACK nor return, and R6 then locks the chain forever while the tokens sit
+undelivered. **Rejection must be token-safe**: accept-and-quarantine the
+delivery, or provide a permissionless authenticated cancellation terminal for a
+provably-undeliverable dispatch. "Revert and rely on re-execution" is only valid
+where re-execution can *succeed*.
+
+**R6e — the gate is per CHAIN, across deployment epochs** (Codex #1573 r7 P2).
+Constraint 20 already treats delayed packets from retired deployments as
+reachable and keys receipts by deployment identity. If the gate is keyed the
+same way, rotating Base resets it: the new deployment sees no outstanding
+compensation and dispatches a second one while the old deployment's is still
+unresolved — two stranded deliveries, which is precisely what R6 forbids.
+Activation/rotation must **inventory unresolved compensations and carry the
+gate forward**, or the gate must be evaluated against a deployment-independent
+per-chain view.
 
 **R6 does NOT cap the USER loss, and it must not be read as doing so.** The
 loss is a day lapsing at zero; that happens whether or not a compensation was
@@ -1323,18 +1496,38 @@ parameter, and R4's fresh-return path is a mechanism that does not exist yet.
 Both are stated above as ratified requirements, and both belong in the P2
 design document — which they do not block, but do shape.
 
-**Two further items are genuinely OPEN as of r4, and neither is a parameter:**
+**Further items are genuinely OPEN, and none of them is a parameter.** No count
+is given — this list grew in four of the last five review rounds, and a stated
+count is a claim that goes stale faster than the list does.
 
 - **R1c's partially-backed state** — its pinned representation and its
-  permissionless terminal (top-up / reopen / lapse) are required but not yet
-  specified. Until they are, an on-time short receipt has no defined exit.
+  permissionless terminal are required but not yet specified. R6c settles the
+  part that was *blocking*: a receipt-bound top-up to a day whose earlier
+  compensation was consumed is permitted by R6, so the terminal is reachable in
+  principle. Which terminal, and its clock, is still open.
+- **The conversion's denominator** (r7) — R1a now requires pricing against the
+  capped liability rather than uncapped local interest. *Which* authenticated
+  figure that is, and what happens on a zeroed day where the report carrying it
+  may be exactly what failed to arrive, is unspecified.
+- **The residual's ledger and terminal** (r7) — floor dust plus cap-bound
+  excess is delivered-but-unpayable VPFI. R1a says what it is *not* (a debt);
+  what holds it and how it leaves is open.
+- **R6b's re-presentable proof of receipt** (r7) — the mechanism that lets
+  anyone clear the gate from authenticated evidence when the ACK lane is down.
+  Without it the gate itself creates user loss.
+- **R6d's cancellation terminal** (r7) — for a dispatch that is provably
+  undeliverable, so ingress rejection is never unrecoverable.
+- **R6e's cross-epoch gate** (r7) — how unresolved compensations are inventoried
+  and carried across a Base deployment rotation.
 - ~~The correlated-loss bound~~ — **DECIDED 2026-08-06 (#1571)** and landed as
   **R6**: no new manual compensation for a chain while an earlier one is
   unresolved. Note what R6 does and does not do — it bounds the **stranding**,
   not the **user loss**, and the correlated user loss remains *inherent* to
   lapsing on a clock while a lane is down. It is bounded by outage duration,
   capped by nothing short of reopening lapsed days, and is therefore a
-  **detect-and-report** exposure. Do not cite R6 as a cap on user harm.
+  **detect-and-report** exposure. Do not cite R6 as a cap on user harm — and
+  note R6b: badly implemented, the gate can *add* to that loss rather than
+  leaving it unchanged.
 
 ### General rule earned here, applicable beyond P2
 
@@ -1343,8 +1536,19 @@ diverge exactly where a cap or clamp bites.** `EntrySplit.armedFresh` is kept
 whole for commitment retirement while `total` sheds the capped-off part;
 `interactionPoolPaidOut` mixes legacy-schedule and armed payouts;
 `armedFreshFull` is pre-clamp. Before transmitting, bounding, or subtracting
-any such field, establish which side of that line it is on. Three separate
-findings across #1556 and this section were the same mistake.
+any such field, establish which side of that line it is on. Findings across
+#1556 and this section keep reducing to this one mistake — it has recurred in
+most review rounds, which is why it is stated as a rule rather than fixed as a
+list of sites.
+
+**R1a's conversion denominator (r7) is the same mistake again, and the most
+expensive instance so far.** `localInterest` is the mirror's *uncapped*
+aggregate — an obligation figure. What moves is `Σ_users min(rawPay_user,
+C_side − paid_user)`, the capped sum. Dividing a delivered amount by the
+former prices against money that will never be paid, and the gap is material
+rather than dust. The tell was present and missed: §2 of this very document
+already defines the mirror's liability as the capped sum, and names the
+`− userSideDayPaidVpfi` term that stops it factoring out.
 
 
 ### The manual-budget path is USUALLY counted — and the exception is a constraint
