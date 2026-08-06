@@ -278,6 +278,50 @@
   },
   {
     "type": "function",
+    "name": "getChainSurplusPosition",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "throughDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "availRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "avgDailyBudget",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "multiple",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "flagged",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getDailyFirstReportAt",
     "inputs": [
       {
@@ -733,6 +777,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setRecycleSurplusMultiple",
+    "inputs": [
+      {
+        "name": "newMultiple",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "ChainCommitRetirementReported",
     "inputs": [
@@ -1138,6 +1195,19 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecycleSurplusMultipleSet",
+    "inputs": [
+      {
+        "name": "multiple",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -1559,6 +1629,22 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRecycleSurplusMultiple",
+    "inputs": [
+      {
+        "name": "multiple",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "maxAllowed",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
   },
   {
     "type": "error",

@@ -740,6 +740,88 @@ contract RewardAggregatorFacet is
         attributedCumulative = s.chainAttributedRecycled[chainId];
     }
 
+    /// @notice #1222 M4 C1 (#1567) — the surplus multiple `N` changed.
+    ///         `0` means the flag is dark.
+    event RecycleSurplusMultipleSet(uint16 multiple);
+
+    /// @notice #1567 — `N` is bounded above so a fat-fingered value cannot
+    ///         silently make the flag unreachable.
+    error InvalidRecycleSurplusMultiple(uint16 multiple, uint16 maxAllowed);
+
+    /**
+     * @notice #1222 M4 C1 (#1567) — set the surplus-flag multiple `N`: a
+     *         chain is flagged operator-visible once its recycled
+     *         availability exceeds `N ×` its trailing average daily recycled
+     *         budget.
+     * @dev    ADMIN_ROLE-only (behind the 48h timelock like every bounded
+     *         knob). Bounded `[0, RECYCLE_SURPLUS_MULTIPLE_MAX]`.
+     *
+     *         **`0` is DARK, not reset-to-default** — the deploy default and
+     *         the `rewardClaimHorizonDays` sentinel shape, deliberately not
+     *         the `setRecycleMarginBps` reset-to-default one. There is no
+     *         safe universal `N`, and a flag that fires before an operator
+     *         has chosen a threshold is noise that teaches people to ignore
+     *         it.
+     *
+     *         Flagging only — **this moves nothing**. Disposition of a
+     *         flagged surplus is C2 (#1568), where §3.6a requires it to be a
+     *         deliberate, bounded, protocol-controlled disposal.
+     *
+     *         Lives here rather than in `ConfigFacet` for two reasons:
+     *         `ConfigFacet` has ~557 bytes of EIP-170 headroom and this would
+     *         risk it, and the house pattern already keeps a domain knob with
+     *         its domain facet (`setInteractionCapVpfiPerEth` is in
+     *         `InteractionRewardsFacet`, not `ConfigFacet`).
+     * @param  newMultiple New `N`; `0` turns the flag off.
+     */
+    function setRecycleSurplusMultiple(uint16 newMultiple)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (newMultiple > LibVaipakam.RECYCLE_SURPLUS_MULTIPLE_MAX) {
+            revert InvalidRecycleSurplusMultiple(
+                newMultiple,
+                LibVaipakam.RECYCLE_SURPLUS_MULTIPLE_MAX
+            );
+        }
+        LibVaipakam.storageSlot().recycleSurplusMultiple = newMultiple;
+        emit RecycleSurplusMultipleSet(newMultiple);
+    }
+
+    /**
+     * @notice #1222 M4 C1 (#1567) — a chain's surplus position over the
+     *         trailing {LibVaipakam.RECYCLE_SURPLUS_WINDOW_DAYS}-day window
+     *         ending at `throughDay`. Read-only; nothing moves.
+     * @dev    Per chain, never global — a global figure would hide exactly
+     *         the asymmetry this knob exists to surface (a quiet chain
+     *         accumulating while a busy one runs lean).
+     *
+     *         `multiple` is returned so **DARK is directly readable**:
+     *         `threshold == 0` alone cannot distinguish "the flag is off"
+     *         from "this chain budgeted nothing across the whole window",
+     *         which are opposite situations. `multiple == 0` is dark, full
+     *         stop — and it saves a second call to learn the knob's value.
+     * @param  chainId    The chain to inspect.
+     * @param  throughDay Inclusive last day of the trailing window.
+     */
+    function getChainSurplusPosition(uint32 chainId, uint256 throughDay)
+        external
+        view
+        returns (
+            uint256 availRecycled,
+            uint256 avgDailyBudget,
+            uint256 threshold,
+            uint16 multiple,
+            bool flagged
+        )
+    {
+        return LibVpfiRecycle.chainSurplusPosition(
+            LibVaipakam.storageSlot(),
+            chainId,
+            throughDay
+        );
+    }
+
     /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has
     ///         attributed to `(dayId, chainId)` — the mesh half of the
     ///         `credited[D]` feed that B2 folds into `Ā`. Moved here from
