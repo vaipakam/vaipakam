@@ -2,7 +2,7 @@
  * The recovery confirmation word, enforced where CI can see it.
  *
  * The shared translate script (`packages/i18n/scripts/translate-i18n.ts`,
- * reached through `scripts/translate.mjs`) cross-checks the policy file
+ * reached through `scripts/translate.ts`) cross-checks the policy file
  * against `RECOVERY_CONFIRM_WORD` and rejects a response that loses the
  * token — but that script only runs when someone types the `translate`
  * command by hand. The required DeFi check is `tsc -b --noEmit`, which never
