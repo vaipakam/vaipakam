@@ -819,6 +819,62 @@ tasa de descuento al nuevo (más bajo) saldo, aplicado a cada
 préstamo abierto en el que estés. No hay ventana de gracia donde
 aún aplique el nivel anterior.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### Cómo viaja tu tier de VPFI entre chains
+
+Depositas VPFI en tu vault en Base — Base es la chain canónica que
+posee el estado de tu acumulador. Cuando actúas en otra chain (pedir
+prestado en Sepolia, prestar en Arbitrum, etc.), esa chain lee una
+copia *en caché* de tu tier. La caché se mantiene fresca mediante un
+push entre chains: cuando tu tier efectivo cambia en Base, tu
+SIGUIENTE acción en Base difunde un mensaje CCIP a cada chain espejo
+en la que podrías actuar. El push viaja con cada acción normal en
+Base — y desde T-087 Sub 4 el Dashboard también expone un botón
+"Enviar mi tier a los espejos ahora" (que llama a `pokeMyTier()`) para
+que puedas forzar el envío sin mutar el vault. Para el recorrido
+completo, incluidos el consentimiento local y los requisitos de VPFI
+local en las chains espejo, consulta el capítulo "How VPFI Discounts
+Work" — que por ahora solo existe en la guía en inglés.
+
+Tres cosas que conviene saber:
+
+- **La maduración del tier necesita una acción posterior.** Tu primer
+  depósito NO difunde de inmediato: tu tier efectivo está limitado por
+  un periodo mínimo de historial (3 días por defecto), así que un
+  depósito reciente resuelve inicialmente como tier 0 y la difusión se
+  omite en silencio. Una vez transcurrido el periodo, la compuerta se
+  abre en Base al instante, pero los espejos no se enteran hasta que tu
+  SIGUIENTE acción en Base que arrastre el acumulado (cualquier
+  depósito, retiro o acción de préstamo — cualquier cosa que mute tu
+  vault en Base) O un clic en "Enviar mi tier a los espejos ahora" del
+  Dashboard (Sub 4) dispare un push. Un top-up de 1 wei también sirve.
+- **Tiempo de propagación.** Una vez despachado el push, suele llegar
+  al espejo en cuestión de minutos vía CCIP. Hasta entonces, el espejo
+  sigue honrando tu tier en caché anterior — no hay un parpadeo a
+  tier 0.
+- **Caducidad de la caché.** Un tier en caché se sigue honrando hasta
+  que (a) llega un push nuevo, (b) la gobernanza mueve la tabla de
+  umbrales de tier a una versión nueva y sube la versión que el espejo
+  rastrea (lo cual ocurre la primera vez que el push posterior al
+  cambio de CUALQUIER usuario llega a ese espejo — los usuarios
+  inactivos sin actividad reciente en Base también pierden en ese
+  momento su descuento en caché de la versión antigua, hasta que su
+  propio push siguiente los ponga al día), o (c) la caché supera su
+  tope de antigüedad (60 días por defecto). Si pasas mucho tiempo sin
+  actuar en una chain dada, tu caché allí acabará caducando y la chain
+  te tratará como tier 0 hasta el siguiente push. Para refrescarla,
+  haz cualquier acción en Base que arrastre el acumulado y produzca una
+  tupla de push nueva — una mutación de saldo que cambie de tier, O
+  CUALQUIER acción en Base tras un cambio de versión de la tabla de
+  gobernanza. Un acumulado "sin cambios" con la misma tupla NO reenvía
+  el push — es deliberado, para no gastar el presupuesto de difusión
+  del protocolo en cachés que ya son correctas.
+
+Si te interesan las compuertas exactas que aplica la caché para
+detectar obsolescencia, consulta la
+[functional spec de propagación de tier entre chains](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+
 ---
 
 ## Recompensas

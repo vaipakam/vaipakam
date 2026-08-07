@@ -45,25 +45,66 @@ const GUIDE_DIR = path.resolve(
 /**
  * Divergences that predate this check, tracked as #1561 follow-up.
  * Keyed `<doc>:<anchor>`, valued by the locales the divergence affects.
+ *
+ * EMPTY as of the #1561 follow-up — both original entries are closed,
+ * not re-scoped: `Advanced:buy-vpfi.cross-chain-tier` was translated
+ * into all nine editions, and `Basic:rewards.withdraw-staked` was
+ * removed from Korean (it documented a withdraw control on the Rewards
+ * page that does not exist there; the same information is already in
+ * that edition's `buy-vpfi.unstake`, where the control actually lives).
+ * Anchor parity therefore holds with nothing excused — a new entry here
+ * is a regression, and the check below fails on any stale one.
  */
-const KNOWN_GAPS = {
-  // The English guide gained a cross-chain tier-caching section that
-  // was never translated. Real content, not stale — the `buy-vpfi.`
-  // prefix is legacy naming from before the #687-A excision, but the
-  // section itself documents the current CCIP tier push.
-  'Advanced:buy-vpfi.cross-chain-tier': [
-    'ar', 'de', 'es', 'fr', 'hi', 'ja', 'ko', 'ta', 'zh',
-  ],
-  // Korean Basic carries an anchor no other edition has, including the
-  // English source it was translated from.
-  'Basic:rewards.withdraw-staked': ['ko'],
-};
+const KNOWN_GAPS = {};
 
 const ANCHOR_RE = /<a id="([^"]+)"><\/a>/g;
 
-const anchorsIn = (file) => {
-  const raw = fs.readFileSync(path.join(GUIDE_DIR, file), 'utf8');
-  return new Set([...raw.matchAll(ANCHOR_RE)].map((m) => m[1]));
+const readGuide = (file) => fs.readFileSync(path.join(GUIDE_DIR, file), 'utf8');
+
+const anchorsIn = (file) =>
+  new Set([...readGuide(file).matchAll(ANCHOR_RE)].map((m) => m[1]));
+
+/**
+ * Chapter COUNT per edition.
+ *
+ * Anchors are not the whole structure: a `## ` chapter heading carries
+ * no `<a id>` of its own, so an edition can be missing an ENTIRE
+ * chapter while its anchor set still matches — every anchor that
+ * chapter would have contributed is missing from both sides of the
+ * comparison at once, and the symmetric check above sees nothing.
+ *
+ * That is not hypothetical: it is how "How VPFI Discounts Work" went
+ * untranslated in all nine editions, and "How Liquidation Actually
+ * Works" + "Allowances" in two, without this guard ever objecting
+ * (#1561 follow-up).
+ *
+ * Counting is deliberately shallow — comparing heading TEXT would
+ * flag every correctly-translated title. The count answers the only
+ * question anchors cannot: does this edition have as many chapters as
+ * its source?
+ */
+const CHAPTER_RE = /^## .+$/gm;
+const chapterCount = (file) => (readGuide(file).match(CHAPTER_RE) ?? []).length;
+
+/**
+ * Editions known to be short of the English chapter list, per
+ * `<doc>:<locale>` → the number of chapters they still lack.
+ *
+ * Translating these is tracked as #1593 (whole chapters, ~19k
+ * characters of technical prose); recorded here so the count cannot
+ * quietly grow in the meantime. Shrink it; a new shortfall, or one
+ * larger than recorded, is a failure.
+ */
+const KNOWN_CHAPTER_GAPS = {
+  'Advanced:ar': 1,
+  'Advanced:de': 1,
+  'Advanced:es': 1,
+  'Advanced:fr': 1,
+  'Advanced:hi': 3,
+  'Advanced:ja': 3,
+  'Advanced:ko': 1,
+  'Advanced:ta': 1,
+  'Advanced:zh': 1,
 };
 
 /** `Advanced.en.md` → `{ doc: 'Advanced', locale: 'en' }` */
@@ -86,6 +127,7 @@ const isKnown = (doc, anchor, locale) =>
 
 const problems = [];
 const seenGaps = new Set();
+const seenChapterGaps = new Set();
 
 for (const [doc, locales] of byDoc) {
   const englishFile = locales.get('en');
@@ -94,8 +136,34 @@ for (const [doc, locales] of byDoc) {
     continue;
   }
   const english = anchorsIn(englishFile);
+  const englishChapters = chapterCount(englishFile);
   for (const [locale, file] of locales) {
     if (locale === 'en') continue;
+
+    // Chapter-count parity, which the anchor comparison cannot see.
+    const short = englishChapters - chapterCount(file);
+    const allowed = KNOWN_CHAPTER_GAPS[`${doc}:${locale}`] ?? 0;
+    if (short > allowed) {
+      problems.push(
+        `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
+          `${englishChapters}${allowed ? ` (${allowed} recorded as a known gap)` : ''}` +
+          ' — a whole chapter can go missing without changing the anchor set',
+      );
+    } else if (short < allowed) {
+      problems.push(
+        `KNOWN_CHAPTER_GAPS ${doc}:${locale} records ${allowed} missing ` +
+          `chapter(s) but only ${short} are — lower it`,
+      );
+    } else if (allowed > 0) {
+      seenChapterGaps.add(`${doc}:${locale}`);
+    }
+    if (short < 0) {
+      problems.push(
+        `${file}: has MORE chapters than ${englishFile} — the translation ` +
+          'carries a section the source does not',
+      );
+    }
+
     const theirs = anchorsIn(file);
     for (const anchor of english) {
       if (theirs.has(anchor)) continue;
@@ -126,6 +194,16 @@ for (const [key, localesForGap] of Object.entries(KNOWN_GAPS)) {
   }
 }
 
+// Same rule for the chapter list: a closed gap must leave, or the
+// exemption silently re-opens that edition to a fresh shortfall.
+for (const key of Object.keys(KNOWN_CHAPTER_GAPS)) {
+  if (!seenChapterGaps.has(key)) {
+    problems.push(
+      `KNOWN_CHAPTER_GAPS entry ${key} no longer diverges — remove it`,
+    );
+  }
+}
+
 if (problems.length > 0) {
   console.error('[check-guide-anchor-parity] FAILED\n');
   for (const problem of problems) console.error(`  ${problem}`);
@@ -139,5 +217,10 @@ if (problems.length > 0) {
 
 const docs = [...byDoc.keys()].join(', ');
 console.log(
-  `[check-guide-anchor-parity] OK — anchor sets match across every edition of: ${docs}`,
+  `[check-guide-anchor-parity] OK — anchor sets match across every edition` +
+    ` of: ${docs}; chapter counts match too` +
+    (Object.keys(KNOWN_CHAPTER_GAPS).length
+      ? ` (${Object.keys(KNOWN_CHAPTER_GAPS).length} edition(s) short by a` +
+        ' recorded, unchanged amount)'
+      : ''),
 );
