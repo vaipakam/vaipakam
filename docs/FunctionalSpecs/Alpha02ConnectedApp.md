@@ -493,7 +493,7 @@ Thin-market honesty rules apply.
   already presented as available. A newly added surface is translated in
   the same change that ships it, so a user never meets a page that
   switches to English partway down.
-  *(Not yet true of the whole app: an older set of sections still falls
+  *(Not yet true of the whole app: two offer-matching messages still fall
   back to English in the nine advertised languages. That is a recorded
   gap, not a revision of the intent above — see the dated row in
   [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md), which names every

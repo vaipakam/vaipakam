@@ -92,7 +92,10 @@ casualty cannot stop the batch is not the same as pretending it was fine: the
 sweep's whole claim is that every offered language now matches the template, and
 a bundle it could not read is one it never checked.
 
-Closes #1560. Follow-up: the remaining 160 keys (offset, tariff, early repay,
-transfer obligation, sale hold, loan sale and a few strays) are tracked
-separately; they are listed explicitly in the guard's allowlist and each entry
-has to be removed as it is filled.
+Closes #1560. The larger backlog this change was expected to leave behind —
+offset, tariff, early repay, transfer obligation, sale hold, loan sale and a
+few strays — was filled separately while this work was in review, so what
+remains is two keys: the pair of messages shown when an offer cannot be matched
+because the creator's risk settings no longer cover the deal, or because the
+deal needs a higher risk level than the vault allows. They are the only entries
+left in the guard's allowlist, and each has to be removed as it is filled.
