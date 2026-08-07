@@ -126,11 +126,26 @@ async function probe(page, code) {
   const problems = [];
 
   // ---- layer 1: the resource the deployed page actually fetched
+  //
+  // Playwright fires `response` when the HEADERS arrive and does NOT
+  // await the handler, so reading the body is still in flight when the
+  // page has already painted. Collect the read PROMISES and settle them
+  // before asserting, or a slow or large chunk reads as "never fetched"
+  // and fails a healthy deployment (Codex #1590 r2).
   let chunkBody = null;
-  const onResponse = async (res) => {
-    if (chunkBody !== null || !chunkUrlFor(code).test(res.url())) return;
-    const body = await res.text().catch(() => null);
-    if (body && body.includes(BUNDLE_MARKER)) chunkBody = body;
+  const bodyReads = [];
+  const onResponse = (res) => {
+    if (!chunkUrlFor(code).test(res.url())) return;
+    bodyReads.push(
+      res
+        .text()
+        .then((body) => {
+          if (chunkBody === null && body.includes(BUNDLE_MARKER)) {
+            chunkBody = body;
+          }
+        })
+        .catch(() => {}),
+    );
   };
   page.on('response', onResponse);
 
@@ -155,6 +170,7 @@ async function probe(page, code) {
     .catch(() => {});
 
   page.off('response', onResponse);
+  await Promise.all(bodyReads);
 
   if (chunkBody === null) {
     problems.push('locale chunk never fetched (or did not look like a bundle)');
@@ -194,9 +210,15 @@ for (const code of LOCALES) {
   // locale's `vaipakam:language` and cached resources, so a run could
   // pass on a stale bundle. `done()` (not `ctx.close()`) is what removes
   // the throwaway profile directory afterwards (Codex #1590 r1).
-  const { ctx, page, done } = await launch({
+  const { ctx, page, done, blockedRequests } = await launch({
     role: 'public',
     keyless: true,
+    // keyless removes the WALLET; readOnly is what stops the route shim
+    // forwarding a page-initiated POST/PUT/DELETE to a real backend.
+    // They are separate guards and this drive needs both — a locale
+    // check pointed at a regressed or hostile SITE_URL must not be able
+    // to mutate external state (Codex #1590 r2).
+    readOnly: true,
     freshProfile: true,
   });
   try {
@@ -207,7 +229,15 @@ for (const code of LOCALES) {
         /* storage disabled — the lang assertion below catches it */
       }
     }, code);
-    rows.push({ code, ...(await probe(page, code)) });
+    const row = { code, ...(await probe(page, code)) };
+    // The read-only guard's own log, asserted rather than trusted: a
+    // blocked write means the page TRIED to mutate something during a
+    // review that advertises itself as read-only, which is a finding in
+    // its own right — silence here is the only acceptable result.
+    for (const b of blockedRequests) {
+      row.problems.push(`read-only violation: ${b.reason} → ${b.url}`);
+    }
+    rows.push(row);
   } catch (err) {
     rows.push({
       code,
