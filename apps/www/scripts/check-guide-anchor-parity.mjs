@@ -150,7 +150,11 @@ const chapterCount = (file) => {
   let open = null; // { char, len }
   let n = 0;
   for (const line of readGuide(file).split('\n')) {
-    const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+    // 0-3 leading spaces, never `\s*`: at four spaces (or a tab) the
+    // renderer reads the line as INDENTED CODE, not a fence, so treating
+    // it as an opener would swallow every real chapter after it until a
+    // compatible delimiter or EOF (Codex #1594 r6).
+    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (fence) {
       const char = fence[1][0];
       const len = fence[1].length;
@@ -223,14 +227,23 @@ for (const file of files) {
 const isKnown = (doc, anchor, locale) =>
   (KNOWN_GAPS[`${doc}:${anchor}`] ?? []).includes(locale);
 
+/**
+ * Problems carry their CLASS, not just their text, so the closing
+ * advice can name the right repair. A chapter shortfall told the reader
+ * to "add the missing anchor … rather than widening KNOWN_GAPS" — an
+ * anchor does not restore a missing `##`, and the relevant baseline is
+ * KNOWN_CHAPTER_GAPS, so an otherwise actionable diagnostic ended by
+ * sending them at the wrong file (Codex #1594 r6).
+ */
 const problems = [];
+const report = (kind, text) => problems.push({ kind, text });
 const seenGaps = new Set();
 const seenChapterGaps = new Set();
 
 for (const [doc, locales] of byDoc) {
   const englishFile = locales.get('en');
   if (!englishFile) {
-    problems.push(`${doc}: no English edition to compare against`);
+    report('setup', `${doc}: no English edition to compare against`);
     continue;
   }
   const english = anchorsIn(englishFile);
@@ -247,14 +260,16 @@ for (const [doc, locales] of byDoc) {
       // `records 0 missing chapter(s) but only -1 are — remove it`,
       // which is both nonsense and a second thing to chase for one
       // change (Codex #1594 r2).
-      problems.push(
+      report(
+        'chapter',
         `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
           `${englishChapters} — the translation carries a section the ` +
           'source does not',
       );
       if (allowed > 0) seenChapterGaps.add(`${doc}:${locale}`);
     } else if (short > allowed) {
-      problems.push(
+      report(
+        'chapter',
         `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
           `${englishChapters}${allowed ? ` (${allowed} recorded as a known gap)` : ''}` +
           ' — a whole chapter can go missing without changing the anchor set',
@@ -265,7 +280,8 @@ for (const [doc, locales] of byDoc) {
       // to chase for one change (Codex #1594 r3).
       if (allowed > 0) seenChapterGaps.add(`${doc}:${locale}`);
     } else if (short < allowed) {
-      problems.push(
+      report(
+        'chapter',
         `KNOWN_CHAPTER_GAPS ${doc}:${locale} records ${allowed} missing ` +
           `chapter(s) but only ${short} are — ${short === 0 ? 'remove it' : 'lower it'}`,
       );
@@ -284,7 +300,7 @@ for (const [doc, locales] of byDoc) {
         seenGaps.add(`${doc}:${anchor}:${locale}`);
         continue;
       }
-      problems.push(`${file}: missing anchor #${anchor} (present in ${englishFile})`);
+      report('anchor', `${file}: missing anchor #${anchor} (present in ${englishFile})`);
     }
     for (const anchor of theirs) {
       if (english.has(anchor)) continue;
@@ -292,7 +308,7 @@ for (const [doc, locales] of byDoc) {
         seenGaps.add(`${doc}:${anchor}:${locale}`);
         continue;
       }
-      problems.push(`${file}: has anchor #${anchor} the English edition doesn't`);
+      report('anchor', `${file}: has anchor #${anchor} the English edition doesn't`);
     }
   }
 }
@@ -302,7 +318,7 @@ for (const [doc, locales] of byDoc) {
 for (const [key, localesForGap] of Object.entries(KNOWN_GAPS)) {
   for (const locale of localesForGap) {
     if (!seenGaps.has(`${key}:${locale}`)) {
-      problems.push(`KNOWN_GAPS entry ${key}:${locale} no longer diverges — remove it`);
+      report('anchor', `KNOWN_GAPS entry ${key}:${locale} no longer diverges — remove it`);
     }
   }
 }
@@ -311,7 +327,8 @@ for (const [key, localesForGap] of Object.entries(KNOWN_GAPS)) {
 // exemption silently re-opens that edition to a fresh shortfall.
 for (const key of Object.keys(KNOWN_CHAPTER_GAPS)) {
   if (!seenChapterGaps.has(key)) {
-    problems.push(
+    report(
+      'chapter',
       `KNOWN_CHAPTER_GAPS entry ${key} no longer diverges — remove it`,
     );
   }
@@ -319,21 +336,37 @@ for (const key of Object.keys(KNOWN_CHAPTER_GAPS)) {
 
 if (problems.length > 0) {
   console.error('[check-guide-anchor-parity] FAILED\n');
-  for (const problem of problems) console.error(`  ${problem}`);
-  console.error(
-    '\nA deep link naming a section must reach that section in every language\n' +
-      'the guide ships in. Add the missing anchor (and its section) to the\n' +
-      'translated file rather than widening KNOWN_GAPS.',
-  );
+  for (const problem of problems) console.error(`  ${problem.text}`);
+  const kinds = new Set(problems.map((p) => p.kind));
+  if (kinds.has('anchor')) {
+    console.error(
+      '\nA deep link naming a section must reach that section in every language\n' +
+        'the guide ships in. Add the missing anchor (and its section) to the\n' +
+        'translated file rather than widening KNOWN_GAPS.',
+    );
+  }
+  if (kinds.has('chapter')) {
+    console.error(
+      '\nA chapter can go missing without changing the anchor set, which is why\n' +
+        'the counts are compared separately. Add the chapter itself to the\n' +
+        'translated file — an anchor will not restore it — and correct\n' +
+        'KNOWN_CHAPTER_GAPS (not KNOWN_GAPS) rather than widening it.',
+    );
+  }
   process.exit(1);
 }
 
 const docs = [...byDoc.keys()].join(', ');
+const recordedGaps = Object.keys(KNOWN_CHAPTER_GAPS).length;
+// "match too" alongside "9 edition(s) short" is a contradiction, and the
+// half a CI reader remembers is the reassuring one. The counts do NOT
+// match while an allowance stands; what holds is that the recorded
+// divergences are UNCHANGED (Codex #1594 r6).
 console.log(
   `[check-guide-anchor-parity] OK — anchor sets match across every edition` +
-    ` of: ${docs}; chapter counts match too` +
-    (Object.keys(KNOWN_CHAPTER_GAPS).length
-      ? ` (${Object.keys(KNOWN_CHAPTER_GAPS).length} edition(s) short by a` +
-        ' recorded, unchanged amount)'
-      : ''),
+    ` of: ${docs}; ` +
+    (recordedGaps
+      ? `chapter counts are unchanged from their recorded gaps` +
+        ` (${recordedGaps} edition(s) still short — see KNOWN_CHAPTER_GAPS)`
+      : 'chapter counts match too, with nothing recorded as a known gap'),
 );
