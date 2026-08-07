@@ -243,10 +243,40 @@ debit its recycle bucket unilaterally**, or Base's `availRecycled` view (one
 definition, §3.6a) drifts and Base can broadcast a `recycleConsume` the mirror
 can no longer fund (Codex round-1 finding). So keeper allocation flows through the same
 single authority as claim funding: at finalization Base computes an
-optional `keeperAllocate[c][D]`, carries it in the **same broadcast** as
-`recycleConsume`, and counts it into `consumedCumulative[c]`. The mirror
-debits its bucket only on arrival of that instruction. One authority, one
-message, no local-draw drift.
+optional `keeperAllocate[c][D]` and carries it in the **same broadcast** as
+`recycleConsume`. One authority, one message, no local-draw drift.
+
+> **⚠ AMENDED — the two ledger moves this paragraph used to direct were both
+> wrong** (Codex #1578 r2/r5, applied here r6). It said Base *"counts it into
+> `consumedCumulative[c]`"* and the mirror *"debits its bucket on arrival"*.
+> Each breaks a CRITICAL invariant on the **first non-zero allocation**:
+>
+> - **Charging `consumedCumulative`** breaks `outstanding + retired ==
+>   consumed`. Those paired books describe *claim commitments*; a keeper
+>   credit reserves nothing into `chainOutstandingRecycledCommit` and retires
+>   nothing out of it. Same defect as charging a repatriation there.
+> - **Debiting `recycleBucket`** lowers §7 #8's bucket composition without
+>   advancing `paidOutRecycled` or `repatriatedOutCumulative`, so the watcher
+>   raises a CRITICAL over-credit against a healthy allocation.
+>
+> **The correct shape is BOTH of the following, and neither alone:**
+>
+> 1. **Mirror side — an inside-bucket earmark**, which already exists.
+>    `recycleKeeperBudget` works exactly this way: `_applyRecycleRegister`
+>    *"earmarks part of each day's margin from INSIDE the bucket, so the
+>    bucket does not move."* No tokens leave, so §7 #8 is undisturbed.
+> 2. **Base side — a separate keeper debit/release ledger** in the
+>    availability formula (§3.6a) and in governor **§7 #6**. The earmark
+>    reserves nothing in Base's per-chain availability, and `reported` is a
+>    *lifetime* cumulative — so with no keeper term advancing, **the next
+>    finalization can allocate the same tokens again** as `recycleConsume`,
+>    giving `outstandingCommitRecycled + recycleKeeperBudget > recycleBucket`
+>    and underbacked commitments.
+>
+> The general rule, which is what §3.6a reached for repatriation: **a new
+> draw on the bucket needs its own Base-side ledger term, and where the
+> tokens physically sit is a separate question from whether Base has reserved
+> them.** Tracked on **#1569**.
 
 **Claims fund first; keeper takes only the residual** (Codex round-2 P1:
 an uncapped bps-of-inflow allocation could instruct a total debit above
@@ -316,6 +346,20 @@ design must therefore extend availability to
 `reported − (consumed − released) − (repatDebited − repatReleased)`, in the
 same saturating, subtraction-first shape, and **no direction anywhere may say
 "increment `consumedCumulative`" for a repatriation**.
+
+**A THIRD draw term lands with C3** (Codex #1578 r5, applied here r6). The
+keeper allocation of §3.5 is a separate draw on the same bucket, so it takes
+its own pair on the same footing: `− (keeperDebited − keeperReleased)`. The
+mirror-side earmark stays inside the bucket (§3.5's amendment), which is why
+this term is about **Base's reservation**, not about tokens moving. Without
+it, `reported` being a lifetime cumulative means the next finalization can
+re-offer the earmarked tokens as `recycleConsume`.
+
+The generalisation, now that three draws have needed the same treatment:
+**every new draw on the bucket gets its own saturating debit/release pair
+here — never a share of `consumed`** — and governor §7 #6's bound gains the
+matching term. Where the tokens physically sit is a separate question from
+whether Base has reserved them.
 
 **Why Mode B must not touch the claim-side ledger at all.** Writing it as
 `reported + released − consumed` is not an equivalent rearrangement here: a
@@ -720,24 +764,25 @@ So:
 
 - **Mode A is C2 / #1568** — planned surplus out of the recycle bucket. It is
   the §3.6 flow, needs nothing from P2, and is **independent** again.
-- **Mode B is #1584** — the fresh-return of a stranded delivery, held
+- **Mode B is #1434 P2 / R4** — the fresh-return of a stranded delivery, held
   in the recovery reservation of constraint 4 from the moment it arrives (it is
-  never left as plain un-earmarked balance). Its mechanics are documented here because both modes are
-  mirror→Base token returns over one transport, but it is neither C2 nor #1568.
+  never left as plain un-earmarked balance). Its mechanics are documented here
+  because both modes are mirror→Base token returns over one transport, but it
+  ships with P2, not C2. §M7's P2 block names R4's fresh-return as one of P2's
+  wire paths and §2h ratifies it as a **dedicated fresh-return** — Mode B and
+  R4 are the same path.
 
-  **It is NOT "P2 / #1434 R4", which this line said until #1578 r4 P2.**
-  #1434's M3 scope covers the delivered-funding and zeroed-day prerequisites
-  and then retrying mirror pricing — it names no reverse transport and no
-  recovery state, so Mode B would have fallen between that card and #1568
-  (Mode A only). R4 *requires* a dedicated fresh-return; it does not build one.
-  Cut as #1584 so the requirement has an owner.
+  > **A correction, recorded so it is not re-made** (Codex #1578 r3→r6):
+  > #1434's **M3 ROW** named no reverse transport, and I generalised that into
+  > "#1434 does not own Mode B" and cut a duplicate card. The row was the gap;
+  > the scope was never missing. The row now names it.
 
-  **Cross-card dependency with #1434, and it is fund-safety-shaped:** neither
-  mode may restore the append-only 69M headroom, and Mode B must net
-  `rewardBudgetArmedFreshReceived` **where that particular receipt advanced
-  it**. Without both, a return removes the compensation from the mirror while
-  #1434's delivered-funding gate still counts it — opening claims against VPFI
-  the mirror no longer holds.
+  **⛔ SEQUENCING:** R4's **arrival reservation and claim-exclusion slice must
+  land before #1434 lifts the mirror settlement halt.** Otherwise a
+  compensation arriving after its day irreversibly lapsed has no
+  stranded-recovery reservation, and the ordinary fresh-claim `backingRoom`
+  can spend those tokens before the return runs — a claim spending tokens
+  earmarked for something else, with nothing marking them earmarked.
 
 What genuinely is shared, and should therefore be decided once rather than
 twice, is the **transport** (constraint 3) and the **mode discriminator** — so

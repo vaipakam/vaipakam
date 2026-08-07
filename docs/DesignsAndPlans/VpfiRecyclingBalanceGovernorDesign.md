@@ -515,10 +515,13 @@ protocol-owned `recycleBucket` **ledger slice of its own VPFI balance**, with
 bucket-separation invariant
 `diamondVpfiBalance ≥ userLifCustody + unclaimedRewardBudget + recycleBucket`.
 
-> **⚠ This invariant gains a term when Mode B (#1584) / #1434 R4a land**
-> (Codex #1574 r10 P1; ownership corrected #1578 r4 — Mode B is **not**
-> #1568, which is Mode A only, and not #1434, whose M3 scope names no reverse
-> transport). A **stranded-recovery reservation** — a post-lapse
+> **⚠ This invariant gains a term when Mode B / R4a land — both #1434 P2**
+> (Codex #1574 r10 P1; ownership settled #1578 r6 — Mode B is **not** #1568,
+> which is Mode A only, and it IS #1434: §M7's P2 block names R4's
+> mirror→Base fresh-return as one of P2's wire paths. An r4 revision here
+> briefly assigned it to a separate card on the false premise that #1434
+> named no reverse transport). A **stranded-recovery reservation** — a
+> post-lapse
 > compensation held for return — is a *fourth* owner of this one balance. It
 > is not `unclaimedRewardBudget`: the day it belonged to has lapsed, so it is
 > no longer an unclaimed reward obligation. It is not the bucket: those tokens
@@ -677,9 +680,25 @@ sits at the single canonical point (Base finalization):
 
    The second comparison is evaluated only once the first holds, so
    `reported − claimNet` cannot underflow, and no intermediate can exceed
-   `reported`. The two draw ledgers are disjoint, which is what makes the
-   bound a joint one; totality is what makes it checkable under hostile
-   cumulative values.
+   `reported`. The draw ledgers are disjoint, which is what makes the bound a
+   joint one; totality is what makes it checkable under hostile cumulative
+   values.
+
+   **C3's keeper allocation adds a THIRD net term on the same footing**
+   (Codex #1578 r5): `keeperNet = sat(keeperDebited − keeperReleased)`,
+   chained identically — each comparison evaluated only once the previous
+   holds, so no subtraction underflows. It is required because the mirror's
+   inside-bucket earmark (`recycleKeeperBudget`) reserves nothing on Base,
+   and `reported` is a *lifetime* cumulative — so without it the next
+   finalization can re-offer the earmarked tokens as `recycleConsume`,
+   giving `outstandingCommitRecycled + recycleKeeperBudget > recycleBucket`.
+
+   **Never fold a new draw into `consumed`.** That breaks
+   `outstanding + retired == consumed`, whose paired books describe claim
+   commitments only. Three draws have now needed this treatment (claims,
+   repatriation, keeper), so treat it as the rule: **every new draw on the
+   bucket gets its own saturating debit/release pair, here and in the §3.6a
+   availability formula.**
 
    The availability formula this mirrors is single-sourced in
    [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
