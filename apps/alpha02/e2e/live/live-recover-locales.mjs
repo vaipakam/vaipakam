@@ -141,6 +141,15 @@ const BUNDLE_MARKER = '"app":{"name":"Vaipakam"';
 const chunkUrlFor = (code) =>
   new RegExp(`/assets/${code}-[A-Za-z0-9_-]+\\.js(?:\\?|$)`);
 
+/**
+ * A missing PRECONDITION, as distinct from a product finding: the
+ * browser would not start, or the site could not be reached at all.
+ * The three-verdict contract keeps these apart on purpose — exit 1
+ * means "the product is wrong", and spending that code on "I could not
+ * look" is how a batch run learns the wrong lesson.
+ */
+class SetupError extends Error {}
+
 async function probe(page, code) {
   const expected = EXPECTED[code];
   const problems = [];
@@ -169,10 +178,22 @@ async function probe(page, code) {
   };
   page.on('response', onResponse);
 
-  await page.goto(`${SITE}/recover`, {
-    waitUntil: 'domcontentloaded',
-    timeout: 60_000,
-  });
+  try {
+    await page.goto(`${SITE}/recover`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+    });
+  } catch (err) {
+    // Nothing has been OBSERVED yet, so this cannot be a product
+    // finding: an unreachable host, a wrong SITE_URL or an egress
+    // failure says the check never ran, not that the page is broken.
+    // Reported as FAIL it would be nine confident rows asserting a
+    // healthy deployment is broken (Codex #1590 r7).
+    page.off('response', onResponse);
+    throw new SetupError(
+      `could not load ${SITE}/recover — ${String(err).split('\n')[0]}`,
+    );
+  }
 
   // Wait for the REQUESTED locale to settle, not merely for any
   // heading: on a slow chunk fetch the English fallback paints first,
@@ -241,7 +262,9 @@ async function probe(page, code) {
 function summarize(observed) {
   let failed = 0;
   for (const r of observed) {
-    if (r.problems.length > 0) {
+    if (r.blocked) {
+      console.log(`----  ${r.code}  not checked: ${r.blocked}`);
+    } else if (r.problems.length > 0) {
       failed += 1;
       console.log(`FAIL ${r.code}  ${r.problems.join('; ')}`);
     } else {
@@ -253,6 +276,47 @@ function summarize(observed) {
   }
   console.log('');
   return failed;
+}
+
+/**
+ * The single rule both early-exit and end-of-run use: **the verdict
+ * follows the accumulated evidence**, never the last thing that
+ * happened.
+ *
+ * FAIL outranks BLOCKED because a real product finding must not be
+ * discarded by a later setup problem — a run that proved `es` renders
+ * English and then lost the browser has still proved it. BLOCKED
+ * outranks PASS because "I could not look" is not "I looked and it was
+ * fine". Both directions have been got wrong here in turn (Codex #1590
+ * r5, r6, r7), which is why there is now one function rather than one
+ * rule per exit point.
+ */
+function exitOnEvidence(observed, note) {
+  const failed = summarize(observed);
+  const blocked = observed.filter((r) => r.blocked);
+  if (failed > 0) {
+    console.log(
+      `live recover locales: ${failed} of ${observed.length} locale(s) FAILED` +
+        (blocked.length > 0
+          ? ` (${blocked.length} could not be checked; a real finding outranks` +
+            ' a setup problem)'
+          : ''),
+    );
+    process.exit(1);
+  }
+  if (blocked.length > 0) {
+    console.log(
+      `\nBLOCKED: ${blocked.length} of ${LOCALES.length} locale(s) could not` +
+        ` be checked and none of the rest found a problem.${note ? `\n  ${note}` : ''}` +
+        `\n  first cause: ${blocked[0].blocked}`,
+    );
+    process.exit(2);
+  }
+  console.log(
+    `live recover locales: all ${observed.length} serve and render the` +
+      ' expected resource in their own language',
+  );
+  process.exit(0);
 }
 
 const rows = [];
@@ -290,23 +354,19 @@ for (const code of LOCALES) {
     // (Codex #1590 r6).
     console.error(
       `\nCould not start the browser for ${code} — a setup precondition,` +
-        ` not a product finding.\n  ${String(err).split('\n')[0]}` +
-        `\n  → check LIVE_CHROMIUM_PATH, or that Chromium is installed.`,
+        ` not a product finding.\n  ${String(err).split('\n')[0]}`,
     );
-    summarize(rows);
-    if (rows.some((r) => r.problems.length > 0)) {
-      console.log(
-        '\nExiting FAIL rather than BLOCKED: the run stopped early, but the' +
-          ' locales it did reach found real problems.',
-      );
-      process.exit(1);
+    // Every locale from this one on is unreachable, so record them all
+    // as blocked rather than stopping at the first: a run that reports
+    // "1 of 9 could not be checked" when in fact none of the remaining
+    // eight ran overstates its own coverage.
+    for (const rest of LOCALES.slice(LOCALES.indexOf(code))) {
+      rows.push({ code: rest, blocked: `browser would not start`, problems: [] });
     }
-    console.log(
-      `\nBLOCKED: stopped at ${code} having verified` +
-        ` ${rows.length} of ${LOCALES.length} locale(s), with no problems` +
-        ' found among them.',
+    exitOnEvidence(
+      rows,
+      'check LIVE_CHROMIUM_PATH, or that Chromium is installed.',
     );
-    process.exit(2);
   }
   const { ctx, page, done, blockedRequests } = session;
   try {
@@ -339,27 +399,20 @@ for (const code of LOCALES) {
     }
     rows.push(row);
   } catch (err) {
-    rows.push({
-      code,
-      lang: '?',
-      dir: '?',
-      h1: '',
-      problems: [`drive error: ${String(err).slice(0, 140)}`],
-    });
+    rows.push(
+      err instanceof SetupError
+        ? { code, blocked: err.message, problems: [] }
+        : {
+            code,
+            lang: '?',
+            dir: '?',
+            h1: '',
+            problems: [`drive error: ${String(err).slice(0, 140)}`],
+          },
+    );
   } finally {
     await done();
   }
 }
 
-const failed = summarize(rows);
-if (failed > 0) {
-  console.log(
-    `live recover locales: ${failed} of ${rows.length} locale(s) FAILED`,
-  );
-  process.exitCode = 1;
-} else {
-  console.log(
-    `live recover locales: all ${rows.length} serve and render the expected` +
-      ' resource in their own language',
-  );
-}
+exitOnEvidence(rows);
