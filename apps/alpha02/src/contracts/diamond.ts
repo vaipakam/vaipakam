@@ -14,6 +14,7 @@ import { copy } from '../content/copy';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import type { TransactionReceipt } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { assertSettled } from './ownReceipt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
 
@@ -42,6 +43,13 @@ export function useDiamondWrite() {
     async (
       functionName: string,
       args: readonly unknown[],
+      /** `onSubmitted` fires the moment the transaction has a hash,
+       *  BEFORE the receipt wait. A caller that unwinds on failure needs
+       *  it to tell "never sent" from "sent, outcome unknown": the
+       *  receipt wait can time out on a transaction that mined perfectly
+       *  well, and undoing a side effect of a write that actually landed
+       *  is worse than leaving it (#1529 review round 8). */
+      opts?: { onSubmitted?: (hash: `0x${string}`) => void },
     ): Promise<DiamondWriteResult> => {
       if (!onSupportedChain || !walletChain || !walletClient || !address) {
         throw new Error(copy.errors.walletConnectFirst);
@@ -55,10 +63,26 @@ export function useDiamondWrite() {
         account: address,
         chain: walletClient.chain,
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== 'success') {
-        throw new Error(`Transaction reverted (${hash})`);
-      }
+      opts?.onSubmitted?.(hash);
+      // Not just "did a transaction succeed" but "did OUR CALL run":
+      // viem follows replacements, so a cancelled write resolves with the
+      // replacement's successful receipt and would otherwise be reported
+      // as a completed call (#1529 review round 11). This covers every
+      // Diamond write in the app, `createOffer` among them — where
+      // treating a cancel as success announced a refinance request that
+      // does not exist and left its payoff approval standing.
+      //
+      // A Speed Up is NOT such a case: viem classifies it `repriced` only
+      // when `to`, `value` and `input` all match, so it is this very call
+      // at a higher gas price and it succeeds normally. What it does
+      // change is the hash — so the receipt has to come back from the
+      // wait rather than be re-fetched by the submitted hash, which for a
+      // sped-up transaction has no receipt at all (#1529 review round 12).
+      const receipt = await assertSettled(
+        publicClient,
+        hash,
+        `The ${functionName} transaction`,
+      );
       // RPC read-diet PR A (§4.1.4) — the centralized post-receipt
       // floor: every confirmed Diamond write dirties the standard
       // own-state set (here, in every other tab via broadcast, and
@@ -66,7 +90,14 @@ export function useDiamondWrite() {
       // ADDITIVE: flows keep their surface-specific invalidations on
       // top of this — the floor is what no future flow can forget.
       publishReceiptInvalidation(queryClient);
-      return { hash, receipt };
+      // The MINED hash, not the submitted one. On a Speed Up they differ,
+      // and callers put this straight into an explorer link on the
+      // success panel — the submitted hash never mined, so the link goes
+      // nowhere (#1529 review round 13). Callers that need the SUBMITTED
+      // hash for reconciliation (RefinanceFlow, deciding whether an offer
+      // might exist after a failure) take it from `onSubmitted`, which is
+      // exactly why that callback exists.
+      return { hash: receipt.transactionHash, receipt };
     },
     [
       onSupportedChain,

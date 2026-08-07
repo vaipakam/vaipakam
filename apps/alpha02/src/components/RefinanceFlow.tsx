@@ -32,9 +32,11 @@
  *      (exact; the pull only shrinks as partials settle interest).
  *   3. createOffer with the refinance tag and a hard `expiresAt` at
  *      the disclosed request lifetime.
- * If the user abandons the sequence after step 2, the approval is
- * best-effort revoked — a payoff-sized authorization must not linger
- * behind a pristine form with nothing to cancel.
+ * If the user abandons the sequence after step 2, the allowance is
+ * best-effort RESTORED to whatever it was before — a payoff-sized
+ * authorization must not linger behind a pristine form with nothing to
+ * cancel, and a pre-existing grant another arrangement depends on must
+ * not be zeroed either.
  */
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -45,7 +47,8 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
+import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
+import { TxNotSettledError } from '../contracts/ownReceipt';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -257,9 +260,33 @@ export function RefinanceFlow({
     if (rateBps === null || durationDays === null) return;
     setBusy(true);
     setError(null);
-    // Tracks whether THIS attempt granted the payoff approval, so an
-    // abandoned step 3 can unwind it (see header).
-    let approvalGranted = false;
+    // The allowance as it stood BEFORE this attempt, so an abandoned
+    // step 3 can put it back (see header). The prior VALUE, not a
+    // boolean: ensureAllowance also raises a non-zero-but-insufficient
+    // allowance, and zeroing that would destroy a grant another live
+    // arrangement depends on (#1529 review).
+    let priorAllowance: bigint | null = null;
+    // The value THIS attempt last put on-chain — null while it has
+    // written nothing. Stamped per mined approve rather than from
+    // ensureAllowance's return value, so the zero-reset counts even when
+    // the approve after it is rejected. The unwind acts only if the
+    // allowance still reads exactly this (#1529 review).
+    let wroteAllowance: bigint | null = null;
+    // Hash of that write, so the unwind can settle a still-pending
+    // approve instead of reading it as somebody else's change.
+    let wroteAllowanceTx: `0x${string}` | null = null;
+    // The last value the approve helper CONFIRMED. Needed when a later
+    // approve's revert is only discovered by the unwind, after the helper
+    // has thrown on a timeout and can no longer correct its own report.
+    let confirmedAllowance: bigint | null = null;
+    // Hash of the createOffer transaction once submitted. The unwind
+    // needs it because creating the request does NOT consume the payoff
+    // approval — the later acceptance does. So unlike the handover flow,
+    // where a landed write eats the allowance and the restore no-ops by
+    // itself, here a lost receipt on a transaction that actually mined
+    // would strip the approval off a LIVE refinance offer, leaving one
+    // whose acceptance cannot collect the payoff (#1529 review round 8).
+    let createOfferTx: `0x${string}` | null = null;
     let approvalToken: `0x${string}` | null = null;
     try {
       // createOffer + the accept-time refinance are Tier-1 — live
@@ -399,21 +426,36 @@ export function RefinanceFlow({
           (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
         symbol: sym,
       });
-      // Only a MINED approve tx arms the unwind — when the wallet
-      // already held a sufficient allowance (ensureAllowance returns
-      // null), that allowance belongs to some other live arrangement
-      // (a prior request, a sale listing, a user-managed grant) and a
-      // failed step 3 must not zero it out from under that flow.
-      const approvalTx = await ensureAllowance({
+      // The standing allowance is what an abandoned step 3 restores. Any
+      // pre-existing grant belongs to some other live arrangement (a
+      // prior request, a sale listing, a user-managed approval), so the
+      // unwind must put that figure back rather than zero it:
+      // ensureAllowance raises a non-zero but insufficient allowance
+      // too, and treating that as ours to erase would break the flow
+      // relying on it. The figure comes from ensureAllowance's OWN read
+      // — sampling it separately here would be a second moment, and
+      // anything moving the allowance in between would leave this stale
+      // so the unwind restored a value that was never replaced (#1529
+      // review).
+      approvalToken = liveLoan.principalAsset;
+      await ensureAllowance({
         publicClient,
         walletClient,
         token: liveLoan.principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
         amount: liveApproval,
+        onObserved: (value) => {
+          priorAllowance = value;
+        },
+        onWrote: (value, hash) => {
+          wroteAllowance = value;
+          wroteAllowanceTx = hash;
+        },
+        onConfirmed: (value) => {
+          confirmedAllowance = value;
+        },
       });
-      approvalGranted = approvalTx !== null;
-      approvalToken = liveLoan.principalAsset;
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
         rateBpsMax: rateBps,
         durationDays,
@@ -432,23 +474,15 @@ export function RefinanceFlow({
           // already have MINED above — unwind it the same best-effort
           // way (Codex #1511 r11): a blocked submit must not leave a
           // payoff-sized authorization behind a pristine form.
-          if (approvalGranted && approvalToken) {
-            try {
-              await revokeAllowance({
-                publicClient,
-                walletClient,
-                token: approvalToken,
-                owner: address,
-                spender: walletChain.diamondAddress,
-              });
-            } catch {
-              // Leave the block message as the surfaced outcome.
-            }
-          }
+          await unwindApproval();
           return;
         }
       }
-      const { receipt } = await write('createOffer', [payload]);
+      const { receipt } = await write('createOffer', [payload], {
+        onSubmitted: (hash) => {
+          createOfferTx = hash;
+        },
+      });
       const created = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
         logs: receipt.logs,
@@ -462,26 +496,92 @@ export function RefinanceFlow({
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
       setError(captureTxError(err));
-      // No offer was created but the payoff approval mined — unwind
-      // it so a rejected step 3 leaves no payoff-sized authorization
-      // behind a pristine form with nothing to cancel. Best-effort:
-      // a second rejection just leaves the wallet's approvals view
-      // as the remedy (the error banner already shows the failure).
-      if (approvalGranted && approvalToken) {
+      // Unwind the payoff approval so a rejected step 3 leaves no
+      // payoff-sized authorization behind a pristine form with nothing to
+      // cancel. Best-effort: a second rejection just leaves the wallet's
+      // approvals view as the remedy (the error banner already shows the
+      // failure).
+      //
+      // But ONLY once it is established that no offer exists. `write`
+      // throws for three different reasons and they are not equivalent:
+      // never submitted (safe to unwind), submitted and reverted (safe),
+      // or submitted with the receipt lost — in which case the offer may
+      // be live on chain and its approval is load-bearing. Failing to
+      // unwind leaves a stale approval the user can revoke from the
+      // approvals view; unwinding wrongly breaks a commitment a
+      // counterparty is entitled to act on. Those are not symmetric, so
+      // an unknown outcome keeps the approval.
+      const offerMayExist = await (async () => {
+        if (createOfferTx === null) return false; // never submitted
+        // A settlement failure is POSITIVE evidence, and it is the whole
+        // reason the error carries a reason at all. Cancelled or
+        // replaced: our call never executed, so no offer exists.
+        // Reverted: it executed and produced nothing. All three are safe
+        // to unwind, and none of them can be recovered from a receipt
+        // lookup — a cancelled transaction's own hash has no receipt, so
+        // asking for one throws and reads as "cannot tell", which kept
+        // the approval standing for a confirmed cancel (#1529 review
+        // round 12).
+        if (err instanceof TxNotSettledError) return false;
         try {
-          await revokeAllowance({
-            publicClient,
-            walletClient,
-            token: approvalToken,
-            owner: address,
-            spender: walletChain.diamondAddress,
-          });
+          const r = await publicClient.getTransactionReceipt({ hash: createOfferTx });
+          return r.status === 'success';
         } catch {
-          // Leave the submit error as the surfaced failure.
+          return true; // cannot tell — assume it landed and keep the approval
         }
+      })();
+      if (offerMayExist) {
+        setError(copy.refinance.postedButUnconfirmed);
+      } else {
+        await unwindApproval();
       }
     } finally {
       setBusy(false);
+    }
+
+    // ONE unwind, shared by every abandoning exit — the late-gate return
+    // above and the catch below it. They were duplicated inline, and the
+    // duplication did exactly what duplication does: round 13 taught the
+    // catch to surface a failed cleanup and the late-gate copy kept
+    // swallowing it, so a blocked submit could erase a standing grant and
+    // say nothing (#1529 review round 14). Mirrors the shape
+    // `ObligationTransferFlow` already uses, where a single helper is why
+    // that fix covered both of its paths at once.
+    //
+    // Best-effort by design: the cleanup must not REPLACE the reason the
+    // flow stopped — that is what the user was trying to do — but a reset
+    // to zero whose put-back then fails leaves their prior grant erased,
+    // which is state they have to act on. So the failure is APPENDED.
+    async function unwindApproval() {
+      if (priorAllowance === null || !approvalToken) return;
+      if (!publicClient || !walletClient || !address || !walletChain) return;
+      const previous = priorAllowance;
+      const wrote = wroteAllowance;
+      const wroteTx = wroteAllowanceTx;
+      const confirmedVal = confirmedAllowance;
+      // Cleared before the await so a second exit path cannot unwind twice.
+      priorAllowance = null;
+      wroteAllowance = null;
+      wroteAllowanceTx = null;
+      try {
+        await restoreAllowance({
+          publicClient,
+          walletClient,
+          token: approvalToken,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          previous,
+          wrote,
+          wroteTxHash: wroteTx,
+          confirmed: confirmedVal,
+        });
+      } catch {
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
+      }
     }
   }
 

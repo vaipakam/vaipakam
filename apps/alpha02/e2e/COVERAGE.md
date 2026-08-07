@@ -21,6 +21,240 @@ existing one, stating WHERE it is verified.
 A feature may appear in both tiers (CI-Anvil for the flow mechanics,
 live for the deployed-service half).
 
+**What a live driver's exit code means** — 0 PASS, 1 FAIL (an assertion
+against a page actually observed), 2 BLOCKED (could not observe, or
+could not trust what was observed). The distinction is load-bearing for
+every "Live review DONE" claim below: a driver that cannot reach the
+chain must report BLOCKED, never PASS. So a driver must not convert an
+RPC or transport failure into a domain answer — no "candidate raced
+out", no "token burned" — because that hides a review it did not
+perform behind an exit 0. Only an on-chain answer (a revert) may become
+a domain verdict; anything else propagates to the BLOCKED path.
+
+Two corollaries of "could not trust what was observed". A driver must
+verify that the RPC it was pointed at actually serves the chain the
+report names — nothing else checks it, since the injected wallet answers
+the chain question locally, so a misdirected RPC otherwise reviews
+another network consistently and exits 0 under the requested chain's
+name. And every input to a pre-visit eligibility re-check must be read
+at re-check time: a value cached during discovery can have changed under
+it, and judging a page against a stale one turns a configuration change
+into a reported product regression.
+
+A live driver's output is pasted into the PR thread, so it is a
+PUBLICATION surface: never print an RPC URL, a request URL or anything
+else that can carry a provider key verbatim. Status lines get the origin
+only; recorded URLs are redacted where they are recorded, not where they
+are printed, so a later report line cannot reintroduce the leak.
+
+Redact by HOST, not by the shape of the path. Deciding from the shape —
+"segments over 24 characters look like keys" — is a denylist for
+secrets: it has to anticipate every provider's key format, and the ones
+it misses print in full (Blast and Chainstack key on a hyphenated UUID;
+short hex keys fall under the length floor). The RPC's origin is known,
+so any URL on it prints as its origin with the path discarded unread,
+which covers a provider nobody has configured yet. Shape heuristics stay
+as second-line defence for other hosts, where a legible path is worth
+having. A redaction helper is only as good as its test: `redact.mjs` is
+extracted from the driver precisely so `redact.test.mjs` can pin each
+key shape in CI, rather than the guarantee resting on a throwaway script
+someone ran once.
+
+Classify transport-vs-answer by an ALLOWLIST of what counts as the chain
+answering, never a denylist of known failures — the same argument the
+read-only allowlist is built on. A missed operational code in a denylist
+becomes a product FAIL blamed on the app; a missed one in an allowlist
+becomes a BLOCKED, which is loud and harmless.
+
+Read that evidence off the error CHAIN, not the top-level error object.
+The RPC client wraps the provider's error, so the code and any revert
+bytes generally sit on an inner cause; a predicate that tests the outer
+object still works for the plain case and silently covers nothing else.
+Because the miss costs only a false BLOCKED, this kind of dead clause
+does not announce itself — it has to be measured against a responder
+that produces each shape.
+
+That allowlist is a THREE-way split, not two. Between "the chain
+answered" and "nothing answered" sits a reachable provider REJECTING the
+page's request as malformed — the JSON-RPC parse-error, invalid-request
+and invalid-params codes. Those are positive evidence the endpoint is
+working, and the fault is the page's, so they are a product FAIL. Filing
+them with the transport failures exits BLOCKED and hides an app defect
+behind a "re-run" verdict. Method-not-found is deliberately NOT in that
+set: it describes what the server implements, not whether the request
+was well formed. The classifier is extracted to `rpc-verdict.mjs` with
+its own tests, for the reason `redact.mjs` was — a predicate verified by
+a throwaway script grows silent bypasses.
+
+Ask that same question of a RESOLVED response, not only of a thrown
+error. The page reaches the chain by two doors — the injected provider,
+whose failures throw, and the app's own HTTP transport, whose failures do
+not. A rate-limited or rejected call comes back through the second door
+as an ordinary response that `fetch` resolves happily, so a shim that
+classifies only its `catch` block sees nothing wrong. Handed on
+unjudged, that made a failed REQUIRED read look like a missing surface
+(a product FAIL) and let a failed OPTIONAL read pass at exit 0 on a page
+that was never fully served — the two outcomes the BLOCKED verdict
+exists to prevent.
+
+Two traps live in that check, and a naive "an error body means failure"
+rule falls into both. The shim serves the WHOLE site, so only traffic
+whose REQUEST is JSON-RPC may be judged by the RPC verdict — and the
+request is also the only reliable discriminator, because a rate-limited
+provider answers `429` with plain text that reveals nothing about what
+was asked. And an ordinary REVERT arrives as an HTTP 200 carrying a
+JSON-RPC error, so the same three-way split has to decide here too, with
+'answered' recorded as nothing at all; anything less exits non-zero on
+every healthy run. A batch is judged member by member and reported as
+ONE entry per verdict, because the count is of page requests.
+
+The unit of judgement is the CALL, not the HTTP envelope, and three
+things go wrong when the envelope is treated as the unit. A non-2xx is
+not automatically "no answer": a provider returning 400 with a
+well-formed JSON-RPC error has received and rejected the page's request,
+and the RPC client passes that straight through to the app — so it is a
+client fault, and only a status the page itself cannot see past ends the
+question. Mirror the client's own test for that exactly (both a numeric
+code and a string message, on a single non-array body), because what
+matters is what the PAGE experiences, not what seems reasonable. A batch
+response that OMITS a member answers every call but one, and batches
+resolve POSITIONALLY — a dropped member does not merely yield
+`undefined`, it can hand one call another call's answer — so an
+unanswered request id is unreachable. And two calls in one batch can
+deserve different verdicts.
+
+Positional resolution cuts the other way too: a SURPLUS or duplicate
+member is worse than a missing one. Ask for ids 10 and 11, get back 9,
+10 and 11, and the sort hands the first call the id-9 result while every
+id asked for is present and looks answered — so an extra member poisons
+the whole batch, where an omission costs exactly one call and leaves the
+rest trustworthy. Nor is the absence of an error the same as success: a
+member carrying neither a `result` nor a usable error object makes the
+client hand the page `undefined`, which fails or renders degraded state
+while contributing no verdict at all. Require a result, and require the
+response ids to match the requested ids one for one.
+
+Validate the request ENVELOPE before applying the method allowlist, and
+share one definition of "is this JSON-RPC" between the gate and the
+response classifier so the two cannot disagree. An empty batch satisfies
+`every()` vacuously, so it rode through the gate and was then declined
+by the response side — an invalid request the page itself made vanished
+from the run. A member whose `method` is not a string failed the
+allowlist lookup like any unsanctioned method, reporting a malformed
+product request as a gap in OUR allowlist. Both are page defects and
+must report as such.
+
+A single attempt cannot settle any of it. The RPC client retries a
+failed read by default and the app wraps its transports in a fallback
+list, so the shim sees ATTEMPTS while the page experiences one logical
+read. Judge per logical call — method plus params — and let a LATER
+success clear an earlier failure. Only later: a read that worked and
+then died for good is a genuine failure, and letting an early success
+cancel it would hide exactly the mid-run degradation the drive exists to
+notice. The driver's OWN reads need no such reconciliation, because
+there the client exhausts its retries internally and throws once.
+
+That reconciliation has a known limit, tracked as issue #1583: method
+plus params is not invocation identity, so two independent reads that
+share both — a repeated `eth_blockNumber` poll, say — are treated as one
+logical call, and an unrelated later success can clear a failure that
+genuinely reached a page. There is no sound fix at this layer: the RPC
+client's retries are indistinguishable on the wire from independent
+calls (each retry carries a fresh id), concurrent duplicate requests are
+identical byte for byte, and no time threshold separates a retry chain
+from the next poll. Closing it means taking operation identity from the
+page rather than inferring it from the wire.
+
+Checking OUR client's chain is not checking the PAGE's. The injected
+provider answers `eth_chainId` locally, and the page's reads are neither
+forwarded to the discovery RPC nor rewritten to it — the route handler
+fetches each original request URL, which is whatever RPC the deployed
+bundle was BUILT with. So a site built against the wrong network passes
+the discovery check, and the surface it then fails to render is blamed
+on the product; with deterministic deploys putting the same address on
+both chains it can pass outright. Probe the endpoints the page actually
+uses, and let only a definite mismatch block.
+
+"The endpoints the page uses" is not "every endpoint the page touches",
+though, and the first version of that check conflated them. The app talks
+to two networks on purpose — an explicit chain-1 transport backs ENS
+reverse lookups, one per counterparty on a connected page — so asserting
+the review's chain against every endpoint declared a healthy site to be
+built for the wrong network on essentially every connected run. Attribute
+by positive evidence instead: an endpoint carrying a call ADDRESSED to
+the Diamond is the one serving the deployment. Not by excluding known ENS
+URLs, which come from the deployed bundle's own env and cannot be
+enumerated from outside it — an exclusion list would be a guess that
+silently stops matching.
+
+A probe awaited at verdict time needs a deadline. The batch runner spawns
+each driver with no timeout of its own, so an endpoint that serves the
+page normally but stalls on a synthetic request would hold the whole live
+review rather than produce a verdict. Expiry settles as "could not tell",
+the same as any other unanswerable probe.
+
+Every guarantee in that driver rides on HTTP interception, so RPC over a
+WEBSOCKET bypasses all of it — the method allowlist, the response ledger
+and the chain probe alike. The app prefers a WebSocket transport whenever
+a deploy sets `VITE_*_WSS_URL` (none does today, and the live bundle was
+checked to confirm it). Rather than pass a run that verified less than it
+claims, the driver now watches for JSON-RPC frames on page sockets and
+reports BLOCKED if any flowed. Gated on frames that are actually JSON-RPC
+requests: a relay socket carrying other traffic says nothing about chain
+reads, and a socket reset before its first frame has bypassed nothing,
+because the fallback transport simply dropped to HTTP.
+
+Two claims that did NOT survive checking, recorded so they are not
+re-litigated. The production CSP is `script-src 'self'` with no
+third-party origin, and the live HTML carries no Cloudflare RUM injection
+at all — so there is no `POST /cdn-cgi/rum` beacon for the read-only gate
+to trip over, and an exemption for one would be a hole guarding nothing.
+
+Test the WIRING, not just the predicate. A correct verdict filed into
+the wrong bucket is the same defect in a different coat, so the step
+that turns the attempt ledger into the malformed-vs-unreachable buckets
+is itself an exported, tested function rather than a few lines inline at
+the call site.
+
+The app-vs-infrastructure distinction only applies to PAGE traffic. A
+driver's own discovery reads stay a two-way question: a malformed
+request there is a defect in the driver, and "could not observe" is the
+honest verdict for that too.
+
+Browser and context SETUP is BLOCKED, not FAIL, and every step of it
+belongs inside the same wrapper the discovery reads use — launching,
+creating the context, installing routes, bindings and init scripts. Left
+bare, the rejection reaches the top level and Node exits 1, which the
+batch reports as a product defect from a driver that promised to tell
+the two apart. No page was ever observed, so there is nothing to blame
+on the app. A BLOCKED exit taken after the launch must also close the
+browser.
+
+A credential the drivers cannot USE is a BLOCKED precondition, not a
+FAIL — and validating its shape is not the same as validating it. A
+32-byte hex string is not necessarily a valid secp256k1 key (the
+all-zero placeholder and anything at or above the curve order both pass
+a regex and fail derivation), so the derivation itself has to be inside
+the guarded path. Otherwise every signing driver exits 1 and the batch
+reports an unusable wallet file as a possible product defect.
+
+The three-verdict exit contract is only honoured by the drivers that
+implement it. The batch summary must say which those are rather than
+applying its vocabulary to every driver, or a row reading FAIL hides
+that no infrastructure failure could have been distinguished. Naming
+them is not enough on its own: the runner must also CLASSIFY by that
+list, so an exit 2 from a driver outside it reads as FAIL rather than
+being promoted to BLOCKED. Otherwise the summary asserts "ran but
+verified nothing" about a driver that never agreed to mean that by
+exiting 2 — a claim about a surface nobody checked.
+
+The transport rule covers EVERY way the page reaches the network, not
+just the one the driver proxies. Reads the app makes through an injected
+wallet do not travel the routed-fetch path, so a driver that records
+unreachable traffic in only one place still reports the other as a
+product FAIL. Wherever a page-initiated request can fail without an
+answer from the node, that has to reach the same BLOCKED verdict.
+
 | Feature | Tier | Where | Live-only reason |
 | --- | --- | --- | --- |
 | Wallet connect + network gate | CI-Anvil | `tests/01-connect.spec.ts` | — |
@@ -124,11 +358,11 @@ live for the deployed-service half).
 
 | Full VPFI tariff opt-in (#1355 / M2 PR-8) — accept/fill review screens offer the acceptor's per-party Full opt-in (live `C*` quote via `quoteCStar`, auto-seeded editable `maxCStar` ceiling, vault-balance sufficiency warning, revert-vs-downgrade choice, dual-fee honesty copy), a standing-offer creator arms theirs post-create from Open Orders (`setOfferCreatorFullTariff`; signed-order makers can't — #1369), and Loan Details shows the stamped per-party modes + absorbed tariffs, a no-refund-on-preclose note, and the entitlement-travels-with-the-position-NFT note on sale surfaces. The whole surface is HIDDEN while `feeEntitlementEnabled` is off (a Full auth presented while dark fails on chain) | CI-Anvil | `tests/24-full-tariff.spec.ts` — three legs on the fork: (1) dark default renders NO opt-in control; (2) admin-impersonated enable + strict Full opt-in with an empty VPFI vault REJECTS the accept (proves the signed `acceptorFull` reaches the contract — the discriminating leg); (3) the same accept with the downgrade box ticked opens the loan and `getFeeEntitlement` reads a stamped non-Full borrower mode with zero tariff absorbed. The kill-switch is restored in a finally | — (the deployed testnet posture is DARK, so the live half of the DoD review is the leg-1 assertion — no opt-in surface renders on alpha02.vaipakam.com; the enabled-state legs are fork-only until the M2 joint cutover arms the feature) |
 
-| Early-repayment options surface (FunctionalSpecs §8) — the borrower loan page gains a "Ways to repay or exit early" chooser card (BOTH modes: names full repay / partial / close-early / obligation handover / offset / refinance with each path's cost implication up front, jump links in Advanced, one explicit "switch to Advanced" CTA in Basic), plus the two previously-unexposed preclose paths as full flows: **Option 2 obligation handover** (`transferObligationViaOffer` — eligibility-mirrored picker over the live book: same assets, amount range covering the outstanding principal, ≥ collateral, term inside the loan's maturity, not own/refinance-tagged/filled; per-candidate cost quote = seconds-precise accrued + lender rate top-up via `transferEconomicsOf`, live re-verified at submit) and **Option 3 offset** (`offsetWithNewOffer` — rate/duration/collateral form seeded from the loan, duration bounded to the remaining term, MUST-SURFACE transfer-lock + funding disclosures, single approval sized `principal + completion bound`; page-owned `useOffsetPending` pending card keyed on the chain's PrecloseOffset lock with completion-funding watch, restore-approval, and cooldown-gated `cancelOffer`). Repay/partial/preclose surfaces interlock against a live offset (warn banners; repay itself never blocked) | CI-Anvil (unit + fork) | `src/contracts/loanLive.test.ts` covers the sibling settlement mirrors this feature extends (`transferEconomicsOf` / `offsetCompletionBoundOf` ride the same pinned primitives). `tests/25-early-repay-options.spec.ts` drives both flows on the fork: (1) Basic-mode chooser renders all paths + the explicit Advanced switch, a direct-seeded matching borrow request lists with the borrower's cost quote, and confirming the handover rewrites `loan.borrower` to the replacement borrower on-chain (loan stays Active); (2) the offset form posts the linked lender offer, the pending card takes over, `positionLock(borrowerTokenId)` reads PrecloseOffset on-chain, and cancel past the 300 s cooldown releases the lock. Follow-up on next touch: an accept-side spec driving `completeOffset` through a counterparty acceptance (needs a third funded wallet accepting the offset offer). | Post-deploy eyeball per the live-review DoD: on a dev-wallet active loan, the chooser renders in Basic mode; drive an offset post + cancel on the live Base Sepolia Diamond; the handover path needs a matching standing borrow request from the second dev wallet. |
+| Early-repayment options surface (FunctionalSpecs §8) — the borrower loan page gains a "Ways to repay or exit early" chooser card (BOTH modes: names full repay / partial / close-early / obligation handover / offset / refinance with each path's cost implication up front, jump links in Advanced, one explicit "switch to Advanced" CTA in Basic), plus the two previously-unexposed preclose paths as full flows: **Option 2 obligation handover** (`transferObligationViaOffer` — eligibility-mirrored picker over the live book: same assets, amount range covering the outstanding principal, ≥ collateral, term inside the loan's maturity, not own/refinance-tagged/filled; per-candidate cost quote = seconds-precise accrued + lender rate top-up via `transferEconomicsOf`, live re-verified at submit) and **Option 3 offset** (`offsetWithNewOffer` — rate/duration/collateral form seeded from the loan, duration bounded to the remaining term MINUS a 600 s sizing reserve, with the pre-write re-judge demanding only a 60 s submit buffer over the contract's own bound (#1539/#1535 — the contract compares seconds at MINE time while the form computes at READ time, so flooring to whole days leaves zero head-room exactly when the remaining term is a whole multiple of a day; the sizing reserve is meant to be CONSUMED by review + wallet confirmation, which is why the submit re-judge must not demand it back), MUST-SURFACE transfer-lock + funding disclosures, single approval sized `principal + completion bound`; page-owned `useOffsetPending` pending card keyed on the chain's PrecloseOffset lock with completion-funding watch, restore-approval, and cooldown-gated `cancelOffer`). Repay/partial/preclose surfaces interlock against a live offset (warn banners; repay itself never blocked) | CI-Anvil (unit + fork) | `src/contracts/loanLive.test.ts` covers the sibling settlement mirrors this feature extends (`transferEconomicsOf` / `offsetCompletionBoundOf` ride the same pinned primitives). `tests/25-early-repay-options.spec.ts` drives both flows on the fork: (1) Basic-mode chooser renders all paths + the explicit Advanced switch, a direct-seeded matching borrow request lists with the borrower's cost quote, and confirming the handover rewrites `loan.borrower` to the replacement borrower on-chain (loan stays Active); (2) the offset form posts the linked lender offer, the pending card takes over, `positionLock(borrowerTokenId)` reads PrecloseOffset on-chain, and cancel past the 300 s cooldown releases the lock. Follow-up on next touch: an accept-side spec driving `completeOffset` through a counterparty acceptance (needs a third funded wallet accepting the offset offer). | Live review DONE (read half, 2026-08-03) via `live/live-position-observe.mjs` — WATCH-ONLY, no wallet file needed: three REAL active loans on the live Base Sepolia Diamond (ids 7/10/11, borrower `0xC86B…039D`) load their position pages with the chooser rendering and both new paths named (`handover=true offset=true`), and ZERO uncaught errors — in particular no hooks-order crash, which is the check that matters here because that defect is invisible to typecheck, the production build and a preview deploy alike. STILL OWED (write half, needs `TESTNET_WALLETS_FILE`): driving an offset post + cancel and a handover through the wallet-confirm path against the live Diamond — the read drive cannot sign, by construction. |
 
 | Lender-sale listing window (#1503 PR-A) — the listing form gains a mandatory listing-window selector (1/3/7/14/30-day presets; contract bounds [1 h, 30 d], clamped at loan maturity), the expiry + one-day relist-cooldown note, receipts/lock-warning copy naming expiry as a way the listing ends, and window changes voiding a given consent + closing an open review; the standing-approval headroom rationale is re-anchored on the 30-day max window (listings no longer live forever) | CI (unit) + **Gap** (fork) | typecheck + `enTemplate`/placeholder-parity pin the new copy wiring; the defi legacy page's arg-forwarding is pinned in `apps/defi/test/pages/LenderEarlyWithdrawal.test.tsx` (7-day default as the 4th contract arg). No fork spec drives the alpha02 listing form yet — the surface predates this matrix and has never had a driving spec | Commit a listing-flow spec (form → on-chain listing with stamped `expiresAt` → cooldown-refused relist) when PR-H of the #1503 series reworks the lender exit surface — that PR rebuilds this exact form, so the spec lands against its final shape instead of twice. |
 
-| Borrower-side listing-hold surface (#1503 PR-A follow-up) — while a lender-sale listing stands on the borrower's loan, `SaleListingHoldCard` explains the hold (offset + collateral withdrawal held — the on-chain guards; full/partial repay and the direct early close stay open, a partial shrinking what a buyer takes over) and the chooser's offset row is marked held with the why; once the listing ends, the same card grows the permissionless "Free held options" cleanup (`teardownStaleSaleListing`, pause-exempt). A sale a buyer has already ACCEPTED but not completed goes further than a notice: the borrower's settlement paths (full/partial repay, close early, obligation transfer, refinance) are PAUSED with the reason stated up front while add-collateral stays available; every one of those paths also re-probes the chain immediately before it sends, and an unanswered probe pauses rather than proceeds. The pause is scoped to `active` ONLY: `_completeLoanSaleImpl` reverts `LoanNotActive`, so on a `fallback_pending` loan the completion is already stranded and a pause would be permanent rather than momentary — there the borrower gets a non-blocking warning inside the repay review instead, and the live pre-send gate re-reads the loan and refuses only when the chain confirms it is still Active. State is a chain-only teardown-simulation probe (`data/saleListingHold.ts`): success→clearable, `SaleListingLoanStillLive`→live, `NoStaleSaleListing`→none, or →accepted when the lender NFT is still sale-locked, anything else fails CLOSED (renders nothing — incl. the pre-refresh Diamond, gated on a loupe read of the 4-arg listing selector). | CI-Anvil | `src/data/saleListingHold.test.ts` pins all four classifier arms (incl. the sale-locked accepted arm) + the fail-closed default, AND sweeps the whole capability×probe matrix through the extracted `computeHoldGate` — including the invariant that a surface is never left open on an answer the app isn't rendering, and the two regressions that came out of that interaction (an errored re-ask of a known-negative capability must NOT pause; an errored revalidation of a known-positive one must). `tests/26-sale-listing-hold.spec.ts` drives the full lifecycle on the fork (listing → live hold card + held offset row, no cleanup button → warp past expiry → cleanup review + confirm → on-chain link severed); SELF-ARMING: skips on a loupe probe while the fork (live Base Sepolia) predates the `RefreshAllFacetsInPlace` cut that routes the 4-arg listing selector, activates automatically once the refresh lands. | Post-deploy eyeball per the live-review DoD: on a dev-wallet loan pair, lender lists (min window), borrower page shows the hold; after expiry the cleanup click frees the options on the live Diamond. The accepted-sale PAUSE has no fork arm — reaching it needs a sale acceptance whose completion does not settle in the same transaction, which the post-refresh contracts make atomic; it is a legacy/manual-recovery shape, so the classifier arm is unit-pinned and the paused rendering is left to the live review if such a listing is ever observed. |
+| Borrower-side listing-hold surface (#1503 PR-A follow-up) — while a lender-sale listing stands on the borrower's loan, `SaleListingHoldCard` explains the hold (offset + collateral withdrawal held — the on-chain guards; full/partial repay and the direct early close stay open, a partial shrinking what a buyer takes over) and the chooser's offset row is marked held with the why; once the listing ends, the same card grows the permissionless "Free held options" cleanup (`teardownStaleSaleListing`, pause-exempt). A sale a buyer has already ACCEPTED but not completed goes further than a notice: the borrower's settlement paths (full/partial repay, close early, obligation transfer, refinance) are PAUSED with the reason stated up front while add-collateral stays available; every one of those paths also re-probes the chain immediately before it sends, and an unanswered probe pauses rather than proceeds. The pause is scoped to `active` ONLY: `_completeLoanSaleImpl` reverts `LoanNotActive`, so on a `fallback_pending` loan the completion is already stranded and a pause would be permanent rather than momentary — there the borrower gets a non-blocking warning inside the repay review instead, and the live pre-send gate re-reads the loan and refuses only when the chain confirms it is still Active. State is a chain-only teardown-simulation probe (`data/saleListingHold.ts`): success→clearable, `SaleListingLoanStillLive`→live, `NoStaleSaleListing`→none, or →accepted when the lender NFT is still sale-locked, anything else fails CLOSED (renders nothing — incl. the pre-refresh Diamond, gated on a loupe read of the 4-arg listing selector). | CI-Anvil | `src/data/saleListingHold.test.ts` pins all four classifier arms (incl. the sale-locked accepted arm) + the fail-closed default, AND sweeps the whole capability×probe matrix through the extracted `computeHoldGate` — including the invariant that a surface is never left open on an answer the app isn't rendering, and the two regressions that came out of that interaction (an errored re-ask of a known-negative capability must NOT pause; an errored revalidation of a known-positive one must). `tests/26-sale-listing-hold.spec.ts` drives the full lifecycle on the fork (listing → live hold card + held offset row, no cleanup button → warp past expiry → cleanup review + confirm → on-chain link severed); SELF-ARMING via a loupe probe: it skipped while the fork (live Base Sepolia) predated the facet cut that routes the 4-arg listing selector, and armed itself automatically when that refresh landed (2026-08-02) — the selector now resolves to a real facet, so this spec RUNS. The probe stays in place: it is the same positive facet-version signal the in-app surface gates on, so a future chain that lags the checkout skips cleanly instead of failing opaquely. | Live review PARTIAL (2026-08-03) via `live/live-position-observe.mjs` — WATCH-ONLY: the borrower position page renders clean on three real live loans with NO hooks-order crash (the #1511 P1 this surface shipped and then fixed), and the hold card correctly renders NOTHING on all three, which is the right answer — no lender has a sale listing standing on chain right now, so the hold state is not reachable to observe rather than being absent in error. The facet dependency is confirmed live: a loupe probe of the post-refresh Diamond routes `teardownStaleSaleListing` to a real facet, so the in-app capability gate opens. STILL OWED (needs `TESTNET_WALLETS_FILE`): a lender listing on a min window so the hold actually appears, then the post-expiry cleanup click freeing the options on the live Diamond. The accepted-sale PAUSE has no fork arm — reaching it needs a sale acceptance whose completion does not settle in the same transaction, which the post-refresh contracts make atomic; it is a legacy/manual-recovery shape, so the classifier arm is unit-pinned and the paused rendering is left to the live review if such a listing is ever observed. |
 
 | Risk-access page (#671/#728 defi port) — a wallet-gated `/risk-access` page (linked from Settings' More list, noindex in SeoMeta + `_headers`) exposes the vault's two GLOBAL self-sovereign risk controls: the risk level (three tiers, plain-language hints, honest enforcement note — the retail deploy's gate is OFF and the page says "not enforced yet" rather than implying enforcement) and strict mode — where ENABLE is honestly withheld (alpha02 has no surface yet to collect the per-deal mid-tier acknowledgement strict mode demands; enabling would lock the user out of their own mid-tier accepts once enforcement is on — Codex #1517 r1) while DISABLE stays available as the recovery lever (a risk-increasing change under the contract model, bounded by the disable-linger cooldown), with the disable-linger note. Trust rules ported from the defi original's review findings: controls never render over a failed critical tier read; a held-but-not-active level is called cooling vs terms-stale only from trustworthy reads (`classifyHeldTier`), with the in-place re-affirm offered only for stale; failed linger read says "couldn't check"; the advanced detail line calls a cooldown pending only for a FUTURE unlock timestamp (the contract stamps it on every write). Contextual recorders (illiquid pair consent at create, strict-mode mid-tier ack) are a deferred follow-up | CI-Anvil (unit + fork) | `src/data/riskAccess.test.ts` pins the pure classification (cooling vs stale vs unknown — a coerced 0 on a failed anchor/terms read must not flip the comparison; strict-linger predicate matrix). `tests/24-risk-access.spec.ts` drives the real facet on the fork: Settings → page, fresh vault reads Blue-chip active + honest "not enforced yet", raise to Broad liquid (real `setVaultRiskTier` write) re-renders the raised choice, lower back is immediate (✓), and strict mode renders the withheld-enable note when off, then (seeded ON via a direct on-chain write) disables through the UI's real write. Cooldown/terms-bump re-lock rendering is covered at the unit layer — the fork can't bump governance risk-terms | Post-deploy eyeball on alpha02.vaipakam.com: Settings shows the Risk access row; the page renders the connected dev wallet's true tier and the strict-mode toggle round-trips on Base Sepolia. |
 
