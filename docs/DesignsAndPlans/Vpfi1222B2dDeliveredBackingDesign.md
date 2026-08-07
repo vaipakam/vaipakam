@@ -1520,7 +1520,11 @@ restore-then-recharge through an evidenced governance act. R4's case needs no
 restoration at all: its day lapsed, no replacement send will ever exist, and
 the parcel is re-usable against its standing original charge (the uncharged
 re-dispatch above) — restoring automatically on a permissionless path would
-be the exact reopening this decision rejects. The residual tension — the
+be the exact reopening this decision rejects. *(Since decided one step
+further: the owner unified the ceremony itself on the recovery-position
+pattern — `Vpfi1434P2ZeroedDayMechanismsDesign.md` §5.3 — so after P2-w6's
+FunctionalSpec amendment the restore, and with it the one non-monotone
+window, is gone entirely.)* The residual tension — the
 ceremony makes `remaining` rise too, inside its narrow governance-gated
 window — belongs to R6d's open recovery-settlement item, which must specify
 the ceremony's evidence and clearing path and reconcile it with the
@@ -1948,7 +1952,11 @@ count is a claim that goes stale faster than the list does.
   `remaining` rise inside its governance-gated window, and the recovery
   settlement must square that with the truncate-and-consume justification
   (boundary note above) rather than leave the two rules adjacent and
-  unexplained.
+  unexplained. **The reconciliation is DECIDED** (owner, 2026-08-07 —
+  `Vpfi1434P2ZeroedDayMechanismsDesign.md` §5.3): the ceremony unifies on
+  the recovery-position pattern — no restore, `remaining` monotone
+  everywhere — with the FunctionalSpec amendment carried by P2-w6; the
+  evidence and clearing mechanics are specified there (§5.1/§5.3).
 - **R2a's evidence path** (r9) — the lapse cannot be invoked at all if the
   broadcast carrying `finalizedAt` never executes. Needs either a
   permissionlessly re-presentable proof of the finalized broadcast, or an
