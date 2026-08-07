@@ -872,11 +872,17 @@ Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
 ONLY when its trigger words appear in the PR description or a PR
 comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 
-- **Docs-only PRs**: keep triggering rounds until findings converge
-  (a round with zero P1/P2 merges immediately), with **up to 5 Codex
-  review rounds** as the backstop (user directive 2026-07-10,
-  superseding the earlier "up to 2 rounds" wording; skipping entirely
-  remains OK for trivial mechanical edits — say so in the thread).
+- **Docs-only PRs**: **merge after 2 Codex review rounds** (user
+  directive 2026-08-07, verbatim "merge after 2 rounds as these are
+  docs only PR, we can go for full convergence on codex findings for
+  PR with code" — superseding the 2026-07-10 "up to 5 rounds"
+  directive, which had itself superseded an earlier 2-round wording).
+  Run round 1 → triage/fix every finding → round 2 → triage/fix →
+  merge, regardless of whether round 2 was clean; merge earlier if a
+  round converges (zero P1/P2). The cap bounds ROUNDS, not diligence —
+  every finding still gets the accept-fix / refute / defer triage
+  gate. Skipping entirely remains OK for trivial mechanical edits —
+  say so in the thread.
 - **Coding PRs**: keep triggering rounds until findings **converge**,
   allowing up to 10 rounds after the last SURFACE CHANGE in the code
   as a hard backstop. Only a substantive code change resets the
