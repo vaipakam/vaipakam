@@ -39,10 +39,23 @@ proved the collateral had carried over. It does not: the documented
 failure mode, where the offer's creator does not match the borrower
 stored at loan initiation, produces a fresh pledge of the same asset in
 the same amount pulled from the poster's wallet, and sails through both
-comparisons. The spec now asserts that the borrower's collateral
-balance does not move across the acceptance, which is what separates a
-re-tagged lien from a second pledge; it was verified to catch a
-one-wei perturbation.
+comparisons.
+
+Balance invariance alone does not settle it either, which review caught
+in a later round. The contract keeps a legacy branch that returns the
+old collateral at acceptance, so a re-pledge nets to zero across any
+window and looks identical from the outside. The spec therefore pins
+both halves: the persisted carry-over flag, read off the chain request,
+establishes which path was taken, and the borrower's collateral balance
+— sampled before the request is posted and compared after completion —
+establishes that nothing was pulled along the way. The balance half was
+verified to catch a one-wei perturbation; the flag half guards a path
+that is not reachable through this surface today, so it is a regression
+guard rather than a mutation-isolated assertion, and it is described
+that way rather than claimed as more. The rate ceiling and loan length
+typed into the form are also read back, off both the request and the
+replacement loan, so a form that quietly stopped persisting either
+would fail here rather than posting a valid request on stale terms.
 
 Supporting change: the shared direct-accept helper became side-aware.
 It previously bound only the lender-offer endpoints, so a lender

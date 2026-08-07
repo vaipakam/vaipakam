@@ -45,6 +45,8 @@ interface LoanShape {
   borrower: `0x${string}`;
   lender: `0x${string}`;
   principal: bigint;
+  interestRateBps: bigint;
+  durationDays: bigint;
   collateralAsset: `0x${string}`;
   collateralAmount: bigint;
   status: number;
@@ -152,6 +154,21 @@ test('refinance request completes: old loan closes, new loan carries the collate
     request.refinanceCarryOver as boolean,
     'the request must take the carry-over path, not the legacy return-and-repledge one',
   ).toBe(true);
+  // The terms TYPED INTO THE FORM, read back off the chain. Without
+  // these the drive proves only that a request was posted, not that it
+  // carries what the borrower asked for: `acceptOfferDirect` reads the
+  // live request and signs whatever ceiling and length it finds, so a
+  // form that silently stopped persisting either value would post a
+  // perfectly valid request on stale or default terms and every other
+  // assertion here would still pass.
+  expect(
+    request.interestRateBpsMax as bigint,
+    'the rate ceiling typed into the form must reach the chain',
+  ).toBe(1200n);
+  expect(
+    request.durationDays as bigint,
+    'the loan length typed into the form must reach the chain',
+  ).toBe(30n);
   // ...and the id the page is standing behind is that same request, so
   // a chain-side read of some other offer cannot stand in for the one
   // this drive actually posted.
@@ -194,4 +211,15 @@ test('refinance request completes: old loan closes, new loan carries the collate
   expect(fresh.principal, 'the new loan refinances the old principal').toBe(
     before.principal,
   );
+  // ...and the replacement actually INHERITS the requested terms, so a
+  // regression that posts the right request but opens the loan on
+  // something else is caught too.
+  expect(
+    fresh.interestRateBps,
+    'the replacement loan opens at the requested ceiling',
+  ).toBe(1200n);
+  expect(
+    fresh.durationDays,
+    'the replacement loan opens for the requested length',
+  ).toBe(30n);
 });
