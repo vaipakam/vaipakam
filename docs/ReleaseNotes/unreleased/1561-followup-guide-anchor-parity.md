@@ -46,3 +46,14 @@ above it. Counting chapters the way the contents list does would have hidden
 that, and would also have stopped reporting the chapter the nine translations
 are genuinely missing, so the check counts what each file contains instead. The
 difference between the two counts is the bug.
+
+Counting chapters correctly turned out to be its own small lesson. It began as
+a scan of the raw text for lines starting with two hashes, and review found a
+new way for that to be wrong six times over: a code sample inside another code
+sample, a heading separated by a tab instead of a space, an indented block that
+only looks like a code sample, a heading hidden inside an HTML comment. Every
+individual fix was right, and every one was followed by another case, because
+what was being written was a Markdown parser — in a guard script, by hand. The
+check now asks the same parser the website itself renders with, and all of
+those cases stop being special: they are simply not chapters, along with the
+ones nobody has thought of yet.

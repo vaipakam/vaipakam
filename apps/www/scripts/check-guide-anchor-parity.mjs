@@ -33,6 +33,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 
 const GUIDE_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -83,43 +84,42 @@ const anchorsIn = (file) =>
  * question anchors cannot: does this edition have as many chapters as
  * its source?
  *
- * "Chapter" is a heading the FILE declares at column zero — matching
- * how the guide's own extractor, `extractToc` in
- * `src/pages/UserGuide.tsx`, recognises one: `/^##\s+(.+)$/` per line.
- * (Note the file: the guide pages use their OWN extractor, not the
- * `extractMarkdownToc` in `src/lib/markdownToc.tsx` that Overview and
- * Whitepaper use. The two behave differently, and checking the wrong
- * one is how this comment was previously wrong — Codex #1594 r3.)
- * A heading that is not at column zero is not a chapter here, because
- * it is not one there either.
+ * A "chapter" is a `##` heading at the DOCUMENT ROOT, taken from the
+ * real Markdown parse tree rather than matched out of the raw text.
  *
- * That distinction is load-bearing here. `Advanced.hi.md` and
- * `Advanced.ja.md` carry two two-space-indented `##` lines each, which
- * a CommonMark-shaped `^ {0,3}## ` pattern counts as chapters — but
- * those two spaces CONTINUE the preceding list item, so they parse as
- * `root > list > listItem > heading` rather than as top-level
- * chapters, and the site's own table of contents omits them. Counting
- * them would record those editions as chapter-equivalent while two of
- * their chapters are unreachable from the sidebar (Codex #1594 r2,
- * correcting r1).
+ * This started as a line scan and took six rounds of review to stop
+ * being wrong, one CommonMark rule at a time: nested fences, closing
+ * fences with info strings, backticks inside a backtick info string,
+ * tab-separated headings, four-space indentation, HTML comments. Each
+ * fix was correct and each one was followed by another case, because
+ * the thing being written was a Markdown block parser — badly, in a
+ * guard script. `mdast-util-from-markdown` is the parser
+ * `react-markdown` itself is built on; it is now a direct dependency
+ * so this asks it instead of re-deriving it. Every one of those cases
+ * falls out for free, and so do the ones nobody has thought of yet
+ * (Codex #1594 r4-r7).
  *
- * Fenced blocks are skipped: a `## Example` inside a code sample is
- * illustration, not structure. None exists in the corpus today, but
- * the failure mode — a phantom chapter masking a real missing one — is
- * silent, so the guard is worth its few lines. This is deliberately
- * STRICTER than `extractToc`, which does not track fences at all and
- * would list such a line in the sidebar; that is a renderer defect,
- * recorded in #1599 rather than mirrored here.
+ * Verified equal to the previous hand-rolled count on all twenty files
+ * before the swap — including `Advanced.hi.md` / `Advanced.ja.md` at 16,
+ * where two `##` lines are indented into the preceding list item and so
+ * parse as `root > list > listItem > heading`. Requiring the ROOT is
+ * what keeps that conclusion (Codex #1594 r2, correcting r1): those
+ * chapters are in the file but not in the sidebar, and counting them
+ * would record those editions as chapter-equivalent while two of their
+ * chapters stay unreachable.
  *
  * Two places where the SIDEBAR shows fewer chapters than the FILE
  * declares, and why this counts the file anyway:
  *
- *  - `extractToc` ends with `sections.filter((s) => s.items.length > 0)`
- *    and only registers an `###` that carries a non-role `<a id>`
- *    above it. So a chapter whose subsections are unanchored is
- *    dropped from the sidebar entirely. That is live today, in
- *    English: `## How VPFI Discounts Work` renders in the body of
- *    `/help/advanced` but appears nowhere in its contents list —
+ *  - `extractToc` (`src/pages/UserGuide.tsx` — the guide's own
+ *    extractor, NOT the `extractMarkdownToc` in `src/lib/markdownToc.tsx`
+ *    that Overview and Whitepaper use; checking the wrong one is how
+ *    this comment was previously wrong) ends with
+ *    `sections.filter((s) => s.items.length > 0)` and registers only an
+ *    `###` carrying a non-role `<a id>`. So a chapter whose subsections
+ *    are unanchored is dropped from the contents list entirely. That is
+ *    live today, in English: `## How VPFI Discounts Work` renders in the
+ *    body of `/help/advanced` but appears nowhere in its contents list —
  *    confirmed on production, and filed as #1599.
  *  - The same filter means a translation could gain an unanchored
  *    chapter and close its recorded gap here while remaining
@@ -140,47 +140,10 @@ const anchorsIn = (file) =>
  * each `##` its own `<a id>`; that is a content change across the whole
  * corpus and is tracked in #1597 rather than half-done here.
  */
-const chapterCount = (file) => {
-  // CommonMark: a fence closes only on the SAME character, at least as
-  // long as the opener. A plain toggle mis-reads a nested example — an
-  // embedded ``` inside a ```` block is content, but toggling on it
-  // would reopen the document and let a following `## Example` count as
-  // a chapter, which is exactly the phantom that can offset a genuinely
-  // missing one (Codex #1594 r4).
-  let open = null; // { char, len }
-  let n = 0;
-  for (const line of readGuide(file).split('\n')) {
-    // 0-3 leading spaces, never `\s*`: at four spaces (or a tab) the
-    // renderer reads the line as INDENTED CODE, not a fence, so treating
-    // it as an opener would swallow every real chapter after it until a
-    // compatible delimiter or EOF (Codex #1594 r6).
-    const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence) {
-      const char = fence[1][0];
-      const len = fence[1].length;
-      const info = fence[2];
-      if (open === null) {
-        open = { char, len };
-      } else if (char === open.char && len >= open.len && info.trim() === '') {
-        // CommonMark: a CLOSING fence carries no info string. Without
-        // this, a ```js sample inside an outer ```md block reads as a
-        // closer — the document reopens, a `##` in the sample counts,
-        // and the real closer then hides the chapters after it. Two
-        // errors in opposite directions, which can cancel and pass
-        // (Codex #1594 r5).
-        open = null;
-      }
-      continue;
-    }
-    // `\s+`, not a literal space: `extractToc` matches `/^##\s+(.+)$/`,
-    // so `##\tTitle` IS a chapter on the site. A narrower pattern here
-    // would let a translation drop that chapter without moving the
-    // count — the guard silently passing the case it exists for
-    // (Codex #1594 r5).
-    if (open === null && /^##\s+.+$/.test(line)) n += 1;
-  }
-  return n;
-};
+const chapterCount = (file) =>
+  fromMarkdown(readGuide(file)).children.filter(
+    (node) => node.type === 'heading' && node.depth === 2,
+  ).length;
 
 /**
  * Editions known to be short of the English chapter list, per
@@ -261,7 +224,7 @@ for (const [doc, locales] of byDoc) {
       // which is both nonsense and a second thing to chase for one
       // change (Codex #1594 r2).
       report(
-        'chapter',
+        'chapter-extra',
         `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
           `${englishChapters} — the translation carries a section the ` +
           'source does not',
@@ -269,7 +232,7 @@ for (const [doc, locales] of byDoc) {
       if (allowed > 0) seenChapterGaps.add(`${doc}:${locale}`);
     } else if (short > allowed) {
       report(
-        'chapter',
+        'chapter-missing',
         `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
           `${englishChapters}${allowed ? ` (${allowed} recorded as a known gap)` : ''}` +
           ' — a whole chapter can go missing without changing the anchor set',
@@ -281,7 +244,7 @@ for (const [doc, locales] of byDoc) {
       if (allowed > 0) seenChapterGaps.add(`${doc}:${locale}`);
     } else if (short < allowed) {
       report(
-        'chapter',
+        'chapter-stale',
         `KNOWN_CHAPTER_GAPS ${doc}:${locale} records ${allowed} missing ` +
           `chapter(s) but only ${short} are — ${short === 0 ? 'remove it' : 'lower it'}`,
       );
@@ -328,7 +291,7 @@ for (const [key, localesForGap] of Object.entries(KNOWN_GAPS)) {
 for (const key of Object.keys(KNOWN_CHAPTER_GAPS)) {
   if (!seenChapterGaps.has(key)) {
     report(
-      'chapter',
+      'chapter-stale',
       `KNOWN_CHAPTER_GAPS entry ${key} no longer diverges — remove it`,
     );
   }
@@ -345,12 +308,31 @@ if (problems.length > 0) {
         'translated file rather than widening KNOWN_GAPS.',
     );
   }
-  if (kinds.has('chapter')) {
+  // Three different chapter diagnoses, three different repairs. Sharing
+  // one footer told a contributor whose translation has an EXTRA chapter
+  // to go add another one, and told someone whose only problem is a
+  // stale baseline to write prose — advice that contradicts the
+  // diagnostic printed directly above it (Codex #1594 r7).
+  if (kinds.has('chapter-missing')) {
     console.error(
       '\nA chapter can go missing without changing the anchor set, which is why\n' +
         'the counts are compared separately. Add the chapter itself to the\n' +
         'translated file — an anchor will not restore it — and correct\n' +
         'KNOWN_CHAPTER_GAPS (not KNOWN_GAPS) rather than widening it.',
+    );
+  }
+  if (kinds.has('chapter-extra')) {
+    console.error(
+      '\nA translation with MORE chapters than the source has drifted: either\n' +
+        'the section belongs in the English original too, or it should not be\n' +
+        'there at all. Do not add anything — reconcile the two editions.',
+    );
+  }
+  if (kinds.has('chapter-stale')) {
+    console.error(
+      '\nA stale KNOWN_CHAPTER_GAPS entry is a bookkeeping fix, not a writing\n' +
+        'one: the file already has the chapters it is recorded as lacking.\n' +
+        'Lower the number, or delete the entry.',
     );
   }
   process.exit(1);
