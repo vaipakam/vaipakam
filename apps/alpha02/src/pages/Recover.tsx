@@ -31,6 +31,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { ownLocaleResource } from '../i18n/ownLocaleResource';
+import { CONFIRM_WORD, RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
 import { useQueryClient } from '@tanstack/react-query';
 import { CircleCheck, Lock, ShieldAlert, TriangleAlert } from 'lucide-react';
 import {
@@ -48,7 +51,7 @@ import {
   type PublicClient,
 } from 'viem';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { copy } from '../content/copy';
+import { copy, copySource } from '../content/copy';
 import { getSupportedChain } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
@@ -82,34 +85,6 @@ const RECOVERY_TYPES = {
 } as const;
 
 const RECOVERY_DEADLINE_SECONDS = 30 * 60;
-
-/** UI friction constant, not copy — the user types this literal to
- *  arm the sign button (same untranslated rule as signing text). */
-const CONFIRM_WORD = 'CONFIRM';
-
-/**
- * The canonical recovery declaration — byte-for-byte the string whose
- * keccak256 is VaultFactoryFacet's RECOVERY_ACK_TEXT_HASH (the
- * concatenated literal at VaultFactoryFacet.sol ~line 717). Shown
- * verbatim on the review card so the user reads EXACTLY what the
- * signature commits to, and re-hashed against the live on-chain value
- * before every signature (Codex #1547 r1) — a mismatch blocks signing.
- *
- * DELIBERATELY NOT in the copy catalog: translating or rewording it
- * would break the hash equality, so it must stay contract-fixed
- * English in every locale.
- */
-const RECOVERY_ACK_TEXT =
-  // Segment boundaries mirror the Solidity literal one-for-one so a
-  // side-by-side diff against the contract is trivial. ASCII
-  // apostrophe ("protocol's"), NOT the typographic one the rest of
-  // the catalog uses — the hash is byte-sensitive.
-  'I am declaring that the source address belongs to a wallet I' +
-  ' control or authorized. If the source is later determined to' +
-  ' be on the sanctions list, my vault will be locked under the' +
-  " protocol's sanctions policy until the address is de-listed." +
-  ' I have read and understood the Advanced User Guide section' +
-  ' on stuck-token recovery.';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -1084,6 +1059,30 @@ export function Recover() {
   const { data: walletClient } = useWalletClient();
   const queryClient = useQueryClient();
   const sanctions = useSanctionsCheck();
+  // The reading aid below the declaration is only honest if the
+  // reader's OWN bundle actually carries it, so it is gated on the
+  // resource rather than on the language code: what we check is
+  // exactly what we render. `useTranslation` re-renders on the store's
+  // `added` event, so a bundle that lands late switches this on by
+  // itself.
+  //
+  // BOTH halves are checked, and both are rendered from the checked
+  // value. The label is what makes the claim ("in your language"), so
+  // an English label over a translated block states it in a language
+  // the reader may not read; a translated label over English text
+  // states something false. Either alone is worse than showing
+  // neither (Codex #1563 r10).
+  const { i18n } = useTranslation();
+  const localizedAckText = ownLocaleResource(
+    i18n,
+    'copy.recover.ackTextTranslation',
+    copySource.recover.ackTextTranslation,
+  );
+  const localizedAckLabel = ownLocaleResource(
+    i18n,
+    'copy.recover.ackTextTranslationLabel',
+    copySource.recover.ackTextTranslationLabel,
+  );
 
   const [tokenInput, setTokenInput] = useState('');
   const [sourceInput, setSourceInput] = useState('');
@@ -3105,6 +3104,35 @@ export function Recover() {
             >
               {RECOVERY_ACK_TEXT}
             </blockquote>
+            {/* A reading aid beside the signed bytes, for locales that
+                aren't the one those bytes are written in. The
+                declaration's hash must equal the on-chain value, so the
+                signed text cannot be translated — but rendering ONLY
+                English left a non-English reader attesting, in a
+                language they may not read, that they had understood
+                what they were attesting to (Codex #1563 r8). Shown
+                only when the reader's own bundle really carries it —
+                see ownLocaleResource — and labelled so which of the
+                two is authoritative is never ambiguous. */}
+            {localizedAckText !== null && localizedAckLabel !== null && (
+              <>
+                <p className="muted" style={{ margin: 0, fontSize: '0.85em' }}>
+                  {localizedAckLabel}
+                </p>
+                <blockquote
+                  className="muted"
+                  style={{
+                    margin: 0,
+                    padding: '8px 12px',
+                    border: '1px dashed var(--border)',
+                    borderRadius: 8,
+                    fontSize: '0.9em',
+                  }}
+                >
+                  {localizedAckText}
+                </blockquote>
+              </>
+            )}
             {/* The declaration asserts the user has READ the Advanced
                 User Guide section on stuck-token recovery — so link it
                 right here (Codex #1547 r5). Attesting to having read
@@ -3150,7 +3178,7 @@ export function Recover() {
                 className="btn btn-primary"
                 disabled={
                   reviewBusy ||
-                  confirmInput.trim().toUpperCase() !== CONFIRM_WORD
+                  confirmInput.trim().toUpperCase() !== CONFIRM_WORD.toUpperCase()
                 }
                 onClick={() => void signAndSubmit()}
               >

@@ -28,6 +28,7 @@
 
 import { createTranslatedCopy } from '../i18n/reactiveCopy';
 import { tmpl } from '../i18n/tmpl';
+import { RECOVERY_ACK_TEXT } from '../lib/recoveryAck';
 
 const copySource = {
   app: {
@@ -1432,6 +1433,23 @@ const copySource = {
     // must equal the on-chain RECOVERY_ACK_TEXT_HASH, so it must never
     // be translated or reworded (see RECOVERY_ACK_TEXT in Recover.tsx).
     ackTextIntro: 'You are signing this exact declaration:',
+    // The declaration itself is contract-fixed English — its keccak256
+    // must equal the on-chain RECOVERY_ACK_TEXT_HASH, so translating
+    // the signed bytes is impossible. Rendering ONLY English left a
+    // non-English reader attesting, in a language they may not read,
+    // that they understood what they were attesting to (Codex #1563
+    // r8). These two keys add a clearly-labelled reading aid beside it;
+    // the label must keep saying which of the two is authoritative.
+    ackTextTranslationLabel:
+      'In your language, so you can read what it says. The English above is the exact text you sign:',
+    // NOT a second copy of the declaration — the declaration itself,
+    // imported from its single definition. Two independent literals
+    // could silently diverge, leaving the aid explaining the OLD text
+    // while the user signs the new one (Codex #1563 r11). Translators
+    // overwrite this per locale; English is the signed text verbatim,
+    // which is what makes each locale's value a translation OF what is
+    // being signed.
+    ackTextTranslation: RECOVERY_ACK_TEXT,
     // The declaration asserts the user has read the Advanced User
     // Guide's stuck-token section — so the review card (and the Help
     // explainer) must LINK it (Codex #1547 r5). Named exactly as the

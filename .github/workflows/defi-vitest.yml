@@ -85,11 +85,18 @@ jobs:
           # they import (a lib/contracts/ui change can break any suite),
           # plus the root dependency / workspace inputs a
           # Vitest/jsdom/React/wagmi bump rides in on, plus this workflow
-          # file itself. apps/indexer joined post-#1149: its vitest suite
+          # file itself. packages/i18n joined post-#1563: the defi and
+          # alpha02 suites now assert token semantics imported from it
+          # (containsToken decides whether a translated confirmation
+          # prompt still carries the word the signing gate compares
+          # against), so a PR touching only that package could change
+          # the answer while this job was skipped — the workspace
+          # typecheck compiles those tests but never runs them.
+          # apps/indexer joined post-#1149: its vitest suite
           # (route SQL semantics + the SQL-vs-schema guard) previously ran
           # nowhere in CI, so the exact statement that wedged production
           # ingest had no gate.
-          DEFI_RE='^(apps/(defi|alpha02|indexer)/|packages/(lib|contracts|ui)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
+          DEFI_RE='^(apps/(defi|alpha02|indexer)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/defi-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else

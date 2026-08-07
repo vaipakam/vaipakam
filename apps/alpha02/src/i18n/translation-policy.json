@@ -1,0 +1,45 @@
+{
+  "_readme": [
+    "Per-repo translation POLICY for the shared i18n guards, read by",
+    "check-locale-coverage.ts and by both ingestion scripts via --policy.",
+    "Committed rather than passed on the command line: restating a rule",
+    "per run is how it becomes a reflex, and a flag people always pass",
+    "guards nothing.",
+    "",
+    "requiredLiterals — strings the app compares TYPED USER INPUT against.",
+    "  A locale that translates one renders a gate no speaker of that",
+    "  language can pass. Enforced at ingestion because surfaces at risk",
+    "  include apps with no coverage guard of their own (apps/defi's",
+    "  recovery page compares against the same word).",
+    "omissions / empty — the narrow linguistic exemptions, bound to the",
+    "  exact locale:key(:token) so each excuses itself and nothing else."
+  ],
+  "requiredLiterals": {
+    "copy.recover.confirmPrompt": [
+      "CONFIRM"
+    ]
+  },
+  "omissions": {
+    "ar:copy.units.durationDay_two": {
+      "tokens": [
+        "count, number"
+      ],
+      "reason": "Arabic dual encodes the count in the noun (يومان = 'two days'); restating {{count}} renders '2 يومان'"
+    },
+    "ar:copy.units.durationMonth_two": {
+      "tokens": [
+        "count, number"
+      ],
+      "reason": "Arabic dual encodes the count in the noun"
+    },
+    "ar:copy.units.durationYear_two": {
+      "tokens": [
+        "count, number"
+      ],
+      "reason": "Arabic dual encodes the count in the noun"
+    }
+  },
+  "empty": {
+    "ja:copy.consentParts.prefix": "Japanese puts the verb last; the suffix carries the agreement the English states up front"
+  }
+}

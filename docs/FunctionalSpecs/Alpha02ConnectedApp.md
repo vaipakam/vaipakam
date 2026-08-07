@@ -482,7 +482,30 @@ Thin-market honesty rules apply.
   language/direction is applied before the first paint (no flash of
   wrong-direction layout).
 - Protocol-specific terms (VPFI, HF, LTV, asset and network names)
-  stay verbatim in every language.
+  stay verbatim in every language. So does any word the app asks the
+  user to TYPE BACK as a confirmation: a translated confirmation word
+  would be compared against the English one the app expects, leaving
+  the user unable to pass a gate they had typed correctly in their own
+  language.
+- A language offered as translated shows that language everywhere it is
+  offered. Falling back to English is the documented behaviour for a
+  language still being filled in — not for a page inside a language
+  already presented as available. A newly added surface is translated in
+  the same change that ships it, so a user never meets a page that
+  switches to English partway down.
+  *(Not yet true of the whole app: two offer-matching messages still fall
+  back to English in the nine advertised languages. That is a recorded
+  gap, not a revision of the intent above — see the dated row in
+  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md), which names every
+  outstanding key and locale. The intent is deliberately left stated in
+  full, because a spec narrowed to the surfaces that happen to be
+  finished cannot be violated and would erase the only record that the
+  rest is unfinished rather than intended.)*
+- Where a sentence embeds a live value, that value survives translation.
+  A translation may reorder the values to fit its grammar, and may leave
+  one out where the grammar already carries it (a dual form that means
+  "two days" in the noun itself), but it never invents a value slot the
+  English does not have.
 - The translation covers the whole displayed interface, not only the
   page chrome: the Activity feed's plain-language event labels, the
   loan-status badges shown on positions and history, the Claim Center's
@@ -494,6 +517,31 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- Where signing-critical text cannot be translated, the reader is not
+  simply left with a language they may not read. A declaration the user
+  must affirm they have understood is shown in their own language
+  alongside the exact text being signed, labelled so it is never
+  ambiguous which of the two is the authoritative one. Untranslatable
+  is a constraint on the SIGNED BYTES, not a licence to leave the
+  person signing them without comprehension — an acknowledgement the
+  user cannot read is not an acknowledgement.
+- That reading aid appears only when a translation genuinely exists for
+  the reader's language. Choosing a language the app does not yet
+  translate, or a translated language whose text fails to load, leaves
+  the page in English throughout — and in that state no aid is shown at
+  all, rather than English text presented as being "in your language".
+  A label claiming a language the text is not written in would be a
+  false statement made at the exact moment the user is affirming they
+  understood what they read. Nothing else about the page changes; the
+  aid reappears on its own if the translation arrives. Text that merely
+  repeats the English word for word does not count as a translation for
+  this purpose, and neither does a translated declaration under an
+  English label: the label is what states which language the reader is
+  being shown, so both halves have to be in their language or neither
+  is shown. The aid is also kept honest over time: it explains one
+  specific declaration, so if that declaration is ever changed, the aid
+  cannot continue to be published in a form written for the previous
+  one.
 - The plain-language explanation shown when a transaction fails — the
   friendly cause a contract revert is decoded to ("Health factor too
   low", "This offer has expired", "Only the lender can perform this

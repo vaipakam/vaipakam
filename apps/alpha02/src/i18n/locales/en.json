@@ -827,6 +827,8 @@
       "reviewWarnSanctions": "Declaring a sanctions-listed sender locks recovery for your vault until that address leaves the oracle’s list — the same lock the protocol applies to any sanctioned address.",
       "reviewWarnOwnership": "Signing asserts, as a typed wallet signature, that the declared sender is a wallet you control or that acted with your permission.",
       "ackTextIntro": "You are signing this exact declaration:",
+      "ackTextTranslationLabel": "In your language, so you can read what it says. The English above is the exact text you sign:",
+      "ackTextTranslation": "I am declaring that the source address belongs to a wallet I control or authorized. If the source is later determined to be on the sanctions list, my vault will be locked under the protocol's sanctions policy until the address is de-listed. I have read and understood the Advanced User Guide section on stuck-token recovery.",
       "guideLinkLabel": "Read the Advanced User Guide section on stuck-token recovery",
       "confirmPrompt": "Type CONFIRM to enable signing",
       "sign": "Sign & recover",
