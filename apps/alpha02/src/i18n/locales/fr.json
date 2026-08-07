@@ -471,7 +471,9 @@
       "linkedLoanAcceptBlocked": "Cette offre est liée au prêt n°{{loanId}} déjà en cours — l’accepter réglerait ou transférerait la position de ce prêt, au lieu de démarrer le nouveau prêt examiné ci-dessus. Cette app ne peut pas encore afficher les vraies conditions de ce type d’opération ; l’acceptation ici est donc désactivée pour le moment.",
       "saleBuyerNext": "Vous êtes maintenant le prêteur du prêt n°{{loanId}} — le prêt continue sans changement pour l’emprunteur, et son remboursement vous revient. Suivez-le dans Mes positions ; lorsqu’il rembourse, vous réclamez le principal et les intérêts restants.",
       "saleVehicleBanner": "Il s’agit d’une vente de position : vous achèteriez le côté prêteur du prêt n°{{loanId}} déjà en cours, sans démarrer un nouveau prêt. L’emprunteur et ses obligations de remboursement ne changent pas — seul le prêteur change. Les chiffres ci-dessous viennent de ce prêt, en direct.",
-      "wrongChainLink": "Ce lien pointe vers une offre sur {{chainName}}. Passez sur ce réseau (en haut de la page), puis ouvrez à nouveau le lien — les numéros d’offre se répètent entre réseaux, donc nous ne devinons pas."
+      "wrongChainLink": "Ce lien pointe vers une offre sur {{chainName}}. Passez sur ce réseau (en haut de la page), puis ouvrez à nouveau le lien — les numéros d’offre se répètent entre réseaux, donc nous ne devinons pas.",
+      "riskGateCreatorBlocked": "Les paramètres de risque du créateur de l’offre ne couvrent plus cette opération, elle ne peut donc pas être acceptée pour le moment. Rien n’a été envoyé ni approuvé.",
+      "riskGateTierTooLow": "Cette opération nécessite un niveau de risque plus élevé que ce que votre vault autorise actuellement. Vous pouvez l’augmenter dans Paramètres → Accès au risque, puis revenir et accepter. Rien n’a été envoyé ni approuvé."
     },
     "borrow": {
       "title": "Emprunter des actifs",

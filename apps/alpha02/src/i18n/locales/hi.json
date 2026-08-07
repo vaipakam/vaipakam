@@ -471,7 +471,9 @@
       "linkedLoanAcceptBlocked": "यह offer पहले से running loan #{{loanId}} से tied है — इसे accept करना ऊपर reviewed fresh loan शुरू नहीं करेगा, बल्कि उस loan की position settle या transfer करेगा। यह app अभी उस तरह के deal की real terms नहीं दिखा सकती, इसलिए यहाँ acceptance अभी disabled है।",
       "saleBuyerNext": "अब आप loan #{{loanId}} के lender हैं — borrower के लिए loan unchanged चलता रहता है, और उसकी repayment आपको आती है। इसे My positions में track करें; वह repay करे तो principal और remaining interest claim करें।",
       "saleVehicleBanner": "यह position sale है: आप पहले से running loan #{{loanId}} का lender side खरीदेंगे, नया loan start नहीं करेंगे। Borrower और repayment obligations नहीं बदलते — सिर्फ lender बदलता है। नीचे numbers उसी loan से live आते हैं।",
-      "wrongChainLink": "यह link {{chainName}} पर offer की ओर जाता है। उस network पर switch करें (page के top पर), फिर link दोबारा open करें — offer numbers networks में repeat होते हैं, इसलिए हम guess नहीं करेंगे।"
+      "wrongChainLink": "यह link {{chainName}} पर offer की ओर जाता है। उस network पर switch करें (page के top पर), फिर link दोबारा open करें — offer numbers networks में repeat होते हैं, इसलिए हम guess नहीं करेंगे।",
+      "riskGateCreatorBlocked": "ऑफर बनाने वाले की risk settings अब इस deal को cover नहीं करतीं, इसलिए इसे अभी accept नहीं किया जा सकता। कुछ भेजा या approve नहीं हुआ।",
+      "riskGateTierTooLow": "इस deal के लिए आपके vault की मौजूदा अनुमति से ज़्यादा risk level चाहिए। आप इसे सेटिंग्स → जोखिम पहुँच में बढ़ा सकते हैं, फिर वापस आकर accept करें। कुछ भेजा या approve नहीं हुआ।"
     },
     "borrow": {
       "title": "एसेट उधार लें",
