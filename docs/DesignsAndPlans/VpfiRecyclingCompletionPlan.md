@@ -5,7 +5,7 @@
 | **Title** | VPFI Recycling — Completion Plan |
 | **Author** | Vaipakam Developer Team |
 | **Date** | 2026-07-18 |
-| **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch) |
+| **Status** | **Draft — programme plan + Phase B′ implementation design** for owner review. Single document of record for *everything still required* to complete VPFI recycling, re-verified against `main` (through the RL-4 landing) and reconciled with the 2026-07-18 completeness-scout state (#1346, #1347, the #1222 parked B1–B4/C1–C2 plan + WIP branch — that C1–C2 names the plan AS PARKED IN 2026-07; the Phase-C tail is now C1–C4, see §M4) |
 | **Cards** | Umbrella **#1349** · #1222 (Phase B′ mesh + Phase C′) · #1331 (folds into B2) · #1346 (Layer 0) · #1347 (Layer 2 — **D1 DECIDED (b)**, owner 2026-07-18; re-based to the formula doc) · #1218 (metric completion) · #1204 / #1219 (channels 3–4) · M2 card set (cut per §M2) |
 | **Substrate (binding)** | [`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) (RATIFIED governor), [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) (Option-B mesh), [`VpfiRecyclingLoopClosureDesign.md`](VpfiRecyclingLoopClosureDesign.md) (RATIFIED RL-1…6), [`VpfiAbsorptionDistributionFormulaRedesign.md`](VpfiAbsorptionDistributionFormulaRedesign.md) **pinned at rev 15 — the revision the owner's D1 decision (2026-07-18) approved** (adds ack-timed remitted accounting + reward-haircut snapshotting over the rev-8–14 freezes). A later formula-doc rev enters implementation scope ONLY after this completion plan is updated to adopt it (a conscious re-ratification step) — cards must never silently follow a mutable draft past the decided revision |
 
@@ -102,12 +102,12 @@ merged PRs' design records are authoritative):**
 | Item | Where |
 | --- | --- |
 | ~~**M3 B2-d3**~~ **— DONE, merged `bf2b97cc` (#1430).** Mirror commitment-on-arrival (**not** the "consume-on-arrival" this row said while parked — arrival RESERVES the instructed amount into the mirror's `outstandingCommitRecycled`; the bucket is debited later, pro-rata, at claim/remit, per this plan's own "broadcast *commits*" rule. Debiting at arrival would charge the same tokens twice, because claims already debit as they pay — see `LibVpfiRecycle.reserveMirrorCommit`) + two-sided netting + per-chain books (`chainConsumedRecycled` / `chainOutstandingRecycledCommit` become real; `_stampOne` local-vs-top-up split; remittance netting) — makes the per-chain §7 invariants bind | #1222 |
-| **M3 B2-d4** — lift the mirror `_dayPoolHalves` pricing halt (mirror claims are HALTED on armed days until this lands — per the B2-d design record `Vpfi1222B2dDeliveredBackingDesign.md`; `LibInteractionRewards` gates on it). **ATTEMPTED 2026-07-27 (PR #1433) and WITHDRAWN — the halt STAYS.** d5 discharged the precondition this row assumed, but review found the halt ALSO guards (a) the FRESH side, which has no delivered-funding bound on a mirror and truncates-terminally rather than deferring, and (b) deliberately-zeroed (`remitIneligible`) days, which would advance the cursor and retire their entries for zero — and which the manual-compensation path cannot reprice, since nothing writes the mirror's funding stamp. **Both prerequisites, and the retry of this slice, are tracked on #1434** (design record §2g) | #1222 → **#1434** |
+| **M3 B2-d4** — lift the mirror `_dayPoolHalves` pricing halt (mirror claims are HALTED on armed days until this lands — per the B2-d design record `Vpfi1222B2dDeliveredBackingDesign.md`; `LibInteractionRewards` gates on it). **ATTEMPTED 2026-07-27 (PR #1433) and WITHDRAWN — the halt STAYS.** d5 discharged the precondition this row assumed, but review found the halt ALSO guards (a) the FRESH side, which has no delivered-funding bound on a mirror and truncates-terminally rather than deferring, and (b) deliberately-zeroed (`remitIneligible`) days, which would advance the cursor and retire their entries for zero — and which the manual-compensation path cannot reprice, since nothing writes the mirror's funding stamp. **Both prerequisites, and the retry of this slice, are tracked on #1434** (design record §2g). **#1434 ALSO owns R4's mirror→Base FRESH-RETURN — the reverse transport and the stranded-recovery reservation** (§M7's P2 block names it as one of P2's wire paths; §2h ratifies it as a dedicated fresh-return, and it is what §3.6a calls Mode B). This row omitted it until #1578 r3/r6, which let a reader scope #1434 without a return path at all — and I compounded that by cutting a duplicate card on the omission rather than fixing the row. **Its arrival reservation and claim-exclusion slice must land BEFORE this halt lifts** (§4 `MODEBRES --> SETTLE`), or a post-lapse compensation is ordinary fresh backing a claim can spend | #1222 → **#1434** |
 | ~~**M3 B2-d5**~~ **— DONE, merged `64964e91` (#1432).** The `Ā`-excluded remitted-recycled custody-credit class (`RecycleSource.RemittedCustodyRelocation`) + the #1331 reclassification. The exclusion covers the REPORTED CUMULATIVE as well as the `Ā` day-bucket (the derived floor `bucket + paidOut` would otherwise re-admit it), and the remit payload carries a leading keccak version sentinel (`RemitWire.REMIT_WIRE_TAG_D5`) so an un-upgraded receiver REJECTS rather than silently truncates | #1222 |
 | **M2 #1369** — deferred Full-auth origination paths: signed-offer maker Full authorization (`OfferCreateFacet`) + matched fills honoring the lender offer's `creatorFull` (`FeeEntitlementFacet`) + the frontend maker surface — without it, those parties cannot enter the Full absorption channel even after enablement | #1369 |
 | ~~**M3 B3**~~ **— DONE, merged `4961e9db` (#1435).** Source-scoped netted remittance completion. d3 had shipped the SEND half (shortfall-only remittance); B3 closed the BOOK half — mirrors now report two commitment-retirement cumulatives (total retired, and the release-only subset) on the day-close, so `chainOutstandingRecycledCommit[c]` finally RETIRES (`== instructed − retired`, exact with broadcasts in flight) and a commitment released un-spent restores that chain's availability instead of being lost forever. Both figures are clamped on ingest against Base's own instruction ledger — a mirror is trusted for timing, never magnitude — which forces `avail ≤ reported` and keeps d5's exclusion intact. Report payload 6→8 words (length is a sound discriminator here: flat `uint256` tuple, no dynamic member, so no version sentinel is needed unlike d5's remit payload). Design record `Vpfi1222B3SourceScopedNettingDesign.md` | #1222 |
 | **M3 B4** — 3-chain mesh e2e + invariants + watcher per-chain bucket checks + TokenomicsTechSpec §4a. **B4-a DONE, merged `393852d9` (#1437)** (per-chain §7 commitment invariants). **B4-b DONE, merged `48ab772e` (#1439)** (three real diamonds over a queueing `MeshBusMessenger`; surfaced the **#1434-before-`D*` second arming gate** now recorded in §M7 and in the §4 graph's `ARMGATE` node). **B4-c DONE, merged `e77fe3de` (#1443).** `ops/mesh-watcher`, a standalone Cloudflare Worker reading every reward chain's recycled ledger. B4-c SHIPPED with eight CRITICAL checks as real alerts (commit identity, the clamp chain, the §7 #6 consumed cap, attribution ceiling, availability formula, Base self-inertness, Base-never-ahead-of-chain, bucket coverage — the last then CRITICAL on mirrors only, since `releaseRemitReservation` makes a canonical shortfall the intended recovery state; #1448 below supersedes that scoping and takes the total to ELEVEN CRITICAL checks — adding `bucket-composition` (both directions), `reported-derivation` and `role-consistency`); stuck-settlement, report-lag and coverage gaps ship **ADVISORY** and are delivered silently. Nine Codex rounds / ~54 findings drove a source-level restructure: error text is classified rather than forwarded, storage returns failures rather than throwing, and the windowed-signal rules, alert identity, health definition and snapshot freshness each live in one enforced place. 146 tests, 65 mutations at B4-c; 180 tests and a further nine mutation checks after the #1448 follow-up. Code-complete and **undeployed** — D1 creation, secrets and the first deploy are documented operator steps in its README. **B4-c follow-ups #1444 + #1446 DONE, merged via #1448** — the contracts now publish the raw stored counters behind the recycled books (`getRecycleCompositionPosition`) plus the released-remit stranded cumulative, which closed both gaps without the event-stream scanning #1446 had assumed it needed. Bucket coverage became a single strict rule on every chain (the canonical advisory exception is gone, not documented — governor §7 #2 amended to its universal form), and two new CRITICAL checks landed: `bucket-composition` (a counter cannot claim more credit than the bucket received — catches a custody relocation also advancing absorption) and `reported-derivation` (the published cumulative is re-derived off-chain and disagreed with). Neither subsumes the other and the tests assert that. **#1445** (endpoint chain-identity) is CLOSED — every tick verifies `eth_chainId` per target against the id its secret is named for, so a mis-set endpoint can no longer be adopted silently and report a clean tick against the wrong chain. The watcher's remaining untested seam is the `mesh.ts` wiring around that check, recorded as a coverage boundary in its README rather than as a limitation. **B4-d DONE.** TokenomicsTechSpec §4a swept — the funding bullets described the pre-mesh shape (canonical chain funds every slice on demand) long after two-pass self-funding, the commitment-report gate and the zeroed-chain manual path shipped, and §4a's testing requirements now record what a mesh test must establish that a single-deployment test cannot. §7 #2's fresh half driven to its boundary: the invariant is an upper bound the campaign cannot approach (fresh reservations size from the fixed schedule, ~20,164 VPFI on an early day, over **52** finalizable slots — days 0-39 from the general actions plus the 12 even days 40-62 that `instructThenRetire` reserves — so 51 with a non-zero schedule and ~1.03M reachable against 69M: a factor of ~67, **under two orders of magnitude**. Counted twice: the first version of this row said "seven orders", the second "fewer than 40 slots, under ~1M"; both were wrong and the conclusion was unchanged by either), so FIVE deterministic tests place the ledger AT the cap: fresh clamps to exactly the remaining headroom rather than to the day's schedule; at the cap exactly fresh goes to zero while recycled keeps funding (§7 #1's "bounds fresh drawdown only"); value already REMITTED reserves identically — the one term no fixture could otherwise reach, since it needs a mirror sent almost the whole allocation; and TWO combination fixtures, because every single-term fixture is satisfied by a formula that takes the LARGEST reservation instead of summing them (remitted+outstanding together, then all three terms with paid-out non-zero as well). Mutation evidence is recorded as a table in `MeshLedger.invariant.t.sol` beside the fixtures themselves, NOT restated here — three successive reviews caught a stale "and only that fixture" claim in this row and in the release note, each time because a fixture had been added and nothing tied the prose to the fixture set. Exclusivity was the wrong property, and so was the order criterion that briefly replaced it — the measured sets are NOT nested, so "fails while the others pass" establishes nothing either. What earns a fixture its place is pinning a distinct behaviour at the boundary. Both sides also assert the RESERVATION, not just the day's published stamp — publishing the clamped figure while reserving the unclamped one breaks the cap with every stamp assertion green, and the same publish-versus-reserve gap exists on the recycled side (a stamped recycled budget with no reservation behind it lets a later day re-offer the same availability). **Open out of B4, and NOT closed by it: #1460** — a fresh-only claim can spend recycle-bucket backing (mechanism in §M7 step 0). It is a claim-path defect rather than a mesh one, so no B4 slice closes it. **It is BOTH already reachable on an unarmed deployment AND still a hard arming gate** — not alternatives, though r17 wrongly replaced the second with the first before r19/r20 restored both. THREE conditions are needed, not two: `recycleBucket` non-zero (notification-fee absorption, ungated), a scheduled-only claim (the only kind an unarmed deployment serves), **and** the scheduled side short — `balanceOf − recycleBucket < scheduledPayout`. With ample unearmarked funding the first two hold and nothing is corrupted, so they are not sufficient alone; nothing measured the third until #1487 (M5) published the unearmarked backing figure, which makes it readable but does NOT close the defect. Arming does not make it reachable, it makes it VISIBLE, because recycled claims then fail over a shortfall an earlier scheduled claim caused — which is also why `BACKING --> ARM` stays an unconditional hard edge (§4). The edge governs SEQUENCING; reachability governs URGENCY. Full statement in §M7 step 0. An operator reading this row as "B4 done" must not conclude either that the arming path is clear or that this one can wait for the ceremony. Also open: #1452 (the one exclusion variant no bound catches), #1461 (the coverage allowance is GROSS — a released-then-late-delivered remittance still counts as stranded backing, so both post-conditions can pass over a genuinely short bucket; detection-only). **#1331's B4 coverage recorded as discharged** except the mirror half, which is unreachable until #1434 — the CONSUMPTION side only (claim / forfeit / expiry pricing → retirement / release); a mirror's bucket is credited today via `onRewardBudgetReceived` | #1222 |
-| **M4 C1/C2** — surplus knob + batched repatriation | #1222 tail |
+| **M4 C1–C4** — **C1 DONE, merged `cc3a973fe` (#1579)** (surplus knob, read-only, mirror-scoped, dark by default; #1567 closed) + batched repatriation **Mode A** (#1568) + local keeper-budget credit (#1569) + TokenomicsTechSpec §9 (#1570), **plus #1577's code-side availability/invariant changes, which must land with or before Mode A**. See §M4 — C2's scope CHANGED with §3.6a. **Mode B is NOT here**: it is #1434's R4 fresh-return | #1222 tail |
 | **M5 — DONE.** Dashboard views (`selfFundingRatio`, `platformRetained`, runway, `netEmission = freshDrawdown`) + public surface. **All four verified present in BOTH `apps/indexer/src` and `apps/defi/src`, and rendered** — the last of them, `platformRetained`, shipped in #1532 (`e907e9b0d`, closes #1525). Checked against this row's own list rather than against the PRs, because the FIRST time this row was marked done it was wrong: `platformRetained` had been deferred out of #1524 and the milestone was closed over the gap, since every shipped PR was green and nothing compared them to the definition. The implementation PRs (#1531 is NOT among them — it changed this row and shipped no deliverable): #1487 + #1496 (contract slices — the `GovernorDayPoolStamped` EVENT widened by TWO fields; event arguments are not struct members and shift no storage slot), #1507 (indexer consumer), **#1508** (day-0 — where `recycledCreditedPreLaunch` was appended at the STORAGE struct TAIL, `45dd7880a`), #1513 (schema + read surface; operator capture PASS split to **#1523**), #1524 (the public surface, `c2ff56a16`), #1532 (the retained reserve beside its CAPTURED backing). **The reserve is obtained by a SCHEDULED capture, not a per-request chain read** — that recut removed a whole class of defect (deadline coupling, request amplification, cross-isolate coordination) and is why the surface publishes the moment each reading describes. **Migration 0048 gates the backing block, and the deploy scripts run `wrangler deploy` BEFORE `d1 migrations apply` (`deploy-chain.sh` 8b.1/8b.2, `deploy-testnet.sh` [a]/[b]).** Between those two steps the table does not exist: the capture's insert throws and is caught per-chain, and `readBacking` returns `read-failed`, so the block is WITHHELD rather than wrong — the correct state, and self-healing once the migration lands. If step [b] fails, that withholding persists until an operator applies it. **Do not read a missing backing block as "the migration" in general, though** — the block is also withheld before the first scheduled capture (`not-captured-yet`), after a deployment change (`snapshot-other-deployment`), when the schedule falls behind (`snapshot-stale`), and when the chain stops advancing (`chain-behind`). The response names which, and that name is the diagnostic; the migration is only the answer inside the deploy-to-migrate window. Ratified into TokenomicsTechSpec: publishable ≠ displayable; a caveat only where its condition holds, judged AT DISPLAYED PRECISION; a positive amount never renders as zero and a published share rounds so it cannot overstate; a surface that distrusts an input refuses ITS OWN figures and no more; and a reading at a stated moment, withheld when the schedule stalls OR the chain stops advancing — two faults one clock cannot tell apart. Open M5-adjacent follow-ups, none blocking: #1523 (versioned captures + promote; carries the unfixed post-apply-backup gap), #1515, #1510 | #1218 |
 | **M6** — perks (#1204, `SpendGatedPerk` enum entry, legal glance first) + bonds (#1219, schedule the glance) | #1204 / #1219 |
 | **M7** — ceremonies, now including the NEW operator steps the mesh added. **Chain-side ORDER is load-bearing (r4):** **(1) enable `feeEntitlementEnabled` FIRST** — while it is off, `_fullTariffShouldRun` skips plain canonical originations, so any loan accepted after an unstamped-scan but before enablement re-joins the unstamped class and the readback goes stale; enabling first means every subsequent origination stamps itself and the scan result cannot be invalidated by new loans (this reorders the §M7.4 joint gate — arming becomes the LAST step, see the in-place note there; the alternative is atomically batching enablement + scan + arming with canonical originations paused across the batch). **(2) Zero unstamped reward-eligible canonical loans.** On armed days the legacy #1008 cap retires and the loan-side cap deliberately skips an UNSTAMPED loan (`feeEntitlementByLoanId[loanId].openDays == 0` — the rev-15 unstamped-earns-normally rule), so any reward-eligible canonical loan still open and unstamped at `D*` would earn **uncapped**. Enumerate open reward-eligible canonical loans with `openDays == 0` and resolve each, reading back **zero unresolved** before arming. **There is NO backfill surface**: `_stampEntitlement` runs only at origination and no admin/migration path can stamp an existing loan — the supported resolutions are the enable-first ordering (prevents new members of the class) and **wait-for-close** (or voluntary close/re-open) for existing ones; a true backfill needs a not-yet-filed migration card with snapshot inputs + verification. (Pre-live: enabling + arming at mainnet genesis makes the set empty by construction — but the readback is still the gate, and any testnet-rehearsal or post-launch `D*` DOES have such loans.) **(3) Arm with a propagation buffer:** `setGovernorCommitArmedFromDay(D*)` **IS the D\* cutover** — one canonical-only, one-shot, future-day-only Base call; NO per-chain `D*` administration (a mirror-chain or duplicate call reverts). The setter only writes Base storage + emits `GovernorCommitArmed` — it does NOT itself send anything: a mirror learns `D*` only when the **first application of a not-yet-applied finalized day's kind-5 broadcast** lands after arming (a replay of an already-applied day exits through the idempotency branch WITHOUT installing `armedFromDay`). Because the call is **irreversible the moment it lands** while `D*` may legally be `today+1`, choose `D*` with a **multi-day buffer** (several broadcast cycles), require the per-mirror **readback of `governorCommitArmedFromDay`** to succeed on every mirror **well before `D*`**, and have the contingency written down for a mirror that misses the deadline (its claims stay halted until CCIP delivery recovery / manual re-execution — governance cannot postpone `D*`). **Keeper side:** apply D1 migrations 0043/0044; grant the keeper EOA `KEEPER_ROLE` **on EVERY mirror Diamond** (`submitCommitmentBatch` is mirror-only AND role-gated — granting on Base alone, or missing one mirror, leaves that mirror's commitment pass reverting forever, its report never completes, and the remit gate stalls that chain's funding); **fund the keeper EOA on every mirror AND on Base (canonical)** — mirrors need transaction gas for `submitCommitmentBatch` plus the quoted native CCIP fee for `sendCommitmentReport`/`sendRemitAck`, and **Base needs gas + the CCIP `msg.value` fee for every Base→mirror `remitRewardBudget` send** (`runRewardBudgetRemit` submits from the canonical chain — an unfunded Base EOA lets commitment reports complete while every reward-budget send fails and mirror claims stay unfunded); per-chain balance readback **including the canonical chain** is part of the checklist; **verify per-destination lane capacity before enabling the flags** — the keeper excludes any day whose eligible slice exceeds `REWARD_REMIT_LANE_CAP` or the CCIP token-bucket capacity (retries cannot fund it until limits are raised, and the 50,000-VPFI default capacity can be below an early high-concentration daily slice), so the **#918 largest-slice preflight is an M7 activation dependency**: read back that each destination's token-bucket capacity AND the keeper lane cap clear the maximum supported single-day slice; authorize the remit signing EOA; and arm the **master flags together** — `KEEPER_ENABLED` + `REWARD_COMMIT_ENABLED` (commitment reports) + `REWARD_REMIT_ENABLED` (delivery-ack pass) — arming the chain without all of these leaves reports/acks inert and stalls multi-chain funding | runbook |
@@ -480,14 +480,199 @@ bucket → budget → expiry → bucket and manufacture repeat reward budget
 behind it). A distinct custody-relocation credit class carries this
 (e.g. a non-`Ā` flag on `VpfiRecycled` or a sibling event). Fresh-funded
 forfeit/expiry shares still credit `Ā` — those tokens enter the
-recycled economy for the first time. Phase C′ (C1 surplus knob, C2 batched repatriation,
-Base-ledgered before the send) stays sequenced last, unchanged.
+recycled economy for the first time. Phase C′ is **C1–C4** (#1567–#1570), not
+the C1–C2 an earlier revision named (Codex #1578 r2 P2), and it stays
+**sequenced last** — but it is **no longer "unchanged": read §M4** (r1 P2).
+C2 in particular: §3.6a established that repatriation is two modes over one
+transport, and that the debit is a **separate repatriation ledger**, never
+`consumedCumulative`.
 
 Invariants/tests: the B4 list, plus the governor §7 commitment
 invariants per chain and the no-double-count rule across
 fresh / remitted-recycled / locally-committed shares.
 
-### M4 — Phase C′ surplus tooling — #1222 tail (C1 + C2, unchanged)
+### M4 — Phase C′ surplus tooling — #1222 tail
+
+This section was an empty stub carrying only "(C1 + C2, unchanged)". C2 is no
+longer unchanged, and the reason matters enough that the plan must not send an
+implementer to §3.6 alone.
+
+**Design of record:**
+[`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md) **§3.6a**
+(merged via #1574). §3.6 ratified the *planned* case only.
+
+- **C1 — surplus knob + operator flagging → #1567. ✅ DONE, merged
+  `cc3a973fe` (#1579); #1567 closed.** Flagging only: **nothing moves** — the
+  shipped surface is read-only, mirror-scoped (the canonical chain's own id is
+  rejected) and dark by default (`recycleSurplusMultiple == 0` disables). The
+  substantive sub-problem — which day series the "trailing average daily
+  budget" averages — was **decided as the funded per-chain budget**
+  (`ChainDayFunding.fundedLender + fundedBorrower` over a 30-day window,
+  zero-padded before launch): it flags against what Base actually delivered
+  rather than against consumption or claim demand. Note the per-chain
+  `ChainDayFunding.lenderHalfEquiv` / `borrowerHalfEquiv` fields were ruled
+  out as candidates: they are global-equivalent numerators scaled by `1/p_c`,
+  and the struct's own docs record that a thin chain legitimately produces
+  values far above the actual daily pool.
+- **C2 — batched repatriation → #1568. Mode A only.** §3.6a establishes that
+  repatriation is **two modes over one transport**: Mode A planned surplus
+  (Base-initiated, drawn from the mirror's recycle bucket, was in `reported`)
+  and Mode B stranded-delivery recovery (mirror-initiated, never in `reported`,
+  and it must not touch the claim-side ledger at all). They need an explicit
+  **mode discriminator on the wire** — ratified 2026-08-07 as the
+  **payload-kind tag itself** on one shared channel, each mode keeping its own
+  kind, decoder and rollout ladder (canonical statement in §3.6a; §2h 12a
+  agrees).
+
+  ⚠️ **The old one-line scope was wrong.** It read "Base-ledgered into
+  `consumedCumulative` before the mirror send". Charging `consumedCumulative`
+  for a repatriation breaks the `outstanding + retired == consumed` identity on
+  the **first** repatriation. C2 takes a **separate repatriation debit ledger**
+  under a releasable pending authorization.
+
+  **#1568 also owns the SHARED return-transport slice** — the channel that is
+  cut once (constraint 3's resolution, the mirror-side sender leg, the
+  kind-dispatching Base receiver, channel registration, and the shared slice's
+  own rollout test). #1434's R4 wire slice is downstream of it and builds Mode
+  B's protocol on that channel: its own payload kind, decoder and handler
+  **plus its own independently versioned rollout ladder and rollout test**
+  (§2h 12a's per-path requirement — the channel is shared, the ladder is not).
+  **No M3→M4 cycle**: B2-d4's halt lift (the M3 gate) needs only R4's
+  arrival-reservation/claim-exclusion slice on the remit ingress; the return
+  WIRE sequences after this shared slice in M4-era order and must be live
+  before the M7 arming ceremony (§3.6a's ownership note). The §4 graph
+  carries this as `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE` — the return wire
+  gates ACTIVE-MIRROR arming only (the mirrors-dark disjunct and unrelated
+  M4 work are untouched).
+
+  **Invariants that must move, split by WHICH MODE forces them** — an earlier
+  revision lumped these together and would have pulled Mode-B storage into
+  Mode A's scope (Codex #1578 r1 P2). All tracked in **#1577**.
+
+  *With or before **Mode A** (#1568) — each fails against correct code
+  otherwise:*
+
+  - governor **§7 #6**, the per-chain commitment bound, needs the
+    `repatDebited` / `repatReleased` draw ledger, **and
+    `LibVpfiRecycle.mirrorAvailRecycled` needs the matching availability
+    terms**. This is the one an implementer is most likely to skip and the
+    most damaging to skip: a successful Mode-A return leaves claim-side
+    `consumed` untouched, so without it **the drained amount is offered again
+    to later broadcasts**. **Take the bound's exact form from §7 #6 — it is
+    not reproduced here** (Codex #1578 r2 P2): §3.6a designates that and the
+    availability formula the only canonical statements and calls any further
+    copy a defect, so restating it in the programme plan would have created
+    the third one, a single round after that rule was written. What a planner
+    needs at this level: the form is **overflow-sensitive** and has drifted
+    repeatedly, so it must be copied from §7 #6 rather than reconstructed.
+  - governor **§7 #8**, bucket composition, needs `repatriatedOutCumulative`
+    in both directions and in the `creditedCumulative` derivation. Mode A
+    drains the bucket without advancing `paidOutRecycled`, so the forward
+    EXACT direction fails on the **first healthy send** and
+    `ops/mesh-watcher` raises a CRITICAL over-credit.
+
+  *With **Mode B** — which is **#1434's R4 fresh-return**, not this card:*
+
+  > **Mode B is #1434 P2 / R4.** §M7's P2 block names R4's mirror→Base
+  > fresh-return as one of P2's wire paths, and §2h ratifies it as a
+  > **dedicated fresh-return** recovery. Mode B and R4 are the same path.
+  >
+  > **Correcting my own error** (Codex #1578 r6 P2): r3 reported that
+  > #1434's **M3 ROW** names no reverse transport — true of the row — and I
+  > wrongly generalised it to "#1434 does not own Mode B", then cut a
+  > duplicate card (#1584, since closed). The premise was false in the merge
+  > result; I was working a branch cut before #1573 landed and did not check.
+  > **The ROW was the real gap**, and it is fixed where it lives rather than
+  > by inventing a second owner.
+  >
+  > **The accounting dependency is INTRA-card, not cross-card:** neither
+  > return mode may restore the append-only 69M interaction-pool headroom
+  > (ratified by owner 2026-08-07 — §2h records the decision and the
+  > recovered tokens' disposition: re-used for platform interaction rewards
+  > via a position-bounded re-dispatch that does NOT charge the cap a second
+  > time),
+  > and a Mode-B return is recorded in a **separate receipt-bound RETURNED
+  > cumulative** — never by decrementing `rewardBudgetArmedFreshReceived` or
+  > `rewardBudgetFreshUncounted`, which §2h R4 keeps **gross and
+  > append-only** because `RewardRemitLedgerTest` asserts their sum
+  > reconciles exhaustively. Netting uses the receipt's **effective**
+  > classification, since constraint 16 can re-attribute an overtaking
+  > receipt uncounted→armed before a return settles; a quarantined or
+  > return-pending receipt is ineligible for re-attribution. Without that,
+  > armed spendable credit survives for VPFI that has left the mirror
+  > (Codex #1578 r6 P1).
+  >
+  > **⛔ SEQUENCING, the load-bearing part** (Codex #1578 r5 P1): R4's
+  > **arrival reservation and claim-exclusion slice must land BEFORE #1434
+  > lifts the mirror settlement halt.** Otherwise a compensation arriving
+  > after its day irreversibly lapsed has no stranded-recovery reservation
+  > and the existing fresh-claim `backingRoom` can spend those tokens — the
+  > #1460 shape, a claim spending tokens earmarked for something else with
+  > nothing marking them earmarked. Carried in the §4 graph as
+  > `MODEBRES --> SETTLE`. Not all of R4 need precede settlement; that slice
+  > must.
+
+  - governor **§7 #3**, custody separation, needs the stranded-recovery
+    reservation as a **fourth balance owner**, with
+    `LibVpfiRecycle.backingPosition` following. Mode B is what introduces
+    that reservation, so #1568 must not be blocked on it.
+- **C3 — local keeper-budget credit → #1569.** Decide explicitly rather than
+  by omission, and **it carries the same ledger defect C2 did** (Codex #1578
+  r2 P2). §3.5 directs Base to count `keeperAllocate` into
+  `chainConsumedRecycled`. But the watcher enforces
+  `outstanding + retired == consumed`, and the paired outstanding/retirement
+  books describe **claim commitments** — a keeper-budget credit reserves and
+  retires nothing through them. So the **first non-zero keeper allocation
+  breaks that CRITICAL identity**, exactly as charging a repatriation to
+  `consumedCumulative` would have.
+
+  **And the Base-side identity is only half of it** (Codex #1578 r4 P2).
+  Debiting `recycleBucket` for a keeper allocation *also* lowers the right
+  side of governor **§7 #8** without advancing `paidOutRecycled` or
+  `repatriatedOutCumulative` — so the first non-zero allocation trips the same
+  CRITICAL over-credit as an untracked repatriation, on the mirror side, even
+  after the commitment identity is repaired.
+
+  **Resolved: C3 needs BOTH an inside-bucket mirror earmark AND a separate
+  Base-side keeper ledger.** Not one or the other — I proposed each in turn
+  and each alone is insufficient (Codex #1578 r3, r4, r5).
+
+  - **Mirror side — the inside-bucket earmark**, which already exists:
+    `recycleKeeperBudget` works that way and the governor design says so —
+    `_applyRecycleRegister` *"earmarks part of each day's margin from INSIDE
+    the bucket, so the bucket does not move."* Leaving the balance in place is
+    what keeps §7 #8's composition undisturbed, since no tokens left.
+  - **Base side — a separate keeper debit/release ledger** in the availability
+    calculation and in §7 #6. **The inside-bucket earmark does NOT reserve
+    anything in Base's per-chain availability** (Codex #1578 r5 P2), and
+    `reported` is a lifetime credit cumulative — so if neither
+    `chainConsumedRecycled` nor a keeper term advances, **the next
+    finalization can allocate the same tokens again as `recycleConsume`**,
+    even though the mirror's `_recycleFundable` already excludes
+    `recycleKeeperBudget`. That yields `outstandingCommitRecycled +
+    recycleKeeperBudget > recycleBucket` — underbacked reward commitments.
+
+  §3.5's "count it into `consumedCumulative`" sentence is superseded by this
+  pair. Note the shape, because it is the same one §3.6a reached for
+  repatriation: **a new draw needs its own Base-side ledger term**, and where
+  the tokens physically sit is a separate question from whether Base has
+  reserved them.
+
+  Note the pattern, since it has now appeared three times: `consumedCumulative`
+  is **not a general-purpose availability debit**. It is one half of a paired
+  identity, and every new draw on the bucket needs its own ledger unless it
+  also participates in that pairing.
+- **C4 — TokenomicsTechSpec §9 edit for Phase-C surplus tooling → #1570.**
+  **C4's scope INCLUDES C1's surplus flag** — do not scope it out on the
+  premise that the flag is already documented (Codex #1578 r3 P2). An earlier
+  revision here claimed "§9a already carries C1's flag"; at the time that
+  section existed only on the unmerged #1579 branch, so from this document's
+  branch the claim was **false** — the same unverifiable cross-branch
+  dependency §2h's R4a records. **#1579 has since merged (`cc3a973fe`), so
+  §9a now exists on `main`** and C4's job for the flag changed shape rather
+  than disappearing: C4 integrates the broader Phase-C disposition section
+  WITH the landed §9a — one coherent §9 story — instead of writing the flag
+  from scratch or duplicating it.
 
 ### M5 — #1218 transparency dashboard completion
 
@@ -1253,6 +1438,9 @@ flowchart LR
   ARMGATE{{"arming gate:<br/>mirrors dark OR<br/>(M3 complete AND #1434)"}} --> ARM
   M3 -.-> ARMGATE
   SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}} -.-> ARMGATE
+  MODEBRES{{"#1434 R4 arrival reservation<br/>+ claim-exclusion slice"}} --> SETTLE
+  SHAREDWIRE{{"#1568 shared return transport<br/>(channel cut once)"}} --> MODEBWIRE{{"#1434 R4 return wire<br/>(Mode B kind + ladder)"}}
+  MODEBWIRE -.-> ARMGATE
   BACKING{{"#1460 bucket/fresh separation<br/>enforced AT CLAIM TIME"}} --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
@@ -1267,7 +1455,7 @@ flowchart LR
   GATE --> FEE
   PR2 -. one wire evolution .-> M3[M3 #1222 B1..B4]
   M1b -.-> M3
-  M3 --> M4[M4 Phase C' C1..C2]
+  M3 --> M4[M4 Phase C' C1..C4 + #1577]
   M3 --> M5g[M5 global metrics]
   PR5 --> E2[M6 #1204 perks]
 ```
@@ -1283,7 +1471,7 @@ constituent cards below remain the working tickets.
 | #1349 | Umbrella — keep in lockstep with this plan; tick milestones as constituent cards close |
 | #1346 | Keep as filed = M1; add the #973 restamp note (comment posted) |
 | #1347 | **D1 decided (b)** — body re-based to the formula doc at rev 15 (LIF·year, dual-fee, per-party double absorption, PR-5a/5b scope) |
-| #1222 | Adopt the parked B1–B4/C1–C2 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2 |
+| #1222 | Adopt the parked B1–B4 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2. **The Phase-C tail is C1–C4, not C1–C2** (#1567–#1570), **plus #1577's code-side changes** which must land with or before Mode A, and **C2's scope changed** with §3.6a — see §M4 |
 | #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it. **B4 coverage DISCHARGED as of B4-d, except the mirror half.** Recording the evidence precisely, because the first version of this row credited it to the wrong tests: B4-a's `availRecycled ≤ reported` ceiling does NOT establish the exclusion (it still holds if relocated custody wrongly increments `reported` — the ceiling rises with it), and `MeshThreeChainE2ETest` never delivers a reward remittance through the receive path, so B4-b does not drive remit-ingress labelling either. The exclusion is exercised by the single-diamond `RewardRemitLedgerTest`, which drives the ingress directly, and made externally observable by #1448's composition relation — with the omission case (an arrival never labelled at all) still open as #1452. B4-a and B4-b remain load-bearing for what they DO prove: the per-chain clamp chain and the three-diamond mesh behaviour respectively. The MIRROR half is **unreachable until #1434** — but state it precisely, because "no mirror-side bucket" is FALSE: B2-d5 moved the recycled credit to remit ARRIVAL, so `onRewardBudgetReceived` already calls `creditCustodyRelocated` and a mirror's bucket is live and credited today (exercised by `RewardRemitLedgerTest`). What #1434 gates is claim / forfeit / expiry PRICING on a mirror, and therefore the retirement or release of locally-committed reservations — the consumption side, not the credit side. Recording it as "no bucket exists" would send the follow-up to build something that already ships |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
 | #1204 / #1219 | Keep; note the RL-5 release-train commitment; schedule the #1219 legal glance |
@@ -1316,7 +1504,9 @@ constituent cards below remain the working tickets.
    by default.
 3. **Cross-chain**: recycle-at-source + netted remittance live on every
    deployed chain (M3), which requires **#1434** so mirror settlement is
-   reachable; surplus tooling available (M4); watcher **DEPLOYED** and
+   reachable — and **#1434 includes R4's fresh-return**, without which a
+   late compensation has no return path; surplus tooling available (M4),
+   **including #1577's availability/invariant changes**; watcher **DEPLOYED** and
    invariants green — `ops/mesh-watcher` is code-complete but undeployed,
    so "green" is not yet a statement anything can make; #1445 closed so a
    mis-set endpoint cannot report a clean tick against the wrong chain.
@@ -1339,7 +1529,9 @@ constituent cards below remain the working tickets.
    option (a) retired with a supersession note.
 2. **CONFIRMED (owner, 2026-07-27):** this plan is the **programme of
    record** (supersedes the Phase-B checklist in #1222's body; adopts the
-   parked B1–B4/C1–C2 cut with §M3's two corrections). It had been
+   parked B1–B4/C1–C2 cut with §M3's two corrections — that cut is the
+   2026-07 parked plan; the Phase-C tail has since grown to C1–C4 and C2's
+   scope changed, see §M4). It had been
    executed against as such since the plan merged — every M1/M2/M3 slice
    in §1a was scoped from it — so this marker records the standing
    practice rather than changing it.

@@ -915,8 +915,12 @@ review cycle.
 
 12a. **R4's fresh-return is a THIRD wire path** (Codex #1573 r3 P1). Once R4
     stopped routing through C2, the mirror→Base return became its own message —
-    it must carry enough authenticated identity to reverse the original remit
-    accounting, and R4 explicitly forbids reusing C2's. It therefore needs its
+    it must carry enough authenticated identity to SETTLE the original remit
+    accounting (under the 2026-08-07 decision that settlement is the
+    receipt-bound recovery-position credit and returned-cumulative writes,
+    never a deduction from cap usage — this line said "reverse" until Codex
+    #1586 r3 P1, which an implementer could build as the rejected cap
+    reversal), and R4 explicitly forbids reusing C2's. It therefore needs its
     own payload kind, decoder and rollout compatibility. An earlier revision
     kept saying "two evolutions" *after* making the change that created the
     third, which would let a P2 implementation and rollout plan omit **the very
@@ -924,6 +928,17 @@ review cycle.
     versioned changes, each with its own rollout test — and the same reasoning
     that made this a third path applies again to the conversion's authenticated
     input if it lands as its own message (r10 P2).
+
+> **✅ RATIFIED 2026-08-07 (owner) — how 12a coexists with §3.6a's "one
+> transport with a mode discriminator".** The two texts briefly read as a
+> fork (surfaced on #1578 r7, recorded on #1434) and the owner ratified
+> the layered reading as the architecturally clean route: the mirror→Base
+> return CHANNEL is shared and cut once (§3.6a constraint 3's
+> transport-layer decision), and **the payload-kind tag IS the mode
+> discriminator** — each mode keeps its own payload kind, decoder and
+> rollout compatibility exactly as 12a requires. Nothing in
+> this constraint changes; the canonical statement of the layering lives
+> in §3.6a, beside the discriminator requirement it qualifies.
 
 12b. **Legacy zeroed-day broadcasts need an inventory/backfill or an activation
     gate, not just a decoder test** (Codex #1573 r3 P1). At activation, a
@@ -1361,12 +1376,13 @@ exist.
 Returning a stranded compensation is logically **undoing a remit**, not
 disposing of surplus: different source ledger, different authorization,
 different bounds. It therefore gets its own authenticated path, which must also
-perform the corresponding **Base-side accounting reversal — bounded by the
+perform the corresponding **Base-side recovery-position credit — bounded by the
 amount Base ACTUALLY RECOVERS, on authenticated Base receipt** (Codex #1573 r4
 P1: the original declared total, the mirror's receipt and the amount finally
-returned can all differ when either leg lands short; reversing the declared
-total, or reversing before receipt, reopens 69M headroom for tokens that are
-still missing or were burned — with any residual tracked separately) — and
+returned can all differ when either leg lands short; crediting the declared
+total, or crediting before receipt, over-states the re-dispatchable position
+for tokens that are still missing or were burned — an uncharged emission path,
+with any residual tracked separately) — and
 reduce the mirror's **spendable** delivered-fresh backing.
 
 **Spendable, by SUBTRACTING A SECOND CUMULATIVE — never by decrementing the
@@ -1391,19 +1407,42 @@ So:
 
 **And the append-only discipline applies to the BASE side too — that is where
 it came from** (Codex #1573 r9 P1). The rule above was written for the mirror's
-receipt counters and left Base's 69M headroom with no instrument. R4 requires
-the authenticated Base inflow to reverse 69M usage, and `rewardBudgetRemittedGlobal`
-is append-only — so an implementation is left choosing between decrementing it,
-which destroys the gross-evidence semantics the whole rule exists to protect,
-and leaving recovered VPFI **permanently charged against the cap** even though
-the tokens came back. Neither is acceptable, and the fix is the same shape:
+receipt counters and left Base's side with no instrument for the authenticated
+inflow at all: `rewardBudgetRemittedGlobal` is append-only, so an
+implementation was left choosing between decrementing it, which destroys the
+gross-evidence semantics the whole rule exists to protect, and recording the
+inflow nowhere. The fix is the same counter shape — with the recovered
+counter's ROLE fixed by the 2026-08-07 decision (Codex #1586 r2 P1: an earlier
+revision of this list said "net 69M usage is `gross remitted − recovered`,
+derived at read time", which an implementer would wire straight into
+`remaining` — exactly the reopening the decision rejects):
 
-- `rewardBudgetRemittedGlobal` stays **append-only** (gross remitted);
-- R4 adds a **receipt-bound BASE RECOVERED cumulative**;
-- net 69M usage is `gross remitted − recovered`, derived at read time.
+- `rewardBudgetRemittedGlobal` stays **append-only** (gross remitted), and it
+  is what `remaining` reads — **`remaining` never reads the recovered
+  cumulative**;
+- R4 adds a **receipt-bound BASE RECOVERED cumulative** whose role is
+  **recovery-position evidence**: it credits and bounds the re-dispatchable
+  position of the decision block above, and is never a deduction from cap
+  usage;
+- the operator reporting view of net physical outflow is
+  `(gross remitted + re-dispatched) − recovered`, **additions first** (Codex
+  #1586 r3 P2 + r4 P2: the two-term form reports zero while value has left
+  Base again, and the subtraction-first ordering underflows once a
+  re-dispatched parcel is recovered a second time — 100 gross / 200 recovered
+  / 100 re-dispatched is reachable and its true net outflow is zero). Every
+  authenticated recovery follows a dispatch of one of the two kinds, so
+  `recovered ≤ gross + re-dispatched` holds by construction; implementations
+  still evaluate additions-first and saturate defensively. A reporting view
+  only, feeding no funding-planning surface and never `remaining`, which
+  reads gross alone. **Scoped to the R4/Mode-B flow** (Codex #1586 r5 P2): a
+  governance-ceremony recovery of a released reservation returns value whose
+  dispatch is in `gross` but whose recovery rides the ceremony's own
+  instrument — unspecified until R6d — so ceremony recoveries enter operator
+  reporting only once R6d defines that instrument, and this view does not
+  claim to cover them.
 
-**⚠ This exposes a real tension the P2 design must settle, and it is on the
-open list.** The claim path's truncate-and-consume rule is justified by
+**⚠ This exposed a real tension — since DECIDED (2026-08-07, below).** The
+claim path's truncate-and-consume rule is justified by
 `remaining = CAP − paidOut − remittedGlobal` being **monotone non-increasing** —
 a trimmed remainder is unfundable forever, so consuming the entry alongside it
 costs the claimant nothing. If `recovered` feeds `remaining`, that monotonicity
@@ -1413,40 +1452,108 @@ the cap permanently under-counts a pool that genuinely still holds the tokens,
 and R4's reversal accomplishes nothing.
 
 The accounting shape above is right either way — a gross counter and a separate
-recovered counter — so it can be specified now. **What feeds `remaining` is the
-decision**, and it has a stated cost on both sides.
+recovered counter — so it can be specified now. **What feeds `remaining` was the
+decision**, and it had a stated cost on both sides; the ratification below takes
+the non-reopening side, with a disposition that discharges most of that side's
+stated cost (the re-dispatch never charges twice — below).
 
-**Until that decision is taken, the recovered cumulative does NOT feed
-`remaining`.** Stated as this document's own default rather than deferred, so
-an implementation has a safe reading: recovered value sits in an explicitly
-separate, **non-reopening** recovery position, visible to operators and
-excluded from 69M headroom. That is the conservative direction — it under-counts
-a pool that holds the tokens, which costs program longevity — but it cannot
-retroactively falsify a truncation that already happened, which is the failure
-the other direction risks. Reopening is a deliberate change from this default,
-not something an implementer may assume.
+**✅ DECIDED 2026-08-07 (owner) — the recovered cumulative does NOT feed
+`remaining`, ratified jointly with #1568 §3.6a** (decided across both modes
+at once, as the coordination note below required; the retained charge itself
+is a Mode-B property — see the narrowing recorded there). What was this
+document's conservative default is now the permanent rule: recovered value
+sits in an explicitly separate, **non-reopening** recovery position, visible
+to operators and excluded from 69M headroom. No Mode-B recovery ever moves
+`remaining` upward, so with respect to THIS path the claim path's
+truncate-and-consume justification is untouched and no past truncation is
+retroactively falsified. Stated path-scoped on purpose: the one upward
+movement that exists anywhere is the pre-existing, governance-gated
+released-reservation ceremony in the boundary note below — claims truncated
+while released funds sat stranded can have been consumed before that ceremony
+restores headroom, and reconciling THAT with truncate-and-consume is R6d's
+open item. This decision neither creates nor cures that window.
 
-**This coordinates with #1568's repatriation case, and that document is NOT on
-this branch** (Codex #1573 r10 P2). An earlier revision cited
+**The owner also settled the recovered tokens' DISPOSITION, which the default
+had left open: recovered VPFI is re-used for platform interaction rewards —
+not burned, and not quarantined.** The recovery position is a *source* for
+future interaction-reward funding, and — the owner's model, stated precisely —
+**a recovery-sourced re-dispatch does NOT charge `rewardBudgetRemittedGlobal`
+a second time**: the parcel's cap charge happened at its original dispatch and
+is never repeated. Stated with each counter's direction explicit (Codex #1586
+r4 P2: "the 69M counter only ever decreases" conflated the two and read as an
+instruction to decrement the gross-evidence counter): the append-only
+`rewardBudgetRemittedGlobal` only ever INCREASES, and only at first dispatch;
+`remaining` headroom only ever DECREASES, and only at first dispatch; recovery
+and re-use move neither. `remaining` therefore never rises (recovery is not a
+credit) and is not debited again on re-use (a re-dispatch is not a new mint). Two constraints make this safe
+rather than a cap bypass, and both are implementation requirements: a
+recovery-sourced dispatch must be **sourced from and bounded by the recovery
+position's receipt-bound balance** — anything else is an uncharged emission
+path; and it must advance its **own re-dispatch cumulative**, so the
+reconciliation over gross remitted / recovered / re-dispatched stays
+exhaustive — reusing `rewardBudgetRemittedGlobal` for it would re-introduce
+the second charge, and reusing nothing would leave physical outflow
+unaccounted. Which targets a recovery-sourced dispatch may fund (ordinary day
+funding, an R1c supplemental top-up, a later manual compensation) is R4
+mechanism design, specified with it in the P2 design document. The one honest
+residual of the old "accepted cost": a recovered parcel with no admissible
+target left at end-of-program simply remains treasury-held VPFI — nothing
+about this decision strands value mid-program.
+
+**Boundary — the released-reservation TRANSPORT-CUSTODY recovery is a
+NEIGHBOURING CASE this decision does not cover.** TokenomicsTechSpec §9's
+"Delivered-backing ledger" passage (the B2-d2 operator-valve bullets) already
+ratifies that when an operator-RELEASED reservation's tokens — sent but never
+executed, sitting in the CCIP token pool, never delivered to any mirror — are
+physically recovered pool → Diamond, that governance ceremony restores BOTH
+the lifetime emission headroom and the recycled bucket. That is not overruled
+here, and the asymmetry is deliberate — with the ORDERING as the spec states
+it (Codex #1586 r2 P1: an earlier wording here said a re-remittance had
+"already" consumed new headroom by ceremony time, which reverses the spec'd
+sequence and, followed literally, would bypass the post-close backing gate):
+a released day stays UNFUNDABLE while its tokens sit in transport custody —
+every remittance-planning surface gates each day on post-close backing — so
+the recovery ceremony runs FIRST, restoring the original charge and the
+backing, and only then can the replacement re-remittance proceed under its
+own single fresh charge. Net one charge per funded day, achieved by
+restore-then-recharge through an evidenced governance act. R4's case needs no
+restoration at all: its day lapsed, no replacement send will ever exist, and
+the parcel is re-usable against its standing original charge (the uncharged
+re-dispatch above) — restoring automatically on a permissionless path would
+be the exact reopening this decision rejects. The residual tension — the
+ceremony makes `remaining` rise too, inside its narrow governance-gated
+window — belongs to R6d's open recovery-settlement item, which must specify
+the ceremony's evidence and clearing path and reconcile it with the
+truncate-and-consume justification rather than leave the two rules adjacent
+and unexplained.
+
+**This coordinates with #1568's repatriation case — which at the time was NOT
+on this branch** (Codex #1573 r10 P2). An earlier revision cited
 `VpfiCrossChainRecyclingDesign.md` §3.6a as having already settled the
 repatriation direction — the exact unverifiable cross-branch dependency **R4a
-records this section making once before**, repeated. The local rule above is
-therefore self-contained and does not wait on that section landing. What is
-true and checkable: the two paths share `rewardBudgetRemittedGlobal`, whose
-monotonicity the claim path relies on, so whoever decides either must decide
-both.
+records this section making once before**, repeated. The local rule above was
+therefore kept self-contained rather than waiting on that section landing.
+What was checkable then — "the two paths share `rewardBudgetRemittedGlobal`"
+— was later NARROWED (Codex #1586 r5 P2): only fresh remittances advance that
+counter, so Mode A's recycled surplus was never in it and the retained-charge
+rule is a Mode-B property; the operative point survives in weakened form —
+both modes needed the same no-restore decision, and the claim path's
+monotonicity reliance is on the counter Mode B retains its charge in. **Both
+documents have since merged (`268e7db10`, `37256d430`), and the 2026-08-07
+decision above was taken jointly across them, as this note required.**
 
 **Two deltas, not one — the mirror's OUTFLOW and Base's INFLOW are different
 numbers** (Codex #1573 r8 P1). The paragraph above already establishes that the
 declared total, the mirror's receipt and the amount finally returned can all
-differ when a leg lands short, and correctly bounds the Base-side 69M reversal
-by what Base **actually recovers**. Applying that same figure to the mirror's
-returned cumulative is the error: on a fee-on-transfer or partially-burned
-return, the mirror no longer holds the taxed portion, but a reversal-sized
-decrement leaves it counted as spendable backing — so later claims can consume
-headroom for tokens that are gone. Track both, each bound to the receipt: the
-**mirror's actual outflow** drives its returned cumulative, and **Base's actual
-inflow** drives the reversal. They coincide only when the return lands whole,
+differ when a leg lands short, and correctly bounds the Base-side
+recovery-position credit by what Base **actually recovers**. Applying that same
+figure to the mirror's returned cumulative is the error: on a fee-on-transfer
+or partially-burned return, the mirror no longer holds the taxed portion, but
+an inflow-sized decrement leaves it counted as spendable backing — so later
+claims can consume backing for tokens that are gone. Track both, each bound to
+the receipt: the **mirror's actual outflow** drives its returned cumulative,
+and **Base's actual inflow** drives the recovery-position credit. They
+coincide only when the return lands whole,
 and assuming they always do re-creates on the mirror the exact over-backing
 this rule exists to prevent on Base.
 
@@ -1490,10 +1597,11 @@ backing, retired exactly once on the return** — or the accounting and the
 return must be **atomic at ingress**.
 
 Stated in full here on purpose: an earlier revision cited it as a rule the
-repatriation design "already states", which is **not verifiable from this
-document's branch** — the C2 design carries a matching constraint but the two
-changes are unmerged and cross-referencing each other (Codex #1573 r4). This
-rule is P2's own and does not depend on that one landing.
+repatriation design "already states", which was **not verifiable from this
+document's branch at the time** — the C2 design carried a matching constraint
+but the two changes were unmerged and cross-referencing each other (Codex
+#1573 r4). Both have since merged; the rule stays stated in full because it
+is P2's own, not because the other statement is unavailable.
 
 **R4b — the arriving compensation must be CLASSIFIABLE at ingress, and today's
 wire split makes it not** (Codex #1573 r7 P1). R4a says late receipts are
@@ -1594,7 +1702,7 @@ CCIP pool.
 r6 established that a *post-lapse* ACK is not resolution: R4 has the mirror
 finalize/ACK the original reservation *before* starting the fresh-return, so
 releasing the gate there would free Base to dispatch again while the tokens and
-the reversal are still outstanding. That much stands.
+the return settlement are still outstanding. That much stands.
 
 **The r6 wording then over-generalised it to "only a recovered receipt plus
 completed reversal clears the gate", and that breaks the ordinary path.**
@@ -1604,9 +1712,9 @@ clears and the chain is locked out of compensation permanently:
 
 | State | What actually happened | Terminal |
 | --- | --- | --- |
-| **Consumed on time** | mirror credited the delivery, users were paid, no reversal exists or ever will (r7 P1) | **consumption ACK** clears |
+| **Consumed on time** | mirror credited the delivery, users were paid, no return settlement exists or ever will (r7 P1) | **consumption ACK** clears |
 | **Consumed on time but short** | all delivered tokens landed and were credited; the *day* awaits a top-up (R1c) | **consumption ACK** clears — see R6c |
-| **Delivered after lapse** | quarantined (R4a), fresh-returned, Base reverses | **return settlement** clears |
+| **Delivered after lapse** | quarantined (R4a), fresh-returned, Base credits the recovery position (the 2026-08-07 settlement — never a cap deduction) | **return settlement** clears |
 | **Permanently undeliverable** | ingress rejects a malformed instruction; CCIP leaves it failed-but-re-executable and re-execution repeats the failure, so there is no ACK and no return (r7 P1) | **HOLDS the gate.** Cancellation records the message's terminal state but does **not** clear it — §2d leaves the tokens locked in the CCIP pool (r8 P1). See R6d |
 | **Cancelled, recovery pending** | the dispatch is provably dead and cancelled, and the pool → Diamond recovery has not settled yet (r9 P1) | **HOLDS the gate** — the tokens are still stranded, which is the only thing R6 measures |
 | **Recovered** | the governance recovery settled and Base authenticated the inflow | **recovery settlement** clears |
@@ -1675,7 +1783,7 @@ go out beside it — with repeated malformed instructions accumulating *unbounde
 stranded deliveries under a rule whose entire purpose is to bound them at one.
 
 The gate therefore clears on **receipt-bound recovery settlement**, or
-cancellation must atomically recover and reverse. Since §2d makes recovery a
+cancellation must atomically recover and settle. Since §2d makes recovery a
 governance op rather than an atomic step, the practical reading is the first.
 
 **That this clearing is operator-gated is acceptable, and the reason is worth
@@ -1834,19 +1942,31 @@ count is a claim that goes stale faster than the list does.
   not-yet-folded, and what the bounded terminal is for the undecidable case.
 - **R6d's recovery settlement** (r8) — cancellation does not clear the gate;
   the pool → Diamond recovery that does is a governance op, and its evidence
-  and clearing path are unspecified.
+  and clearing path are unspecified. It also inherits a reconciliation duty
+  from the 2026-08-07 `remaining` decision: the TokenomicsTechSpec's
+  released-reservation ceremony restores emission headroom, which makes
+  `remaining` rise inside its governance-gated window, and the recovery
+  settlement must square that with the truncate-and-consume justification
+  (boundary note above) rather than leave the two rules adjacent and
+  unexplained.
 - **R2a's evidence path** (r9) — the lapse cannot be invoked at all if the
   broadcast carrying `finalizedAt` never executes. Needs either a
   permissionlessly re-presentable proof of the finalized broadcast, or an
   independent bounded mirror-known terminal. **This is the largest open item
   in the section**: without it R2 does not actually discharge §2g's pin in the
   case the pin was written for.
-- **What feeds `remaining` after a recovery** (r9) — the gross/recovered
-  counter split is settled; whether `recovered` reopens 69M headroom is not,
-  and it trades the claim path's truncate-and-consume justification against a
-  cap that permanently under-counts returned tokens. **Decide jointly with
-  #1568 §3.6a**, which settles the repatriation case conservatively — the two
-  share the counter.
+- ~~**What feeds `remaining` after a recovery**~~ — **DECIDED 2026-08-07
+  (owner), jointly with #1568 §3.6a** as required: `recovered` does NOT reopen
+  69M headroom. The gross/recovered counter split stands, and a Mode-B
+  recovery never moves `remaining` in either direction — no credit on
+  recovery, no second debit on re-use, because a recovery-sourced re-dispatch
+  is uncharged, bounded by the position's receipt-bound balance, and tracked
+  on its own cumulative. The recovered position's exit is re-use for platform
+  interaction rewards. Full statement — including the two implementation
+  constraints that keep the uncharged path from becoming a cap bypass —
+  beside the R4 accounting rules above; §3.6a's "returned tokens do NOT
+  restore interaction-pool headroom" is thereby ratified rather than default.
+  The released-reservation ceremony's governance-gated rise stays R6d's item.
 - **The residual's ledger and terminal** (r7) — floor dust plus cap-bound
   excess is delivered-but-unpayable VPFI. R1a says what it is *not* (a debt);
   what holds it and how it leaves is open.

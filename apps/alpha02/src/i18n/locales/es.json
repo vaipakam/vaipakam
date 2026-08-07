@@ -471,7 +471,9 @@
       "linkedLoanAcceptBlocked": "Esta oferta está ligada al préstamo #{{loanId}} ya en curso — aceptarla saldaría o transferiría la posición de ese préstamo, no iniciaría el préstamo nuevo revisado arriba. Esta app aún no puede mostrarte los términos reales de ese tipo de trato, así que aceptarla aquí está deshabilitado por ahora.",
       "saleBuyerNext": "Ahora eres el prestamista del préstamo #{{loanId}} — el préstamo sigue funcionando sin cambios para el prestatario, y su reembolso viene a ti. Síguelo en Mis posiciones; cuando reembolse, reclamas el principal y los intereses restantes.",
       "saleVehicleBanner": "Esto es una venta de posición: comprarías el lado prestamista del préstamo #{{loanId}} ya en curso, no iniciarías un préstamo nuevo. El prestatario y sus obligaciones de reembolso no cambian — solo cambia el prestamista. Los números de abajo vienen de ese préstamo, en vivo.",
-      "wrongChainLink": "Ese enlace apunta a una oferta en {{chainName}}. Cambia a esa red (arriba en la página) y luego abre el enlace de nuevo — los números de oferta se repiten entre redes, así que no adivinaremos."
+      "wrongChainLink": "Ese enlace apunta a una oferta en {{chainName}}. Cambia a esa red (arriba en la página) y luego abre el enlace de nuevo — los números de oferta se repiten entre redes, así que no adivinaremos.",
+      "riskGateCreatorBlocked": "La configuración de riesgo de quien creó la oferta ya no cubre este acuerdo, así que no se puede aceptar ahora mismo. No se envió ni aprobó nada.",
+      "riskGateTierTooLow": "Este acuerdo necesita un nivel de riesgo más alto del que tu vault permite ahora mismo. Puedes subirlo en Configuración → Acceso al riesgo y luego volver y aceptar. No se envió ni aprobó nada."
     },
     "borrow": {
       "title": "Pedir activos prestados",

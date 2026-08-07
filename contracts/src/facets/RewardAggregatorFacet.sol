@@ -740,6 +740,139 @@ contract RewardAggregatorFacet is
         attributedCumulative = s.chainAttributedRecycled[chainId];
     }
 
+    /// @notice #1222 M4 C1 (#1567) — the surplus multiple `N` changed.
+    ///         `0` means the flag is dark.
+    event RecycleSurplusMultipleSet(uint16 multiple);
+
+    /// @notice #1567 — `N` is bounded above so a fat-fingered value cannot
+    ///         silently make the flag unreachable.
+    error InvalidRecycleSurplusMultiple(uint16 multiple, uint16 maxAllowed);
+
+    /// @notice #1567 — the surplus flag is a MIRROR concept; asking it about
+    ///         the canonical chain is rejected rather than answered wrongly.
+    error SurplusFlagNotForCanonicalChain(uint32 chainId);
+
+    /**
+     * @notice #1222 M4 C1 (#1567) — set the surplus-flag multiple `N`: a
+     *         chain is flagged operator-visible once its recycled
+     *         availability exceeds `N ×` its trailing average daily recycled
+     *         budget.
+     * @dev    ADMIN_ROLE-only (behind the 48h timelock like every bounded
+     *         knob). Bounded `[0, RECYCLE_SURPLUS_MULTIPLE_MAX]`.
+     *
+     *         **`0` is DARK, not reset-to-default** — the deploy default and
+     *         the `rewardClaimHorizonDays` sentinel shape, deliberately not
+     *         the `setRecycleMarginBps` reset-to-default one. There is no
+     *         safe universal `N`, and a flag that fires before an operator
+     *         has chosen a threshold is noise that teaches people to ignore
+     *         it.
+     *
+     *         Flagging only — **this moves nothing**. Disposition of a
+     *         flagged surplus is C2 (#1568), where §3.6a requires it to be a
+     *         deliberate, bounded, protocol-controlled disposal.
+     *
+     *         **`onlyCanonical` as well as ADMIN_ROLE** (Codex #1579 r2 P2).
+     *         This facet's header states that every mutating method is
+     *         Base-only, and the flag it configures reads a Base-side ledger.
+     *         Without the gate an admin on a MIRROR deployment would get a
+     *         successful call and a `RecycleSurplusMultipleSet` event while
+     *         nothing observable changed — a false confirmation to governance
+     *         or automation that the live flag had been configured, which is
+     *         worse than a revert.
+     *
+     *         Lives here rather than in `ConfigFacet` for two reasons:
+     *         `ConfigFacet` has ~557 bytes of EIP-170 headroom and this would
+     *         risk it, and the house pattern already keeps a domain knob with
+     *         its domain facet (`setInteractionCapVpfiPerEth` is in
+     *         `InteractionRewardsFacet`, not `ConfigFacet`).
+     * @param  newMultiple New `N`; `0` turns the flag off.
+     */
+    function setRecycleSurplusMultiple(uint16 newMultiple)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
+        if (newMultiple > LibVaipakam.RECYCLE_SURPLUS_MULTIPLE_MAX) {
+            revert InvalidRecycleSurplusMultiple(
+                newMultiple,
+                LibVaipakam.RECYCLE_SURPLUS_MULTIPLE_MAX
+            );
+        }
+        LibVaipakam.storageSlot().recycleSurplusMultiple = newMultiple;
+        emit RecycleSurplusMultipleSet(newMultiple);
+    }
+
+    /**
+     * @notice #1222 M4 C1 (#1567) — a chain's surplus position over the
+     *         trailing {LibVaipakam.RECYCLE_SURPLUS_WINDOW_DAYS}-day window
+     *         ending at `throughDay`. Read-only; nothing moves.
+     * @dev    Per chain, never global — a global figure would hide exactly
+     *         the asymmetry this knob exists to surface (a quiet chain
+     *         accumulating while a busy one runs lean).
+     *
+     *         `multiple` is returned so **DARK is directly readable**:
+     *         `threshold == 0` alone cannot distinguish "the flag is off"
+     *         from "this chain budgeted nothing across the whole window",
+     *         which are opposite situations. `multiple == 0` is dark, full
+     *         stop — and it saves a second call to learn the knob's value.
+     *
+     *         **The CANONICAL chain is REJECTED, not answered** (Codex #1579
+     *         r1 P2). Two independent reasons, either sufficient:
+     *
+     *         - The number would be WRONG. `mirrorAvailRecycled` states in
+     *           its own contract that Base is inert there — Base never
+     *           instructs itself, so `chainConsumedRecycled[Base]` stays 0
+     *           and the helper returns the LIFETIME `chainReportedRecycled`
+     *           cumulative rather than live availability. Once Base has paid
+     *           or reserved recycled rewards that overstates what it holds,
+     *           and would keep the flag raised for funds already spent.
+     *           Base's real position is its live fundable bucket net of
+     *           global commitments and keeper earmarks — a different
+     *           computation entirely.
+     *         - The flag would be ACTIONLESS. It exists to surface
+     *           repatriation candidates, and repatriation (C2/#1568) runs
+     *           mirror→Base. Base cannot repatriate to itself, so a Base
+     *           "surplus" names no possible disposition.
+     *
+     *         Base's own position is available through
+     *         `getRecycleCompositionPosition` and the backing reads, which
+     *         compute it correctly for the canonical chain.
+     *
+     *         **The guard reads `block.chainid`, NOT `s.baseChainId`** (Codex
+     *         #1579 r2 P2 — the r1 fix used the latter and did not work).
+     *         `setBaseChainId` documents itself as the destination for
+     *         MIRROR-side reports and **"Zero on Base"**, so on the canonical
+     *         Diamond `s.baseChainId` is legitimately 0 and never matches the
+     *         real chain id — the guard would have passed the very call it
+     *         exists to reject. `RewardReporterFacet` states the rule this
+     *         now follows: *"a chain's own identity is `block.chainid`, read
+     *         directly."* This surface only runs on the canonical Diamond
+     *         (the ledger it reads is Base's), so "is this me?" is exactly
+     *         the question.
+     * @param  chainId    The MIRROR chain to inspect.
+     * @param  throughDay Inclusive last day of the trailing window.
+     */
+    function getChainSurplusPosition(uint32 chainId, uint256 throughDay)
+        external
+        view
+        returns (
+            uint256 availRecycled,
+            uint256 avgDailyBudget,
+            uint256 threshold,
+            uint16 multiple,
+            bool flagged
+        )
+    {
+        if (chainId == block.chainid) {
+            revert SurplusFlagNotForCanonicalChain(chainId);
+        }
+        return LibVpfiRecycle.chainSurplusPosition(
+            LibVaipakam.storageSlot(),
+            chainId,
+            throughDay
+        );
+    }
+
     /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has
     ///         attributed to `(dayId, chainId)` — the mesh half of the
     ///         `credited[D]` feed that B2 folds into `Ā`. Moved here from

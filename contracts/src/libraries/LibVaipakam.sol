@@ -702,6 +702,28 @@ library LibVaipakam {
     ///      elapsed days would count a launch-day spike ≈2.6×, violating
     ///      the ≤1× lifetime-contribution bound (Codex r2).
     uint256 constant RECYCLE_TRAILING_WINDOW_DAYS = 7;
+    /// @dev #1222 M4 C1 (#1567) — trailing window for the per-chain SURPLUS
+    ///      flag, in days. `VpfiCrossChainRecyclingDesign.md` §3.6 sizes the
+    ///      knob against a chain's "trailing 30-day average daily budget".
+    ///
+    ///      **Deliberately NOT {RECYCLE_TRAILING_WINDOW_DAYS}**, and this is
+    ///      load-bearing rather than an oversight. That constant is the
+    ///      ABSORPTION window `Ā`, ratified fixed at 7 under governor §11.3
+    ///      ("one auditable economic knob beats two interacting ones").
+    ///      Reusing it would couple an OPS FLAGGING window to REWARD
+    ///      ECONOMICS: an operator retuning when a flag appears would
+    ///      silently change how every chain's budget is sized. Different
+    ///      quantity (funded budget vs absorption), different purpose
+    ///      (operator visibility vs sizing), so they get different windows.
+    ///      §11.3's rationale is about interacting ECONOMIC knobs; this one
+    ///      feeds no economic computation and is not a second such knob.
+    uint256 constant RECYCLE_SURPLUS_WINDOW_DAYS = 30;
+    /// @dev #1222 M4 C1 (#1567) — upper bound for the surplus multiple `N`.
+    ///      A year of runway is already far past any operational meaning; the
+    ///      bound exists so a fat-fingered value cannot silently disable the
+    ///      flag by making it unreachable (the failure mode a max-less knob
+    ///      has, since too LARGE reads as "never flag" rather than erroring).
+    uint16 constant RECYCLE_SURPLUS_MULTIPLE_MAX = 365;
     /// @dev RL-3 (#1305, VpfiRecyclingLoopClosureDesign §6 — ratified
     ///      §10.2) — bounds for the post-claimability reward claim horizon
     ///      `H` (days). The ratified default is 365; the knob is bounded
@@ -6061,6 +6083,24 @@ library LibVaipakam {
         ///      both — and a non-zero value here is the signal that this
         ///      chain's counted funding understates what Base actually sent.
         uint256 rewardBudgetFreshUncounted;
+        /// @notice #1222 M4 C1 (#1567) — the surplus-flag multiple `N`.
+        ///         A chain is flagged operator-visible when its
+        ///         `availRecycled` exceeds `N ×` its trailing average daily
+        ///         recycled budget (window
+        ///         {RECYCLE_SURPLUS_WINDOW_DAYS}).
+        /// @dev **`0` means the flag is DARK** — the deploy default, and NOT
+        ///      a reset-to-default sentinel. This is the
+        ///      `rewardClaimHorizonDays` shape, deliberately not the
+        ///      `recycleMarginBps` one: there is no safe universal `N`, and
+        ///      an ops flag that fires before an operator has chosen a
+        ///      threshold is noise that trains people to ignore it.
+        ///      Bounded above by {RECYCLE_SURPLUS_MULTIPLE_MAX}.
+        ///
+        ///      Flagging only — **nothing moves**. Disposition of a flagged
+        ///      surplus is C2's job (#1568), and the design is explicit that
+        ///      surplus movement is always a deliberate, bounded,
+        ///      protocol-controlled disposal.
+        uint16 recycleSurplusMultiple;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

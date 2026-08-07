@@ -95,6 +95,7 @@ import {
   ensureConnected,
   launch,
   SITE,
+  requireSigningRole,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -204,6 +205,11 @@ const ZERO_CREATOR = /^0x0{40}$/i;
 //                          single-value by contract invariant).
 // Decimals are read LIVE from the tokens, exactly like the ticket does
 // — a hardcoded 18 would mask the very drift this assert exists for.
+// Credential first: this driver signs, so a missing dev-wallet file
+// must read as BLOCKED (exit 2) rather than as a failed chain read
+// from the live probes below (Codex #1590 r4).
+requireSigningRole('lender');
+
 const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
   erc20Read(WETH, 'decimals'),
   erc20Read(TLIQ, 'decimals'),

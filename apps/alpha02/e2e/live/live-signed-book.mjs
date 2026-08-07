@@ -103,6 +103,7 @@ import {
   ensureConnected,
   launch,
   SITE,
+  requireSigningRole,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -204,6 +205,11 @@ const BUCKET_PREFERENCE = [60, 90, 14, 180, 7, 30];
 // the timeout honest either way; this just stops a healthy-but-slow
 // cadence from burning a full post+cancel gas cycle on a DEFERRED.
 const SCAN_WAIT_MS = 600_000;
+
+// Credential first: this driver signs, so a missing dev-wallet file
+// must read as BLOCKED (exit 2) rather than as a failed chain read
+// from the live probes below (Codex #1590 r4).
+requireSigningRole('lender');
 
 const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
   pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),

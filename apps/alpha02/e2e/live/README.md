@@ -48,6 +48,7 @@ SITE_URL=https://<branch-preview>.workers.dev node live-dryrun-review.mjs
 | `driver.mjs` | Shared launcher: persistent Chromium profile per role, injected EIP-1193 wallet signing with the role's key, undici page routing. |
 | `live-dryrun-review.mjs` | #1058/#1059 — drives a fresh lend offer to the review step and asserts the pre-sign dry-run footer renders a real verdict (and, post-#1059, the benign approval note rather than the cry-wolf would-fail). |
 | `live-recover.mjs` | #1547 post-deploy review — the unlisted /recover surface: the Help explainer is the only in-app path (no nav/Settings entry), the Advanced User Guide link the signed declaration attests to resolves, and the posture matches the LIVE oracle setting — with the oracle unset (the retail default) recovery must present as unavailable rather than offer a doomed form, which is the one arm the fork can't check honestly since its spec installs a mock oracle. Read-only; also asserts noindex,nofollow. |
+| `live-recover-locales.mjs` | #1560 follow-up post-deploy review — do the nine advertised languages actually reach the reader on the DEPLOYED build? Two independent layers per locale, because either alone can lie: it captures the locale CHUNK the page really fetched and asserts it carries this revision's expected values (including the `copy.match.riskGate*` pair #1560's follow-up added, so an older deployment or a stale cached chunk fails instead of passing on pre-existing content), then asserts what RENDERED — `<html lang>`, the expected direction (`rtl` for Arabic, `ltr` for the rest), and an `<h1>` equal to that locale's own `copy.recover.title` rather than merely "not English". Every expected string is read from the repo's locale JSON, so there is no second copy to drift. Fresh profile per locale (the persistent one would carry the previous locale's cached resources). Keyless and read-only — no wallet injected, no dev-wallet key read. |
 | `live-risk-access.mjs` | #1517 post-deploy review — /risk-access against the live diamond: true chain state rendered, a real raise + lower land on-chain through the wallet-confirm path (normalizing back to Blue-chip / strict OFF), strict card shows the withheld-enable posture. Needs the funded dev-wallet file (`TESTNET_WALLETS_FILE`). |
 | `live-alerts-link.mjs` | #1055/#1056 — Settings → Link Telegram → wallet signs the ownership proof → a six-digit handshake code renders. |
 | `live-killswitch-regression.mjs` | #1056 — zero-regression sweep: every page renders and the kill-switch banner copy appears nowhere while `VITE_DISABLED_FLOWS` is unset in production. |
@@ -64,7 +65,7 @@ review doesn't rebuild the tooling from scratch.
 
 ## Watch-only drives vs. signing drives
 
-Two drivers need no `TESTNET_WALLETS_FILE` at all:
+Three drivers need no `TESTNET_WALLETS_FILE` at all:
 
 - `live-desk-i18n-capture.mjs` — read-only locale capture of PUBLIC
   surfaces, never connected to a wallet.
@@ -72,6 +73,11 @@ Two drivers need no `TESTNET_WALLETS_FILE` at all:
   state through an injected watch-only provider holding no key, so it
   reaches CONNECTED surfaces (the position pages) that a public-only
   capture cannot.
+- `live-recover-locales.mjs` — launches with `keyless: true`, so no
+  wallet is injected at all and no key is read. It reads only the
+  public `/recover` chrome, and pairs `keyless` with `readOnly` —
+  separate guards: the first removes the wallet, the second stops the
+  route shim forwarding a page-initiated write.
 
 Every other driver signs, and needs the file. That is unavoidable for
 the write half of a review — but it made the READ half unrunnable too
