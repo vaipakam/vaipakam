@@ -845,6 +845,55 @@ Frontend expectations:
 
 ## 9. Treasury Recycling Rule
 
+### 9a. Per-chain recycled-surplus flag (operator signal only)
+
+Recycled VPFI accumulates on whichever chain the fees landed on, and funds that
+chain's own reward claims. A chain with little activity can therefore hold more
+than it will use, while a busy chain runs lean. The platform surfaces that
+difference **per chain** rather than as one global figure, because a global
+total conceals exactly the asymmetry worth seeing.
+
+A **mirror** chain is flagged when the recycled VPFI available to it exceeds a
+configured multiple of its trailing-average daily recycled budget, averaged over
+the trailing thirty days. The same read also reports the availability, the
+trailing average, the threshold compared against, and the configured multiple,
+so an operator can see why a chain is or is not flagged.
+
+**The flag is a mirror concept and the canonical chain is refused, not
+answered.** Asking about the canonical chain fails rather than returning a
+figure — deliberately, for two reasons. The availability number computed that
+way would be the *lifetime* total rather than what is live, so it would keep
+the flag raised for funds already spent, with nothing able to clear it. And the
+flag exists to surface candidates for moving surplus back to the canonical
+chain, so the canonical chain is never a candidate: there is nowhere for it to
+move value to. The canonical chain's own recycled position is reported by the
+composition and backing reads, which compute it correctly. An operator scanning
+chains should scan the mirrors.
+
+Intended behaviour, in the terms that are observable:
+
+- **The flag moves no value.** It is a signal. Disposal of a flagged surplus is
+  a separate, deliberate action — consistent with the rule below that on retail,
+  disposing of a bucket surplus is a deliberate treasury action and never
+  automatic protocol behaviour.
+- **It is off until an administrator configures a multiple**, and while off
+  nothing is ever flagged. No threshold suits every deployment, and a warning
+  that fires before anyone has chosen its meaning is one people stop reading.
+  Clearing the multiple turns it off again.
+- **The comparison is against what a chain BUDGETED**, not what it spent from
+  its own balance. The two agree while a chain has ample availability and
+  diverge when it is short — and a spend-based measure would make the warning
+  harder to clear the worse a chain's position became.
+- **Days with no budget count as zero**, and the average always divides by the
+  full window. One busy day in an idle month reads as an idle month with one
+  busy day.
+- **A chain holding funds while budgeting nothing across the whole window is
+  flagged.** That is the clearest instance of what the flag exists to find, so
+  it is reported rather than treated as uncomputable.
+
+The broader Phase-C surplus-tooling section, covering disposition, is tracked
+separately (#1570).
+
 VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets, each carrying a per-target allocation in basis points (`setTreasuryConvertTargets`), plus **global** conversion-eligibility thresholds — a minimum **numeraire** value and a maximum interval (`setTreasuryConvertThresholds`) — that gate when a conversion may run. (The threshold is denominated in the protocol's active numeraire, which is USD by default but governance-rotatable; it is not hard-wired to USD.) These thresholds are protocol-wide, not per-target and not per-asset: a single minimum-value gate and a single shared last-conversion timer are consulted for every input asset, so converting any one asset resets the interval gate for all of them. `convertTreasuryAsset` performs the conversions, but only when (a) targets are configured and (b) the Diamond itself is the treasury (Diamond-as-treasury mode); in external-treasury deployments (Treasury is a separate multisig/address) this path is unavailable and configuring targets does not enable it.
 
 The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper's v4.0 rewrite states the same illustrative-only framing, so the two documents agree; the remaining open item is only the deploy-time governance choice of the actual launch allocation from the design doc's recommended list.)

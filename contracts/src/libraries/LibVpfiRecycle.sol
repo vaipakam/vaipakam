@@ -1069,4 +1069,97 @@ library LibVpfiRecycle {
         uint256 netConsumed = consumed > released ? consumed - released : 0;
         return reported > netConsumed ? reported - netConsumed : 0;
     }
+
+    /**
+     * @notice #1222 M4 C1 (#1567) — a chain's surplus position: how its
+     *         recycled availability compares to what it has actually been
+     *         budgeting, over a trailing window ending at `throughDay`.
+     *         READ-ONLY. Nothing moves — disposition is C2's job (#1568).
+     *
+     * @dev    **Why the denominator is `fundedLender + fundedBorrower`**, and
+     *         not the two obvious alternatives:
+     *
+     *         - NOT `lenderHalfEquiv` / `borrowerHalfEquiv`. Those are
+     *           global-equivalent numerators scaled by `1/p_c,side`, and
+     *           {LibVaipakam.ChainDayFunding} records that a thin chain's tiny
+     *           nonzero side weight LEGITIMATELY produces values far above the
+     *           actual daily pool. Averaging them would flag every small chain.
+     *         - NOT `recycleConsume`. It is `min(B, avail)` — **clamped by
+     *           availability itself** — so a chain whose availability falls
+     *           sees its denominator fall too, inflating the ratio and making
+     *           the flag STICKIER exactly as the condition resolves. A
+     *           feedback loop in an ops signal is worse than an approximate
+     *           one. `funded` is demand-driven and independent of `avail`.
+     *
+     *         The choice costs little where the flag actually fires: a chain
+     *         with ample availability is self-funding, needs no Base top-up,
+     *         and therefore has `funded == recycleConsume`. They diverge only
+     *         when availability is scarce — precisely when this must not fire.
+     *
+     *         **Unstamped days in the window contribute ZERO**, the same
+     *         treatment `Ā` gives a missed day, and the divisor is ALWAYS the
+     *         full window. Dividing by "days that happened to be stamped"
+     *         would let one busy day in a quiet month masquerade as a month of
+     *         demand and suppress a real surplus.
+     *
+     *         **`throughDay` is a parameter, not a stored cursor**: there is
+     *         no finalized-day cursor on the recycle side (days are stamped
+     *         individually), and inventing one for a read would be a second
+     *         source of truth about which day is current.
+     *
+     * @param  throughDay  Inclusive last day of the trailing window.
+     * @return availRecycled   The chain's availability (single-sourced above).
+     * @return avgDailyBudget  Trailing mean of `fundedLender + fundedBorrower`.
+     * @return threshold       `N × avgDailyBudget`; `0` when the flag is dark.
+     * @return multiple        The configured `N`. **Returned so DARK is
+     *                         directly readable**: `threshold == 0` alone
+     *                         cannot distinguish "flag is off" from "the
+     *                         chain budgeted nothing all window", which are
+     *                         opposite situations. `multiple == 0` is dark,
+     *                         full stop — and it saves an operator a second
+     *                         call to learn what the knob is set to.
+     * @return flagged         Whether `availRecycled` exceeds `threshold`.
+     */
+    function chainSurplusPosition(
+        LibVaipakam.Storage storage s,
+        uint32 chainId,
+        uint256 throughDay
+    )
+        internal
+        view
+        returns (
+            uint256 availRecycled,
+            uint256 avgDailyBudget,
+            uint256 threshold,
+            uint16 multiple,
+            bool flagged
+        )
+    {
+        availRecycled = mirrorAvailRecycled(s, chainId);
+
+        uint256 window = LibVaipakam.RECYCLE_SURPLUS_WINDOW_DAYS;
+        uint256 total;
+        for (uint256 i; i < window; ++i) {
+            if (throughDay < i) break; // pre-launch prefix: contributes 0
+            LibVaipakam.ChainDayFunding storage f =
+                s.chainDayRecycledFunding[throughDay - i][chainId];
+            // An unstamped day is a real zero here, not missing data.
+            total += f.fundedLender + f.fundedBorrower;
+        }
+        avgDailyBudget = total / window;
+
+        multiple = s.recycleSurplusMultiple;
+        if (multiple == 0) {
+            // DARK — the deploy default. No threshold, nothing flagged, and
+            // `threshold == 0` must NOT be read as "everything flags".
+            return (availRecycled, avgDailyBudget, 0, 0, false);
+        }
+
+        threshold = avgDailyBudget * multiple;
+        // A zero trailing average with live availability is the STRONGEST
+        // surplus case, not an undefined one: the chain has held funds and
+        // budgeted nothing across the whole window. Flag it rather than
+        // letting a zero denominator silently suppress it.
+        flagged = availRecycled > threshold;
+    }
 }
