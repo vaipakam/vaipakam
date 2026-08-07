@@ -567,6 +567,18 @@ implementer to §3.6 alone.
   > advanced it**. Without both, a return removes the compensation from the
   > mirror while #1434's delivered-funding gate still counts it — opening
   > claims against VPFI the mirror no longer holds.
+  >
+  > **⛔ SEQUENCING — #1584's arrival reservation is a PREREQUISITE of mirror
+  > settlement, not a downstream M4 item** (Codex #1578 r5 P1). Treating it as
+  > "M4, after M3" opens a window: #1434/M3 completes, settlement and arming
+  > become reachable, and a compensation arriving **after its day has
+  > irreversibly lapsed** then has **no stranded-recovery reservation** — so
+  > the existing fresh-claim `backingRoom` calculation can spend those tokens
+  > on another claim, leaving the later return underfunded. This is the #1460
+  > shape once more: a claim spending tokens earmarked for something else,
+  > with nothing marking them as earmarked. The §4 graph carries it as
+  > `MODEBRES --> SETTLE`. The whole of #1584 need not precede settlement —
+  > **its arrival reservation and claim-exclusion slice must.**
 
   - governor **§7 #3**, custody separation, needs the stranded-recovery
     reservation as a **fourth balance owner**, with
@@ -589,18 +601,30 @@ implementer to §3.6 alone.
   CRITICAL over-credit as an untracked repatriation, on the mirror side, even
   after the commitment identity is repaired.
 
-  **Resolved: C3 uses the EXISTING inside-bucket reservation model.** This is
-  not a new choice — `recycleKeeperBudget` already works that way, and the
-  governor design says so explicitly: `_applyRecycleRegister` *"earmarks part
-  of each day's margin from INSIDE the bucket, so the bucket does not move."*
-  An earmark that leaves the balance in place satisfies both identities at
-  once — nothing is consumed on the Base side, and §7 #8's composition is
-  undisturbed because no tokens left. §3.5's "count it into
-  `consumedCumulative`" sentence is superseded by that model.
+  **Resolved: C3 needs BOTH an inside-bucket mirror earmark AND a separate
+  Base-side keeper ledger.** Not one or the other — I proposed each in turn
+  and each alone is insufficient (Codex #1578 r3, r4, r5).
 
-  A distinct keeper-outflow term added to the composition and derived-credit
-  surfaces would also work, but it is strictly more machinery for the same
-  result, and it would fork the keeper earmark into two representations.
+  - **Mirror side — the inside-bucket earmark**, which already exists:
+    `recycleKeeperBudget` works that way and the governor design says so —
+    `_applyRecycleRegister` *"earmarks part of each day's margin from INSIDE
+    the bucket, so the bucket does not move."* Leaving the balance in place is
+    what keeps §7 #8's composition undisturbed, since no tokens left.
+  - **Base side — a separate keeper debit/release ledger** in the availability
+    calculation and in §7 #6. **The inside-bucket earmark does NOT reserve
+    anything in Base's per-chain availability** (Codex #1578 r5 P2), and
+    `reported` is a lifetime credit cumulative — so if neither
+    `chainConsumedRecycled` nor a keeper term advances, **the next
+    finalization can allocate the same tokens again as `recycleConsume`**,
+    even though the mirror's `_recycleFundable` already excludes
+    `recycleKeeperBudget`. That yields `outstandingCommitRecycled +
+    recycleKeeperBudget > recycleBucket` — underbacked reward commitments.
+
+  §3.5's "count it into `consumedCumulative`" sentence is superseded by this
+  pair. Note the shape, because it is the same one §3.6a reached for
+  repatriation: **a new draw needs its own Base-side ledger term**, and where
+  the tokens physically sit is a separate question from whether Base has
+  reserved them.
 
   Note the pattern, since it has now appeared three times: `consumedCumulative`
   is **not a general-purpose availability debit**. It is one half of a paired
@@ -1348,6 +1372,7 @@ flowchart LR
   ARMGATE{{"arming gate:<br/>mirrors dark OR<br/>(M3 complete AND #1434)"}} --> ARM
   M3 -.-> ARMGATE
   SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}} -.-> ARMGATE
+  MODEBRES{{"#1584 arrival reservation<br/>+ claim-exclusion slice"}} --> SETTLE
   BACKING{{"#1460 bucket/fresh separation<br/>enforced AT CLAIM TIME"}} --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
