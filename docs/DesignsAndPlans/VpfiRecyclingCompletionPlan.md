@@ -530,6 +530,12 @@ implementer to §3.6 alone.
   the **first** repatriation. C2 takes a **separate repatriation debit ledger**
   under a releasable pending authorization.
 
+  **#1568 also owns the SHARED return-transport slice** — the channel that is
+  cut once (constraint 3's resolution, the mirror-side sender leg, the
+  kind-dispatching Base receiver, channel registration, first rollout test).
+  #1434's R4 wire slice is downstream of it and adds only its own payload
+  kind, decoder and handler (§3.6a's ownership note).
+
   **Invariants that must move, split by WHICH MODE forces them** — an earlier
   revision lumped these together and would have pulled Mode-B storage into
   Mode A's scope (Codex #1578 r1 P2). All tracked in **#1577**.

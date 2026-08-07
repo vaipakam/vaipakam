@@ -506,7 +506,11 @@ treatment a released reservation already receives.
 > (the parcel's cap charge happened at its original dispatch and is never
 > repeated, so `remaining` neither rises on recovery nor falls again on
 > re-use) — and the two implementation constraints that keep the uncharged
-> path from becoming a cap bypass. Mode A's destination remains governed by
+> path from becoming a cap bypass. The "permanently shrinks" above therefore
+> holds for value that is never recovered; a RECOVERED parcel re-enters
+> funding through the uncharged re-dispatch, so recovery un-does the shrink
+> economically without ever moving the counter. Mode A's destination remains
+> governed by
 > constraints 1/1a below; nothing here changes it. One neighbouring case sits
 > deliberately OUTSIDE both modes and this ratification: the
 > released-reservation transport-custody recovery ceremony (tokens sent but
@@ -863,6 +867,19 @@ twice, is the **transport** (constraint 3) and the **payload-kind space** that
 serves as the mode discriminator — so the CHANNEL is cut once even though the
 two modes ship on different cards, while each mode keeps its own payload kind,
 decoder and rollout ladder (the ratified layering above; §2h 12a).
+
+**The shared slice has ONE owner: #1568** (Codex #1586 r2 P2 — "cut once"
+across two owning cards with no assignee invites either duplicate transport
+infrastructure or an undeclared wait). #1568 lands the common transport slice
+— constraint 3's resolution, the mirror-side sender leg, the Base-side
+receiving endpoint that dispatches on payload kind, channel registration, and
+the first rollout test — together with Mode A's own payload kind. **#1434's R4
+wire slice declares that slice a prerequisite** and adds only Mode B's payload
+kind, decoder and handler on the already-cut channel. This ordering is
+compatible with the ⛔ SEQUENCING note above: R4's arrival-reservation and
+claim-exclusion slice rides the existing REMIT ingress, not the return
+channel, so it still lands before the halt lifts regardless of when the
+return transport ships.
 
 ### 3.7 Failure modes
 

@@ -1372,12 +1372,13 @@ exist.
 Returning a stranded compensation is logically **undoing a remit**, not
 disposing of surplus: different source ledger, different authorization,
 different bounds. It therefore gets its own authenticated path, which must also
-perform the corresponding **Base-side accounting reversal — bounded by the
+perform the corresponding **Base-side recovery-position credit — bounded by the
 amount Base ACTUALLY RECOVERS, on authenticated Base receipt** (Codex #1573 r4
 P1: the original declared total, the mirror's receipt and the amount finally
-returned can all differ when either leg lands short; reversing the declared
-total, or reversing before receipt, reopens 69M headroom for tokens that are
-still missing or were burned — with any residual tracked separately) — and
+returned can all differ when either leg lands short; crediting the declared
+total, or crediting before receipt, over-states the re-dispatchable position
+for tokens that are still missing or were burned — an uncharged emission path,
+with any residual tracked separately) — and
 reduce the mirror's **spendable** delivered-fresh backing.
 
 **Spendable, by SUBTRACTING A SECOND CUMULATIVE — never by decrementing the
@@ -1402,16 +1403,26 @@ So:
 
 **And the append-only discipline applies to the BASE side too — that is where
 it came from** (Codex #1573 r9 P1). The rule above was written for the mirror's
-receipt counters and left Base's 69M headroom with no instrument. R4 requires
-the authenticated Base inflow to reverse 69M usage, and `rewardBudgetRemittedGlobal`
-is append-only — so an implementation is left choosing between decrementing it,
-which destroys the gross-evidence semantics the whole rule exists to protect,
-and leaving recovered VPFI **permanently charged against the cap** even though
-the tokens came back. Neither is acceptable, and the fix is the same shape:
+receipt counters and left Base's side with no instrument for the authenticated
+inflow at all: `rewardBudgetRemittedGlobal` is append-only, so an
+implementation was left choosing between decrementing it, which destroys the
+gross-evidence semantics the whole rule exists to protect, and recording the
+inflow nowhere. The fix is the same counter shape — with the recovered
+counter's ROLE fixed by the 2026-08-07 decision (Codex #1586 r2 P1: an earlier
+revision of this list said "net 69M usage is `gross remitted − recovered`,
+derived at read time", which an implementer would wire straight into
+`remaining` — exactly the reopening the decision rejects):
 
-- `rewardBudgetRemittedGlobal` stays **append-only** (gross remitted);
-- R4 adds a **receipt-bound BASE RECOVERED cumulative**;
-- net 69M usage is `gross remitted − recovered`, derived at read time.
+- `rewardBudgetRemittedGlobal` stays **append-only** (gross remitted), and it
+  is what `remaining` reads — **`remaining` never reads the recovered
+  cumulative**;
+- R4 adds a **receipt-bound BASE RECOVERED cumulative** whose role is
+  **recovery-position evidence**: it credits and bounds the re-dispatchable
+  position of the decision block above, and is never a deduction from cap
+  usage;
+- `gross remitted − recovered` survives ONLY as an operator reporting view of
+  net physical outflow currently charged — it feeds no funding-planning
+  surface and never `remaining`.
 
 **⚠ This exposed a real tension — since DECIDED (2026-08-07, below).** The
 claim path's truncate-and-consume rule is justified by
@@ -1475,14 +1486,20 @@ ratifies that when an operator-RELEASED reservation's tokens — sent but never
 executed, sitting in the CCIP token pool, never delivered to any mirror — are
 physically recovered pool → Diamond, that governance ceremony restores BOTH
 the lifetime emission headroom and the recycled bucket. That is not overruled
-here, and the asymmetry is deliberate: there a re-remittance already consumed
-new headroom for the same days, so the recovery nets a guaranteed
-double-charge back to a single charge, through an evidenced governance act;
-R4's recovered parcel was delivered, its day lapsed unpaid, and the single
-charge stands **with the parcel re-usable against it** (the uncharged
-re-dispatch above) — so R4 needs no restoration at all, and restoring
-automatically on a permissionless path would be the exact reopening this
-decision rejects. The residual tension — the
+here, and the asymmetry is deliberate — with the ORDERING as the spec states
+it (Codex #1586 r2 P1: an earlier wording here said a re-remittance had
+"already" consumed new headroom by ceremony time, which reverses the spec'd
+sequence and, followed literally, would bypass the post-close backing gate):
+a released day stays UNFUNDABLE while its tokens sit in transport custody —
+every remittance-planning surface gates each day on post-close backing — so
+the recovery ceremony runs FIRST, restoring the original charge and the
+backing, and only then can the replacement re-remittance proceed under its
+own single fresh charge. Net one charge per funded day, achieved by
+restore-then-recharge through an evidenced governance act. R4's case needs no
+restoration at all: its day lapsed, no replacement send will ever exist, and
+the parcel is re-usable against its standing original charge (the uncharged
+re-dispatch above) — restoring automatically on a permissionless path would
+be the exact reopening this decision rejects. The residual tension — the
 ceremony makes `remaining` rise too, inside its narrow governance-gated
 window — belongs to R6d's open recovery-settlement item, which must specify
 the ceremony's evidence and clearing path and reconcile it with the
@@ -1504,14 +1521,15 @@ jointly across them, as this note required.**
 **Two deltas, not one — the mirror's OUTFLOW and Base's INFLOW are different
 numbers** (Codex #1573 r8 P1). The paragraph above already establishes that the
 declared total, the mirror's receipt and the amount finally returned can all
-differ when a leg lands short, and correctly bounds the Base-side 69M reversal
-by what Base **actually recovers**. Applying that same figure to the mirror's
-returned cumulative is the error: on a fee-on-transfer or partially-burned
-return, the mirror no longer holds the taxed portion, but a reversal-sized
-decrement leaves it counted as spendable backing — so later claims can consume
-headroom for tokens that are gone. Track both, each bound to the receipt: the
-**mirror's actual outflow** drives its returned cumulative, and **Base's actual
-inflow** drives the reversal. They coincide only when the return lands whole,
+differ when a leg lands short, and correctly bounds the Base-side
+recovery-position credit by what Base **actually recovers**. Applying that same
+figure to the mirror's returned cumulative is the error: on a fee-on-transfer
+or partially-burned return, the mirror no longer holds the taxed portion, but
+an inflow-sized decrement leaves it counted as spendable backing — so later
+claims can consume backing for tokens that are gone. Track both, each bound to
+the receipt: the **mirror's actual outflow** drives its returned cumulative,
+and **Base's actual inflow** drives the recovery-position credit. They
+coincide only when the return lands whole,
 and assuming they always do re-creates on the mirror the exact over-backing
 this rule exists to prevent on Base.
 
