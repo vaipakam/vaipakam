@@ -180,10 +180,23 @@ When Base finalizes day `D` it already computes each chain's reward budget
    `dayId`, with the stamp covering the WHOLE per-day broadcast**: the
    mirror stamps `broadcastApplied[dayId]` on first application, and a
    redelivered or governance-replayed broadcast for the same day is a
-   no-op on the bucket for **every** bucket-debiting field it carries —
+   no-op for **every** bucket-touching field it carries —
    `recycleConsume` AND the §3.5 `keeperAllocate` alike (Codex rounds
    4–5: broadcasts are retriable by design, and a double-apply of either
-   field would debit the bucket twice while Base counted once). Consumption is **only** ever
+   field would move the bucket twice while Base counted once).
+
+   > **`keeperAllocate` is NOT a bucket DEBIT** (Codex #1578 r7 P2). This
+   > paragraph called it "bucket-debiting"; §3.5's amendment makes it an
+   > **inside-bucket earmark** — `recycleKeeperBudget` rises and the bucket
+   > balance does **not** move, which is what keeps governor §7 #8's
+   > composition intact. Debiting on arrival would lower §7 #8's right side
+   > with no payout or repatriation term to account for it, tripping a
+   > CRITICAL over-credit on the first non-zero allocation. **The
+   > idempotency requirement is unchanged and applies identically** — a
+   > redelivered broadcast must not advance the earmark twice either.
+   > `recycleConsume` remains a genuine debit.
+
+   Consumption is **only** ever
    Base-instructed — a mirror never self-consumes — so the global ledger
    cannot double-count and the accounting identity below holds by
    construction.
@@ -729,8 +742,27 @@ challenged and stand.
 
 **On the delivered-fresh counter:**
 
-8. **Repatriating Mode-B funds must net the received-fresh cumulative — but
-   only where THAT receipt was credited to it.** A manual compensation is
+8. **Repatriating Mode-B funds nets the received-fresh position via a
+   SEPARATE returned cumulative — never by decrementing a gross counter**
+   (Codex #1578 r7 P1; this constraint said "net the received-fresh
+   cumulative … bind a subtraction to the receipt", which permits exactly the
+   decrement §2h R4 forbids). `rewardBudgetArmedFreshReceived` and
+   `rewardBudgetFreshUncounted` are **gross lifetime sums and stay
+   append-only** — `RewardRemitLedgerTest` asserts their sum reconciles
+   exhaustively over every non-recycled delivery, so a decrement breaks that
+   reconciliation and erases the receipt from operator reconstruction. R4 adds
+   a **receipt-bound RETURNED cumulative**; spendable backing is the
+   difference, derived at read time.
+
+   **Bind it to the receipt's EFFECTIVE classification, not its original
+   one.** Constraint 16 permits an overtaking receipt to be re-attributed
+   `uncounted → armed` once `D*` installs; if that runs before a late return
+   settles, netting against the original side leaves **armed spendable credit
+   alive for VPFI already returned**. A quarantined or return-pending receipt
+   is therefore ineligible for re-attribution.
+
+   The attribution point below still holds and is why "effective" matters —
+   a manual compensation is
    fresh-only, so its arrival normally advances
    `rewardBudgetArmedFreshReceived` (#1556), and sending the tokens back does
    not undo it; once P1-b bounds mirror payouts by delivered-fresh-minus-paid,
@@ -752,13 +784,13 @@ longer routes through C2** — a manual compensation is fresh-only and never
 enters the recycle bucket, so C2 could not reach it; R4 specifies a dedicated
 fresh-return path instead.
 
-> **⚠️ That R4 revision is on an UNMERGED branch** (PR #1573). As this document
-> stands on `main`, §2h still reads as "contains no design" with the lapse
-> authority open, so a reader here cannot verify the state this section assigns
-> Mode B to — and the two changes were cross-referencing each other's unmerged
-> content (Codex #1574 r4). **#1573 lands first**; until it does, treat the
-> Mode-B ownership below as pending rather than settled. Mode A does not depend
-> on it and is unblocked either way.
+> **#1573 HAS LANDED** (`268e7db10`), so §2h's R1–R6 — including R4's
+> dedicated fresh-return — is on `main` and the Mode-B ownership below is
+> **settled, not pending** (Codex #1578 r7 P2). This warning previously said
+> the opposite and was left standing after the merge, so the section marked
+> the same ownership pending in one paragraph and settled in the next — which
+> let a reader defer the reservation and sequencing work. Mode A never
+> depended on it and was unblocked either way.
 
 So:
 
