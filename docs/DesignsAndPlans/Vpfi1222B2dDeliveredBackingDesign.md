@@ -1426,30 +1426,47 @@ and R4's reversal accomplishes nothing.
 The accounting shape above is right either way — a gross counter and a separate
 recovered counter — so it can be specified now. **What feeds `remaining` was the
 decision**, and it had a stated cost on both sides; the ratification below takes
-the non-reopening side.
+the non-reopening side, with a disposition that discharges most of that side's
+stated cost (the re-dispatch never charges twice — below).
 
 **✅ DECIDED 2026-08-07 (owner) — the recovered cumulative does NOT feed
 `remaining`, ratified jointly with #1568 §3.6a** (the two paths share the
 counter, exactly as the coordination note below requires). What was this
 document's conservative default is now the permanent rule: recovered value
 sits in an explicitly separate, **non-reopening** recovery position, visible
-to operators and excluded from 69M headroom. `remaining` stays monotone
-non-increasing, so the claim path's truncate-and-consume justification stands
-untouched and no past truncation is retroactively falsified. The accepted cost
-is unchanged: the cap under-counts a pool that genuinely holds the tokens.
+to operators and excluded from 69M headroom. No Mode-B recovery ever moves
+`remaining` upward, so with respect to THIS path the claim path's
+truncate-and-consume justification is untouched and no past truncation is
+retroactively falsified. Stated path-scoped on purpose: the one upward
+movement that exists anywhere is the pre-existing, governance-gated
+released-reservation ceremony in the boundary note below — claims truncated
+while released funds sat stranded can have been consumed before that ceremony
+restores headroom, and reconciling THAT with truncate-and-consume is R6d's
+open item. This decision neither creates nor cures that window.
 
 **The owner also settled the recovered tokens' DISPOSITION, which the default
-had left open: recovered VPFI is re-used as reward funding — not burned, and
-not quarantined forever.** The recovery position is a *source* for future
-interaction-reward funding, and drawing it down is ordinary dispatch
-accounting — each draw charges `rewardBudgetRemittedGlobal` exactly as any
-remit does, with no special cap credit anywhere. Two consequences, stated so
-neither is later "fixed" as a bug: a stranded-then-recovered parcel is charged
-against the cap once per dispatch, so the nominal 69M under-counts by the
-stranded amount even though Base still holds the tokens; and at cap exhaustion
-(`remaining == 0`) recovered tokens cannot fund interaction rewards at all —
-they remain visible treasury-held VPFI whose reward-funding use ended with the
-cap. That is the intended terminal, not a leak.
+had left open: recovered VPFI is re-used for platform interaction rewards —
+not burned, and not quarantined.** The recovery position is a *source* for
+future interaction-reward funding, and — the owner's model, stated precisely —
+**a recovery-sourced re-dispatch does NOT charge `rewardBudgetRemittedGlobal`
+a second time**: the parcel's cap charge happened at its original dispatch and
+is never repeated, so the 69M counter only ever decreases when value is first
+dispatched for rewards, and never moves on recovery or on re-use. `remaining`
+therefore never rises (recovery is not a credit) and is not debited again on
+re-use (a re-dispatch is not a new mint). Two constraints make this safe
+rather than a cap bypass, and both are implementation requirements: a
+recovery-sourced dispatch must be **sourced from and bounded by the recovery
+position's receipt-bound balance** — anything else is an uncharged emission
+path; and it must advance its **own re-dispatch cumulative**, so the
+reconciliation over gross remitted / recovered / re-dispatched stays
+exhaustive — reusing `rewardBudgetRemittedGlobal` for it would re-introduce
+the second charge, and reusing nothing would leave physical outflow
+unaccounted. Which targets a recovery-sourced dispatch may fund (ordinary day
+funding, an R1c supplemental top-up, a later manual compensation) is R4
+mechanism design, specified with it in the P2 design document. The one honest
+residual of the old "accepted cost": a recovered parcel with no admissible
+target left at end-of-program simply remains treasury-held VPFI — nothing
+about this decision strands value mid-program.
 
 **Boundary — the released-reservation TRANSPORT-CUSTODY recovery is a
 NEIGHBOURING CASE this decision does not cover.** TokenomicsTechSpec §9's
@@ -1462,8 +1479,10 @@ here, and the asymmetry is deliberate: there a re-remittance already consumed
 new headroom for the same days, so the recovery nets a guaranteed
 double-charge back to a single charge, through an evidenced governance act;
 R4's recovered parcel was delivered, its day lapsed unpaid, and the single
-charge stands — restored automatically on a permissionless path it would be
-the exact reopening this decision rejects. The residual tension — the
+charge stands **with the parcel re-usable against it** (the uncharged
+re-dispatch above) — so R4 needs no restoration at all, and restoring
+automatically on a permissionless path would be the exact reopening this
+decision rejects. The residual tension — the
 ceremony makes `remaining` rise too, inside its narrow governance-gated
 window — belongs to R6d's open recovery-settlement item, which must specify
 the ceremony's evidence and clearing path and reconcile it with the
@@ -1896,12 +1915,16 @@ count is a claim that goes stale faster than the list does.
   case the pin was written for.
 - ~~**What feeds `remaining` after a recovery**~~ — **DECIDED 2026-08-07
   (owner), jointly with #1568 §3.6a** as required: `recovered` does NOT reopen
-  69M headroom. The gross/recovered counter split stands, `remaining` stays
-  monotone non-increasing, and the recovered position's exit is re-use as
-  ordinary reward funding, charged per dispatch. Full statement — including
-  the disposition and its two accepted consequences — beside the R4 accounting
-  rules above; §3.6a's "returned tokens do NOT restore interaction-pool
-  headroom" is thereby ratified rather than default.
+  69M headroom. The gross/recovered counter split stands, and a Mode-B
+  recovery never moves `remaining` in either direction — no credit on
+  recovery, no second debit on re-use, because a recovery-sourced re-dispatch
+  is uncharged, bounded by the position's receipt-bound balance, and tracked
+  on its own cumulative. The recovered position's exit is re-use for platform
+  interaction rewards. Full statement — including the two implementation
+  constraints that keep the uncharged path from becoming a cap bypass —
+  beside the R4 accounting rules above; §3.6a's "returned tokens do NOT
+  restore interaction-pool headroom" is thereby ratified rather than default.
+  The released-reservation ceremony's governance-gated rise stays R6d's item.
 - **The residual's ledger and terminal** (r7) — floor dust plus cap-bound
   excess is delivered-but-unpayable VPFI. R1a says what it is *not* (a debt);
   what holds it and how it leaves is open.

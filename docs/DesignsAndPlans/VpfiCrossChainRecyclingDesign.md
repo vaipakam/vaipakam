@@ -501,9 +501,12 @@ treatment a released reservation already receives.
 > whoever decides either to decide both. This section's rule is now a
 > ratified decision, not a conservative default: recovered or repatriated
 > value never reopens 69M headroom, in either mode. §2h additionally records
-> the owner's disposition for Mode B's recovered fresh value — re-used as
-> ordinary reward funding, each dispatch charging the cap afresh — and its
-> two accepted consequences. Mode A's destination remains governed by
+> the owner's disposition for Mode B's recovered fresh value — re-used for
+> platform interaction rewards via an uncharged, position-bounded re-dispatch
+> (the parcel's cap charge happened at its original dispatch and is never
+> repeated, so `remaining` neither rises on recovery nor falls again on
+> re-use) — and the two implementation constraints that keep the uncharged
+> path from becoming a cap bypass. Mode A's destination remains governed by
 > constraints 1/1a below; nothing here changes it. One neighbouring case sits
 > deliberately OUTSIDE both modes and this ratification: the
 > released-reservation transport-custody recovery ceremony (tokens sent but
