@@ -213,9 +213,19 @@ render then verifies that marker against the chain, so the state is trustworthy
 **The consequence.** A borrower who posts a refinance request on one device and
 then opens the app on another is offered partial repayment with nothing held.
 Taking it shrinks the principal, and the standing request — frozen at the old
-amount — becomes permanently unacceptable to any lender, stranded until the
-borrower returns to the original device and cancels it. Nothing warns them, and
-the app they are looking at cannot know.
+amount — becomes permanently unacceptable to any lender. Nothing warns them
+beforehand, and the app they are looking at cannot know the request exists.
+
+**What is NOT lost, stated precisely** (a first draft of this entry overstated
+it): the dead request is not stranded on the original device. `useMyOffersFull`
+chain-enumerates every active offer the wallet created, and `OpenOrdersPanel`
+exposes `cancelOffer` to its creator, so the borrower can find and cancel it as
+an ordinary open order from anywhere. The cleanup is device-independent; what
+is device-local is the ASSOCIATION with the loan — the position page cannot
+connect the request to the loan it targets, so the partial is not held, no
+warning is shown, and the borrower has to already know to go looking. The cost
+is therefore the lost refinance opportunity and a silent surprise, not an
+unreachable piece of state.
 
 **Why this is filed rather than fixed here.** #1589 is a test-coverage PR; this
 was found while writing the spec sentence for partial repayment, when a review
