@@ -1,0 +1,24 @@
+{
+  "copy.match.riskGateCreatorBlocked": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "hi",
+    "ja",
+    "ko",
+    "ta",
+    "zh"
+  ],
+  "copy.match.riskGateTierTooLow": [
+    "ar",
+    "de",
+    "es",
+    "fr",
+    "hi",
+    "ja",
+    "ko",
+    "ta",
+    "zh"
+  ]
+}

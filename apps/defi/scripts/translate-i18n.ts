@@ -40,6 +40,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requiredLiteralProblems } from '@vaipakam/i18n';
+import { RECOVERY_CONFIRM_WORD } from '../src/lib/recoveryConfirm.ts';
 import {
   GLOSSARY_KEEP_VERBATIM,
   GLOSSARY_STYLE_NOTES,
@@ -49,6 +51,55 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = path.resolve(__dirname, '..', 'src', 'i18n', 'locales');
+
+/**
+ * Strings this app compares TYPED USER INPUT against — see
+ * src/i18n/translation-policy.json.
+ *
+ * `VaultRecover` gates signing on the user typing `CONFIRM`, and the
+ * glossary check below cannot protect it: it is warning-only, and it
+ * matches by SUBSTRING, so "Escribe CONFIRMAR" passes while instructing
+ * the user to type a word that can never equal the literal — the gate
+ * becomes unpassable for every speaker of that language, with no error
+ * because from the app's side they simply haven't typed it yet (Codex
+ * #1563 r18).
+ *
+ * This script is the pre-hoist original that packages/i18n was
+ * generalised FROM, so it does not yet share that script's validation.
+ * Migrating this command onto the shared guarded path is tracked in
+ * #1582; until then the literal is enforced here, because the surface
+ * is live either way.
+ */
+const POLICY = JSON.parse(
+  fs.readFileSync(
+    path.resolve(__dirname, '..', 'src', 'i18n', 'translation-policy.json'),
+    'utf8',
+  ),
+) as { requiredLiterals: Record<string, string[]> };
+
+// The policy file is DATA, so it can drift from the constant the app
+// actually compares against — and a policy still protecting the old
+// word would pass every check while the live gate wants the new one.
+// Cross-check rather than trust (Codex #1563 r19).
+// EXACTLY this word, not merely "contains" it. `includes` proves the
+// new word was ADDED but not that the old one was removed, and
+// requiredLiteralProblems demands every listed token — so a policy
+// updated to ["CONFIRM", "PROCEED"] would pass this check and then
+// reject every correct prompt saying only "PROCEED", with nothing
+// explaining why (Codex #1563 r20). The gate compares against one
+// word, so the policy must name one word.
+const declaredLiterals = POLICY.requiredLiterals['vaultRecover.modalConfirmPrompt'] ?? [];
+if (
+  declaredLiterals.length !== 1 ||
+  declaredLiterals[0] !== RECOVERY_CONFIRM_WORD
+) {
+  console.error(
+    `translation-policy.json requiredLiterals["vaultRecover.modalConfirmPrompt"] is ` +
+      `${JSON.stringify(declaredLiterals)}, expected exactly ["${RECOVERY_CONFIRM_WORD}"] — ` +
+      'the word VaultRecover compares typed input against',
+  );
+  process.exit(1);
+}
 
 const LOCALE_NAMES: Record<LocaleCode, string> = {
   // Already translated
@@ -230,6 +281,7 @@ async function main() {
   console.log(`Translating ${targets.length} locale(s): ${targets.join(', ')}`);
   console.log();
 
+  const failed: LocaleCode[] = [];
   for (const code of targets) {
     process.stdout.write(`→ ${code} (${LOCALE_NAMES[code]})… `);
     try {
@@ -237,6 +289,16 @@ async function main() {
       const responseText = await callClaude(prompt);
       const translated = extractJson(responseText);
       const warnings = verifyGlossaryPreserved(translated, enRaw);
+      // Reject BEFORE writing. A written prompt that lost the literal
+      // makes the confirmation gate unpassable for that locale, and
+      // undoing it is manual.
+      const literals = requiredLiteralProblems(
+        translated as Record<string, unknown>,
+        POLICY.requiredLiterals,
+      );
+      if (literals.length > 0) {
+        throw new Error(`required literal lost — ${literals.join('; ')}`);
+      }
       const outPath = path.join(LOCALES_DIR, `${code}.json`);
       fs.writeFileSync(outPath, JSON.stringify(translated, null, 2) + '\n');
       console.log('done.');
@@ -244,7 +306,17 @@ async function main() {
     } catch (err) {
       console.log('FAILED.');
       console.error(`    ${(err as Error).message}`);
+      failed.push(code);
     }
+  }
+
+  // A rejected locale must not leave the command reporting success.
+  // The bad response is never written, but automation reading only the
+  // exit code would treat an incomplete run as a finished one
+  // (Codex #1563 r19).
+  if (failed.length > 0) {
+    console.error(`\n${failed.length} locale(s) failed: ${failed.join(', ')}`);
+    process.exitCode = 1;
   }
 }
 

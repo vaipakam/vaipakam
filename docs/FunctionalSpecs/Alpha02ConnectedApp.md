@@ -482,7 +482,30 @@ Thin-market honesty rules apply.
   language/direction is applied before the first paint (no flash of
   wrong-direction layout).
 - Protocol-specific terms (VPFI, HF, LTV, asset and network names)
-  stay verbatim in every language.
+  stay verbatim in every language. So does any word the app asks the
+  user to TYPE BACK as a confirmation: a translated confirmation word
+  would be compared against the English one the app expects, leaving
+  the user unable to pass a gate they had typed correctly in their own
+  language.
+- A language offered as translated shows that language everywhere it is
+  offered. Falling back to English is the documented behaviour for a
+  language still being filled in — not for a page inside a language
+  already presented as available. A newly added surface is translated in
+  the same change that ships it, so a user never meets a page that
+  switches to English partway down.
+  *(Not yet true of the whole app: two offer-matching messages still fall
+  back to English in the nine advertised languages. That is a recorded
+  gap, not a revision of the intent above — see the dated row in
+  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md), which names every
+  outstanding key and locale. The intent is deliberately left stated in
+  full, because a spec narrowed to the surfaces that happen to be
+  finished cannot be violated and would erase the only record that the
+  rest is unfinished rather than intended.)*
+- Where a sentence embeds a live value, that value survives translation.
+  A translation may reorder the values to fit its grammar, and may leave
+  one out where the grammar already carries it (a dual form that means
+  "two days" in the noun itself), but it never invents a value slot the
+  English does not have.
 - The translation covers the whole displayed interface, not only the
   page chrome: the Activity feed's plain-language event labels, the
   loan-status badges shown on positions and history, the Claim Center's
@@ -494,6 +517,31 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- Where signing-critical text cannot be translated, the reader is not
+  simply left with a language they may not read. A declaration the user
+  must affirm they have understood is shown in their own language
+  alongside the exact text being signed, labelled so it is never
+  ambiguous which of the two is the authoritative one. Untranslatable
+  is a constraint on the SIGNED BYTES, not a licence to leave the
+  person signing them without comprehension — an acknowledgement the
+  user cannot read is not an acknowledgement.
+- That reading aid appears only when a translation genuinely exists for
+  the reader's language. Choosing a language the app does not yet
+  translate, or a translated language whose text fails to load, leaves
+  the page in English throughout — and in that state no aid is shown at
+  all, rather than English text presented as being "in your language".
+  A label claiming a language the text is not written in would be a
+  false statement made at the exact moment the user is affirming they
+  understood what they read. Nothing else about the page changes; the
+  aid reappears on its own if the translation arrives. Text that merely
+  repeats the English word for word does not count as a translation for
+  this purpose, and neither does a translated declaration under an
+  English label: the label is what states which language the reader is
+  being shown, so both halves have to be in their language or neither
+  is shown. The aid is also kept honest over time: it explains one
+  specific declaration, so if that declaration is ever changed, the aid
+  cannot continue to be published in a form written for the previous
+  one.
 - The plain-language explanation shown when a transaction fails — the
   friendly cause a contract revert is decoded to ("Health factor too
   low", "This offer has expired", "Only the lender can perform this
@@ -857,7 +905,71 @@ Its intended behaviour, as the test oracle for this surface:
   request that has gone ineligible since it was posted fails with a
   plain explanation instead of leaving a pointless approval behind a
   reverted handover; an unreadable check never blocks an otherwise
-  valid handover. The review states what is paid
+  valid handover. One check cannot be satisfied by that ordering: the
+  accepted-sale interlock has to be asked as late as possible, since
+  its whole purpose is to catch an acceptance that lands while the
+  review sits open, so it necessarily runs after the approval. Where a
+  check must come after the spending approval like that — or where the
+  handover simply fails once the approval has been given — the app
+  withdraws the approval it just obtained, so a handover that never
+  happened leaves no spending authorisation standing against a form
+  with nothing left to cancel. This holds however the flow stopped —
+  whether it failed outright or was halted by one of those late
+  checks. It is best-effort: if the withdrawal is itself declined, the
+  original failure stays the headline rather than being replaced by a
+  second, more confusing error — but it is not the whole message. A
+  withdrawal that clears the approval and then fails to put a prior
+  standing grant back leaves that grant erased, which the person has
+  to act on, so that outcome is reported after the original failure
+  rather than passed over in silence. Being UNABLE TO ESTABLISH what
+  the approval was left at counts as that same outcome, not as a clean
+  withdrawal: the app stands back from an approval it cannot account
+  for, and says that it could not account for it. A withdrawal that
+  reports nothing is a promise that nothing needs acting on, and it
+  may only be made when that has actually been determined. Standing
+  back because ANOTHER TRANSACTION IS IN FLIGHT on the account is the
+  same kind of outcome and is reported the same way: the withdrawal is
+  right not to queue behind a transaction whose effect it cannot yet
+  see — that one could mine first and be overwritten by ours — but the
+  approval it declined to clear is still standing, or, past the
+  clearing step, the person's earlier grant is still erased. Not being
+  able to tell whether anything is in flight counts here too: that is
+  weaker ground than knowing something is, not stronger. Where the
+  withdrawal takes two steps — clearing an approval to zero before
+  writing the earlier figure back — both the standing-back rule and
+  the no-overwrite rule apply to the SECOND step as well as the
+  first: what matters is what the approval is worth at the moment of
+  writing, not what it was worth when the clearing step happened, so
+  a grant made by someone else in between is left alone. And a
+  clearing step that succeeded followed by an approval that did not
+  take effect is a case for putting the earlier figure BACK, not for
+  standing down — the person's approval was cleared by a step that
+  did work, and nothing else has claimed it. The mirror case is the
+  CLEARING STEP itself not holding — undone by a chain reorganisation
+  after it was reported as done, or a token that reports success
+  without moving the approval. What the app then sees is its own
+  flow's figure still standing, which is not somebody else having
+  changed the approval and must not be treated as one: nothing has
+  claimed it, so there is no other decision to defer to, and the
+  approval this withdrawal exists to clear is still live. That is
+  reported, never passed over in silence. The distinction is between
+  a figure that is OURS and a figure that is not — never merely
+  between zero and non-zero. An
+  approval the wallet already held is never withdrawn — it was granted
+  for some other purpose and is not this flow's to revoke. Nor does the
+  withdrawal act on an allowance that has changed hands since: if the
+  figure standing now is not the one this flow put there — because
+  another tab, or the person themselves, has raised, lowered or revoked
+  it in the meantime — the cleanup leaves it exactly as found, even
+  where that means the flow's own approval stays behind. Restoring an
+  earlier figure over a deliberate change would hand the spender an
+  authorisation the person had just taken away, which is worse than the
+  approval it was trying to tidy. The cleanup also reports when it
+  cannot confirm its own last step: having cleared the approval and
+  written the earlier figure back, being unable to establish that the
+  figure is there is not the same as knowing it is, and it is said
+  aloud, because the person's approval is definitely cleared and only
+  might have been restored. The review states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and

@@ -1087,11 +1087,43 @@ GovernanceRunbook gains a recycling section, executed in order:
    >    the clamp residual. Full correction in the design record's **§2h**
    >    (#1565), which — after three review rounds and SIXTEEN confirmed P1s —
    >    deliberately holds the verified problem statement and a **constraint
-   >    set**, NOT a design. P2 is a subsystem, its wire is **two** evolutions
-   >    (broadcast and remit travel through different messengers), and it is
-   >    blocked on one owner decision: **who lapses a zeroed day, and how the
-   >    in-flight compensation race resolves.** Neither sketched option is
-   >    viable as written.
+   >    set**, NOT a design. P2 is a subsystem whose wire is **at least three**
+   >    paths (the day broadcast, the remit, and R4's mirror→Base fresh-return
+   >    — independent messengers, decoders and rollouts). **Treat three as a
+   >    FLOOR, not a budget** (Codex #1573 r9 P2): §2h re-opened the
+   >    conversion's authenticated input, and its leading shape — a
+   >    mirror-authenticated quote — likely adds a fourth. Planning that
+   >    budgets exactly three would omit that transport.
+   >    **The lapse decision that gated it is RATIFIED** (#1571, 2026-08-04):
+   >    a mirror-local permissionless lapse, recorded in §2h as R1-R6 — two
+   >    authenticated per-side amounts; a permissionless lapse; a dispatch
+   >    cutoff strictly earlier than it; a **dedicated fresh-return** recovery
+   >    (NOT M4 C2, which cannot reach a fresh-booked compensation); the
+   >    per-day schedule authenticated in BOTH domains; and **R6**, a per-chain
+   >    bound on how many compensations can be stranded at once.
+   >
+   >    **How the mirror obtains Δ is NOT settled** (Codex #1573 r9 P1). This
+   >    line previously said "with the mirror deriving Δ locally", which was
+   >    R1's original mechanism and is now **withdrawn** — dividing the
+   >    delivered amount by uncapped local interest prices against an
+   >    obligation the mirror will not pay. Two authenticated per-side amounts
+   >    remain ratified; the conversion's authenticated input is open in §2h.
+   >
+   >    **The operative rules of R6 and its sub-rules are NOT summarised here
+   >    — read §2h** (Codex #1573 r8 P1 ×2). This summary previously carried
+   >    R6's clearing condition and R6a's recording duty in full, and both
+   >    were corrected in §2h while these copies stayed as written — so the
+   >    summary told an implementer to lock the gate after the first
+   >    successful compensation, and to require an exact loss figure that is
+   >    unavailable by construction. A summary that restates operative rules
+   >    will be wrong one round after the rules move; this one now states
+   >    only what R6 is *for*.
+   >
+   >    Two properties of R6 are worth carrying at this level because they
+   >    are routinely misread: it bounds the **STRANDING, not the user
+   >    loss** — never cite it as a cap on user harm — and it *suppresses the
+   >    very deliveries the counters observe, so the lapse terminal has to
+   >    instrument itself* rather than relying on delivery-side counters.
    > 2. **The PAID side is not derivable from the splits today**, which is why
    >    P1-a is receipts-only. A loan-side-capped split keeps `armedFresh`
    >    whole (so the full commitment retires) while `total` sheds the

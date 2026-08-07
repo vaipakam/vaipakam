@@ -515,4 +515,9 @@ if (allBlockedRequests.length > 0) {
     `READ-ONLY VIOLATIONS: ${allBlockedRequests.length} page-initiated write(s) were blocked — see blockedWriteRequests in the report`,
   );
 }
-process.exit(allBlockedRequests.length > 0 ? 2 : 0);
+// Exit 1, not 2. A page-initiated write during a read-only sweep is a
+// REGRESSION in the app, and the batch runner reads 2 as "BLOCKED — ran
+// but verified nothing", whose cause and remedy are the opposite of this
+// one's (#1529 review round 5). This sweep verified plenty; what it found
+// is a defect.
+process.exit(allBlockedRequests.length > 0 ? 1 : 0);

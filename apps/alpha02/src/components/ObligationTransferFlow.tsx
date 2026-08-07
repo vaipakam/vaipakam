@@ -28,7 +28,7 @@ import { captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance } from '../contracts/erc20';
+import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
 import {
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
@@ -262,6 +262,28 @@ export function ObligationTransferFlow({
     }
     setBusy(true);
     setError(null);
+    // The allowance as it stood BEFORE this attempt, so a submit that
+    // never reaches the write can put it back (#1514). Tracking the
+    // prior VALUE rather than a boolean matters: ensureAllowance also
+    // raises a non-zero-but-insufficient allowance, and zeroing that
+    // would destroy a grant another live arrangement depends on
+    // (#1529 review).
+    let priorAllowance: bigint | null = null;
+    // The value THIS attempt last put on-chain — null while it has
+    // written nothing. Stamped per mined approve rather than from
+    // ensureAllowance's return value, so the zero-reset counts even when
+    // the approve after it is rejected. The unwind acts only if the
+    // allowance still reads exactly this, so a change made meanwhile by
+    // another tab or flow is left alone (#1529 review).
+    let wroteAllowance: bigint | null = null;
+    // Hash of that write, so the unwind can settle a still-pending
+    // approve instead of reading it as somebody else's change.
+    let wroteAllowanceTx: `0x${string}` | null = null;
+    // The last value the approve helper CONFIRMED. Needed when a later
+    // approve's revert is only discovered by the unwind, after the helper
+    // has thrown on a timeout and can no longer correct its own report.
+    let confirmedAllowance: bigint | null = null;
+    let approvalToken: `0x${string}` | null = null;
     try {
       // transferObligationViaOffer is Tier-1 — live re-screen first.
       await assertWalletNotSanctionedLive(
@@ -444,28 +466,39 @@ export function ObligationTransferFlow({
         });
       }
       if (liveCost.total + pad > 0n) {
+        // The standing allowance is what the unwind restores, and it is
+        // reported by ensureAllowance's own read rather than sampled
+        // here. Two reads are two moments: anything moving the allowance
+        // between them would leave this figure stale, and the unwind
+        // would then "restore" a value that was never the one replaced
+        // (#1529 review).
+        const needed = liveCost.total + pad;
+        approvalToken = liveLoan.principalAsset;
         await ensureAllowance({
           publicClient,
           walletClient,
           token: liveLoan.principalAsset,
           owner: address,
           spender: walletChain.diamondAddress,
-          amount: liveCost.total + pad,
+          amount: needed,
+          onObserved: (value) => {
+            priorAllowance = value;
+          },
+          onWrote: (value, hash) => {
+            wroteAllowance = value;
+            wroteAllowanceTx = hash;
+          },
+          onConfirmed: (value) => {
+            confirmedAllowance = value;
+          },
         });
       }
       // LATE re-gate (Codex #1511 r10 P1) — see the entry gate note.
-      // Deliberately does NOT unwind the allowance above, unlike
-      // RefinanceFlow's equivalent: this flow tracks no approval state
-      // and never revokes on ANY post-approval failure (a reverted
-      // write, a rejected signature), so a lone unwind here would be
-      // the odd one out. The residue is the cost of the transfer the
-      // user was actively attempting, not a standing payoff-sized
-      // grant. Giving this flow the tracked-approval + revoke pattern
-      // wholesale is #1514.
       if (preSubmitBlock) {
         const blockedLate = await preSubmitBlock();
         if (blockedLate) {
           setError(blockedLate);
+          await unwindApproval();
           return;
         }
       }
@@ -483,8 +516,49 @@ export function ObligationTransferFlow({
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
       setError(captureTxError(err));
+      await unwindApproval();
     } finally {
       setBusy(false);
+    }
+
+    // Best-effort: no handover happened but the allowance mined, so
+    // leave no spend authorization behind a form with nothing to
+    // cancel (#1514). The cleanup must not REPLACE the handover error —
+    // that is the thing the user was trying to do — but it must not be
+    // swallowed either. On the zero-first path the unwind can reset to
+    // zero and then fail to put the prior value back, which leaves the
+    // user's standing grant erased; showing only the handover error
+    // hides a state they have to act on (#1529 review round 13). So the
+    // cleanup failure is APPENDED.
+    async function unwindApproval() {
+      if (priorAllowance === null || !approvalToken) return;
+      if (!publicClient || !walletClient || !address || !walletChain) return;
+      const previous = priorAllowance;
+      const wrote = wroteAllowance;
+      const wroteTx = wroteAllowanceTx;
+      const confirmedVal = confirmedAllowance;
+      priorAllowance = null;
+      wroteAllowance = null;
+      wroteAllowanceTx = null;
+      try {
+        await restoreAllowance({
+          publicClient,
+          walletClient,
+          token: approvalToken,
+          owner: address,
+          spender: walletChain.diamondAddress,
+          previous,
+          wrote,
+          wroteTxHash: wroteTx,
+          confirmed: confirmedVal,
+        });
+      } catch {
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
+      }
     }
   }
 

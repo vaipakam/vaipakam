@@ -12,6 +12,7 @@
  * ERC-4907 NFT with a client-random 256-bit id (collision-safe).
  */
 import { useState } from 'react';
+import { assertSettled } from '../contracts/ownReceipt';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
 import { Droplets, ExternalLink, LoaderCircle, TestTube } from 'lucide-react';
@@ -210,10 +211,11 @@ export function Faucet() {
         account: address,
         chain: walletClient.chain,
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== 'success') throw new Error(`Transaction reverted (${hash})`);
+      // The MINED hash: on a Speed Up the submitted one never mined, and
+      // the success panel links straight to it (#1529 review round 13).
+      const receipt = await assertSettled(publicClient, hash, 'The faucet transaction');
       setDone({
-        hash,
+        hash: receipt.transactionHash,
         label: copy.faucet.mintedTokens(units, symbol),
         asset: { address: token, symbol },
       });
@@ -241,10 +243,9 @@ export function Faucet() {
         account: address,
         chain: walletClient.chain,
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      if (receipt.status !== 'success') throw new Error(`Transaction reverted (${hash})`);
+      const receipt = await assertSettled(publicClient, hash, 'The faucet transaction');
       setDone({
-        hash,
+        hash: receipt.transactionHash,
         label: copy.faucet.mintedNft,
         tokenId: tokenId.toString(),
       });

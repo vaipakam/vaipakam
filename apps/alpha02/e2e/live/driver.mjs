@@ -38,19 +38,91 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // file lives OUTSIDE the repo on purpose (never commit keys); point
 // TESTNET_WALLETS_FILE at a JSON of { <role>: { address, privateKey } }
 // or an array of { role, address, privateKey }.
-const WALLETS_RAW = JSON.parse(
-  fs.readFileSync(
-    process.env.TESTNET_WALLETS_FILE ??
-      path.join(HERE, '../testnet-wallets/wallets.json'),
-    'utf8',
-  ),
-);
+const WALLETS_PATH =
+  process.env.TESTNET_WALLETS_FILE ??
+  path.join(HERE, '../testnet-wallets/wallets.json');
+let WALLETS_RAW;
+try {
+  WALLETS_RAW = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
+} catch (err) {
+  // Exit 2 = BLOCKED, per the contract in run-live-batch.mjs. An absent
+  // dev-wallet file is a missing PRECONDITION, not a product regression:
+  // letting this throw exits 1 and makes every ordinary
+  // secret-unavailable batch read as a defect, which is exactly the
+  // mislabelling the three-verdict contract exists to prevent (#1529
+  // review round 6).
+  console.error(
+    `\nBLOCKED: cannot read the dev wallet file — this driver signs, so it` +
+      ` cannot run without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
+      `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
+      ` (live-position-observe.mjs) which needs no key.`,
+  );
+  process.exit(2);
+}
 // Normalize both documented shapes to a role map — the array form
 // ({ role, address, privateKey }[]) indexed as a map yields
 // undefined.privateKey otherwise.
 const WALLETS = Array.isArray(WALLETS_RAW)
   ? Object.fromEntries(WALLETS_RAW.map((w) => [w.role ?? w.name, w]))
   : WALLETS_RAW;
+
+/**
+ * The ONE accessor for a role's key, so a missing credential is BLOCKED
+ * wherever it is discovered.
+ *
+ * A readable-but-incomplete wallet file is just as much a missing
+ * precondition as an absent one — an empty `{}` parses fine and then
+ * `WALLETS[role].privateKey` throws deep inside `launch`, which exits 1
+ * and reads as a product regression (#1529 review round 7). The file
+ * check alone was not enough; the check has to be per ROLE, at the point
+ * of use.
+ */
+function walletFor(role) {
+  const w = WALLETS?.[role];
+  const key = w?.privateKey;
+  const blocked = (why) => {
+    const roles = Object.keys(WALLETS ?? {});
+    console.error(
+      `\nBLOCKED: the dev wallet file has no usable credential for role` +
+        ` "${role}" — ${why}.` +
+        `\n  path:  ${WALLETS_PATH}` +
+        `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
+        `\n  → each role needs { address, privateKey } with a 32-byte key,` +
+        ` and the address must be the one that key derives.`,
+    );
+    process.exit(2);
+  };
+
+  if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+    blocked('no valid privateKey');
+  }
+  // The ADDRESS is a credential too, not decoration. `addressOf` is used
+  // BEFORE launch by several drivers, so a missing one crashes with exit 1
+  // rather than BLOCKED — and worse, an address belonging to a DIFFERENT
+  // key makes a drive inspect one wallet while injecting another, which
+  // fails in a way that looks like an app bug (#1529 review round 8).
+  if (typeof w.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(w.address)) {
+    blocked('no valid address');
+  }
+  // The regex proves 32 bytes of hex, not a usable key: secp256k1 also
+  // requires 1 <= k < n, so the all-zero placeholder and anything at or
+  // above the curve order pass the shape test and throw here. Letting
+  // that escape exits 1 from every signing driver, and the batch reports
+  // an unusable CREDENTIAL as a possible product FAIL — the precondition
+  // shape this file's `blocked()` exists for (#1529 review round 20).
+  let derived;
+  try {
+    derived = privateKeyToAccount(key).address;
+  } catch {
+    blocked('privateKey is 32 bytes of hex but not a valid secp256k1 key');
+  }
+  if (derived.toLowerCase() !== w.address.toLowerCase()) {
+    blocked(
+      `address ${w.address} is not the one its privateKey derives (${derived})`,
+    );
+  }
+  return w;
+}
 
 export const CHAINS = {
   84532: {
@@ -115,13 +187,13 @@ export function clientsFor(chainId) {
       createWalletClient({
         chain,
         transport: http(rpc),
-        account: privateKeyToAccount(WALLETS[role].privateKey),
+        account: privateKeyToAccount(walletFor(role).privateKey),
       }),
   };
 }
 
 export function addressOf(role) {
-  return WALLETS[role].address;
+  return walletFor(role).address;
 }
 
 export async function launch({
@@ -163,7 +235,7 @@ export async function launch({
   // represent a first visit (Codex #1181 P2).
   freshProfile = false,
 } = {}) {
-  const account = privateKeyToAccount(WALLETS[role].privateKey);
+  const account = privateKeyToAccount(walletFor(role).privateKey);
   let chainId = startChainId;
   let authorized = preAuthorized;
 

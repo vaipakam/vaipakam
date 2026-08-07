@@ -232,6 +232,9 @@ importers:
       '@cloudflare/vite-plugin':
         specifier: ^1.15.0
         version: 1.36.3(bufferutil@4.1.0)(utf-8-validate@5.0.10)(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))(workerd@1.20260507.1)(wrangler@4.90.0(@cloudflare/workers-types@4.20260507.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      '@eslint/js':
+        specifier: ^9.39.4
+        version: 9.39.4
       '@playwright/test':
         specifier: ^1.49.0
         version: 1.61.1
@@ -247,12 +250,27 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.1
         version: 6.0.1(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0))
+      eslint:
+        specifier: ^9.39.4
+        version: 9.39.4
+      eslint-plugin-react-hooks:
+        specifier: ^7.0.1
+        version: 7.1.1(eslint@9.39.4)
+      eslint-plugin-react-refresh:
+        specifier: ^0.5.2
+        version: 0.5.2(eslint@9.39.4)
+      globals:
+        specifier: ^17.4.0
+        version: 17.6.0
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
       typescript:
         specifier: ~6.0.2
         version: 6.0.3
+      typescript-eslint:
+        specifier: ^8.58.0
+        version: 8.59.2(eslint@9.39.4)(typescript@6.0.3)
       vite:
         specifier: ^8.0.9
         version: 8.0.11(@types/node@22.19.18)(esbuild@0.27.7)(tsx@4.21.0)
@@ -271,6 +289,9 @@ importers:
       '@vaipakam/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vaipakam/i18n':
+        specifier: workspace:*
+        version: link:../../packages/i18n
       '@vaipakam/lib':
         specifier: workspace:*
         version: link:../../packages/lib
