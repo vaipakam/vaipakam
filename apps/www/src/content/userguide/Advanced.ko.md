@@ -703,6 +703,54 @@ VPFI를 vault에서 wallet으로 다시 withdraw합니다. approval leg는 없�
 모든 open loans에 적용됩니다. 이전 tier가 계속 apply되는 grace window는
 없습니다.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### VPFI tier가 chain 사이를 이동하는 방식
+
+VPFI는 Base의 vault에 deposit합니다 — Base가 회원님의 accumulator
+state를 소유한 canonical chain입니다. 다른 chain에서 action할 때
+(Sepolia에서 borrow, Arbitrum에서 lend 등) 그 chain은 tier의 *cached*
+사본을 읽습니다. 이 cache는 cross-chain push로 최신 상태를 유지합니다:
+Base에서 실효 tier가 바뀌면, 다음 Base 측 action이 회원님이 action할 수
+있는 모든 mirror chain으로 CCIP message를 broadcast합니다. push는 모든
+일반 Base action에 함께 실려 갑니다 — 그리고 T-087 Sub 4부터 Dashboard
+에 "지금 mirror로 내 tier push하기" 버튼(`pokeMyTier()`를 호출)이 있어
+vault mutation 없이 push를 강제할 수 있습니다. mirror chain에서의 local
+consent와 local VPFI 요건을 포함한 전체 설명은 "How VPFI Discounts
+Work" 장에 있으며, 현재는 영어 가이드에만 존재합니다.
+
+알아둘 점 세 가지:
+
+- **tier 성숙에는 후속 action이 필요합니다.** 첫 stake는 즉시
+  broadcast하지 않습니다 — 실효 tier는 최소 이력 기간(기본 3일)으로
+  gate되므로, 갓 넣은 stake는 처음에 tier 0으로 해석되고 broadcast는
+  조용히 skip됩니다. 기간이 지나면 Base에서는 gate가 즉시 열리지만,
+  mirror는 다음 rollup을 동반한 Base action(모든 deposit, withdrawal,
+  loan action — Base의 vault를 mutate하는 모든 것) 또는 Dashboard의
+  "지금 mirror로 내 tier push하기" 클릭(Sub 4)이 push를 trigger할 때까지
+  알지 못합니다. 1 wei top-up으로도 됩니다.
+- **전파 시간.** push가 발송되면 보통 CCIP를 통해 몇 분 안에 mirror에
+  도착합니다. 그때까지 mirror는 이전 cached tier를 계속 인정합니다 —
+  tier 0으로 깜빡이는 일은 없습니다.
+- **cache 만료.** cached tier는 (a) 새 push가 도착하거나, (b)
+  governance가 tier 임계값 표를 새 version으로 올리고 mirror가 추적하는
+  version이 상승하거나(이는 어떤 user든 bump 이후의 push가 그 mirror에
+  처음 도착하는 시점에 일어납니다 — Base에서 최근 활동이 없는 휴면
+  user도 그 순간 구 version의 cached discount를 잃고, 자신의 다음
+  push가 따라잡을 때까지 회복되지 않습니다), (c) cache가 최대 수명
+  backstop(기본 60일)을 넘길 때까지 인정됩니다. 특정 chain에서 오랫동안
+  action하지 않으면 그곳의 cache는 결국 만료되고, 그 chain은 다음
+  push까지 회원님을 tier 0으로 취급합니다. 갱신하려면 새 push tuple을
+  만드는 rollup 동반 Base action을 하십시오 — tier가 바뀌는 balance
+  mutation, 또는 governance table version bump 이후의 아무 Base action.
+  동일한 tuple의 "no-op" rollup은 push를 재전송하지 않습니다 — 이미
+  올바른 cache에 protocol의 broadcast 예산을 쓰지 않기 위한 의도된
+  동작입니다.
+
+cache가 staleness를 감지하기 위해 적용하는 정확한 gate가 궁금하다면
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)
+을 참고하십시오.
+
 ---
 
 ## Rewards

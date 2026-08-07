@@ -816,6 +816,64 @@ taux de remise au nouveau solde plus bas, appliqué à chaque
 prêt ouvert te concernant. Il n'y a pas de fenêtre de grâce où
 l'ancien tier s'applique encore.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### Comment ton tier VPFI voyage entre les chains
+
+Tu déposes du VPFI dans ton vault sur Base — Base est la chain
+canonique qui détient l'état de ton accumulateur. Quand tu agis sur une
+autre chain (emprunter sur Sepolia, prêter sur Arbitrum, etc.), cette
+chain lit une copie *en cache* de ton tier. Le cache est tenu à jour
+par un push inter-chains : dès que ton tier effectif change sur Base,
+ta PROCHAINE action côté Base diffuse un message CCIP vers chaque chain
+miroir où tu pourrais agir. Le push voyage avec chaque action Base
+ordinaire — et depuis T-087 Sub 4 le Dashboard expose aussi un bouton
+« Pousser mon tier vers les miroirs maintenant » (qui appelle
+`pokeMyTier()`) pour forcer l'envoi sans muter le vault. Pour le
+parcours complet, y compris le consentement local et les exigences de
+VPFI local sur les chains miroirs, vois le chapitre « How VPFI
+Discounts Work » — actuellement présent uniquement dans le guide
+anglais.
+
+Trois choses à savoir :
+
+- **La maturation du tier demande une action de suivi.** Ton premier
+  stake ne diffuse PAS immédiatement : ton tier effectif est bridé par
+  une période d'historique minimale (3 jours par défaut), si bien qu'un
+  stake récent se résout d'abord en tier 0 et que la diffusion est
+  silencieusement sautée. Une fois la période écoulée, la barrière
+  s'ouvre aussitôt sur Base, mais les miroirs ne l'apprennent qu'au
+  moment où ta PROCHAINE action Base porteuse du rollup (tout dépôt,
+  retrait ou action de prêt — tout ce qui mute ton vault sur Base) OU
+  un clic sur « Pousser mon tier vers les miroirs maintenant » dans le
+  Dashboard (Sub 4) déclenche un push. Un top-up de 1 wei suffit aussi.
+- **Temps de propagation.** Une fois le push envoyé, il atterrit
+  généralement sur le miroir en quelques minutes via CCIP. D'ici là, le
+  miroir honore toujours ton tier mis en cache précédemment — il n'y a
+  pas de retour momentané au tier 0.
+- **Expiration du cache.** Un tier en cache reste honoré jusqu'à ce que
+  (a) un nouveau push arrive, (b) la gouvernance fasse passer la table
+  des seuils de tier à une nouvelle version et que la version suivie
+  par le miroir augmente (ce qui se produit la première fois que le
+  push post-bump de N'IMPORTE QUEL utilisateur atteint ce miroir — les
+  utilisateurs dormants sans activité récente sur Base perdent eux
+  aussi, à cet instant, leur remise en cache de l'ancienne version,
+  jusqu'à ce que leur propre push suivant les rattrape), ou (c) le cache
+  dépasse sa limite d'âge maximale (60 jours par défaut). Si tu n'agis
+  pas pendant longtemps sur une chain donnée, ton cache y finira par
+  expirer et la chain te traitera comme tier 0 jusqu'au push suivant.
+  Pour le rafraîchir, effectue n'importe quelle action Base porteuse du
+  rollup qui produise un nouveau tuple de push — une mutation de solde
+  changeant de tier, OU N'IMPORTE QUELLE action Base après un
+  changement de version de la table de gouvernance. Un rollup « no-op »
+  au même tuple NE renverra PAS de push — c'est voulu, pour ne pas
+  brûler le budget de diffusion du protocole sur des caches déjà
+  corrects.
+
+Si les barrières exactes que le cache applique pour détecter la
+péremption t'intéressent, vois la
+[functional spec de propagation du tier inter-chains](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+
 ---
 
 ## Récompenses

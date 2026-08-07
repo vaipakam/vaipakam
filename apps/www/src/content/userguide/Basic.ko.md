@@ -415,14 +415,6 @@ interaction-pool share는 하루에 한 번 settle되므로, 마지막 settlemen
 이후 earned된 부분이 있다면 다음 daily window가 닫힌 직후에 live가
 됩니다.
 
-<a id="rewards.withdraw-staked"></a>
-
-### Vault VPFI 인출
-
-VPFI를 vault에서 wallet으로 옮깁니다. wallet에 들어가면 discount
-tier에 더 이상 count되지 않습니다. VPFI 페이지의 "withdraw"와 같은
-action입니다 — 편의를 위해 여기에도 둔 것입니다.
-
 ---
 
 ## Loan Details
