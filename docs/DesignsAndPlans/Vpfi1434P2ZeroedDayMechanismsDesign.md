@@ -41,6 +41,18 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   (`RewardAggregatorFacet.sol:561-570`). Per-destination like the existing
   `_perDestFields` halves; a mirror stores it as
   `dayDeliberatelyZeroed[dayId]`.
+- `baseDeployment` (`address`) — the sending deployment's own identity,
+  `address(this)`, exactly as the d5 remit wire already carries it
+  (`RewardRemittanceFacet.sol:604-611`) and as §2h constraint 20 requires of
+  the broadcast evolution (Codex #1600 r1 P1: without it, a delayed
+  broadcast from a retired Base deployment could install its zeroed marker,
+  clock and schedule into the new era, and that stale marker could then
+  combine with a new-era compensation to lapse or price the day wrongly).
+  The mirror stores it beside the clock (`dayClockEra[dayId]`); the
+  compensation ingress (§2.2) accepts a compensation for a day only from
+  the remitter matching the day's recorded era, and a V3 packet whose
+  `baseDeployment` differs from an already-recorded era for that day is
+  rejected.
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything
@@ -58,8 +70,14 @@ three new fields; `armedFromDay` stays outside that comparison, as today
 apply path early-returns on `broadcastV2Applied[dayId]` after the divergence
 check. The V3 apply path adds one branch: an already-applied day whose
 `dayFinalizedAt` is **unset on the mirror** accepts a V3 packet as a
-**clock backfill** — it runs the full V2-field divergence check, then writes
-only the three V3 fields. So:
+**clock backfill** — it verifies day identity, `destChainId`, deployment
+era, and the **immutable pair only** (the two globals), then writes only
+the V3 fields. It deliberately does NOT compare the halves or inclusion-
+derived fields (Codex #1600 r1 P2: `backfillDayInclusion` legitimately
+mutates a destination's halves after the first send, so a full V2-field
+comparison would make the one supported migration sequence unhealable), and
+it never re-applies halves — adding the clock is the branch's only write.
+So:
 
 - A day applied via kind-5 before the upgrade has no clock. It is **not
   lapse-eligible and not priceable as a zeroed day** (both machines gate on
@@ -67,6 +85,19 @@ only the three V3 fields. So:
   the permissionless `broadcastGlobal(dayId)` again, which now emits V3 and
   backfills the clock. This is the inventory/backfill 12b requires, and it
   needs no operator: the gate is per-day and self-healing.
+- **The heal must stay targetable after a destination-set change** (Codex
+  #1600 r1 P1): `broadcastGlobal` enumerates the messenger's *current*
+  `broadcastDestinationChainIds`, so a mirror removed from that set after
+  its kind-5 apply could never receive its V3 backfill. The design adds the
+  single-destination form `broadcastGlobalTo(dayId, destChainId)` —
+  permissionless, same payload assembly, admitted when the destination has
+  day-scoped historical standing (`chainDailyIncluded[dayId][dest]` or a
+  `chainDayCommitments[dayId][dest]` record) even if it is absent from the
+  current destination list. Boundary stated plainly: if the LANE itself
+  (channel peer / messenger config) has been torn down, nothing can deliver
+  to that chain — that is an operator decommissioning decision whose
+  consequences include unhealed clocks, the same class as Base-unreachable
+  in §3.
 - An old in-flight kind-5 after the upgrade still decodes (the kind-5 branch
   is kept, unchanged) and applies without a clock — healed the same way.
   Nothing is rejected, so nothing wedges (12b's "reject → halt forever"
@@ -127,9 +158,30 @@ quoteZeroedDayCompensation(dayId)
   requires dayDeliberatelyZeroed[dayId]        (V3 marker, §1.1)
   requires chainReportSentAt[dayId] != 0        (R1d, §2.3)
   requires day not lapsed and not already quoted-and-funded
-  computes perSide = the §2c per-entry capped supremum for this chain-day
+  computes perSide = Σ over local entries of min(perDay_e × Δq_side, C_side)
   sends (dayId, quotedLender, quotedBorrower) via the reward channel
 ```
+
+**The quote's delta is defined constructively — it is the counterfactual
+fair-share delta, not the day's frozen Δ_d** (Codex #1600 r1 P1: the frozen
+Δ_d uses the zeroed chain's excluded denominator and is zero on the
+constraint-17 side, and an earlier §1.5 wording derived the delta from the
+quote — circular). For side *s*:
+
+```
+Δq_s = halfPool_s(d) × 1e18 / (G_s + L_s)
+```
+
+where `halfPool_s(d)` is the deterministic global schedule half for the day
+(chain-known, `LibInteractionRewards.halfPoolForDay`), `G_s` is the frozen
+global denominator the V3 broadcast already carries
+(`globalLenderNumeraire18` / `...Borrower...` — the finalized total that
+EXCLUDES this chain), and `L_s` is the mirror's own folded per-side total
+for the day (`total{Lender,Borrower}InterestNumeraire18[d]`, valid because
+R1d's gate ran). This is exactly the share the chain would have priced at
+had its report been included, computed entirely from authenticated broadcast
+data plus mirror-local state — no circularity, and `L_s == 0` yields a zero
+quote for that side, which is the genuinely-zero case (§2.3).
 
 On Base it lands as evidence, not as funding: `onCompQuoteReceived` stores
 `compQuote[dayId][chain] = (lender, borrower, receivedAt)` after checking
@@ -155,17 +207,19 @@ on that side and Δ_d's division guard returns zero
 (`LibInteractionRewards.sol:1048, 3659`) — rewriting the funding stamp
 cannot make the day payable through the ordinary walk. The vehicle: a
 compensated day does not go through Δ_d at all. The mirror prices it
-**locally** — `compensatedDailyRpn = quotedSideHalf * 1e18 /
-totalSideInterestNumeraire18[d]` (its own folded per-side total,
+**locally** — `compensatedDailyRpn = fundedSideHalf * 1e18 / L_s` (the same
+mirror-local per-side total the quote's Δq was built on, §1.4;
 `LibInteractionRewards.sol:799/828`), bounded by the received compensation
 value with **deferral** semantics (the delivered budget grows with the
 funding, §2g's rule — never trim). The walk recognises a compensated day by
 a mirror-local stamp written at compensation ingress
 (`dayCompensated[dayId] = receiptKey`), and `processUserSideDay` prices it
-from the compensated pool instead of the broadcast halves. The local
-denominator is the SAME quantity the quote's supremum was computed against,
-so the quote bounds the payout by construction; entry-level caps (§2c) apply
-unchanged.
+from the compensated pool instead of the broadcast halves. Because
+`fundedSideHalf ≤ quotedSide = Σ min(perDay_e × Δq_s, C_side)` and the walk
+applies the per-entry caps unchanged, the funded amount bounds the payout
+by construction and no entry exceeds its §2c cap; when caps bind for some
+entries, the uncapped ones absorb at most the funded remainder, never more
+than the pool.
 
 ---
 
@@ -173,17 +227,28 @@ unchanged.
 
 ### 2.1 Suppression (R1, main body — restated only to anchor the gate)
 
-A mirror must not price a deliberately-zeroed day through the ordinary walk.
-Gate: `dayDeliberatelyZeroed[dayId] && !dayCompensated[dayId]` makes
-`_dayPoolHalves` return the **defer** shape for that day (halt=true today is
-the blanket mirror halt; after P1-b the per-day form replaces it for zeroed
-days only). Deferral — not terminal — because `advanceCumLenderThrough`'s
-`if (halt) break;` (`LibInteractionRewards.sol:1042-1044`) leaves the cursor
-before the day, which is exactly the "waits, re-attempted next call"
-behaviour the standing rule requires. The `rawPay == 0` terminal-progress
-path (`:4353-4358` + `_persistDay` `:1456`) is therefore never reached for a
-zeroed-uncompensated day; the entries-retired-for-zero mechanism P2 exists
-to prevent is closed at the pricing gate, not patched at persistence.
+A mirror must not price a deliberately-zeroed day through the ordinary walk
+**while a compensation is still possible**. Gate:
+`dayDeliberatelyZeroed[dayId] && !dayCompensated[dayId] && !dayLapsed[dayId]`
+makes `_dayPoolHalves` return the **defer** shape for that day (halt=true
+today is the blanket mirror halt; after P1-b the per-day form replaces it
+for zeroed days only). The third conjunct is load-bearing (Codex #1600 r1
+P1: without it the halt outlives the lapse — `lapseZeroedDay` sets neither
+of the first two flags, so the "terminal" would leave the day deferring
+forever and block every later day's claims behind the stuck cursor).
+**After the lapse, the day prices as zero through the ordinary machinery**:
+`_dayPoolHalves` returns `(0, 0, halt=false)` for a lapsed day, the
+`rawPay == 0` terminal-progress path (`:4353-4358` + `_persistDay` `:1456`)
+retires its entries at zero, and the cursor advances — which is exactly what
+"lapsed" means, with the loss already recorded by §5.2 at the moment of
+lapse. Deferral — not terminal — while the gate holds, because
+`advanceCumLenderThrough`'s `if (halt) break;`
+(`LibInteractionRewards.sol:1042-1044`) leaves the cursor before the day,
+the "waits, re-attempted next call" behaviour the standing rule requires.
+The entries-retired-for-zero mechanism P2 exists to prevent is closed at
+the pricing gate for exactly as long as payment is still possible, and
+deliberately reopened by the lapse terminal — retiring at zero is then the
+intended outcome, not the bug.
 
 ### 2.2 R1a — ingress classifiability + token-safe rejection
 
@@ -266,6 +331,31 @@ sizing comes from the ACK, which reads the mirror's recorded receipt
 R6c already permits this: a receipt-bound top-up cannot create a second
 stranded delivery.
 
+**The partially-backed state also gets a bounded PERMISSIONLESS terminal —
+the ADMIN top-up alone is not one** (Codex #1600 r1 P1: with
+`dayCompensated` set, §3's lapse precondition is false, so if the operator
+never supplements, the day defers on its shortfall forever and blocks every
+later day behind the cursor — the exact R1c state §2h requires to have a
+permissionless exit). New mirror function:
+
+```
+lapseShortCompensatedDay(dayId)                       permissionless
+  requires dayCompensated[dayId]
+  requires compensated pool short of the standing obligation
+  requires mirror block.timestamp > receivedAt + lapseWindow(version)
+           (the SAME versioned window, restarted from the compensation
+            receipt's own recorded receivedAt — ReceivedRemit.receivedAt)
+```
+
+Effect: the day's compensated pricing switches from defer-on-shortfall to
+**truncate-at-remaining** — entries are paid until the funded pool
+exhausts, the rest retire with the shortfall recorded in the §5.2 loss
+ledger, and the cursor advances. Each supplemental delivery restarts the
+window (its own `receivedAt`), so an operator actively topping up is never
+raced; only an abandoned shortfall terminates. This is R2's principle
+applied to R1c's state: pay what is backed, terminate on a clock, record
+the loss.
+
 ---
 
 ## 3. R2 — the lapse terminal, and R2a stated at its true width
@@ -331,7 +421,19 @@ kind (§3.6a layering): payload carries the receipt identity
 
 - mirror side: returned cumulative `+= actual outflow`, reservation record
   retired exactly once;
-- Base side: `rewardBudgetRecovered += actual inflow` — **recovery-position
+- Base side: the credit is **entitlement-bounded and chain-bound** (Codex
+  #1600 r1 P1 ×2): the authenticated message's `sourceChainId` must equal
+  the referenced reservation's `dstChainId` — otherwise another registered
+  mirror could consume a chain's one-shot recovery, clear its gate, and
+  strand the genuine return — and the position credit is
+  `min(actual inflow, reservation entitlement − already recovered for this
+  receipt)` (constraint 6's amount-bounded entitlement: without the cap, a
+  faulty or compromised mirror could attach a small valid receipt to an
+  arbitrarily large return and mint uncharged re-dispatch capacity, a 69M
+  bypass). Any excess above the entitlement is **quarantined token-safe**
+  in an operator-visible overage position — never credited to the recovery
+  position, never reverted (R6d's rule);
+- `rewardBudgetRecovered += credited amount` — **recovery-position
   evidence, never a cap deduction** (`remaining` reads gross alone); the
   physical tokens sit in the recovery position;
 - the R6 gate for that chain clears (return settlement, §5.1).
@@ -425,9 +527,29 @@ carry-over**, not new wire: a view enumerating non-zero
 inventoried before cutover, and an ADMIN
 `importOutstandingCompensation(chain, oldRemitter, oldRemitId)` on the new
 deployment that seeds the gate CLOSED for those chains until old-era
-evidence (verified against the old deployment's public state) clears them.
+evidence clears them.
+
+**How an imported gate observes old-era settlement — the clearing
+transitions** (Codex #1600 r1 P1: seeding closed with no observer would
+suppress that chain's compensations permanently even after the old delivery
+resolved):
+
+- *Consumed or returned on the mirror*: the mirror's receipt state for
+  `(oldRemitter, oldRemitId)` is mirror-side storage that survives Base's
+  rotation. A permissionless mirror function re-presents it to the CURRENT
+  Base as a settlement message carrying the old-era tuple; the new
+  deployment verifies the tuple against its imported marker — not against
+  its own reservations, which never contained it — and clears. This is
+  R6b's re-presentable-evidence property pointed at the new era, and it
+  reuses the ack/return wire shapes with the imported tuple as the key.
+- *Ceremony-recovered*: governance evidence is operator-verified by
+  construction, so an ADMIN evidenced clear in the
+  `finalizeRemitReservation(forced)` mould covers the case where the old
+  era's stranded tokens were recovered pool → Diamond.
+
 No unresolved compensation may be silently forgotten by a redeploy — that
-is the whole requirement.
+is the whole requirement; the transitions above are what make the imported
+marker *resolvable* rather than a permanent lock.
 
 ---
 
@@ -460,6 +582,14 @@ the bump (frozen per day):
 - **`dispatchCutoffGap`** (R3) — proposal: default `24 hours`, bounds
   `[6 hours, 7 days]`. Base refuses to dispatch a compensation within the
   gap before expiry.
+- **Relational bound, enforced at the version setter** (Codex #1600 r1 P1:
+  independent ranges admit `window = 3 days, gap = 7 days`, which places
+  the cutoff before finalization and forbids every compensation for every
+  day frozen under that version — unrepairable, since frozen parameters
+  are permanent): `lapseWindowSeconds >= dispatchCutoffGap + 48 hours`.
+  The 48-hour floor is the dispatch-opportunity margin (grace + lane
+  latency + skew, with slack); a version violating it is refused, never
+  stored.
 - **The skew rule (ratified requirement):** Base evaluates the R3 cutoff on
   Base's clock; the mirror evaluates the R2 lapse on its own. Both compare
   against the same frozen `finalizedAt` (Base-domain), so the residual
@@ -491,10 +621,27 @@ the bounds are the design's actual commitment.
    gate** (§1.4, §1.5, §2.1, §2.3). Proves: constraint-17 day pays under
    the local denominator; zero-quote resolves a genuinely-zero day; funding
    bounded by quote.
-4. **P2-w4 — lapse terminal + R6 gate + R6a instrumentation + supplemental
-   transition** (§3, §5.1, §5.2, §2.5). Proves: lapse requires all four
-   preconditions; gate one-in-flight; supplemental accumulates under the
-   quote bound; R6a figure recorded for a suppressed day.
+4. **P2-w4 — lapse terminals + R6 gate + R6a instrumentation + supplemental
+   transition** (§3, §5.1, §5.2, §2.5 — both lapse functions). Proves:
+   each lapse requires its full precondition set; gate one-in-flight;
+   supplemental accumulates under the quote bound and restarts the short-
+   compensated window; R6a figure recorded for a suppressed day; a lapsed
+   day prices zero and the cursor advances past it (§2.1's third conjunct).
+   **Activation precondition — the constraint-19 migration for legacy
+   MANUAL remits** (Codex #1600 r1 P1: a pre-P2 d5 manual remit carries
+   neither the P2 tag nor per-side amounts, so the upgraded machinery could
+   ACK it and close the Base day yet never stamp or price the compensated
+   pool, leaving lapse-and-underpay as the only exit): before the R6 gate
+   and lapse terminals arm, (a) Base inventories pre-P2 manual reservations
+   (identifiable: fresh-only, single-day, day was `remitIneligible`) — a
+   Pending one is released or allowed to resolve; (b) a delivered one is
+   healed on the mirror by the permissionless
+   `stampLegacyCompensation(dayId, receiptKey)`: it verifies the existing
+   receipt (`ReceivedRemit` — mirror-local authenticated evidence) covers
+   exactly that zeroed day, then stamps `dayCompensated` and moves the
+   received amount from the delivered-fresh position into the compensated
+   pool, bounded by the receipt amount. The activation gate is the
+   inventory reading empty.
 5. **P2-w5 — R4 return over #1568's channel + recovery position +
    uncharged re-dispatch** (§4.2) — downstream of #1568's shared slice,
    before M7 arming (plan §4 `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE`).
