@@ -71,24 +71,22 @@ const LOCALES = ['ar', 'de', 'es', 'fr', 'hi', 'ja', 'ko', 'ta', 'zh'];
 const EXPECTED_DIR = (code) => (code === 'ar' ? 'rtl' : 'ltr');
 
 /**
- * BCP-47 match: the exact base code, or the base code followed by a
- * subtag separator (`de-AT`, `zh-Hans`).
+ * Does `lang` name this locale, as a well-formed BCP-47 tag?
  *
- * `startsWith(code)` is not the same test and passes things it should
- * not: `"deceptive".startsWith("de")` is true, so a malformed or
- * truncated `lang` attribute would satisfy the very layer that exists
- * to catch malformed language metadata (Codex #1590 r3).
+ * Delegated to `Intl.Locale` rather than a hand-rolled pattern. My
+ * regex accepted `de-12` and `de-a1` (both invalid) while REJECTING
+ * `de-u-co-phonebk` (valid — a Unicode extension), so it was wrong in
+ * both directions: malformed metadata could pass and a legitimate
+ * extended tag could fail. The platform already has a standards-aware
+ * parser; a second, worse copy of the grammar is not worth owning
+ * (Codex #1590 r5).
  */
-const BCP47 = /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/;
 const langMatches = (lang, code) => {
-  const l = String(lang).toLowerCase();
-  // The whole tag must be well-formed, not merely start with the code.
-  // `de-`, `de--junk` and `de-\u{1F4A9}` all pass a separator-only test
-  // while being invalid tags, so malformed deployment metadata could
-  // satisfy the very layer meant to catch it (Codex #1590 r4).
-  if (!BCP47.test(l)) return false;
-  const c = code.toLowerCase();
-  return l === c || l.startsWith(`${c}-`);
+  try {
+    return new Intl.Locale(String(lang)).language.toLowerCase() === code.toLowerCase();
+  } catch {
+    return false; // not a well-formed tag at all
+  }
 };
 
 /**
@@ -183,14 +181,21 @@ async function probe(page, code) {
   // the expected title means a slow load reads as slow, not as failed.
   await page
     .waitForFunction(
-      (want) =>
-        // Same well-formedness rule as `langMatches`; inlined because
-        // this predicate is serialised into the page.
-        new RegExp(want.bcp47).test(document.documentElement.lang.toLowerCase()) &&
-        (document.documentElement.lang.toLowerCase() === want.code ||
-          document.documentElement.lang.toLowerCase().startsWith(`${want.code}-`)) &&
-        (document.querySelector('h1')?.textContent ?? '').trim() === want.title,
-      { code, title: expected['copy.recover.title'], bcp47: BCP47.source },
+      (want) => {
+        // Same rule as `langMatches`, evaluated in the page (which has
+        // its own Intl) because this predicate is serialised across.
+        let base = null;
+        try {
+          base = new Intl.Locale(document.documentElement.lang).language.toLowerCase();
+        } catch {
+          return false;
+        }
+        return (
+          base === want.code &&
+          (document.querySelector('h1')?.textContent ?? '').trim() === want.title
+        );
+      },
+      { code, title: expected['copy.recover.title'] },
       { timeout: 30_000 },
     )
     .catch(() => {});
@@ -238,17 +243,35 @@ for (const code of LOCALES) {
   // locale's `vaipakam:language` and cached resources, so a run could
   // pass on a stale bundle. `done()` (not `ctx.close()`) is what removes
   // the throwaway profile directory afterwards (Codex #1590 r1).
-  const { ctx, page, done, blockedRequests } = await launch({
-    role: 'public',
-    keyless: true,
+  // Browser SETUP failure is a missing precondition, not a product
+  // regression: Chromium absent, LIVE_CHROMIUM_PATH wrong, no space for
+  // a profile. Left uncaught it escapes the per-locale try below and
+  // exits 1 — and now that this script is registered in
+  // THREE_VERDICT_DRIVERS the batch TRUSTS that code and reports a
+  // missing browser as FAIL. Hit exactly this in review with
+  // Playwright's "Executable doesn't exist" (Codex #1590 r5).
+  let session;
+  try {
+    session = await launch({
+      role: 'public',
+      keyless: true,
     // keyless removes the WALLET; readOnly is what stops the route shim
     // forwarding a page-initiated POST/PUT/DELETE to a real backend.
     // They are separate guards and this drive needs both — a locale
     // check pointed at a regressed or hostile SITE_URL must not be able
     // to mutate external state (Codex #1590 r2).
-    readOnly: true,
-    freshProfile: true,
-  });
+      readOnly: true,
+      freshProfile: true,
+    });
+  } catch (err) {
+    console.error(
+      `\nBLOCKED: could not start the browser for ${code} — this is a setup` +
+        ` precondition, not a product finding.\n  ${String(err).split('\n')[0]}` +
+        `\n  → check LIVE_CHROMIUM_PATH, or that Chromium is installed.`,
+    );
+    process.exit(2);
+  }
+  const { ctx, page, done, blockedRequests } = session;
   try {
     await ctx.addInitScript((c) => {
       try {
