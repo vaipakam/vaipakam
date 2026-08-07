@@ -56,8 +56,23 @@ const SHARED = path.resolve(
  * difference between finding out now and finding out after the API
  * bill and the diff (Codex #1595 r1).
  */
-function assertConfirmWordPolicy(): void {
-  const policy = JSON.parse(fs.readFileSync(POLICY_PATH, 'utf8')) as {
+function assertConfirmWordPolicy(argv: string[]): void {
+  // Validate the policy the shared runner will ACTUALLY load. It
+  // accepts `--policy <file>`, resolved against INIT_CWD; checking only
+  // the default path while forwarding an override would leave the guard
+  // inspecting one file and the runner enforcing another, so a custom
+  // policy with empty or stale requiredLiterals would slip straight
+  // past it (Codex #1595 r2).
+  const i = argv.indexOf('--policy');
+  const override = i !== -1 ? argv[i + 1] : undefined;
+  if (i !== -1 && (override === undefined || override.startsWith('--'))) {
+    console.error('--policy needs a file path.');
+    process.exit(1);
+  }
+  const effective = override
+    ? path.resolve(process.env.INIT_CWD ?? process.cwd(), override)
+    : POLICY_PATH;
+  const policy = JSON.parse(fs.readFileSync(effective, 'utf8')) as {
     requiredLiterals?: Record<string, string[]>;
   };
   const declared = policy.requiredLiterals?.['vaultRecover.modalConfirmPrompt'] ?? [];
@@ -65,9 +80,10 @@ function assertConfirmWordPolicy(): void {
   // naming two would let a locale satisfy the check with the wrong one.
   if (declared.length !== 1 || declared[0] !== RECOVERY_CONFIRM_WORD) {
     console.error(
-      `translation-policy.json requiredLiterals["vaultRecover.modalConfirmPrompt"] is ` +
+      `${path.basename(effective)} requiredLiterals["vaultRecover.modalConfirmPrompt"] is ` +
         `${JSON.stringify(declared)}, expected exactly ["${RECOVERY_CONFIRM_WORD}"] — ` +
-        'the word VaultRecover compares typed input against.',
+        'the word VaultRecover compares typed input against.' +
+        (effective === POLICY_PATH ? '' : `\n  policy checked: ${effective}`),
     );
     process.exit(1);
   }
@@ -91,11 +107,12 @@ function mapLegacyFlags(argv: string[]): string[] {
   });
 }
 
-assertConfirmWordPolicy();
+const forwarded = mapLegacyFlags(process.argv.slice(2));
+assertConfirmWordPolicy(forwarded);
 
 const { status } = spawnSync(
   'tsx',
-  [SHARED, '--locales-dir', LOCALES_DIR, ...mapLegacyFlags(process.argv.slice(2))],
+  [SHARED, '--locales-dir', LOCALES_DIR, ...forwarded],
   { stdio: 'inherit', shell: false },
 );
 
