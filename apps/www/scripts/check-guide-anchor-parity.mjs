@@ -83,16 +83,41 @@ const anchorsIn = (file) =>
  * question anchors cannot: does this edition have as many chapters as
  * its source?
  *
- * The pattern allows up to three leading spaces because CommonMark
- * does, and the renderer follows CommonMark: `Advanced.hi.md` and
- * `Advanced.ja.md` both carry two-space-indented `##` headings that
- * render as real chapters. Anchoring at column zero counted those
- * editions two chapters short and would have recorded a gap that does
- * not exist — then failed the moment someone tidied the indentation
- * (Codex #1594 r1).
+ * "Chapter" is defined as the RENDERER defines it, not as CommonMark
+ * would in the abstract: `extractToc` in `src/lib/markdownToc.tsx`
+ * matches `/^##\s+(.+)$/` per line, so a heading that is not at column
+ * zero never reaches the sidebar and is not a chapter the reader can
+ * navigate to.
+ *
+ * That distinction is load-bearing here. `Advanced.hi.md` and
+ * `Advanced.ja.md` carry two two-space-indented `##` lines each, which
+ * a CommonMark-shaped `^ {0,3}## ` pattern counts as chapters — but
+ * those two spaces CONTINUE the preceding list item, so they parse as
+ * `root > list > listItem > heading` rather than as top-level
+ * chapters, and the site's own table of contents omits them. Counting
+ * them would record those editions as chapter-equivalent while two of
+ * their chapters are unreachable from the sidebar (Codex #1594 r2,
+ * correcting r1).
+ *
+ * Fenced blocks are skipped: a `## Example` inside a code sample is
+ * illustration, not structure. None exists in the corpus today; the
+ * guard is cheap and the failure mode — a phantom chapter masking a
+ * real missing one — is silent. (`extractToc` does NOT skip fences,
+ * so it would list such a line in the sidebar; that is a pre-existing
+ * renderer issue, tracked separately rather than papered over here.)
  */
-const CHAPTER_RE = /^ {0,3}## .+$/gm;
-const chapterCount = (file) => (readGuide(file).match(CHAPTER_RE) ?? []).length;
+const chapterCount = (file) => {
+  let fenced = false;
+  let n = 0;
+  for (const line of readGuide(file).split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (!fenced && /^## .+$/.test(line)) n += 1;
+  }
+  return n;
+};
 
 /**
  * Editions known to be short of the English chapter list, per
@@ -108,8 +133,11 @@ const KNOWN_CHAPTER_GAPS = {
   'Advanced:de': 1,
   'Advanced:es': 1,
   'Advanced:fr': 1,
-  'Advanced:hi': 1,
-  'Advanced:ja': 1,
+  // hi/ja additionally lack `How Liquidation Actually Works` and
+  // `Allowances` as CHAPTERS: the text is present but indented into
+  // the preceding list item, so the sidebar never offers it.
+  'Advanced:hi': 3,
+  'Advanced:ja': 3,
   'Advanced:ko': 1,
   'Advanced:ta': 1,
   'Advanced:zh': 1,
@@ -151,7 +179,19 @@ for (const [doc, locales] of byDoc) {
     // Chapter-count parity, which the anchor comparison cannot see.
     const short = englishChapters - chapterCount(file);
     const allowed = KNOWN_CHAPTER_GAPS[`${doc}:${locale}`] ?? 0;
-    if (short > allowed) {
+    if (short < 0) {
+      // An EXTRA chapter is its own report, handled first: falling
+      // through to the stale-baseline branch would print
+      // `records 0 missing chapter(s) but only -1 are — remove it`,
+      // which is both nonsense and a second thing to chase for one
+      // change (Codex #1594 r2).
+      problems.push(
+        `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
+          `${englishChapters} — the translation carries a section the ` +
+          'source does not',
+      );
+      if (allowed > 0) seenChapterGaps.add(`${doc}:${locale}`);
+    } else if (short > allowed) {
       problems.push(
         `${file}: has ${chapterCount(file)} chapters, ${englishFile} has ` +
           `${englishChapters}${allowed ? ` (${allowed} recorded as a known gap)` : ''}` +
@@ -170,13 +210,6 @@ for (const [doc, locales] of byDoc) {
     } else if (allowed > 0) {
       seenChapterGaps.add(`${doc}:${locale}`);
     }
-    if (short < 0) {
-      problems.push(
-        `${file}: has MORE chapters than ${englishFile} — the translation ` +
-          'carries a section the source does not',
-      );
-    }
-
     const theirs = anchorsIn(file);
     for (const anchor of english) {
       if (theirs.has(anchor)) continue;
