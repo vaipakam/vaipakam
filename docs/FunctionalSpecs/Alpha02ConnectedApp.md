@@ -847,6 +847,25 @@ Its intended behaviour, as the test oracle for this surface:
   the interest accrued so far plus a top-up when the replacement rate
   earns the staying lender less than promised, and an offset requires
   fresh lending capital now plus the automatic payoff at completion.
+  Choosing partial repayment, where the lender enabled it, settles
+  the interest accrued up to that moment and reduces the outstanding
+  principal by the amount paid, and the loan CONTINUES on the smaller
+  balance rather than closing — that continuation is the whole point
+  of the option, and it is what separates a partial from every other
+  path on this list. Retiring the balance in full is the full-repayment
+  path's job, so a "partial" sized at the entire outstanding amount is
+  refused rather than quietly settling the loan. Because a partial
+  changes the outstanding amount, it is held while another arrangement
+  is pinned to that amount, and the reason is stated rather than the
+  option vanishing. Two of those holds are answered by the chain and so
+  hold wherever the borrower is signed in: a live offset, and a sale a
+  buyer has already accepted. The third — a standing refinance request
+  — is currently remembered only on the device that posted it, so a
+  borrower acting from a second device is not held back from a partial
+  that would leave that request permanently unacceptable. That
+  limitation is a known divergence from the intent, recorded in
+  `_CodeVsDocsAudit.md`, and is stated here rather than described as a
+  guarantee the product does not yet make.
   The chooser never submits anything itself: in Advanced mode each
   path leads to its own tool with its own review; in Basic mode the
   advanced paths share one explicit, clearly labelled action that

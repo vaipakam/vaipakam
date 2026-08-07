@@ -271,12 +271,23 @@ function randomNonce(): bigint {
   return nonce;
 }
 
-/** Direct-write accept of an ERC-20/ERC-20 LENDER offer (the shape
- *  seedDeskOffer creates on the lend side): approve the collateral,
- *  sign the canonical AcceptTerms bound to the LIVE getOffer fields
- *  (mirroring useAcceptTerms' lender-offer mapping — amountMax +
- *  interestRateBps are the endpoints a direct accept binds), send
- *  acceptOffer. Returns the initiated loan id. */
+/** Direct-write accept of an ERC-20/ERC-20 offer of EITHER side (both
+ *  shapes seedDeskOffer creates): escrow the acceptor's leg, sign the
+ *  canonical AcceptTerms bound to the LIVE getOffer fields, send
+ *  acceptOffer. Returns the initiated loan id.
+ *
+ *  Which endpoint of the creator's range binds, and which leg the
+ *  acceptor escrows, both flip with the offer's side — per
+ *  `OfferAcceptFacet._bindTermsToOffer`:
+ *
+ *      roleAmount = isLender ? o.amountMax : o.amount
+ *      roleRate   = isLender ? o.interestRateBps : o.interestRateBpsMax
+ *
+ *  Accepting a LENDER offer makes the caller the borrower (it locks
+ *  collateral); accepting a BORROW request makes the caller the lender
+ *  (it funds the principal). Getting either endpoint wrong reverts
+ *  `OfferTermsMismatch(6)` / `(8)` rather than failing legibly, which
+ *  is why they are derived here rather than passed in. */
 export async function acceptOfferDirect(
   role: Role,
   offerId: bigint,
@@ -284,13 +295,27 @@ export async function acceptOfferDirect(
   const account = accountFor(role);
   const wallet = walletFor(account);
   const o = await getOffer(offerId);
+  const creatorIsLender = Number(o.offerType) === 0;
 
-  // The acceptor of a lender offer locks the collateral leg.
+  // The acceptor escrows the leg the creator did NOT: collateral when
+  // taking a lender offer, principal when funding a borrow request.
+  // Approve the range's UPPER endpoint on either leg (the collateral
+  // side already did): the bound principal is `o.amount`, but a
+  // helper that approves exactly the bound figure has no headroom if
+  // an offer's endpoints ever disagree, and an over-approval by a
+  // disposable fork wallet costs nothing.
+  const fundMax =
+    (o.amountMax as bigint) > (o.amount as bigint)
+      ? (o.amountMax as bigint)
+      : (o.amount as bigint);
+  const [escrowToken, escrowAmount] = creatorIsLender
+    ? ([o.collateralAsset as `0x${string}`, o.collateralAmountMax as bigint] as const)
+    : ([o.lendingAsset as `0x${string}`, fundMax] as const);
   const approveHash = await wallet.writeContract({
-    address: o.collateralAsset as `0x${string}`,
+    address: escrowToken,
     abi: ERC20_MIN_ABI,
     functionName: 'approve',
-    args: [DIAMOND, o.collateralAmountMax as bigint],
+    args: [DIAMOND, escrowAmount],
     account,
     chain: forkChain,
   });
@@ -326,11 +351,13 @@ export async function acceptOfferDirect(
     offerType: Number(o.offerType),
     lendingAsset: o.lendingAsset as `0x${string}`,
     collateralAsset: o.collateralAsset as `0x${string}`,
-    // ERC-20 LENDER offer endpoints (OfferAcceptFacet._bindTermsToOffer):
-    // amountMax + the floor rate.
-    amount: o.amountMax as bigint,
+    // Side-dependent endpoints (OfferAcceptFacet._bindTermsToOffer) —
+    // see this function's doc comment.
+    amount: (creatorIsLender ? o.amountMax : o.amount) as bigint,
     collateralAmount: o.collateralAmount as bigint,
-    interestRateBps: o.interestRateBps as bigint,
+    interestRateBps: (creatorIsLender
+      ? o.interestRateBps
+      : o.interestRateBpsMax) as bigint,
     durationDays: o.durationDays as bigint,
     tokenId: o.tokenId as bigint,
     collateralTokenId: o.collateralTokenId as bigint,
@@ -378,7 +405,8 @@ export async function acceptOfferDirect(
     chain: forkChain,
   });
   await pub.waitForTransactionReceipt({ hash });
-  return newestLoanIdFor(account.address, 'borrower');
+  // The acceptor's side is the mirror of the creator's.
+  return newestLoanIdFor(account.address, creatorIsLender ? 'borrower' : 'lender');
 }
 
 /** Direct-write full repayment: approve the contract's own settlement

@@ -190,3 +190,48 @@ was neither: reading the finalization branch settled it in one look. Recording
 that because "which layer is this claim about?" would have resolved it before it
 was ever filed as a divergence.
 
+
+---
+
+## Partial repayment vs. a standing refinance request — the hold is device-local (2026-08-07, #1589 r3)
+
+**Status:** open — needs a human intent decision.
+
+The connected app holds partial repayment while another arrangement is pinned
+to the loan's outstanding amount. Two of those holds are answered by the chain
+and therefore hold from any device: a live offset (the borrower position's lock
+is read live and fails closed on an unreadable answer) and a sale a buyer has
+already accepted (a chain simulation probe).
+
+The third — a standing refinance request — is not. `data/refinancePending.ts`
+discovers the request from a **device-local `localStorage` marker**, and its own
+header states why: "the indexer has no column for the refinance tag yet". Every
+render then verifies that marker against the chain, so the state is trustworthy
+*once known*; what is device-local is knowing a request exists at all.
+`repayPartial` carries no refinance guard on chain either.
+
+**The consequence.** A borrower who posts a refinance request on one device and
+then opens the app on another is offered partial repayment with nothing held.
+Taking it shrinks the principal, and the standing request — frozen at the old
+amount — becomes permanently unacceptable to any lender. Nothing warns them
+beforehand, and the app they are looking at cannot know the request exists.
+
+**What is NOT lost, stated precisely** (a first draft of this entry overstated
+it): the dead request is not stranded on the original device. `useMyOffersFull`
+chain-enumerates every active offer the wallet created, and `OpenOrdersPanel`
+exposes `cancelOffer` to its creator, so the borrower can find and cancel it as
+an ordinary open order from anywhere. The cleanup is device-independent; what
+is device-local is the ASSOCIATION with the loan — the position page cannot
+connect the request to the loan it targets, so the partial is not held, no
+warning is shown, and the borrower has to already know to go looking. The cost
+is therefore the lost refinance opportunity and a silent surprise, not an
+unreachable piece of state.
+
+**Why this is filed rather than fixed here.** #1589 is a test-coverage PR; this
+was found while writing the spec sentence for partial repayment, when a review
+round pointed out the sentence claimed a guarantee the product does not make.
+The spec has been narrowed to state the limitation plainly. Whether the intent
+is a chain-backed interlock (requiring refinance-tag discovery the indexer
+cannot currently serve) or an accepted device-local behaviour with a warning is
+a product call, not one to settle by writing whichever the code happens to do
+into the spec.
