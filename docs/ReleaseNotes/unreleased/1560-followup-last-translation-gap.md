@@ -15,12 +15,21 @@ with the same reassurance the neighbouring refusal already used in that
 language, so the three do not each phrase "nothing was sent or approved" a
 different way.
 
-With these filled, the list of known-untranslated entries is empty. That list
-was never a place to park things: every entry had to be deleted as it was
-filled, and the requirement it was measured against was deliberately never
-softened to match whatever happened to be finished. The list shrank from a
-hundred and sixty entries per language to two to none, and the requirement now
-applies with nothing excused from it.
+With these filled, the list of known-missing entries is empty. That list was
+never a place to park things: every entry had to be deleted as it was filled,
+and the requirement it was measured against was deliberately never softened to
+match whatever happened to be finished. It shrank from a hundred and sixty
+entries per language to two to none.
+
+That closes one question and not the bigger one. The list tracked wording that
+was ABSENT, and every language now has every entry. But an entry can be present
+and still hold the English words, and several hundred do — Hindi most of all —
+so a reader can still meet English partway down a page in a language we offer
+as translated. The check cannot see those, because it asks whether an entry
+exists rather than what it says. That gap is now recorded and tracked
+separately; it needs a decision about which entries are meant to read the same
+in every language (brand names, token symbols) before it can be checked
+automatically.
 
 Filling the list closes one question but not the one people actually care
 about. Checking the wording files proves the sentences were written; it does

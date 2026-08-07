@@ -493,12 +493,17 @@ Thin-market honesty rules apply.
   already presented as available. A newly added surface is translated in
   the same change that ships it, so a user never meets a page that
   switches to English partway down.
-  *(Now true of the whole app: the recorded gap is closed and the guard
-  carries no exemption for any key in any advertised language, so the
-  sentence above is enforced rather than aspirational. It stays stated in
-  full — the intent is that a language advertised as available never
-  switches to English mid-page, which remains the requirement whatever
-  the current state of the bundles happens to be.)*
+  *(Not yet true of the whole app. Every key now EXISTS in every
+  advertised language — the missing-key baseline is empty — but a key
+  can exist and still hold the English string, and several hundred do:
+  Hindi carries ~283 such leaves, the others 12-48 each. The guard
+  compares key PRESENCE, so it cannot see them. That is a recorded gap,
+  not a revision of the intent above — see the dated row in
+  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent is
+  deliberately left stated in full, because a spec narrowed to the
+  surfaces that happen to be finished cannot be violated and would
+  erase the only record that the rest is unfinished rather than
+  intended.)*
 - Where a sentence embeds a live value, that value survives translation.
   A translation may reorder the values to fit its grammar, and may leave
   one out where the grammar already carries it (a dual form that means

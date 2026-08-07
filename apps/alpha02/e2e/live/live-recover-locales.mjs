@@ -55,6 +55,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch, SITE } from './driver.mjs';
+import { splitBlocked } from './readOnlyFindings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = path.join(HERE, '..', '..', 'src', 'i18n', 'locales');
@@ -78,8 +79,14 @@ const EXPECTED_DIR = (code) => (code === 'ar' ? 'rtl' : 'ltr');
  * truncated `lang` attribute would satisfy the very layer that exists
  * to catch malformed language metadata (Codex #1590 r3).
  */
+const BCP47 = /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/;
 const langMatches = (lang, code) => {
   const l = String(lang).toLowerCase();
+  // The whole tag must be well-formed, not merely start with the code.
+  // `de-`, `de--junk` and `de-\u{1F4A9}` all pass a separator-only test
+  // while being invalid tags, so malformed deployment metadata could
+  // satisfy the very layer meant to catch it (Codex #1590 r4).
+  if (!BCP47.test(l)) return false;
   const c = code.toLowerCase();
   return l === c || l.startsWith(`${c}-`);
 };
@@ -177,10 +184,13 @@ async function probe(page, code) {
   await page
     .waitForFunction(
       (want) =>
+        // Same well-formedness rule as `langMatches`; inlined because
+        // this predicate is serialised into the page.
+        new RegExp(want.bcp47).test(document.documentElement.lang.toLowerCase()) &&
         (document.documentElement.lang.toLowerCase() === want.code ||
           document.documentElement.lang.toLowerCase().startsWith(`${want.code}-`)) &&
         (document.querySelector('h1')?.textContent ?? '').trim() === want.title,
-      { code, title: expected['copy.recover.title'] },
+      { code, title: expected['copy.recover.title'], bcp47: BCP47.source },
       { timeout: 30_000 },
     )
     .catch(() => {});
@@ -251,8 +261,20 @@ for (const code of LOCALES) {
     // The read-only guard's own log, asserted rather than trusted: a
     // blocked write means the page TRIED to mutate something during a
     // review that advertises itself as read-only, which is a finding in
-    // its own right — silence here is the only acceptable result.
-    for (const b of blockedRequests) {
+    // its own right.
+    //
+    // Cloudflare's edge injects a `POST /cdn-cgi/rum` beacon into the
+    // deployed page, which the guard blocks correctly and which is not
+    // an application write. Counting it would have failed every locale
+    // on a healthy production run — or worse, failed them
+    // nondeterministically depending on whether the beacon fired before
+    // this loop sampled the log (Codex #1590 r4). Classified with the
+    // SHARED predicate rather than a second copy.
+    const { telemetry, violations } = splitBlocked(blockedRequests, [SITE]);
+    if (telemetry.length > 0) {
+      row.telemetry = telemetry.length;
+    }
+    for (const b of violations) {
       row.problems.push(`read-only violation: ${b.reason} → ${b.url}`);
     }
     rows.push(row);
@@ -275,7 +297,8 @@ for (const r of rows) {
     failed++;
     console.log(`FAIL ${r.code}  ${r.problems.join('; ')}`);
   } else {
-    console.log(`ok   ${r.code}  lang=${r.lang} dir=${r.dir}  h1="${r.h1}"`);
+    const tel = r.telemetry ? `  (${r.telemetry} edge-telemetry request(s) blocked, expected)` : '';
+    console.log(`ok   ${r.code}  lang=${r.lang} dir=${r.dir}  h1="${r.h1}"${tel}`);
   }
 }
 

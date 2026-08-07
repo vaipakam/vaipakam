@@ -217,6 +217,26 @@ export function addressOf(role) {
   return walletFor(role).address;
 }
 
+/**
+ * Assert a signing driver's credential UP FRONT.
+ *
+ * Loading the wallet file lazily (so keyless drives can import this
+ * module) moved the BLOCKED exit from import time to first use — and
+ * several signing drivers do live chain reads BEFORE they ever reach
+ * `launch` or `addressOf`. With no credential and a slow or unavailable
+ * public RPC, those reads now fail with exit 1, or hang, instead of the
+ * immediate exit 2 the batch contract documents: a missing secret would
+ * be reported as a product regression (Codex #1590 r4).
+ *
+ * Call this at the top of any driver that signs, before its first
+ * network call. It is the same per-role validation `walletFor` does, so
+ * there is no second rule to keep in step — only an earlier moment to
+ * apply it.
+ */
+export function requireSigningRole(role) {
+  walletFor(role);
+}
+
 export async function launch({
   role,
   startChainId = 84532,

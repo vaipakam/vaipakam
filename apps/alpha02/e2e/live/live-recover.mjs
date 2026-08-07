@@ -42,6 +42,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
 import { ensureConnected, launch, SITE } from './driver.mjs';
+import { splitBlocked } from './readOnlyFindings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIAMOND = JSON.parse(
@@ -416,51 +417,9 @@ try {
  * ignored with it — but a guard widened past its reason stops being a
  * guard at all.
  */
-function isCloudflareBeacon({ reason, url: rawUrl }) {
-  // The REASON has to match too, not just the URL. `readOnlyViolation`
-  // classifies by content: a JSON-RPC body carrying a write method is
-  // recorded as `json-rpc eth_sendTransaction`, whatever URL it was
-  // posted to. A URL-only filter would therefore have exempted a
-  // signing or broadcast attempt aimed at the beacon path — the single
-  // worst thing this check exists to catch (Codex #1576 r2).
-  //
-  // POST specifically, not any method. The documented beacon is a POST;
-  // a PUT/PATCH/DELETE to the same path is an anomaly, and accepting
-  // the generic shape would have filed it as expected telemetry —
-  // contradicting the claim that everything else stays fatal (Codex
-  // #1576 r3). Every `json-rpc *` and `wallet rpc *` reason falls
-  // through and stays fatal too, as does any reason shape this doesn't
-  // recognise: unknown means fatal, the safe direction for a guard.
-  if (reason !== 'POST (non-RPC mutating request)') return false;
-  try {
-    const url = new URL(rawUrl);
-    // ORIGIN, not hostname: `hostname` ignores both scheme and port, so
-    // `http://alpha02.vaipakam.com/cdn-cgi/rum` (cleartext) and
-    // `https://vaipakam.com:8443/cdn-cgi/rum` (odd port) matched a
-    // hostname test while being nothing Cloudflare's edge would emit
-    // (Codex #1576 r4). `url.origin` folds scheme, host and non-default
-    // port into one comparable value.
-    //
-    // The HTTPS check is kept even though every allowed origin is
-    // already HTTPS today: it makes "never exempt a cleartext write" a
-    // property of this function rather than of how SITE_URL happens to
-    // be set.
-    return (
-      url.protocol === 'https:' &&
-      BEACON_ORIGINS.has(url.origin) &&
-      url.pathname === '/cdn-cgi/rum'
-    );
-  } catch {
-    return false;
-  }
-}
-
-// 5. The read-only guard's own findings. A blocked request means the
-//    page attempted a signing RPC or a backend write during a review
-//    that claims to be read-only — that is a finding in its own right,
-//    not noise to discard under otherwise-green checks.
-const telemetry = blockedRequests.filter((b) => isCloudflareBeacon(b));
-const violations = blockedRequests.filter((b) => !isCloudflareBeacon(b));
+const { telemetry, violations } = splitBlocked(blockedRequests, [
+  ...BEACON_ORIGINS,
+]);
 if (telemetry.length) {
   console.log(
     `\nBlocked ${telemetry.length} edge-telemetry request(s) (expected, not a finding):`,
