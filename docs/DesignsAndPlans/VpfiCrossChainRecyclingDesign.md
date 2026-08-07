@@ -720,10 +720,24 @@ So:
 
 - **Mode A is C2 / #1568** — planned surplus out of the recycle bucket. It is
   the §3.6 flow, needs nothing from P2, and is **independent** again.
-- **Mode B is P2 / #1434 R4** — the fresh-return of a stranded delivery, held
+- **Mode B is #1584** — the fresh-return of a stranded delivery, held
   in the recovery reservation of constraint 4 from the moment it arrives (it is
   never left as plain un-earmarked balance). Its mechanics are documented here because both modes are
-  mirror→Base token returns over one transport, but it ships with P2, not C2.
+  mirror→Base token returns over one transport, but it is neither C2 nor #1568.
+
+  **It is NOT "P2 / #1434 R4", which this line said until #1578 r4 P2.**
+  #1434's M3 scope covers the delivered-funding and zeroed-day prerequisites
+  and then retrying mirror pricing — it names no reverse transport and no
+  recovery state, so Mode B would have fallen between that card and #1568
+  (Mode A only). R4 *requires* a dedicated fresh-return; it does not build one.
+  Cut as #1584 so the requirement has an owner.
+
+  **Cross-card dependency with #1434, and it is fund-safety-shaped:** neither
+  mode may restore the append-only 69M headroom, and Mode B must net
+  `rewardBudgetArmedFreshReceived` **where that particular receipt advanced
+  it**. Without both, a return removes the compensation from the mirror while
+  #1434's delivered-funding gate still counts it — opening claims against VPFI
+  the mirror no longer holds.
 
 What genuinely is shared, and should therefore be decided once rather than
 twice, is the **transport** (constraint 3) and the **mode discriminator** — so

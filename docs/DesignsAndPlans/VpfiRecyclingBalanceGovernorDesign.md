@@ -515,8 +515,10 @@ protocol-owned `recycleBucket` **ledger slice of its own VPFI balance**, with
 bucket-separation invariant
 `diamondVpfiBalance ≥ userLifCustody + unclaimedRewardBudget + recycleBucket`.
 
-> **⚠ This invariant gains a term when #1568 Mode B / #1434 R4a land** (Codex
-> #1574 r10 P1). A **stranded-recovery reservation** — a post-lapse
+> **⚠ This invariant gains a term when Mode B (#1584) / #1434 R4a land**
+> (Codex #1574 r10 P1; ownership corrected #1578 r4 — Mode B is **not**
+> #1568, which is Mode A only, and not #1434, whose M3 scope names no reverse
+> transport). A **stranded-recovery reservation** — a post-lapse
 > compensation held for return — is a *fourth* owner of this one balance. It
 > is not `unclaimedRewardBudget`: the day it belonged to has lapsed, so it is
 > no longer an unclaimed reward obligation. It is not the bucket: those tokens
