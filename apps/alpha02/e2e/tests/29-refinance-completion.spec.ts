@@ -18,13 +18,22 @@
  *  just `asset` + `amount` equality. A fresh pledge produces a new
  *  loan holding the same asset in the same amount — those two
  *  comparisons pass straight through the bug. What separates the two
- *  is WHERE the collateral came from, so the discriminating assertion
+ *  is WHERE the collateral came from, so one discriminating assertion
  *  is that the borrower's collateral balance does not move across the
- *  acceptance: carry-over re-tags an existing lien and pulls nothing.
+ *  whole flow: carry-over re-tags an existing lien and pulls nothing.
  *  (Established by mutation, not by reasoning: posting a request whose
  *  collateral amount disagrees with the loan is rejected before a loan
  *  can exist, so a mismatched AMOUNT is not the reachable defect —
  *  a matching amount from the wrong SOURCE is.)
+ *
+ *  That balance check is necessary but NOT sufficient on its own, so
+ *  the persisted `refinanceCarryOver` flag is asserted alongside it.
+ *  The contract keeps a legacy non-carry-over branch that RETURNS the
+ *  old collateral at acceptance; on that path posting pre-vaults a
+ *  fresh batch and acceptance hands the old one back, netting to zero
+ *  across any window while the stake was re-pledged rather than
+ *  re-tagged. Flag plus balance pins the path AND its effect; either
+ *  alone leaves a green run that never exercised the re-tag.
  */
 import { test, expect } from '../lib/wallet-fixture';
 import { seedDeskOffer, acceptOfferDirect, getOffer } from '../lib/desk';
@@ -132,6 +141,17 @@ test('refinance request completes: old loan closes, new loan carries the collate
     request.refinanceTargetLoanId as bigint,
     'newest borrower offer must be the refinance request for this loan',
   ).toBe(oldLoanId);
+  // The persisted create-time decision that selects the carry-over
+  // path at all. Without this the balance check below is necessary but
+  // NOT sufficient: on the legacy non-carry-over path posting pre-vaults
+  // a fresh collateral batch and acceptance releases and returns the old
+  // one, so the borrower's holding is unchanged end-to-end while the
+  // lien was re-pledged rather than re-tagged — same asset, same amount,
+  // same loan statuses, and nothing else here would tell the difference.
+  expect(
+    request.refinanceCarryOver as boolean,
+    'the request must take the carry-over path, not the legacy return-and-repledge one',
+  ).toBe(true);
   // ...and the id the page is standing behind is that same request, so
   // a chain-side read of some other offer cannot stand in for the one
   // this drive actually posted.
