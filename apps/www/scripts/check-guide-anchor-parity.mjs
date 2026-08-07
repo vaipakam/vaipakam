@@ -99,12 +99,27 @@ const anchorsIn = (file) =>
  * their chapters are unreachable from the sidebar (Codex #1594 r2,
  * correcting r1).
  *
- * Fenced blocks are skipped: a `## Example` inside a code sample is
- * illustration, not structure. None exists in the corpus today; the
- * guard is cheap and the failure mode — a phantom chapter masking a
- * real missing one — is silent. (`extractToc` does NOT skip fences,
- * so it would list such a line in the sidebar; that is a pre-existing
- * renderer issue, tracked separately rather than papered over here.)
+ * Fenced blocks are skipped, matching `extractToc`, which tracks
+ * fences the same way: a `## Example` inside a code sample is
+ * illustration, not structure. None exists in the corpus today, but
+ * the failure mode — a phantom chapter masking a real missing one — is
+ * silent, so the guard is worth its few lines.
+ *
+ * Verified equivalent to the renderer on the real corpus:
+ * `extractToc` yields 19 sections for `Advanced.en.md`, 18 for `de`,
+ * 16 for `hi` — the same numbers this function reports. (Its trailing
+ * `.map` PROMOTES a section with no `###` items into a single-item
+ * entry; it does not drop it, and no section in the corpus is empty
+ * anyway. Nothing is filtered out — Codex #1594 r3.)
+ *
+ * KNOWN LIMIT: this is a COUNT, so an edition that omits one anchorless
+ * chapter and adds a different anchorless one nets to zero and passes
+ * here, while the anchor comparison — seeing no anchors either side —
+ * also stays silent. Chapters carrying anchors are covered, because the
+ * anchor check catches those directly. Closing the residue needs a
+ * locale-independent identifier on every chapter heading, i.e. giving
+ * each `##` its own `<a id>`; that is a content change across the whole
+ * corpus and is tracked in #1597 rather than half-done here.
  */
 const chapterCount = (file) => {
   let fenced = false;
@@ -123,10 +138,13 @@ const chapterCount = (file) => {
  * Editions known to be short of the English chapter list, per
  * `<doc>:<locale>` → the number of chapters they still lack.
  *
- * Translating these is tracked as #1593 (whole chapters, ~19k
- * characters of technical prose); recorded here so the count cannot
- * quietly grow in the meantime. Shrink it; a new shortfall, or one
- * larger than recorded, is a failure.
+ * Translating these is tracked as #1593: one English chapter of
+ * ~10.7k characters, which is ~96k of translated output across the
+ * nine — and for `hi`/`ja` the extra two may need no translator at
+ * all, since the prose is already there and only the indentation
+ * hides it. Recorded here so the count cannot quietly grow in the
+ * meantime. Shrink it; a new shortfall, or one larger than recorded,
+ * is a failure.
  */
 const KNOWN_CHAPTER_GAPS = {
   'Advanced:ar': 1,
@@ -197,6 +215,11 @@ for (const [doc, locales] of byDoc) {
           `${englishChapters}${allowed ? ` (${allowed} recorded as a known gap)` : ''}` +
           ' — a whole chapter can go missing without changing the anchor set',
       );
+      // The baseline is not stale, it is EXCEEDED — already reported
+      // above. Without this the sweep below would also say "no longer
+      // diverges — remove it", which is both wrong and a second thing
+      // to chase for one change (Codex #1594 r3).
+      if (allowed > 0) seenChapterGaps.add(`${doc}:${locale}`);
     } else if (short < allowed) {
       problems.push(
         `KNOWN_CHAPTER_GAPS ${doc}:${locale} records ${allowed} missing ` +
