@@ -1067,7 +1067,21 @@ library LibVpfiRecycle {
         uint256 consumed = s.chainConsumedRecycled[chainId];
         uint256 released = s.chainReleasedRecycledCommit[chainId];
         uint256 netConsumed = consumed > released ? consumed - released : 0;
-        return reported > netConsumed ? reported - netConsumed : 0;
+        uint256 avail = reported > netConsumed ? reported - netConsumed : 0;
+        // C2 Mode-A repatriation draw (#1568): a SEPARATE saturating
+        // debit/release pair, per §3.6a's canonical availability formula
+        // `reported − (consumed − released) − (repatDebited − repatReleased)`.
+        // It must NOT ride `chainConsumedRecycled` — that counter is one half
+        // of the `outstanding + retired == consumed` identity, and charging a
+        // repatriation there breaks the identity on the first authorization.
+        // All-zero until the repatriation ledger writes land, so this term is
+        // inert on every deployment built before #1568 arms.
+        uint256 repatDebited = s.chainRepatriationDebited[chainId];
+        uint256 repatReleased = s.chainRepatriationReleased[chainId];
+        uint256 netRepat = repatDebited > repatReleased
+            ? repatDebited - repatReleased
+            : 0;
+        return avail > netRepat ? avail - netRepat : 0;
     }
 
     /**

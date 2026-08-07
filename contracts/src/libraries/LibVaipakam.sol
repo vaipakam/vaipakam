@@ -5511,9 +5511,15 @@ library LibVaipakam {
         mapping(uint32 => uint256) chainReportedRecycled;
         // `chainConsumedRecycled` — BASE-ONLY: cumulative recycled Base has
         //   INSTRUCTED chain `c` to consume (B2 `recycleConsume` +
-        //   `keeperAllocate`, B3 netting, C2 repatriation). Declared with the
-        //   ledger so the block reads as one unit; written from B2 on. Always
-        //   `≤ chainReportedRecycled[c]`.
+        //   `keeperAllocate`, B3 netting). Declared with the ledger so the
+        //   block reads as one unit; written from B2 on. Always
+        //   `≤ chainReportedRecycled[c]`. **C2 repatriation does NOT write
+        //   this counter** (an earlier revision of this comment listed it as
+        //   a future writer — wrong: this counter is one half of the
+        //   `outstanding + retired == consumed` identity, and a repatriation
+        //   charge here breaks it on the first authorization). The
+        //   repatriation draw has its own pair at the struct tail:
+        //   `chainRepatriationDebited` / `chainRepatriationReleased`.
         mapping(uint32 => uint256) chainConsumedRecycled;
         // Day-attribution accumulator, per chain, for the clamped
         //   `credited[d]` feed (`Ā`'s per-day attribution — see
@@ -6101,6 +6107,24 @@ library LibVaipakam {
         ///      surplus movement is always a deliberate, bounded,
         ///      protocol-controlled disposal.
         uint16 recycleSurplusMultiple;
+        // ── C2 Mode-A repatriation draw ledger (#1568) ────────────────────
+        // `chainRepatriationDebited` — BASE-ONLY: cumulative recycled value
+        //   Base has AUTHORIZED out of chain `c`'s recycle availability for
+        //   planned-surplus repatriation (Mode A). Charged when the
+        //   authorization is issued — before any mirror send — under a
+        //   releasable pending authorization. Deliberately its OWN ledger:
+        //   charging `chainConsumedRecycled` instead would break the
+        //   `outstanding + retired == consumed` commitment identity on the
+        //   first authorization (plan §M4 correction; §3.6a constraint 2).
+        //   Enters availability as the second net term of
+        //   `LibVpfiRecycle.mirrorAvailRecycled` — never anywhere else.
+        mapping(uint32 => uint256) chainRepatriationDebited;
+        // `chainRepatriationReleased` — BASE-ONLY: cumulative released back
+        //   from repatriation authorizations that verifiably never executed.
+        //   Ratchet `<= chainRepatriationDebited[c]`, enforced at the write
+        //   site; a release restores the chain's availability instead of
+        //   stranding it (B3's release lesson applied to this draw).
+        mapping(uint32 => uint256) chainRepatriationReleased;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one
