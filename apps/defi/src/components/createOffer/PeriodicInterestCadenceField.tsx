@@ -65,12 +65,15 @@ export function PeriodicInterestCadenceField({
     collateralAssetType,
   );
 
-  // Filter 0 — illiquid: render NOTHING. Per the design doc §3.0, even
-  // a disabled control is wrong here — the feature should look like it
-  // doesn't exist for illiquid offers.
-  if (!liquid) return null;
-  // Master kill-switch off — same "feature doesn't exist" rule.
-  if (!periodicInterestEnabled) return null;
+  // NOTE the two "render nothing" gates live BELOW every hook, not
+  // here (#1521). `liquid` is derived from props fed by live form
+  // state, so returning early on it changed the hook count between
+  // renders: switching the asset-type dropdown from a liquid asset to
+  // an illiquid one dropped the two `useMemo`s below and React aborted
+  // the whole page with "Rendered more hooks than during the previous
+  // render". Both memos are pure, so evaluating them on the path that
+  // renders nothing costs a little work and changes no behaviour —
+  // which is the cheaper half of the trade.
 
   // Compute the visible options. We deliberately bypass the
   // principal-threshold component of Filter 2 here (no live oracle
@@ -122,6 +125,13 @@ export function PeriodicInterestCadenceField({
 
   const currentDisabled = options.find((o) => o.value === value)?.disabled ?? false;
   const effectiveValue = currentDisabled ? fallbackValue : value;
+
+  // Filter 0 — illiquid: render NOTHING. Per the design doc §3.0, even
+  // a disabled control is wrong here — the feature should look like it
+  // doesn't exist for illiquid offers.
+  if (!liquid) return null;
+  // Master kill-switch off — same "feature doesn't exist" rule.
+  if (!periodicInterestEnabled) return null;
 
   return (
     <div style={{ marginTop: 12 }}>

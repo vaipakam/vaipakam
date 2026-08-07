@@ -825,11 +825,15 @@ jobs:
       # red CI on that scenario (the step errors with "command not found"
       # rather than silently no-opping).
       #
-      # `apps/defi` typechecks via `tsc -b --noEmit` directly because its
-      # workspace doesn't declare a `typecheck` script (the type-check is
-      # bundled into the `build` script's `tsc -b && vite build`). We avoid
-      # the full build to keep CI fast — `--noEmit` is the structural-only
+      # `apps/defi` now HAS a `typecheck` script (#1521): `tsc -b --noEmit`
+      # plus a one-rule `react-hooks/rules-of-hooks` lint. We avoid the
+      # full build to keep CI fast — `--noEmit` is the structural-only
       # half of the build and is what matters for "did the types break".
+      # The lint half is deliberately narrow: defi's full config reports
+      # ~277 errors (mostly `no-explicit-any`), which is exactly why no
+      # job ever ran it, and is how a real hook-order crash on Create
+      # Offer reached production. Guarding the one rule the app is clean
+      # against beats guarding nothing until the backlog is cleared.
       - name: Typecheck — apps/keeper
         run: pnpm --filter @vaipakam/keeper typecheck
 
@@ -839,8 +843,8 @@ jobs:
       - name: Typecheck — apps/agent
         run: pnpm --filter @vaipakam/agent typecheck
 
-      - name: Typecheck — apps/defi (tsc -b --noEmit)
-        run: pnpm --filter @vaipakam/defi exec tsc -b --noEmit
+      - name: Typecheck — apps/defi (tsc -b --noEmit + rules-of-hooks)
+        run: pnpm --filter @vaipakam/defi typecheck
 
       - name: Typecheck — apps/www
         run: pnpm --filter @vaipakam/www typecheck

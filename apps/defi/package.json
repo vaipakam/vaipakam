@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js",
     "postbuild": "tsx scripts/generate-sitemap.ts && tsx scripts/inject-seo-meta.ts",
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev",
