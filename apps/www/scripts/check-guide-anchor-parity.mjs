@@ -82,8 +82,16 @@ const anchorsIn = (file) =>
  * flag every correctly-translated title. The count answers the only
  * question anchors cannot: does this edition have as many chapters as
  * its source?
+ *
+ * The pattern allows up to three leading spaces because CommonMark
+ * does, and the renderer follows CommonMark: `Advanced.hi.md` and
+ * `Advanced.ja.md` both carry two-space-indented `##` headings that
+ * render as real chapters. Anchoring at column zero counted those
+ * editions two chapters short and would have recorded a gap that does
+ * not exist — then failed the moment someone tidied the indentation
+ * (Codex #1594 r1).
  */
-const CHAPTER_RE = /^## .+$/gm;
+const CHAPTER_RE = /^ {0,3}## .+$/gm;
 const chapterCount = (file) => (readGuide(file).match(CHAPTER_RE) ?? []).length;
 
 /**
@@ -100,8 +108,8 @@ const KNOWN_CHAPTER_GAPS = {
   'Advanced:de': 1,
   'Advanced:es': 1,
   'Advanced:fr': 1,
-  'Advanced:hi': 3,
-  'Advanced:ja': 3,
+  'Advanced:hi': 1,
+  'Advanced:ja': 1,
   'Advanced:ko': 1,
   'Advanced:ta': 1,
   'Advanced:zh': 1,
@@ -152,8 +160,13 @@ for (const [doc, locales] of byDoc) {
     } else if (short < allowed) {
       problems.push(
         `KNOWN_CHAPTER_GAPS ${doc}:${locale} records ${allowed} missing ` +
-          `chapter(s) but only ${short} are — lower it`,
+          `chapter(s) but only ${short} are — ${short === 0 ? 'remove it' : 'lower it'}`,
       );
+      // Mark it seen even though it is wrong: the stale-entry sweep
+      // below reports an entry nothing matched, and an over-record has
+      // already been reported here. Two messages for one problem sends
+      // the reader looking for a second thing to fix.
+      seenChapterGaps.add(`${doc}:${locale}`);
     } else if (allowed > 0) {
       seenChapterGaps.add(`${doc}:${locale}`);
     }

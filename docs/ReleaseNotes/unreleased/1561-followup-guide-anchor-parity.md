@@ -23,7 +23,7 @@ carries. That can only see a section that went missing while its neighbours
 stayed — if an entire chapter is absent from a translation, every link target
 it would have contributed is missing from both sides of the comparison at
 once, and the check has nothing to compare. It reported all ten editions in
-agreement while nine were missing a whole chapter, and two were missing three.
+agreement while every one of the nine was missing a whole chapter.
 
 The check now also compares how many chapters each edition has. The known
 shortfalls are recorded so they cannot quietly grow, and a recorded shortfall
