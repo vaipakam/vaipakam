@@ -909,8 +909,10 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   independent adversarial self-review BEFORE Codex round 1 so the
   loop starts from a cleaner base. Not required for app/test-infra
   PRs.
-- Merge only after a converged round AND green CI. All review
-  conversations must be resolved before merge (repo rule).
+- Merge gate: **coding PRs** only after a converged round AND green CI;
+  **docs-only PRs** after the 2-round cap above (converged or not) AND
+  green CI. All review conversations must be resolved before merge
+  (repo rule) in both cases.
 
 ## Release notes — per-PR fragments
 
