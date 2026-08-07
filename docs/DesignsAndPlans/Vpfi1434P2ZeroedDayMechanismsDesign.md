@@ -389,30 +389,30 @@ is balance-verifiable (tokens arrive at the Diamond) plus the ceremony
 record binding the recovered amount to the cancelled reservation; it clears
 the gate (the stranding ends).
 
-**The reconciliation this document must settle** (assigned here by #1586):
-TokenomicsTechSpec §9 ratifies the ceremony as *restoring* emission headroom
-and bucket (restore-then-recharge), which makes `remaining` rise inside a
-governance-gated window — the one non-monotone case left. Two shapes:
+**The reconciliation this document had to settle** (assigned here by
+#1586) — **✅ DECIDED 2026-08-07 (owner): unify on the recovery-position
+pattern.** TokenomicsTechSpec §9 ratified the ceremony as *restoring*
+emission headroom (restore-then-recharge), which made `remaining` rise
+inside a governance-gated window — the one non-monotone case left. The
+owner ratified the unification: the ceremony's fresh half lands in the
+SAME recovery position R4 credits — no headroom restoration, no
+non-monotonicity anywhere — and the re-remittance that §9's backing gate
+holds the day open for is funded **from the position, uncharged**.
+Economically identical to restore-then-recharge (net one charge per funded
+day), with strictly stronger invariants and one recovery pattern instead
+of two. The recycled half's ceremony path (`creditCustodyRelocated`) is
+untouched. **P2-w6 carries the FunctionalSpec amendment** to the
+released-reservation passage (an explicit intent change, per the
+FunctionalSpecs discipline — code-observed behaviour never enters the spec
+silently, and neither does a design decision).
 
-- **(a) RECOMMENDED — unify on the recovery-position pattern.** The
-  ceremony's fresh half lands in the SAME recovery position R4 credits:
-  no headroom restoration, no non-monotonicity anywhere, and the
-  re-remittance that §9's gate holds the day open for is funded **from the
-  position, uncharged** — economically identical to restore-then-recharge
-  (net one charge per funded day), with strictly stronger invariants and
-  one recovery pattern instead of two. Requires a FunctionalSpec amendment
-  (an intent change — flagged for the owner with this document; the
-  recycled half's ceremony path, `creditCustodyRelocated`, is untouched).
-- **(b) Keep §9's restore.** Add the ceremony-recovered cumulative as a
-  fourth `remaining` term and accept the bounded non-monotone window, with
-  the truncate-and-consume caveat stated at every `remaining` site (six
-  sites exist today — `RewardClaimFacet.sol:269`,
-  `LibInteractionRewards.sol:2570`, `RewardRemittanceFacet.sol:944`,
-  `InteractionRewardsFacet.sol:87,176`, `RewardAggregatorFacet.sol:980`).
-
-(a) is the architecturally clean route under #1571's standing instruction
-and is what this document specifies; (b) is recorded so its cost is visible
-if the owner prefers spec stability over invariant strength.
+The rejected alternative, recorded so its cost stays visible: keeping §9's
+restore would have added the ceremony-recovered cumulative as a fourth
+`remaining` term and accepted the bounded non-monotone window, with the
+truncate-and-consume caveat stated at every `remaining` site (six exist
+today — `RewardClaimFacet.sol:269`, `LibInteractionRewards.sol:2570`,
+`RewardRemittanceFacet.sol:944`, `InteractionRewardsFacet.sol:87,176`,
+`RewardAggregatorFacet.sol:980`).
 
 ### 5.4 R6e — deployment rotation
 
@@ -507,10 +507,12 @@ of §2.1/§2.4 in its place.
 
 ---
 
-## 9. Decisions this document asks of the owner
+## 9. Owner decisions
 
-1. **§5.3 — unify the ceremony on the recovery-position pattern (a), or
-   keep §9's restore (b)?** (a) is specified and recommended; it amends the
-   FunctionalSpec's released-reservation passage. Everything else in this
-   document is delegated design under #1571's standing instruction and
-   ships unless vetoed.
+1. **§5.3 — ✅ DECIDED 2026-08-07 (owner): unify the ceremony on the
+   recovery-position pattern.** `remaining` is monotone everywhere; one
+   recovery pattern; P2-w6 carries the FunctionalSpec amendment. Recorded
+   in §5.3 with the rejected alternative's cost.
+
+Everything else in this document is delegated design under #1571's
+standing instruction.
