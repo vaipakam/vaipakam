@@ -540,7 +540,10 @@ implementer to §3.6 alone.
   **No M3→M4 cycle**: B2-d4's halt lift (the M3 gate) needs only R4's
   arrival-reservation/claim-exclusion slice on the remit ingress; the return
   WIRE sequences after this shared slice in M4-era order and must be live
-  before the M7 arming ceremony (§3.6a's ownership note).
+  before the M7 arming ceremony (§3.6a's ownership note). The §4 graph
+  carries this as `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE` — the return wire
+  gates ACTIVE-MIRROR arming only (the mirrors-dark disjunct and unrelated
+  M4 work are untouched).
 
   **Invariants that must move, split by WHICH MODE forces them** — an earlier
   revision lumped these together and would have pulled Mode-B storage into
@@ -1436,6 +1439,8 @@ flowchart LR
   M3 -.-> ARMGATE
   SETTLE{{"#1434 mirror settlement<br/>reachable (halt lifted)"}} -.-> ARMGATE
   MODEBRES{{"#1434 R4 arrival reservation<br/>+ claim-exclusion slice"}} --> SETTLE
+  SHAREDWIRE{{"#1568 shared return transport<br/>(channel cut once)"}} --> MODEBWIRE{{"#1434 R4 return wire<br/>(Mode B kind + ladder)"}}
+  MODEBWIRE -.-> ARMGATE
   BACKING{{"#1460 bucket/fresh separation<br/>enforced AT CLAIM TIME"}} --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]

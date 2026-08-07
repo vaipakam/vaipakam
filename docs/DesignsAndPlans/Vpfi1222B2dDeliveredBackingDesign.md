@@ -1425,11 +1425,16 @@ derived at read time", which an implementer would wire straight into
   position of the decision block above, and is never a deduction from cap
   usage;
 - the operator reporting view of net physical outflow is
-  `gross remitted − recovered + re-dispatched` (Codex #1586 r3 P2: once a
-  parcel is re-used, the two-term form reports zero while value has left Base
-  again — the re-dispatch cumulative the decision block requires must appear
-  in the reconciliation) — a reporting view only, feeding no funding-planning
-  surface and never `remaining`, which reads gross alone.
+  `(gross remitted + re-dispatched) − recovered`, **additions first** (Codex
+  #1586 r3 P2 + r4 P2: the two-term form reports zero while value has left
+  Base again, and the subtraction-first ordering underflows once a
+  re-dispatched parcel is recovered a second time — 100 gross / 200 recovered
+  / 100 re-dispatched is reachable and its true net outflow is zero). Every
+  authenticated recovery follows a dispatch of one of the two kinds, so
+  `recovered ≤ gross + re-dispatched` holds by construction; implementations
+  still evaluate additions-first and saturate defensively. A reporting view
+  only, feeding no funding-planning surface and never `remaining`, which
+  reads gross alone.
 
 **⚠ This exposed a real tension — since DECIDED (2026-08-07, below).** The
 claim path's truncate-and-consume rule is justified by
@@ -1468,10 +1473,13 @@ not burned, and not quarantined.** The recovery position is a *source* for
 future interaction-reward funding, and — the owner's model, stated precisely —
 **a recovery-sourced re-dispatch does NOT charge `rewardBudgetRemittedGlobal`
 a second time**: the parcel's cap charge happened at its original dispatch and
-is never repeated, so the 69M counter only ever decreases when value is first
-dispatched for rewards, and never moves on recovery or on re-use. `remaining`
-therefore never rises (recovery is not a credit) and is not debited again on
-re-use (a re-dispatch is not a new mint). Two constraints make this safe
+is never repeated. Stated with each counter's direction explicit (Codex #1586
+r4 P2: "the 69M counter only ever decreases" conflated the two and read as an
+instruction to decrement the gross-evidence counter): the append-only
+`rewardBudgetRemittedGlobal` only ever INCREASES, and only at first dispatch;
+`remaining` headroom only ever DECREASES, and only at first dispatch; recovery
+and re-use move neither. `remaining` therefore never rises (recovery is not a
+credit) and is not debited again on re-use (a re-dispatch is not a new mint). Two constraints make this safe
 rather than a cap bypass, and both are implementation requirements: a
 recovery-sourced dispatch must be **sourced from and bounded by the recovery
 position's receipt-bound balance** — anything else is an uncharged emission
