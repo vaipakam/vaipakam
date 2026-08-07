@@ -1,115 +1,210 @@
-// #1560 post-deploy live review — does /recover actually RENDER in each
-// advertised language on production?
+// #1560 post-deploy live review — do the nine advertised languages
+// actually reach the reader on the deployed build?
 //
-// This is a different question from the one the coverage guard answers,
-// and neither implies the other:
+// This is a different question from the one `check-locale-coverage`
+// answers, and neither implies the other:
 //
-//  - `check-locale-coverage` reads the JSON on disk. It proves the KEYS
-//    EXIST in every bundle and that interpolation tokens survived. It
-//    cannot prove the deployed app ever SERVES that bundle: locale
-//    resources are code-split and fetched at runtime, so a chunk that
-//    404s, a build that drops a locale from the split, or a language
-//    detector that never switches all leave the guard perfectly green
-//    while the reader sees English.
-//  - The fork/Vite tier cannot close that gap either. It serves assets
+//  - The guard reads the JSON on disk. It proves the KEYS EXIST and
+//    that interpolation tokens survived. It cannot prove the deployed
+//    app ever SERVES that bundle: locale resources are code-split
+//    (`import('./locales/xx.json')`, one Vite chunk each) and fetched at
+//    runtime, so a chunk that 404s, a locale dropped from the split, or
+//    a detector that never switches all leave the guard perfectly green
+//    while the reader sees English. `copy.*` resolves via
+//    `i18n.t(key, { defaultValue: englishSource })`, so that fallback
+//    renders with nothing logged anywhere.
+//  - The fork/Vite tier cannot close the gap either: it serves assets
 //    from a dev server with a different chunking story than the
-//    deployed Worker, so "the chunk loads" there is not evidence about
-//    production.
+//    deployed Worker.
 //
-// Hence: seed the language preference, load the real deployed page, and
-// assert on what actually rendered.
+// Two independent layers, because either alone can lie:
 //
-// A row passes only when ALL THREE hold:
-//   1. `<html lang>` switched to the requested locale — proves the
-//      language actually took effect rather than the seed being ignored.
-//   2. The <h1> is non-empty — an empty string would otherwise satisfy
-//      "not English" and pass a naive check while the page rendered
-//      nothing (the i18next `returnEmptyString` failure mode).
-//   3. The <h1> differs from the ENGLISH SOURCE. This is the one that
-//      catches a silent fallback: `copy.*` resolves via
-//      `i18n.t(key, { defaultValue: englishSource })`, so a missing
-//      resource renders the English text with no error anywhere. Equal
-//      to English means untranslated, not translated-identically —
-//      these strings have no plausible identical translation in any of
-//      the nine.
+//  1. RESOURCE — capture the locale CHUNK the deployed page actually
+//     fetched and assert it carries the expected values for this
+//     revision. Every expected string is read from the repo's own
+//     locale JSON, so there is no second copy to drift (Codex #1590 r1)
+//     — and the assertion includes the keys THIS change adds, so an
+//     older deployment, or a stale cached chunk, fails instead of
+//     passing on pre-existing content.
+//  2. RENDER — assert the page actually switched: `<html lang>`, the
+//     expected text direction, and an `<h1>` equal to that locale's own
+//     `copy.recover.title`. Comparing against the EXPECTED heading (not
+//     merely "not English") means a loader wired to the wrong bundle, or
+//     a redirect to some other localized page that happens to have an
+//     `<h1>`, fails rather than passing on "it's non-English".
 //
-// Arabic additionally asserts `dir="rtl"`: a bundle can be fully
-// translated and still ship unreadable if the document direction never
-// flips.
+// A locale passes only when BOTH layers pass. The resource layer alone
+// would not prove the reader sees it; the render layer alone would not
+// distinguish this build from an older one.
 //
-// Read-only — it navigates and reads the DOM, and rides driver.mjs's
-// route shim + read-only RPC guard like every other live drive. It
-// never connects a wallet: /recover renders its language-bearing chrome
-// unconnected, and a drive that needs no key should not hold one.
+// Keyless: launched with `keyless: true`, so no wallet is injected and
+// no dev-wallet key is read. `/recover` renders its language-bearing
+// chrome unconnected, and a drive that needs no key should not hold
+// one. It still rides driver.mjs's egress route shim rather than
+// duplicating it — a second copy of that shim is how the two start
+// diverging.
 //
 // Usage (from apps/alpha02/e2e/live/):
-//   LIVE_CHROMIUM_PATH=/opt/pw-browsers/chromium \
-//   TESTNET_WALLETS_FILE=~/secrets/vaipakam-dev-wallets.json \
-//     node live-recover-locales.mjs
+//   LIVE_CHROMIUM_PATH=/opt/pw-browsers/chromium node live-recover-locales.mjs
 //
-// SITE_URL overrides the target (defaults to production).
+// SITE_URL overrides the target (defaults to production). Run it
+// against the branch preview to check a change BEFORE it is merged —
+// the resource layer is revision-specific, so production will correctly
+// fail until the change is actually deployed there.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { launch, SITE } from './driver.mjs';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const LOCALES_DIR = path.join(HERE, '..', '..', 'src', 'i18n', 'locales');
+
 // The nine advertised translations. Deliberately NOT imported from the
-// app: this drive's job is to check the DEPLOYED build against the set
-// we believe we ship, and importing the build's own list would make the
-// two agree by construction — a locale silently dropped from the split
-// would then be silently dropped from the check too.
+// app's own locale registry: this drive checks the DEPLOYED build
+// against the set we believe we ship, and reading the build's list
+// would make the two agree by construction — a locale silently dropped
+// from the split would then be dropped from the check too.
 const LOCALES = ['ar', 'de', 'es', 'fr', 'hi', 'ja', 'ko', 'ta', 'zh'];
 
-const RTL_LOCALES = new Set(['ar']);
+/** Text direction each locale must render in. */
+const EXPECTED_DIR = (code) => (code === 'ar' ? 'rtl' : 'ltr');
 
-// The English source for `copy.recover.title`. Kept here rather than
-// read from en.json so that an accidental edit to the English catalog
-// cannot make the fallback check vacuous by matching both sides.
-const EN_TITLE = 'Recover stuck tokens';
+/**
+ * The keys asserted against the deployed chunk, by catalog path.
+ *
+ * `copy.recover.title` is the heading this drive reads off the page, so
+ * it ties the two layers together. The `copy.match.riskGate*` pair is
+ * what #1560's follow-up ADDED — without them a build predating this
+ * change would satisfy every other assertion here.
+ */
+const ASSERTED_KEYS = [
+  'copy.recover.title',
+  'copy.match.riskGateCreatorBlocked',
+  'copy.match.riskGateTierTooLow',
+];
 
-/** @param {import('@playwright/test').Page} page */
+const leafAt = (obj, dotted) =>
+  dotted.split('.').reduce((node, k) => (node ?? {})[k], obj);
+
+/** Expected values per locale, read from the repo — the single source. */
+const EXPECTED = Object.fromEntries(
+  LOCALES.map((code) => {
+    const bundle = JSON.parse(
+      fs.readFileSync(path.join(LOCALES_DIR, `${code}.json`), 'utf8'),
+    );
+    const values = {};
+    for (const key of ASSERTED_KEYS) {
+      const v = leafAt(bundle, key);
+      if (typeof v !== 'string' || v.trim() === '') {
+        console.error(
+          `\nBLOCKED: ${code}.json has no usable string at ${key} — the drive` +
+            ` cannot assert a value it does not have. Fix the bundle (or the` +
+            ` key list) before running.`,
+        );
+        process.exit(2);
+      }
+      values[key] = v;
+    }
+    return [code, values];
+  }),
+);
+
+/**
+ * A locale chunk is `var e=JSON.parse(`{…}`)` with literal UTF-8 inside
+ * a template literal, so an exact substring is a sound membership test
+ * for our values (none contain a backtick, backslash or `${`, which are
+ * the only sequences the builder escapes). The bundle marker guards
+ * against matching some unrelated chunk whose name merely starts with
+ * the same two letters.
+ */
+const BUNDLE_MARKER = '"app":{"name":"Vaipakam"';
+const chunkUrlFor = (code) =>
+  new RegExp(`/assets/${code}-[A-Za-z0-9_-]+\\.js(?:\\?|$)`);
+
 async function probe(page, code) {
+  const expected = EXPECTED[code];
+  const problems = [];
+
+  // ---- layer 1: the resource the deployed page actually fetched
+  let chunkBody = null;
+  const onResponse = async (res) => {
+    if (chunkBody !== null || !chunkUrlFor(code).test(res.url())) return;
+    const body = await res.text().catch(() => null);
+    if (body && body.includes(BUNDLE_MARKER)) chunkBody = body;
+  };
+  page.on('response', onResponse);
+
   await page.goto(`${SITE}/recover`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });
-  // The locale chunk is fetched after hydration; give it room to land
-  // so a slow fetch reads as slow rather than as untranslated.
-  await page.waitForFunction(
-    () => (document.querySelector('h1')?.textContent ?? '').trim() !== '',
-    undefined,
-    { timeout: 30_000 },
-  ).catch(() => {});
 
+  // Wait for the REQUESTED locale to settle, not merely for any
+  // heading: on a slow chunk fetch the English fallback paints first,
+  // and a predicate satisfied by "an h1 exists" would sample that and
+  // report a healthy deployment as broken (Codex #1590 r1). Waiting for
+  // the expected title means a slow load reads as slow, not as failed.
+  await page
+    .waitForFunction(
+      (want) =>
+        document.documentElement.lang.startsWith(want.code) &&
+        (document.querySelector('h1')?.textContent ?? '').trim() === want.title,
+      { code, title: expected['copy.recover.title'] },
+      { timeout: 30_000 },
+    )
+    .catch(() => {});
+
+  page.off('response', onResponse);
+
+  if (chunkBody === null) {
+    problems.push('locale chunk never fetched (or did not look like a bundle)');
+  } else {
+    for (const key of ASSERTED_KEYS) {
+      if (!chunkBody.includes(expected[key])) {
+        problems.push(`deployed chunk is missing the expected ${key}`);
+      }
+    }
+  }
+
+  // ---- layer 2: what actually rendered
   const lang = await page.evaluate(() => document.documentElement.lang || '');
   const dir = await page.evaluate(() => document.documentElement.dir || 'ltr');
   const h1 = (
     (await page.locator('h1').first().textContent().catch(() => '')) ?? ''
   ).trim();
 
-  const problems = [];
   if (!lang.startsWith(code)) problems.push(`lang="${lang}" (wanted ${code})`);
-  if (h1 === '') problems.push('h1 empty');
-  else if (h1 === EN_TITLE) problems.push('h1 is the English source — fell back');
-  if (RTL_LOCALES.has(code) && dir !== 'rtl') problems.push(`dir="${dir}" (wanted rtl)`);
+  if (dir !== EXPECTED_DIR(code)) {
+    problems.push(`dir="${dir}" (wanted ${EXPECTED_DIR(code)})`);
+  }
+  if (h1 !== expected['copy.recover.title']) {
+    problems.push(
+      h1 === ''
+        ? 'h1 empty'
+        : `h1="${h1}" (wanted "${expected['copy.recover.title']}")`,
+    );
+  }
 
   return { lang, dir, h1, problems };
 }
 
 const rows = [];
 for (const code of LOCALES) {
-  // A fresh profile per locale: the persistent profile would carry the
-  // previous locale's `vaipakam:language` and localStorage-cached
-  // resources, so a run could pass on a stale bundle.
-  const { ctx, page } = await launch({
-    role: 'lender',
-    readOnly: true,
+  // A fresh profile per locale: the persistent one carries the previous
+  // locale's `vaipakam:language` and cached resources, so a run could
+  // pass on a stale bundle. `done()` (not `ctx.close()`) is what removes
+  // the throwaway profile directory afterwards (Codex #1590 r1).
+  const { ctx, page, done } = await launch({
+    role: 'public',
+    keyless: true,
     freshProfile: true,
-    preAuthorized: false,
   });
   try {
     await ctx.addInitScript((c) => {
       try {
         window.localStorage.setItem('vaipakam:language', c);
       } catch {
-        /* storage disabled — the lang assertion below will catch it */
+        /* storage disabled — the lang assertion below catches it */
       }
     }, code);
     rows.push({ code, ...(await probe(page, code)) });
@@ -119,10 +214,10 @@ for (const code of LOCALES) {
       lang: '?',
       dir: '?',
       h1: '',
-      problems: [`drive error: ${String(err).slice(0, 120)}`],
+      problems: [`drive error: ${String(err).slice(0, 140)}`],
     });
   } finally {
-    await ctx.close();
+    await done();
   }
 }
 
@@ -130,7 +225,7 @@ let failed = 0;
 for (const r of rows) {
   if (r.problems.length > 0) {
     failed++;
-    console.log(`FAIL ${r.code}  ${r.problems.join('; ')}  h1="${r.h1}"`);
+    console.log(`FAIL ${r.code}  ${r.problems.join('; ')}`);
   } else {
     console.log(`ok   ${r.code}  lang=${r.lang} dir=${r.dir}  h1="${r.h1}"`);
   }
@@ -144,6 +239,7 @@ if (failed > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `live recover locales: all ${rows.length} render /recover in their own language`,
+    `live recover locales: all ${rows.length} serve and render the expected` +
+      ' resource in their own language',
   );
 }
