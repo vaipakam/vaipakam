@@ -27,6 +27,14 @@ about. Checking the wording files proves the sentences were written; it does
 not prove a reader ever sees them, because each language is fetched separately
 while the page is loading and that fetch can fail without anything appearing to
 be wrong — the reader simply gets English and no error is reported. So a review
-now opens the deployed Recovery page once per language and confirms the page
-genuinely changed language, that the heading is not the English one, and that
-Arabic lays out right-to-left. All nine passed on the live site.
+now opens the deployed Recovery page once per language, checks that the wording
+file the page actually downloaded is the one this change produces, and confirms
+the page genuinely changed language, shows the expected heading, and lays
+Arabic out right-to-left.
+
+All nine passed on a build made from this change. They do not pass against the
+currently published site, and that is the check working rather than failing:
+the published site was built before this change, so it does not yet carry the
+two new messages. It will pass there once this is released — which is the point
+of checking the downloaded file rather than something that was already correct
+beforehand.

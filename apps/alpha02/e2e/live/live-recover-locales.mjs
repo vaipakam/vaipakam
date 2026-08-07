@@ -70,6 +70,21 @@ const LOCALES = ['ar', 'de', 'es', 'fr', 'hi', 'ja', 'ko', 'ta', 'zh'];
 const EXPECTED_DIR = (code) => (code === 'ar' ? 'rtl' : 'ltr');
 
 /**
+ * BCP-47 match: the exact base code, or the base code followed by a
+ * subtag separator (`de-AT`, `zh-Hans`).
+ *
+ * `startsWith(code)` is not the same test and passes things it should
+ * not: `"deceptive".startsWith("de")` is true, so a malformed or
+ * truncated `lang` attribute would satisfy the very layer that exists
+ * to catch malformed language metadata (Codex #1590 r3).
+ */
+const langMatches = (lang, code) => {
+  const l = String(lang).toLowerCase();
+  const c = code.toLowerCase();
+  return l === c || l.startsWith(`${c}-`);
+};
+
+/**
  * The keys asserted against the deployed chunk, by catalog path.
  *
  * `copy.recover.title` is the heading this drive reads off the page, so
@@ -162,7 +177,8 @@ async function probe(page, code) {
   await page
     .waitForFunction(
       (want) =>
-        document.documentElement.lang.startsWith(want.code) &&
+        (document.documentElement.lang.toLowerCase() === want.code ||
+          document.documentElement.lang.toLowerCase().startsWith(`${want.code}-`)) &&
         (document.querySelector('h1')?.textContent ?? '').trim() === want.title,
       { code, title: expected['copy.recover.title'] },
       { timeout: 30_000 },
@@ -189,7 +205,9 @@ async function probe(page, code) {
     (await page.locator('h1').first().textContent().catch(() => '')) ?? ''
   ).trim();
 
-  if (!lang.startsWith(code)) problems.push(`lang="${lang}" (wanted ${code})`);
+  if (!langMatches(lang, code)) {
+    problems.push(`lang="${lang}" (wanted ${code} or ${code}-<subtag>)`);
+  }
   if (dir !== EXPECTED_DIR(code)) {
     problems.push(`dir="${dir}" (wanted ${EXPECTED_DIR(code)})`);
   }

@@ -65,7 +65,7 @@ review doesn't rebuild the tooling from scratch.
 
 ## Watch-only drives vs. signing drives
 
-Two drivers need no `TESTNET_WALLETS_FILE` at all:
+Three drivers need no `TESTNET_WALLETS_FILE` at all:
 
 - `live-desk-i18n-capture.mjs` — read-only locale capture of PUBLIC
   surfaces, never connected to a wallet.
@@ -73,6 +73,11 @@ Two drivers need no `TESTNET_WALLETS_FILE` at all:
   state through an injected watch-only provider holding no key, so it
   reaches CONNECTED surfaces (the position pages) that a public-only
   capture cannot.
+- `live-recover-locales.mjs` — launches with `keyless: true`, so no
+  wallet is injected at all and no key is read. It reads only the
+  public `/recover` chrome, and pairs `keyless` with `readOnly` —
+  separate guards: the first removes the wallet, the second stops the
+  route shim forwarding a page-initiated write.
 
 Every other driver signs, and needs the file. That is unavoidable for
 the write half of a review — but it made the READ half unrunnable too
