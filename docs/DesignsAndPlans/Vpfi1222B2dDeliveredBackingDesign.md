@@ -915,8 +915,12 @@ review cycle.
 
 12a. **R4's fresh-return is a THIRD wire path** (Codex #1573 r3 P1). Once R4
     stopped routing through C2, the mirror→Base return became its own message —
-    it must carry enough authenticated identity to reverse the original remit
-    accounting, and R4 explicitly forbids reusing C2's. It therefore needs its
+    it must carry enough authenticated identity to SETTLE the original remit
+    accounting (under the 2026-08-07 decision that settlement is the
+    receipt-bound recovery-position credit and returned-cumulative writes,
+    never a deduction from cap usage — this line said "reverse" until Codex
+    #1586 r3 P1, which an implementer could build as the rejected cap
+    reversal), and R4 explicitly forbids reusing C2's. It therefore needs its
     own payload kind, decoder and rollout compatibility. An earlier revision
     kept saying "two evolutions" *after* making the change that created the
     third, which would let a P2 implementation and rollout plan omit **the very
@@ -1420,9 +1424,12 @@ derived at read time", which an implementer would wire straight into
   **recovery-position evidence**: it credits and bounds the re-dispatchable
   position of the decision block above, and is never a deduction from cap
   usage;
-- `gross remitted − recovered` survives ONLY as an operator reporting view of
-  net physical outflow currently charged — it feeds no funding-planning
-  surface and never `remaining`.
+- the operator reporting view of net physical outflow is
+  `gross remitted − recovered + re-dispatched` (Codex #1586 r3 P2: once a
+  parcel is re-used, the two-term form reports zero while value has left Base
+  again — the re-dispatch cumulative the decision block requires must appear
+  in the reconciliation) — a reporting view only, feeding no funding-planning
+  surface and never `remaining`, which reads gross alone.
 
 **⚠ This exposed a real tension — since DECIDED (2026-08-07, below).** The
 claim path's truncate-and-consume rule is justified by
@@ -1678,7 +1685,7 @@ CCIP pool.
 r6 established that a *post-lapse* ACK is not resolution: R4 has the mirror
 finalize/ACK the original reservation *before* starting the fresh-return, so
 releasing the gate there would free Base to dispatch again while the tokens and
-the reversal are still outstanding. That much stands.
+the return settlement are still outstanding. That much stands.
 
 **The r6 wording then over-generalised it to "only a recovered receipt plus
 completed reversal clears the gate", and that breaks the ordinary path.**
@@ -1688,9 +1695,9 @@ clears and the chain is locked out of compensation permanently:
 
 | State | What actually happened | Terminal |
 | --- | --- | --- |
-| **Consumed on time** | mirror credited the delivery, users were paid, no reversal exists or ever will (r7 P1) | **consumption ACK** clears |
+| **Consumed on time** | mirror credited the delivery, users were paid, no return settlement exists or ever will (r7 P1) | **consumption ACK** clears |
 | **Consumed on time but short** | all delivered tokens landed and were credited; the *day* awaits a top-up (R1c) | **consumption ACK** clears — see R6c |
-| **Delivered after lapse** | quarantined (R4a), fresh-returned, Base reverses | **return settlement** clears |
+| **Delivered after lapse** | quarantined (R4a), fresh-returned, Base credits the recovery position (the 2026-08-07 settlement — never a cap deduction) | **return settlement** clears |
 | **Permanently undeliverable** | ingress rejects a malformed instruction; CCIP leaves it failed-but-re-executable and re-execution repeats the failure, so there is no ACK and no return (r7 P1) | **HOLDS the gate.** Cancellation records the message's terminal state but does **not** clear it — §2d leaves the tokens locked in the CCIP pool (r8 P1). See R6d |
 | **Cancelled, recovery pending** | the dispatch is provably dead and cancelled, and the pool → Diamond recovery has not settled yet (r9 P1) | **HOLDS the gate** — the tokens are still stranded, which is the only thing R6 measures |
 | **Recovered** | the governance recovery settled and Base authenticated the inflow | **recovery settlement** clears |
@@ -1759,7 +1766,7 @@ go out beside it — with repeated malformed instructions accumulating *unbounde
 stranded deliveries under a rule whose entire purpose is to bound them at one.
 
 The gate therefore clears on **receipt-bound recovery settlement**, or
-cancellation must atomically recover and reverse. Since §2d makes recovery a
+cancellation must atomically recover and settle. Since §2d makes recovery a
 governance op rather than an atomic step, the practical reading is the first.
 
 **That this clearing is operator-gated is acceptable, and the reason is worth

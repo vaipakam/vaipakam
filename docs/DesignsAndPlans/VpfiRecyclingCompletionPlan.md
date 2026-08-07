@@ -532,9 +532,15 @@ implementer to §3.6 alone.
 
   **#1568 also owns the SHARED return-transport slice** — the channel that is
   cut once (constraint 3's resolution, the mirror-side sender leg, the
-  kind-dispatching Base receiver, channel registration, first rollout test).
-  #1434's R4 wire slice is downstream of it and adds only its own payload
-  kind, decoder and handler (§3.6a's ownership note).
+  kind-dispatching Base receiver, channel registration, and the shared slice's
+  own rollout test). #1434's R4 wire slice is downstream of it and builds Mode
+  B's protocol on that channel: its own payload kind, decoder and handler
+  **plus its own independently versioned rollout ladder and rollout test**
+  (§2h 12a's per-path requirement — the channel is shared, the ladder is not).
+  **No M3→M4 cycle**: B2-d4's halt lift (the M3 gate) needs only R4's
+  arrival-reservation/claim-exclusion slice on the remit ingress; the return
+  WIRE sequences after this shared slice in M4-era order and must be live
+  before the M7 arming ceremony (§3.6a's ownership note).
 
   **Invariants that must move, split by WHICH MODE forces them** — an earlier
   revision lumped these together and would have pulled Mode-B storage into

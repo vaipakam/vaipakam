@@ -873,13 +873,27 @@ across two owning cards with no assignee invites either duplicate transport
 infrastructure or an undeclared wait). #1568 lands the common transport slice
 — constraint 3's resolution, the mirror-side sender leg, the Base-side
 receiving endpoint that dispatches on payload kind, channel registration, and
-the first rollout test — together with Mode A's own payload kind. **#1434's R4
-wire slice declares that slice a prerequisite** and adds only Mode B's payload
-kind, decoder and handler on the already-cut channel. This ordering is
-compatible with the ⛔ SEQUENCING note above: R4's arrival-reservation and
-claim-exclusion slice rides the existing REMIT ingress, not the return
-channel, so it still lands before the halt lifts regardless of when the
-return transport ships.
+the shared slice's own rollout test — together with Mode A's own payload kind.
+**#1434's R4 wire slice declares that slice a prerequisite** and builds Mode
+B's protocol on the already-cut channel: its own payload kind, decoder and
+handler **plus its own independently versioned rollout-compatibility ladder
+and rollout test** (Codex #1586 r3 P2 — "only" here means the channel is not
+rebuilt, never that Mode B skips §2h 12a's per-path rollout requirement; that
+per-path test is exactly the safeguard against deploying without the
+fresh-return receiver).
+
+**This creates no M3→M4 milestone cycle** (Codex #1586 r3 P2: #1434 sits in
+the plan's M3, #1568 in M4, and M4 sequences after M3 — read carelessly, the
+new prerequisite loops them). The resolution is what the ⛔ SEQUENCING note
+already implies: **B2-d4's halt lift — the M3 gate — requires only R4's
+arrival-reservation and claim-exclusion slice**, which rides the existing
+REMIT ingress and needs no return channel. R4's return-WIRE slice is NOT an
+M3-completion gate: it sequences after #1568's shared slice in M4-era order,
+and must be live **before the M7 arming ceremony** — the first moment an
+armed programme can actually need a lapse-recovery (until arming, the whole
+surface is dark and a quarantined late delivery simply waits in its
+reservation). A card is not a milestone: #1434 keeps ownership of the wire
+slice even though it lands in M4-era order.
 
 ### 3.7 Failure modes
 
