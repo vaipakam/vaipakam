@@ -497,10 +497,18 @@ permanently shrinks the interaction pool by its amount — the same conservative
 treatment a released reservation already receives.
 
 > **✅ RATIFIED 2026-08-07 (owner), jointly with §2h's `remaining` decision**
-> — the two paths share `rewardBudgetRemittedGlobal`, and §2h required
-> whoever decides either to decide both. This section's rule is now a
-> ratified decision, not a conservative default: recovered or repatriated
-> value never reopens 69M headroom, in either mode. §2h additionally records
+> — decided across both modes at once, as §2h required. The retained
+> original cap charge is a **Mode-B property**: only FRESH remittances
+> advance `rewardBudgetRemittedGlobal` (`RewardRemittanceFacet` advances it
+> by the fresh component alone), and Mode A's recycled surplus was never in
+> that counter (Codex #1586 r5 P2 — an earlier wording said the two paths
+> "share" it, which could couple recycled repatriation to the fresh-cap
+> ledger). Mode A's non-effect on 69M headroom holds independently:
+> repatriated recycled value moves on the recycle bucket's own books (the
+> repatriation debit ledger and its availability terms) and touches no
+> fresh-cap instrument. This section's rule is now a ratified decision, not
+> a conservative default: recovered or repatriated value never reopens 69M
+> headroom, in either mode. §2h additionally records
 > the owner's disposition for Mode B's recovered fresh value — re-used for
 > platform interaction rewards via an uncharged, position-bounded re-dispatch
 > (the parcel's cap charge happened at its original dispatch and is never

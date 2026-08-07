@@ -1434,7 +1434,12 @@ derived at read time", which an implementer would wire straight into
   `recovered ≤ gross + re-dispatched` holds by construction; implementations
   still evaluate additions-first and saturate defensively. A reporting view
   only, feeding no funding-planning surface and never `remaining`, which
-  reads gross alone.
+  reads gross alone. **Scoped to the R4/Mode-B flow** (Codex #1586 r5 P2): a
+  governance-ceremony recovery of a released reservation returns value whose
+  dispatch is in `gross` but whose recovery rides the ceremony's own
+  instrument — unspecified until R6d — so ceremony recoveries enter operator
+  reporting only once R6d defines that instrument, and this view does not
+  claim to cover them.
 
 **⚠ This exposed a real tension — since DECIDED (2026-08-07, below).** The
 claim path's truncate-and-consume rule is justified by
@@ -1453,8 +1458,9 @@ the non-reopening side, with a disposition that discharges most of that side's
 stated cost (the re-dispatch never charges twice — below).
 
 **✅ DECIDED 2026-08-07 (owner) — the recovered cumulative does NOT feed
-`remaining`, ratified jointly with #1568 §3.6a** (the two paths share the
-counter, exactly as the coordination note below requires). What was this
+`remaining`, ratified jointly with #1568 §3.6a** (decided across both modes
+at once, as the coordination note below required; the retained charge itself
+is a Mode-B property — see the narrowing recorded there). What was this
 document's conservative default is now the permanent rule: recovered value
 sits in an explicitly separate, **non-reopening** recovery position, visible
 to operators and excluded from 69M headroom. No Mode-B recovery ever moves
@@ -1527,11 +1533,14 @@ on this branch** (Codex #1573 r10 P2). An earlier revision cited
 repatriation direction — the exact unverifiable cross-branch dependency **R4a
 records this section making once before**, repeated. The local rule above was
 therefore kept self-contained rather than waiting on that section landing.
-What was true and checkable then remains the operative point: the two paths
-share `rewardBudgetRemittedGlobal`, whose monotonicity the claim path relies
-on, so whoever decides either must decide both. **Both documents have since
-merged (`268e7db10`, `37256d430`), and the 2026-08-07 decision above was taken
-jointly across them, as this note required.**
+What was checkable then — "the two paths share `rewardBudgetRemittedGlobal`"
+— was later NARROWED (Codex #1586 r5 P2): only fresh remittances advance that
+counter, so Mode A's recycled surplus was never in it and the retained-charge
+rule is a Mode-B property; the operative point survives in weakened form —
+both modes needed the same no-restore decision, and the claim path's
+monotonicity reliance is on the counter Mode B retains its charge in. **Both
+documents have since merged (`268e7db10`, `37256d430`), and the 2026-08-07
+decision above was taken jointly across them, as this note required.**
 
 **Two deltas, not one — the mirror's OUTFLOW and Base's INFLOW are different
 numbers** (Codex #1573 r8 P1). The paragraph above already establishes that the
