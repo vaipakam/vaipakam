@@ -459,6 +459,30 @@ to take. This is the #1434 §2h constraint 15 lesson applied one layer up: a
 shared wire generation carrying two meanings, with only an aggregate bound
 between them, is how one transfer gets booked twice.
 
+> **✅ RATIFIED 2026-08-07 (owner) — the discriminator IS the payload-kind
+> tag, and the sharing stops at the transport.** This paragraph and §2h
+> constraint 12a briefly read as contradicting each other — "one transport
+> with a mode discriminator" versus "R4 needs its own payload kind, decoder
+> and rollout compatibility" (surfaced on #1578 r7, recorded on #1434) — and
+> the owner ratified the layered reading that satisfies both, per #1571's
+> standing architecturally-clean instruction. The mirror→Base return CHANNEL
+> is cut once and shared: whatever shape constraint 3 below resolves to (a
+> mirror-side sender/escrow contract, or authenticated channel selection in
+> the messenger), both modes ride it. Each mode is its own wire PROTOCOL on
+> that channel: its own payload kind, its own decoder and Base-side handler,
+> its own rollout-compatibility ladder, versioned independently (§2h 12a).
+> The discriminator is therefore **not a mode field inside a shared payload
+> schema** — one schema with a mode flag is exactly what 12a forbids, since
+> one decoder and one rollout ladder for two protocols with different
+> authenticated identities lets a rollout plan omit the fresh-return receiver
+> entirely. The discriminator is the payload-kind tag itself, and "Base must
+> reject a mismatch" means: the kind selects the ledger action, each kind's
+> handler performs only its own mode's accounting, and a payload whose kind
+> does not match the pending authorization or reservation it references is
+> rejected, not coerced. **This is the canonical statement of the
+> resolution** — §2h 12a and the completion plan's §M4 point here rather
+> than restating it.
+
 #### The returned tokens do NOT restore interaction-pool headroom
 
 `rewardBudgetRemittedGlobal` is **append-only** — verified: written only with
@@ -471,6 +495,36 @@ repatriation would falsify that argument and turn every earlier truncation into
 a silent underpayment. **Neither mode decrements it**, so a lapsed compensation
 permanently shrinks the interaction pool by its amount — the same conservative
 treatment a released reservation already receives.
+
+> **✅ RATIFIED 2026-08-07 (owner), jointly with §2h's `remaining` decision**
+> — decided across both modes at once, as §2h required. The retained
+> original cap charge is a **Mode-B property**: only FRESH remittances
+> advance `rewardBudgetRemittedGlobal` (`RewardRemittanceFacet` advances it
+> by the fresh component alone), and Mode A's recycled surplus was never in
+> that counter (Codex #1586 r5 P2 — an earlier wording said the two paths
+> "share" it, which could couple recycled repatriation to the fresh-cap
+> ledger). Mode A's non-effect on 69M headroom holds independently:
+> repatriated recycled value moves on the recycle bucket's own books (the
+> repatriation debit ledger and its availability terms) and touches no
+> fresh-cap instrument. This section's rule is now a ratified decision, not
+> a conservative default: recovered or repatriated value never reopens 69M
+> headroom, in either mode. §2h additionally records
+> the owner's disposition for Mode B's recovered fresh value — re-used for
+> platform interaction rewards via an uncharged, position-bounded re-dispatch
+> (the parcel's cap charge happened at its original dispatch and is never
+> repeated, so `remaining` neither rises on recovery nor falls again on
+> re-use) — and the two implementation constraints that keep the uncharged
+> path from becoming a cap bypass. The "permanently shrinks" above therefore
+> holds for value that is never recovered; a RECOVERED parcel re-enters
+> funding through the uncharged re-dispatch, so recovery un-does the shrink
+> economically without ever moving the counter. Mode A's destination remains
+> governed by
+> constraints 1/1a below; nothing here changes it. One neighbouring case sits
+> deliberately OUTSIDE both modes and this ratification: the
+> released-reservation transport-custody recovery ceremony (tokens sent but
+> never delivered, recovered pool → Diamond by governance), which the
+> TokenomicsTechSpec ratifies as headroom-restoring — §2h's boundary note
+> records why the asymmetry is intended.
 
 #### Constraints — the mechanisms this section first proposed did NOT survive review
 
@@ -817,8 +871,37 @@ So:
   earmarked for something else, with nothing marking them earmarked.
 
 What genuinely is shared, and should therefore be decided once rather than
-twice, is the **transport** (constraint 3) and the **mode discriminator** — so
-the wire is cut once even though the two modes ship on different cards.
+twice, is the **transport** (constraint 3) and the **payload-kind space** that
+serves as the mode discriminator — so the CHANNEL is cut once even though the
+two modes ship on different cards, while each mode keeps its own payload kind,
+decoder and rollout ladder (the ratified layering above; §2h 12a).
+
+**The shared slice has ONE owner: #1568** (Codex #1586 r2 P2 — "cut once"
+across two owning cards with no assignee invites either duplicate transport
+infrastructure or an undeclared wait). #1568 lands the common transport slice
+— constraint 3's resolution, the mirror-side sender leg, the Base-side
+receiving endpoint that dispatches on payload kind, channel registration, and
+the shared slice's own rollout test — together with Mode A's own payload kind.
+**#1434's R4 wire slice declares that slice a prerequisite** and builds Mode
+B's protocol on the already-cut channel: its own payload kind, decoder and
+handler **plus its own independently versioned rollout-compatibility ladder
+and rollout test** (Codex #1586 r3 P2 — "only" here means the channel is not
+rebuilt, never that Mode B skips §2h 12a's per-path rollout requirement; that
+per-path test is exactly the safeguard against deploying without the
+fresh-return receiver).
+
+**This creates no M3→M4 milestone cycle** (Codex #1586 r3 P2: #1434 sits in
+the plan's M3, #1568 in M4, and M4 sequences after M3 — read carelessly, the
+new prerequisite loops them). The resolution is what the ⛔ SEQUENCING note
+already implies: **B2-d4's halt lift — the M3 gate — requires only R4's
+arrival-reservation and claim-exclusion slice**, which rides the existing
+REMIT ingress and needs no return channel. R4's return-WIRE slice is NOT an
+M3-completion gate: it sequences after #1568's shared slice in M4-era order,
+and must be live **before the M7 arming ceremony** — the first moment an
+armed programme can actually need a lapse-recovery (until arming, the whole
+surface is dark and a quarantined late delivery simply waits in its
+reservation). A card is not a milestone: #1434 keeps ownership of the wire
+slice even though it lands in M4-era order.
 
 ### 3.7 Failure modes
 
