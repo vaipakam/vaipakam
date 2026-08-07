@@ -5,12 +5,22 @@ funding that chain's own reward claims. A quiet chain can therefore build up a
 balance it has no near-term use for, while a busy one runs lean — and until now
 nothing surfaced that difference. An operator had to go looking.
 
-There is now a per-chain **surplus flag**. A chain is flagged when the recycled
-VPFI available to it exceeds a configured multiple of what it has actually been
-budgeting per day, averaged over the trailing thirty days. Alongside the flag,
-the same read reports the availability, the trailing average, the threshold it
-was compared against, and the configured multiple — so an operator can see *why*
-something is or is not flagged rather than only that it is.
+There is now a per-chain **surplus flag**. A mirror chain is flagged when the
+recycled VPFI available to it exceeds a configured multiple of what it has
+actually been budgeting per day, averaged over the trailing thirty days.
+Alongside the flag, the same read reports the availability, the trailing
+average, the threshold it was compared against, and the configured multiple — so
+an operator can see *why* something is or is not flagged rather than only that
+it is.
+
+**It covers the mirror chains, and asking it about the canonical chain fails
+rather than answering.** That is deliberate on two counts: the figure it would
+produce for the canonical chain is a lifetime total rather than what is
+currently available, so the flag would stay raised for funds already spent and
+nothing could clear it; and the flag exists to surface candidates for moving
+surplus *back* to the canonical chain, which the canonical chain can never be.
+Its own recycled position is reported by the existing composition and backing
+reads. An operator scanning for surplus should scan the mirrors.
 
 **The flag moves nothing.** It is a signal, and only a signal. Deciding what to
 do about a flagged surplus — including whether to move any of it — is separate

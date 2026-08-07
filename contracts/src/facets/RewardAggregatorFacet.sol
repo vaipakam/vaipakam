@@ -771,6 +771,15 @@ contract RewardAggregatorFacet is
      *         flagged surplus is C2 (#1568), where §3.6a requires it to be a
      *         deliberate, bounded, protocol-controlled disposal.
      *
+     *         **`onlyCanonical` as well as ADMIN_ROLE** (Codex #1579 r2 P2).
+     *         This facet's header states that every mutating method is
+     *         Base-only, and the flag it configures reads a Base-side ledger.
+     *         Without the gate an admin on a MIRROR deployment would get a
+     *         successful call and a `RecycleSurplusMultipleSet` event while
+     *         nothing observable changed — a false confirmation to governance
+     *         or automation that the live flag had been configured, which is
+     *         worse than a revert.
+     *
      *         Lives here rather than in `ConfigFacet` for two reasons:
      *         `ConfigFacet` has ~557 bytes of EIP-170 headroom and this would
      *         risk it, and the house pattern already keeps a domain knob with
@@ -781,6 +790,7 @@ contract RewardAggregatorFacet is
     function setRecycleSurplusMultiple(uint16 newMultiple)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
     {
         if (newMultiple > LibVaipakam.RECYCLE_SURPLUS_MULTIPLE_MAX) {
             revert InvalidRecycleSurplusMultiple(
@@ -827,6 +837,18 @@ contract RewardAggregatorFacet is
      *         Base's own position is available through
      *         `getRecycleCompositionPosition` and the backing reads, which
      *         compute it correctly for the canonical chain.
+     *
+     *         **The guard reads `block.chainid`, NOT `s.baseChainId`** (Codex
+     *         #1579 r2 P2 — the r1 fix used the latter and did not work).
+     *         `setBaseChainId` documents itself as the destination for
+     *         MIRROR-side reports and **"Zero on Base"**, so on the canonical
+     *         Diamond `s.baseChainId` is legitimately 0 and never matches the
+     *         real chain id — the guard would have passed the very call it
+     *         exists to reject. `RewardReporterFacet` states the rule this
+     *         now follows: *"a chain's own identity is `block.chainid`, read
+     *         directly."* This surface only runs on the canonical Diamond
+     *         (the ledger it reads is Base's), so "is this me?" is exactly
+     *         the question.
      * @param  chainId    The MIRROR chain to inspect.
      * @param  throughDay Inclusive last day of the trailing window.
      */
@@ -841,11 +863,14 @@ contract RewardAggregatorFacet is
             bool flagged
         )
     {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (chainId == s.baseChainId) {
+        if (chainId == block.chainid) {
             revert SurplusFlagNotForCanonicalChain(chainId);
         }
-        return LibVpfiRecycle.chainSurplusPosition(s, chainId, throughDay);
+        return LibVpfiRecycle.chainSurplusPosition(
+            LibVaipakam.storageSlot(),
+            chainId,
+            throughDay
+        );
     }
 
     /// @notice #1222 M3 B1 — the accepted (clamped) recycled credit Base has

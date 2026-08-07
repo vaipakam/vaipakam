@@ -853,11 +853,22 @@ than it will use, while a busy chain runs lean. The platform surfaces that
 difference **per chain** rather than as one global figure, because a global
 total conceals exactly the asymmetry worth seeing.
 
-A chain is **flagged** when the recycled VPFI available to it exceeds a
+A **mirror** chain is flagged when the recycled VPFI available to it exceeds a
 configured multiple of its trailing-average daily recycled budget, averaged over
 the trailing thirty days. The same read also reports the availability, the
 trailing average, the threshold compared against, and the configured multiple,
 so an operator can see why a chain is or is not flagged.
+
+**The flag is a mirror concept and the canonical chain is refused, not
+answered.** Asking about the canonical chain fails rather than returning a
+figure — deliberately, for two reasons. The availability number computed that
+way would be the *lifetime* total rather than what is live, so it would keep
+the flag raised for funds already spent, with nothing able to clear it. And the
+flag exists to surface candidates for moving surplus back to the canonical
+chain, so the canonical chain is never a candidate: there is nowhere for it to
+move value to. The canonical chain's own recycled position is reported by the
+composition and backing reads, which compute it correctly. An operator scanning
+chains should scan the mirrors.
 
 Intended behaviour, in the terms that are observable:
 

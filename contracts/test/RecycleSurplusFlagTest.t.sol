@@ -8,6 +8,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  RecycleSurplusFlagTest
@@ -353,12 +354,42 @@ contract RecycleSurplusFlagTest is SetupTest {
         assertEq(multiple, 10, "mirrors are unaffected by the Base guard");
     }
 
-    /// The guard keys on the CONFIGURED canonical chain id, not on a
-    /// hardcoded value — so a deployment whose Base id differs is still
-    /// protected, and the mirror it happens to share an id with is not.
-    function test_CanonicalGuard_FollowsConfiguredBaseChainId() public {
-        // Re-point the canonical id at what was previously a mirror.
-        _rep().setBaseChainId(CHAIN_ARB);
+    /// **The guard must key on `block.chainid`, never on `s.baseChainId`.**
+    ///
+    /// `setBaseChainId` documents itself as the destination for MIRROR-side
+    /// reports and "Zero on Base", so a REAL canonical Diamond legitimately
+    /// runs with `baseChainId == 0`. A guard reading that field passes the
+    /// exact call it exists to reject.
+    ///
+    /// This is the configuration the rest of the suite does NOT exercise:
+    /// `setUp` calls `setBaseChainId(CHAIN_BASE)`, which is a mirror-shaped
+    /// setting, and under it a `s.baseChainId` guard appears to work. That is
+    /// precisely how the first version of this fix shipped green while not
+    /// working (Codex #1579 r2).
+    function test_CanonicalGuard_HoldsWhenBaseChainIdIsUnset() public {
+        // The genuine canonical shape: own identity from `block.chainid`,
+        // `baseChainId` left at its documented zero.
+        _rep().setBaseChainId(0);
+        assertEq(
+            LibVaipakam.storageSlot().baseChainId,
+            0,
+            "sanity: this test contract's own slot is not the Diamond's"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardAggregatorFacet.SurplusFlagNotForCanonicalChain.selector,
+                CHAIN_BASE
+            )
+        );
+        _agg().getChainSurplusPosition(CHAIN_BASE, THROUGH_DAY);
+    }
+
+    /// The guard follows the Diamond's ACTUAL chain, so the same bytecode
+    /// deployed elsewhere protects that chain instead — and CHAIN_BASE, no
+    /// longer "self", answers normally.
+    function test_CanonicalGuard_FollowsBlockChainid() public {
+        vm.chainId(CHAIN_ARB);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -368,9 +399,20 @@ contract RecycleSurplusFlagTest is SetupTest {
         );
         _agg().getChainSurplusPosition(CHAIN_ARB, THROUGH_DAY);
 
-        // And the chain that WAS canonical now answers, because the guard
-        // tracks configuration rather than a constant.
+        // Not "self" any more, so it is answerable.
         _agg().getChainSurplusPosition(CHAIN_BASE, THROUGH_DAY);
+    }
+
+    /// The knob is a MUTATING method, and this facet's header states every
+    /// mutating method is Base-only. On a mirror the call must revert rather
+    /// than succeed-and-emit, which would falsely confirm to governance or
+    /// automation that the live flag had been configured.
+    function test_Knob_RejectsNonCanonicalDeployment() public {
+        vm.chainId(CHAIN_ARB); // same Diamond, now not the canonical chain
+        _rep().setIsCanonicalRewardChain(false);
+
+        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
+        _agg().setRecycleSurplusMultiple(10);
     }
 
     // ─── Read-only ───────────────────────────────────────────────────────
