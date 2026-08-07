@@ -515,7 +515,10 @@ implementer to §3.6 alone.
   (Base-initiated, drawn from the mirror's recycle bucket, was in `reported`)
   and Mode B stranded-delivery recovery (mirror-initiated, never in `reported`,
   and it must not touch the claim-side ledger at all). They need an explicit
-  **mode discriminator on the wire**.
+  **mode discriminator on the wire** — ratified 2026-08-07 as the
+  **payload-kind tag itself** on one shared channel, each mode keeping its own
+  kind, decoder and rollout ladder (canonical statement in §3.6a; §2h 12a
+  agrees).
 
   ⚠️ **The old one-line scope was wrong.** It read "Base-ledgered into
   `consumedCumulative` before the mirror send". Charging `consumedCumulative`
@@ -564,7 +567,10 @@ implementer to §3.6 alone.
   > by inventing a second owner.
   >
   > **The accounting dependency is INTRA-card, not cross-card:** neither
-  > return mode may restore the append-only 69M interaction-pool headroom,
+  > return mode may restore the append-only 69M interaction-pool headroom
+  > (ratified by owner 2026-08-07 — §2h records the decision and the
+  > recovered tokens' disposition: re-used as ordinary reward funding, each
+  > dispatch charging the cap afresh),
   > and a Mode-B return is recorded in a **separate receipt-bound RETURNED
   > cumulative** — never by decrementing `rewardBudgetArmedFreshReceived` or
   > `rewardBudgetFreshUncounted`, which §2h R4 keeps **gross and
@@ -639,12 +645,14 @@ implementer to §3.6 alone.
 - **C4 — TokenomicsTechSpec §9 edit for Phase-C surplus tooling → #1570.**
   **C4's scope INCLUDES C1's surplus flag** — do not scope it out on the
   premise that the flag is already documented (Codex #1578 r3 P2). An earlier
-  revision here claimed "§9a already carries C1's flag"; that section exists
-  only on the unmerged #1579 branch, so from this document's branch the claim
-  was **false** — the same unverifiable cross-branch dependency §2h's R4a
-  records. `TokenomicsTechSpec` §9 today specifies no N×-trailing-budget
-  operator-visible flag at all. C4 covers both the flag and the broader
-  disposition section.
+  revision here claimed "§9a already carries C1's flag"; at the time that
+  section existed only on the unmerged #1579 branch, so from this document's
+  branch the claim was **false** — the same unverifiable cross-branch
+  dependency §2h's R4a records. **#1579 has since merged (`cc3a973fe`), so
+  §9a now exists on `main`** and C4's job for the flag changed shape rather
+  than disappearing: C4 integrates the broader Phase-C disposition section
+  WITH the landed §9a — one coherent §9 story — instead of writing the flag
+  from scratch or duplicating it.
 
 ### M5 — #1218 transparency dashboard completion
 

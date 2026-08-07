@@ -459,6 +459,30 @@ to take. This is the #1434 §2h constraint 15 lesson applied one layer up: a
 shared wire generation carrying two meanings, with only an aggregate bound
 between them, is how one transfer gets booked twice.
 
+> **✅ RATIFIED 2026-08-07 (owner) — the discriminator IS the payload-kind
+> tag, and the sharing stops at the transport.** This paragraph and §2h
+> constraint 12a briefly read as contradicting each other — "one transport
+> with a mode discriminator" versus "R4 needs its own payload kind, decoder
+> and rollout compatibility" (surfaced on #1578 r7, recorded on #1434) — and
+> the owner ratified the layered reading that satisfies both, per #1571's
+> standing architecturally-clean instruction. The mirror→Base return CHANNEL
+> is cut once and shared: whatever shape constraint 3 below resolves to (a
+> mirror-side sender/escrow contract, or authenticated channel selection in
+> the messenger), both modes ride it. Each mode is its own wire PROTOCOL on
+> that channel: its own payload kind, its own decoder and Base-side handler,
+> its own rollout-compatibility ladder, versioned independently (§2h 12a).
+> The discriminator is therefore **not a mode field inside a shared payload
+> schema** — one schema with a mode flag is exactly what 12a forbids, since
+> one decoder and one rollout ladder for two protocols with different
+> authenticated identities lets a rollout plan omit the fresh-return receiver
+> entirely. The discriminator is the payload-kind tag itself, and "Base must
+> reject a mismatch" means: the kind selects the ledger action, each kind's
+> handler performs only its own mode's accounting, and a payload whose kind
+> does not match the pending authorization or reservation it references is
+> rejected, not coerced. **This is the canonical statement of the
+> resolution** — §2h 12a and the completion plan's §M4 point here rather
+> than restating it.
+
 #### The returned tokens do NOT restore interaction-pool headroom
 
 `rewardBudgetRemittedGlobal` is **append-only** — verified: written only with
@@ -471,6 +495,21 @@ repatriation would falsify that argument and turn every earlier truncation into
 a silent underpayment. **Neither mode decrements it**, so a lapsed compensation
 permanently shrinks the interaction pool by its amount — the same conservative
 treatment a released reservation already receives.
+
+> **✅ RATIFIED 2026-08-07 (owner), jointly with §2h's `remaining` decision**
+> — the two paths share `rewardBudgetRemittedGlobal`, and §2h required
+> whoever decides either to decide both. This section's rule is now a
+> ratified decision, not a conservative default: recovered or repatriated
+> value never reopens 69M headroom, in either mode. §2h additionally records
+> the owner's disposition for Mode B's recovered fresh value — re-used as
+> ordinary reward funding, each dispatch charging the cap afresh — and its
+> two accepted consequences. Mode A's destination remains governed by
+> constraints 1/1a below; nothing here changes it. One neighbouring case sits
+> deliberately OUTSIDE both modes and this ratification: the
+> released-reservation transport-custody recovery ceremony (tokens sent but
+> never delivered, recovered pool → Diamond by governance), which the
+> TokenomicsTechSpec ratifies as headroom-restoring — §2h's boundary note
+> records why the asymmetry is intended.
 
 #### Constraints — the mechanisms this section first proposed did NOT survive review
 
@@ -817,8 +856,10 @@ So:
   earmarked for something else, with nothing marking them earmarked.
 
 What genuinely is shared, and should therefore be decided once rather than
-twice, is the **transport** (constraint 3) and the **mode discriminator** — so
-the wire is cut once even though the two modes ship on different cards.
+twice, is the **transport** (constraint 3) and the **payload-kind space** that
+serves as the mode discriminator — so the CHANNEL is cut once even though the
+two modes ship on different cards, while each mode keeps its own payload kind,
+decoder and rollout ladder (the ratified layering above; §2h 12a).
 
 ### 3.7 Failure modes
 
