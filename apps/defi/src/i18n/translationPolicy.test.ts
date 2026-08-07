@@ -1,10 +1,11 @@
 /**
  * The recovery confirmation word, enforced where CI can see it.
  *
- * `scripts/translate-i18n.ts` cross-checks the policy file against
- * `RECOVERY_CONFIRM_WORD` and rejects a response that loses the token —
- * but that script only runs when someone types the `translate` command
- * by hand. The required DeFi check is `tsc -b --noEmit`, which never
+ * The shared translate script (`packages/i18n/scripts/translate-i18n.ts`,
+ * reached through `scripts/translate.mjs`) cross-checks the policy file
+ * against `RECOVERY_CONFIRM_WORD` and rejects a response that loses the
+ * token — but that script only runs when someone types the `translate`
+ * command by hand. The required DeFi check is `tsc -b --noEmit`, which never
  * executes it. So `RECOVERY_CONFIRM_WORD` could change while the policy
  * and the committed prompts kept the old word, every required check
  * would stay green, and speakers of all nine translated languages would
