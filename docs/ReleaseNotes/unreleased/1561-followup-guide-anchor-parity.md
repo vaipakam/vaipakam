@@ -36,3 +36,13 @@ drift out of date in either direction. Translating those chapters is tracked
 separately; it is roughly ninety-six thousand characters of translated output
 across the nine languages, which is a translation project rather than a repair
 to the check.
+
+Chasing exactly what counts as a chapter turned up a defect on the live English
+site, which is now filed on its own. The guide builds its contents list from the
+link targets under each chapter, and drops any chapter that has none — so "How
+VPFI Discounts Work" is printed on the Advanced page today but appears nowhere
+in its contents list. A reader can only reach it by scrolling past everything
+above it. Counting chapters the way the contents list does would have hidden
+that, and would also have stopped reporting the chapter the nine translations
+are genuinely missing, so the check counts what each file contains instead. The
+difference between the two counts is the bug.

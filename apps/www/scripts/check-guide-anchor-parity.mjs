@@ -83,11 +83,15 @@ const anchorsIn = (file) =>
  * question anchors cannot: does this edition have as many chapters as
  * its source?
  *
- * "Chapter" is defined as the RENDERER defines it, not as CommonMark
- * would in the abstract: `extractToc` in `src/lib/markdownToc.tsx`
- * matches `/^##\s+(.+)$/` per line, so a heading that is not at column
- * zero never reaches the sidebar and is not a chapter the reader can
- * navigate to.
+ * "Chapter" is a heading the FILE declares at column zero — matching
+ * how the guide's own extractor, `extractToc` in
+ * `src/pages/UserGuide.tsx`, recognises one: `/^##\s+(.+)$/` per line.
+ * (Note the file: the guide pages use their OWN extractor, not the
+ * `extractMarkdownToc` in `src/lib/markdownToc.tsx` that Overview and
+ * Whitepaper use. The two behave differently, and checking the wrong
+ * one is how this comment was previously wrong — Codex #1594 r3.)
+ * A heading that is not at column zero is not a chapter here, because
+ * it is not one there either.
  *
  * That distinction is load-bearing here. `Advanced.hi.md` and
  * `Advanced.ja.md` carry two two-space-indented `##` lines each, which
@@ -99,18 +103,33 @@ const anchorsIn = (file) =>
  * their chapters are unreachable from the sidebar (Codex #1594 r2,
  * correcting r1).
  *
- * Fenced blocks are skipped, matching `extractToc`, which tracks
- * fences the same way: a `## Example` inside a code sample is
+ * Fenced blocks are skipped: a `## Example` inside a code sample is
  * illustration, not structure. None exists in the corpus today, but
  * the failure mode — a phantom chapter masking a real missing one — is
- * silent, so the guard is worth its few lines.
+ * silent, so the guard is worth its few lines. This is deliberately
+ * STRICTER than `extractToc`, which does not track fences at all and
+ * would list such a line in the sidebar; that is a renderer defect,
+ * recorded in #1599 rather than mirrored here.
  *
- * Verified equivalent to the renderer on the real corpus:
- * `extractToc` yields 19 sections for `Advanced.en.md`, 18 for `de`,
- * 16 for `hi` — the same numbers this function reports. (Its trailing
- * `.map` PROMOTES a section with no `###` items into a single-item
- * entry; it does not drop it, and no section in the corpus is empty
- * anyway. Nothing is filtered out — Codex #1594 r3.)
+ * Two places where the SIDEBAR shows fewer chapters than the FILE
+ * declares, and why this counts the file anyway:
+ *
+ *  - `extractToc` ends with `sections.filter((s) => s.items.length > 0)`
+ *    and only registers an `###` that carries a non-role `<a id>`
+ *    above it. So a chapter whose subsections are unanchored is
+ *    dropped from the sidebar entirely. That is live today, in
+ *    English: `## How VPFI Discounts Work` renders in the body of
+ *    `/help/advanced` but appears nowhere in its contents list —
+ *    confirmed on production, and filed as #1599.
+ *  - The same filter means a translation could gain an unanchored
+ *    chapter and close its recorded gap here while remaining
+ *    unreachable in its own sidebar.
+ *
+ * Counting the sidebar instead would make BOTH of those invisible:
+ * `en` and `de` both yield 18 sidebar sections, so the chapter German
+ * genuinely does not have would stop being a finding. The file is the
+ * honest denominator; the sidebar shortfall is its own bug with its
+ * own issue (Codex #1594 r3, which I first refuted in error).
  *
  * KNOWN LIMIT: this is a COUNT, so an edition that omits one anchorless
  * chapter and adds a different anchorless one nets to zero and passes
@@ -131,18 +150,30 @@ const chapterCount = (file) => {
   let open = null; // { char, len }
   let n = 0;
   for (const line of readGuide(file).split('\n')) {
-    const fence = /^\s*(`{3,}|~{3,})/.exec(line);
+    const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
     if (fence) {
       const char = fence[1][0];
       const len = fence[1].length;
+      const info = fence[2];
       if (open === null) {
         open = { char, len };
-      } else if (char === open.char && len >= open.len) {
+      } else if (char === open.char && len >= open.len && info.trim() === '') {
+        // CommonMark: a CLOSING fence carries no info string. Without
+        // this, a ```js sample inside an outer ```md block reads as a
+        // closer — the document reopens, a `##` in the sample counts,
+        // and the real closer then hides the chapters after it. Two
+        // errors in opposite directions, which can cancel and pass
+        // (Codex #1594 r5).
         open = null;
       }
       continue;
     }
-    if (open === null && /^## .+$/.test(line)) n += 1;
+    // `\s+`, not a literal space: `extractToc` matches `/^##\s+(.+)$/`,
+    // so `##\tTitle` IS a chapter on the site. A narrower pattern here
+    // would let a translation drop that chapter without moving the
+    // count — the guard silently passing the case it exists for
+    // (Codex #1594 r5).
+    if (open === null && /^##\s+.+$/.test(line)) n += 1;
   }
   return n;
 };
