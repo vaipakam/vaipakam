@@ -549,7 +549,20 @@ implementer to §3.6 alone.
     EXACT direction fails on the **first healthy send** and
     `ops/mesh-watcher` raises a CRITICAL over-credit.
 
-  *With **Mode B** (which ships with #1434, NOT with this card):*
+  *With **Mode B** — which is **NOT this card, and NOT currently in any
+  card's scope** (Codex #1578 r3 P2):*
+
+  > ⚠️ **Mode B has no owner.** An earlier revision said it "ships with
+  > #1434". It does not: #1434's M3 row covers the delivered-funding and
+  > zeroed-day prerequisites and then retrying mirror pricing — it names no
+  > reverse transport and no recovery state. But §3.6a requires Mode B to add
+  > the shared reverse transport, the wire mode-discriminator, the
+  > stranded-recovery reservation and the one-shot entitlement. As things
+  > stand **#1434/M3 could have closed with none of that built**, so the work
+  > fell through the gap between the two cards. **Now owned by #1584**, cut
+  > rather than folded into #1434 — that card is already large, and Mode B is
+  > a distinct transport with its own reservation, entitlement and rotation
+  > semantics.
 
   - governor **§7 #3**, custody separation, needs the stranded-recovery
     reservation as a **fourth balance owner**, with
@@ -577,7 +590,14 @@ implementer to §3.6 alone.
   identity, and every new draw on the bucket needs its own ledger unless it
   also participates in that pairing.
 - **C4 — TokenomicsTechSpec §9 edit for Phase-C surplus tooling → #1570.**
-  §9a already carries C1's flag; C4 is the broader disposition section.
+  **C4's scope INCLUDES C1's surplus flag** — do not scope it out on the
+  premise that the flag is already documented (Codex #1578 r3 P2). An earlier
+  revision here claimed "§9a already carries C1's flag"; that section exists
+  only on the unmerged #1579 branch, so from this document's branch the claim
+  was **false** — the same unverifiable cross-branch dependency §2h's R4a
+  records. `TokenomicsTechSpec` §9 today specifies no N×-trailing-budget
+  operator-visible flag at all. C4 covers both the flag and the broader
+  disposition section.
 
 ### M5 — #1218 transparency dashboard completion
 
