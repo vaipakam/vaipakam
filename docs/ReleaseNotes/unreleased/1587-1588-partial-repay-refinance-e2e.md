@@ -2,12 +2,17 @@
 
 A coverage audit of the borrower's early-exit surfaces, run after the
 #1529 merge, found that two of the six options the app offers had no
-automated drive behind them. Partial repayment had none at any tier —
-no fork spec, no unit test, and no row in the coverage matrix recording
-the absence. Refinance had a spec that asserted only that its form
-RENDERS inside the grace window, which passes just as happily against a
-flow whose submit reverts. Both are shipped, reachable, fund-moving
-settlement paths, so this closes the gap rather than recording it.
+automated drive behind them from the app's own side. The contract rules
+for both are well unit-pinned in Solidity — partial repayment alone has
+around ten cases covering the floor, the full-principal rejection and
+the boundary a wei below it — so the gap was never "is the rule right".
+It was that no test drove the borrower's actual surface: partial
+repayment had no fork spec, nothing in the frontend unit tier, and no
+row in the coverage matrix recording the absence, while refinance had a
+spec asserting only that its form RENDERS inside the grace window,
+which passes just as happily against a flow whose submit reverts. Both
+are shipped, reachable, fund-moving paths, so this closes the gap
+rather than recording it.
 
 Each new spec drives the real UI on an Anvil fork and takes its verdict
 from the chain rather than from a success banner. The partial-repay

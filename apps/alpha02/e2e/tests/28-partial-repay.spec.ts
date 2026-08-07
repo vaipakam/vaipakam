@@ -2,9 +2,15 @@
  *  principal reduction.
  *
  *  Partial repay is a first-class row in the borrower's early-exit
- *  chooser, but nothing drove it at any tier: `04-repay` settles a
- *  loan IN FULL, the shared helper is `repayLoanInFull`, and there was
- *  no unit coverage either. This spec closes that gap, and the
+ *  chooser, and the CONTRACT behaviour is well unit-pinned
+ *  (`contracts/test/RepayFacetTest.t.sol` covers the ERC-20 path, the
+ *  minimum-amount floor, the full-principal rejection and the
+ *  one-wei-below boundary). What nothing exercised was the APP: no
+ *  fork spec drove the surface — `04-repay` settles a loan IN FULL and
+ *  the shared helper is `repayLoanInFull` — and the frontend unit tier
+ *  (`src/contracts/loanLive.test.ts`) says nothing about it either. So
+ *  the gap this closes is the drive from the borrower's own card
+ *  through to chain state, not the contract rule. The
  *  assertion that carries it is the pair — the principal must SHRINK
  *  and the loan must stay Active. Either alone is satisfiable by the
  *  wrong behaviour: a full repay also reduces what is owed, and a

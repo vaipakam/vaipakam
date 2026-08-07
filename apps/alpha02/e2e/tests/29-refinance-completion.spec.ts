@@ -66,6 +66,25 @@ test('refinance request completes: old loan closes, new loan carries the collate
   const before = await loanOf(oldLoanId);
   expect(before.status, 'loan should open Active').toBe(0);
 
+  // The borrower's collateral holding BEFORE anything in the refinance
+  // happens — the baseline for the carry-over check at the end.
+  //
+  // Sampled here rather than just before the acceptance so the window
+  // spans BOTH legs. Posting is supposed to pull nothing (the lien is
+  // re-tagged inside the lender's accept, not re-pledged at create),
+  // and a window that starts after the post would miss a regression
+  // that pre-vaults a second collateral batch at create time while
+  // acceptance still re-tags the old lien correctly — every assertion
+  // would pass with the borrower's collateral taken twice.
+  const collateralHeld = async (): Promise<bigint> =>
+    (await pub.readContract({
+      address: before.collateralAsset,
+      abi: ERC20_MIN_ABI,
+      functionName: 'balanceOf',
+      args: [before.borrower],
+    })) as bigint;
+  const heldBefore = await collateralHeld();
+
   // The borrower posts the refinance request through the real form
   // (advanced-mode surface).
   const adv = await launchWallet('borrower', { advanced: true });
@@ -121,19 +140,6 @@ test('refinance request completes: old loan closes, new loan carries the collate
   ).toBeVisible({ timeout: 30_000 });
   await adv.ctx.close();
 
-  // The borrower's collateral holding immediately before acceptance —
-  // the baseline for the carry-over check below. Read here rather than
-  // at the top of the test so the posting drive itself is inside the
-  // window: nothing in a refinance should ever pull collateral.
-  const collateralHeld = async (): Promise<bigint> =>
-    (await pub.readContract({
-      address: before.collateralAsset,
-      abi: ERC20_MIN_ABI,
-      functionName: 'balanceOf',
-      args: [before.borrower],
-    })) as bigint;
-  const heldBefore = await collateralHeld();
-
   // A different lender accepts it — one transaction that opens the new
   // loan, pays off the old lender and closes the old loan.
   const newLoanId = await acceptOfferDirect('newLender', requestId);
@@ -160,7 +166,7 @@ test('refinance request completes: old loan closes, new loan carries the collate
   // ...and this says it is the SAME stake rather than a second one.
   // A fresh pledge satisfies both lines above while quietly taking
   // another `collateralAmount` out of the borrower's wallet; the lien
-  // re-tag takes nothing.
+  // re-tag takes nothing. Spans the whole refinance — post AND accept.
   expect(
     await collateralHeld(),
     'refinance must re-tag the existing lien, never pull fresh collateral',
