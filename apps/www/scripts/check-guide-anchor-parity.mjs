@@ -122,14 +122,27 @@ const anchorsIn = (file) =>
  * corpus and is tracked in #1597 rather than half-done here.
  */
 const chapterCount = (file) => {
-  let fenced = false;
+  // CommonMark: a fence closes only on the SAME character, at least as
+  // long as the opener. A plain toggle mis-reads a nested example — an
+  // embedded ``` inside a ```` block is content, but toggling on it
+  // would reopen the document and let a following `## Example` count as
+  // a chapter, which is exactly the phantom that can offset a genuinely
+  // missing one (Codex #1594 r4).
+  let open = null; // { char, len }
   let n = 0;
   for (const line of readGuide(file).split('\n')) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      fenced = !fenced;
+    const fence = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      const char = fence[1][0];
+      const len = fence[1].length;
+      if (open === null) {
+        open = { char, len };
+      } else if (char === open.char && len >= open.len) {
+        open = null;
+      }
       continue;
     }
-    if (!fenced && /^## .+$/.test(line)) n += 1;
+    if (open === null && /^## .+$/.test(line)) n += 1;
   }
   return n;
 };
