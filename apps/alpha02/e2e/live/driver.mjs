@@ -294,17 +294,28 @@ export async function launch({
     ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
     : path.join(HERE, 'profiles', role);
   fs.mkdirSync(profileDir, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(profileDir, {
-    headless,
-    // Optional override for environments with a pre-provisioned
-    // browser image (e.g. a sandbox that blocks downloads); when
-    // unset, Playwright resolves its own installed Chromium.
-    ...(process.env.LIVE_CHROMIUM_PATH
-      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
-      : {}),
-    args: ['--no-sandbox'],
-    viewport: { width: 1280, height: 900 },
-  });
+  // A throwaway profile is created BEFORE the browser is launched, so a
+  // launch failure (Chromium missing, bad LIVE_CHROMIUM_PATH, no disk)
+  // leaves it behind — the caller never gets a `done()` to clean up
+  // with. Cleaning here rather than at each call site keeps the
+  // create/remove pair in one place (Codex #1590 r6).
+  let ctx;
+  try {
+    ctx = await chromium.launchPersistentContext(profileDir, {
+      headless,
+      // Optional override for environments with a pre-provisioned
+      // browser image (e.g. a sandbox that blocks downloads); when
+      // unset, Playwright resolves its own installed Chromium.
+      ...(process.env.LIVE_CHROMIUM_PATH
+        ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
+        : {}),
+      args: ['--no-sandbox'],
+      viewport: { width: 1280, height: 900 },
+    });
+  } catch (err) {
+    if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
+    throw err;
+  }
 
   // The egress gateway resets Chromium's own TLS handshakes, so ALL
   // page traffic is served from THIS process via undici (whose stack

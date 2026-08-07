@@ -237,6 +237,24 @@ async function probe(page, code) {
   return { lang, dir, h1, problems };
 }
 
+/** Print every observed row; returns how many had problems. */
+function summarize(observed) {
+  let failed = 0;
+  for (const r of observed) {
+    if (r.problems.length > 0) {
+      failed += 1;
+      console.log(`FAIL ${r.code}  ${r.problems.join('; ')}`);
+    } else {
+      const tel = r.telemetry
+        ? `  (${r.telemetry} edge-telemetry request(s) blocked, expected)`
+        : '';
+      console.log(`ok   ${r.code}  lang=${r.lang} dir=${r.dir}  h1="${r.h1}"${tel}`);
+    }
+  }
+  console.log('');
+  return failed;
+}
+
 const rows = [];
 for (const code of LOCALES) {
   // A fresh profile per locale: the persistent one carries the previous
@@ -264,10 +282,29 @@ for (const code of LOCALES) {
       freshProfile: true,
     });
   } catch (err) {
+    // BLOCKED means "verified nothing". If an EARLIER locale already
+    // found a product mismatch, exiting 2 here would discard it and
+    // tell the batch nothing was checked — masking a real failure
+    // behind a setup problem. Report what was actually observed first,
+    // and only claim BLOCKED when there is nothing to report
+    // (Codex #1590 r6).
     console.error(
-      `\nBLOCKED: could not start the browser for ${code} — this is a setup` +
-        ` precondition, not a product finding.\n  ${String(err).split('\n')[0]}` +
+      `\nCould not start the browser for ${code} — a setup precondition,` +
+        ` not a product finding.\n  ${String(err).split('\n')[0]}` +
         `\n  → check LIVE_CHROMIUM_PATH, or that Chromium is installed.`,
+    );
+    summarize(rows);
+    if (rows.some((r) => r.problems.length > 0)) {
+      console.log(
+        '\nExiting FAIL rather than BLOCKED: the run stopped early, but the' +
+          ' locales it did reach found real problems.',
+      );
+      process.exit(1);
+    }
+    console.log(
+      `\nBLOCKED: stopped at ${code} having verified` +
+        ` ${rows.length} of ${LOCALES.length} locale(s), with no problems` +
+        ' found among them.',
     );
     process.exit(2);
   }
@@ -314,18 +351,7 @@ for (const code of LOCALES) {
   }
 }
 
-let failed = 0;
-for (const r of rows) {
-  if (r.problems.length > 0) {
-    failed++;
-    console.log(`FAIL ${r.code}  ${r.problems.join('; ')}`);
-  } else {
-    const tel = r.telemetry ? `  (${r.telemetry} edge-telemetry request(s) blocked, expected)` : '';
-    console.log(`ok   ${r.code}  lang=${r.lang} dir=${r.dir}  h1="${r.h1}"${tel}`);
-  }
-}
-
-console.log('');
+const failed = summarize(rows);
 if (failed > 0) {
   console.log(
     `live recover locales: ${failed} of ${rows.length} locale(s) FAILED`,
