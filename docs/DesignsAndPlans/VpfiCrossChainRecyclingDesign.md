@@ -180,10 +180,23 @@ When Base finalizes day `D` it already computes each chain's reward budget
    `dayId`, with the stamp covering the WHOLE per-day broadcast**: the
    mirror stamps `broadcastApplied[dayId]` on first application, and a
    redelivered or governance-replayed broadcast for the same day is a
-   no-op on the bucket for **every** bucket-debiting field it carries —
+   no-op for **every** bucket-touching field it carries —
    `recycleConsume` AND the §3.5 `keeperAllocate` alike (Codex rounds
    4–5: broadcasts are retriable by design, and a double-apply of either
-   field would debit the bucket twice while Base counted once). Consumption is **only** ever
+   field would move the bucket twice while Base counted once).
+
+   > **`keeperAllocate` is NOT a bucket DEBIT** (Codex #1578 r7 P2). This
+   > paragraph called it "bucket-debiting"; §3.5's amendment makes it an
+   > **inside-bucket earmark** — `recycleKeeperBudget` rises and the bucket
+   > balance does **not** move, which is what keeps governor §7 #8's
+   > composition intact. Debiting on arrival would lower §7 #8's right side
+   > with no payout or repatriation term to account for it, tripping a
+   > CRITICAL over-credit on the first non-zero allocation. **The
+   > idempotency requirement is unchanged and applies identically** — a
+   > redelivered broadcast must not advance the earmark twice either.
+   > `recycleConsume` remains a genuine debit.
+
+   Consumption is **only** ever
    Base-instructed — a mirror never self-consumes — so the global ledger
    cannot double-count and the accounting identity below holds by
    construction.
@@ -243,10 +256,40 @@ debit its recycle bucket unilaterally**, or Base's `availRecycled` view (one
 definition, §3.6a) drifts and Base can broadcast a `recycleConsume` the mirror
 can no longer fund (Codex round-1 finding). So keeper allocation flows through the same
 single authority as claim funding: at finalization Base computes an
-optional `keeperAllocate[c][D]`, carries it in the **same broadcast** as
-`recycleConsume`, and counts it into `consumedCumulative[c]`. The mirror
-debits its bucket only on arrival of that instruction. One authority, one
-message, no local-draw drift.
+optional `keeperAllocate[c][D]` and carries it in the **same broadcast** as
+`recycleConsume`. One authority, one message, no local-draw drift.
+
+> **⚠ AMENDED — the two ledger moves this paragraph used to direct were both
+> wrong** (Codex #1578 r2/r5, applied here r6). It said Base *"counts it into
+> `consumedCumulative[c]`"* and the mirror *"debits its bucket on arrival"*.
+> Each breaks a CRITICAL invariant on the **first non-zero allocation**:
+>
+> - **Charging `consumedCumulative`** breaks `outstanding + retired ==
+>   consumed`. Those paired books describe *claim commitments*; a keeper
+>   credit reserves nothing into `chainOutstandingRecycledCommit` and retires
+>   nothing out of it. Same defect as charging a repatriation there.
+> - **Debiting `recycleBucket`** lowers §7 #8's bucket composition without
+>   advancing `paidOutRecycled` or `repatriatedOutCumulative`, so the watcher
+>   raises a CRITICAL over-credit against a healthy allocation.
+>
+> **The correct shape is BOTH of the following, and neither alone:**
+>
+> 1. **Mirror side — an inside-bucket earmark**, which already exists.
+>    `recycleKeeperBudget` works exactly this way: `_applyRecycleRegister`
+>    *"earmarks part of each day's margin from INSIDE the bucket, so the
+>    bucket does not move."* No tokens leave, so §7 #8 is undisturbed.
+> 2. **Base side — a separate keeper debit/release ledger** in the
+>    availability formula (§3.6a) and in governor **§7 #6**. The earmark
+>    reserves nothing in Base's per-chain availability, and `reported` is a
+>    *lifetime* cumulative — so with no keeper term advancing, **the next
+>    finalization can allocate the same tokens again** as `recycleConsume`,
+>    giving `outstandingCommitRecycled + recycleKeeperBudget > recycleBucket`
+>    and underbacked commitments.
+>
+> The general rule, which is what §3.6a reached for repatriation: **a new
+> draw on the bucket needs its own Base-side ledger term, and where the
+> tokens physically sit is a separate question from whether Base has reserved
+> them.** Tracked on **#1569**.
 
 **Claims fund first; keeper takes only the residual** (Codex round-2 P1:
 an uncapped bps-of-inflow allocation could instruct a total debit above
@@ -316,6 +359,20 @@ design must therefore extend availability to
 `reported − (consumed − released) − (repatDebited − repatReleased)`, in the
 same saturating, subtraction-first shape, and **no direction anywhere may say
 "increment `consumedCumulative`" for a repatriation**.
+
+**A THIRD draw term lands with C3** (Codex #1578 r5, applied here r6). The
+keeper allocation of §3.5 is a separate draw on the same bucket, so it takes
+its own pair on the same footing: `− (keeperDebited − keeperReleased)`. The
+mirror-side earmark stays inside the bucket (§3.5's amendment), which is why
+this term is about **Base's reservation**, not about tokens moving. Without
+it, `reported` being a lifetime cumulative means the next finalization can
+re-offer the earmarked tokens as `recycleConsume`.
+
+The generalisation, now that three draws have needed the same treatment:
+**every new draw on the bucket gets its own saturating debit/release pair
+here — never a share of `consumed`** — and governor §7 #6's bound gains the
+matching term. Where the tokens physically sit is a separate question from
+whether Base has reserved them.
 
 **Why Mode B must not touch the claim-side ledger at all.** Writing it as
 `reported + released − consumed` is not an equivalent rearrangement here: a
@@ -685,8 +742,27 @@ challenged and stand.
 
 **On the delivered-fresh counter:**
 
-8. **Repatriating Mode-B funds must net the received-fresh cumulative — but
-   only where THAT receipt was credited to it.** A manual compensation is
+8. **Repatriating Mode-B funds nets the received-fresh position via a
+   SEPARATE returned cumulative — never by decrementing a gross counter**
+   (Codex #1578 r7 P1; this constraint said "net the received-fresh
+   cumulative … bind a subtraction to the receipt", which permits exactly the
+   decrement §2h R4 forbids). `rewardBudgetArmedFreshReceived` and
+   `rewardBudgetFreshUncounted` are **gross lifetime sums and stay
+   append-only** — `RewardRemitLedgerTest` asserts their sum reconciles
+   exhaustively over every non-recycled delivery, so a decrement breaks that
+   reconciliation and erases the receipt from operator reconstruction. R4 adds
+   a **receipt-bound RETURNED cumulative**; spendable backing is the
+   difference, derived at read time.
+
+   **Bind it to the receipt's EFFECTIVE classification, not its original
+   one.** Constraint 16 permits an overtaking receipt to be re-attributed
+   `uncounted → armed` once `D*` installs; if that runs before a late return
+   settles, netting against the original side leaves **armed spendable credit
+   alive for VPFI already returned**. A quarantined or return-pending receipt
+   is therefore ineligible for re-attribution.
+
+   The attribution point below still holds and is why "effective" matters —
+   a manual compensation is
    fresh-only, so its arrival normally advances
    `rewardBudgetArmedFreshReceived` (#1556), and sending the tokens back does
    not undo it; once P1-b bounds mirror payouts by delivered-fresh-minus-paid,
@@ -708,22 +784,37 @@ longer routes through C2** — a manual compensation is fresh-only and never
 enters the recycle bucket, so C2 could not reach it; R4 specifies a dedicated
 fresh-return path instead.
 
-> **⚠️ That R4 revision is on an UNMERGED branch** (PR #1573). As this document
-> stands on `main`, §2h still reads as "contains no design" with the lapse
-> authority open, so a reader here cannot verify the state this section assigns
-> Mode B to — and the two changes were cross-referencing each other's unmerged
-> content (Codex #1574 r4). **#1573 lands first**; until it does, treat the
-> Mode-B ownership below as pending rather than settled. Mode A does not depend
-> on it and is unblocked either way.
+> **#1573 HAS LANDED** (`268e7db10`), so §2h's R1–R6 — including R4's
+> dedicated fresh-return — is on `main` and the Mode-B ownership below is
+> **settled, not pending** (Codex #1578 r7 P2). This warning previously said
+> the opposite and was left standing after the merge, so the section marked
+> the same ownership pending in one paragraph and settled in the next — which
+> let a reader defer the reservation and sequencing work. Mode A never
+> depended on it and was unblocked either way.
 
 So:
 
 - **Mode A is C2 / #1568** — planned surplus out of the recycle bucket. It is
   the §3.6 flow, needs nothing from P2, and is **independent** again.
-- **Mode B is P2 / #1434 R4** — the fresh-return of a stranded delivery, held
+- **Mode B is #1434 P2 / R4** — the fresh-return of a stranded delivery, held
   in the recovery reservation of constraint 4 from the moment it arrives (it is
-  never left as plain un-earmarked balance). Its mechanics are documented here because both modes are
-  mirror→Base token returns over one transport, but it ships with P2, not C2.
+  never left as plain un-earmarked balance). Its mechanics are documented here
+  because both modes are mirror→Base token returns over one transport, but it
+  ships with P2, not C2. §M7's P2 block names R4's fresh-return as one of P2's
+  wire paths and §2h ratifies it as a **dedicated fresh-return** — Mode B and
+  R4 are the same path.
+
+  > **A correction, recorded so it is not re-made** (Codex #1578 r3→r6):
+  > #1434's **M3 ROW** named no reverse transport, and I generalised that into
+  > "#1434 does not own Mode B" and cut a duplicate card. The row was the gap;
+  > the scope was never missing. The row now names it.
+
+  **⛔ SEQUENCING:** R4's **arrival reservation and claim-exclusion slice must
+  land before #1434 lifts the mirror settlement halt.** Otherwise a
+  compensation arriving after its day irreversibly lapsed has no
+  stranded-recovery reservation, and the ordinary fresh-claim `backingRoom`
+  can spend those tokens before the return runs — a claim spending tokens
+  earmarked for something else, with nothing marking them earmarked.
 
 What genuinely is shared, and should therefore be decided once rather than
 twice, is the **transport** (constraint 3) and the **mode discriminator** — so
