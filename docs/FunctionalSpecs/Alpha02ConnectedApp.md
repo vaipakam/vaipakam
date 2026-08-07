@@ -905,7 +905,71 @@ Its intended behaviour, as the test oracle for this surface:
   request that has gone ineligible since it was posted fails with a
   plain explanation instead of leaving a pointless approval behind a
   reverted handover; an unreadable check never blocks an otherwise
-  valid handover. The review states what is paid
+  valid handover. One check cannot be satisfied by that ordering: the
+  accepted-sale interlock has to be asked as late as possible, since
+  its whole purpose is to catch an acceptance that lands while the
+  review sits open, so it necessarily runs after the approval. Where a
+  check must come after the spending approval like that — or where the
+  handover simply fails once the approval has been given — the app
+  withdraws the approval it just obtained, so a handover that never
+  happened leaves no spending authorisation standing against a form
+  with nothing left to cancel. This holds however the flow stopped —
+  whether it failed outright or was halted by one of those late
+  checks. It is best-effort: if the withdrawal is itself declined, the
+  original failure stays the headline rather than being replaced by a
+  second, more confusing error — but it is not the whole message. A
+  withdrawal that clears the approval and then fails to put a prior
+  standing grant back leaves that grant erased, which the person has
+  to act on, so that outcome is reported after the original failure
+  rather than passed over in silence. Being UNABLE TO ESTABLISH what
+  the approval was left at counts as that same outcome, not as a clean
+  withdrawal: the app stands back from an approval it cannot account
+  for, and says that it could not account for it. A withdrawal that
+  reports nothing is a promise that nothing needs acting on, and it
+  may only be made when that has actually been determined. Standing
+  back because ANOTHER TRANSACTION IS IN FLIGHT on the account is the
+  same kind of outcome and is reported the same way: the withdrawal is
+  right not to queue behind a transaction whose effect it cannot yet
+  see — that one could mine first and be overwritten by ours — but the
+  approval it declined to clear is still standing, or, past the
+  clearing step, the person's earlier grant is still erased. Not being
+  able to tell whether anything is in flight counts here too: that is
+  weaker ground than knowing something is, not stronger. Where the
+  withdrawal takes two steps — clearing an approval to zero before
+  writing the earlier figure back — both the standing-back rule and
+  the no-overwrite rule apply to the SECOND step as well as the
+  first: what matters is what the approval is worth at the moment of
+  writing, not what it was worth when the clearing step happened, so
+  a grant made by someone else in between is left alone. And a
+  clearing step that succeeded followed by an approval that did not
+  take effect is a case for putting the earlier figure BACK, not for
+  standing down — the person's approval was cleared by a step that
+  did work, and nothing else has claimed it. The mirror case is the
+  CLEARING STEP itself not holding — undone by a chain reorganisation
+  after it was reported as done, or a token that reports success
+  without moving the approval. What the app then sees is its own
+  flow's figure still standing, which is not somebody else having
+  changed the approval and must not be treated as one: nothing has
+  claimed it, so there is no other decision to defer to, and the
+  approval this withdrawal exists to clear is still live. That is
+  reported, never passed over in silence. The distinction is between
+  a figure that is OURS and a figure that is not — never merely
+  between zero and non-zero. An
+  approval the wallet already held is never withdrawn — it was granted
+  for some other purpose and is not this flow's to revoke. Nor does the
+  withdrawal act on an allowance that has changed hands since: if the
+  figure standing now is not the one this flow put there — because
+  another tab, or the person themselves, has raised, lowered or revoked
+  it in the meantime — the cleanup leaves it exactly as found, even
+  where that means the flow's own approval stays behind. Restoring an
+  earlier figure over a deliberate change would hand the spender an
+  authorisation the person had just taken away, which is worse than the
+  approval it was trying to tidy. The cleanup also reports when it
+  cannot confirm its own last step: having cleared the approval and
+  written the earlier figure back, being unable to establish that the
+  figure is there is not the same as knowing it is, and it is said
+  aloud, because the person's approval is definitely cleared and only
+  might have been restored. The review states what is paid
   now, that the exact figure is computed on-chain at execution, that
   the borrower's collateral is returned straight to their wallet in
   the same transaction (no separate claim step exists for it), and

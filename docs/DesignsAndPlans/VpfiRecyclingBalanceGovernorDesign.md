@@ -515,6 +515,23 @@ protocol-owned `recycleBucket` **ledger slice of its own VPFI balance**, with
 bucket-separation invariant
 `diamondVpfiBalance ≥ userLifCustody + unclaimedRewardBudget + recycleBucket`.
 
+> **⚠ This invariant gains a term when #1568 Mode B / #1434 R4a land** (Codex
+> #1574 r10 P1). A **stranded-recovery reservation** — a post-lapse
+> compensation held for return — is a *fourth* owner of this one balance. It
+> is not `unclaimedRewardBudget`: the day it belonged to has lapsed, so it is
+> no longer an unclaimed reward obligation. It is not the bucket: those tokens
+> were never reported as that chain's recycled availability. Left out, the
+> canonical checks pass while an **ordinary fresh claim spends the very tokens
+> Mode B exists to return** — the #1460 shape, one owner over.
+>
+> `LibVpfiRecycle.backingPosition` must follow: it subtracts the bucket only,
+> and its comment records that as a *deliberate* stopping point after review
+> kept surfacing further owners. That decision was about **user collateral**,
+> which is correctly excluded. A stranded-recovery reservation is
+> protocol-owned and earmarked, so it falls on the other side of that line and
+> must be subtracted. Extending the invariant without extending the read would
+> leave the check green and the spend reachable.
+
 One sharpening this redesign makes load-bearing: **recyclable VPFI receipt
 classes must terminate in Diamond custody, not an external treasury wallet.**
 `LibFacet.recordTreasuryAccrual` already only ledger-accrues when
@@ -558,10 +575,18 @@ sits at the single canonical point (Base finalization):
   dropping the recycled add-on (Codex #1257 r1 P1). The netted CCIP remittance is **source-scoped** (Codex r3): netting
   applies only to the RECYCLED component of a chain's budget —
   `remit_recycled[c] = max(0, chainRecycledBudget[c] − availRecycled[c])`,
-  where `availRecycled[c]` is **commitment-netted** (reported cumulative −
-  consumed cumulative − that chain's outstanding recycled commitments —
-  Codex r4: the old reported-minus-consumed form would let one bucket
-  balance back two days' netting) —
+  where `availRecycled[c]` is the **single-sourced availability formula**
+  ([`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
+  §3.6a) — **not restated here** (Codex #1574 r11 P1). This line previously
+  carried `reported − consumed − outstanding`, which is wrong in three
+  independent ways against the current ledger: `consumed` **already
+  includes** the instructed commitments, so subtracting `outstanding` again
+  **double-counts** and underfunds a healthy mirror; it omits the `released`
+  term B3 added, so a commitment released un-spent never restores that
+  chain's availability; and it omits the repatriation terms, so after #1568
+  Mode A it re-offers tokens that already left. The r4 concern it was written
+  for — one bucket balance backing two days' netting — is what the
+  commitment ledger in the canonical formula handles. —
   while the fresh-floor component always remits from the fresh pool
   (`remit_fresh[c] = chainFreshBudget[c]`). A mirror's bucket can therefore
   never be spent on the fresh floor while the accumulators book those
@@ -619,8 +644,44 @@ sits at the single canonical point (Base finalization):
    Holds by construction: each absorbed unit contributes at most `1/W` to each
    of the W following days' `Ā`, so its lifetime contribution to recycled
    budgets is at most `(1 − m)` of itself.
-6. Per-chain `consumedCumulative ≤ reportedCumulative`; duplicate broadcast is
-   a no-op; missed report self-heals (all carried over from the prior design).
+6. Per-chain commitment bound — `max(consumed − released, 0) ≤ reported`,
+   **subtraction-first**; duplicate broadcast is a no-op; missed report
+   self-heals (the latter two carried over from the prior design).
+
+   This invariant is what `MeshLedger.invariant.t.sol` cites as "§7 #6", so
+   the wording here is load-bearing. It is **not** the bare
+   `consumedCumulative ≤ reportedCumulative` an earlier revision stated:
+   B3's release makes a commitment released un-spent legitimately
+   re-committable, so `consumed` is deliberately unbounded by `reported`
+   (report 100 → consume 100 → release 100 → consume it again is valid at
+   `consumed = 200, released = 100, reported = 100`), and a check written
+   from the bare form rejects a healthy state. Nor is it the algebraically
+   equal `consumed ≤ reported + released`: a reported cumulative is
+   unbounded, so the addition overflows on a hostile report and reverts
+   instead of comparing.
+
+   **Once #1568 repatriation lands, the bound gains a second draw ledger —
+   and it must NOT be written as a sum either** (Codex #1574 r8 P1; the first
+   revision of this bullet wrote `claimNet + repatNet ≤ reported` two
+   sentences after explaining why `reported + released` overflows, which is
+   the same mistake in the same paragraph). Write it as two total
+   comparisons, each net term formed by saturating subtraction:
+
+   ```
+   claimNet = sat(consumed − released)
+   repatNet = sat(repatDebited − repatReleased)
+   claimNet ≤ reported   AND   repatNet ≤ reported − claimNet
+   ```
+
+   The second comparison is evaluated only once the first holds, so
+   `reported − claimNet` cannot underflow, and no intermediate can exceed
+   `reported`. The two draw ledgers are disjoint, which is what makes the
+   bound a joint one; totality is what makes it checkable under hostile
+   cumulative values.
+
+   The availability formula this mirrors is single-sourced in
+   [`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)
+   §3.6a; state it in neither place twice.
 7. Anti-gaming economic check (property test), **scoped to the coupled term**
    (Codex #1257 r1): the *marginal* recycled budget attributable to a wash
    cycle's own absorption returns at most `(1 − m)` of what was absorbed —
@@ -634,9 +695,23 @@ sits at the single canonical point (Base finalization):
 
    - forward, EXACT: `recycleCreditedCumulative +
      recycleCustodyRelocatedCumulative ≤ recycleBucket + paidOutRecycled +
-     releasedRemitStranded`
+     releasedRemitStranded + repatriatedOutCumulative`
    - reverse, with its OWN slack: `recycleBucket + paidOutRecycled +
-     releasedRemitStranded ≤ (the same left side) + slack`
+     releasedRemitStranded + repatriatedOutCumulative ≤ (the same left side)
+     + slack`
+
+   **The `repatriatedOutCumulative` term is required the moment #1568 Mode A
+   ships, and omitting it breaks this invariant on the FIRST successful
+   repatriation** (Codex #1574 r10 P1). Mode A moves tokens out of the bucket
+   *without* advancing `paidOutRecycled` — deliberately, since no reward was
+   paid — so `recycleBucket` falls while every other term stays put and the
+   forward direction fails against a completely healthy transfer. A watcher or
+   test built from the un-extended form reports a CRITICAL over-credit, and
+   the derived `creditedCumulative` floor below regresses, on the first
+   correct Mode-A send. The term is a **counter of tokens that left the bucket
+   by repatriation**, and it belongs here rather than only in the #1568
+   constraint that introduced the outflow — an invariant stated without it is
+   not conservative, it is wrong.
 
    The reverse direction is load-bearing, not symmetry for its own sake: a
    custody arrival that credits `recycleBucket` while failing to advance
@@ -652,9 +727,13 @@ sits at the single canonical point (Base finalization):
    behind it and the relation is UNVERIFIABLE. That state is REPORTED, not
    assumed away, and it is distinguished by the seeded flag rather than by
    `recycleCreditedCumulative == 0`, which a fresh chain also satisfies, and `creditedCumulative` is reproducible from those
-   same slots as `max(raw, bucket + paidOut − relocated)`.
+   same slots as `max(raw, bucket + paidOut + repatriatedOut − relocated)`
+   — the repatriated-outflow term for the same reason the two directions
+   above carry it (Codex #1574 r10 P1): without it, the derived floor
+   **regresses on the first Mode-A send**, because the bucket has fallen and
+   nothing else in the expression accounts for where those tokens went.
 
-   Both exist because invariant 6's per-chain `consumed ≤ reported`
+   Both exist because invariant 6's per-chain commitment bound
    compares the reported cumulative against the canonical chain's accepted
    COPY of it, and both are produced by the same helper — a regression in
    that helper inflates them together and the comparison stays green. These

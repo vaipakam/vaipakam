@@ -5,6 +5,7 @@
  * into vault custody at offer creation.
  */
 import { parseAbi } from 'viem';
+import { assertSettled } from './ownReceipt';
 import type { PublicClient, WalletClient } from 'viem';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient, useReadContract } from 'wagmi';
@@ -172,10 +173,7 @@ export async function ensureNftApproval(opts: {
     account: owner,
     chain: walletClient.chain,
   });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== 'success') {
-    throw new Error(`NFT approval failed (${hash})`);
-  }
+  await assertSettled(publicClient, hash, 'The NFT approval');
 }
 
 

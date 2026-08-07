@@ -688,6 +688,7 @@
       "onlyBeforeDue": "An offset needs a replacement term that ends before this loan’s due date — it’s no longer available this close to (or past) the due date."
     },
     "refinance": {
+      "postedButUnconfirmed": "Your request was sent, but we could not confirm whether it went through. Check your open requests before trying again — if it did land, requesting a second time would create a duplicate. The spending approval has been left in place, because a lender accepting the request needs it to collect the payoff.",
       "receiptYouMayOwe": "~{{payoff}} to pay off this loan, pulled automatically when a lender accepts.",
       "feesTreasuryNote": "The protocol’s {{cut}} cut of the payoff interest settles inside the payoff.",
       "whenEndsComposed": "When a lender accepts your request, when you cancel it, or {{branch}}.",
@@ -1774,6 +1775,7 @@
       "needMore": "You need more {{asset}} to continue.",
       "needMoreBy": "You need about {{shortBy}} more {{asset}} to continue.",
       "requiredAssetFallback": "the required asset",
+      "approvalCleanupFailed": "Also: the spending approval this step asked for could not be put back. Check this token’s approvals in your wallet.",
       "partialOverPrincipal": "That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.",
       "notAToken": "That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.",
       "walletConnectFirst": "Connect a wallet on a supported network first.",

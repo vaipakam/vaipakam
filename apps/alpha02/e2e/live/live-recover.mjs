@@ -69,6 +69,24 @@ const GUIDE_ANCHOR_ID = 'stuck-recovery.what';
  *  landing clears this comfortably. */
 const NAVBAR_CLEARANCE_PX = 72;
 
+/**
+ * The only origins this run actually loads a page from — so the only
+ * ones whose Cloudflare edge can legitimately emit a beacon.
+ *
+ * Derived from the driver's own targets rather than matched as
+ * `*.vaipakam.com`: a wildcard exempts hosts this run never visits, and
+ * a subdomain fronting a real backend rather than Cloudflare's edge
+ * would have its POST filed as expected telemetry (Codex #1576 r5).
+ * Derived rather than hardcoded so a `SITE_URL` override — a preview
+ * deploy — keeps the exemption and the thing being reviewed in step
+ * instead of silently exempting production's origin while driving a
+ * preview.
+ */
+const BEACON_ORIGINS = new Set([
+  new URL(SITE).origin,
+  new URL(GUIDE_URL).origin,
+]);
+
 const fails = [];
 /** Console/page errors from the separately-opened guide page. */
 const guideErrors = [];
@@ -375,14 +393,84 @@ try {
   await done();
 }
 
+/**
+ * Is this blocked request Cloudflare's Real User Monitoring beacon?
+ *
+ * `/cdn-cgi/` is Cloudflare's reserved path — injected by the edge into
+ * pages it serves, never routed by application code — and `rum` is the
+ * monitoring beacon specifically. Blocking it is correct (it is a POST
+ * and this run is read-only), but FAILING on it is not: it says nothing
+ * about whether the surface under review tried to mutate anything, and
+ * it fires on the marketing page the guide arm opens as a second tab,
+ * which isn't even this app.
+ *
+ * Matched by exact PATHNAME on a first-party host, not by substring.
+ * A `/cdn-cgi/` substring test would also have waved through a genuine
+ * mutating POST to something like `/cdn-cgi/upload`, or any external
+ * URL that merely contains the segment — turning a narrow carve-out
+ * into a hole in the one check that proves this review didn't write
+ * anything (Codex #1576 r1).
+ *
+ * Kept narrow deliberately. A guard that reports a failure nobody can
+ * act on gets ignored, and the real violation it exists to catch gets
+ * ignored with it — but a guard widened past its reason stops being a
+ * guard at all.
+ */
+function isCloudflareBeacon({ reason, url: rawUrl }) {
+  // The REASON has to match too, not just the URL. `readOnlyViolation`
+  // classifies by content: a JSON-RPC body carrying a write method is
+  // recorded as `json-rpc eth_sendTransaction`, whatever URL it was
+  // posted to. A URL-only filter would therefore have exempted a
+  // signing or broadcast attempt aimed at the beacon path — the single
+  // worst thing this check exists to catch (Codex #1576 r2).
+  //
+  // POST specifically, not any method. The documented beacon is a POST;
+  // a PUT/PATCH/DELETE to the same path is an anomaly, and accepting
+  // the generic shape would have filed it as expected telemetry —
+  // contradicting the claim that everything else stays fatal (Codex
+  // #1576 r3). Every `json-rpc *` and `wallet rpc *` reason falls
+  // through and stays fatal too, as does any reason shape this doesn't
+  // recognise: unknown means fatal, the safe direction for a guard.
+  if (reason !== 'POST (non-RPC mutating request)') return false;
+  try {
+    const url = new URL(rawUrl);
+    // ORIGIN, not hostname: `hostname` ignores both scheme and port, so
+    // `http://alpha02.vaipakam.com/cdn-cgi/rum` (cleartext) and
+    // `https://vaipakam.com:8443/cdn-cgi/rum` (odd port) matched a
+    // hostname test while being nothing Cloudflare's edge would emit
+    // (Codex #1576 r4). `url.origin` folds scheme, host and non-default
+    // port into one comparable value.
+    //
+    // The HTTPS check is kept even though every allowed origin is
+    // already HTTPS today: it makes "never exempt a cleartext write" a
+    // property of this function rather than of how SITE_URL happens to
+    // be set.
+    return (
+      url.protocol === 'https:' &&
+      BEACON_ORIGINS.has(url.origin) &&
+      url.pathname === '/cdn-cgi/rum'
+    );
+  } catch {
+    return false;
+  }
+}
+
 // 5. The read-only guard's own findings. A blocked request means the
 //    page attempted a signing RPC or a backend write during a review
 //    that claims to be read-only — that is a finding in its own right,
 //    not noise to discard under otherwise-green checks.
-if (blockedRequests.length) {
-  console.log(`\nBlocked ${blockedRequests.length} non-read request(s):`);
-  for (const b of blockedRequests.slice(0, 20)) console.log(`  ${b.reason} ${b.url}`);
-  fails.push(`${blockedRequests.length} blocked non-read request(s)`);
+const telemetry = blockedRequests.filter((b) => isCloudflareBeacon(b));
+const violations = blockedRequests.filter((b) => !isCloudflareBeacon(b));
+if (telemetry.length) {
+  console.log(
+    `\nBlocked ${telemetry.length} edge-telemetry request(s) (expected, not a finding):`,
+  );
+  for (const b of telemetry.slice(0, 5)) console.log(`  ${b.reason} ${b.url}`);
+}
+if (violations.length) {
+  console.log(`\nBlocked ${violations.length} non-read request(s):`);
+  for (const b of violations.slice(0, 20)) console.log(`  ${b.reason} ${b.url}`);
+  fails.push(`${violations.length} blocked non-read request(s)`);
 }
 // Uncaught exceptions are app defects and fail the run. Ordinary
 // console.error noise on a live page (a rate-limited RPC, a third-party
