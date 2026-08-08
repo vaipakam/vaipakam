@@ -269,6 +269,7 @@ export const DIAMOND_ABI = [
   ...RewardAggregatorFacetABI,
   ...RewardRemittanceFacetABI,
   ...RewardCommitmentFacetABI,
+  ...RepatriationFacetABI,
   ...ConfigFacetABI,
   ...NumeraireConfigFacetABI,
   ...LegalFacetABI,

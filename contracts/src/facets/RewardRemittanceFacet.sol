@@ -901,7 +901,11 @@ contract RewardRemittanceFacet is
         // The guard against a malformed/hostile payload claiming more
         // recycled backing than actually arrived now runs at the TOP of this
         // function, alongside its fresh-share twin.
-        LibVpfiRecycle.creditCustodyRelocated(remitId, recycledShare);
+        LibVpfiRecycle.creditCustodyRelocated(
+            remitId,
+            recycledShare,
+            LibVpfiRecycle.RecycleSource.RemittedCustodyRelocation
+        );
         // r4 — receipts key by (remitter, remitId): `remitter` comes from
         // the remit PAYLOAD (immutable, messenger-authenticated message
         // data — never delivery-time channel config), so different

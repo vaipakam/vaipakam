@@ -72,7 +72,18 @@ library LibVpfiRecycle {
         // absorbed there, so this class is excluded from the day-bucketed
         // `credited[d]` feed AND from the cumulative a mirror reports to Base
         // (see {creditCustodyRelocated} and design record §2f).
-        RemittedCustodyRelocation
+        RemittedCustodyRelocation,
+        // #1568 C2 — CUSTODY-RELOCATION class for the OPPOSITE direction
+        // (append-only enum): a Mode-A planned-surplus RETURN settling on
+        // Base. Same exclusion semantics as the entry above (relocated
+        // custody, never new absorption — the value was Ā-counted once on
+        // the mirror), but a DISTINCT class (Codex #1608 r2 P2): the remit
+        // class is documented as Base→mirror with a remit-id refId, and a
+        // repatriation return published under it would attribute returned
+        // surplus as mirror funding and collide authorization ids with
+        // remit ids in event-based accounting. refId here is the
+        // repatriation AUTHORIZATION id.
+        RepatriationReturnRelocation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -568,7 +579,11 @@ library LibVpfiRecycle {
      * @param  refId  Class-specific reference id (the remit id at arrival).
      * @param  amount VPFI wei of RECYCLED backing delivered.
      */
-    function creditCustodyRelocated(uint256 refId, uint256 amount) internal {
+    function creditCustodyRelocated(
+        uint256 refId,
+        uint256 amount,
+        RecycleSource source
+    ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
@@ -606,9 +621,7 @@ library LibVpfiRecycle {
         // records is "recycled accounting has run here", not "the cumulative
         // is non-zero".
         s.recycleAccountingSeeded = true;
-        emit VpfiCustodyRelocated(
-            uint8(RecycleSource.RemittedCustodyRelocation), refId, amount, dayId
-        );
+        emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
     }
 
     /**

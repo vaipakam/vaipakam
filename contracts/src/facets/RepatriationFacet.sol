@@ -255,7 +255,11 @@ contract RepatriationFacet is
         auth.status = AUTH_SETTLED;
         uint256 shortfall = declaredAmount - actualReceived;
         if (shortfall != 0) s.repatShortfall[authId] = shortfall;
-        LibVpfiRecycle.creditCustodyRelocated(authId, actualReceived);
+        LibVpfiRecycle.creditCustodyRelocated(
+            authId,
+            actualReceived,
+            LibVpfiRecycle.RecycleSource.RepatriationReturnRelocation
+        );
         emit RepatriationSettled(authId, sourceChainId, actualReceived, shortfall);
     }
 
