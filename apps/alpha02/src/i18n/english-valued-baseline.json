@@ -8,14 +8,6 @@
   "contractError.SaleListingActive": {
     "source": "Sale listing active",
     "locales": [
-      "hi",
-      "ko"
-    ]
-  },
-  "contractError.SaleVehicleImmutable": {
-    "source": "Sale vehicle immutable",
-    "locales": [
-      "hi",
       "ko"
     ]
   },
@@ -64,7 +56,6 @@
   "copy.activity.labels.LoanSold": {
     "source": "Loan sold",
     "locales": [
-      "hi",
       "ko"
     ]
   },
@@ -288,12 +279,6 @@
   },
   "copy.approvals.revoke": {
     "source": "Revoke",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.assetPicker.contractAddressAria": {
-    "source": "{{label}} contract address",
     "locales": [
       "hi"
     ]
@@ -1276,12 +1261,6 @@
       "hi"
     ]
   },
-  "copy.nftVerifier.placeholder": {
-    "source": "Position NFT token id",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.nftVerifier.sanctionsLabel": {
     "source": "Compliance status",
     "locales": [
@@ -1311,43 +1290,37 @@
   "copy.notifications.unreadBadgeTitle_few": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.notifications.unreadBadgeTitle_many": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.notifications.unreadBadgeTitle_one": {
     "source": "1 unread notification",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.notifications.unreadBadgeTitle_other": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.notifications.unreadBadgeTitle_two": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.notifications.unreadBadgeTitle_zero": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi",
-      "ko"
+      "hi"
     ]
   },
   "copy.offerFlow.advancedOptions": {
@@ -1431,12 +1404,6 @@
   },
   "copy.offerFlow.steps.offers": {
     "source": "Offers",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.offerFlow.steps.review": {
-    "source": "Review & sign",
     "locales": [
       "hi"
     ]
@@ -1792,18 +1759,6 @@
       "hi"
     ]
   },
-  "copy.rent.stepReview": {
-    "source": "Review & sign",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.rent.switchPrompt": {
-    "source": "{{path}}? Switch",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.rent.tokenIdLabel": {
     "source": "Token id",
     "locales": [
@@ -1823,12 +1778,6 @@
     "source": "Test assets — Vaipakam",
     "locales": [
       "de"
-    ]
-  },
-  "copy.seo.home.title": {
-    "source": "Vaipakam — P2P lending, borrowing & NFT rental",
-    "locales": [
-      "hi"
     ]
   },
   "copy.settingsPage.experience.advanced": {
@@ -1911,8 +1860,7 @@
     "source": "Email support@vaipakam.com",
     "locales": [
       "de",
-      "es",
-      "zh"
+      "es"
     ]
   },
   "copy.support.sending": {
