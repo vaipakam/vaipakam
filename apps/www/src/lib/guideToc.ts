@@ -42,8 +42,11 @@ export interface TocSection {
  * that the page renders.
  *
  * Only ROOT-level headings count. A `##` indented into a list item
- * parses as `root > list > listItem > heading` and is not a chapter —
- * `Advanced.hi.md` and `Advanced.ja.md` each carry two of those (#1593).
+ * parses as `root > list > listItem > heading` and is not a chapter.
+ * `Advanced.hi.md` and `Advanced.ja.md` used to carry two of those
+ * each — already translated, indented into the preceding bullet, and
+ * therefore offered nowhere. They have since been de-indented (#1593);
+ * the rule stays so the next one is caught rather than counted.
  *
  * A chapter whose cards have no anchors becomes its OWN jump target
  * rather than being dropped. It used to be dropped, and that was a live
