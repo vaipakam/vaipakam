@@ -1038,8 +1038,6 @@
   "copy.diagnostics.title": {
     "source": "Support",
     "locales": [
-      "de",
-      "fr",
       "hi"
     ]
   },

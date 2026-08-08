@@ -33,9 +33,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stillEnglish } from '../src/i18n/stillEnglish.ts';
+import {
+  isAcceptedAsTranslated,
+  type AcceptedAsTranslatedEntry,
+} from '../src/i18n/translationPolicy.ts';
+
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..', '..');
+
+/**
+ * The committed policy, as it stands AFTER the change.
+ *
+ * Deliberately the new one, not the base's: recognising a backlog entry
+ * as a legitimate identical translation is a change that adds the
+ * policy entry and removes the baseline pair together, and it is the
+ * new entry that authorizes the removal.
+ */
+const POLICY: Readonly<Record<string, AcceptedAsTranslatedEntry>> = (() => {
+  const file = path.join(
+    REPO_ROOT,
+    'apps/alpha02/src/i18n/translation-policy.json',
+  );
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+    acceptedAsTranslated?: Record<string, AcceptedAsTranslatedEntry>;
+  };
+  return parsed.acceptedAsTranslated ?? {};
+})();
 
 /** Repo-relative, because that is how `git show <ref>:<path>` addresses. */
 const BASELINES = [
@@ -207,7 +231,29 @@ for (const repoPath of BASELINES) {
     const recordedSource = before.get(pair);
     if (typeof recordedSource !== 'string') return false; // no source recorded
     const value = currentValue(pair);
-    return typeof value === 'string' && stillEnglish(recordedSource, value);
+    if (typeof value !== 'string' || !stillEnglish(recordedSource, value)) {
+      return false;
+    }
+    // UNLESS the committed policy now authorizes this exact value.
+    //
+    // The two guards deadlocked without this. Recognising a backlog
+    // entry as a legitimate identical translation — German `Support`,
+    // whose translated sibling reads `Support und Verbindungsprüfung` —
+    // means adding a policy entry AND removing the baseline pair. The
+    // removal check would reject it precisely BECAUSE the value still
+    // reads as English, which is the whole reason it needed an entry:
+    // coverage would pass, this required check would fail, and there
+    // would be no supported way to correct a false-positive backlog
+    // entry (Codex #1607 r25).
+    //
+    // Exact match through the shared policy rule, so this authorizes
+    // the reviewed value and nothing near it. An unapproved removal is
+    // still refused.
+    const [code, key] = [
+      pair.slice(0, pair.indexOf(':')),
+      pair.slice(pair.indexOf(':') + 1),
+    ];
+    return !isAcceptedAsTranslated(POLICY, key, code, value);
   });
   if (wrongful.length > 0) {
     problems.push(

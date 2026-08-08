@@ -54,6 +54,11 @@ import {
 } from '@vaipakam/i18n';
 import { TRANSLATED_LOCALES } from '../src/i18n/localeConfig.ts';
 import {
+  acceptedValue,
+  isAcceptedAsTranslated,
+  type AcceptedAsTranslatedEntry,
+} from '../src/i18n/translationPolicy.ts';
+import {
   coveredBySourceWords,
   hasLetters,
   marksOf,
@@ -193,58 +198,6 @@ function reauditNeeded(): Map<string, string> {
  * which no other check can see: the key is present, the value is a
  * valid string, and there are no tokens to compare.
  */
-interface AcceptedAsTranslatedEntry {
-  reason: string;
-  /** The English value this exemption was granted against. If en.json
-   *  moves on, the exemption is stale rather than silently inherited. */
-  source: string;
-  /**
-   * The locales it applies to — REQUIRED, never an implicit "all".
-   *
-   * Equality can be right in one language and wrong in the next.
-   * `copy.consentParts.suffix` is `.` in English, `.` in Arabic, and
-   * `。` in Chinese: a key-wide exemption would excuse Chinese
-   * regressing to the ASCII period, and no exemption leaves Arabic as
-   * permanent debt it does not owe. Neither is acceptable, and only a
-   * per-locale scope avoids both (Codex #1607 r2).
-   */
-  locales: string[];
-  /**
-   * The exact accepted value, per locale, where it is NOT the English
-   * one. Defaults to `source`.
-   *
-   * The comparison asks whether everything the reader sees can be built
-   * out of the English source's own words — so a translation made of
-   * those words is flagged however it arranges them, which is necessary,
-   * because a rearranged English sentence still reads as English.
-   * French `Mode strict` for `Strict mode` is the case where that is
-   * wrong, and no rule can tell it from `content to Skip` without
-   * knowing French. Recording the accepted value makes the
-   * judgement explicit AND self-expiring: reword the French and it no
-   * longer matches, so the scope reports as unused rather than
-   * standing guard over a string nobody looked at again.
-   */
-  values?: Record<string, string>;
-  /**
-   * This value may never differ, in ANY translated locale.
-   *
-   * Two kinds of entry live in this scope and they behave oppositely
-   * when the locale value moves. `Mode strict` is a judgement about the
-   * present: reword the French and the entry should retire, so the
-   * guard says "narrow the locale list". A brand name is not — change
-   * `Vaipakam` to `VaipakamX` and the guard said the same thing, and
-   * FOLLOWING that advice made the corrupted brand pass (Codex #1607
-   * r20). The advice was right for one kind of entry and actively
-   * harmful for the other.
-   *
-   * An invariant entry is checked against every translated locale
-   * rather than its own `locales` list, so narrowing the scope cannot
-   * make a changed value green. The only ways out are restoring the
-   * value or deleting this flag — a one-line edit, on a line that says
-   * it must never change, in front of a reviewer.
-   */
-  invariant?: boolean;
-}
 interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
   omissions: Record<string, { tokens: string[]; reason: string }>;
@@ -393,9 +346,6 @@ const ACCEPTED_AS_TRANSLATED: Readonly<
   Record<string, AcceptedAsTranslatedEntry>
 > = POLICY.acceptedAsTranslated ?? {};
 
-/** The exact value this exemption accepts for `code`. */
-const acceptedValue = (entry: AcceptedAsTranslatedEntry, code: string): string =>
-  entry.values?.[code] ?? entry.source;
 
 /**
  * The shape above is a TypeScript interface over parsed JSON, which is
@@ -702,7 +652,7 @@ function unapprovedWordlessLocalizations(): string[] {
       // invariant, so the second instruction is not merely redundant
       // but impossible to follow (Codex #1607 r21).
       if (exemption?.invariant) continue;
-      if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
+      if (isAcceptedAsTranslated(ACCEPTED_AS_TRANSLATED, key, code, value)) {
         continue;
       }
       out.push(`${code}:${key} = ${JSON.stringify(value)}`);
@@ -724,8 +674,7 @@ function englishValuedLeaves(code: string, bundle: Bundle): string[] {
     // acronym entries would likewise have excused `gtc` / `Aon`. Let
     // anything short of exact fall through to the baseline check
     // (Codex #1607 r4).
-    const exemption = ACCEPTED_AS_TRANSLATED[key];
-    if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
+    if (isAcceptedAsTranslated(ACCEPTED_AS_TRANSLATED, key, code, value)) {
       continue;
     }
     found.push(key);
@@ -919,8 +868,7 @@ function letterlessForProseLeaves(code: string, bundle: Bundle): string[] {
     // in a language that puts the words elsewhere — three locales do
     // exactly that with the offer footer's tail — and that is a written
     // judgement, not a pattern.
-    const exemption = ACCEPTED_AS_TRANSLATED[key];
-    if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
+    if (isAcceptedAsTranslated(ACCEPTED_AS_TRANSLATED, key, code, value)) {
       continue;
     }
     out.push(`${key} (${JSON.stringify(value)})`);

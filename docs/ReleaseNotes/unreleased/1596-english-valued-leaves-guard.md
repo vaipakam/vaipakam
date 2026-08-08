@@ -12,7 +12,7 @@ the moment the last missing piece was filled, every language read as complete �
 while Hindi alone still showed nearly three hundred English strings to anyone
 using the app in Hindi.
 
-The check now asks the second question too. At the time of writing, 492 pairs
+The check now asks the second question too. At the time of writing, 490 pairs
 of language and text are recorded as a known, dated backlog so the number cannot quietly grow: a
 piece of text that regresses to English fails the build, and one that gets
 translated has to be struck from the record or the build fails as well. The
@@ -24,7 +24,16 @@ the same place as the code, so a single change could introduce an English
 string, add it to the record, and pass — the check that exists to catch the
 regression could be widened by the change causing it. Both records are now
 compared against the state of the branch being merged into, and a change that
-adds an entry to either one fails. Removals are checked too, which is less obvious: a line
+adds an entry to either one fails. Moving an entry the other way — off the backlog and onto the list of text
+that is correct as it stands — is a thing someone will need to do, because the
+backlog was assembled by a machine and some of it is wrong. The word "Support"
+is the same in German and French as in English, and both languages use it inside
+sentences they did translate. Recording that judgement means adding it to one
+list and taking it off the other, in one change, and the checks now permit
+exactly that: a line may leave the backlog when the reasoned record accounts for
+it, and not otherwise.
+
+Removals are checked too, which is less obvious: a line
 may only leave the record because the text was actually translated, and a change
 that rewords the English while deleting the entry — leaving the language showing
 the old wording — would otherwise erase the very evidence that the debt is still

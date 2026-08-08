@@ -216,6 +216,14 @@
       ],
       "invariant": true
     },
+    "copy.diagnostics.title": {
+      "reason": "'Support' is the ordinary German and French noun for this, spelled as the English one. The evidence is the sibling in each bundle: copy.diagnostics.open reads 'Support und Verbindungsprüfung' in German and 'Support et vérification de connexion' in French, so each locale uses the word inside a sentence it did translate — settled vocabulary, not an untouched string. Spanish is deliberately absent: it says 'Soporte', and Hindi stays in the shrinkable baseline because it owes a Devanagari rendering.",
+      "source": "Support",
+      "locales": [
+        "de",
+        "fr"
+      ]
+    },
     "copy.notifications.bellLabel": {
       "reason": "\"Notifications\" is the correct French plural of \"notification\" — an ordinary French word that happens to be spelled exactly as the English. Recorded here rather than in the shrink-only baseline because the baseline is a worklist of translations someone owes, and this one is already done: the only way it could leave the baseline is by being replaced with a less natural synonym, which would be a regression.",
       "source": "Notifications",
