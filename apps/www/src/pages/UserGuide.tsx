@@ -199,71 +199,8 @@ function parseGuide(raw: string): GuideBlock[] {
 
 // ── TOC extraction ────────────────────────────────────────────────────
 
-interface TocItem {
-  id: string;
-  title: string;
-}
-
-interface TocSection {
-  title: string;
-  items: TocItem[];
-}
-
-/**
- * Walk the raw markdown line-by-line to build a two-level table of
- * contents — H2 headings (page sections like "Dashboard", "Offer
- * Book") group H3 headings (the actual cards) underneath them. Only
- * H3s that have a stable inline anchor id directly above them get a
- * link target; role-tab variants (`…:lender`, `…:borrower`) are
- * skipped so they don't appear as duplicate TOC entries.
- *
- * The TOC is built once per file via useMemo on the page; cheap (O(n)
- * over the markdown text) and avoids re-parsing on every role flip.
- */
-function extractToc(raw: string): TocSection[] {
-  const lines = raw.split('\n');
-  const sections: TocSection[] = [];
-  let currentSection: TocSection | null = null;
-  let pendingId: string | null = null;
-
-  for (const line of lines) {
-    const anchorMatch = /^<a id="([^"]+)"><\/a>\s*$/.exec(line.trim());
-    if (anchorMatch) {
-      pendingId = anchorMatch[1];
-      continue;
-    }
-    const h2Match = /^##\s+(.+)$/.exec(line);
-    if (h2Match) {
-      currentSection = { title: h2Match[1].trim(), items: [] };
-      sections.push(currentSection);
-      pendingId = null;
-      continue;
-    }
-    const h3Match = /^###\s+(.+)$/.exec(line);
-    if (h3Match) {
-      // H3 without a section header above it is unusual but we
-      // tolerate it by spawning an "Unsectioned" group.
-      if (!currentSection) {
-        currentSection = { title: '', items: [] };
-        sections.push(currentSection);
-      }
-      // Only register H3s that carry a non-role anchor id. Role-tab
-      // variants live under the parent H3 and shouldn't pollute the
-      // TOC.
-      if (pendingId && !pendingId.includes(':')) {
-        currentSection.items.push({
-          id: pendingId,
-          title: h3Match[1].trim(),
-        });
-      }
-      pendingId = null;
-      continue;
-    }
-  }
-  // Drop empty groups (sometimes the parser sees an H2 with no H3
-  // children, e.g. a "Status snapshot" section in release notes).
-  return sections.filter((s) => s.items.length > 0);
-}
+import type { TocItem, TocSection } from '../lib/guideToc';
+import { extractToc } from '../lib/guideToc';
 
 // ── Role tabs widget (per-card, embedded in the body) ─────────────────
 
