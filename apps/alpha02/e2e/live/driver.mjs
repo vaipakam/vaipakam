@@ -41,30 +41,50 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WALLETS_PATH =
   process.env.TESTNET_WALLETS_FILE ??
   path.join(HERE, '../testnet-wallets/wallets.json');
-let WALLETS_RAW;
-try {
-  WALLETS_RAW = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
-} catch (err) {
-  // Exit 2 = BLOCKED, per the contract in run-live-batch.mjs. An absent
-  // dev-wallet file is a missing PRECONDITION, not a product regression:
-  // letting this throw exits 1 and makes every ordinary
-  // secret-unavailable batch read as a defect, which is exactly the
-  // mislabelling the three-verdict contract exists to prevent (#1529
-  // review round 6).
-  console.error(
-    `\nBLOCKED: cannot read the dev wallet file — this driver signs, so it` +
-      ` cannot run without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
-      `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
-      ` (live-position-observe.mjs) which needs no key.`,
-  );
-  process.exit(2);
+/**
+ * Read LAZILY, on the first request for a key — not at import.
+ *
+ * A keyless drive (`launch({ keyless: true })`, e.g.
+ * live-recover-locales.mjs) reads only public pages and must not depend
+ * on a signing credential to run. Loading at module scope made the mere
+ * IMPORT of this file exit 2, so a public probe could not reuse the
+ * browser + route-shim machinery here and would have had to duplicate
+ * it — which is how two copies of the egress shim start diverging
+ * (Codex #1590 r1).
+ *
+ * Signing drives are unaffected: they reach `walletFor()` inside
+ * `launch()`, which is the first thing it does, so the BLOCKED exit
+ * still fires before any browser work.
+ */
+let WALLETS;
+function loadWallets() {
+  if (WALLETS !== undefined) return WALLETS;
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
+  } catch (err) {
+    // Exit 2 = BLOCKED, per the contract in run-live-batch.mjs. An absent
+    // dev-wallet file is a missing PRECONDITION, not a product regression:
+    // letting this throw exits 1 and makes every ordinary
+    // secret-unavailable batch read as a defect, which is exactly the
+    // mislabelling the three-verdict contract exists to prevent (#1529
+    // review round 6).
+    console.error(
+      `\nBLOCKED: cannot read the dev wallet file — this driver signs, so it` +
+        ` cannot run without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
+        `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
+        ` (live-position-observe.mjs) which needs no key.`,
+    );
+    process.exit(2);
+  }
+  // Normalize both documented shapes to a role map — the array form
+  // ({ role, address, privateKey }[]) indexed as a map yields
+  // undefined.privateKey otherwise.
+  WALLETS = Array.isArray(raw)
+    ? Object.fromEntries(raw.map((w) => [w.role ?? w.name, w]))
+    : raw;
+  return WALLETS;
 }
-// Normalize both documented shapes to a role map — the array form
-// ({ role, address, privateKey }[]) indexed as a map yields
-// undefined.privateKey otherwise.
-const WALLETS = Array.isArray(WALLETS_RAW)
-  ? Object.fromEntries(WALLETS_RAW.map((w) => [w.role ?? w.name, w]))
-  : WALLETS_RAW;
 
 /**
  * The ONE accessor for a role's key, so a missing credential is BLOCKED
@@ -78,10 +98,11 @@ const WALLETS = Array.isArray(WALLETS_RAW)
  * of use.
  */
 function walletFor(role) {
-  const w = WALLETS?.[role];
+  const wallets = loadWallets();
+  const w = wallets?.[role];
   const key = w?.privateKey;
   const blocked = (why) => {
-    const roles = Object.keys(WALLETS ?? {});
+    const roles = Object.keys(wallets ?? {});
     console.error(
       `\nBLOCKED: the dev wallet file has no usable credential for role` +
         ` "${role}" — ${why}.` +
@@ -196,6 +217,26 @@ export function addressOf(role) {
   return walletFor(role).address;
 }
 
+/**
+ * Assert a signing driver's credential UP FRONT.
+ *
+ * Loading the wallet file lazily (so keyless drives can import this
+ * module) moved the BLOCKED exit from import time to first use — and
+ * several signing drivers do live chain reads BEFORE they ever reach
+ * `launch` or `addressOf`. With no credential and a slow or unavailable
+ * public RPC, those reads now fail with exit 1, or hang, instead of the
+ * immediate exit 2 the batch contract documents: a missing secret would
+ * be reported as a product regression (Codex #1590 r4).
+ *
+ * Call this at the top of any driver that signs, before its first
+ * network call. It is the same per-role validation `walletFor` does, so
+ * there is no second rule to keep in step — only an earlier moment to
+ * apply it.
+ */
+export function requireSigningRole(role) {
+  walletFor(role);
+}
+
 export async function launch({
   role,
   startChainId = 84532,
@@ -234,8 +275,18 @@ export async function launch({
   // flags, connectkit state), so a later run would no longer
   // represent a first visit (Codex #1181 P2).
   freshProfile = false,
+  // keyless: launch the browser + egress route shim with NO wallet
+  // injected and no key read. For drives that only read PUBLIC pages
+  // (live-recover-locales.mjs): the page sees no provider at all, which
+  // is both the honest posture for a public probe and the reason the
+  // drive can run in an environment with no dev-wallet file. The route
+  // shim, viewport, profile handling and `done()` cleanup are shared
+  // with every other drive rather than copied (Codex #1590 r1).
+  keyless = false,
 } = {}) {
-  const account = privateKeyToAccount(walletFor(role).privateKey);
+  const account = keyless
+    ? null
+    : privateKeyToAccount(walletFor(role).privateKey);
   let chainId = startChainId;
   let authorized = preAuthorized;
 
@@ -243,17 +294,28 @@ export async function launch({
     ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
     : path.join(HERE, 'profiles', role);
   fs.mkdirSync(profileDir, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(profileDir, {
-    headless,
-    // Optional override for environments with a pre-provisioned
-    // browser image (e.g. a sandbox that blocks downloads); when
-    // unset, Playwright resolves its own installed Chromium.
-    ...(process.env.LIVE_CHROMIUM_PATH
-      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
-      : {}),
-    args: ['--no-sandbox'],
-    viewport: { width: 1280, height: 900 },
-  });
+  // A throwaway profile is created BEFORE the browser is launched, so a
+  // launch failure (Chromium missing, bad LIVE_CHROMIUM_PATH, no disk)
+  // leaves it behind — the caller never gets a `done()` to clean up
+  // with. Cleaning here rather than at each call site keeps the
+  // create/remove pair in one place (Codex #1590 r6).
+  let ctx;
+  try {
+    ctx = await chromium.launchPersistentContext(profileDir, {
+      headless,
+      // Optional override for environments with a pre-provisioned
+      // browser image (e.g. a sandbox that blocks downloads); when
+      // unset, Playwright resolves its own installed Chromium.
+      ...(process.env.LIVE_CHROMIUM_PATH
+        ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
+        : {}),
+      args: ['--no-sandbox'],
+      viewport: { width: 1280, height: 900 },
+    });
+  } catch (err) {
+    if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
+    throw err;
+  }
 
   // The egress gateway resets Chromium's own TLS handshakes, so ALL
   // page traffic is served from THIS process via undici (whose stack
@@ -460,62 +522,67 @@ export async function launch({
     }
   }
 
-  await ctx.exposeBinding('__walletRequest', async (_src, payload) => {
-    try {
-      const result = await handle(payload);
-      return { result: jsonSafe(result) };
-    } catch (e) {
-      return {
-        error: {
-          code: e.code ?? -32603,
-          message: e.shortMessage ?? e.message ?? 'error',
-        },
-      };
-    }
-  });
+  // The injected EIP-1193 wallet. Skipped entirely when keyless: a
+  // public-page probe should present no provider at all, so an app
+  // regression that asks for accounts on load has nothing to answer it.
+  if (!keyless) {
+    await ctx.exposeBinding('__walletRequest', async (_src, payload) => {
+      try {
+        const result = await handle(payload);
+        return { result: jsonSafe(result) };
+      } catch (e) {
+        return {
+          error: {
+            code: e.code ?? -32603,
+            message: e.shortMessage ?? e.message ?? 'error',
+          },
+        };
+      }
+    });
 
-  await ctx.addInitScript(() => {
-    if (window.ethereum?.__vaipakamTest) return;
-    const listeners = {};
-    const provider = {
-      __vaipakamTest: true,
-      isMetaMask: true,
-      request: async (payload) => {
-        const r = await window.__walletRequest(payload);
-        if (r.error) {
-          const err = new Error(r.error.message);
-          err.code = r.error.code;
-          throw err;
-        }
-        return r.result;
-      },
-      on: (ev, fn) => {
-        (listeners[ev] ??= []).push(fn);
-        return provider;
-      },
-      removeListener: (ev, fn) => {
-        listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn);
-        return provider;
-      },
-      emit: (ev, arg) => (listeners[ev] ?? []).forEach((f) => f(arg)),
-    };
-    window.ethereum = provider;
-    // EIP-6963 announce so ConnectKit/wagmi discovers it reliably.
-    const info = {
-      uuid: '7a3f4b1e-9d2c-4f6a-8e5b-vaipakamtest0',
-      name: 'Vaipakam Test Wallet',
-      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjMDA1NUZGIi8+PC9zdmc+',
-      rdns: 'com.vaipakam.testwallet',
-    };
-    const announce = () =>
-      window.dispatchEvent(
-        new CustomEvent('eip6963:announceProvider', {
-          detail: Object.freeze({ info, provider }),
-        }),
-      );
-    window.addEventListener('eip6963:requestProvider', announce);
-    announce();
-  });
+    await ctx.addInitScript(() => {
+      if (window.ethereum?.__vaipakamTest) return;
+      const listeners = {};
+      const provider = {
+        __vaipakamTest: true,
+        isMetaMask: true,
+        request: async (payload) => {
+          const r = await window.__walletRequest(payload);
+          if (r.error) {
+            const err = new Error(r.error.message);
+            err.code = r.error.code;
+            throw err;
+          }
+          return r.result;
+        },
+        on: (ev, fn) => {
+          (listeners[ev] ??= []).push(fn);
+          return provider;
+        },
+        removeListener: (ev, fn) => {
+          listeners[ev] = (listeners[ev] ?? []).filter((f) => f !== fn);
+          return provider;
+        },
+        emit: (ev, arg) => (listeners[ev] ?? []).forEach((f) => f(arg)),
+      };
+      window.ethereum = provider;
+      // EIP-6963 announce so ConnectKit/wagmi discovers it reliably.
+      const info = {
+        uuid: '7a3f4b1e-9d2c-4f6a-8e5b-vaipakamtest0',
+        name: 'Vaipakam Test Wallet',
+        icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiBmaWxsPSIjMDA1NUZGIi8+PC9zdmc+',
+        rdns: 'com.vaipakam.testwallet',
+      };
+      const announce = () =>
+        window.dispatchEvent(
+          new CustomEvent('eip6963:announceProvider', {
+            detail: Object.freeze({ info, provider }),
+          }),
+        );
+      window.addEventListener('eip6963:requestProvider', announce);
+      announce();
+    });
+  }
 
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   page.setDefaultTimeout(20_000);

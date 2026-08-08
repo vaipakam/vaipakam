@@ -24,23 +24,10 @@
 import type { ReactNode } from 'react';
 import { LiveValue, type KnobName } from '../components/docs/LiveValue';
 
-/**
- * GitHub-style heading slug. Lowercase, non-alphanumeric becomes
- * hyphens, multiple hyphens collapse, leading/trailing hyphens
- * stripped. Matches the algorithm used by GitHub's renderer so
- * external links to `…#section-name` keep working when the markdown
- * is viewed on GitHub vs. in-app.
- */
-export function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-');
-}
+import { slugify } from './slugify';
+// Re-exported so the several pages that already import it from here keep
+// working; the implementation moved out to stay React-free.
+export { slugify };
 
 export interface TocItem {
   id: string;

@@ -471,7 +471,9 @@
       "linkedLoanAcceptBlocked": "Dieses Angebot ist mit dem bereits laufenden Kredit #{{loanId}} verknüpft — die Annahme würde die Position dieses Kredits abrechnen oder übertragen, nicht den oben geprüften neuen Kredit starten. Diese App kann die echten Bedingungen dieser Art von Deal noch nicht anzeigen, daher ist die Annahme hier vorerst deaktiviert.",
       "saleBuyerNext": "Sie sind jetzt der Kreditgeber von Kredit #{{loanId}} — der Kredit läuft für den Kreditnehmer unverändert weiter, und seine Rückzahlung geht an Sie. Verfolgen Sie ihn unter Meine Positionen; wenn er zurückzahlt, beanspruchen Sie den Kreditbetrag und die restlichen Zinsen.",
       "saleVehicleBanner": "Dies ist ein Positionsverkauf: Sie würden die Kreditgeberseite des bereits laufenden Kredits #{{loanId}} kaufen, keinen neuen Kredit starten. Der Kreditnehmer und seine Rückzahlungspflichten ändern sich nicht — nur der Kreditgeber. Die Zahlen unten kommen live aus diesem Kredit.",
-      "wrongChainLink": "Dieser Link zeigt auf ein Angebot auf {{chainName}}. Wechseln Sie zu diesem Netzwerk (oben auf der Seite) und öffnen Sie den Link erneut — Angebotsnummern wiederholen sich über Netzwerke hinweg, daher raten wir nicht."
+      "wrongChainLink": "Dieser Link zeigt auf ein Angebot auf {{chainName}}. Wechseln Sie zu diesem Netzwerk (oben auf der Seite) und öffnen Sie den Link erneut — Angebotsnummern wiederholen sich über Netzwerke hinweg, daher raten wir nicht.",
+      "riskGateCreatorBlocked": "Die Risikoeinstellungen des Angebotserstellers decken dieses Geschäft nicht mehr ab, daher kann es derzeit nicht angenommen werden. Es wurde nichts gesendet oder freigegeben.",
+      "riskGateTierTooLow": "Dieses Geschäft erfordert eine höhere Risikostufe, als Ihr Vault derzeit zulässt. Sie können sie unter Einstellungen → Risikozugang anheben und dann zurückkommen und annehmen. Es wurde nichts gesendet oder freigegeben."
     },
     "borrow": {
       "title": "Assets leihen",

@@ -58,7 +58,16 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
  * is that none could be distinguished (#1529 review round 19). Migrating
  * the rest is tracked separately; add each here as it lands.
  */
-const THREE_VERDICT_DRIVERS = new Set(['live-position-observe.mjs']);
+const THREE_VERDICT_DRIVERS = new Set([
+  'live-position-observe.mjs',
+  // Exits 2 when a locale bundle lacks a key it is asked to assert —
+  // a missing PRECONDITION in the repo, not a product regression. It
+  // is auto-discovered by the sweep below, so without this entry the
+  // batch would relabel its BLOCKED as `FAIL (exit 2)` and claim the
+  // driver predates the contract, contradicting the driver's own
+  // report of the same run (Codex #1590 r3).
+  'live-recover-locales.mjs',
+]);
 
 const scripts = fs
   .readdirSync(HERE)

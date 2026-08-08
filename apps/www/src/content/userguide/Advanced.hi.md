@@ -775,6 +775,56 @@ debit करता है। withdraw fee-discount rate को नए (कम) b
 पर तुरंत re-stamp करता है, जो आपके हर खुले loan पर लागू होता
 है। कोई grace window नहीं जहाँ पुराना tier अभी भी apply हो।
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### आपका VPFI tier chains के बीच कैसे travel करता है
+
+आप VPFI को Base पर अपने vault में deposit करते हैं — Base ही canonical
+chain है जो आपकी accumulator state रखती है। जब आप किसी दूसरी chain पर
+action लेते हैं (Sepolia पर borrow, Arbitrum पर lend, आदि), तो वह chain
+आपके tier की एक *cached* copy पढ़ती है। यह cache एक cross-chain push से
+ताज़ा रहती है: जब Base पर आपका effective tier बदलता है, तो आपकी अगली
+Base-side action हर उस mirror chain को CCIP message broadcast करती है
+जहाँ आप action ले सकते हैं। यह push हर सामान्य Base action के साथ चलती
+है — और T-087 Sub 4 से Dashboard पर एक "अभी mirrors पर मेरा tier भेजें"
+button भी है (जो `pokeMyTier()` call करता है), ताकि आप vault mutation के
+बिना push force कर सकें। local consent और mirror chains पर local VPFI
+requirements सहित पूरा walkthrough "How VPFI Discounts Work" chapter में
+है — जो फ़िलहाल सिर्फ़ अंग्रेज़ी guide में मौजूद है।
+
+तीन बातें जानने योग्य:
+
+- **Tier maturation के लिए एक follow-up action चाहिए।** आपका पहला stake
+  तुरंत broadcast नहीं करता — आपका effective tier एक minimum-history
+  period (default 3 दिन) से gated है, इसलिए नया stake शुरू में tier 0
+  resolve होता है और broadcast चुपचाप skip हो जाता है। period बीतने पर
+  gate Base पर तुरंत खुल जाता है, लेकिन mirrors को तब तक पता नहीं चलता
+  जब तक आपकी अगली rollup-bearing Base action (कोई भी deposit, withdrawal
+  या loan action — कुछ भी जो Base पर आपके vault को mutate करे) या
+  Dashboard का "अभी mirrors पर मेरा tier भेजें" click (Sub 4) push
+  trigger न करे। 1-wei का top-up भी काम करता है।
+- **Propagation time.** push dispatch होने के बाद यह आम तौर पर CCIP से
+  कुछ ही मिनटों में mirror पर पहुँच जाती है। तब तक mirror आपका पिछला
+  cached tier ही honour करता रहता है — tier 0 पर कोई flicker नहीं होता।
+- **Cache expiry.** cached tier तब तक honour होता है जब तक (a) कोई नई
+  push न आए, (b) governance tier-threshold table को नए version पर न ले
+  जाए और mirror का tracked version न बढ़े (यह तब होता है जब किसी भी user
+  की post-bump push पहली बार उस mirror पर पहुँचती है — Base पर हाल में
+  निष्क्रिय रहे users भी उसी क्षण अपना पुराने version वाला cached
+  discount खो देते हैं, जब तक उनकी अपनी अगली push catch up न कर ले), या
+  (c) cache अपने max-age backstop (default 60 दिन) को पार न कर जाए। अगर
+  आप किसी chain पर लंबे समय तक action नहीं लेते, तो वहाँ आपकी cache
+  आख़िरकार expire हो जाएगी और वह chain अगली push तक आपको tier 0 मानेगी।
+  refresh करने के लिए कोई भी rollup-bearing Base action करें जो नया push
+  tuple बनाए — tier बदलने वाला balance mutation, या governance
+  table-version bump के बाद कोई भी Base action। एक ही tuple वाला "no-op"
+  rollup दोबारा push नहीं भेजेगा — यह जानबूझकर है, ताकि protocol का
+  broadcast budget पहले से सही caches पर ख़र्च न हो।
+
+cache staleness पकड़ने के लिए किन gates का इस्तेमाल करती है, यह जानने के
+लिए देखें
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)।
+
 ---
 
 ## Rewards

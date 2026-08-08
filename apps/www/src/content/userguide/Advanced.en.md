@@ -779,7 +779,7 @@ mutation. See "How VPFI Discounts Work" below for the full
 walkthrough including local consent + local VPFI requirements
 on mirror chains.
 
-Two things to know:
+Three things to know:
 
 - **Tier maturation takes a follow-up action.** Your first
   stake does NOT immediately broadcast — your effective tier

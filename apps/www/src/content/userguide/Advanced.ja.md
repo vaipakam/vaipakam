@@ -760,6 +760,56 @@ VPFI を vault から wallet に戻します。approval leg はありません
 し、あなたの open loans すべてに適用されます。古い tier がまだ
 apply される grace window はありません。
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### VPFI tier が chain 間をどう移動するか
+
+VPFI は Base 上の vault に deposit します — Base があなたの
+accumulator state を保持する canonical chain です。別の chain で
+action したとき (Sepolia で borrow、Arbitrum で lend など)、その chain
+はあなたの tier の *cached* コピーを読みます。この cache は
+cross-chain push によって最新に保たれます: Base 上の実効 tier が変わる
+と、あなたの次の Base 側 action が、action する可能性のあるすべての
+mirror chain へ CCIP message を broadcast します。push は通常の Base
+action すべてに相乗りします — さらに T-087 Sub 4 以降、Dashboard には
+「今すぐ mirror に tier を push」ボタン (`pokeMyTier()` を呼びます) も
+あり、vault を mutate せずに push を強制できます。mirror chain 上の
+local consent と local VPFI 要件を含む完全な解説は "How VPFI Discounts
+Work" の章にありますが、現時点では英語版ガイドにのみ存在します。
+
+知っておくべきことが 3 つあります:
+
+- **tier の成熟には follow-up action が必要です。** 最初の stake は
+  すぐには broadcast しません — 実効 tier は最小履歴期間 (default 3
+  日) で gate されるため、直後の stake はまず tier 0 として解決され、
+  broadcast は静かに skip されます。期間が過ぎると Base 側では gate が
+  即座に開きますが、mirror が知るのは、次の rollup を伴う Base action
+  (deposit、withdrawal、loan action など Base 上の vault を mutate する
+  もの) または Dashboard の「今すぐ mirror に tier を push」クリック
+  (Sub 4) が push を trigger したときです。1 wei の top-up でも動作
+  します。
+- **伝播時間。** push が送出されると、通常は CCIP 経由で数分以内に
+  mirror へ届きます。それまで mirror は以前の cached tier を尊重し続け
+  ます — tier 0 へのちらつきは起きません。
+- **cache の期限切れ。** cached tier は、(a) 新しい push が届く、
+  (b) governance が tier しきい値テーブルを新 version に移し、mirror
+  の追跡 version が上がる (これは、いずれかの user の bump 後の push が
+  その mirror に初めて届いた時点で起こります — Base 上で最近 activity
+  のない休眠 user も、その瞬間に旧 version の cached discount を失い、
+  自分の次の push が追いつくまで戻りません)、(c) cache が最大保持期間の
+  backstop (default 60 日) を超える、のいずれかまで尊重されます。ある
+  chain で長期間 action しないと、そこの cache はいずれ expire し、その
+  chain は次の push まであなたを tier 0 として扱います。更新するには、
+  新しい push tuple を生む rollup を伴う Base action を行ってください —
+  tier が変わる balance の mutation、または governance の table version
+  bump 後の任意の Base action です。同一 tuple の「no-op」rollup は push
+  を再送しません — これは意図的で、すでに正しい cache のために protocol
+  の broadcast 予算を使わないためです。
+
+cache が staleness を検出するために適用する正確な gate に興味があれば、
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)
+を参照してください。
+
 ---
 
 ## Rewards

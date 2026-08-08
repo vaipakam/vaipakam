@@ -641,6 +641,48 @@ cleanly fall back。
 balance 立即触发 fee-discount rate re-stamp，并应用到您参与的每笔
 open loan。没有让旧 tier 继续适用的 grace window。
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### 您的 VPFI tier 如何跨 chain 传递
+
+您把 VPFI deposit 到 Base 上的 vault — Base 是持有您 accumulator state
+的 canonical chain。当您在其他 chain 上 action 时 (在 Sepolia borrow、
+在 Arbitrum lend 等)，该 chain 读取的是您 tier 的一份 *cached* 副本。这
+份 cache 由一次 cross-chain push 保持新鲜: 当您在 Base 上的实际 tier 发
+生变化时，您的下一次 Base 侧 action 会向每一条您可能操作的 mirror chain
+broadcast 一条 CCIP message。push 会搭载在每一次常规 Base action 上 —
+并且自 T-087 Sub 4 起，Dashboard 还提供一个"立即把我的 tier push 到
+mirror"按钮 (它调用 `pokeMyTier()`)，让您无需 mutate vault 即可强制
+push。包含 mirror chain 上 local consent 与 local VPFI 要求的完整说明，
+见"How VPFI Discounts Work"一章 — 该章目前仅存在于英文指南中。
+
+有三点需要了解:
+
+- **tier 成熟需要一次后续 action。** 您的第一次 stake 不会立即
+  broadcast — 您的实际 tier 受最短历史期 (默认 3 天) 限制，因此新的
+  stake 起初会解析为 tier 0，broadcast 被静默跳过。该期限过后，Base 上
+  的 gate 会立即放开，但 mirror 要等到您下一次带 rollup 的 Base action
+  (任何 deposit、withdrawal 或 loan action — 任何会 mutate 您 Base 上
+  vault 的操作) 或 Dashboard 上的"立即把我的 tier push 到 mirror"点击
+  (Sub 4) 触发 push 时才会知道。1 wei 的 top-up 同样有效。
+- **传播时间。** push 一经发出，通常会在几分钟内经由 CCIP 抵达 mirror。
+  在此之前，mirror 仍然沿用您先前的 cached tier — 不会闪回 tier 0。
+- **cache 过期。** cached tier 会一直有效，直到 (a) 新的 push 抵达，
+  (b) governance 把 tier 阈值表升到新 version 且 mirror 追踪的 version
+  随之上升 (这发生在任何一位 user 在 bump 之后的 push 首次抵达该 mirror
+  的那一刻 — 在 Base 上近期没有活动的休眠 user 也会在那一刻失去其旧
+  version 的 cached discount，直到他们自己的下一次 push 追平)，或者
+  (c) cache 超过其最大存活期 backstop (默认 60 天)。如果您很长时间没有
+  在某条 chain 上 action，您在那里的 cache 最终会过期，该 chain 会把您
+  当作 tier 0，直到下一次 push。要刷新它，请做任何会产生新 push tuple
+  的、带 rollup 的 Base action — 改变 tier 的 balance mutation，或在
+  governance 表 version bump 之后的任意 Base action。相同 tuple 的
+  "no-op" rollup 不会重新发送 push — 这是刻意为之，以免把 protocol 的
+  broadcast 预算耗在本已正确的 cache 上。
+
+如果您想了解 cache 用来检测 staleness 的确切 gate，请参阅
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)。
+
 ---
 
 ## Rewards

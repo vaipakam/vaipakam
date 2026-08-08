@@ -775,6 +775,63 @@ VPFI-ஐ உங்கள் vault-இலிருந்து மீண்டு
 loan-க்கும் புதிய (குறைந்த) balance அடிப்படையில் உடனடி fee-discount rate
 re-stamp-ஐத் தூண்டும். பழைய tier தொடரும் grace window இல்லை.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### உங்கள் VPFI tier chain-களுக்கு இடையே எப்படிப் பயணிக்கிறது
+
+நீங்கள் VPFI-ஐ Base-இல் உள்ள உங்கள் vault-இல் deposit செய்கிறீர்கள் —
+உங்கள் accumulator state-ஐ வைத்திருக்கும் canonical chain Base தான். வேறு
+ஒரு chain-இல் நீங்கள் action எடுக்கும்போது (Sepolia-இல் borrow,
+Arbitrum-இல் lend, முதலியன), அந்த chain உங்கள் tier-இன் *cached* நகலைப்
+படிக்கிறது. இந்த cache ஒரு cross-chain push மூலம் புதியதாக
+வைக்கப்படுகிறது: Base-இல் உங்கள் effective tier மாறும்போது, உங்கள் அடுத்த
+Base-side action, நீங்கள் action எடுக்கக்கூடிய ஒவ்வொரு mirror chain-க்கும்
+ஒரு CCIP message-ஐ broadcast செய்கிறது. இந்த push ஒவ்வொரு வழக்கமான Base
+action-உடனும் சேர்ந்து பயணிக்கிறது — மேலும் T-087 Sub 4 முதல்,
+vault mutation இல்லாமல் push-ஐ கட்டாயப்படுத்த "இப்போதே என் tier-ஐ
+mirror-களுக்கு push செய்" என்ற button-ஐயும் (`pokeMyTier()`-ஐ அழைக்கிறது)
+Dashboard காட்டுகிறது. mirror chain-களில் உள்ள local consent மற்றும் local
+VPFI தேவைகள் உட்பட முழு விளக்கம் "How VPFI Discounts Work" அத்தியாயத்தில்
+உள்ளது — அது தற்போது ஆங்கில வழிகாட்டியில் மட்டுமே உள்ளது.
+
+தெரிந்துகொள்ள வேண்டிய மூன்று விஷயங்கள்:
+
+- **tier முதிர்ச்சிக்கு ஒரு தொடர் action தேவை.** உங்கள் முதல் stake
+  உடனடியாக broadcast செய்யாது — உங்கள் effective tier ஒரு குறைந்தபட்ச
+  வரலாற்றுக் காலத்தால் (இயல்பாக 3 நாட்கள்) gate செய்யப்படுகிறது, எனவே புதிய
+  stake முதலில் tier 0 ஆகத் தீர்மானிக்கப்பட்டு broadcast அமைதியாகத்
+  தவிர்க்கப்படுகிறது. அந்தக் காலம் முடிந்ததும் Base-இல் gate உடனடியாகத்
+  திறக்கிறது; ஆனால் உங்கள் அடுத்த rollup-தாங்கிய Base action (எந்த
+  deposit, withdrawal அல்லது loan action — Base-இல் உங்கள் vault-ஐ mutate
+  செய்யும் எதுவும்) அல்லது Dashboard-இல் "இப்போதே என் tier-ஐ mirror-களுக்கு
+  push செய்" என்ற click (Sub 4) ஒரு push-ஐத் தூண்டும் வரை mirror-கள்
+  அறியாது. 1-wei top-up-ம் வேலை செய்யும்.
+- **பரவல் நேரம்.** push அனுப்பப்பட்ட பிறகு, அது பொதுவாக CCIP வழியாகச் சில
+  நிமிடங்களில் mirror-ஐ அடையும். அது வரை mirror உங்கள் முந்தைய cached
+  tier-ஐயே மதிக்கும் — tier 0-க்கு எந்த ஒளிர்வும் இல்லை.
+- **cache காலாவதி.** cached tier, (அ) புதிய push வரும் வரை, (ஆ)
+  governance tier-threshold அட்டவணையை புதிய version-க்கு நகர்த்தி
+  mirror-இன் கண்காணிக்கப்படும் version உயரும் வரை (இது எந்த ஒரு
+  user-இன் bump-க்குப் பிந்தைய push அந்த mirror-ஐ முதன்முதலில் அடையும்
+  தருணத்தில் நிகழ்கிறது — Base-இல் சமீபத்திய செயல்பாடு இல்லாத செயலற்ற
+  user-களும் அந்தத் தருணத்தில் தங்கள் பழைய version cached discount-ஐ
+  இழக்கிறார்கள், அவர்களின் அடுத்த push ஈடுசெய்யும் வரை), அல்லது (இ)
+  cache தன் அதிகபட்ச வயது backstop-ஐ (இயல்பாக 60 நாட்கள்) கடக்கும் வரை
+  மதிக்கப்படும். ஒரு குறிப்பிட்ட chain-இல் நீண்ட காலம் நீங்கள் action
+  எடுக்கவில்லை என்றால், அங்குள்ள உங்கள் cache இறுதியில் காலாவதியாகி,
+  அடுத்த push வரை அந்த chain உங்களை tier 0 ஆகக் கருதும். புதுப்பிக்க,
+  புதிய push tuple-ஐ உருவாக்கும் எந்த rollup-தாங்கிய Base action-ஐயும்
+  செய்யுங்கள் — tier-ஐ மாற்றும் balance mutation, அல்லது governance
+  table-version bump-க்குப் பிறகு எந்த Base action-ம். அதே tuple-ஐக்
+  கொண்ட "no-op" rollup ஒரு push-ஐ மீண்டும் அனுப்பாது — ஏற்கனவே சரியான
+  cache-களுக்காக protocol-இன் broadcast பட்ஜெட் செலவழிக்கப்படாமல்
+  இருக்கவே இது வடிவமைக்கப்பட்டுள்ளது.
+
+staleness-ஐக் கண்டறிய cache பயன்படுத்தும் சரியான gate-கள் குறித்து
+அறிய விரும்பினால்,
+[Cross-Chain Tier Propagation functional spec](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md)-ஐப்
+பார்க்கவும்.
+
 ---
 
 ## Rewards

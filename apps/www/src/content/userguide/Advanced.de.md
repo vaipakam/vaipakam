@@ -817,6 +817,63 @@ sofortiges Neu-Stempeln des Rabatt-Satzes auf den neuen
 du beteiligt bist. Es gibt kein Gnadenfenster, in dem das alte Tier
 noch gilt.
 
+<a id="buy-vpfi.cross-chain-tier"></a>
+
+### Wie dein VPFI-Tier zwischen Chains wandert
+
+Du zahlst VPFI in deinen Vault auf Base ein — Base ist die kanonische
+Chain, die deinen Akkumulator-Stand besitzt. Wenn du auf einer anderen
+Chain handelst (Borrow auf Sepolia, Lend auf Arbitrum usw.), liest
+diese Chain eine *gecachte* Kopie deines Tiers. Der Cache wird durch
+einen Cross-Chain-Push frisch gehalten: Sobald sich dein effektives
+Tier auf Base ändert, sendet deine NÄCHSTE Base-Aktion eine
+CCIP-Nachricht an jede Mirror-Chain, auf der du handeln könntest. Der
+Push reitet auf jeder regulären Base-Aktion mit — und seit T-087 Sub 4
+bietet das Dashboard zusätzlich einen Button "Mein Tier jetzt an die
+Mirrors pushen" (der `pokeMyTier()` aufruft), damit du den Push ohne
+Vault-Mutation erzwingen kannst. Die vollständige Erklärung inklusive
+lokaler Zustimmung und lokaler VPFI-Anforderungen auf Mirror-Chains
+steht im Kapitel "How VPFI Discounts Work" — das derzeit nur im
+englischen Guide vorhanden ist.
+
+Drei Dinge, die du wissen solltest:
+
+- **Tier-Reifung braucht eine Folgeaktion.** Dein erster Stake sendet
+  NICHT sofort — dein effektives Tier ist durch eine
+  Mindesthistorien-Frist gedeckelt (standardmäßig 3 Tage), sodass ein
+  frischer Stake zunächst als Tier 0 auflöst und der Broadcast still
+  übersprungen wird. Nach Ablauf der Frist öffnet sich das Gate auf
+  Base sofort, aber die Mirrors erfahren es erst, wenn deine NÄCHSTE
+  rollup-tragende Base-Aktion (jede Einzahlung, Auszahlung oder
+  Loan-Aktion — alles, was deinen Vault auf Base verändert) ODER ein
+  Klick auf "Mein Tier jetzt an die Mirrors pushen" im Dashboard
+  (Sub 4) einen Push auslöst. Ein Top-up von 1 Wei genügt ebenfalls.
+- **Propagationszeit.** Ist ein Push einmal abgeschickt, landet er über
+  CCIP typischerweise innerhalb von Minuten auf dem Mirror. Bis dahin
+  respektiert der Mirror weiterhin dein zuvor gecachtes Tier — es gibt
+  kein Flackern auf Tier 0.
+- **Cache-Ablauf.** Ein gecachtes Tier bleibt gültig, bis entweder
+  (a) ein frischer Push eintrifft, (b) die Governance die
+  Tier-Schwellentabelle auf eine neue Version hebt und die vom Mirror
+  verfolgte Version steigt (das passiert, sobald der erste Push
+  IRGENDEINES Nutzers nach dem Bump auf diesem Mirror landet — auch
+  ruhende Nutzer ohne jüngste Base-Aktivität verlieren in diesem Moment
+  ihren gecachten Rabatt der alten Version, bis ihr eigener nächster
+  Push nachzieht), oder (c) der Cache seine Maximalalter-Grenze
+  überschreitet (standardmäßig 60 Tage). Handelst du auf einer Chain
+  lange nicht, läuft dein Cache dort irgendwann ab und die Chain
+  behandelt dich bis zum nächsten Push als Tier 0. Zum Auffrischen
+  genügt jede rollup-tragende Base-Aktion, die ein neues Push-Tupel
+  erzeugt — eine tier-verändernde Saldo-Mutation ODER IRGENDEINE
+  Base-Aktion nach einem Versionssprung der Governance-Tabelle. Ein
+  "No-op"-Rollup mit demselben Tupel sendet KEINEN neuen Push — das ist
+  Absicht, damit das Broadcast-Budget des Protokolls nicht für bereits
+  korrekte Caches verbraucht wird.
+
+Wenn dich die genauen Gates interessieren, mit denen der Cache
+Veraltung erkennt, siehe die
+[Functional Spec zur Cross-Chain-Tier-Propagation](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/CrossChainTierPropagation.md).
+
 ---
 
 ## Rewards
