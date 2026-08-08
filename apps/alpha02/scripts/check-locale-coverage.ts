@@ -892,11 +892,21 @@ function checkDocumentedTotal(pairs: number): void {
       if (!optional) problems.push(`${rel} is missing — this check cannot verify the recorded total`);
       continue;
     }
-    // A WHOLE number, not a substring: `'491'.includes('49')` is true,
-    // so once a translation batch took the total to 49 every doc still
-    // saying 491 would have passed (Codex #1607 r6).
-    const wholeNumber = new RegExp(`(?<![0-9])${pairs}(?![0-9])`);
-    if (!wholeNumber.test(fs.readFileSync(file, 'utf8'))) {
+    // Bound to the SENTENCE that states the backlog, not merely present
+    // in the file. A whole-number match anywhere was the second version
+    // of this check and still too loose: both required docs contain an
+    // unrelated standalone `12` (a per-locale count in one, "2026-07-12"
+    // in the other), so a future 12-pair baseline would have satisfied
+    // it with neither backlog sentence touched (Codex #1607 r9).
+    //
+    // The number must be followed by the word `pairs` in the same
+    // sentence. That still lets the prose around it be reworded freely
+    // — which is the point — while requiring the reworded sentence to
+    // still be ABOUT pairs.
+    const inBacklogSentence = new RegExp(
+      `(?<![0-9])${pairs}(?![0-9])[^.\n]{0,60}?\\bpairs\\b`,
+    );
+    if (!inBacklogSentence.test(fs.readFileSync(file, 'utf8'))) {
       problems.push(
         `${path.basename(file)} does not mention the current english-valued ` +
           `total (${pairs} pairs) — it quotes a figure this baseline no ` +
