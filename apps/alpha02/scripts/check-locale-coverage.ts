@@ -784,6 +784,49 @@ for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
   }
 }
 
+/**
+ * The recorded pair count is quoted in three documents, and it went
+ * stale three times in this one change — corrected in the audit row,
+ * then in the spec, then in the release note, each time by hand and
+ * each time missing one. A number that lives in four places and is
+ * maintained by remembering is a number that will be wrong.
+ *
+ * Checked here instead: each doc must contain the current total
+ * somewhere. It is a deliberately loose check — reword the prose all
+ * you like, but do not leave a figure behind that contradicts the file
+ * it describes (#1596).
+ */
+const recordedPairs = Object.values(ENGLISH_VALUED).flatMap((e) => e.locales).length;
+const REPO_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+);
+const DOCS_QUOTING_THE_COUNT: ReadonlyArray<{ rel: string; optional: boolean }> = [
+  { rel: 'docs/FunctionalSpecs/_CodeVsDocsAudit.md', optional: false },
+  { rel: 'docs/FunctionalSpecs/Alpha02ConnectedApp.md', optional: false },
+  // Folded into the dated release notes and deleted at release time.
+  { rel: 'docs/ReleaseNotes/unreleased/1596-english-valued-leaves-guard.md', optional: true },
+];
+for (const { rel, optional } of DOCS_QUOTING_THE_COUNT) {
+  const file = path.resolve(REPO_ROOT, rel);
+  if (!fs.existsSync(file)) {
+    // A silently-skipped check is worse than no check: the first draft
+    // of this had the path one level short, so `existsSync` was false
+    // for all three and it reported OK on a figure of 999.
+    if (!optional) problems.push(`${rel} is missing — this check cannot verify the recorded total`);
+    continue;
+  }
+  if (!fs.readFileSync(file, 'utf8').includes(String(recordedPairs))) {
+    problems.push(
+      `${path.basename(file)} does not mention the current english-valued ` +
+        `total (${recordedPairs} pairs) — it quotes a figure this baseline no ` +
+        'longer supports',
+    );
+  }
+}
+
 const pruning = process.argv.includes('--prune');
 // In prune mode the stale pairs are about to be REMOVED, so they aren't
 // a problem — but every other problem still is (see below).
