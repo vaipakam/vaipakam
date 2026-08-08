@@ -1,0 +1,2032 @@
+{
+  "contractError.RefinanceCarryOverCollateralShortfall": {
+    "source": "Refinance carry over collateral shortfall",
+    "locales": [
+      "hi"
+    ]
+  },
+  "contractError.SaleListingActive": {
+    "source": "Sale listing active",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.Approval": {
+    "source": "Approval",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.activity.labels.LoanDefaulted": {
+    "source": "Loan defaulted",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanLiquidated": {
+    "source": "Loan liquidated",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanRefinanced": {
+    "source": "Loan refinanced",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanRepaid": {
+    "source": "Loan repaid",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanSettled": {
+    "source": "Loan settled",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanSettlementBreakdown": {
+    "source": "Loan settled",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanSold": {
+    "source": "Loan sold",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OfferAccepted": {
+    "source": "Offer accepted",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OfferCanceled": {
+    "source": "Offer cancelled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OfferClosed": {
+    "source": "Offer closed",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OfferCreated": {
+    "source": "Offer created",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OfferMatched": {
+    "source": "Offers matched",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OfferModified": {
+    "source": "Offer amended",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OffsetCompleted": {
+    "source": "Loan offset",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.OffsetOfferCreated": {
+    "source": "Offset offer created",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.PartialRepaid": {
+    "source": "Partial repayment",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.PeriodicInterestSettled": {
+    "source": "Interest settled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.PrepayCollateralSaleSettled": {
+    "source": "Collateral sale settled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.PrepayListingCanceled": {
+    "source": "Collateral listing cancelled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.PrepayListingMatched": {
+    "source": "Collateral sale matched",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.PrepayListingUpdated": {
+    "source": "Collateral listing updated",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.RepayPartialPeriodAdvanced": {
+    "source": "Interest period advanced",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SignedOfferCancelled": {
+    "source": "Signed offer cancelled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SignedOfferFilled": {
+    "source": "Signed offer filled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SignedOfferMatched": {
+    "source": "Signed offers matched",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SignedOfferNonceBurned": {
+    "source": "Signed offer voided",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SwapToRepayIntentCancelled": {
+    "source": "Swap-to-repay cancelled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SwapToRepayIntentCommitted": {
+    "source": "Swap-to-repay set up",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SwapToRepayIntentFilled": {
+    "source": "Swap-to-repay filled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.SwapToRepayIntentForceCancelled": {
+    "source": "Swap-to-repay cancelled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.Transfer": {
+    "source": "Transfer",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.activity.loadingMore": {
+    "source": "Loading…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.activity.loanRef": {
+    "source": "Loan #{{loanId}}",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.offerRef": {
+    "source": "Offer #{{offerId}}",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.positionsLink": {
+    "source": "My positions",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.activity.title": {
+    "source": "Activity",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.alerts.saved": {
+    "source": "Saved.",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.alerts.title": {
+    "source": "Alerts",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.alerts.unlink": {
+    "source": "Unlink",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.approvals.revoke": {
+    "source": "Revoke",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.assetPicker.faucetBadge": {
+    "source": "Faucet test token",
+    "locales": [
+      "de"
+    ]
+  },
+  "copy.claimAll.itemLabel": {
+    "source": "{{noun}} #{{id}} — {{what}}",
+    "locales": [
+      "ar",
+      "de",
+      "es",
+      "hi",
+      "ja",
+      "ko",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.claimAll.loanNoun": {
+    "source": "Loan",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claimAll.rentalNoun": {
+    "source": "Rental",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claimAll.rewardsLabel": {
+    "source": "Interaction rewards — {{amount}} VPFI",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claimAll.vaultVpfiLabel": {
+    "source": "Vault VPFI — {{amount}} VPFI",
+    "locales": [
+      "ar",
+      "de",
+      "hi",
+      "ja",
+      "ko",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.claims.claim": {
+    "source": "Claim",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.claims.row.collateralLabel": {
+    "source": "{{collateral}} collateral",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claims.row.defaultRecovery": {
+    "source": "Default recovery — {{collateral}}",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claims.row.heldProceedsSuffix": {
+    "source": " + held proceeds",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claims.row.loan": {
+    "source": "Loan",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.claims.row.principalPlusInterest": {
+    "source": "{{amount}} {{symbol}} + interest",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claims.row.rebateAmount": {
+    "source": "{{amount}} VPFI rebate",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.claims.row.rental": {
+    "source": "Rental",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.claims.title": {
+    "source": "Claims",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.common.networkFallback": {
+    "source": "network #{{id}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.consentParts.terms": {
+    "source": "Vaipakam Terms",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.bookTitle": {
+    "source": "Order book",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.attribution": {
+    "source": "Charts by TradingView",
+    "locales": [
+      "hi",
+      "ja",
+      "zh"
+    ]
+  },
+  "copy.desk.chart.intervalLabel": {
+    "source": "Interval",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.lastFill": {
+    "source": "last fill: {{rate}} · {{ago}}",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.chart.mobileBook": {
+    "source": "Book",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.mobileChart": {
+    "source": "Chart",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.desk.chart.mobileViewLabel": {
+    "source": "Desk view",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.quotedMid": {
+    "source": "quoted mid",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.rangeLabel": {
+    "source": "Range",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.retry": {
+    "source": "Retry",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.title": {
+    "source": "Executed rates",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.chart.tooltipFills_few": {
+    "source": "{{count}} fills",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.chart.tooltipFills_many": {
+    "source": "{{count}} fills",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.chart.tooltipFills_one": {
+    "source": "{{count}} fill",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.chart.tooltipFills_other": {
+    "source": "{{count}} fills",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.chart.tooltipFills_two": {
+    "source": "{{count}} fills",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.chart.tooltipFills_zero": {
+    "source": "{{count}} fills",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.crossed": {
+    "source": "crossed",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.cumHeading": {
+    "source": "Depth",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.customPair": {
+    "source": "Custom pair…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.healthLtvTitle": {
+    "source": "Health factor {{ratio}} · LTV {{ltv}}",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.history.loadingMore": {
+    "source": "Loading…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.history.roleBorrower": {
+    "source": "Borrower",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.history.roleLender": {
+    "source": "Lender",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.history.started": {
+    "source": "started",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.history.tab": {
+    "source": "History",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ladderMid": {
+    "source": "mid {{rate}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ladderMidTitle": {
+    "source": "{{bps}} bps quoted mid",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ladderSpread": {
+    "source": " · spread {{spread}}",
+    "locales": [
+      "de",
+      "es",
+      "fr",
+      "hi"
+    ]
+  },
+  "copy.desk.lastFill": {
+    "source": "Last fill",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.lastFillTitle": {
+    "source": "{{bps}} bps · loan #{{loanId}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.loanStatus.active": {
+    "source": "active",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.loanStatus.defaulted": {
+    "source": "defaulted",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.loanStatus.fallback_pending": {
+    "source": "settling",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.loanStatus.internal_matched": {
+    "source": "matched",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.loanStatus.liquidated": {
+    "source": "liquidated",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.loanStatus.repaid": {
+    "source": "repaid",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.loanStatus.settled": {
+    "source": "settled",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.marketLabel": {
+    "source": "Market",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.match.executing": {
+    "source": "Matching…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.match.pairTitle": {
+    "source": "{{rate}} bps · offers #{{lenderId}} × #{{borrowerId}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amend": {
+    "source": "Amend",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amendCollateral": {
+    "source": "Collateral",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amendCollateralMax": {
+    "source": "Collateral max",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amendMaxAmount": {
+    "source": "Max amount",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amendMinAmount": {
+    "source": "Min amount",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amendRate": {
+    "source": "Rate (APR %)",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amendTitle": {
+    "source": "Amend in place — same offer, same position, one transaction.",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.amended": {
+    "source": "Order amended.",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.approving": {
+    "source": "Approving…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.cancel": {
+    "source": "Cancel",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.cancelling": {
+    "source": "Cancelling…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.close": {
+    "source": "Close",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.fillSummary": {
+    "source": " · filled {{filled}} ({{pct}}) · {{remaining}} left",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.orders.filledTooltip": {
+    "source": "{{pct}} filled",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.desk.orders.saving": {
+    "source": "Amending…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.signedCancel": {
+    "source": "Cancel on-chain",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.signedCancelling": {
+    "source": "Cancelling…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.tab": {
+    "source": "Open orders",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.positions.health": {
+    "source": "Health",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.positions.manage": {
+    "source": "Manage",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.positions.partialRepayOk": {
+    "source": " · partial repay OK",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.positions.tab": {
+    "source": "Positions",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.quotedMid": {
+    "source": "Quoted mid",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.rateHeading": {
+    "source": "Rate (APR %)",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.signed.accepting": {
+    "source": "Filling…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.signed.badge": {
+    "source": "Signed",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.signed.close": {
+    "source": "Close",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.signed.fill": {
+    "source": "Fill",
+    "locales": [
+      "hi",
+      "ja"
+    ]
+  },
+  "copy.desk.sizeHeading": {
+    "source": "Size",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.spread": {
+    "source": "Spread",
+    "locales": [
+      "de",
+      "es",
+      "fr",
+      "hi"
+    ]
+  },
+  "copy.desk.tapeRowTitle": {
+    "source": "{{bps}} bps · loan #{{loanId}} · {{status}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.tapeTitle": {
+    "source": "Recent fills",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.tenorLabel": {
+    "source": "Term",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.collateralAmount": {
+    "source": "Collateral amount",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.expiryCustom": {
+    "source": "Custom…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.expiryLabel": {
+    "source": "Expiry",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.fillModeLabel": {
+    "source": "Fill mode",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.fillPartial": {
+    "source": "Partial",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.gaslessPosting": {
+    "source": "Signing…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.legCollateral": {
+    "source": "collateral",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.legLoanAsset": {
+    "source": "loan asset",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.max": {
+    "source": "Max",
+    "locales": [
+      "de",
+      "fr",
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.modeLabel": {
+    "source": "Posting",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.modeOnchain": {
+    "source": "On-chain",
+    "locales": [
+      "de",
+      "es",
+      "fr",
+      "hi",
+      "ja",
+      "zh"
+    ]
+  },
+  "copy.desk.ticket.posted": {
+    "source": "Order posted",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.posting": {
+    "source": "Posting…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.sideBorrow": {
+    "source": "Borrow",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.sideLend": {
+    "source": "Lend",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.ticket.title": {
+    "source": "Order ticket",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.desk.title": {
+    "source": "Rate Desk",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.build": {
+    "source": "App version",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.diagnostics.close": {
+    "source": "Close",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.copied": {
+    "source": "Copied.",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.network": {
+    "source": "Network",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.rpcChecking": {
+    "source": "Checking…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.rpcOk": {
+    "source": "Working — latest block {{block}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.title": {
+    "source": "Support",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.diagnostics.wallet": {
+    "source": "Wallet",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.errorBoundary.detailAria": {
+    "source": "Error detail",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.faucet.copiedTokenId": {
+    "source": "Copied.",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.faucet.illiquid.action": {
+    "source": "Mint {{units, number}} tILQ",
+    "locales": [
+      "ar",
+      "ko"
+    ]
+  },
+  "copy.faucet.illiquid2.action": {
+    "source": "Mint {{units, number}} tILQ2",
+    "locales": [
+      "ar",
+      "ko"
+    ]
+  },
+  "copy.faucet.liquid.action": {
+    "source": "Mint {{units, number}} tLIQ",
+    "locales": [
+      "ar",
+      "ko"
+    ]
+  },
+  "copy.faucet.liquid2.action": {
+    "source": "Mint {{units, number}} {{symbol}}",
+    "locales": [
+      "ar",
+      "ko"
+    ]
+  },
+  "copy.faucet.liquid2.actionGeneric": {
+    "source": "Mint {{units, number}} test stablecoin",
+    "locales": [
+      "ar",
+      "ko"
+    ]
+  },
+  "copy.faucet.liquid2.title": {
+    "source": "Mock USD Coin ({{symbol}})",
+    "locales": [
+      "ar",
+      "de",
+      "es",
+      "fr",
+      "hi",
+      "ja",
+      "ko",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.faucet.liquid2.titleGeneric": {
+    "source": "Mock USD Coin (test stablecoin)",
+    "locales": [
+      "ar",
+      "de",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.faucet.minting": {
+    "source": "Minting…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.faucet.mweth.action": {
+    "source": "Mint {{units, number}} mWETH",
+    "locales": [
+      "ar",
+      "ko"
+    ]
+  },
+  "copy.faucet.mweth.title": {
+    "source": "Mock wrapped ETH (mWETH)",
+    "locales": [
+      "de",
+      "es",
+      "fr",
+      "hi",
+      "ja",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.help.buildDevFallback": {
+    "source": "dev",
+    "locales": [
+      "ar",
+      "de",
+      "es",
+      "fr",
+      "hi",
+      "ja",
+      "ko",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.help.buildLabel": {
+    "source": "Build",
+    "locales": [
+      "ar",
+      "de",
+      "es",
+      "fr",
+      "hi",
+      "ja",
+      "ko",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.help.title": {
+    "source": "Help",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.keepers.revoke": {
+    "source": "Revoke",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.loanState.closed": {
+    "source": "Closed",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.loanState.defaulted": {
+    "source": "Defaulted",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.loanState.pastDue": {
+    "source": "Past due",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.loanState.repaid": {
+    "source": "Repaid",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.match.loanOpened": {
+    "source": "Loan opened",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.check": {
+    "source": "Check",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.inKindLabel": {
+    "source": "Default payout",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.loanLabel": {
+    "source": "Linked loan",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.lockLabel": {
+    "source": "Transfer lock",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.ownerLabel": {
+    "source": "Current holder",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.sanctionsLabel": {
+    "source": "Compliance status",
+    "locales": [
+      "de"
+    ]
+  },
+  "copy.nftVerifier.title": {
+    "source": "NFT verifier",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.bellLabel": {
+    "source": "Notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.title": {
+    "source": "Notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.unreadBadgeTitle_few": {
+    "source": "{{count}} unread notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.unreadBadgeTitle_many": {
+    "source": "{{count}} unread notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.unreadBadgeTitle_one": {
+    "source": "1 unread notification",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.unreadBadgeTitle_other": {
+    "source": "{{count}} unread notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.unreadBadgeTitle_two": {
+    "source": "{{count}} unread notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.notifications.unreadBadgeTitle_zero": {
+    "source": "{{count}} unread notifications",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.advancedOptions": {
+    "source": "Advanced options",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.collateralAmountLabel": {
+    "source": "Collateral amount",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.counterAssetBorrowed": {
+    "source": "Borrowed asset",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.counterAssetCollateral": {
+    "source": "Collateral asset",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.durationLabel": {
+    "source": "Duration",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.liveFeesLoaded": {
+    "source": "Live fee terms loaded",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.retry": {
+    "source": "Retry",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.rowBorrow": {
+    "source": "Borrow",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.rowLend": {
+    "source": "Lend",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.securityLegCollateral": {
+    "source": "collateral",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.securityLegLoanAsset": {
+    "source": "loan asset",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.steps.details": {
+    "source": "Details",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.offerFlow.steps.done": {
+    "source": "Done",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.steps.offers": {
+    "source": "Offers",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.advancedPartialRepayOk": {
+    "source": "partial repay OK",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.badgeBorrower": {
+    "source": "Borrower",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.badgeLender": {
+    "source": "Lender",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.borrowerOffer": {
+    "source": "Borrow request",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.collateralLabel": {
+    "source": "collateral",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.collateralNone": {
+    "source": "none",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.feesPrepaid": {
+    "source": "fees prepaid",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sideRentals": {
+    "source": "NFT rentals",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sortDurationLong": {
+    "source": "Duration — longest first",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sortDurationShort": {
+    "source": "Duration — shortest first",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sortLabel": {
+    "source": "Sort by",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sortNewest": {
+    "source": "Newest first",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sortRateHigh": {
+    "source": "Rate — high to low",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.filters.sortRateLow": {
+    "source": "Rate — low to high",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.footerParts.borrowLink": {
+    "source": "Borrow",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.footerParts.lendLink": {
+    "source": "Lend",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.lenderOffer": {
+    "source": "Lending offer",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.rateBand": {
+    "source": "rate band {{min}}–{{max}}",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.offers.rateInline": {
+    "source": "rate {{pct}}",
+    "locales": [
+      "ar",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.offers.rentalListing": {
+    "source": "NFT rental",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.title": {
+    "source": "Offer Book",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offers.yearly": {
+    "source": "yearly",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.claimWaiting": {
+    "source": "Claim waiting",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.addCollateral.button": {
+    "source": "Add",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.labels.health": {
+    "source": "Health",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.labels.locked": {
+    "source": "Locked",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.labels.owed": {
+    "source": "Owed",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.labels.terms": {
+    "source": "Terms",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.loanAssetFallback": {
+    "source": "the loan asset",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.positions.details.lockedSymbolFallback": {
+    "source": "locked",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.principalPlusInterest": {
+    "source": "{{principal}} plus the earned interest.",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.positions.details.titleLoan": {
+    "source": "Loan",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.titleRental": {
+    "source": "Rental",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.details.vaultCollateralSuffix": {
+    "source": ", plus {{collateral}} collateral",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.positions.groupActive": {
+    "source": "Active loans",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.groupEnded": {
+    "source": "Ended loans",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.openOffers": {
+    "source": "Open offers",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.positions.rowLoan": {
+    "source": "Loan #{{id}} · {{rate}} yearly interest",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.positions.rowRental": {
+    "source": "Rental #{{id}} · fees prepaid",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.powerSurface.dismiss": {
+    "source": "Dismiss",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.powerSurface.guidedBorrow": {
+    "source": "Guided Borrow",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.powerSurface.guidedLend": {
+    "source": "Guided Lend",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.preclose.action": {
+    "source": "Close early",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.receipt.fees": {
+    "source": "Fees",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.recover.reviewToken": {
+    "source": "Token",
+    "locales": [
+      "de",
+      "es",
+      "fr"
+    ]
+  },
+  "copy.rent.browseRowUnpriced": {
+    "source": "{{duration}} · listing #{{id}}",
+    "locales": [
+      "ar",
+      "de",
+      "hi",
+      "ko",
+      "zh"
+    ]
+  },
+  "copy.rent.contractLabel": {
+    "source": "NFT contract address",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.dailyFeeLabel": {
+    "source": "Daily fee",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.durationLabel": {
+    "source": "Rental length",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.liveFeesLoaded": {
+    "source": "Live fee terms loaded",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.liveRentalLoaded": {
+    "source": "Live rental terms loaded",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.nftTypeErc1155": {
+    "source": "Multi-edition NFT (ERC-1155)",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.rent.nftTypeErc721": {
+    "source": "Single NFT (ERC-721)",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.nftTypeLabel": {
+    "source": "NFT type",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.perDaySuffix": {
+    "source": " ({{symbol}} per day)",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.rent.prepaymentTokenLabel": {
+    "source": "prepayment token",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.quantityLabel": {
+    "source": "Quantity",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.receiptRentYouLock": {
+    "source": "{{total}} prepaid — the full term’s fees plus a {{buffer}} refundable buffer.",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.rent.rentalOpened": {
+    "source": "Rental started",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.stepDone": {
+    "source": "Done",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.tokenIdLabel": {
+    "source": "Token id",
+    "locales": [
+      "de",
+      "hi",
+      "ta",
+      "zh"
+    ]
+  },
+  "copy.risk.healthy": {
+    "source": "Healthy",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.seo.faucet.title": {
+    "source": "Test assets — Vaipakam",
+    "locales": [
+      "de"
+    ]
+  },
+  "copy.settingsPage.experience.advanced": {
+    "source": "Advanced",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.settingsPage.experience.basic": {
+    "source": "Basic",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.settingsPage.experience.title": {
+    "source": "Experience level",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.settingsPage.more.title": {
+    "source": "More",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.settingsPage.theme.dark": {
+    "source": "Dark",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.settingsPage.theme.light": {
+    "source": "Light",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.settingsPage.theme.system": {
+    "source": "System",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.settingsPage.theme.title": {
+    "source": "Theme",
+    "locales": [
+      "de",
+      "hi"
+    ]
+  },
+  "copy.settingsPage.title": {
+    "source": "Settings",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.signing.phaseApprove": {
+    "source": "Approving… ({{c}} of {{t}})",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.signing.phasePermit": {
+    "source": "Signing the permission… ({{c}} of {{t}}) — free, no gas",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.signing.phaseSend": {
+    "source": "Submitting… ({{c}} of {{t}})",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.signing.phaseSign": {
+    "source": "Signing terms… ({{c}} of {{t}})",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.stepNav.progress": {
+    "source": "Step {{current}} of {{total}} — {{label}}",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.stepNav.progressAria": {
+    "source": "Progress",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.support.mailButton": {
+    "source": "Email support@vaipakam.com",
+    "locales": [
+      "de",
+      "es"
+    ]
+  },
+  "copy.support.sending": {
+    "source": "Sending…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.tariff.borrowerModeLabel": {
+    "source": "Borrower",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.tariff.lenderModeLabel": {
+    "source": "Lender",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.tokenSecurity.badge.block.label": {
+    "source": "Risk flagged",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vault.addressLabel": {
+    "source": "Vault address:",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vault.badgeFree": {
+    "source": "Free",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vault.badgePartlyLocked": {
+    "source": "Partly locked",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vault.unreadableCount_few": {
+    "source": "{{count}} assets",
+    "locales": [
+      "de",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.vault.unreadableCount_many": {
+    "source": "{{count}} assets",
+    "locales": [
+      "de",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.vault.unreadableCount_other": {
+    "source": "{{count}} assets",
+    "locales": [
+      "de",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.vault.unreadableCount_two": {
+    "source": "{{count}} assets",
+    "locales": [
+      "de",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.vault.unreadableCount_zero": {
+    "source": "{{count}} assets",
+    "locales": [
+      "de",
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.vpfi.activeDiscount": {
+    "source": "Active discount",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vpfi.deposit": {
+    "source": "Deposit",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vpfi.max": {
+    "source": "Max",
+    "locales": [
+      "ar",
+      "de",
+      "es",
+      "fr",
+      "hi",
+      "ja",
+      "ko",
+      "zh"
+    ]
+  },
+  "copy.vpfi.receiptWithdraw.youCanLoseLead": {
+    "source": "Future fee discounts —",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vpfi.title": {
+    "source": "VPFI discounts",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vpfi.vaultActionLabel": {
+    "source": "Vault action",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vpfi.warmingUp": {
+    "source": "Warming up",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.vpfi.withdraw": {
+    "source": "Withdraw",
+    "locales": [
+      "hi"
+    ]
+  }
+}
