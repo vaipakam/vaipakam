@@ -146,19 +146,13 @@
   },
   {
     "type": "function",
-    "name": "getRepatriationMaxPerAuth",
-    "inputs": [
-      {
-        "name": "dstChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
+    "name": "getRepatriationLanePool",
+    "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -390,17 +384,12 @@
   },
   {
     "type": "function",
-    "name": "setRepatriationMaxPerAuth",
+    "name": "setRepatriationLanePool",
     "inputs": [
       {
-        "name": "dstChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "newMax",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "pool_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -608,25 +597,19 @@
   },
   {
     "type": "event",
-    "name": "RepatriationMaxPerAuthSet",
+    "name": "RepatriationLanePoolSet",
     "inputs": [
       {
-        "name": "dstChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
+        "name": "previousPool",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       },
       {
-        "name": "previousMax",
-        "type": "uint256",
+        "name": "newPool",
+        "type": "address",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newMax",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -848,7 +831,7 @@
   },
   {
     "type": "error",
-    "name": "RepatriationExceedsPerAuthMax",
+    "name": "RepatriationExceedsLaneCapacity",
     "inputs": [
       {
         "name": "requested",
@@ -856,7 +839,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "maxPerAuth",
+        "name": "capacity",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -890,12 +873,12 @@
   },
   {
     "type": "error",
-    "name": "RepatriationLaneCeilingUnset",
+    "name": "RepatriationLaneUnknown",
     "inputs": [
       {
-        "name": "dstChainId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

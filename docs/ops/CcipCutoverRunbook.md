@@ -104,17 +104,14 @@ chain until every chain in the topology has been deployed.
 
 ```
 Pass 1 — deploy, every chain:        DeployCrosschain.s.sol
-Pass 2 — wire, every chain:          ConfigureCcip.s.sol   (canonical chain LAST)
+Pass 2 — wire, every chain:          ConfigureCcip.s.sol
 ```
 
-Within pass 2, run the **canonical (Base) chain last** (#1568 C2): each
-mirror's pass records its configured lane capacity into its artifact, and
-the canonical pass derives every repatriation per-authorization ceiling as
-min(local, mirror). Fail-closed — a lane whose mirror capacity is not yet
-recorded is skipped with a `REPATRIATION CEILINGS INCOMPLETE` banner, and
-Mode-A authorization toward it refuses until a canonical re-run arms it.
-Every other wiring step is order-independent (it reads only pass-1
-artifacts).
+Pass-2 order across chains is free — every step reads only pass-1
+artifacts. (#1568 C2: the repatriation lane-capacity bounds read each
+chain's own VPFI TokenPool limiter LIVE at issuance/execution; the only
+repatriation wiring in pass 2 is `setRepatriationLanePool`, so nothing
+per-lane has to be derived, recorded, or ordered.)
 
 The orchestration scripts encode this:
 
@@ -184,22 +181,18 @@ admin multisig → governance timelock.
    bash contracts/script/deploy-mainnet.sh <chain-slug> --phase contracts \
         --confirm-i-have-multisig-ready
    ```
-2. **Wire** every mainnet chain once all are deployed — **mirrors first,
-   the canonical Base chain LAST** (§3's ordering rule: Base's pass
-   derives the repatriation ceilings from the capacities the mirrors'
-   passes record; run early it skips them all with a `REPATRIATION
-   CEILINGS INCOMPLETE` banner and Mode-A stays un-authorizable until a
-   Base re-run):
+2. **Wire** every mainnet chain once all are deployed (any order):
    ```
    CCIP_LANE_CHAIN_IDS=<remote chain ids> \
      bash contracts/script/deploy-mainnet.sh <chain-slug> --phase ccip-wire
    ```
-3. **Verify** every chain (`--phase verify`). On Base additionally
-   confirm every mirror lane's repatriation ceiling is armed —
-   `cast call $DIAMOND 'getRepatriationMaxPerAuth(uint32)(uint256)'
-   <mirrorChainId>` must return the expected min(local, mirror)
-   capacity, not 0 — the automated verify phase does not read these
-   (same known limit as the per-lane limiter configs).
+3. **Verify** every chain (`--phase verify`). On every chain
+   additionally confirm the Diamond's repatriation lane pool is wired —
+   `cast call $DIAMOND 'getRepatriationLanePool()(address)'` must
+   return that chain's VPFI TokenPool, not zero (the live
+   lane-capacity bounds read it; unset = repatriation stays dark) —
+   the automated verify phase does not read this (same known limit as
+   the per-lane limiter configs).
 4. **Hand over** ownership to governance — see §7.
 
 On mainnet the admin is a **multisig**, which cannot broadcast a Foundry
@@ -279,33 +272,39 @@ Rotating the admin multisig → governance timelock is the final step.
   `bash contracts/script/exportFrontendDeployments.sh` and the typecheck
   cycle (see CLAUDE.md "Deployments sync").
 
-### Changing lane rate limits after deployment (#1568 C2 coupling)
+### Changing lane rate limits after deployment (#1568 C2)
 
-Whenever governance changes a lane CAPACITY through
-`VpfiPoolRateGovernor.setLaneRateLimits` — on the canonical chain or a
-mirror — the change does NOT propagate to the repatriation
-per-authorization ceiling the canonical Diamond enforces at issuance, nor
-to the artifact-recorded `.ccipRateCapacity` the deploy tooling derives
-it from. A capacity **lowered** without re-arming leaves a stale, looser
-ceiling: an authorization between the two values passes issuance but its
-single return message permanently exceeds the live limiter, stranding
-the draw until cancellation. So the ceremony is COUPLED:
+The repatriation bounds need **no coupled ceremony**: authorize reads
+the canonical pool's INBOUND limiter and execute reads the mirror
+pool's OUTBOUND limiter LIVE, so a capacity change through
+`VpfiPoolRateGovernor.setLaneRateLimits` binds new authorizations and
+executions the moment it lands — there is no recorded ceiling to
+update, on either chain, and nothing to keep in sync across timelocks.
 
-1. In the **same governance batch** that changes a lane's capacity,
-   include `RepatriationFacet.setRepatriationMaxPerAuth(<mirrorChainId>,
-   min(mirrorOutboundCapacity, baseInboundCapacity))` on the canonical
-   Diamond (post-handover this is a timelock action like the limit
-   change itself).
-2. Update `CCIP_RATE_CAPACITY` in the affected chain's `.env` and
-   re-record its artifact (`.ccipRateCapacity`) — either by re-running
-   `ccip-wire` on that chain or editing the artifact to match — so a
-   future canonical `ccip-wire` re-run derives the same ceiling instead
-   of silently reverting it.
-3. Verify: `cast call $DIAMOND
-   'getRepatriationMaxPerAuth(uint32)(uint256)' <mirrorChainId>` equals
-   the new min. (A capacity **raised** needs the same two steps or the
-   ceiling simply stays conservatively tight — safe, but Mode A refuses
-   amounts the lane could now carry.)
+What a capacity change DOES require is attention to work already in
+flight, in this order when **lowering**:
+
+1. **Before lowering a canonical INBOUND capacity**: confirm no
+   executed repatriation return (or any other VPFI token message —
+   reward remits and buyback remits share the pools) is still
+   in flight above the proposed value. An in-flight message that
+   exceeds the new inbound capacity fails delivery PERMANENTLY (a
+   single over-capacity request is rejected, never queued), and for a
+   repatriation the mirror has already irreversibly marked the
+   instruction executed — cancellation can then never produce an ACK,
+   so the draw stays charged until governance re-raises the lane to
+   drain the message. Check pending authorizations too
+   (`getRepatriationAuthorization` status 1 with
+   `getRepatriationInstruction` state 2 on the mirror = executed,
+   return in flight).
+2. **Lowering a mirror OUTBOUND capacity** is self-healing for
+   not-yet-executed instructions: `executeRepatriation` re-checks the
+   live limiter BEFORE its one-shot marker, so an instruction above
+   the new value fails retryably and the canonical side releases the
+   draw through the normal cancellation ceremony. Drain or cancel
+   any such pending authorizations at your convenience.
+3. **Raising** a capacity needs nothing: the live bounds simply accept
+   larger amounts from that moment.
 
 ---
 

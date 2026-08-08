@@ -36,17 +36,16 @@ What shipped, in behaviour terms:
   endpoints also join the governance ownership handover ceremony, so
   after handover no single operator key retains upgrade or re-pointing
   authority over the channel.
-- Authorizations gained a **per-destination ceiling sized to each lane's
-  transfer capacity**: a single transfer above either side's capacity
-  would be rejected permanently by the transport, so an over-capacity
-  authorization — which could only ever strand its reserved amount until
-  cancellation — is now refused at issuance instead. The deploy tooling
-  arms each destination with the minimum of the two capacities its
-  return would consume (each chain records its configured capacity for
-  the canonical chain to read). A destination with no ceiling armed
-  **refuses authorization entirely** — until the other side's figure is
-  recorded no bound is known-safe, so an unconfigured lane is
-  un-authorizable rather than unbounded.
+- Authorizations and executions are bounded by the lane's **live
+  transfer capacity, read from the transport itself at each check** —
+  the canonical chain checks its inbound limit at issuance, the mirror
+  its outbound limit before the irreversible execution step. A single
+  transfer above either capacity would be rejected permanently by the
+  transport, so an over-capacity request — which could only ever strand
+  its reserved amount until cancellation — is refused before it commits
+  anything. Because the bound is live there is nothing to arm, record,
+  or keep in sync when capacities change; an unconfigured transport
+  reference refuses rather than passes.
 - The incident tooling knows the new endpoints: the all-chains pause
   sweep and the testnet pause rehearsal both enumerate the return
   channel's sender and receiver, so an incident pause engages — and its

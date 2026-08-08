@@ -8,6 +8,10 @@ import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {
+    MockCcipSelectorRegistry,
+    MockVpfiTokenPool
+} from "./mocks/MockVpfiTokenPool.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /**
@@ -77,11 +81,17 @@ contract RepatriationAccountingTest is SetupTest {
 
     function _arm() internal {
         _repat().setRepatriationEndpoints(address(0), RECEIVER);
-        // #1618 r3 — an unarmed lane refuses authorization (fail-closed
-        // per-destination ceiling). Type-max keeps the ceiling out of this
-        // suite's way: it pins the ACCOUNTING core, including hostile
-        // near-max draw magnitudes a finite ceiling would fence off.
-        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, type(uint256).max);
+        // #1618 r6 — the live lane-capacity bound reads the pool's limiter
+        // through the messenger's selector registry; wire both with the
+        // bucket left DISABLED (= no bound, exactly CCIP's own semantics),
+        // keeping the bound out of this suite's way: it pins the
+        // ACCOUNTING core, including hostile near-max draw magnitudes a
+        // finite capacity would fence off.
+        MockVpfiTokenPool pool = new MockVpfiTokenPool();
+        MockCcipSelectorRegistry reg = new MockCcipSelectorRegistry();
+        reg.setChainSelector(uint256(CHAIN_ARB), 1);
+        _mut().setCrossChainMessengerRaw(address(reg));
+        _repat().setRepatriationLanePool(address(pool));
     }
 
     // ── Dark by default ─────────────────────────────────────────────────────

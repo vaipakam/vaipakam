@@ -16,6 +16,7 @@ import {VpfiReturnReceiver} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {MockVpfiTokenPool} from "./mocks/MockVpfiTokenPool.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /// @dev Stand-in for the CCIP adapter on the SEND side: quotes a settable
@@ -25,6 +26,15 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 ///      real, not assumed.
 contract MockCcipChannelMessenger {
     using SafeERC20 for IERC20;
+
+    /// @notice chainId → CCIP selector, mirroring `CcipMessenger`'s public
+    ///         registry — the surface the facet's live lane-capacity
+    ///         bounds consult.
+    mapping(uint256 => uint64) public chainSelectorOf;
+
+    function setChainSelector(uint256 chainId, uint64 selector) external {
+        chainSelectorOf[chainId] = selector;
+    }
 
     uint256 public fee;
     uint256 public lastDst;
@@ -111,6 +121,7 @@ contract RepatriationTransportTest is SetupTest {
     MockRewardMessenger internal messenger;
     MockCcipChannelMessenger internal ccip;
     MockReturnRelay internal relay;
+    MockVpfiTokenPool internal pool;
     VpfiReturnSender internal returnSender;
     VpfiReturnReceiver internal returnReceiver;
     ERC20Mock internal vpfi;
@@ -118,6 +129,9 @@ contract RepatriationTransportTest is SetupTest {
     uint32 internal constant CHAIN_BASE = 8453;
     uint32 internal constant CHAIN_ARB = 42161;
     uint32 internal constant CHAIN_OP = 10;
+    uint64 internal constant SEL_BASE = 15971525489660198786;
+    uint64 internal constant SEL_ARB = 4949039107694359620;
+    uint64 internal constant SEL_OP = 3734403246176062136;
     uint256 internal constant DEST_GAS = 400_000;
     address internal constant STRANGER = address(0x57A9);
 
@@ -139,6 +153,17 @@ contract RepatriationTransportTest is SetupTest {
         chainIds[0] = CHAIN_BASE;
         chainIds[1] = CHAIN_ARB;
         _agg().setExpectedSourceChainIds(chainIds);
+
+        // Live lane-capacity wiring (#1618 r6): the facet reads the pool's
+        // limiter buckets through the messenger's selector registry. Unset
+        // selectors' buckets read disabled = no bound, so tests that pin
+        // the bound itself enable a bucket explicitly.
+        pool = new MockVpfiTokenPool();
+        ccip.setChainSelector(CHAIN_BASE, SEL_BASE);
+        ccip.setChainSelector(CHAIN_ARB, SEL_ARB);
+        ccip.setChainSelector(CHAIN_OP, SEL_OP);
+        _mut().setCrossChainMessengerRaw(address(ccip));
+        _repat().setRepatriationLanePool(address(pool));
 
         // Base-side receiver satellite (real, behind a proxy), driven by
         // the relay standing in for the CCIP adapter.
@@ -199,15 +224,13 @@ contract RepatriationTransportTest is SetupTest {
         return RepatriationFacet(address(diamond));
     }
 
-    /// Take the Base role: canonical, receiver satellite armed, and the
-    /// ARB lane's fail-closed ceiling armed generously (#1618 r3 — an
-    /// unarmed lane refuses authorization; tests about the ceiling itself
-    /// re-arm it explicitly).
+    /// Take the Base role: canonical, receiver satellite armed. The lane
+    /// pool + selector registry are wired once in setUp; buckets default
+    /// to disabled (no bound), so only bound-pinning tests enable them.
     function _armBase() internal {
         vm.chainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _repat().setRepatriationEndpoints(address(0), address(returnReceiver));
-        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 1_000_000 ether);
     }
 
     /// Take the mirror role: non-canonical, sender satellite armed.
@@ -311,44 +334,33 @@ contract RepatriationTransportTest is SetupTest {
         _repat().sendRepatriationInstruction(authId, payable(address(this)));
     }
 
-    // ── Base side: per-authorization ceiling (lane capacity) ────────────────
+    // ── Live lane-capacity bounds (#1618 r1→r6) ─────────────────────────────
 
-    function test_Authorize_BoundedByPerAuthCeiling() public {
+    function test_Authorize_BoundedByLiveInboundCapacity() public {
         _armBase();
         _seedAvail(1, 100 ether);
-        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 30 ether);
-        assertEq(_repat().getRepatriationMaxPerAuth(CHAIN_ARB), 30 ether);
-        // Above the ceiling: refused at ISSUANCE — a single CCIP token
-        // message above the lane capacity is rejected permanently, so an
+        pool.setInbound(SEL_ARB, true, 30 ether);
+        // Above the LIVE inbound capacity: refused at ISSUANCE — a single
+        // CCIP token message above capacity is rejected permanently, so an
         // over-capacity authorization could only ever strand its draw.
         vm.expectRevert(
             abi.encodeWithSelector(
-                RepatriationFacet.RepatriationExceedsPerAuthMax.selector,
+                RepatriationFacet.RepatriationExceedsLaneCapacity.selector,
                 30 ether + 1,
                 30 ether
             )
         );
         _repat().authorizeRepatriation(CHAIN_ARB, 30 ether + 1);
-        // Exactly at the ceiling passes.
+        // Exactly at capacity passes; a capacity RAISE binds immediately —
+        // no arming ceremony, the next read simply sees the new bucket.
         _repat().authorizeRepatriation(CHAIN_ARB, 30 ether);
-        // Zero DARKENS the lane — never "unbounded" (#1618 r3): while no
-        // ceiling is armed, no bound is known-safe, so authorization
-        // refuses the destination outright.
-        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RepatriationFacet.RepatriationLaneCeilingUnset.selector,
-                CHAIN_ARB
-            )
-        );
-        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+        pool.setInbound(SEL_ARB, true, 100 ether);
+        _repat().authorizeRepatriation(CHAIN_ARB, 60 ether);
     }
 
-    function test_MaxPerAuthCeiling_IsPerDestination() public {
-        // Codex #1618 r2 — lane capacities may diverge per chain, and a
-        // return consumes the MIRROR side's outbound limiter too, so one
-        // global ceiling read from the local capacity misses a
-        // lower-configured mirror. The bound must be the DESTINATION's.
+    function test_Authorize_LaneBoundIsPerDestination() public {
+        // Codex #1618 r2 — capacities may diverge per lane; the bound
+        // read must be the DESTINATION lane's, not any global figure.
         _armBase();
         uint32[] memory chainIds = new uint32[](3);
         chainIds[0] = CHAIN_BASE;
@@ -359,12 +371,12 @@ contract RepatriationTransportTest is SetupTest {
         messenger.deliverChainReportRecycled(
             CHAIN_OP, 2, 20e18, 10e18, 100 ether, 100 ether
         );
-        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 30 ether);
-        _repat().setRepatriationMaxPerAuth(CHAIN_OP, 50 ether);
-        // 40 exceeds ARB's lane ceiling but fits OP's — only ARB refuses.
+        pool.setInbound(SEL_ARB, true, 30 ether);
+        pool.setInbound(SEL_OP, true, 50 ether);
+        // 40 exceeds ARB's lane capacity but fits OP's — only ARB refuses.
         vm.expectRevert(
             abi.encodeWithSelector(
-                RepatriationFacet.RepatriationExceedsPerAuthMax.selector,
+                RepatriationFacet.RepatriationExceedsLaneCapacity.selector,
                 40 ether,
                 30 ether
             )
@@ -373,11 +385,66 @@ contract RepatriationTransportTest is SetupTest {
         _repat().authorizeRepatriation(CHAIN_OP, 40 ether);
     }
 
-    function test_SetMaxPerAuth_AdminOnly() public {
+    function test_Authorize_FailsClosedOnMissingWiring() public {
+        _armBase();
+        _seedAvail(1, 100 ether);
+        // Unknown lane selector — the messenger registry has no entry.
+        ccip.setChainSelector(CHAIN_ARB, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationLaneUnknown.selector,
+                uint256(CHAIN_ARB)
+            )
+        );
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+        ccip.setChainSelector(CHAIN_ARB, SEL_ARB);
+        // Unset pool — the bounded surface is dark, never unbounded.
+        _repat().setRepatriationLanePool(address(0));
+        vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+        _repat().setRepatriationLanePool(address(pool));
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+    }
+
+    function test_Execute_BoundedByLiveOutboundCapacity_Retryable() public {
+        // The mirror-outbound half (#1618 r6): checked BEFORE the one-shot
+        // marker, so an instruction above the lane's CURRENT capacity —
+        // including one issued before a capacity was LOWERED — fails
+        // retryably instead of marking executed and sending a message the
+        // limiter permanently rejects.
+        address base = address(0xBA5E);
+        _instructed(base, 1, 40 ether);
+        pool.setOutbound(SEL_BASE, true, 30 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationExceedsLaneCapacity.selector,
+                40 ether,
+                30 ether
+            )
+        );
+        _repat().executeRepatriation(base, 1, payable(address(this)));
+        (uint8 state, ) = _repat().getRepatriationInstruction(base, 1);
+        assertEq(state, 1, "still pending after the refused execute");
+        // A raise (or drain) unblocks the same instruction.
+        pool.setOutbound(SEL_BASE, true, 100 ether);
+        _repat().executeRepatriation(base, 1, payable(address(this)));
+        (state, ) = _repat().getRepatriationInstruction(base, 1);
+        assertEq(state, 2);
+    }
+
+    function test_SetLanePool_AdminOnlyAndCodeChecked() public {
         _armBase();
         vm.prank(STRANGER);
         vm.expectRevert();
-        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 1 ether);
+        _repat().setRepatriationLanePool(address(pool));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationEndpointNotContract.selector,
+                address(0xE0A1)
+            )
+        );
+        _repat().setRepatriationLanePool(address(0xE0A1));
+        assertEq(_repat().getRepatriationLanePool(), address(pool));
     }
 
     // ── Base side: cancel request ───────────────────────────────────────────

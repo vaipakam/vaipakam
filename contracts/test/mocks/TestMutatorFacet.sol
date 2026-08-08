@@ -1140,6 +1140,14 @@ contract TestMutatorFacet {
     ///         on liquidation-class terminals) so recycle-bucket tests can
     ///         drive the claim/sweep forfeit routing without a full default
     ///         scaffold.
+    /// @notice #1568 C2 (#1618 r6) test-only — point `s.crossChainMessenger`
+    ///         at a mock selector registry so the live lane-capacity bound
+    ///         can resolve a CCIP selector without cutting TreasuryFacet
+    ///         into minimal test diamonds.
+    function setCrossChainMessengerRaw(address messenger) external {
+        LibVaipakam.storageSlot().crossChainMessenger = messenger;
+    }
+
     function setRewardEntryForfeitedRaw(uint256 id) external {
         LibVaipakam.storageSlot().rewardEntries[id].forfeited = true;
     }

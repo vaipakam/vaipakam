@@ -6171,22 +6171,22 @@ library LibVaipakam {
         //   them.
         address repatriationSender; //   mirror-side outbound escrow/sender
         address repatriationReceiver; // Base-side inbound endpoint
-        // #1568 C2 part 2 (Codex #1618 r1+r2 P2) — PER-DESTINATION
-        //   per-authorization ceiling. A Mode-A return travels as ONE CCIP
-        //   token message and consumes BOTH the mirror pool's outbound
-        //   limiter and Base's inbound one; a single request above either
-        //   capacity is rejected permanently — so an authorization larger
-        //   than the LANE's effective cap could never execute, stranding
-        //   its availability draw until an operator cancels. Keyed by
-        //   destination chain because capacities may diverge per lane
-        //   (r2: one global ceiling read from Base's own capacity misses
-        //   a lower-configured mirror). The deploy tooling arms each
-        //   destination to min(local capacity, that mirror's recorded
-        //   capacity), and SKIPS a lane whose mirror capacity is not yet
-        //   recorded. Zero = the lane is UNARMED and authorization
-        //   refuses it (r3 fail-closed: an unrecorded mirror capacity
-        //   means no bound is known-safe — never "unbounded").
-        mapping(uint32 => uint256) repatriationMaxPerAuth;
+        // #1568 C2 part 2 (Codex #1618 r1→r6) — this chain's VPFI CCIP
+        //   TokenPool, read LIVE at the lane-capacity bounds. A Mode-A
+        //   return travels as ONE CCIP token message and consumes BOTH
+        //   the mirror pool's outbound limiter and Base's inbound one; a
+        //   single request above either capacity is rejected permanently,
+        //   which would strand the authorization's draw until the
+        //   cancellation ceremony. Four review rounds showed that ANY
+        //   off-chain-derived ceiling (artifact-recorded capacities,
+        //   min() arming ceremonies, ordering rules) goes stale or gets
+        //   skipped on some documented operator path — so the bound is
+        //   read from the pool's live limiter state instead: authorize
+        //   checks Base's INBOUND capacity for the lane, execute checks
+        //   the mirror's OUTBOUND capacity, and nothing has to be armed,
+        //   recorded, ordered, or kept in sync. Zero = transport dark
+        //   (fail-closed, like the endpoints).
+        address repatriationLanePool;
     }
 
     /// @notice #1568 C2 Mode A — one planned-surplus repatriation

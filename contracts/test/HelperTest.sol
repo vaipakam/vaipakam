@@ -88,7 +88,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](151);
+        selectors = new bytes4[](152);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -139,6 +139,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
         selectors[n++] =
             TestMutatorFacet.debitRepatriationSurplusRaw.selector;
+        // #1618 r6 — selector-registry pointer for the live lane bound.
+        selectors[n++] =
+            TestMutatorFacet.setCrossChainMessengerRaw.selector;
         // #1222 M3 B2-d3 — per-chain remit split for the netting identity.
         selectors[n++] =
             TestMutatorFacet.chainRewardBudgetSplitForDayRaw.selector;
@@ -2177,8 +2180,8 @@ contract HelperTest {
         selectors[11] = RepatriationFacet.executeRepatriation.selector;
         selectors[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
         selectors[13] = RepatriationFacet.getRepatriationInstruction.selector;
-        selectors[14] = RepatriationFacet.setRepatriationMaxPerAuth.selector;
-        selectors[15] = RepatriationFacet.getRepatriationMaxPerAuth.selector;
+        selectors[14] = RepatriationFacet.setRepatriationLanePool.selector;
+        selectors[15] = RepatriationFacet.getRepatriationLanePool.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

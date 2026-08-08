@@ -630,26 +630,20 @@ The post-deploy health check (step `[5d]`) runs on every chain and
 its log is persisted to
 `deployments/<slug>/.history/health-<unix-ts>.log` for audit.
 
-### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains — canonical chain LAST)
+### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains, any order)
 
 ```bash
+bash contracts/script/deploy-testnet.sh base-sepolia --phase ccip-wire
 bash contracts/script/deploy-testnet.sh arb-sepolia  --phase ccip-wire
 bash contracts/script/deploy-testnet.sh op-sepolia   --phase ccip-wire
-bash contracts/script/deploy-testnet.sh base-sepolia --phase ccip-wire   # canonical — LAST
 ```
 
-**Order matters for exactly one step (#1568 C2, Codex #1618 r4): run the
-canonical (Base) chain's pass LAST.** Each mirror's pass records its
-configured lane capacity (`.ccipRateCapacity`) into its own artifact, and
-the canonical pass derives every repatriation per-authorization ceiling as
-min(local, that mirror's recorded capacity) — fail-closed, so a lane whose
-mirror capacity is not yet recorded is SKIPPED and Mode-A authorization
-toward that chain refuses (`RepatriationLaneCeilingUnset`) until armed. A
-canonical pass run too early prints an unmissable `REPATRIATION CEILINGS
-INCOMPLETE` banner; the repair is simply re-running ccip-wire on the
-canonical chain after the mirrors' passes (idempotent). Every OTHER piece
-of the wiring is order-independent — it reads only `contracts`-phase
-artifacts.
+The pass order across chains is free — every step reads only
+`contracts`-phase artifacts. (#1568 C2: the repatriation lane-capacity
+bounds are read LIVE from each chain's VPFI TokenPool limiter at
+issuance/execution; the only repatriation wiring this phase performs is
+`setRepatriationLanePool`, so there are no per-lane ceilings to derive,
+record, or order.)
 
 Each invocation runs `ConfigureCcip.s.sol`, which reads every chain's
 `deployments/<slug>/addresses.json` and registers chain selectors,
@@ -756,14 +750,12 @@ each item is checked:
       adapter, #687-A.)
 - [ ] `--phase ccip-wire` ran clean on every chain (`ConfigureCcip.s.sol`
       completed: peers, lanes, rate limits, and CCT registration all
-      landed with no `⚠` lines), with the canonical chain's pass run
-      LAST and NO `REPATRIATION CEILINGS INCOMPLETE` banner in its log.
-- [ ] On the canonical chain, every expected mirror lane's repatriation
-      ceiling is armed and non-zero (#1568 C2 — an unarmed lane refuses
-      Mode-A authorization): for each mirror chain id run
-      `cast call $DIAMOND 'getRepatriationMaxPerAuth(uint32)(uint256)'
-      <mirrorChainId>` and confirm the value is the expected
-      min(local, mirror) lane capacity, not 0.
+      landed with no `⚠` lines).
+- [ ] On every chain, the Diamond's repatriation lane pool is wired
+      (#1568 C2 — the live lane-capacity bounds read it; unset = the
+      bounded surfaces are dark):
+      `cast call $DIAMOND 'getRepatriationLanePool()(address)'` returns
+      that chain's VPFI TokenPool, not the zero address.
 - [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
       chain — capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/`.

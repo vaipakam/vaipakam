@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLimiter.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -25,6 +26,28 @@ interface IRepatRewardMessenger {
         uint256 authId,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
+}
+
+/// @dev The slice of {CcipMessenger}'s registry the lane-capacity bounds
+///      read — the chainId → CCIP-selector mapping ConfigureCcip wires.
+interface ICcipSelectorRegistry {
+    function chainSelectorOf(uint256 chainId) external view returns (uint64);
+}
+
+/// @dev The slice of the CCIP VPFI TokenPool the lane-capacity bounds
+///      read — the LIVE per-lane limiter state. The struct comes from the
+///      pinned CCIP library itself, never a hand-typed copy, so the
+///      decode shape cannot drift from the audited pool's.
+interface IVpfiPoolRateLimitView {
+    function getCurrentInboundRateLimiterState(uint64 remoteChainSelector)
+        external
+        view
+        returns (RateLimiter.TokenBucket memory);
+
+    function getCurrentOutboundRateLimiterState(uint64 remoteChainSelector)
+        external
+        view
+        returns (RateLimiter.TokenBucket memory);
 }
 
 /// @dev The slice of {VpfiReturnSender} the mirror-side surfaces drive —
@@ -150,12 +173,9 @@ contract RepatriationFacet is
     ///         the facet to dark.
     event RepatriationEndpointsSet(address sender, address receiver);
 
-    /// @notice A destination's per-authorization ceiling was (re)configured.
-    event RepatriationMaxPerAuthSet(
-        uint32 indexed dstChainId,
-        uint256 previousMax,
-        uint256 newMax
-    );
+    /// @notice The VPFI TokenPool the lane-capacity bounds read was
+    ///         (re)configured. Zeroing it re-darkens the bounded surfaces.
+    event RepatriationLanePoolSet(address previousPool, address newPool);
 
     /// @notice Base dispatched (or re-dispatched) the cross-chain instruction
     ///         for a pending authorization.
@@ -220,16 +240,15 @@ contract RepatriationFacet is
     error RepatriationInvalidRequest();
     /// @notice The draw exceeds the chain's current recycled availability.
     error RepatriationExceedsAvailability(uint256 requested, uint256 available);
-    /// @notice The amount exceeds the configured per-authorization ceiling
-    ///         (sized to the CCIP lane capacity — a single return above it
-    ///         could never deliver, stranding the draw until cancellation).
-    error RepatriationExceedsPerAuthMax(uint256 requested, uint256 maxPerAuth);
-    /// @notice No per-authorization ceiling is configured for this
-    ///         destination — the lane is un-authorizable until the operator
-    ///         arms one (fail-closed: without the mirror side's recorded
-    ///         capacity, ANY guessed bound can exceed the mirror's outbound
-    ///         limiter and strand the draw; Codex #1618 r3).
-    error RepatriationLaneCeilingUnset(uint32 dstChainId);
+    /// @notice The amount exceeds the lane's LIVE limiter capacity (read
+    ///         from the VPFI TokenPool at the moment of the check) — a
+    ///         single return message above capacity is rejected
+    ///         permanently by CCIP, never queued behind refill, so it
+    ///         could only ever strand the authorization's draw.
+    error RepatriationExceedsLaneCapacity(uint256 requested, uint256 capacity);
+    /// @notice The messenger's registry has no CCIP selector for this
+    ///         chain pair — the lane is not wired; fail closed.
+    error RepatriationLaneUnknown(uint256 chainId);
     /// @notice The referenced authorization is not in the required state.
     error RepatriationAuthNotPending(uint256 authId, uint8 status);
     /// @notice The return/cancel names a different issuing deployment — a
@@ -256,6 +275,49 @@ contract RepatriationFacet is
         uint256 authId,
         uint8 state
     );
+
+    // ── Live lane-capacity bound ────────────────────────────────────────────
+
+    /**
+     * @dev Enforce `amount` against the LIVE limiter capacity of the CCIP
+     *      lane toward `remoteChainId`, on this chain's own VPFI pool —
+     *      the inbound bucket when this chain will RECEIVE the return
+     *      (Base, at authorize), the outbound bucket when it will SEND it
+     *      (mirror, at execute). Fail-closed on missing wiring: an unset
+     *      pool or messenger, or an unknown lane selector, refuses rather
+     *      than passes. A disabled limiter imposes no bound — CCIP's own
+     *      `_consume` short-circuits the same way, and the pool rate
+     *      governor refuses to disable a lane's limit (ET-008), so on a
+     *      production deploy this branch means "governor policy says
+     *      unlimited", not "unconfigured".
+     */
+    function _assertWithinLaneCapacity(
+        LibVaipakam.Storage storage s,
+        uint256 remoteChainId,
+        uint256 amount,
+        bool inbound
+    ) private view {
+        address pool = s.repatriationLanePool;
+        address messenger = s.crossChainMessenger;
+        if (pool == address(0) || messenger == address(0)) {
+            revert RepatriationNotConfigured();
+        }
+        uint64 selector =
+            ICcipSelectorRegistry(messenger).chainSelectorOf(remoteChainId);
+        if (selector == 0) revert RepatriationLaneUnknown(remoteChainId);
+        RateLimiter.TokenBucket memory bucket = inbound
+            ? IVpfiPoolRateLimitView(pool).getCurrentInboundRateLimiterState(
+                selector
+            )
+            : IVpfiPoolRateLimitView(pool).getCurrentOutboundRateLimiterState(
+                selector
+            );
+        if (bucket.isEnabled && amount > uint256(bucket.capacity)) {
+            revert RepatriationExceedsLaneCapacity(
+                amount, uint256(bucket.capacity)
+            );
+        }
+    }
 
     // ── Gates ───────────────────────────────────────────────────────────────
 
@@ -310,24 +372,21 @@ contract RepatriationFacet is
         if (amount > avail) {
             revert RepatriationExceedsAvailability(amount, avail);
         }
-        // Lane-capacity ceiling (Codex #1618 r1+r2+r3 P2): the return is
-        // ONE token message consuming BOTH sides' rate limiters, and a
-        // single CCIP request above either capacity is rejected
-        // PERMANENTLY (not queued behind refill) — an over-capacity
-        // authorization would charge a draw that can only ever be
-        // released by the cancellation ceremony. Refuse it at issuance
-        // against THIS destination's ceiling (capacities may diverge per
-        // lane), and FAIL CLOSED while no ceiling is armed: the deploy
-        // tooling only arms a lane once the mirror side's capacity is
-        // recorded, so an unarmed lane means the safe bound is simply
-        // not known yet — any guessed default could exceed the mirror's
-        // outbound limiter (r3: the Base-first runbook order made the
-        // earlier local-capacity fallback exactly that guess).
-        uint256 maxPer = s.repatriationMaxPerAuth[dstChainId];
-        if (maxPer == 0) revert RepatriationLaneCeilingUnset(dstChainId);
-        if (amount > maxPer) {
-            revert RepatriationExceedsPerAuthMax(amount, maxPer);
-        }
+        // LIVE lane-capacity bound, Base-inbound half (Codex #1618
+        // r1→r6): the return is ONE token message consuming BOTH sides'
+        // rate limiters, and a single CCIP request above either capacity
+        // is rejected PERMANENTLY (not queued behind refill) — an
+        // over-capacity authorization would charge a draw that can only
+        // ever be released by the cancellation ceremony. The bound is
+        // read from THIS chain's pool limiter at the moment of issuance —
+        // never from an armed/recorded copy, four rounds of review having
+        // shown every off-chain derivation stale or skippable on some
+        // documented operator path. The mirror-outbound half is enforced
+        // the same live way at {executeRepatriation}. A DISABLED limiter
+        // imposes no bound, exactly as CCIP's own `_consume` treats it
+        // (and the rate governor refuses to disable a lane's limit,
+        // ET-008).
+        _assertWithinLaneCapacity(s, uint256(dstChainId), amount, true);
         s.chainRepatriationDebited[dstChainId] += amount;
         authId = ++s.repatAuthNonce;
         s.repatAuthorizations[authId] = LibVaipakam.RepatriationAuthorization({
@@ -667,6 +726,16 @@ contract RepatriationFacet is
         }
         uint256 amount = s.repatInstructionAmount[key];
 
+        // LIVE lane-capacity bound, mirror-outbound half (Codex #1618
+        // r1→r6) — checked BEFORE the one-shot marker, so an instruction
+        // above the lane's current capacity fails RETRYABLY (still
+        // PENDING, cancellable) instead of marking executed and sending
+        // a message the limiter permanently rejects. This is also what
+        // keeps a capacity LOWERED after instruction issuance from
+        // wedging: the execute simply refuses until the operator cancels
+        // or governance re-raises the lane.
+        _assertWithinLaneCapacity(s, s.baseChainId, amount, false);
+
         // CEI: the one-shot marker precedes every effect and interaction.
         s.repatInstructionState[key] = INSTR_EXECUTED;
         LibVpfiRecycle.debitRepatriationSurplus(s, amount);
@@ -742,41 +811,33 @@ contract RepatriationFacet is
     }
 
     /**
-     * @notice Configure ONE destination's per-authorization ceiling —
-     *         sized by the deploy tooling to the MINIMUM of the two CCIP
-     *         lane capacities a return to that destination consumes (the
-     *         mirror pool's outbound limiter and the local inbound one),
-     *         because a single return message above either is rejected
-     *         permanently (never queued behind refill), which would
-     *         strand the authorization's draw until the cancellation
-     *         ceremony releases it. Per-destination because capacities
-     *         may legitimately diverge per lane (Codex #1618 r2 — a
-     *         single global ceiling read from the local capacity misses
-     *         a lower-configured mirror). Zero DARKENS the destination —
-     *         authorization refuses an unarmed lane (r3): while the
-     *         mirror side's capacity is unrecorded there is no bound that
-     *         is known-safe, so "not configured" must mean "not
-     *         authorizable", never "unbounded".
+     * @notice Configure this chain's VPFI CCIP TokenPool — the contract
+     *         whose LIVE per-lane limiter state bounds every repatriation
+     *         (Base reads its inbound bucket at authorize, a mirror its
+     *         outbound bucket at execute). Reading the pool directly is
+     *         what removed the armed-ceiling ceremony (Codex #1618
+     *         r1→r6): there is no recorded copy to go stale, no arming
+     *         order to follow, and no Safe-execution path that skips a
+     *         local side effect. Zero re-darkens the bounded surfaces
+     *         (fail-closed, like the endpoints); a nonzero pool must hold
+     *         code for the same trust-root reason the endpoints must.
      */
-    function setRepatriationMaxPerAuth(uint32 dstChainId, uint256 newMax)
+    function setRepatriationLanePool(address pool_)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        if (pool_ != address(0) && pool_.code.length == 0) {
+            revert RepatriationEndpointNotContract(pool_);
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        emit RepatriationMaxPerAuthSet(
-            dstChainId, s.repatriationMaxPerAuth[dstChainId], newMax
-        );
-        s.repatriationMaxPerAuth[dstChainId] = newMax;
+        emit RepatriationLanePoolSet(s.repatriationLanePool, pool_);
+        s.repatriationLanePool = pool_;
     }
 
-    /// @notice A destination's per-authorization ceiling (0 = the lane is
-    ///         unarmed and refuses authorization — never "unbounded").
-    function getRepatriationMaxPerAuth(uint32 dstChainId)
-        external
-        view
-        returns (uint256)
-    {
-        return LibVaipakam.storageSlot().repatriationMaxPerAuth[dstChainId];
+    /// @notice The configured VPFI TokenPool the live lane-capacity
+    ///         bounds read (0 = the bounded surfaces are dark).
+    function getRepatriationLanePool() external view returns (address) {
+        return LibVaipakam.storageSlot().repatriationLanePool;
     }
 
     // ── Views ───────────────────────────────────────────────────────────────

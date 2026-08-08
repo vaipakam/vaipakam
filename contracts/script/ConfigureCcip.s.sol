@@ -18,7 +18,6 @@ import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /// @dev T-087 Sub 3.A — minimal selector surface for the
@@ -44,8 +43,7 @@ interface IRepatriationConfig {
     function setRepatriationEndpoints(address sender_, address receiver_)
         external;
 
-    function setRepatriationMaxPerAuth(uint32 dstChainId, uint256 newMax)
-        external;
+    function setRepatriationLanePool(address pool_) external;
 }
 
 /**
@@ -321,12 +319,6 @@ contract ConfigureCcip is Script {
         _wireDiamondRepatriationConfig(c);
 
         vm.stopBroadcast();
-
-        // #1568 C2 (Codex #1618 r2) — record THIS chain's configured lane
-        // capacity in its artifact, so the canonical chain's repatriation-
-        // ceiling pass can derive each lane's min(local, mirror) instead of
-        // assuming its own capacity is the binding one.
-        Deployments.writeUint(".ccipRateCapacity", uint256(c.rateCapacity));
 
         console.log("");
         console.log("CCIP wiring complete for this chain.");
@@ -716,6 +708,15 @@ contract ConfigureCcip is Script {
     function _wireDiamondRepatriationConfig(Ctx memory c) internal {
         address diamond =
             Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
+        // #1568 C2 (Codex #1618 r1→r6) — the lane-capacity bounds read
+        // the pool's LIVE limiter state, so the only wiring either chain
+        // class needs is the pool address itself. No per-lane ceilings to
+        // derive, no capacity artifacts to record, no cross-chain arming
+        // order: the bound can never go stale, and the mainnet Safe path
+        // (which reproduces on-chain calls but not local file writes) has
+        // nothing to persist.
+        IRepatriationConfig(diamond).setRepatriationLanePool(c.pool);
+        console.log("Diamond repatriation lane pool armed ->", c.pool);
         if (c.canonical) {
             IRepatriationConfig(diamond).setRepatriationEndpoints(
                 address(0), c.localReturnHandler
@@ -723,69 +724,6 @@ contract ConfigureCcip is Script {
             console.log(
                 "Diamond repatriation receiver armed ->", c.localReturnHandler
             );
-            // PER-DESTINATION per-authorization ceilings (Codex #1618
-            // r1+r2+r3 P2): a return consumes BOTH the mirror pool's
-            // outbound limiter and Base's inbound one, and a single
-            // message above either is rejected permanently — so each
-            // mirror's ceiling is the MINIMUM of Base's local capacity
-            // and the capacity that mirror RECORDED when its own
-            // ConfigureCcip pass ran (`.ccipRateCapacity` in its
-            // artifact). FAIL CLOSED when the mirror's figure is not yet
-            // recorded (r3: the runbook runs Base first, so a
-            // local-capacity fallback would install Base's LARGER bound
-            // and the mirror's later pass never repairs it): the lane is
-            // simply not armed, the facet refuses authorizations toward
-            // an unarmed lane, and the documented re-run on Base after
-            // the mirrors' passes arms it with the true minimum.
-            uint256 skipped;
-            for (uint256 i; i < c.laneChainIds.length; ++i) {
-                uint256 cid = c.laneChainIds[i];
-                if (_isCanonical(cid)) continue;
-                uint256 remoteCap = Deployments.readUintForChainOptional(
-                    cid, ".ccipRateCapacity"
-                );
-                if (remoteCap == 0) {
-                    skipped++;
-                    console.log(
-                        "  SKIP repatriation ceiling for mirror", cid
-                    );
-                    console.log(
-                        "    no recorded capacity yet - the lane stays UN-AUTHORIZABLE until ConfigureCcip re-runs on this chain after that mirror's pass"
-                    );
-                    continue;
-                }
-                uint256 ceiling = uint256(c.rateCapacity) < remoteCap
-                    ? uint256(c.rateCapacity)
-                    : remoteCap;
-                IRepatriationConfig(diamond).setRepatriationMaxPerAuth(
-                    SafeCast.toUint32(cid), ceiling
-                );
-                console.log("  repatriation ceiling for", cid, "->", ceiling);
-            }
-            // #1618 r4 P1 — an operator following a Base-FIRST order would
-            // otherwise finish this pass with every lane skipped and no
-            // unmissable signal that the ceremony is incomplete (each
-            // authorization would revert `RepatriationLaneCeilingUnset`
-            // until someone diagnosed why). The runbook now orders the
-            // canonical chain's ccip-wire pass LAST — every mirror records
-            // its capacity first and this pass arms everything — and this
-            // banner catches the out-of-order run loudly.
-            if (skipped != 0) {
-                console.log("");
-                console.log(
-                    "  *** REPATRIATION CEILINGS INCOMPLETE:", skipped,
-                    "lane(s) skipped ***"
-                );
-                console.log(
-                    "  *** Mode-A authorization toward those chains will revert until armed."
-                );
-                console.log(
-                    "  *** Re-run ccip-wire on THIS chain after the skipped mirrors' passes"
-                );
-                console.log(
-                    "  *** (the runbook orders the canonical chain LAST for exactly this reason)."
-                );
-            }
         } else {
             IRepatriationConfig(diamond).setRepatriationEndpoints(
                 c.localReturnHandler, address(0)

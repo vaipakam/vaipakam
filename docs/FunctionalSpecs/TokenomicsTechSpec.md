@@ -1169,19 +1169,18 @@ of any implementation:
 - a mirror may only ever part with genuinely **un-reserved** surplus — value
   backing outstanding claim commitments or the keeper earmark is never
   movable
-- an authorization is additionally bounded by a configured **per-destination
-  ceiling sized to the cross-chain transfer capacity of that lane**: a
-  single transfer above either side's capacity would be rejected permanently
-  by the transport rather than queued, leaving the authorization able only
-  to strand its draw until cancellation — so an over-capacity request is
-  refused at issuance, and the deploy tooling arms each destination's
-  ceiling with the **minimum of the two capacities its return would
-  consume** (the sending chain's outbound limit and the canonical chain's
-  inbound one). A destination with **no ceiling armed refuses
-  authorization entirely** — while the other side's capacity is not yet
-  recorded, no bound is known-safe, so "not configured" means "not
-  authorizable", never "unbounded"; the tooling arms the lane once the
-  mirror's recorded figure is available
+- an authorization and its execution are additionally bounded by the
+  lane's **live transfer capacity, read from the transport itself at the
+  moment of each check** — the canonical chain checks its inbound limit
+  at issuance, the mirror checks its outbound limit before the
+  irreversible execution step: a single transfer above either side's
+  capacity would be rejected permanently by the transport rather than
+  queued, leaving the authorization able only to strand its draw until
+  cancellation, so an over-capacity request is refused before it can
+  commit anything. Because the bound is read live, capacity changes bind
+  immediately with no re-arming ceremony, and a deployment whose
+  transport references are unconfigured refuses rather than passes
+  (fail-closed, like every other unarmed repatriation surface)
 - the entire surface is **inert on any deployment where the repatriation
   transport is not explicitly configured**
 

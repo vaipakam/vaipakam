@@ -20,6 +20,10 @@ import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
+import {
+    MockCcipSelectorRegistry,
+    MockVpfiTokenPool
+} from "../mocks/MockVpfiTokenPool.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
 
@@ -222,19 +226,23 @@ contract MeshLedgerInvariant is Test {
         RepatriationFacet(address(diamond)).setRepatriationEndpoints(
             address(0), address(handler)
         );
-        // #1618 r3 — an UNARMED lane refuses authorization (fail-closed
-        // ceiling), so arm every chain the handler draws against at the
-        // type-max: the suite deliberately drives HOSTILE near-max draws,
-        // and any finite ceiling here would fence the fuzz away from
-        // exactly the magnitudes the §7 #6 second term is pinned against.
-        RepatriationFacet(address(diamond)).setRepatriationMaxPerAuth(
-            CHAIN_ARB, type(uint256).max
+        // #1618 r6 — the live lane-capacity bound reads the pool limiter
+        // through the messenger's selector registry; wire both with the
+        // buckets left DISABLED (= no bound, CCIP's own semantics for a
+        // disabled limiter). The suite deliberately drives HOSTILE
+        // near-max draws, and any finite capacity here would fence the
+        // fuzz away from exactly the magnitudes the §7 #6 second term is
+        // pinned against.
+        MockVpfiTokenPool lanePool = new MockVpfiTokenPool();
+        MockCcipSelectorRegistry selReg = new MockCcipSelectorRegistry();
+        selReg.setChainSelector(uint256(CHAIN_ARB), 1);
+        selReg.setChainSelector(uint256(CHAIN_OP), 2);
+        selReg.setChainSelector(uint256(CHAIN_BASE), 3);
+        TestMutatorFacet(address(diamond)).setCrossChainMessengerRaw(
+            address(selReg)
         );
-        RepatriationFacet(address(diamond)).setRepatriationMaxPerAuth(
-            CHAIN_OP, type(uint256).max
-        );
-        RepatriationFacet(address(diamond)).setRepatriationMaxPerAuth(
-            CHAIN_BASE, type(uint256).max
+        RepatriationFacet(address(diamond)).setRepatriationLanePool(
+            address(lanePool)
         );
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits

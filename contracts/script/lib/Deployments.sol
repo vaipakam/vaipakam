@@ -291,27 +291,6 @@ library Deployments {
         return a;
     }
 
-    /// @notice OPTIONAL cross-chain uint read — zero when the remote
-    ///         chain's artifact (or the key inside it) does not exist yet.
-    ///         #1568 C2 (Codex #1618 r2): the canonical chain derives each
-    ///         mirror's repatriation ceiling from the capacity that mirror
-    ///         RECORDED when its own ConfigureCcip pass ran; a not-yet-
-    ///         configured mirror reads zero and the caller falls back.
-    function readUintForChainOptional(uint256 chainId, string memory jsonKey)
-        internal
-        view
-        returns (uint256)
-    {
-        string memory p = string.concat(
-            "deployments/", slugForChainId(chainId), "/addresses.json"
-        );
-        if (!_fileExists(p)) return 0;
-        string memory json = CHEATS.readFile(p);
-        if (!CHEATS.keyExistsJson(json, jsonKey)) return 0;
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        return CHEATS.parseJsonUint(json, jsonKey);
-    }
-
     // ── Typed writes ───────────────────────────────────────────────────────
     //
     // Writes are intentionally append-style: each writer reads the
