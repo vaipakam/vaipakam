@@ -13,14 +13,16 @@
     "  recovery page compares against the same word).",
     "omissions / empty — the narrow linguistic exemptions, bound to the",
     "  exact locale:key(:token) so each excuses itself and nothing else.",
-    "sameAsEnglish — leaves that legitimately read the same in every",
-    "  language, so being identical to the English is not evidence of",
-    "  anything. Deliberately short and each entry carries its reason: a",
-    "  brand name and standard finance acronyms. Common UI words that",
-    "  merely happen to be untranslated do NOT belong here — they go in",
-    "  english-valued-baseline.json, which is meant to shrink. Two",
-    "  categories need no entry at all because they are mechanical: a",
-    "  string of only interpolation tokens, and a string with no letters."
+    "sameAsEnglish — leaves that legitimately read the same in a given",
+    "  language, so being identical to the English is not evidence of a",
+    "  gap. Each entry carries a written reason AND the English value it",
+    "  was granted against: if en.json moves on, the exemption goes stale",
+    "  and is reported rather than silently inherited.",
+    "  There are deliberately NO pattern-based exemptions. Punctuation is",
+    "  localized (consentParts.suffix is '.' in English and '。' in",
+    "  Chinese), so a no-letters rule would have let a real localization",
+    "  regress unnoticed. Everything else identical to English belongs in",
+    "  english-valued-baseline.json, which is meant to shrink."
   ],
   "requiredLiterals": {
     "copy.recover.confirmPrompt": [
@@ -51,10 +53,29 @@
     "ja:copy.consentParts.prefix": "Japanese puts the verb last; the suffix carries the agreement the English states up front"
   },
   "sameAsEnglish": {
-    "copy.app.name": "The product name. A brand is not translated.",
-    "copy.desk.ticket.expiryGtc": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
-    "copy.desk.ticket.fillAon": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-    "copy.desk.ticket.fillIoc": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-    "copy.desk.signed.rateLine": "Two interpolations around APR, itself a standard finance acronym; there is no prose to translate."
+    "copy.app.name": {
+      "reason": "The product name. A brand is not translated.",
+      "source": "Vaipakam"
+    },
+    "copy.desk.ticket.expiryGtc": {
+      "reason": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
+      "source": "GTC"
+    },
+    "copy.desk.ticket.fillAon": {
+      "reason": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
+      "source": "AON"
+    },
+    "copy.desk.ticket.fillIoc": {
+      "reason": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
+      "source": "IOC"
+    },
+    "copy.desk.signed.rateLine": {
+      "reason": "Two interpolated values around APR, itself a standard finance acronym; there is no prose here to translate.",
+      "source": "{{rate}} APR · {{days}}"
+    },
+    "copy.claims.row.amountWithSuffix": {
+      "reason": "Two interpolated values and nothing else — there are no words in this string.",
+      "source": "{{amount}}{{suffix}}"
+    }
   }
 }

@@ -114,12 +114,46 @@ const ENGLISH_VALUED_PATH = path.resolve(
   'i18n',
   'english-valued-baseline.json',
 );
-const ENGLISH_VALUED: Readonly<Record<string, readonly string[]>> = JSON.parse(
+interface EnglishValuedEntry {
+  /** The English text these locales are recorded as still showing. */
+  source: string;
+  locales: string[];
+}
+const ENGLISH_VALUED: Readonly<Record<string, EnglishValuedEntry>> = JSON.parse(
   fs.readFileSync(ENGLISH_VALUED_PATH, 'utf8'),
-) as Record<string, string[]>;
+) as Record<string, EnglishValuedEntry>;
 
 const isKnownEnglishValued = (code: string, key: string): boolean =>
-  ENGLISH_VALUED[key]?.includes(code) ?? false;
+  ENGLISH_VALUED[key]?.locales.includes(code) ?? false;
+
+/**
+ * Entries whose recorded English no longer matches en.json.
+ *
+ * Without this the record rots INVISIBLY, in the direction that loses
+ * debt. Say `hi` is recorded as showing the English "Approval" and
+ * someone rewords the English to "Approval updated". `hi` now differs
+ * from the source, so it stops being detected — and the stale sweep
+ * concludes the entry was translated and tells you to prune it. Prune
+ * obeys, the entry disappears, and `hi` goes on showing "Approval": a
+ * locale that is still untranslated, no longer recorded, and no longer
+ * detectable, produced by following the guard's own advice (Codex
+ * #1607 r1).
+ *
+ * Inequality is not proof of translation. It is only proof of
+ * inequality, and there are two ways to get there.
+ */
+function reauditNeeded(): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+    const current = leafAt(en, key);
+    if (typeof current !== 'string') {
+      out.push(`${key} (no longer a string leaf in en.json)`);
+    } else if (current !== entry.source) {
+      out.push(key);
+    }
+  }
+  return out;
+}
 
 /**
  * Per-(locale, key) exemptions, read from the COMMITTED record at
@@ -144,12 +178,19 @@ const isKnownEnglishValued = (code: string, key: string): boolean =>
  * which no other check can see: the key is present, the value is a
  * valid string, and there are no tokens to compare.
  */
+interface SameAsEnglishEntry {
+  reason: string;
+  /** The English value this exemption was granted against. If en.json
+   *  moves on, the exemption is stale rather than silently inherited. */
+  source: string;
+}
 interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
   omissions: Record<string, { tokens: string[]; reason: string }>;
   empty: Record<string, string>;
-  /** key → why this leaf reads the same in every language (#1596). */
-  sameAsEnglish?: Record<string, string>;
+  /** key → why this leaf reads the same in every language, bound to
+   *  the English value the reason was written against (#1596). */
+  sameAsEnglish?: Record<string, SameAsEnglishEntry>;
 }
 const POLICY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -277,16 +318,36 @@ const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
  * `Close`, `Revoke` — are NOT exempt; they go in the shrinkable
  * baseline, because they are a translation job rather than a decision.
  */
-const SAME_AS_ENGLISH: Readonly<Record<string, string>> = POLICY.sameAsEnglish ?? {};
+const SAME_AS_ENGLISH: Readonly<Record<string, SameAsEnglishEntry>> =
+  POLICY.sameAsEnglish ?? {};
 
-const PLACEHOLDER_ONLY = /^[\s\-\u2013\u2014:,.()/|]*(\{\{[^}]+\}\}[\s\-\u2013\u2014:,.()/|]*)+$/;
-const HAS_NO_LETTERS = /^[^\p{L}]*$/u;
-
-/** Is an identical-to-English value untranslatable by construction? */
-const identicalIsMeaningless = (value: string): boolean => {
-  const trimmed = value.trim();
-  return PLACEHOLDER_ONLY.test(trimmed) || HAS_NO_LETTERS.test(trimmed);
-};
+/**
+ * `sameAsEnglish` entries whose recorded English no longer matches, so
+ * the written reason may no longer describe the string it excuses.
+ *
+ * There are deliberately NO pattern-based exemptions. An earlier draft
+ * excused any value made only of interpolation tokens, and any value
+ * with no letters in it — on the theory that neither has anything to
+ * translate. The second is simply false: `copy.consentParts.suffix` is
+ * `.` in English and `。` in Chinese, so punctuation IS localized, and
+ * a blanket rule would have let Chinese regress to the ASCII period
+ * with the guard still green (Codex #1607 r1). The first was justified
+ * as avoiding ceremony — but measured, the whole bundle contains ONE
+ * token-only leaf and two letterless ones. Three explicit entries is
+ * not a tax; a rule that quietly excuses a class nobody counted is.
+ */
+function policyReauditNeeded(): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
+    const current = leafAt(en, key);
+    if (typeof current !== 'string') {
+      out.push(`${key} (no longer a string leaf in en.json)`);
+    } else if (current !== entry.source) {
+      out.push(key);
+    }
+  }
+  return out;
+}
 
 /**
  * Leaves this locale carries with the English string still in them.
@@ -300,7 +361,6 @@ function englishValuedLeaves(bundle: Bundle): string[] {
     const source = leafAt(en, key);
     if (typeof source !== 'string') continue;
     if (leafAt(bundle, key) !== source) continue;
-    if (identicalIsMeaningless(source)) continue;
     if (SAME_AS_ENGLISH[key] !== undefined) continue;
     found.push(key);
   }
@@ -538,19 +598,28 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
     }
   }
 }
+// A changed English source is reported BEFORE the stale sweep, and
+// suppresses it for those keys: "the English moved" and "the locale was
+// translated" are different events that look identical from here, and
+// only one of them means the debt is gone.
+const needsReaudit = new Set(reauditNeeded());
+const policyStale = policyReauditNeeded();
+
 // Same stale sweep for the English-valued baseline: an entry that has
 // since been translated must LEAVE, or the exemption silently re-opens
 // that key to regressing back to English.
 const staleEnglishValued: string[] = [];
-for (const [key, codes] of Object.entries(ENGLISH_VALUED)) {
-  for (const code of codes) {
+for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+  for (const code of entry.locales) {
     if (!translated.includes(code as (typeof translated)[number])) {
       staleEnglishValued.push(`${code}:${key} (not a translated locale)`);
       continue;
     }
     const observed = englishValuedByLocale.get(code);
     // No entry = the bundle was never read; its entries are unrefuted.
-    if (observed !== undefined && !observed.has(key)) {
+    // A key pending re-audit is NOT stale — it stopped matching because
+    // the English moved, which is reported separately above.
+    if (observed !== undefined && !observed.has(key) && !needsReaudit.has(key)) {
       staleEnglishValued.push(`${code}:${key}`);
     }
   }
@@ -568,6 +637,23 @@ if (stalePairs.length > 0 && !pruning) {
   );
 }
 
+if (needsReaudit.size > 0) {
+  problems.push(
+    `${needsReaudit.size} english-valued baseline entr(y/ies) record an ` +
+      'English string that en.json no longer has — the recorded locales may ' +
+      'now be showing STALE English rather than being translated. Re-check ' +
+      `each and update or remove it by hand: ${[...needsReaudit].slice(0, 6).join(', ')}` +
+      (needsReaudit.size > 6 ? ', …' : ''),
+  );
+}
+if (policyStale.length > 0) {
+  problems.push(
+    `${policyStale.length} sameAsEnglish polic(y/ies) record an English ` +
+      'string that en.json no longer has — the written reason may no longer ' +
+      `describe what it excuses: ${policyStale.slice(0, 6).join(', ')}` +
+      (policyStale.length > 6 ? ', …' : ''),
+  );
+}
 if (staleEnglishValued.length > 0 && !pruning) {
   problems.push(
     `${staleEnglishValued.length} english-valued baseline entr(y/ies) already ` +
@@ -615,8 +701,8 @@ if (pruning) {
   for (const code of translated) {
     const observed = englishValuedByLocale.get(code);
     if (observed === undefined) {
-      for (const [key, codes] of Object.entries(ENGLISH_VALUED)) {
-        if (codes.includes(code)) (prunedEnglish[key] ??= []).push(code);
+      for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+        if (entry.locales.includes(code)) (prunedEnglish[key] ??= []).push(code);
       }
       continue;
     }
@@ -625,13 +711,25 @@ if (pruning) {
       (prunedEnglish[key] ??= []).push(code);
     }
   }
+  // A key whose English MOVED is carried through untouched. Pruning it
+  // would delete the very debt the re-audit exists to preserve, which
+  // is the failure the r1 finding described.
+  for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+    if (needsReaudit.has(key)) prunedEnglish[key] = [...entry.locales];
+  }
   const sortedEnglish = Object.fromEntries(
     Object.keys(prunedEnglish)
       .sort()
-      .map((k) => [k, prunedEnglish[k].sort()]),
+      .map((k) => [
+        k,
+        {
+          source: ENGLISH_VALUED[k]?.source ?? (leafAt(en, k) as string),
+          locales: prunedEnglish[k].sort(),
+        },
+      ]),
   );
   fs.writeFileSync(ENGLISH_VALUED_PATH, JSON.stringify(sortedEnglish, null, 2) + '\n');
-  const englishPairs = Object.values(sortedEnglish).flat().length;
+  const englishPairs = Object.values(sortedEnglish).flatMap((e) => e.locales).length;
   console.log(
     `[check-locale-coverage] pruned english-valued baseline → ` +
       `${Object.keys(sortedEnglish).length} key(s), ${englishPairs} pair(s)`,
@@ -662,11 +760,19 @@ if (problems.length > 0) {
   if (problems.some((p) => p.includes('hold the English string'))) {
     console.error(
       '\nThose keys are PRESENT — they just still read in English, so\n' +
-        '`--missing-only` will skip every one of them. Translate them in\n' +
-        'place (drop `--missing-only`, or hand-author and `merge-patch`),\n' +
-        'and prune the baseline as they land. If a leaf genuinely reads the\n' +
-        'same in every language, give it a `sameAsEnglish` entry WITH a\n' +
-        'reason in src/i18n/translation-policy.json instead.',
+        '`--missing-only` skips every one of them. Do NOT simply drop that\n' +
+        'flag: with no locale codes the translator targets bundles that are\n' +
+        'missing or `{}`, i.e. the untranslated stubs, and not the locale\n' +
+        'that just failed. Either hand-author the strings and merge them\n' +
+        'with `merge-patch`, or name the locale explicitly:\n' +
+        '  pnpm --filter @vaipakam/i18n translate -- \\\n' +
+        '    --locales-dir apps/alpha02/src/i18n/locales <code>\n' +
+        'which OVERWRITES and re-translates that entire bundle — paid, and\n' +
+        'it discards existing wording, so prefer merge-patch for a handful.\n' +
+        'Prune the baseline as they land. If a leaf genuinely reads the\n' +
+        'same in that language, give it a `sameAsEnglish` entry with a\n' +
+        'reason AND the English it was granted against, in\n' +
+        'src/i18n/translation-policy.json.',
     );
   }
   process.exit(1);
