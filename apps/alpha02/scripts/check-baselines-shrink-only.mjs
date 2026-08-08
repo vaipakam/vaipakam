@@ -60,22 +60,46 @@ if (!baseRef) {
  * older `{ "<key>": [...] }`. Flattened to `<locale>:<key>` either way,
  * so the check does not depend on which shape a file currently uses.
  */
-const pairsOf = (text, where) => {
+const entriesOf = (text, where) => {
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch (error) {
     throw new Error(`${where} is not valid JSON: ${error.message}`);
   }
-  const out = new Set();
+  // `<locale>:<key>` -> the English text the entry was recorded against
+  // (undefined for the missing-key baseline, which records no source).
+  const out = new Map();
   for (const [key, entry] of Object.entries(parsed)) {
     const locales = Array.isArray(entry) ? entry : entry?.locales;
     if (!Array.isArray(locales)) {
       throw new Error(`${where} entry "${key}" has no locales array`);
     }
-    for (const code of locales) out.add(`${code}:${key}`);
+    for (const code of locales) out.set(`${code}:${key}`, entry?.source);
   }
   return out;
+};
+
+/** `<locale>:<key>` -> what that locale actually holds right now. */
+const currentValue = (pair) => {
+  const [code, key] = [pair.slice(0, pair.indexOf(':')), pair.slice(pair.indexOf(':') + 1)];
+  const file = path.join(REPO_ROOT, 'apps/alpha02/src/i18n/locales', `${code}.json`);
+  if (!fs.existsSync(file)) return undefined;
+  let node;
+  try {
+    node = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return undefined;
+  }
+  // Segments, with `a.b[2]` addressing an array element.
+  for (const segment of key.split('.')) {
+    const m = /^(.*)\[(\d+)\]$/.exec(segment);
+    const name = m ? m[1] : segment;
+    if (node === null || typeof node !== 'object') return undefined;
+    node = node[name];
+    if (m) node = Array.isArray(node) ? node[Number(m[2])] : undefined;
+  }
+  return typeof node === 'string' ? node : undefined;
 };
 
 /**
@@ -126,7 +150,7 @@ for (const repoPath of BASELINES) {
     // nothing can have grown. Reported rather than silent: a new
     // baseline is a claim about debt that already existed, and its
     // contents are what the reviewing of THAT change is for.
-    const initial = pairsOf(
+    const initial = entriesOf(
       fs.readFileSync(path.join(REPO_ROOT, repoPath), 'utf8'),
       repoPath,
     );
@@ -137,9 +161,9 @@ for (const repoPath of BASELINES) {
     );
     continue;
   }
-  const before = pairsOf(beforeText, `${repoPath}@${baseRef}`);
-  const after = pairsOf(fs.readFileSync(path.join(REPO_ROOT, repoPath), 'utf8'), repoPath);
-  const added = [...after].filter((pair) => !before.has(pair)).sort();
+  const before = entriesOf(beforeText, `${repoPath}@${baseRef}`);
+  const after = entriesOf(fs.readFileSync(path.join(REPO_ROOT, repoPath), 'utf8'), repoPath);
+  const added = [...after.keys()].filter((pair) => !before.has(pair)).sort();
   if (added.length > 0) {
     problems.push(
       `${repoPath} GREW by ${added.length} pair(s): ${added.slice(0, 8).join(', ')}` +
@@ -147,6 +171,42 @@ for (const repoPath of BASELINES) {
         '\n    This record may only shrink. A newly untranslated string is ' +
         'not something to record — it is something to translate before the ' +
         'change ships, in the same pass that ships the surface.',
+    );
+  }
+
+  // REMOVALS need checking too, and that is not obvious. Shrinking is
+  // the point of the record, so an additions-only check reads as
+  // sufficient — but a pair may only leave because the locale was
+  // TRANSLATED, and nothing was verifying that.
+  //
+  // The gap is not hypothetical: reword the English, leave the locale
+  // showing the old text, and delete its baseline entry, all in one
+  // change. `reauditNeeded` in the coverage guard can only inspect
+  // entries that still EXIST, so deleting the entry deletes the
+  // evidence — the locale no longer matches the new English, is no
+  // longer recorded, and both guards go green while a reader still
+  // meets the old English (Codex #1607 r22). Round 1 established that
+  // inequality is not proof of translation; this is the same defect one
+  // level up, where the record that proves it can be dropped.
+  //
+  // So: a removed pair whose locale STILL HOLDS the exact English the
+  // entry was recorded against has not been translated, whatever the
+  // English says now.
+  const removed = [...before.keys()].filter((pair) => !after.has(pair)).sort();
+  const wrongful = removed.filter((pair) => {
+    const recordedSource = before.get(pair);
+    if (typeof recordedSource !== 'string') return false; // no source recorded
+    return currentValue(pair) === recordedSource;
+  });
+  if (wrongful.length > 0) {
+    problems.push(
+      `${repoPath} REMOVED ${wrongful.length} pair(s) that are not translated: ` +
+        `${wrongful.slice(0, 8).join(', ')}` +
+        (wrongful.length > 8 ? ', …' : '') +
+        '\n    Each still holds the exact English it was recorded against, so ' +
+        'removing it deletes the record of debt that is still owed rather ' +
+        'than marking it paid. If the English was reworded, re-audit the ' +
+        'entry and update its source; do not drop it.',
     );
   }
 }

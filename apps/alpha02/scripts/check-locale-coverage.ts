@@ -507,27 +507,42 @@ function unusedPolicyScopes(alreadyReported: ReadonlySet<string>): string[] {
     // regression, reported by `invariantViolations` with the opposite
     // advice. Sweeping them here too would print both.
     if (entry.invariant) continue;
+    const source = leafOrElement(en, key);
     for (const code of entry.locales) {
       const bundle = bundleByLocale.get(code);
       if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      // ONE FAULT, ONE REMEDY. If another sweep has already named this
+      // pair — the punctuation one, or the English-valued one — it has
+      // the repair instruction, and this function's advice ("narrow the
+      // scope") is the opposite of it. Three separate rounds produced
+      // that collision, each time from a new checker not asking who
+      // already speaks for the pair (Codex #1607 r20, r21, r22). The
+      // Japanese consent suffix regressing to `.` is the clearest: the
+      // entry records the exact Japanese to restore, and telling anyone
+      // to delete that record is the last thing to do.
+      if (alreadyReported.has(`${code}:${key}`)) continue;
+      const value = leafOrElement(bundle, key);
       // Against the ACCEPTED value, not the English one. An entry whose
       // recorded French is reworded has had its judgement overtaken,
       // and that is precisely when it should stop excusing anything.
-      //
-      // Still the loose comparison, not exact equality. A value that is
-      // near the accepted one — the brand name lowercased — fails the
-      // exact test in `englishValuedLeaves` and is reported there, with
-      // the advice to fix the casing. Reporting it here TOO would add a
-      // second message advising the opposite (narrow the scope), and
-      // one edit producing two contradictory instructions is worse than
-      // one clear one.
-      // Not if the punctuation sweep already named this pair. Its
-      // advice is "approve the value or fix it"; this one's is "narrow
-      // the scope", and they point opposite ways. One edit must not
-      // produce two instructions that contradict each other.
-      if (alreadyReported.has(`${code}:${key}`)) continue;
-      if (!stillEnglish(acceptedValue(entry, code), leafOrElement(bundle, key))) {
-        out.push(`${code}:${key}`);
+      // The comparison is loose, not exact: a value NEAR the accepted
+      // one — the brand name lowercased — is reported by
+      // `englishValuedLeaves` with the advice to fix the casing.
+      if (!stillEnglish(acceptedValue(entry, code), value)) {
+        out.push(`${code}:${key} — no longer holds the value this entry accepts`);
+        continue;
+      }
+      // INERT: the entry matches, and suppresses nothing. An exemption
+      // is consulted in exactly two places — the English-valued check
+      // (which needs the value to read as English) and the wordless
+      // check (which runs only where the source has no letters). An
+      // entry outside both excuses a finding that was never going to
+      // happen, and no sweep would ever retire it, so it sits in the
+      // file forever looking like a judgement somebody made
+      // (Codex #1607 r22). Same reasoning as the `locales: ["en"]`
+      // scope in r21: an unauditable claim is worse than none.
+      if (typeof source === 'string' && hasLetters(source) && !stillEnglish(source, value)) {
+        out.push(`${code}:${key} — suppresses nothing; this locale is already translated`);
       }
     }
   }
@@ -1407,7 +1422,16 @@ const policyStale = policyReauditNeeded();
 const invariantBroken = invariantViolations();
 const unapprovedMarks = unapprovedWordlessLocalizations();
 const policyUnused = unusedPolicyScopes(
-  new Set(unapprovedMarks.map((entry) => entry.split(' = ')[0])),
+  new Set([
+    ...unapprovedMarks.map((entry) => entry.split(' = ')[0]),
+    // Pairs the English-valued check has already named. It says "this
+    // still reads in English"; this sweep would say "narrow the scope",
+    // and for an entry recording the exact translated value to restore
+    // that is precisely backwards.
+    ...[...englishValuedByLocale].flatMap(([code, keys]) =>
+      [...keys].map((key) => `${code}:${key}`),
+    ),
+  ]),
 );
 
 // Same stale sweep for the English-valued baseline: an entry that has
@@ -1476,11 +1500,12 @@ if (unapprovedMarks.length > 0) {
 }
 if (policyUnused.length > 0) {
   problems.push(
-    `${policyUnused.length} acceptedAsTranslated scope(s) name a locale that ` +
-      'does not currently hold the value the entry accepts — an exemption is a statement ' +
-      'about the present, and one left armed will silently excuse a future ' +
-      `regression. Narrow the locale list: ${policyUnused.slice(0, 6).join(', ')}` +
-      (policyUnused.length > 6 ? ', …' : ''),
+    `${policyUnused.length} acceptedAsTranslated scope(s) are not doing ` +
+      'anything. An exemption is a statement about the present, and one left ' +
+      'armed either excuses a future regression silently or records a ' +
+      'judgement no check ever consults. Narrow the locale list: ' +
+      `${policyUnused.slice(0, 6).join('; ')}` +
+      (policyUnused.length > 6 ? '; …' : ''),
   );
 }
 if (policyStale.length > 0) {

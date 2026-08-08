@@ -24,9 +24,13 @@ the same place as the code, so a single change could introduce an English
 string, add it to the record, and pass — the check that exists to catch the
 regression could be widened by the change causing it. Both records are now
 compared against the state of the branch being merged into, and a change that
-adds an entry to either one fails. Nothing prevents someone editing the rule
-itself; what this stops is the quiet version, where a line is added in a large
-diff under a heading that says the file only ever loses entries.
+adds an entry to either one fails. Removals are checked too, which is less obvious: a line
+may only leave the record because the text was actually translated, and a change
+that rewords the English while deleting the entry — leaving the language showing
+the old wording — would otherwise erase the very evidence that the debt is still
+owed. Nothing prevents someone editing the rule itself; what this stops is the
+quiet version, where a line is added or dropped in a large diff under a heading
+that says the file only ever loses entries.
 
 What counts as "still English" is deliberately loose about everything that is
 not vocabulary. Capitalisation, punctuation, spacing and invisible characters
