@@ -3,7 +3,7 @@
 // is: every page renders normally and the kill-switch banner copy
 // appears NOWHERE. (Flipping the switch on production is an operator
 // action we don't do for a review — exception stated in the PR body.)
-import { ensureConnected, launch, SITE, pasteAssetLive } from './driver.mjs';
+import { ensureConnected, launch, SITE, visit, pasteAssetLive } from './driver.mjs';
 
 const KILL_COPY = 'switched off right now';
 // EVERY public route in App.tsx — the claim is "the banner appears
@@ -19,7 +19,11 @@ const { page, done } = await launch({ role: 'lender' });
 // unauthenticated visit, hiding the deposit banner spot), so an
 // unauthenticated sweep couldn't honestly claim the vpfi-deposit id
 // (round 4). The session persists across gotos in this context.
-await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+// BLOCKED, not FAIL, if the site itself never answers (#1581) — the
+// sweep below keeps exiting 1, since by then the site is known
+// reachable and a route that will not render IS the regression this
+// driver hunts.
+await visit(page, '/');
 await page.waitForTimeout(2500);
 await ensureConnected(page);
 let failures = 0;

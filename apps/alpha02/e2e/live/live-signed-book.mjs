@@ -98,12 +98,14 @@ import { fileURLToPath } from 'node:url';
 import { parseUnits } from 'viem';
 import {
   addressOf,
+  blockedSync,
   chooseMenuValue,
   clientsFor,
   ensureConnected,
   launch,
   SITE,
   requireSigningRole,
+  visit,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -113,25 +115,50 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // can never drift from the app's own address/ABI source. --------------
 const CONTRACTS_SRC = path.resolve(HERE, '../../../../packages/contracts/src');
 
+// PRECONDITIONS, all of them — same reasoning as live-rate-desk.mjs: a
+// stale or half-exported bundle leaves this drive with nothing to assert
+// against, which means the signed book went UNREVIEWED rather than
+// regressed, so it exits BLOCKED instead of FAIL (#1581).
 function loadDiamondAbi() {
   const dir = path.join(CONTRACTS_SRC, 'abis');
   const out = [];
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.json') || f.startsWith('_')) continue;
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    if (Array.isArray(parsed)) out.push(...parsed);
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json') || f.startsWith('_')) continue;
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (Array.isArray(parsed)) out.push(...parsed);
+    }
+  } catch (err) {
+    blockedSync(`cannot read the per-facet ABI bundle\n  dir: ${dir}\n  ${err.message}`);
+  }
+  if (out.length === 0) {
+    blockedSync(
+      `the per-facet ABI bundle is empty — nothing to decode this drive's` +
+        ` events with.\n  dir: ${dir}\n  → run contracts/script/exportFrontendAbis.sh`,
+    );
   }
   return out;
 }
 
 const CHAIN_ID = 84532;
-const deployment = JSON.parse(
-  fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
-)[String(CHAIN_ID)];
+function loadDeployment() {
+  const file = path.join(CONTRACTS_SRC, 'deployments.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))[String(CHAIN_ID)] ?? {};
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+}
+const deployment = loadDeployment();
 const DIAMOND = deployment.diamond;
 const WETH = deployment.weth;
 const TLIQ = deployment.testnetMocks?.liquidToken;
-if (!WETH || !TLIQ) throw new Error('bundle missing weth/testnetMocks.liquidToken');
+if (!DIAMOND || !WETH || !TLIQ) {
+  blockedSync(
+    `the deployments bundle is missing diamond/weth/testnetMocks.liquidToken` +
+      ` for chain ${CHAIN_ID} — no market pair to drive the signed book with.`,
+  );
+}
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
 
@@ -163,10 +190,11 @@ async function indexerGet(url) {
 /** Validate an address loaded from a bundle/wallet FILE and rebuild it
  *  numerically before it may enter a probe URL (CodeQL
  *  js/file-data-in-outbound-network-request) — same helper as
- *  live-rate-desk.mjs. */
+ *  live-rate-desk.mjs, including its BLOCKED exit on a corrupt bundle
+ *  (#1581): the numeric rebuild remains the taint barrier. */
 function asAddress(value, label) {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw new Error(`${label} is not a 0x-40-hex address: "${value}"`);
+    blockedSync(`${label} is not a 0x-40-hex address: "${value}"`);
   }
   return `0x${BigInt(value).toString(16).padStart(40, '0')}`;
 }
@@ -544,7 +572,14 @@ try {
   ]);
   const freeWeth = tracked > encumbered ? tracked - encumbered : 0n;
   if (freeWeth < EXPECTED_AMOUNT) {
-    throw new Error(
+    // BLOCKED, not FAIL (#1581). An underfunded dev wallet is a missing
+    // PRECONDITION — the signed book was never exercised, so the surface
+    // is unreviewed. Thrown, this reached the catch below as
+    // `record('drive', 'FAIL', …)` and the batch reported "top up the
+    // vault" as a gasless-posting regression. Safe to exit here: no
+    // signature exists yet (`signClicked` is still false), so the
+    // cleanup boundary that process.exit skips has nothing to unwind.
+    blockedSync(
       `lender vault free WETH ${freeWeth} < the ${EXPECTED_AMOUNT} this drive ` +
         'commits — deposit WETH to the vault (or shrink AMOUNT_WETH) before running',
     );
@@ -766,7 +801,10 @@ try {
       /* non-HTTP or malformed URL — step 4 asserts the capture landed */
     }
   });
-  await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded' });
+  // BLOCKED if the site never answers (#1581). Safe ahead of the
+  // cleanup boundary: nothing is signed yet, so the finally block below
+  // has nothing to unwind.
+  await visit(page, '/desk');
   await page
     .getByRole('heading', { name: 'Rate Desk', level: 1 })
     .waitFor({ timeout: 30_000 });

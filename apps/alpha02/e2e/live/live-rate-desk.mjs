@@ -90,12 +90,14 @@ import { fileURLToPath } from 'node:url';
 import { pad, parseUnits, toEventSelector } from 'viem';
 import {
   addressOf,
+  blockedSync,
   chooseMenuValue,
   clientsFor,
   ensureConnected,
   launch,
   SITE,
   requireSigningRole,
+  visit,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -105,25 +107,51 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // driver can never drift from the app's own address/ABI source. ------
 const CONTRACTS_SRC = path.resolve(HERE, '../../../../packages/contracts/src');
 
+// Every read below is a PRECONDITION: the shipped bundle supplies the
+// addresses and the event shapes this drive asserts against, so a stale
+// or half-exported bundle means the desk went UNREVIEWED — it is not
+// evidence the desk regressed. All of it therefore exits BLOCKED, where
+// it used to throw and be reported as a Rate Desk FAIL (#1581).
 function loadDiamondAbi() {
   const dir = path.join(CONTRACTS_SRC, 'abis');
   const out = [];
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.json') || f.startsWith('_')) continue;
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    if (Array.isArray(parsed)) out.push(...parsed);
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json') || f.startsWith('_')) continue;
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (Array.isArray(parsed)) out.push(...parsed);
+    }
+  } catch (err) {
+    blockedSync(`cannot read the per-facet ABI bundle\n  dir: ${dir}\n  ${err.message}`);
+  }
+  if (out.length === 0) {
+    blockedSync(
+      `the per-facet ABI bundle is empty — nothing to decode this drive's` +
+        ` events with.\n  dir: ${dir}\n  → run contracts/script/exportFrontendAbis.sh`,
+    );
   }
   return out;
 }
 
 const CHAIN_ID = 84532;
-const deployment = JSON.parse(
-  fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
-)[String(CHAIN_ID)];
+function loadDeployment() {
+  const file = path.join(CONTRACTS_SRC, 'deployments.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))[String(CHAIN_ID)] ?? {};
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+}
+const deployment = loadDeployment();
 const DIAMOND = deployment.diamond;
 const WETH = deployment.weth;
 const TLIQ = deployment.testnetMocks?.liquidToken;
-if (!WETH || !TLIQ) throw new Error('bundle missing weth/testnetMocks.liquidToken');
+if (!DIAMOND || !WETH || !TLIQ) {
+  blockedSync(
+    `the deployments bundle is missing diamond/weth/testnetMocks.liquidToken` +
+      ` for chain ${CHAIN_ID} — no market pair to drive the desk with.`,
+  );
+}
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
 
@@ -173,11 +201,14 @@ async function indexerGet(url) {
  *  numerically before it may enter a probe URL (CodeQL
  *  js/file-data-in-outbound-network-request): the returned string is
  *  derived from the parsed integer value, not the file bytes, so a
- *  corrupted bundle can only throw here — never smuggle URL syntax
- *  into an outbound request. */
+ *  corrupted bundle can only stop the run here — never smuggle URL
+ *  syntax into an outbound request. The numeric rebuild is the taint
+ *  barrier; the shape check only decides how the run ends, and a
+ *  corrupt bundle is a missing PRECONDITION, so it ends BLOCKED
+ *  (#1581). */
 function asAddress(value, label) {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw new Error(`${label} is not a 0x-40-hex address: "${value}"`);
+    blockedSync(`${label} is not a 0x-40-hex address: "${value}"`);
   }
   return `0x${BigInt(value).toString(16).padStart(40, '0')}`;
 }
@@ -385,6 +416,23 @@ async function selectTenor(page, days) {
 
 // ---------------------------------------------------------------------
 const lenderAddr = addressOf('lender');
+// Funding preflight — BLOCKED, not FAIL (#1581), and BEFORE the browser
+// so an underfunded run wastes nothing.
+//
+// The create pulls the escrow out of the WALLET, and step 3b asserts the
+// balance fell by exactly EXPECTED_AMOUNT_MAX — so that is precisely what
+// the drive requires, which is why gating on it cannot block a run that
+// would otherwise pass. Without the gate an underfunded wallet failed
+// mid-post and the batch reported "top up the lender" as a Rate Desk
+// regression. (The mirror check in live-signed-book.mjs reads the VAULT
+// free balance instead: the gasless path funds fills from there.)
+const walletWeth = await erc20Read(WETH, 'balanceOf', [lenderAddr]);
+if (walletWeth < EXPECTED_AMOUNT_MAX) {
+  blockedSync(
+    `lender wallet WETH ${walletWeth} < the ${EXPECTED_AMOUNT_MAX} this drive ` +
+      'escrows — top up the wallet (or shrink AMOUNT_WETH) before running',
+  );
+}
 const startBlock = await pub.getBlockNumber();
 const { days: tenor, empty: tenorEmpty } = await pickTenor();
 console.log(
@@ -432,7 +480,10 @@ try {
   // ---- step 1: initial /desk state — markets summary ASSERTED healthy
   // (Codex round-2 P2 #3: production carries real markets data since
   // the 2026-07-10 D1 migrations, so this is PASS/FAIL, not observed.)
-  await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded' });
+  // BLOCKED if the site never answers (#1581). Safe ahead of the
+  // cleanup boundary: nothing is posted yet, so the finally block below
+  // has nothing to unwind.
+  await visit(page, '/desk');
   await page
     .getByRole('heading', { name: 'Rate Desk', level: 1 })
     .waitFor({ timeout: 30_000 });

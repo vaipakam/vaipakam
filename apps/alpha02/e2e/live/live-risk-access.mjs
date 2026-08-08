@@ -13,15 +13,35 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { clientsFor, ensureConnected, launch, SITE } from './driver.mjs';
+import { blockedSync, clientsFor, ensureConnected, launch, precondition, visit } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIAMOND = JSON.parse(
-  readFileSync(
-    path.join(HERE, '../../../../packages/contracts/src/deployments.json'),
-    'utf8',
-  ),
-)['84532'].diamond;
+const DIAMOND = readDiamond();
+/**
+ * The Base-Sepolia Diamond address from the shipped bundle.
+ *
+ * BLOCKED, not FAIL (#1581): with no address there is nothing to point
+ * the read/write asserts at, so the surface goes unreviewed. Left
+ * unguarded, a missing bundle key threw `TypeError: Cannot read
+ * properties of undefined` and the batch reported a stale artifact as a
+ * /risk-access regression.
+ */
+function readDiamond() {
+  const file = path.join(
+    HERE,
+    '../../../../packages/contracts/src/deployments.json',
+  );
+  let diamond;
+  try {
+    diamond = JSON.parse(readFileSync(file, 'utf8'))['84532']?.diamond;
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+  if (typeof diamond !== 'string') {
+    blockedSync(`the deployments bundle has no 84532.diamond address\n  path: ${file}`);
+  }
+  return diamond;
+}
 const READ_ABI = parseAbi([
   'function getVaultRiskTier(address) view returns (uint8)',
   'function getEffectiveRiskTier(address) view returns (uint8)',
@@ -131,7 +151,27 @@ try {
 // r4): a prior strict-mode run must not poison the OFF-posture
 // assertions. Chain-confirmed direct write, exactly like the fork
 // spec's resetRiskState.
-if (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'getRiskStrictMode', args: [who] })) {
+// The strict-mode READ and the first page load are PRECONDITIONS — a
+// dead RPC or an unreachable site means this drive never got a page to
+// assert against, so they exit BLOCKED rather than FAIL (#1581). Both sit
+// ahead of every TIER mutation on purpose: a BLOCKED exit skips the
+// cleanup boundary below, and that is only safe while the wallet is still
+// where the drive found it. Do not move a precondition below the first
+// tier write.
+//
+// The normalization WRITE is deliberately NOT wrapped. A chain that
+// reverts a valid `setRiskStrictMode(false)` is evidence of a defect, and
+// reclassifying that as "verified nothing" would hide it — the reason to
+// separate the two verdicts is to stop mislabelling, in both directions.
+const strictOn = await precondition('reading strict mode from a prior run', () =>
+  pub.readContract({
+    address: DIAMOND,
+    abi: READ_ABI,
+    functionName: 'getRiskStrictMode',
+    args: [who],
+  }),
+);
+if (strictOn) {
   console.log('note: strict mode ON from a prior run — normalizing OFF');
   const w = clientsFor(84532).wallet('borrower');
   const hash = await w.writeContract({
@@ -143,7 +183,7 @@ if (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'get
   await pub.waitForTransactionReceipt({ hash });
 }
 
-await page.goto(SITE + '/risk-access', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await visit(page, '/risk-access');
 await page.waitForTimeout(3000);
 await ensureConnected(page);
 

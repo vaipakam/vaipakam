@@ -2,15 +2,26 @@
 // production alpha02: drive the lend post-offer flow to review, tick
 // consent, confirm the footer renders a real verdict.
 import fs from 'node:fs';
-import { ensureConnected, launch, SITE, pasteAssetLive } from './driver.mjs';
+import { blockedSync, ensureConnected, launch, visit, pasteAssetLive } from './driver.mjs';
 
 // Faucet mock addresses (Base Sepolia). Override with FAUCET_JSON to
 // point at a deployments artifact — both the flat shape and the
 // repo artifact's nested `testnetMocks` shape are accepted; defaults
 // to the live testnet set.
-const raw = process.env.FAUCET_JSON
-  ? JSON.parse(fs.readFileSync(process.env.FAUCET_JSON, 'utf8'))
-  : {};
+let raw = {};
+if (process.env.FAUCET_JSON) {
+  try {
+    raw = JSON.parse(fs.readFileSync(process.env.FAUCET_JSON, 'utf8'));
+  } catch (err) {
+    // An unreadable override is a missing PRECONDITION — the drive was
+    // pointed at an artifact it cannot use, so it never got as far as
+    // observing the app (#1581).
+    blockedSync(
+      `cannot read FAUCET_JSON — the drive was pointed at an artifact it` +
+        ` cannot parse.\n  path: ${process.env.FAUCET_JSON}\n  ${err.message}`,
+    );
+  }
+}
 const mocks = raw.testnetMocks ?? raw;
 const TILQ =
   mocks.illiquidToken ?? '0x2affacdea8119e38d9754b2c2c15ec79af360807';
@@ -18,7 +29,7 @@ const TILQ2 =
   mocks.illiquidToken2 ?? '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3';
 
 const { page, done } = await launch({ role: 'lender' });
-await page.goto(SITE + '/lend', { waitUntil: 'domcontentloaded' });
+await visit(page, '/lend');
 await page.waitForTimeout(2500);
 await ensureConnected(page);
 await page.waitForTimeout(1500);

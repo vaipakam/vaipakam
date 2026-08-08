@@ -24,12 +24,18 @@
  * (issue #1118 / #1119); addresses are read from the deployments bundle so this
  * driver survives future mock refreshes.
  */
-import { launch, ensureConnected, SITE, pasteAssetLive } from './driver.mjs';
+import { blockedSync, launch, ensureConnected, SITE, visit, pasteAssetLive } from './driver.mjs';
 import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
 const mocks = deployments['84532']?.testnetMocks;
 if (!mocks?.liquidToken || !mocks?.liquidToken2) {
-  throw new Error('base-sepolia testnetMocks (liquidToken/liquidToken2) missing from deployments bundle');
+  // BLOCKED, not FAIL (#1581): the drive needs these fixtures to have
+  // anything to assert against, so a bundle that does not carry them
+  // means this surface went UNREVIEWED — not that the app regressed.
+  blockedSync(
+    'base-sepolia testnetMocks (liquidToken/liquidToken2) missing from the' +
+      ' deployments bundle — no fixture pair to drive the precheck with.',
+  );
 }
 const TLIQ = mocks.liquidToken; // asset to borrow (Liquid, Tier 1)
 const MUSDC = mocks.liquidToken2; // collateral (Liquid)
@@ -39,7 +45,7 @@ const step = (m) => console.log(`  · ${m}`);
 try {
   console.log('wallet:', account.address, '| site:', SITE);
   step(`goto ${SITE}/borrow`);
-  await page.goto(`${SITE}/borrow`, { waitUntil: 'domcontentloaded' });
+  await visit(page, '/borrow');
   await ensureConnected(page);
   step('connected');
 

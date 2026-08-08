@@ -41,21 +41,31 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WALLETS_PATH =
   process.env.TESTNET_WALLETS_FILE ??
   path.join(HERE, '../testnet-wallets/wallets.json');
+let LIVE_BROWSER = null;
+
 /**
- * Read LAZILY, on the first request for a key — not at import.
+ * Register a browser/context for `blocked()` to close.
  *
- * A keyless drive (`launch({ keyless: true })`, e.g.
- * live-recover-locales.mjs) reads only public pages and must not depend
- * on a signing credential to run. Loading at module scope made the mere
- * IMPORT of this file exit 2, so a public probe could not reuse the
- * browser + route-shim machinery here and would have had to duplicate
- * it — which is how two copies of the egress shim start diverging
- * (Codex #1590 r1).
- *
- * Signing drives are unaffected: they reach `walletFor()` inside
- * `launch()`, which is the first thing it does, so the BLOCKED exit
- * still fires before any browser work.
+ * `launch()` registers its own, so drives built on it need not call
+ * this. It exists for the one drive that launches Chromium itself
+ * (`live-desk-i18n-capture.mjs` runs a per-locale context matrix that
+ * `launch()`'s single-context shape does not express) so it can still
+ * reach the SHARED blocked exit rather than keep a second copy of it.
  */
+export function trackBrowser(browser) {
+  LIVE_BROWSER = browser;
+}
+
+/**
+ * Synchronous BLOCKED exit, for the pre-browser precondition checks
+ * (`loadWallets`, `walletFor`, bundle-shape and config validation) that
+ * run before any browser exists and cannot await.
+ */
+export function blockedSync(why) {
+  console.error(`\nBLOCKED: ${why}`);
+  process.exit(2);
+}
+
 /**
  * Exit BLOCKED (code 2) — "this drive could not verify anything", as
  * distinct from FAIL (code 1) — "this drive found a defect".
@@ -75,18 +85,6 @@ const WALLETS_PATH =
  * per-driver duplication `live-position-observe.mjs`'s `discovery()`
  * wrapper existed to avoid.
  */
-let LIVE_BROWSER = null;
-
-/**
- * Synchronous BLOCKED exit, for the pre-browser precondition checks
- * (`loadWallets`, `walletFor`) that run before any browser exists and
- * cannot await.
- */
-export function blockedSync(why) {
-  console.error(`\nBLOCKED: ${why}`);
-  process.exit(2);
-}
-
 export async function blocked(why, err) {
   const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
   console.error(`\nBLOCKED: ${why}${detail}`);
@@ -138,6 +136,21 @@ export async function visit(page, pathname, opts = {}) {
 }
 
 let WALLETS;
+/**
+ * Read LAZILY, on the first request for a key — not at import.
+ *
+ * A keyless drive (`launch({ keyless: true })`, e.g.
+ * live-recover-locales.mjs) reads only public pages and must not depend
+ * on a signing credential to run. Loading at module scope made the mere
+ * IMPORT of this file exit 2, so a public probe could not reuse the
+ * browser + route-shim machinery here and would have had to duplicate
+ * it — which is how two copies of the egress shim start diverging
+ * (Codex #1590 r1).
+ *
+ * Signing drives are unaffected: they reach `walletFor()` inside
+ * `launch()`, which is the first thing it does, so the BLOCKED exit
+ * still fires before any browser work.
+ */
 function loadWallets() {
   if (WALLETS !== undefined) return WALLETS;
   let raw;

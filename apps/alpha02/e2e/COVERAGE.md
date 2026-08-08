@@ -238,15 +238,48 @@ a regex and fail derivation), so the derivation itself has to be inside
 the guarded path. Otherwise every signing driver exits 1 and the batch
 reports an unusable wallet file as a possible product defect.
 
-The three-verdict exit contract is only honoured by the drivers that
-implement it. The batch summary must say which those are rather than
-applying its vocabulary to every driver, or a row reading FAIL hides
-that no infrastructure failure could have been distinguished. Naming
-them is not enough on its own: the runner must also CLASSIFY by that
-list, so an exit 2 from a driver outside it reads as FAIL rather than
-being promoted to BLOCKED. Otherwise the summary asserts "ran but
-verified nothing" about a driver that never agreed to mean that by
-exiting 2 — a claim about a surface nobody checked.
+The three-verdict exit contract is honoured by EVERY driver in
+`e2e/live/` as of #1581, and the batch runner classifies by an explicit
+registry rather than by exit code alone. The registry stays even now that
+it lists everything, because it is what makes the vocabulary honest: an
+exit 2 from an unregistered driver reads as FAIL rather than being
+promoted to BLOCKED, so the summary can never assert "ran but verified
+nothing" about a driver that never agreed to mean that by exiting 2 — a
+claim about a surface nobody checked. **Register a new driver when you
+add one**; the runner names anything unregistered at startup instead of
+quietly misreporting it later.
+
+Which failures are preconditions, driver by driver:
+
+- **The FIRST navigation is the reachability probe** — BLOCKED via the
+  shared `visit()` helper. Later navigations stay FAIL: once the site is
+  known to serve, a route that will not load IS a plausible regression.
+  The line is "did we ever get served anything", not "did every
+  navigation succeed".
+- **Fixture data the drive reads rather than asserts** — the deployments
+  bundle's addresses, the per-facet ABI bundle, an override artifact a
+  flag points at. A stale or half-exported bundle means the surface went
+  UNREVIEWED, not that it regressed.
+- **On-chain state the drive needs in order to act at all** — most
+  visibly wallet/vault funding. Gate it BEFORE the browser opens, on
+  exactly the quantity the drive later asserts against, so the gate can
+  never block a run that would otherwise pass.
+- **Config that selects nothing** — a typo'd session or locale selector
+  gathers no evidence, so the surfaces it names are still unswept.
+
+Two failure modes to avoid when drawing that line. A precondition placed
+AFTER the drive has mutated state exits past the cleanup boundary and can
+leave a dev wallet dirty — every BLOCKED exit must sit ahead of the first
+mutation. And the line must not be drawn so wide that it swallows real
+defects: a chain that REVERTS a valid write is evidence, so only the read
+half of a setup step belongs inside the precondition wrapper. The point of
+separating the verdicts is to stop mislabelling in both directions.
+
+Finding these is not a grep for `throw` and `process.exit`. The
+misclassification that survived the first pass of #1581 went through a
+driver's own step recorder — `record(step, 'FAIL', …)` — and reported "top
+up the lender's vault" as a gasless-posting regression. Read what each
+non-zero path actually MEANS, rather than trusting the shape of the exit.
 
 The transport rule covers EVERY way the page reaches the network, not
 just the one the driver proxies. Reads the app makes through an injected

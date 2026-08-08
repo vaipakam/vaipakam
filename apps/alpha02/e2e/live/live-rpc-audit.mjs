@@ -8,7 +8,7 @@
 // stragglers. The pre-diet defect measured ~85 eth_blockNumber +
 // ~19 eth_getLogs in 100s — an order of magnitude over budget, so
 // the thresholds cleanly separate regression from timing noise.
-import { launch, SITE } from './driver.mjs';
+import { launch, visit } from './driver.mjs';
 
 const BUDGET_TOTAL = 12; // all JSON-RPC calls in the 60s window
 const BUDGET_BLOCKNUMBER = 5;
@@ -36,7 +36,7 @@ page.on('request', (req) => {
   }
 });
 
-await page.goto(SITE + '/offers', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await visit(page, '/offers');
 await page.waitForTimeout(8_000); // initial hydration outside the window
 recording = true;
 console.log('recording 60s of steady-state traffic…');

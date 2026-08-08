@@ -26,9 +26,13 @@
  *                         uses) when a pinned Playwright build mismatches the
  *                         installed browser (e.g. a sandbox image).
  *
- * Exit code: non-zero if ANY locale failed to load OR did not switch to the
- * requested language (so `run-live-batch.mjs`, which judges PASS by child
- * exit status, cannot report a blocked/regressed run as green).
+ * Exit codes follow the three-verdict contract in `run-live-batch.mjs`
+ * (#1581): 0 when every locale captured cleanly, 1 when a locale loaded but
+ * did not switch language or rendered no desk (a regression this drive
+ * found), 2 when it could not capture at all — no browser, nowhere to write
+ * the artifacts, or a site that never answered the first load. Before the
+ * migration all three collapsed into 1, so a sandbox without a usable
+ * Chromium was reported as a desk-i18n defect.
  *
  * NB: some desk strings (positions, own orders) only render with a connected
  * wallet + live data — this read-only pass confirms the language switch and
@@ -45,9 +49,23 @@ const ufetch = globalThis.fetch;
 import { chromium } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
+// Dynamic, not a static import: a static one is HOISTED above the shim
+// block above, so driver.mjs would capture its own `globalThis.fetch`
+// before this file's documented shim ordering had run. This drive owns
+// that ordering deliberately, so it reaches the shared BLOCKED exits
+// (#1581) without disturbing it — the shared exits are the point, since a
+// second local copy is how two definitions of "BLOCKED" start diverging.
+const { blockedSync, precondition, trackBrowser } = await import('./driver.mjs');
+
 const SITE = process.env.SITE_URL || 'https://alpha02.vaipakam.com';
 const OUT = new URL('./shots/desk-i18n/', import.meta.url).pathname;
-mkdirSync(OUT, { recursive: true });
+try {
+  // The screenshots and report ARE this drive's output — nowhere to write
+  // them means it captured nothing, which is BLOCKED, not a defect.
+  mkdirSync(OUT, { recursive: true });
+} catch (err) {
+  blockedSync(`cannot create the capture output directory\n  path: ${OUT}\n  ${err.message}`);
+}
 
 const LOCALES = (process.env.DESK_I18N_LOCALES || 'en,zh,ta,de,fr,es,ar,ja,ko,hi')
   .split(',')
@@ -111,15 +129,22 @@ function languageMatches(lng, htmlLang, dir) {
 const report = {};
 const blockedRequests = [];
 
-const browser = await chromium.launch({
-  headless: true,
-  ...(process.env.LIVE_CHROMIUM_PATH
-    ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
-    : {}),
-  args: ['--no-sandbox', '--disable-dev-shm-usage'],
-});
+// No browser means no capture at all — BLOCKED, not a desk-i18n defect.
+const browser = await precondition('launching a browser', () =>
+  chromium.launch({
+    headless: true,
+    ...(process.env.LIVE_CHROMIUM_PATH
+      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
+      : {}),
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  }),
+);
+// Register it so a later BLOCKED exit closes it instead of leaving a
+// Chromium behind. `launch()` does this for every other drive; this one
+// builds its own per-locale context matrix, so it registers its own.
+trackBrowser(browser);
 
-for (const lng of LOCALES) {
+for (const [index, lng] of LOCALES.entries()) {
   const ctx = await browser.newContext({
     viewport: { width: 1440, height: 1000 },
     locale: lng,
@@ -181,8 +206,16 @@ for (const lng of LOCALES) {
     deskText: [],
     error: null,
   };
+  const openDesk = () =>
+    page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   try {
-    await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    // The FIRST locale's load is the reachability probe: an unreachable
+    // site means no locale can be captured, so stop at BLOCKED rather
+    // than grind through nine more rows and report a dead target as ten
+    // i18n regressions (#1581). Later locales keep failing the row — by
+    // then the site is known to serve, so a load that fails IS a finding.
+    if (index === 0) await precondition(`opening ${SITE}/desk`, openDesk);
+    else await openDesk();
     await page.waitForTimeout(7000); // SPA boot + lazy locale chunk activation
 
     rec.htmlLang = await page.getAttribute('html', 'lang').catch(() => null);

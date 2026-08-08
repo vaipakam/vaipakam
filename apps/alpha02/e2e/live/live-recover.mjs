@@ -41,16 +41,36 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { ensureConnected, launch, SITE } from './driver.mjs';
+import { blockedSync, ensureConnected, launch, precondition, SITE, visit } from './driver.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIAMOND = JSON.parse(
-  readFileSync(
-    path.join(HERE, '../../../../packages/contracts/src/deployments.json'),
-    'utf8',
-  ),
-)['84532'].diamond;
+const DIAMOND = readDiamond();
+/**
+ * The Base-Sepolia Diamond address from the shipped bundle.
+ *
+ * BLOCKED, not FAIL (#1581): the oracle read that decides which posture
+ * is CORRECT for this deployment needs it, so without an address the
+ * drive cannot judge anything. Unguarded, a missing bundle key threw
+ * `TypeError: Cannot read properties of undefined` and the batch
+ * reported a stale artifact as a /recover regression.
+ */
+function readDiamond() {
+  const file = path.join(
+    HERE,
+    '../../../../packages/contracts/src/deployments.json',
+  );
+  let diamond;
+  try {
+    diamond = JSON.parse(readFileSync(file, 'utf8'))['84532']?.diamond;
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+  if (typeof diamond !== 'string') {
+    blockedSync(`the deployments bundle has no 84532.diamond address\n  path: ${file}`);
+  }
+  return diamond;
+}
 const ORACLE_ABI = parseAbi([
   'function getSanctionsOracle() view returns (address)',
 ]);
@@ -184,17 +204,25 @@ const { page, ctx, done, blockedRequests, consoleErrors } = await launch({
 });
 try {
   // The live oracle setting decides which posture is CORRECT — read it
-  // first so this driver checks the deployment it actually found.
-  const oracle = await pub.readContract({
-    address: DIAMOND,
-    abi: ORACLE_ABI,
-    functionName: 'getSanctionsOracle',
-  });
+  // first so this driver checks the deployment it actually found. A
+  // PRECONDITION, therefore: without it every posture assert below is
+  // unanchored, so a dead RPC exits BLOCKED rather than reporting
+  // /recover as regressed (#1581).
+  const oracle = await precondition('reading the live sanctions-oracle setting', () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: ORACLE_ABI,
+      functionName: 'getSanctionsOracle',
+    }),
+  );
   const oracleSet = oracle.toLowerCase() !== ZERO;
   console.log(`sanctions oracle: ${oracleSet ? 'configured' : 'UNSET'}`);
 
-  // 1. Discoverability gate — in via Help only.
-  await page.goto(SITE + '/help', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // 1. Discoverability gate — in via Help only. This first load is also
+  //    the reachability probe: BLOCKED if the site never answers, while
+  //    the /settings and /recover navigations below stay FAIL, since by
+  //    then the site is known to serve.
+  await visit(page, '/help');
   await ensureConnected(page);
   // Help is a React.lazy route and `domcontentloaded` does not wait for
   // its dynamic import, so an immediate isVisible() can read the

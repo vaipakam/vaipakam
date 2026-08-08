@@ -42,7 +42,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, ensureConnected, addressOf, SITE } from './driver.mjs';
+import { launch, ensureConnected, addressOf, blockedSync, SITE, visit } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
@@ -167,16 +167,19 @@ const sessionKeys = (sessionsEnv ?? (PROBE_ONLY ? 'main' : 'main,disconnected,ar
 // which evidence gets produced, and silently dropping `disconnect`
 // (say) would let a review report ship missing a whole coverage
 // dimension while exiting 0 (Codex #1181 P2).
+// Both exits are BLOCKED, not FAIL (#1581): a mis-set selector means the
+// sweep gathered nothing, so the surfaces it covers are still unswept —
+// the batch must not report that as evidence the app regressed.
 const knownKeys = new Set(SESSIONS.map((s) => s.key));
 const unknown = sessionKeys.filter((k) => !knownKeys.has(k));
 if (unknown.length > 0) {
-  throw new Error(
+  blockedSync(
     `UX_SWEEP_SESSIONS names unknown session(s): ${unknown.join(', ')} — known: ${[...knownKeys].join(', ')}`,
   );
 }
 const activeSessions = SESSIONS.filter((s) => sessionKeys.includes(s.key));
 if (activeSessions.length === 0) {
-  throw new Error('UX_SWEEP_SESSIONS selected no sessions — nothing to sweep');
+  blockedSync('UX_SWEEP_SESSIONS selected no sessions — nothing to sweep');
 }
 
 /** The DevTools-tabs-in-one-call probe. Runs in the page; every field
@@ -278,7 +281,13 @@ async function resolveLoanDetailRoute(page) {
 
 const routesEnv = process.env.UX_SWEEP_ROUTES;
 
-fs.mkdirSync(OUT_DIR, { recursive: true });
+// The sweep's whole output is these artifacts — nowhere to write them is
+// a missing precondition, not a finding (#1581).
+try {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+} catch (err) {
+  blockedSync(`cannot create the sweep output directory\n  path: ${OUT_DIR}\n  ${err.message}`);
+}
 const report = {
   site: SITE,
   startedAt: null, // stamped by the caller reading report.json mtime; Date.now is fine here (plain node, not a Workflow)
@@ -375,7 +384,13 @@ page.on('response', async (res) => {
   if (bytes > 500_000) s.network.heavy.push({ bytes, url: url.slice(0, 300) });
 });
 
-await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+// The FIRST session's initial load is this sweep's reachability probe:
+// if the site never answers there is no evidence to gather, so BLOCKED
+// (#1581). Later sessions keep exiting 1 — by then the site is known to
+// serve, and the per-route loop below already records its own nav
+// failures as findings rather than crashing.
+if (session === activeSessions[0]) await visit(page, '/');
+else await page.goto(SITE, { waitUntil: 'domcontentloaded' });
 if (session.connect) {
   await ensureConnected(page);
 }
