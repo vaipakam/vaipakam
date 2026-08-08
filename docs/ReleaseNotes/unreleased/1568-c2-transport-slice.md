@@ -36,12 +36,15 @@ What shipped, in behaviour terms:
   endpoints also join the governance ownership handover ceremony, so
   after handover no single operator key retains upgrade or re-pointing
   authority over the channel.
-- Authorizations gained a **per-move ceiling sized to the cross-chain
-  lane capacity** (armed by the deploy tooling with the same value it
-  configures on the lanes): a single transfer above lane capacity would
-  be rejected permanently by the transport, so an over-capacity
+- Authorizations gained a **per-destination ceiling sized to each lane's
+  transfer capacity**: a single transfer above either side's capacity
+  would be rejected permanently by the transport, so an over-capacity
   authorization — which could only ever strand its reserved amount until
-  cancellation — is now refused at issuance instead.
+  cancellation — is now refused at issuance instead. The deploy tooling
+  arms each destination with the minimum of the two capacities its
+  return would consume (each chain records its configured capacity for
+  the canonical chain to read), falling back to the local capacity —
+  never wider — until the other side's figure is recorded.
 - The mesh watcher now understands repatriation: the availability figure
   it re-derives nets out live draws, a new check pages if authorized
   draws ever exceed what a chain reported holding, and the bucket

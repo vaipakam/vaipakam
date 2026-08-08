@@ -312,8 +312,8 @@ contract RepatriationTransportTest is SetupTest {
     function test_Authorize_BoundedByPerAuthCeiling() public {
         _armBase();
         _seedAvail(1, 100 ether);
-        _repat().setRepatriationMaxPerAuth(30 ether);
-        assertEq(_repat().getRepatriationMaxPerAuth(), 30 ether);
+        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 30 ether);
+        assertEq(_repat().getRepatriationMaxPerAuth(CHAIN_ARB), 30 ether);
         // Above the ceiling: refused at ISSUANCE — a single CCIP token
         // message above the lane capacity is rejected permanently, so an
         // over-capacity authorization could only ever strand its draw.
@@ -327,15 +327,44 @@ contract RepatriationTransportTest is SetupTest {
         _repat().authorizeRepatriation(CHAIN_ARB, 30 ether + 1);
         // Exactly at the ceiling passes; zero re-disables the bound.
         _repat().authorizeRepatriation(CHAIN_ARB, 30 ether);
-        _repat().setRepatriationMaxPerAuth(0);
+        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 0);
         _repat().authorizeRepatriation(CHAIN_ARB, 60 ether);
+    }
+
+    function test_MaxPerAuthCeiling_IsPerDestination() public {
+        // Codex #1618 r2 — lane capacities may diverge per chain, and a
+        // return consumes the MIRROR side's outbound limiter too, so one
+        // global ceiling read from the local capacity misses a
+        // lower-configured mirror. The bound must be the DESTINATION's.
+        _armBase();
+        uint32[] memory chainIds = new uint32[](3);
+        chainIds[0] = CHAIN_BASE;
+        chainIds[1] = CHAIN_ARB;
+        chainIds[2] = CHAIN_OP;
+        _agg().setExpectedSourceChainIds(chainIds);
+        _seedAvail(1, 100 ether);
+        messenger.deliverChainReportRecycled(
+            CHAIN_OP, 2, 20e18, 10e18, 100 ether, 100 ether
+        );
+        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 30 ether);
+        _repat().setRepatriationMaxPerAuth(CHAIN_OP, 50 ether);
+        // 40 exceeds ARB's lane ceiling but fits OP's — only ARB refuses.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationExceedsPerAuthMax.selector,
+                40 ether,
+                30 ether
+            )
+        );
+        _repat().authorizeRepatriation(CHAIN_ARB, 40 ether);
+        _repat().authorizeRepatriation(CHAIN_OP, 40 ether);
     }
 
     function test_SetMaxPerAuth_AdminOnly() public {
         _armBase();
         vm.prank(STRANGER);
         vm.expectRevert();
-        _repat().setRepatriationMaxPerAuth(1 ether);
+        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 1 ether);
     }
 
     // ── Base side: cancel request ───────────────────────────────────────────

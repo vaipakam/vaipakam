@@ -147,7 +147,13 @@
   {
     "type": "function",
     "name": "getRepatriationMaxPerAuth",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -387,6 +393,11 @@
     "name": "setRepatriationMaxPerAuth",
     "inputs": [
       {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
         "name": "newMax",
         "type": "uint256",
         "internalType": "uint256"
@@ -599,6 +610,12 @@
     "type": "event",
     "name": "RepatriationMaxPerAuthSet",
     "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
       {
         "name": "previousMax",
         "type": "uint256",

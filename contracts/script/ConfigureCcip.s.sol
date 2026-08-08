@@ -18,6 +18,7 @@ import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {GuardianPausable} from "../src/crosschain/GuardianPausable.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /// @dev T-087 Sub 3.A — minimal selector surface for the
@@ -43,7 +44,8 @@ interface IRepatriationConfig {
     function setRepatriationEndpoints(address sender_, address receiver_)
         external;
 
-    function setRepatriationMaxPerAuth(uint256 newMax) external;
+    function setRepatriationMaxPerAuth(uint32 dstChainId, uint256 newMax)
+        external;
 }
 
 /**
@@ -319,6 +321,12 @@ contract ConfigureCcip is Script {
         _wireDiamondRepatriationConfig(c);
 
         vm.stopBroadcast();
+
+        // #1568 C2 (Codex #1618 r2) — record THIS chain's configured lane
+        // capacity in its artifact, so the canonical chain's repatriation-
+        // ceiling pass can derive each lane's min(local, mirror) instead of
+        // assuming its own capacity is the binding one.
+        Deployments.writeUint(".ccipRateCapacity", uint256(c.rateCapacity));
 
         console.log("");
         console.log("CCIP wiring complete for this chain.");
@@ -712,21 +720,43 @@ contract ConfigureCcip is Script {
             IRepatriationConfig(diamond).setRepatriationEndpoints(
                 address(0), c.localReturnHandler
             );
-            // Per-authorization ceiling = the SAME lane capacity this
-            // script configures on the VPFI token pools (Codex #1618 r1
-            // P2): a single return message above the lane capacity is
-            // rejected permanently by the CCIP rate limiter, so an
-            // authorization above it could never execute and would strand
-            // its availability draw until cancellation.
-            IRepatriationConfig(diamond).setRepatriationMaxPerAuth(
-                uint256(c.rateCapacity)
-            );
             console.log(
                 "Diamond repatriation receiver armed ->", c.localReturnHandler
             );
-            console.log(
-                "Diamond repatriation per-auth ceiling ->", uint256(c.rateCapacity)
-            );
+            // PER-DESTINATION per-authorization ceilings (Codex #1618
+            // r1+r2 P2): a return consumes BOTH the mirror pool's
+            // outbound limiter and Base's inbound one, and a single
+            // message above either is rejected permanently — so each
+            // mirror's ceiling is the MINIMUM of Base's local capacity
+            // and the capacity that mirror RECORDED when its own
+            // ConfigureCcip pass ran (`.ccipRateCapacity` in its
+            // artifact). A mirror configured after this pass reads zero
+            // → fall back to the local capacity and say so; re-running
+            // this script on Base (the documented "re-run on every
+            // chain" flow) then tightens it. Never widened silently: the
+            // fallback equals today's local bound.
+            for (uint256 i; i < c.laneChainIds.length; ++i) {
+                uint256 cid = c.laneChainIds[i];
+                if (_isCanonical(cid)) continue;
+                uint256 remoteCap = Deployments.readUintForChainOptional(
+                    cid, ".ccipRateCapacity"
+                );
+                uint256 ceiling = uint256(c.rateCapacity);
+                if (remoteCap != 0 && remoteCap < ceiling) {
+                    ceiling = remoteCap;
+                } else if (remoteCap == 0) {
+                    console.log(
+                        "  NOTE: no recorded capacity for mirror", cid
+                    );
+                    console.log(
+                        "  falling back to the local capacity - re-run on Base after that mirror's ConfigureCcip pass"
+                    );
+                }
+                IRepatriationConfig(diamond).setRepatriationMaxPerAuth(
+                    SafeCast.toUint32(cid), ceiling
+                );
+                console.log("  repatriation ceiling for", cid, "->", ceiling);
+            }
         } else {
             IRepatriationConfig(diamond).setRepatriationEndpoints(
                 c.localReturnHandler, address(0)

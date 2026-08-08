@@ -150,8 +150,12 @@ contract RepatriationFacet is
     ///         the facet to dark.
     event RepatriationEndpointsSet(address sender, address receiver);
 
-    /// @notice The per-authorization ceiling was (re)configured.
-    event RepatriationMaxPerAuthSet(uint256 previousMax, uint256 newMax);
+    /// @notice A destination's per-authorization ceiling was (re)configured.
+    event RepatriationMaxPerAuthSet(
+        uint32 indexed dstChainId,
+        uint256 previousMax,
+        uint256 newMax
+    );
 
     /// @notice Base dispatched (or re-dispatched) the cross-chain instruction
     ///         for a pending authorization.
@@ -300,13 +304,15 @@ contract RepatriationFacet is
         if (amount > avail) {
             revert RepatriationExceedsAvailability(amount, avail);
         }
-        // Lane-capacity ceiling (Codex #1618 r1 P2): the return is ONE
-        // token message, and a single CCIP request above the lane
-        // capacity is rejected PERMANENTLY (not queued behind refill) —
-        // an over-capacity authorization would charge a draw that can
-        // only ever be released by the cancellation ceremony. Refuse it
-        // at issuance instead. Zero = no ceiling configured.
-        uint256 maxPer = s.repatriationMaxPerAuth;
+        // Lane-capacity ceiling (Codex #1618 r1+r2 P2): the return is ONE
+        // token message consuming BOTH sides' rate limiters, and a single
+        // CCIP request above either capacity is rejected PERMANENTLY (not
+        // queued behind refill) — an over-capacity authorization would
+        // charge a draw that can only ever be released by the
+        // cancellation ceremony. Refuse it at issuance instead, against
+        // THIS destination's ceiling (capacities may diverge per lane).
+        // Zero = no ceiling configured for the lane.
+        uint256 maxPer = s.repatriationMaxPerAuth[dstChainId];
         if (maxPer != 0 && amount > maxPer) {
             revert RepatriationExceedsPerAuthMax(amount, maxPer);
         }
@@ -724,28 +730,39 @@ contract RepatriationFacet is
     }
 
     /**
-     * @notice Configure the per-authorization ceiling — sized by the deploy
-     *         tooling to the CCIP lane capacity it configures on the VPFI
-     *         token pool, because a single return message above that
-     *         capacity is rejected permanently (never queued behind
-     *         refill), which would strand the authorization's draw until
-     *         the cancellation ceremony releases it. Zero disables the
+     * @notice Configure ONE destination's per-authorization ceiling —
+     *         sized by the deploy tooling to the MINIMUM of the two CCIP
+     *         lane capacities a return to that destination consumes (the
+     *         mirror pool's outbound limiter and the local inbound one),
+     *         because a single return message above either is rejected
+     *         permanently (never queued behind refill), which would
+     *         strand the authorization's draw until the cancellation
+     *         ceremony releases it. Per-destination because capacities
+     *         may legitimately diverge per lane (Codex #1618 r2 — a
+     *         single global ceiling read from the local capacity misses
+     *         a lower-configured mirror). Zero disables the destination's
      *         ceiling (the pre-arming default; kept legal because a dark
      *         deployment has nothing to bound and issuance is ADMIN-gated
      *         regardless).
      */
-    function setRepatriationMaxPerAuth(uint256 newMax)
+    function setRepatriationMaxPerAuth(uint32 dstChainId, uint256 newMax)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        emit RepatriationMaxPerAuthSet(s.repatriationMaxPerAuth, newMax);
-        s.repatriationMaxPerAuth = newMax;
+        emit RepatriationMaxPerAuthSet(
+            dstChainId, s.repatriationMaxPerAuth[dstChainId], newMax
+        );
+        s.repatriationMaxPerAuth[dstChainId] = newMax;
     }
 
-    /// @notice The configured per-authorization ceiling (0 = unbounded).
-    function getRepatriationMaxPerAuth() external view returns (uint256) {
-        return LibVaipakam.storageSlot().repatriationMaxPerAuth;
+    /// @notice A destination's per-authorization ceiling (0 = unbounded).
+    function getRepatriationMaxPerAuth(uint32 dstChainId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().repatriationMaxPerAuth[dstChainId];
     }
 
     // ── Views ───────────────────────────────────────────────────────────────

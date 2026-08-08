@@ -6171,15 +6171,20 @@ library LibVaipakam {
         //   them.
         address repatriationSender; //   mirror-side outbound escrow/sender
         address repatriationReceiver; // Base-side inbound endpoint
-        // #1568 C2 part 2 (Codex #1618 r1 P2) — per-AUTHORIZATION ceiling.
-        //   A Mode-A return travels as ONE CCIP token message, and the
-        //   lane rate limiter permanently rejects any single request above
-        //   its capacity — so an authorization larger than the lane cap
-        //   could never execute, stranding its availability draw until an
-        //   operator cancels. The deploy tooling arms this to the same
-        //   capacity it configures on the pool lanes. Zero = unbounded
-        //   (the pre-arming default; authorize is ADMIN-gated either way).
-        uint256 repatriationMaxPerAuth;
+        // #1568 C2 part 2 (Codex #1618 r1+r2 P2) — PER-DESTINATION
+        //   per-authorization ceiling. A Mode-A return travels as ONE CCIP
+        //   token message and consumes BOTH the mirror pool's outbound
+        //   limiter and Base's inbound one; a single request above either
+        //   capacity is rejected permanently — so an authorization larger
+        //   than the LANE's effective cap could never execute, stranding
+        //   its availability draw until an operator cancels. Keyed by
+        //   destination chain because capacities may diverge per lane
+        //   (r2: one global ceiling read from Base's own capacity misses
+        //   a lower-configured mirror). The deploy tooling arms each
+        //   destination to min(local capacity, that mirror's recorded
+        //   capacity). Zero = unbounded (the pre-arming default;
+        //   authorize is ADMIN-gated either way).
+        mapping(uint32 => uint256) repatriationMaxPerAuth;
     }
 
     /// @notice #1568 C2 Mode A — one planned-surplus repatriation
