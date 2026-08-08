@@ -403,16 +403,6 @@
       "hi"
     ]
   },
-  "copy.consentParts.suffix": {
-    "source": ".",
-    "locales": [
-      "ar",
-      "de",
-      "es",
-      "fr",
-      "ko"
-    ]
-  },
   "copy.consentParts.terms": {
     "source": "Vaipakam Terms",
     "locales": [

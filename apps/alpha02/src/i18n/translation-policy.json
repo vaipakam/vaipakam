@@ -96,6 +96,17 @@
         "zh"
       ]
     },
+    "copy.consentParts.suffix": {
+      "reason": "The full stop closing the consent sentence. Arabic, German, Spanish, French and Korean all end a sentence with '.', so the correct localization is the same mark the English uses. The sibling copy.consentParts.prefix is fully translated in every one of these five locales, which is the evidence that the sentence was localized and this mark is a deliberate choice rather than an untouched string. Recorded here rather than in the shrink-only baseline because a translation already correct can only leave that list by being replaced with a wrong mark. Hindi, Japanese, Tamil and Chinese are deliberately absent — they genuinely use a different ending, and the baseline must keep watching them.",
+      "source": ".",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "ko"
+      ]
+    },
     "copy.desk.positions.tab": {
       "reason": "\"Positions\" is the correct French plural of \"position\" — an ordinary French word spelled as the English. The same-language sibling copy.chrome.nav.positions is \"Mes positions\", which uses the identical noun, so this is settled French rather than an untouched string. Recorded here for the same reason as the notification labels: it is a translation already done, and a shrink-only baseline could only lose it to a worse synonym.",
       "source": "Positions",

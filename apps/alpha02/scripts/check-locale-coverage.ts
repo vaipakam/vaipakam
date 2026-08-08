@@ -541,7 +541,13 @@ const visibleForm = (value: string): string =>
  * in the file (Codex #1607 r14). The two questions need two tests.
  */
 const hasLetters = (value: string): boolean =>
-  /\p{L}/u.test(value.replace(/\{\{[^}]*\}\}/g, ' '));
+  // Invisible letters do not count. U+115F HANGUL CHOSEONG FILLER is
+  // simultaneously `\p{L}`, default-ignorable, and a Hangul character
+  // the Korean bundle is allowed to contain — so appending it to `…`
+  // satisfied this test, the script rule and the still-English rule at
+  // once, while rendering as punctuation (Codex #1607 r15). Every other
+  // comparison in this file drops ignorables first; this one did not.
+  /\p{L}/u.test(stripIgnorable(value.replace(/\{\{[^}]*\}\}/g, ' ')));
 
 const wordsOf = (value: string): string[] =>
   (stripIgnorable(
@@ -600,8 +606,30 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // at least one word, which is the lowest bar this check can set.
   //
   // The test is VOCABULARY, not counts: is every word in the candidate
-  // one of the English words? Counts and order are both bookkeeping a
+  // one of THIS SOURCE's words? Counts and order are both bookkeeping a
   // reader cannot see.
+  //
+  // Say the rule precisely, because the loose form — "is every word an
+  // English word?" — promises something this cannot deliver and Codex
+  // rightly called the gap (r15). `Open Settings` for `Settings` is
+  // entirely English and passes, because `open` is not in the source.
+  //
+  // The loose form was measured before being rejected. Treating all
+  // 1,801 words in en.json as an English dictionary and asking whether
+  // every candidate word is in THAT adds 17 pairs to the baseline, and
+  // reading them, essentially all are correct translations that share
+  // vocabulary with English: French `Plus` for `More`, `Principal` for
+  // `Primary`, `Type de NFT`, `Confirmation…`, `1 an` — and
+  // `{{noun}} n°{{id}} — {{what}}`, which is the very value defended
+  // one round earlier AS localization. 17 invented debts against one
+  // hypothetical catch is the wrong trade for a list whose worth is
+  // that every line on it is real.
+  //
+  // Separating `Open Settings` from `Type de NFT` needs to know that
+  // `open` is English and `de` is French — a language identifier, not
+  // a set operation. Tracked as #1611 rather than approximated here,
+  // because every approximation available scores worse than the rule
+  // it would replace.
   //
   //   Skip to content -> content to Skip   reordered, all English
   //   Skip to content -> Skip content      an article deleted
@@ -619,10 +647,11 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // the word SET has no such edge — every arrangement, deletion and
   // duplication of English words is English.
   //
-  // The asymmetry is deliberate and is the whole point: a candidate
-  // with even one word the English does not have is a translation
-  // someone started, and flagging it would invent debt — the failure
-  // `\p{L}` over `\w` was fixed to avoid in round 5.
+  // The asymmetry is deliberate: a candidate with a word THIS SOURCE
+  // does not have is treated as a translation someone started, because
+  // flagging it would invent debt — the failure `\p{L}` over `\w` was
+  // fixed to avoid in round 5. The measurement above is what that
+  // choice costs and what it buys.
   const sourceVocabulary = new Set(sourceWords);
   return candidateWords.every((word) => sourceVocabulary.has(word));
 };

@@ -12,7 +12,7 @@ the moment the last missing piece was filled, every language read as complete �
 while Hindi alone still showed nearly three hundred English strings to anyone
 using the app in Hindi.
 
-The check now asks the second question too. At the time of writing, 496 pairs
+The check now asks the second question too. At the time of writing, 491 pairs
 of language and text are recorded as a known, dated backlog so the number cannot quietly grow: a
 piece of text that regresses to English fails the build, and one that gets
 translated has to be struck from the record or the build fails as well. The
@@ -46,6 +46,17 @@ word here an English word? Reordering, deleting and repeating are all just
 arrangements of the same vocabulary, and each had been found separately before
 the shape common to all three was.
 
+The question it settles on is deliberately the narrow one — is every word here a
+word from the English this text is meant to translate? — and not the broader
+"is this English", which sounds better and cannot be answered without knowing
+the languages involved. Text that adds an English word the source did not have
+still passes. The broader rule was tried and measured: treating every word in
+the English as a dictionary would add seventeen entries to the backlog, and
+almost all of them are correct translations that happen to share a word with
+English — the French for "more", for "primary", for "one year". Seventeen
+invented debts to catch one imagined case is a bad trade for a list whose whole
+value is that every line on it is real work.
+
 A small number of strings are correct even though they match — the product
 name, and standard trading acronyms that are used untranslated everywhere.
 There is also one heading where the French genuinely is the same two words as
@@ -56,7 +67,15 @@ separating out from the backlog rather than leaving in it: the backlog is a list
 of translations someone owes, and it can only be worked down by changing text.
 An entry whose translation is already correct could only leave it by being
 replaced with a worse synonym, which would make the list impossible to finish
-honestly. Those are listed separately, each with a
+honestly.
+
+The same applies to the full stop that closes the consent sentence. Arabic,
+German, Spanish, French and Korean all end a sentence with the same mark English
+does, and in each of those languages the rest of that sentence is fully
+translated — which is the evidence that the mark is a choice rather than
+something nobody touched. Those five are recorded as correct. Hindi, Japanese,
+Tamil and Chinese genuinely end the sentence differently and are still watched:
+changing the Japanese ending back to the English one still fails. Those are listed separately, each with a
 written reason, with the English wording it was granted against, and — where
 the accepted text is not the English one — with that exact text, so that
 rewording either side makes the exemption stale rather than letting it quietly
@@ -89,7 +108,11 @@ That is a written judgement now, recorded with the exact text it accepts.
 Digits are not words for this purpose either. A label replaced by "123" counted
 as having a word and slipped past — which is right when comparing what words two
 texts share, and wrong when asking whether there is anything to read. The two
-questions now use two tests.
+questions now use two tests. Nor do invisible letters: one Korean character is
+simultaneously a letter, invisible, and part of the Korean alphabet, so adding
+it to an ellipsis satisfied three separate rules at once while showing the
+reader nothing. Every comparison here now drops invisible characters before
+looking.
 
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot
