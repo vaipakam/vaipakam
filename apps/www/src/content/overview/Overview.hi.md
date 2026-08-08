@@ -95,13 +95,18 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 वह **Repay** पर click करता है, transaction sign करता है, और 1,006.58
 USDC loan settlement में move होते हैं। इसमें से:
 
-- आपको **1,006.45 USDC** मिलते हैं (principal + interest, interest
+- आपको **1,006.44 USDC** मिलते हैं (principal + interest, interest
   वाले हिस्से पर केवल `{liveValue:treasuryFeeBps}`% Yield Fee घटाकर)
 - Treasury को **0.13 USDC** Yield Fee के रूप में मिलते हैं
 - Borrower का WETH unlock हो जाता है
 
+ये आंकड़े cent तक round किए गए हैं। सटीक interest 6.575342 USDC है और
+सटीक Yield Fee 0.131506 USDC, इसलिए एक round किए गए आंकड़े से दूसरा
+घटाने पर आप एक cent दूर रह जाते हैं — protocol बिना round किए amounts
+पर settle करता है।
+
 आपके dashboard पर **Claim** button दिखता है। आप click करते हैं और
-1,006.45 USDC settlement से आपके wallet में move हो जाते हैं।
+1,006.44 USDC settlement से आपके wallet में move हो जाते हैं।
 Borrower claim करता है, उसका WETH उसके wallet में लौटता है, और loan
 close हो जाता है।
 

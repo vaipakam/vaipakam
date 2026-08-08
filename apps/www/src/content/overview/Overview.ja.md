@@ -92,12 +92,16 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 borrowerが**Repay**をclickし、transactionにsignすると、1,006.58
 USDCがloan settlementへ移動します。そこから:
 
-- あなたは**1,006.45 USDC**を受け取ります（principal + interest
+- あなたは**1,006.44 USDC**を受け取ります（principal + interest
   から、interest部分にのみかかる`{liveValue:treasuryFeeBps}`% Yield Feeを差し引いた額）
 - Treasuryは**0.13 USDC**をYield Feeとして受け取ります
 - BorrowerのWETHはunlockされます
 
-dashboardに**Claim** buttonが表示されます。clickすると、1,006.45
+これらの数値はcent単位に丸めてあります。正確なinterestは6.575342 USDC、
+正確なYield Feeは0.131506 USDCなので、丸めた数値どうしを引き算すると
+1 centずれます。protocolは丸める前の金額でsettleします。
+
+dashboardに**Claim** buttonが表示されます。clickすると、1,006.44
 USDCがsettlementからあなたのwalletへ移動します。borrowerもclaimすると、
 WETHが相手のwalletへ戻ります。これでloanはcloseされます。
 

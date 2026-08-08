@@ -102,13 +102,18 @@ Zinsen = 1.000 USDC × 8 % × (30 / 365) = ~6,58 USDC
 Er klickt auf **Zurückzahlen**, unterschreibt eine Transaktion, und
 1.006,58 USDC fließen in die Kreditabwicklung. Daraus:
 
-- Sie erhalten **1.006,45 USDC** (Hauptbetrag + Zinsen abzüglich
+- Sie erhalten **1.006,44 USDC** (Hauptbetrag + Zinsen abzüglich
   einer Renditegebühr von `{liveValue:treasuryFeeBps}` % nur auf den Zinsanteil)
 - Die Treasury erhält **0,13 USDC** als Renditegebühr
 - Das WETH des Kreditnehmers wird entsperrt
 
+Diese Beträge sind auf den Cent gerundet. Die exakten Zinsen betragen
+6,575342 USDC und die exakte Renditegebühr 0,131506 USDC. Wer eine
+gerundete Zahl von einer anderen abzieht, landet deshalb einen Cent
+daneben — abgerechnet wird mit den ungerundeten Beträgen.
+
 In Ihrem Dashboard sehen Sie einen **Beanspruchen**-Button. Sie
-klicken, und die 1.006,45 USDC wandern aus der Abwicklung in Ihr
+klicken, und die 1.006,44 USDC wandern aus der Abwicklung in Ihr
 Wallet. Der Kreditnehmer klickt auf Beanspruchen und sein WETH
 wandert in sein Wallet. Der Kredit ist abgeschlossen.
 

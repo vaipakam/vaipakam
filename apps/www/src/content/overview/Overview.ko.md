@@ -91,12 +91,16 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 borrower가 **Repay**를 click하고 transaction에 sign하면, 1,006.58
 USDC가 loan settlement로 이동합니다. 여기서:
 
-- 당신은 **1,006.45 USDC**를 받습니다 (principal + interest에서
+- 당신은 **1,006.44 USDC**를 받습니다 (principal + interest에서
   interest 부분에만 적용되는 `{liveValue:treasuryFeeBps}`% Yield Fee를 뺀 금액)
 - Treasury는 **0.13 USDC**를 Yield Fee로 받습니다
 - Borrower의 WETH는 unlock됩니다
 
-dashboard에 **Claim** button이 보입니다. click하면 1,006.45 USDC가
+이 숫자들은 cent 단위로 반올림한 값입니다. 정확한 interest는 6.575342 USDC,
+정확한 Yield Fee는 0.131506 USDC이므로, 반올림한 숫자끼리 빼면 1 cent가
+어긋납니다. protocol은 반올림하지 않은 금액으로 settle합니다.
+
+dashboard에 **Claim** button이 보입니다. click하면 1,006.44 USDC가
 settlement에서 당신의 wallet으로 이동합니다. borrower도 claim하면 WETH가
 borrower의 wallet으로 돌아갑니다. loan은 close됩니다.
 

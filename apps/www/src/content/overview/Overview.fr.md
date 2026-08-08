@@ -101,13 +101,18 @@ Intérêts = 1 000 USDC × 8 % × (30 / 365) = ~6,58 USDC
 Il clique sur **Rembourser**, signe une transaction, et 1 006,58 USDC
 arrivent dans le règlement du prêt. À partir de là :
 
-- Vous recevez **1 006,45 USDC** (principal + intérêts, moins une
+- Vous recevez **1 006,44 USDC** (principal + intérêts, moins une
   commission de rendement de `{liveValue:treasuryFeeBps}` % appliquée uniquement aux intérêts)
 - Le trésor reçoit **0,13 USDC** au titre de la commission de rendement
 - Le WETH de l'emprunteur est déverrouillé
 
+Ces montants sont arrondis au centime. Les intérêts exacts sont de
+6,575342 USDC et la commission de rendement exacte de 0,131506 USDC :
+soustraire un montant arrondi d'un autre vous laisse donc à un centime
+près — le protocole règle sur les montants non arrondis.
+
 Vous voyez un bouton **Réclamer** sur votre tableau de bord. Vous
-cliquez et les 1 006,45 USDC passent du règlement à votre
+cliquez et les 1 006,44 USDC passent du règlement à votre
 portefeuille. L'emprunteur clique sur réclamer et son WETH revient
 dans son portefeuille. Le prêt est clôturé.
 
