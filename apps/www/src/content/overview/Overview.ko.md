@@ -75,8 +75,8 @@ Accept되는 순간:
   권리"를 나타냅니다
 - Loan clock이 시작됩니다
 
-Loaned amount에서 작은 **Loan Initiation Fee (0.1%)**가 차감되어 protocol
-treasury로 routed됩니다. 그래서 borrower는 1,000 USDC가 아니라 999 USDC를
+Loaned amount에서 작은 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**가 차감되어 protocol
+treasury로 routed됩니다. 그래서 borrower는 1,000 USDC가 아니라 998 USDC를
 받습니다. (이 fee를 **VPFI**로 pay할 수도 있고, 그 경우 borrower는
 1,000 USDC 전액을 받습니다 — VPFI는 아래에서 더 설명합니다.)
 
@@ -91,12 +91,16 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 borrower가 **Repay**를 click하고 transaction에 sign하면, 1,006.58
 USDC가 loan settlement로 이동합니다. 여기서:
 
-- 당신은 **1,005.51 USDC**를 받습니다 (principal + interest에서
-  interest 부분에만 적용되는 1% Yield Fee를 뺀 금액)
-- Treasury는 **1.07 USDC**를 Yield Fee로 받습니다
+- 당신은 **1,006.44 USDC**를 받습니다 (principal + interest에서
+  interest 부분에만 적용되는 `{liveValue:treasuryFeeBps}`% Yield Fee를 뺀 금액)
+- Treasury는 **0.13 USDC**를 Yield Fee로 받습니다
 - Borrower의 WETH는 unlock됩니다
 
-dashboard에 **Claim** button이 보입니다. click하면 1,005.51 USDC가
+이 숫자들은 cent 단위로 반올림한 값입니다. 정확한 interest는 6.575342 USDC,
+정확한 Yield Fee는 0.131506 USDC이므로, 반올림한 숫자끼리 빼면 1 cent가
+어긋납니다. protocol은 반올림하지 않은 금액으로 settle합니다.
+
+dashboard에 **Claim** button이 보입니다. click하면 1,006.44 USDC가
 settlement에서 당신의 wallet으로 이동합니다. borrower도 claim하면 WETH가
 borrower의 wallet으로 돌아갑니다. loan은 close됩니다.
 
@@ -195,10 +199,10 @@ fees는 두 가지이며, 둘 다 작습니다.
 - **Yield Fee — `{liveValue:treasuryFeeBps}`%** lender로서 얻는
   **interest**의 비율입니다 (principal의 비율이 아닙니다). 1,000 USDC를
   30-day 8% APR로 lending하는 loan에서는 lender가 약 6.58 USDC interest를
-  얻고, 그중 default rate에서 약 0.066 USDC가 Yield Fee입니다.
+  얻고, 그중 default rate에서 약 0.132 USDC가 Yield Fee입니다.
 - **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** lending
   amount의 비율이며, origination 시 borrower가 pay합니다. 1,000 USDC
-  loan에서는 default rate에서 1 USDC입니다.
+  loan에서는 default rate에서 2 USDC입니다.
 
 두 fee 모두 vault에 VPFI를 hold하면 **최대 `{liveValue:tier4DiscountBps}`%
 discount**를 받을 수 있습니다(아래 참고). default나 liquidation에서는
@@ -295,7 +299,7 @@ VPFI token과 daily reward denominator뿐입니다(활발한 chains와 조용한
 2. **Offer Book**에서 자신의 collateral과 지불 가능한 APR에 맞는 offer를
    browse합니다.
 3. **Accept**를 click하고 두 transactions에 sign하면, loan amount가
-   wallet으로 들어옵니다(0.1% Loan Initiation Fee 차감 후).
+   wallet으로 들어옵니다(`{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee 차감 후).
 4. due date plus grace period 전에 repay합니다. collateral이 unlock되어
    wallet으로 돌아옵니다.
 

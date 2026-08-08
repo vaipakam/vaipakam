@@ -84,9 +84,9 @@ In dem Moment, in dem die Annahme erfolgt:
   Rückzahlung geschuldet"
 - Die Kreditlaufzeit-Uhr beginnt zu ticken
 
-Eine kleine **Kreditinitiierungsgebühr (0,1 %)** wird vom verliehenen
+Eine kleine **Kreditinitiierungsgebühr (`{liveValue:loanInitiationFeeBps}` %)** wird vom verliehenen
 Betrag abgezogen und an die Protokoll-Treasury weitergeleitet. Der
-Kreditnehmer erhält also 999 USDC, nicht 1.000. (Sie können die
+Kreditnehmer erhält also 998 USDC, nicht 1.000. (Sie können die
 Gebühr stattdessen in **VPFI** zahlen, dann erhält der Kreditnehmer
 die vollen 1.000 — mehr zu VPFI weiter unten.)
 
@@ -102,13 +102,18 @@ Zinsen = 1.000 USDC × 8 % × (30 / 365) = ~6,58 USDC
 Er klickt auf **Zurückzahlen**, unterschreibt eine Transaktion, und
 1.006,58 USDC fließen in die Kreditabwicklung. Daraus:
 
-- Sie erhalten **1.005,51 USDC** (Hauptbetrag + Zinsen abzüglich
-  einer Renditegebühr von 1 % nur auf den Zinsanteil)
-- Die Treasury erhält **1,07 USDC** als Renditegebühr
+- Sie erhalten **1.006,44 USDC** (Hauptbetrag + Zinsen abzüglich
+  einer Renditegebühr von `{liveValue:treasuryFeeBps}` % nur auf den Zinsanteil)
+- Die Treasury erhält **0,13 USDC** als Renditegebühr
 - Das WETH des Kreditnehmers wird entsperrt
 
+Diese Beträge sind auf den Cent gerundet. Die exakten Zinsen betragen
+6,575342 USDC und die exakte Renditegebühr 0,131506 USDC. Wer eine
+gerundete Zahl von einer anderen abzieht, landet deshalb einen Cent
+daneben — abgerechnet wird mit den ungerundeten Beträgen.
+
 In Ihrem Dashboard sehen Sie einen **Beanspruchen**-Button. Sie
-klicken, und die 1.005,51 USDC wandern aus der Abwicklung in Ihr
+klicken, und die 1.006,44 USDC wandern aus der Abwicklung in Ihr
 Wallet. Der Kreditnehmer klickt auf Beanspruchen und sein WETH
 wandert in sein Wallet. Der Kredit ist abgeschlossen.
 
@@ -221,11 +226,11 @@ Zwei Gebühren, beide klein:
 - **Renditegebühr — `{liveValue:treasuryFeeBps}` %** der **Zinsen**,
   die Sie als Kreditgeber verdienen (nicht des Hauptbetrags). Bei
   einem 30-Tage-Kredit zu 8 % APR über 1.000 USDC verdient der
-  Kreditgeber ~6,58 USDC Zinsen, davon sind ~0,066 USDC die
+  Kreditgeber ~6,58 USDC Zinsen, davon sind ~0,132 USDC die
   Renditegebühr beim Standard-Satz.
 - **Kreditinitiierungsgebühr — `{liveValue:loanInitiationFeeBps}` %**
   des Verleihbetrags, vom Kreditnehmer bei der Erstellung gezahlt.
-  Bei einem 1.000-USDC-Kredit sind das 1 USDC beim Standard-Satz.
+  Bei einem 1.000-USDC-Kredit sind das 2 USDC beim Standard-Satz.
 
 Beide Gebühren können um **bis zu `{liveValue:tier4DiscountBps}` %
 rabattiert** werden, indem Sie VPFI im Vault halten (siehe unten).
@@ -337,7 +342,7 @@ Wenn Sie **leihen** wollen:
    Ihrer Sicherheit und dem APR passt, den Sie zahlen können.
 3. Klicken Sie auf **Annehmen**, unterschreiben Sie zwei
    Transaktionen, und Sie erhalten den Kreditbetrag in Ihrem Wallet
-   (abzüglich der 0,1%-Kreditinitiierungsgebühr).
+   (abzüglich der `{liveValue:loanInitiationFeeBps}`%-Kreditinitiierungsgebühr).
 4. Zahlen Sie vor dem Fälligkeitsdatum plus Karenzzeit zurück. Ihre
    Sicherheit wird zurück in Ihr Wallet entsperrt.
 

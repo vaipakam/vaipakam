@@ -74,8 +74,8 @@ accept ஆகிறது.
   திரும்ப கிடைக்க வேண்டும்" என்று குறிக்கும்
 - Loan clock தொடங்குகிறது
 
-Loaned amount-லிருந்து சிறிய **Loan Initiation Fee (0.1%)** எடுக்கப்பட்டு protocol
-treasury-க்கு செல்கிறது. அதனால் borrower 1,000 அல்ல, 999 USDC பெறுகிறார். (நீங்கள்
+Loaned amount-லிருந்து சிறிய **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** எடுக்கப்பட்டு protocol
+treasury-க்கு செல்கிறது. அதனால் borrower 1,000 அல்ல, 998 USDC பெறுகிறார். (நீங்கள்
 fee-ஐ **VPFI**-யில் செலுத்தினால் borrower முழு 1,000 பெறலாம் - VPFI பற்றி கீழே
 பார்க்கலாம்.)
 
@@ -90,12 +90,17 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 அவர் **Repay** click செய்து transaction sign செய்கிறார்; 1,006.58 USDC loan
 settlement-க்கு நகர்கிறது. அதிலிருந்து:
 
-- நீங்கள் **1,005.51 USDC** பெறுகிறீர்கள் (principal + interest, ஆனால் interest
-  portion-ல் மட்டும் 1% Yield Fee கழித்த பின்)
-- Treasury **1.07 USDC**-ஐ Yield Fee-ஆக பெறுகிறது
+- நீங்கள் **1,006.44 USDC** பெறுகிறீர்கள் (principal + interest, ஆனால் interest
+  portion-ல் மட்டும் `{liveValue:treasuryFeeBps}`% Yield Fee கழித்த பின்)
+- Treasury **0.13 USDC**-ஐ Yield Fee-ஆக பெறுகிறது
 - Borrower-ன் WETH unlock ஆகிறது
 
-உங்கள் dashboard-ல் **Claim** button தெரியும். அதை click செய்தால் 1,005.51 USDC
+இந்த எண்கள் cent வரை round செய்யப்பட்டவை. சரியான interest 6.575342 USDC,
+சரியான Yield Fee 0.131506 USDC. எனவே round செய்த ஒரு எண்ணிலிருந்து
+இன்னொன்றைக் கழித்தால் ஒரு cent வித்தியாசம் வரும் — protocol round
+செய்யாத தொகைகளில் settle செய்கிறது.
+
+உங்கள் dashboard-ல் **Claim** button தெரியும். அதை click செய்தால் 1,006.44 USDC
 settlement-லிருந்து உங்கள் wallet-க்கு நகர்கிறது. Borrower claim செய்தால் WETH
 அவரது wallet-க்கு திரும்பும். Loan close ஆகிறது.
 
@@ -190,11 +195,11 @@ path-ஐ விளக்குகிறது. Consent box tick செய்ய�
 
 - **Yield Fee — `{liveValue:treasuryFeeBps}`%** நீங்கள் lender-ஆக சம்பாதிக்கும்
   **interest**-ல் (principal-ல் அல்ல). 1,000 USDC-க்கு 30-day 8% APR loan எடுத்தால்,
-  lender சுமார் 6.58 USDC interest பெறுகிறார்; அதில் default rate-ல் சுமார் 0.066
+  lender சுமார் 6.58 USDC interest பெறுகிறார்; அதில் default rate-ல் சுமார் 0.132
   USDC Yield Fee.
 - **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** lending amount-ல்,
   origination நேரத்தில் borrower செலுத்துவார். 1,000 USDC loan-க்கு default rate-ல்
-  இது 1 USDC.
+  இது 2 USDC.
 
 இரண்டு fees-மும் vault-ல் VPFI hold செய்வதன் மூலம் **`{liveValue:tier4DiscountBps}`%
 வரை discount** பெறலாம் (கீழே பார்க்கவும்). Default அல்லது liquidation நேரத்தில்
@@ -291,7 +296,7 @@ daily reward denominator. அது busy chains மற்றும் quiet chai
 2. உங்கள் collateral மற்றும் நீங்கள் செலுத்தக்கூடிய APR-க்கு match ஆகும் offer-ஐ
    **Offer Book**-ல் browse செய்யுங்கள்.
 3. **Accept** click செய்து, இரண்டு transactions sign செய்யுங்கள்; loan amount
-   உங்கள் wallet-ல் கிடைக்கும் (0.1% Loan Initiation Fee கழித்த பின்).
+   உங்கள் wallet-ல் கிடைக்கும் (`{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee கழித்த பின்).
 4. Due date plus grace period-க்கு முன் repay செய்யுங்கள். உங்கள் collateral wallet-க்கு
    unlock ஆகும்.
 

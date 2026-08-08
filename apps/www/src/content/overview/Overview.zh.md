@@ -45,7 +45,7 @@ Vaipakam 面向四类用户：
 - 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我 repay 后应取回我的 WETH”
 - Loan clock 开始计时
 
-系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (0.1%)**，并转入 protocol treasury。因此 borrower 收到的是 999 USDC，而不是 1,000。（你也可以用 **VPFI** 支付该 fee，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
+系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**，并转入 protocol treasury。因此 borrower 收到的是 998 USDC，而不是 1,000。（你也可以用 **VPFI** 支付该 fee，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
 
 ### Step 3 — 时间经过；borrower 还款
 
@@ -57,11 +57,13 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 
 他们点击 **Repay**，签署 transaction，1,006.58 USDC 进入 loan settlement。随后：
 
-- 你收到 **1,005.51 USDC**（principal + interest，扣除仅针对 interest portion 的 1% Yield Fee 后）
-- Treasury 收到 **1.07 USDC** 作为 Yield Fee
+- 你收到 **1,006.44 USDC**（principal + interest，扣除仅针对 interest portion 的 `{liveValue:treasuryFeeBps}`% Yield Fee 后）
+- Treasury 收到 **0.13 USDC** 作为 Yield Fee
 - Borrower 的 WETH 被 unlock
 
-你的 dashboard 上会出现 **Claim** button。点击后，1,005.51 USDC 会从 settlement 移到你的 wallet。Borrower 点击 claim 后，他们的 WETH 会回到自己的 wallet。Loan 随之 close。
+以上数字均四舍五入到分。准确的 interest 是 6.575342 USDC，准确的 Yield Fee 是 0.131506 USDC；因此用一个四舍五入后的数字去减另一个，会差出一分钱 — protocol 是按未四舍五入的金额结算的。
+
+你的 dashboard 上会出现 **Claim** button。点击后，1,006.44 USDC 会从 settlement 移到你的 wallet。Borrower 点击 claim 后，他们的 WETH 会回到自己的 wallet。Loan 随之 close。
 
 ### Step 4 — 如果 borrower 没有还款怎么办？
 
@@ -110,8 +112,8 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 只有两项 fees，且都很小：
 
-- **Yield Fee — `{liveValue:treasuryFeeBps}`%**，按你作为 lender 赚到的 **interest** 比例收取（不是 principal 的比例）。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中按默认费率约 0.066 USDC 是 Yield Fee。
-- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 在默认费率下的费用是 1 USDC。
+- **Yield Fee — `{liveValue:treasuryFeeBps}`%**，按你作为 lender 赚到的 **interest** 比例收取（不是 principal 的比例）。在一笔 1,000 USDC、30-day、8% APR 的 loan 中，lender 赚取约 6.58 USDC interest，其中按默认费率约 0.132 USDC 是 Yield Fee。
+- **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**，按 lending amount 收取，由 borrower 在 origination 时支付。1,000 USDC loan 在默认费率下的费用是 2 USDC。
 
 这两项 fees 都可以通过在 vault 中持有 VPFI 获得**最高 `{liveValue:tier4DiscountBps}`% discount**（见下文）。在 default 或 liquidation 时，recovered interest 不会收取 Yield Fee - protocol 不会从 failed loan 中获利。
 
@@ -175,7 +177,7 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 1. 打开 app，连接 wallet。
 2. 在 **Offer Book** 中浏览与你的 collateral 和可接受 APR 匹配的 offer。
-3. 点击 **Accept**，签署两笔 transactions，你会在 wallet 中收到 loan amount（扣除 0.1% Loan Initiation Fee 后）。
+3. 点击 **Accept**，签署两笔 transactions，你会在 wallet 中收到 loan amount（扣除 `{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee 后）。
 4. 在 due date plus grace period 前 repay。你的 collateral 会 unlock 回 wallet。
 
 如果你想 **rent 或 list an NFT**：

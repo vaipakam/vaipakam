@@ -78,6 +78,29 @@ Public-navigation requirements:
 - cross-page hash-anchor navigation must work reliably from every public page and connected-app page that links back into the landing-page sections such as `Features`, `How it works`, `Security`, and `FAQ`
 - when a user clicks one of those anchor links from pages like `VPFI`, `Analytics`, or any route inside the connected app, the frontend should route to the landing page and then scroll to the correct section rather than dropping the user at the top of the home page
 - the implementation should tolerate route-change timing where the landing-page section may mount slightly after navigation, so hash-anchor scrolling should retry briefly until the target section exists
+- a figure the documentation states about a protocol parameter must be
+  the figure the protocol uses. A rate is written down once and
+  referenced from every sentence and every translation that quotes it,
+  rather than copied into each, so a retune updates one definition
+  instead of ten. What that reference resolves to depends on the
+  surface: a page that reads protocol configuration shows the current
+  figure, while the public marketing pages read no chain state at all
+  and show the figure shipped with the build — current as of the last
+  deploy, and never to be described to a reader as read live
+- a number that is DERIVED — a worked example computing a fee on a
+  stated amount — cannot be referenced that way, so it is recomputed
+  whenever the rate it depends on changes, in every language the
+  example appears in. A worked example that disagrees with the rate
+  printed two sentences above it is worse than either alone: a reader
+  who spots the contradiction stops trusting the page, and one who
+  does not carries away arithmetic the protocol will not honour
+- and a worked example must be checkable, which means its figures are
+  the ones the protocol actually produces — computed the way the
+  protocol computes them, not by re-deriving a total from figures the
+  page has already rounded for display. Where rounding to a displayed
+  precision leaves the printed parts not adding up exactly, the example
+  says so and gives the unrounded figures, rather than quietly showing
+  a total a reader cannot reproduce
 - long-form documentation pages (the user guides, whitepaper, overview) must support two kinds of section link at once, because they serve different readers. The page's own contents list links by a heading's wording; links arriving from outside — including the connected app, whose recovery declaration asks the user to attest they have read a named guide section — use the stable anchor the document author attached to that section. Both must land on the section, and the incoming one must keep working when the reader's language changes: a heading's wording is translated, the author's anchor is not
 - consequently every translated edition of a document must carry the same set of author anchors as its English original. A link naming a section is written once and followed by readers in every language, so an anchor that exists in only some editions is a link that silently works for some readers and not others — and the ones it fails are the least likely to report it
 - and every translated edition must carry the same chapters as its original. Matching anchors is not the same claim: a chapter contributes anchors only if it is present, so an edition missing a whole chapter can still agree anchor-for-anchor with its source while a reader of that language simply never learns the subject exists. Where a chapter has not been translated yet, that is a recorded gap rather than a decision that the chapter is unnecessary in that language

@@ -71,9 +71,9 @@ The instant they accept:
   - interest"; theirs says "I'm owed my WETH back when I repay"
 - The loan clock starts ticking
 
-A small **Loan Initiation Fee (0.1%)** is taken from the loaned
+A small **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** is taken from the loaned
 amount and routed to the protocol treasury. So the borrower receives
-999 USDC, not 1,000. (You can pay the fee in **VPFI** instead and the
+998 USDC, not 1,000. (You can pay the fee in **VPFI** instead and the
 borrower receives the full 1,000 — more on VPFI below.)
 
 ### Step 3 — Time passes; the borrower repays
@@ -87,13 +87,18 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 They click **Repay**, sign a transaction, and 1,006.58 USDC moves
 into the loan settlement. From this:
 
-- You receive **1,005.51 USDC** (principal + interest minus a 1%
+- You receive **1,006.44 USDC** (principal + interest minus a `{liveValue:treasuryFeeBps}`%
   Yield Fee on the interest portion only)
-- The treasury receives **1.07 USDC** as the Yield Fee
+- The treasury receives **0.13 USDC** as the Yield Fee
 - The borrower's WETH is unlocked
 
+Those figures are rounded to the cent. The exact interest is
+6.575342 USDC and the exact Yield Fee 0.131506 USDC, so subtracting
+one rounded number from another leaves you a cent off — the protocol
+settles on the unrounded amounts.
+
 You see a **Claim** button on your dashboard. You click it and the
-1,005.51 USDC moves from settlement into your wallet. The borrower
+1,006.44 USDC moves from settlement into your wallet. The borrower
 clicks claim and their WETH moves back to their wallet. The loan is
 closed.
 
@@ -196,10 +201,10 @@ Two fees, both tiny:
   and late fees** you earn as a lender (not of the principal — both
   are lender yield, so both are in the fee base). On a 30-day 8% APR
   loan of 1,000 USDC, the lender earns ~6.58 USDC of interest, of
-  which ~0.066 USDC is the Yield Fee at the default rate.
+  which ~0.132 USDC is the Yield Fee at the default rate.
 - **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%** of
   the lending amount, paid by the borrower at origination. On a
-  1,000 USDC loan, that's 1 USDC at the default rate.
+  1,000 USDC loan, that's 2 USDC at the default rate.
 
 Both fees can be **discounted up to `{liveValue:tier4DiscountBps}`%** by holding VPFI in the vault
 (see below). On default or liquidation, recovered funds go toward
@@ -307,7 +312,7 @@ If you want to **borrow**:
 2. Browse the **Offer Book** for an offer that matches your
    collateral and the APR you can pay.
 3. Click **Accept**, sign two transactions, and you receive the loan
-   amount in your wallet (minus the 0.1% Loan Initiation Fee).
+   amount in your wallet (minus the `{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee).
 4. Repay before the due date plus grace period. Your collateral
    unlocks back to your wallet.
 
