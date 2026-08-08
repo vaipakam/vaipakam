@@ -289,12 +289,6 @@
       "de"
     ]
   },
-  "copy.chrome.nav.positionsShort": {
-    "source": "Positions",
-    "locales": [
-      "fr"
-    ]
-  },
   "copy.claimAll.itemLabel": {
     "source": "{{noun}} #{{id}} — {{what}}",
     "locales": [
@@ -831,7 +825,6 @@
   "copy.desk.positions.tab": {
     "source": "Positions",
     "locales": [
-      "fr",
       "hi"
     ]
   },
@@ -1280,14 +1273,12 @@
   "copy.notifications.bellLabel": {
     "source": "Notifications",
     "locales": [
-      "fr",
       "hi"
     ]
   },
   "copy.notifications.title": {
     "source": "Notifications",
     "locales": [
-      "fr",
       "hi"
     ]
   },

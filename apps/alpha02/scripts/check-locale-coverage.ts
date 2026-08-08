@@ -529,6 +529,20 @@ const visibleForm = (value: string): string =>
   // is the distinction rounds 1 and 4 turned on.
   stripIgnorable(value.normalize('NFKC')).trim();
 
+/**
+ * Does this value contain any LETTER at all, once interpolation tokens
+ * are removed?
+ *
+ * `wordsOf` counts a digit run as a word, which is right for comparing
+ * vocabulary — `Step 1 of 2` and `Step 1/2` differ by the word `of`,
+ * and dropping the digits would lose that. It is wrong for asking
+ * "is there prose here": a label replaced by `123` has a word by that
+ * measure and no readable text by any other, and it passed every check
+ * in the file (Codex #1607 r14). The two questions need two tests.
+ */
+const hasLetters = (value: string): boolean =>
+  /\p{L}/u.test(value.replace(/\{\{[^}]*\}\}/g, ' '));
+
 const wordsOf = (value: string): string[] =>
   (stripIgnorable(
     value
@@ -585,28 +599,32 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // turned on order — while a genuine translation still has to change
   // at least one word, which is the lowest bar this check can set.
   //
-  // A SUB-multiset counts too. Dropping a word is not translating the
-  // ones that remain: `Skip content` for `Skip to content` is English
-  // with an article deleted, and requiring EQUAL length let it through
-  // (Codex #1607 r13). Eight committed leaves were doing exactly that —
-  // Hindi `loan asset` for `the loan asset`, Korean
-  // `permission signing…` for `Signing the permission…` — and English
-  // grammar words are precisely what a hurried edit deletes.
+  // The test is VOCABULARY, not counts: is every word in the candidate
+  // one of the English words? Counts and order are both bookkeeping a
+  // reader cannot see.
   //
-  // Deliberately NOT the superset direction. A candidate carrying every
-  // English word PLUS others has words from somewhere, and calling that
-  // untranslated would invent debt against a partly-done translation —
-  // the failure mode `\p{L}` over `\w` was fixed to avoid in round 5.
-  if (candidateWords.length > sourceWords.length) return false;
-  const remaining = new Map<string, number>();
-  for (const word of sourceWords) remaining.set(word, (remaining.get(word) ?? 0) + 1);
-  for (const word of candidateWords) {
-    const left = remaining.get(word);
-    if (left === undefined) return false;
-    if (left === 1) remaining.delete(word);
-    else remaining.set(word, left - 1);
-  }
-  return true;
+  //   Skip to content -> content to Skip   reordered, all English
+  //   Skip to content -> Skip content      an article deleted
+  //   Settings        -> Settings Settings duplicated, still English
+  //   Settings        -> Einstellungen Settings   has a German word
+  //
+  // The first three are English on screen; only the fourth has a word
+  // from somewhere else. Two earlier revisions each got this partly
+  // right and left the rest through: an equal-length multiset excused
+  // deletions (Codex #1607 r13 — eight committed leaves, Hindi
+  // `loan asset` for `the loan asset`, Korean `permission signing…`
+  // for `Signing the permission…`), and adding sub-multisets still
+  // excused repetition, since `Settings Settings` is LONGER than its
+  // source and the length shortcut returned early (r14). Asking about
+  // the word SET has no such edge — every arrangement, deletion and
+  // duplication of English words is English.
+  //
+  // The asymmetry is deliberate and is the whole point: a candidate
+  // with even one word the English does not have is a translation
+  // someone started, and flagging it would invent debt — the failure
+  // `\p{L}` over `\w` was fixed to avoid in round 5.
+  const sourceVocabulary = new Set(sourceWords);
+  return candidateWords.every((word) => sourceVocabulary.has(word));
 };
 
 /**
@@ -770,32 +788,39 @@ function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
 }
 
 /**
- * Leaves where the English is PROSE and the locale value has no words
- * at all.
+ * Leaves where the English is PROSE and the locale value has no
+ * letters at all.
  *
  * `stillEnglish` cannot see these. Its wordless branch exists for the
  * case where punctuation IS the content on both sides (`.` against
  * `。`), and it compares the two strings exactly — so a worded English
  * against a wordless locale value comes out UNEQUAL, which the caller
  * reads as "not English, therefore translated". Replacing a German
- * label with `…` passed every check in the file (Codex #1607 r13).
+ * label with `…` passed every check in the file (Codex #1607 r13), and
+ * so did `123` — a digit run counts as a word to `wordsOf`, which is
+ * right for comparing vocabulary and wrong for asking whether there is
+ * anything to read (r14), so this asks about LETTERS.
  *
- * Not translation debt, so not the baseline: a value with no words
+ * Not translation debt, so not the baseline: a value with no letters
  * where the source has a sentence is a mangled string, and the reader
- * sees punctuation where text should be.
+ * sees punctuation or digits where text should be.
  *
  * Empty values are skipped — `emptyTranslations` and the `empty` policy
  * scope already own that case, and reporting it twice would make one
  * fault produce two failures with two different remedies.
  */
-function wordlessForProseLeaves(code: string, bundle: Bundle): string[] {
+function letterlessForProseLeaves(code: string, bundle: Bundle): string[] {
   const out: string[] = [];
   for (const key of englishLeafPaths()) {
     const source = leafOrElement(en, key);
-    if (typeof source !== 'string' || wordsOf(source).length === 0) continue;
+    // LETTERS, not words. A digit run counts as a word to `wordsOf`,
+    // so a label replaced by `123` looked wordful and skipped this
+    // check entirely while showing the reader no text at all
+    // (Codex #1607 r14).
+    if (typeof source !== 'string' || !hasLetters(source)) continue;
     const value = leafOrElement(bundle, key);
     if (typeof value !== 'string' || visibleForm(value) === '') continue;
-    if (wordsOf(value).length > 0) continue;
+    if (hasLetters(value)) continue;
     // Same scope the still-English check consults. A sentence split
     // into parts can legitimately leave one part as bare punctuation
     // in a language that puts the words elsewhere — three locales do
@@ -906,11 +931,12 @@ for (const code of translated) {
     );
   }
 
-  const wordless = wordlessForProseLeaves(code, bundle);
+  const wordless = letterlessForProseLeaves(code, bundle);
   if (wordless.length > 0) {
     problems.push(
-      `${code}: ${wordless.length} leaf/leaves hold no words where the English ` +
-        'is prose — the reader sees punctuation where a sentence should be: ' +
+      `${code}: ${wordless.length} leaf/leaves hold no letters where the ` +
+        'English is prose — the reader sees punctuation or digits where words ' +
+        'should be: ' +
         `${wordless.slice(0, 6).join(', ')}` +
         (wordless.length > 6 ? ', …' : ''),
     );

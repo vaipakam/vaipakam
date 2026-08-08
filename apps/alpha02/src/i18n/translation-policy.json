@@ -74,6 +74,13 @@
         "zh"
       ]
     },
+    "copy.chrome.nav.positionsShort": {
+      "reason": "\"Positions\" is the correct French plural of \"position\" — an ordinary French word spelled as the English. The same-language sibling copy.chrome.nav.positions is \"Mes positions\", which uses the identical noun, so this is settled French rather than an untouched string. Recorded here for the same reason as the notification labels: it is a translation already done, and a shrink-only baseline could only lose it to a worse synonym.",
+      "source": "Positions",
+      "locales": [
+        "fr"
+      ]
+    },
     "copy.claims.row.amountWithSuffix": {
       "reason": "Two interpolated values and nothing else — there are no words in this string.",
       "source": "{{amount}}{{suffix}}",
@@ -87,6 +94,13 @@
         "ko",
         "ta",
         "zh"
+      ]
+    },
+    "copy.desk.positions.tab": {
+      "reason": "\"Positions\" is the correct French plural of \"position\" — an ordinary French word spelled as the English. The same-language sibling copy.chrome.nav.positions is \"Mes positions\", which uses the identical noun, so this is settled French rather than an untouched string. Recorded here for the same reason as the notification labels: it is a translation already done, and a shrink-only baseline could only lose it to a worse synonym.",
+      "source": "Positions",
+      "locales": [
+        "fr"
       ]
     },
     "copy.desk.signed.rateLine": {
@@ -162,6 +176,20 @@
         "ko",
         "ta",
         "zh"
+      ]
+    },
+    "copy.notifications.bellLabel": {
+      "reason": "\"Notifications\" is the correct French plural of \"notification\" — an ordinary French word that happens to be spelled exactly as the English. Recorded here rather than in the shrink-only baseline because the baseline is a worklist of translations someone owes, and this one is already done: the only way it could leave the baseline is by being replaced with a less natural synonym, which would be a regression.",
+      "source": "Notifications",
+      "locales": [
+        "fr"
+      ]
+    },
+    "copy.notifications.title": {
+      "reason": "\"Notifications\" is the correct French plural of \"notification\" — an ordinary French word that happens to be spelled exactly as the English. Recorded here rather than in the shrink-only baseline because the baseline is a worklist of translations someone owes, and this one is already done: the only way it could leave the baseline is by being replaced with a less natural synonym, which would be a regression.",
+      "source": "Notifications",
+      "locales": [
+        "fr"
       ]
     },
     "copy.offers.footerParts.tail": {

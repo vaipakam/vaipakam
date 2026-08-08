@@ -12,7 +12,7 @@ the moment the last missing piece was filled, every language read as complete �
 while Hindi alone still showed nearly three hundred English strings to anyone
 using the app in Hindi.
 
-The check now asks the second question too. At the time of writing, 500 pairs
+The check now asks the second question too. At the time of writing, 496 pairs
 of language and text are recorded as a known, dated backlog so the number cannot quietly grow: a
 piece of text that regresses to English fails the build, and one that gets
 translated has to be struck from the record or the build fails as well. The
@@ -38,11 +38,25 @@ strings, now recorded. The reverse — text that keeps every English word and ad
 others — is deliberately left alone: that has words from somewhere, and calling
 it untranslated would invent work against a translation someone had started.
 
+Repeating a word does not translate it either, and that one arrived last: a
+label reading "Settings Settings" is longer than the English, and a check
+counting words rather than looking at which words they are let it through. The
+question the check finally settles on is the simplest form of itself — is every
+word here an English word? Reordering, deleting and repeating are all just
+arrangements of the same vocabulary, and each had been found separately before
+the shape common to all three was.
+
 A small number of strings are correct even though they match — the product
 name, and standard trading acronyms that are used untranslated everywhere.
 There is also one heading where the French genuinely is the same two words as
 the English in the other order, which no comparison of words can tell apart
-from a rearranged English sentence. Those are listed separately, each with a
+from a rearranged English sentence; and the French words for notifications and
+positions, which are spelled exactly as the English ones. Those last are worth
+separating out from the backlog rather than leaving in it: the backlog is a list
+of translations someone owes, and it can only be worked down by changing text.
+An entry whose translation is already correct could only leave it by being
+replaced with a worse synonym, which would make the list impossible to finish
+honestly. Those are listed separately, each with a
 written reason, with the English wording it was granted against, and — where
 the accepted text is not the English one — with that exact text, so that
 rewording either side makes the exemption stale rather than letting it quietly
@@ -71,6 +85,11 @@ say something about how sentences get split for translation: an offer footer is
 assembled from a lead, two links and a tail, and German, Spanish and French put
 the closing noun in the lead, which leaves the tail as nothing but a full stop.
 That is a written judgement now, recorded with the exact text it accepts.
+
+Digits are not words for this purpose either. A label replaced by "123" counted
+as having a word and slipped past — which is right when comparing what words two
+texts share, and wrong when asking whether there is anything to read. The two
+questions now use two tests.
 
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot
