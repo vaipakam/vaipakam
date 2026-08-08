@@ -852,6 +852,17 @@ jobs:
       - name: Typecheck — apps/alpha02
         run: pnpm --filter @vaipakam/alpha02 typecheck
 
+      # `apps/alpha` and `apps/alpha01` are deployable Workers that
+      # render React, and neither was typechecked here at all (#1521).
+      # Both now run `tsc` plus the single-rule rules-of-hooks check,
+      # so a conditional hook in either fails CI like it does in the
+      # other React apps.
+      - name: Typecheck — apps/alpha (tsc -b --noEmit + rules-of-hooks)
+        run: pnpm --filter @vaipakam/alpha typecheck
+
+      - name: Typecheck — apps/alpha01 (tsc -b --noEmit + rules-of-hooks)
+        run: pnpm --filter @vaipakam/alpha01 typecheck
+
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi
       # has pre-existing test-setup failures (Issue #85 — PublicDashboard +

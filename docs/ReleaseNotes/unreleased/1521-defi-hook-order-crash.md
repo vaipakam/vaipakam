@@ -1,4 +1,4 @@
-## Thread — the Create Offer page could be taken down by a dropdown (PR #1590)
+## Thread — the Create Offer page could be taken down by a dropdown (PR #1601)
 
 Changing the asset type on the connected app's Create Offer page could
 crash it outright. The periodic-interest cadence field hid itself for
@@ -55,10 +55,18 @@ one people stop reading — the habit that started this.
 The marketing site needed the same guard and had even less: no lint
 configuration of any kind, which is why nothing could have reported the
 defect on its pages. It now runs the same single-rule check, verified
-the same way. That closes the gap for every part of the codebase that
-renders React — the connected app and the marketing site are guarded by
-this check, the alpha surface already ran the full lint, and the shared
-component package was scanned and is clean.
+the same way.
+
+The first attempt at stating the coverage was wrong, and review caught
+that too. It named the apps this work happened to touch rather than
+listing what the repository actually contains, and two more deployable
+React apps were missing — one with no lint configuration at all, one
+whose configuration existed but was never run, and neither typechecked
+by the build at all. Both are clean of this defect today and both are
+now guarded and typechecked, so the coverage claim is a statement about
+an enumerated list rather than an impression. Every deployable surface
+that renders React now fails its build on a conditional hook: the
+connected app, the marketing site, and all three alpha surfaces.
 
 No functional-spec change accompanies this: the intended behaviour was
 always that the page works, and nothing about what the product is meant

@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite --port 5175",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js",
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev",
     "test": "vitest run",

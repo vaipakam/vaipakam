@@ -69,9 +69,12 @@ export function PeriodicInterestCadenceField({
   // here (#1521). `liquid` is derived from props fed by live form
   // state, so returning early on it changed the hook count between
   // renders: switching the asset-type dropdown from a liquid asset to
-  // an illiquid one dropped the two `useMemo`s below and React aborted
-  // the whole page with "Rendered more hooks than during the previous
-  // render". Both memos are pure, so evaluating them on the path that
+  // an illiquid one dropped the two `useMemo`s below, and React
+  // aborted the whole page with "Rendered fewer hooks than expected".
+  // The reverse switch adds them back and throws the mirror-image
+  // "Rendered more hooks than during the previous render" — either
+  // direction is fatal, so search for both when debugging a report
+  // like this. Both memos are pure, so evaluating them on the path that
   // renders nothing costs a little work and changes no behaviour —
   // which is the cheaper half of the trade.
 
