@@ -875,20 +875,6 @@
       "hi"
     ]
   },
-  "copy.desk.statUnknown": {
-    "source": "—",
-    "locales": [
-      "ar",
-      "de",
-      "es",
-      "fr",
-      "hi",
-      "ja",
-      "ko",
-      "ta",
-      "zh"
-    ]
-  },
   "copy.desk.tapeRowTitle": {
     "source": "{{bps}} bps · loan #{{loanId}} · {{status}}",
     "locales": [

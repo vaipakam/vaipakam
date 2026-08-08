@@ -68,6 +68,51 @@
         "zh"
       ]
     },
+    "copy.claims.row.amountWithSuffix": {
+      "reason": "Two interpolated values and nothing else — there are no words in this string.",
+      "source": "{{amount}}{{suffix}}",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
+    },
+    "copy.desk.signed.rateLine": {
+      "reason": "Two interpolated values around APR, itself a standard finance acronym; there is no prose here to translate.",
+      "source": "{{rate}} APR · {{days}}",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
+    },
+    "copy.desk.statUnknown": {
+      "reason": "The em dash marking an unavailable value on the trading desk (DeskHeader, OrderTicket). It is a symbol, not a word, and all nine locales render it identically on purpose — recorded here rather than in the baseline because it is not debt anyone can pay: the only way it could ever leave a shrink-only backlog is by being replaced with a different glyph, which would be a regression rather than a translation.",
+      "source": "—",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
+    },
     "copy.desk.ticket.expiryGtc": {
       "reason": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
       "source": "GTC",
@@ -101,36 +146,6 @@
     "copy.desk.ticket.fillIoc": {
       "reason": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
       "source": "IOC",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ]
-    },
-    "copy.desk.signed.rateLine": {
-      "reason": "Two interpolated values around APR, itself a standard finance acronym; there is no prose here to translate.",
-      "source": "{{rate}} APR · {{days}}",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ]
-    },
-    "copy.claims.row.amountWithSuffix": {
-      "reason": "Two interpolated values and nothing else — there are no words in this string.",
-      "source": "{{amount}}{{suffix}}",
       "locales": [
         "ar",
         "de",

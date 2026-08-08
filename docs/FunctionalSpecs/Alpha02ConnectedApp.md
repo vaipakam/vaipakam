@@ -496,7 +496,7 @@ Thin-market honesty rules apply.
   *(Not yet true of the whole app, but now bounded. Every key EXISTS in
   every advertised language, and a second check asks the question key
   presence cannot: does the key hold anything other than the English
-  string? 491 `(key, locale)` pairs still do — Hindi carries the bulk of
+  string? 482 `(key, locale)` pairs still do — Hindi carries the bulk of
   them — and every one is recorded, dated, and enforced in both
   directions: a text that regresses to English fails the build, and one
   that gets translated must leave the record or the build fails too. The

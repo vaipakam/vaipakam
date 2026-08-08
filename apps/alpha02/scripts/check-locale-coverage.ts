@@ -473,7 +473,14 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // Chinese, and both reduce to zero words. Stripping punctuation would
   // call a correct localization "still English" (Codex #1607 r4).
   if (sourceWords.length === 0 || candidateWords.length === 0) {
-    return candidate.normalize('NFC').trim() === source.normalize('NFC').trim();
+    // Default-ignorable code points are removed first. They render as
+    // nothing, so `.` followed by a zero-width space IS the English full
+    // stop on screen while differing in bytes — a regression that looked
+    // like a translation (Codex #1607 r6). Visible punctuation is still
+    // compared exactly, so `.` and `。` stay distinct.
+    const visible = (value: string) =>
+      value.normalize('NFC').replace(/\p{Default_Ignorable_Code_Point}/gu, '').trim();
+    return visible(candidate) === visible(source);
   }
   // Otherwise compare the WORDS. Separators and case are not the
   // language: `Refinance carry-over collateral shortfall` in Hindi
@@ -845,7 +852,11 @@ function checkDocumentedTotal(pairs: number): void {
       if (!optional) problems.push(`${rel} is missing — this check cannot verify the recorded total`);
       continue;
     }
-    if (!fs.readFileSync(file, 'utf8').includes(String(pairs))) {
+    // A WHOLE number, not a substring: `'491'.includes('49')` is true,
+    // so once a translation batch took the total to 49 every doc still
+    // saying 491 would have passed (Codex #1607 r6).
+    const wholeNumber = new RegExp(`(?<![0-9])${pairs}(?![0-9])`);
+    if (!wholeNumber.test(fs.readFileSync(file, 'utf8'))) {
       problems.push(
         `${path.basename(file)} does not mention the current english-valued ` +
           `total (${pairs} pairs) — it quotes a figure this baseline no ` +
