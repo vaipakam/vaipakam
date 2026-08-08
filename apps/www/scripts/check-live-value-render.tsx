@@ -77,7 +77,21 @@ function check(name: string, ok: boolean, detail: string) {
   );
 }
 
-// 2. The escape hatch must survive: a FENCED block documenting the
+// 2. No internal react-markdown prop may reach the DOM. v10 hands every
+//    custom renderer its HAST `node`; spreading it onto an element makes
+//    React serialise `node="[object Object]"`. That shipped on 5,728
+//    inline-code elements before #1606 caught it, so it is asserted here
+//    rather than trusted to review.
+{
+  const html = render('Inline `code`, a token `{liveValue:treasuryFeeBps}`, and:\n\n```\nfenced\n```');
+  check(
+    'no internal node prop reaches the DOM',
+    !html.includes('node="'),
+    `an internal prop leaked into the markup:\n      ${html}`,
+  );
+}
+
+// 3. The escape hatch must survive: a FENCED block documenting the
 //    mechanism has to render literally, or the docs cannot describe
 //    their own tooling.
 {
@@ -89,7 +103,7 @@ function check(name: string, ok: boolean, detail: string) {
   );
 }
 
-// 3. An unregistered knob must fall through to visible inline code
+// 4. An unregistered knob must fall through to visible inline code
 //    rather than rendering a silently wrong value.
 {
   const html = render('Typo: `{liveValue:treasuryFeebps}`.');
@@ -102,7 +116,7 @@ function check(name: string, ok: boolean, detail: string) {
 
 if (failures.length > 0) {
   console.error(
-    `[check-live-value-render] FAILED — ${failures.length} of 4 checks\n${failures.join('\n')}\n`,
+    `[check-live-value-render] FAILED — ${failures.length} of 5 checks\n${failures.join('\n')}\n`,
   );
   process.exit(1);
 }

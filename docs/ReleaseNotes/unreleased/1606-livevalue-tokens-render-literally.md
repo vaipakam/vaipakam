@@ -35,9 +35,19 @@ per-change verification, so the failure now surfaces on the change that
 causes it rather than after publication.
 
 Verified against a real render of all 111 pages: 570 pieces of leaked
-placeholder text before, none after, and 40 pages now showing live
-figures. The reader-visible result is that the overview page states the
+placeholder text before, none after; 5,728 stray attributes before, none
+after; and 40 pages now showing live figures. The reader-visible result is that the overview page states the
 yield fee as a percentage again.
+
+Review then found a second, older defect one line away from the first.
+The renderer forwards the markdown library's leftover properties onto the
+underlying page element, and one of those is an internal handle the
+library passes to every custom renderer. It was being written into the
+page as a literal, meaningless attribute — on 5,728 inline code elements
+across the published pages, and it had been doing so for as long as that
+renderer had existed. The new fenced-block renderer would have added ten
+more of the same. Both are now stripped, and the new check asserts the
+attribute never comes back, so this cannot quietly resume either.
 
 One incidental note on the fix's own shape: the change needed a
 component to consult shared state, and the repository's newly-added

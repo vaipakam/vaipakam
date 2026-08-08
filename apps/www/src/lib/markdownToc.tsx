@@ -244,6 +244,21 @@ const InsideFencedBlock = createContext(false);
  */
 interface CodeRendererProps {
   children?: ReactNode;
+  /**
+   * react-markdown v10 hands every custom renderer the HAST node it is
+   * rendering. It is INTERNAL — the default renderers never forward it —
+   * so both renderers below destructure it away rather than letting
+   * `{...rest}` spread it onto a DOM element, where React serialises it
+   * as the literal attribute `node="[object Object]"`.
+   *
+   * This was already shipping on the marketing site before #1606: the
+   * pre-existing `code` renderer spread `...rest` too, putting that
+   * attribute on 5,728 inline-code elements across the prerendered
+   * pages. Adding a `pre` renderer would have added 10 more. Both are
+   * stripped here; `scripts/check-live-value-render.tsx` asserts the
+   * attribute never reappears.
+   */
+  node?: unknown;
   [key: string]: unknown;
 }
 
@@ -254,7 +269,7 @@ interface CodeRendererProps {
  * bare `<code>`, so flagging here is what lets {@link MarkdownCode}
  * tell the two apart (#1606).
  */
-function FencedBlock({ children, ...rest }: CodeRendererProps) {
+function FencedBlock({ children, node: _node, ...rest }: CodeRendererProps) {
   return (
     <InsideFencedBlock.Provider value={true}>
       <pre {...rest}>{children}</pre>
@@ -275,7 +290,7 @@ function FencedBlock({ children, ...rest }: CodeRendererProps) {
  * components. Declaring them as real components satisfies the linter
  * without suppressing it.
  */
-function MarkdownCode({ children, ...rest }: CodeRendererProps) {
+function MarkdownCode({ children, node: _node, ...rest }: CodeRendererProps) {
   // Unconditional — a conditional hook here would be exactly the defect
   // #1521 fixed in this file's neighbourhood.
   const fenced = useContext(InsideFencedBlock);
