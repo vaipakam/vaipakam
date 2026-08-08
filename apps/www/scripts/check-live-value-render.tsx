@@ -213,15 +213,30 @@ function check(name: string, ok: boolean, detail: string) {
   // The formatting bug that made this locale-aware: en-US grouping on a
   // German page turns a 20,000-token threshold into something a German
   // reader parses as twenty.
+  // Expectations DERIVED from the registry, not written as literals.
+  // Pinning "20.000" would couple this file to one knob's current value,
+  // so a governance retune would fail a locale test for no reason — and a
+  // test that fails on unrelated changes is one people delete. What is
+  // asserted is the PROPERTY: output matches the shared formatter for
+  // that locale, and the two locales genuinely differ (otherwise the
+  // check would pass trivially against a locale-blind formatter).
+  const expectCount = (loc: string) =>
+    formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', loc);
+  const expectPct = (loc: string) =>
+    formatKnob(KNOB_DEFAULTS.loanInitiationFeeBps.defaultValue, 'percent', loc);
+
   check(
     'markdown: grouping follows the document locale',
-    md('`{liveValue:tier4Min}`', 'de') === '20.000' && md('`{liveValue:tier4Min}`', 'en') === '20,000',
+    md('`{liveValue:tier4Min}`', 'de') === expectCount('de') &&
+      md('`{liveValue:tier4Min}`', 'en') === expectCount('en') &&
+      expectCount('de') !== expectCount('en'),
     `de gave "${md('`{liveValue:tier4Min}`', 'de')}", en gave "${md('`{liveValue:tier4Min}`', 'en')}"`,
   );
   check(
     'markdown: decimal separator follows the document locale',
-    md('`{liveValue:loanInitiationFeeBps}`', 'fr') === '0,2' &&
-      md('`{liveValue:loanInitiationFeeBps}`', 'en') === '0.2',
+    md('`{liveValue:loanInitiationFeeBps}`', 'fr') === expectPct('fr') &&
+      md('`{liveValue:loanInitiationFeeBps}`', 'en') === expectPct('en') &&
+      expectPct('fr') !== expectPct('en'),
     `fr gave "${md('`{liveValue:loanInitiationFeeBps}`', 'fr')}", en gave "${md('`{liveValue:loanInitiationFeeBps}`', 'en')}"`,
   );
   // NOTE: there is deliberately no "formatting follows the active UI
@@ -252,17 +267,16 @@ function check(name: string, ok: boolean, detail: string) {
 {
   const en = markdownComponents('en');
   const de = markdownComponents('de');
+  const enExpected = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'en');
+  const deExpected = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'de');
   check(
     'document locale is honoured over the active language',
-    (() => {
-      // Active language German, document English — English must win.
-      return renderWith(en, '`{liveValue:tier4Min}`').includes('20,000');
-    })(),
+    renderWith(en, '`{liveValue:tier4Min}`').includes(enExpected) && enExpected !== deExpected,
     'an English document did not format as English',
   );
   check(
     'a German document still formats as German',
-    renderWith(de, '`{liveValue:tier4Min}`').includes('20.000'),
+    renderWith(de, '`{liveValue:tier4Min}`').includes(deExpected),
     'a German document did not format as German',
   );
   check(
@@ -281,8 +295,8 @@ function check(name: string, ok: boolean, detail: string) {
   const enTier4 = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'en');
   check(
     'search formatting differs by locale like the pages do',
-    deTier4 === '20.000' && enTier4 === '20,000',
-    `de gave "${deTier4}", en gave "${enTier4}"`,
+    deTier4 !== enTier4,
+    `both locales formatted identically ("${deTier4}"), so the index is locale-blind`,
   );
 }
 
