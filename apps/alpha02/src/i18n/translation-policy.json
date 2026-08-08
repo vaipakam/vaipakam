@@ -22,6 +22,8 @@
     "  same words in a different order (French 'Mode strict' for 'Strict",
     "  mode'), record that exact value under 'values' so rewording it",
     "  retires the exemption instead of leaving it armed.",
+    "  The same scope also excuses a fragment that correctly holds no words",
+    "  at all because a sister fragment carries them (see footerParts.tail).",
     "  There are deliberately NO pattern-based exemptions. Punctuation is",
     "  localized (consentParts.suffix is '.' in English and '。' in",
     "  Chinese), so a no-letters rule would have let a real localization",
@@ -161,6 +163,20 @@
         "ta",
         "zh"
       ]
+    },
+    "copy.offers.footerParts.tail": {
+      "reason": "The closing fragment of a sentence split around two inline links. English trails the sentence with the noun (' flows.'); German, Spanish and French put that noun in the LEAD fragment instead ('… wie die gefuehrten Ablaeufe ', '… los flujos guiados de ', '… les parcours guides '), so the tail is correctly nothing but the full stop. The words are present in the rendered sentence, just in a different fragment — which is what splitting a sentence into parts costs, and a per-fragment check cannot see.",
+      "source": " flows.",
+      "locales": [
+        "de",
+        "es",
+        "fr"
+      ],
+      "values": {
+        "de": ".",
+        "es": ".",
+        "fr": "."
+      }
     },
     "copy.riskAccess.strict.title": {
       "reason": "French 'Mode strict' is the correct rendering of 'Strict mode' — the noun-adjective order is French grammar, and both words are French. The word comparison is a multiset, so it cannot tell this from a rearranged English sentence; the accepted French is recorded below so rewording it retires this entry.",

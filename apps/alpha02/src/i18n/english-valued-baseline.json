@@ -1584,10 +1584,24 @@
       "hi"
     ]
   },
+  "copy.positions.details.loanAssetFallback": {
+    "source": "the loan asset",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
   "copy.positions.details.lockedSymbolFallback": {
     "source": "locked",
     "locales": [
       "hi"
+    ]
+  },
+  "copy.positions.details.principalPlusInterest": {
+    "source": "{{principal}} plus the earned interest.",
+    "locales": [
+      "hi",
+      "ko"
     ]
   },
   "copy.positions.details.titleLoan": {
@@ -1757,6 +1771,13 @@
       "hi"
     ]
   },
+  "copy.rent.receiptRentYouLock": {
+    "source": "{{total}} prepaid — the full term’s fees plus a {{buffer}} refundable buffer.",
+    "locales": [
+      "hi",
+      "ko"
+    ]
+  },
   "copy.rent.rentalOpened": {
     "source": "Rental started",
     "locales": [
@@ -1853,6 +1874,12 @@
       "ko"
     ]
   },
+  "copy.signing.phasePermit": {
+    "source": "Signing the permission… ({{c}} of {{t}}) — free, no gas",
+    "locales": [
+      "ko"
+    ]
+  },
   "copy.signing.phaseSend": {
     "source": "Submitting… ({{c}} of {{t}})",
     "locales": [
@@ -1864,6 +1891,12 @@
     "source": "Signing terms… ({{c}} of {{t}})",
     "locales": [
       "ko"
+    ]
+  },
+  "copy.stepNav.progress": {
+    "source": "Step {{current}} of {{total}} — {{label}}",
+    "locales": [
+      "hi"
     ]
   },
   "copy.stepNav.progressAria": {

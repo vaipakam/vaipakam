@@ -584,7 +584,20 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // same multiplicities keeps every case above working — none of them
   // turned on order — while a genuine translation still has to change
   // at least one word, which is the lowest bar this check can set.
-  if (sourceWords.length !== candidateWords.length) return false;
+  //
+  // A SUB-multiset counts too. Dropping a word is not translating the
+  // ones that remain: `Skip content` for `Skip to content` is English
+  // with an article deleted, and requiring EQUAL length let it through
+  // (Codex #1607 r13). Eight committed leaves were doing exactly that —
+  // Hindi `loan asset` for `the loan asset`, Korean
+  // `permission signing…` for `Signing the permission…` — and English
+  // grammar words are precisely what a hurried edit deletes.
+  //
+  // Deliberately NOT the superset direction. A candidate carrying every
+  // English word PLUS others has words from somewhere, and calling that
+  // untranslated would invent debt against a partly-done translation —
+  // the failure mode `\p{L}` over `\w` was fixed to avoid in round 5.
+  if (candidateWords.length > sourceWords.length) return false;
   const remaining = new Map<string, number>();
   for (const word of sourceWords) remaining.set(word, (remaining.get(word) ?? 0) + 1);
   for (const word of candidateWords) {
@@ -593,7 +606,7 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
     if (left === 1) remaining.delete(word);
     else remaining.set(word, left - 1);
   }
-  return remaining.size === 0;
+  return true;
 };
 
 /**
@@ -692,13 +705,29 @@ const LOCALE_SCRIPTS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * Matches one LETTER outside the locale's alphabets.
+ * Matches one LETTER OR COMBINING MARK outside the locale's alphabets.
  *
- * `[^\P{L}…]` reads oddly but is exact: inside a negated class,
- * `\P{L}` excludes every non-letter from matching, so the class is
- * "a letter, and not one of these scripts". Punctuation, digits,
- * emoji and interpolation braces are untouched — they are not letters
- * and carry no script.
+ * Marks as well as letters, because a mark is script-bearing and a
+ * misplaced one is doubly invisible: the tokenizer treats it as a word
+ * boundary, so a Hebrew point dropped inside `Settings` splits the word
+ * into `set` + `tings`, matching no English word, while the screen
+ * still reads Settings. A letters-only test missed it entirely, since
+ * the mark is `\p{Mn}` and not `\p{L}` (Codex #1607 r13).
+ *
+ * `Inherited` is allowed — that is what ordinary diacritics carry
+ * (a combining acute takes the script of the letter it sits on), so
+ * excluding it would reject correctly accented French and German.
+ * A mark that names a script of its OWN, like the Hebrew point, is
+ * not a diacritic on a Latin letter; it is text from another writing
+ * system.
+ *
+ * The lookahead is load-bearing: `[^…]` alone cannot express "is a
+ * letter or mark AND is not one of these scripts", because a negated
+ * class conjoins its negations — `[^\P{L}\P{M}]` asks for a character
+ * that is both a letter and a mark, which is nothing at all.
+ *
+ * Punctuation, digits, emoji and interpolation braces are untouched;
+ * they are neither letters nor marks and carry no script.
  *
  * `scx` (Script_Extensions), not `Script`. The Arabic tatweel and the
  * Japanese prolonged-sound mark are both `Script=Common`, so a
@@ -707,13 +736,13 @@ const LOCALE_SCRIPTS: Readonly<Record<string, readonly string[]>> = {
  */
 const foreignLetterRe = (code: string): RegExp =>
   new RegExp(
-    `[^\\P{L}${['Latin', ...(LOCALE_SCRIPTS[code] ?? [])]
+    `(?=[\\p{L}\\p{M}])[^${['Latin', 'Inherited', ...(LOCALE_SCRIPTS[code] ?? [])]
       .map((s) => `\\p{scx=${s}}`)
       .join('')}]`,
     'u',
   );
 
-/** Leaves containing a letter from outside this locale's alphabets. */
+/** Leaves with a letter or mark from outside this locale's alphabets. */
 function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
   const re = foreignLetterRe(code);
   const out: string[] = [];
@@ -740,6 +769,47 @@ function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
   return out;
 }
 
+/**
+ * Leaves where the English is PROSE and the locale value has no words
+ * at all.
+ *
+ * `stillEnglish` cannot see these. Its wordless branch exists for the
+ * case where punctuation IS the content on both sides (`.` against
+ * `。`), and it compares the two strings exactly — so a worded English
+ * against a wordless locale value comes out UNEQUAL, which the caller
+ * reads as "not English, therefore translated". Replacing a German
+ * label with `…` passed every check in the file (Codex #1607 r13).
+ *
+ * Not translation debt, so not the baseline: a value with no words
+ * where the source has a sentence is a mangled string, and the reader
+ * sees punctuation where text should be.
+ *
+ * Empty values are skipped — `emptyTranslations` and the `empty` policy
+ * scope already own that case, and reporting it twice would make one
+ * fault produce two failures with two different remedies.
+ */
+function wordlessForProseLeaves(code: string, bundle: Bundle): string[] {
+  const out: string[] = [];
+  for (const key of englishLeafPaths()) {
+    const source = leafOrElement(en, key);
+    if (typeof source !== 'string' || wordsOf(source).length === 0) continue;
+    const value = leafOrElement(bundle, key);
+    if (typeof value !== 'string' || visibleForm(value) === '') continue;
+    if (wordsOf(value).length > 0) continue;
+    // Same scope the still-English check consults. A sentence split
+    // into parts can legitimately leave one part as bare punctuation
+    // in a language that puts the words elsewhere — three locales do
+    // exactly that with the offer footer's tail — and that is a written
+    // judgement, not a pattern.
+    const exemption = ACCEPTED_AS_TRANSLATED[key];
+    if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
+      continue;
+    }
+    out.push(`${key} (${JSON.stringify(value)})`);
+  }
+  return out;
+}
+
 const problems: string[] = [];
 
 // The English source too. A homoglyph there poisons every comparison
@@ -750,8 +820,8 @@ const problems: string[] = [];
   const foreign = foreignScriptLeaves('en', en);
   if (foreign.length > 0) {
     problems.push(
-      `en: ${foreign.length} leaf/leaves contain a letter outside the Latin ` +
-        `alphabet: ${foreign.slice(0, 6).join(', ')}` +
+      `en: ${foreign.length} leaf/leaves contain a letter or mark from outside ` +
+        `the Latin alphabet: ${foreign.slice(0, 6).join(', ')}` +
         (foreign.length > 6 ? ', …' : ''),
     );
   }
@@ -828,11 +898,21 @@ for (const code of translated) {
   const foreign = foreignScriptLeaves(code, bundle);
   if (foreign.length > 0) {
     problems.push(
-      `${code}: ${foreign.length} leaf/leaves contain a letter outside the ` +
-        `alphabets ${code} is written in. If it is a lookalike it renders as ` +
-        'the English while comparing as a different word; otherwise the ' +
-        `string is mangled: ${foreign.slice(0, 6).join(', ')}` +
+      `${code}: ${foreign.length} leaf/leaves contain a letter or mark from ` +
+        `outside the alphabets ${code} is written in. If it is a lookalike it ` +
+        'renders as the English while comparing as a different word; ' +
+        `otherwise the string is mangled: ${foreign.slice(0, 6).join(', ')}` +
         (foreign.length > 6 ? ', …' : ''),
+    );
+  }
+
+  const wordless = wordlessForProseLeaves(code, bundle);
+  if (wordless.length > 0) {
+    problems.push(
+      `${code}: ${wordless.length} leaf/leaves hold no words where the English ` +
+        'is prose — the reader sees punctuation where a sentence should be: ' +
+        `${wordless.slice(0, 6).join(', ')}` +
+        (wordless.length > 6 ? ', …' : ''),
     );
   }
 

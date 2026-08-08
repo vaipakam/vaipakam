@@ -12,7 +12,7 @@ the moment the last missing piece was filled, every language read as complete �
 while Hindi alone still showed nearly three hundred English strings to anyone
 using the app in Hindi.
 
-The check now asks the second question too. At the time of writing, 492 pairs
+The check now asks the second question too. At the time of writing, 500 pairs
 of language and text are recorded as a known, dated backlog so the number cannot quietly grow: a
 piece of text that regresses to English fails the build, and one that gets
 translated has to be struck from the record or the build fails as well. The
@@ -30,6 +30,14 @@ three Hindi ones that had swapped two English words around, one of them closing
 with the Hindi full stop on a sentence otherwise entirely in English. They are
 now recorded as the untranslated text they are.
 
+Deleting a word does not translate the ones left behind either. Hindi showed
+"loan asset" where the English said "the loan asset", and Korean
+"permission signing…" for "Signing the permission…" — English with the small
+grammar words dropped, which is exactly what a hurried edit removes. Eight more
+strings, now recorded. The reverse — text that keeps every English word and adds
+others — is deliberately left alone: that has words from somewhere, and calling
+it untranslated would invent work against a translation someone had started.
+
 A small number of strings are correct even though they match — the product
 name, and standard trading acronyms that are used untranslated everywhere.
 There is also one heading where the French genuinely is the same two words as
@@ -42,14 +50,27 @@ carry over to text nobody looked at again.
 
 One more way a piece of text can read as English while comparing as
 something else: swap a letter for an identical-looking one from another
-alphabet. A Cyrillic "e" in "Settings" is a different letter to a computer and
+alphabet, or hide a mark from one inside a word. A Cyrillic "e" in "Settings" is
+a different letter to a computer and
 the same shape to a reader, so the check saw a German word where the screen
 showed an English one. Rather than keep a list of every lookalike character —
 which is a list that is never finished — the check now records which alphabets
 each language is actually written in, and rejects a letter from anywhere else.
 Nine short declarations, and the whole class goes with them. It does not catch
 a lookalike drawn from an alphabet the language genuinely uses, and the check
-says so rather than implying otherwise.
+says so rather than implying otherwise. Accent marks are untouched, because the
+marks that sit on ordinary letters do not belong to an alphabet of their own —
+only ones that do are rejected.
+
+The opposite shape is caught as well: text that contains no words at all where
+the English is a sentence. A label replaced by a single ellipsis was accepted
+before, because it plainly is not the English wording — and "not the English
+wording" was the only question being asked. A reader would have seen punctuation
+where a sentence should be. Three real cases turned out to be correct, and they
+say something about how sentences get split for translation: an offer footer is
+assembled from a lead, two links and a tail, and German, Spanish and French put
+the closing noun in the lead, which leaves the tail as nothing but a full stop.
+That is a written judgement now, recorded with the exact text it accepts.
 
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot
