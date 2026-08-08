@@ -19,7 +19,7 @@
  *   `{liveValue:tier3DiscountBps}`
  * which the custom `code` component in `markdownToc.tsx` rewrites to
  * `<LiveValue knob="..." />`. Each token resolves to a registered knob
- * in {@link KNOB_REGISTRY} below.
+ * in {@link KNOB_DEFAULTS}.
  *
  * Why a single component (vs. raw text):
  * - A retune updates one definition rather than every sentence in
@@ -37,116 +37,63 @@
  * The component is a React hook caller — must be invoked from the
  * React tree (i.e. inside the markdown render of a doc page that
  * mounted `useProtocolConfig`'s deps via `<DiamondReadProvider>`).
+ *
+ * Defaults, display format and the formatter itself live in
+ * `lib/liveValueKnobs.ts`, NOT here (#1606 review). The build script that
+ * publishes the machine-readable docs substitutes the same tokens, and
+ * two copies of "what does this token mean" would drift. This file owns
+ * only the chain reads, which are the part the build script cannot do.
  */
 
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
+import { KNOB_DEFAULTS, formatKnob, type KnobName } from '../../lib/liveValueKnobs';
+
+export type { KnobName };
 
 /**
- * Registered knob names. Adding a new value to the docs:
- *   1. Add a `KnobName` entry here.
- *   2. Add a `KNOB_REGISTRY` entry mapping it to the live-read +
- *      compile-time-default + render formatter.
- *   3. Use `{liveValue:<knobName>}` in markdown.
+ * Chain reads only — one per knob.
+ *
+ * The default value and display format come from {@link KNOB_DEFAULTS}.
+ * Adding a value to the docs means: add the name to `KnobName` and an
+ * entry to `KNOB_DEFAULTS` (both in `lib/liveValueKnobs.ts`), add its
+ * read here, then use `{liveValue:<knobName>}` in markdown.
  */
-export type KnobName =
-  | 'treasuryFeeBps'
-  | 'loanInitiationFeeBps'
-  | 'tier1Min'
-  | 'tier2Min'
-  | 'tier3Min'
-  | 'tier4Min'
-  | 'tier1DiscountBps'
-  | 'tier2DiscountBps'
-  | 'tier3DiscountBps'
-  | 'tier4DiscountBps';
+type ChainRead = (config: ReturnType<typeof useProtocolConfig>['config']) => number | null;
 
-interface KnobSpec {
-  /** Compile-time default value used while the read is pending OR when
-   *  the chain read fails. Matches the on-chain library default. */
-  defaultValue: number;
-  /** Resolves the live value from `useProtocolConfig`. Returns `null`
-   *  when config isn't ready so the renderer can fall back. */
-  read: (config: ReturnType<typeof useProtocolConfig>['config']) => number | null;
-  /** Formatter — turns a raw number into a display string.
-   *  - `percent`: BPS in, "x.y%" out (no `%` sign — caller adds it
-   *    in markdown so doc localization controls placement).
-   *  - `count`: integer, locale-formatted (`1,000`).
-   */
-  format: 'percent' | 'count';
-}
-
-const KNOB_REGISTRY: Record<KnobName, KnobSpec> = {
-  treasuryFeeBps: {
-    // 2% since the #1352 fee freeze (mirrors LibVaipakam.TREASURY_FEE_BPS).
-    defaultValue: 200,
-    read: (c) => (c ? c.treasuryFeeBps : null),
-    format: 'percent',
-  },
-  loanInitiationFeeBps: {
-    // 0.2% since the #1352 fee freeze (mirrors LibVaipakam.LOAN_INITIATION_FEE_BPS).
-    defaultValue: 20,
-    read: (c) => (c ? c.loanInitiationFeeBps : null),
-    format: 'percent',
-  },
-  tier1Min: {
-    defaultValue: 100,
-    read: (c) => (c ? c.tierThresholdsTokens[0] : null),
-    format: 'count',
-  },
-  tier2Min: {
-    defaultValue: 1_000,
-    read: (c) => (c ? c.tierThresholdsTokens[1] : null),
-    format: 'count',
-  },
-  tier3Min: {
-    defaultValue: 5_000,
-    read: (c) => (c ? c.tierThresholdsTokens[2] : null),
-    format: 'count',
-  },
-  tier4Min: {
-    defaultValue: 20_000,
-    read: (c) => (c ? c.tierThresholdsTokens[3] : null),
-    format: 'count',
-  },
-  tier1DiscountBps: {
-    defaultValue: 1_000,
-    read: (c) => (c ? c.tierDiscountBps[0] : null),
-    format: 'percent',
-  },
-  tier2DiscountBps: {
-    defaultValue: 1_500,
-    read: (c) => (c ? c.tierDiscountBps[1] : null),
-    format: 'percent',
-  },
-  tier3DiscountBps: {
-    defaultValue: 2_000,
-    read: (c) => (c ? c.tierDiscountBps[2] : null),
-    format: 'percent',
-  },
-  tier4DiscountBps: {
-    defaultValue: 2_400,
-    read: (c) => (c ? c.tierDiscountBps[3] : null),
-    format: 'percent',
-  },
+const KNOB_READS: Record<KnobName, ChainRead> = {
+  treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
+  loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
+  tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
+  tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
+  tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),
+  tier4Min: (c) => (c ? c.tierThresholdsTokens[3] : null),
+  tier1DiscountBps: (c) => (c ? c.tierDiscountBps[0] : null),
+  tier2DiscountBps: (c) => (c ? c.tierDiscountBps[1] : null),
+  tier3DiscountBps: (c) => (c ? c.tierDiscountBps[2] : null),
+  tier4DiscountBps: (c) => (c ? c.tierDiscountBps[3] : null),
 };
-
-/**
- * Format a BPS value as a percentage figure WITHOUT the `%` sign —
- * `100` → `"1"`, `10` → `"0.1"`, `2400` → `"24"`, `1050` → `"10.5"`.
- * The `%` lives in the markdown so doc translators can place it
- * (some locales — French — put a non-breaking space before).
- */
-function bpsAsPct(bps: number): string {
-  if (bps % 100 === 0) return (bps / 100).toString();
-  return (bps / 100).toFixed(2).replace(/\.?0+$/, '');
-}
 
 interface LiveValueProps {
   knob: KnobName;
+  /**
+   * Locale of the DOCUMENT this value appears in — not the UI language
+   * (#1610 review round 5).
+   *
+   * These differ, and using the UI language was wrong. `Whitepaper` and
+   * `AdminKnobsDocs` always resolve the `.en.md` source whatever the
+   * route, so on `/de/help/technical` the prose is English; formatting a
+   * threshold as `20.000` there contradicts the sentence around it, and
+   * on an Arabic route the digits themselves changed script inside
+   * English text. `Overview` and `UserGuide` fall back to English when a
+   * translation is missing, so their document locale is not the route
+   * locale either. The caller knows which document it resolved; this
+   * component cannot infer it.
+   */
+  locale: string;
 }
 
-export function LiveValue({ knob }: LiveValueProps) {
-  const spec = KNOB_REGISTRY[knob];
+export function LiveValue({ knob, locale }: LiveValueProps) {
+  const spec = KNOB_DEFAULTS[knob];
   // The bail-out sits BELOW the hook (#1521). Two things to know:
   //
   // 1. As written before, this was a rules-of-hooks violation — `spec`
@@ -171,12 +118,11 @@ export function LiveValue({ knob }: LiveValueProps) {
   // page rather than rendering a silent misleading value.
   if (!spec) return <code>{`{liveValue:${knob}}`}</code>;
 
-  const live = spec.read(config);
+  const live = KNOB_READS[knob]?.(config) ?? null;
   const value = live ?? spec.defaultValue;
   const isLive = live !== null;
 
-  const display =
-    spec.format === 'percent' ? bpsAsPct(value) : value.toLocaleString('en-US');
+  const display = formatKnob(value, spec.format, locale);
 
   return (
     <span

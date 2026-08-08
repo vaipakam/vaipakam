@@ -6,15 +6,16 @@
   "description": "Vaipakam marketing + docs Vite SPA \u2014 vaipakam.com (apex, canonical) with www.vaipakam.com 301-redirecting to apex via a Cloudflare Bulk Redirect rule. NO wallet connect, NO wagmi, NO on-chain reads \u2014 pure marketing surface populated by a literal copy of the marketing-side files from apps/defi (Landing, BuyVPFIMarketing, Whitepaper, Overview, UserGuide, Terms, Privacy, DataRights, Discord, HelpSearch). Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` rather than duplicated here. Hosted as a Cloudflare Workers Static Assets deploy on the same shape apps/defi uses, but with a tighter dependency surface (no connectkit, no wagmi, no react-query, no per-action permissioning). Folder, package name, Worker name were all switched together at the labs \u2192 www cutover (folder apps/labs \u2192 apps/www; package @vaipakam/labs \u2192 @vaipakam/www; Worker vaipakam-labs \u2192 vaipakam-www).",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/generate-sitemap.mjs && node scripts/generate-llms.mjs",
+    "prebuild": "node scripts/generate-sitemap.mjs && tsx --tsconfig tsconfig.app.json scripts/generate-llms.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js && node scripts/check-guide-anchor-parity.mjs && tsx scripts/check-guide-toc-coverage.ts",
+    "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js && node scripts/check-guide-anchor-parity.mjs && tsx scripts/check-guide-toc-coverage.ts && tsx --tsconfig tsconfig.app.json scripts/check-live-value-render.tsx",
     "prerender": "node scripts/prerender.mjs",
     "deploy": "npm run build && npm run prerender && wrangler deploy",
     "sitemap": "node scripts/generate-sitemap.mjs",
     "check:anchors": "node scripts/check-guide-anchor-parity.mjs",
-    "check:toc": "tsx scripts/check-guide-toc-coverage.ts"
+    "check:toc": "tsx scripts/check-guide-toc-coverage.ts",
+    "check:livevalue": "tsx --tsconfig tsconfig.app.json scripts/check-live-value-render.tsx"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
@@ -44,9 +45,12 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "playwright": "^1.61.0",
+    "remark-parse": "^11.0.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.0",
     "typescript-eslint": "^8.58.0",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.0.0",
     "vite": "^8.0.11",
     "wrangler": "^4.0.0"
   }

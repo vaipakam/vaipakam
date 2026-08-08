@@ -22,7 +22,6 @@
  */
 
 import {
-  copyFileSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -31,6 +30,10 @@ import {
 } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Shared with `LiveValue.tsx` so the published markdown and the rendered
+// pages cannot disagree about what a `{liveValue:...}` token means.
+// This script therefore runs under `tsx`, not bare node (#1606 review).
+import { substituteLiveValuesInMarkdown } from './liveValueMarkdown.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dirname, '..', 'src', 'content');
@@ -67,7 +70,15 @@ for (const set of DOC_SETS) {
     if (!m) continue;
     const locale = m[1];
     const outName = `${set.slug}.${locale}.md`;
-    copyFileSync(resolve(srcDir, file), resolve(DOCS_OUT, outName));
+    // Substituted, not copied verbatim (#1606 review). These artifacts
+    // are advertised to AI crawlers by llms.txt; publishing them raw left
+    // 420 `{liveValue:...}` tokens in the machine-readable surface even
+    // after the rendered pages were fixed. Formatted for THIS file's
+    // locale, matching what a reader of the same page sees.
+    writeFileSync(
+      resolve(DOCS_OUT, outName),
+      substituteLiveValuesInMarkdown(readFileSync(resolve(srcDir, file), 'utf8'), locale),
+    );
     published.push({ slug: set.slug, locale, url: `${ORIGIN}/docs/${outName}` });
   }
 }

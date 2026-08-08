@@ -208,7 +208,15 @@ interface RoleTabsProps {
   block: RoleTabBlock;
 }
 
-function RoleTabs({ block }: RoleTabsProps) {
+/**
+ * @param docLocale locale of the guide document actually rendered — NOT
+ * the route locale, which differs whenever `resolveGuide` falls back to
+ * English. Passed explicitly rather than read from a context: a context
+ * would silently default any renderer mounted outside its provider to
+ * English, mis-formatting a translated document with no error to notice
+ * (#1610 review round 6). A required prop makes that a compile error.
+ */
+function RoleTabs({ block, docLocale }: RoleTabsProps & { docLocale: string }) {
   const { role, setRole } = useRole();
   const body = role === 'lender' ? block.lender : block.borrower;
 
@@ -237,7 +245,7 @@ function RoleTabs({ block }: RoleTabsProps) {
       <div className="role-tabs-body">
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkInlineAnchorToId]}
-          components={markdownComponents() as never}
+          components={markdownComponents(docLocale) as never}
         >
           {body}
         </ReactMarkdown>
@@ -492,9 +500,9 @@ export default function UserGuide({ variant }: UserGuideProps) {
               {fellBackToEnglish && <EnglishOnlyNotice variant="guide" />}
               {blocks.map((block, i) =>
                 block.kind === 'markdown' ? (
-                  <MarkdownChunk key={i} text={block.text} />
+                  <MarkdownChunk key={i} text={block.text} docLocale={usedLocale} />
                 ) : (
-                  <RoleTabs key={i} block={block} />
+                  <RoleTabs key={i} block={block} docLocale={usedLocale} />
                 ),
               )}
             </article>
@@ -507,7 +515,8 @@ export default function UserGuide({ variant }: UserGuideProps) {
 }
 
 // Wrapper so the cast-narrow + plugin chain is in one place.
-function MarkdownChunk({ text }: { text: string }) {
+/** @param docLocale see {@link RoleTabs} — the document's locale, not the route's. */
+function MarkdownChunk({ text, docLocale }: { text: string; docLocale: string }) {
   // `as never` to satisfy react-markdown's strict plugin-tuple typing
   // while still passing our custom plugin through. The shape it
   // expects is a callable PluggableList; our plugin returns the right
@@ -516,7 +525,7 @@ function MarkdownChunk({ text }: { text: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={plugins}
-      components={markdownComponents() as never}
+      components={markdownComponents(docLocale) as never}
     >
       {text as ReactNode as string}
     </ReactMarkdown>

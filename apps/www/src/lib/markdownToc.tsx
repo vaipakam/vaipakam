@@ -203,6 +203,7 @@ function explicitAnchor(id: string | undefined, slug: string): ReactNode {
  */
 const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
 
+
 /**
  * Like {@link headingComponents} plus a `code` interceptor that
  * recognises `{liveValue:knobName}` inline-code spans and renders the
@@ -237,8 +238,13 @@ const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
  * chunk would force every chunk to re-render its tree on every parent
  * update.
  */
-let _cachedMarkdownComponents: ReturnType<typeof buildMarkdownComponents> | null = null;
-function buildMarkdownComponents() {
+// Keyed by DOCUMENT locale (#1610). ReactMarkdown shallow-compares
+// `components`, so a fresh object per render would re-render every chunk
+// on every parent update — the reason this was memoized at all. A Map
+// keeps that stability now that the map depends on the document's
+// language.
+const _cachedMarkdownComponents = new Map<string, ReturnType<typeof buildMarkdownComponents>>();
+function buildMarkdownComponents(docLocale: string) {
   return {
     ...headingComponents(),
     code: ({
@@ -272,7 +278,7 @@ function buildMarkdownComponents() {
         // An unregistered knob name falls through inside `<LiveValue>`,
         // which renders the raw token so the typo is visible in the page
         // rather than silently resolving to something misleading.
-        return <LiveValue knob={match[1] as KnobName} />;
+        return <LiveValue knob={match[1] as KnobName} locale={docLocale} />;
       }
       // Default — preserve native ReactMarkdown behaviour for every
       // other code span and every fenced block. `node` is dropped on
@@ -283,9 +289,17 @@ function buildMarkdownComponents() {
     },
   };
 }
-export function markdownComponents() {
-  if (!_cachedMarkdownComponents) {
-    _cachedMarkdownComponents = buildMarkdownComponents();
+
+/**
+ * @param docLocale locale of the DOCUMENT being rendered — which is not
+ * always the UI locale. Pages that always resolve `.en.md` must pass
+ * `'en'` even on a locale-prefixed route.
+ */
+export function markdownComponents(docLocale: string) {
+  let cached = _cachedMarkdownComponents.get(docLocale);
+  if (!cached) {
+    cached = buildMarkdownComponents(docLocale);
+    _cachedMarkdownComponents.set(docLocale, cached);
   }
-  return _cachedMarkdownComponents;
+  return cached;
 }

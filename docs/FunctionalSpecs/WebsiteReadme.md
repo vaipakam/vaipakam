@@ -599,6 +599,18 @@ Governance-configuration visibility:
 - internal-match warning chips, threshold displays, route labels, priority-window copy, and terminal-state labels should derive from live config and indexed loan state rather than hardcoded constants.
 - VPFI unit displays should use the token contract's live `decimals()` value where available, with an 18-decimal fallback during transient read failures
 - raw wei-denominated config values such as VPFI tier thresholds should be converted through shared display helpers before reaching cards, tooltips, translated strings, or tier tables
+- long-form doc pages (overview, whitepaper, user guide, parameter reference) should be able to embed a governance-tunable value inline in their prose, so each figure is maintained in one place rather than retyped into every sentence and every translation that mentions it
+- an embedded value should always resolve to a number for the reader, so a page never displays its own placeholder syntax or an empty gap
+- on the public marketing surface the resolved number is the value bundled at build time: those pages intentionally do not read the chain, so a governance change does not reach them without a rebuild, and the figures should not be described to readers or operators as live
+- where a surface does have a chain client, the same embedded value should prefer the live protocol read and fall back to the bundled value, and a reader should be able to tell which one they are looking at
+- a reader should be able to tell an embedded value from surrounding prose, and confirm on hover where the figure came from
+- an embedded value whose name is not recognised should render visibly as inline code rather than silently disappearing, so an authoring typo is obvious on the page instead of producing a confidently wrong number
+- a doc page that needs to DESCRIBE the embedding syntax itself should be able to show it literally inside a fenced code block without it being substituted
+- an embedded value should be formatted for the language of the DOCUMENT it appears in, which is not always the language of the URL — grouping and decimal separators follow the prose around the value, since English grouping on a page whose language reads a comma as a decimal point misstates the figure by orders of magnitude
+- pages that always present English content, whatever locale prefix the reader arrived through, should format their embedded values as English, so a figure never uses another language's conventions or digits inside an English sentence
+- a page that falls back to English because a translation is missing should likewise format its embedded values as English
+- the documentation search index should hold the same rendered figures the reader sees, formatted for the same document, so searching for a value visible on a page finds that page
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry the same resolved values as the human-facing pages, formatted for the same language, and should never expose the embedding syntax
 
 Foundational frontend migration requirements:
 
