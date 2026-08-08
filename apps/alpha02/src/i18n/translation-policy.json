@@ -72,7 +72,8 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.chrome.nav.positionsShort": {
       "reason": "\"Positions\" is the correct French plural of \"position\" — an ordinary French word spelled as the English. The same-language sibling copy.chrome.nav.positions is \"Mes positions\", which uses the identical noun, so this is settled French rather than an untouched string. Recorded here for the same reason as the notification labels: it is a translation already done, and a shrink-only baseline could only lose it to a worse synonym.",
@@ -80,6 +81,16 @@
       "locales": [
         "fr"
       ]
+    },
+    "copy.claimAll.itemLabel": {
+      "reason": "French numbers an item with 'n°' where English uses '#'. The English here has no words at all, so the marks are the whole content and a novel mark cannot be read as evidence of translation — this exact French is approved instead. The other eight locales still carry the English '#' and remain recorded in the shrinkable baseline, each owing its own convention (German 'Nr.', Spanish 'n.º').",
+      "source": "{{noun}} #{{id}} — {{what}}",
+      "locales": [
+        "fr"
+      ],
+      "values": {
+        "fr": "{{noun}} n°{{id}} — {{what}}"
+      }
     },
     "copy.claims.row.amountWithSuffix": {
       "reason": "Two interpolated values and nothing else — there are no words in this string.",
@@ -94,18 +105,29 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.consentParts.suffix": {
-      "reason": "The full stop closing the consent sentence. Arabic, German, Spanish, French and Korean all end a sentence with '.', so the correct localization is the same mark the English uses. The sibling copy.consentParts.prefix is fully translated in every one of these five locales, which is the evidence that the sentence was localized and this mark is a deliberate choice rather than an untouched string. Recorded here rather than in the shrink-only baseline because a translation already correct can only leave that list by being replaced with a wrong mark. Hindi, Japanese, Tamil and Chinese are deliberately absent — they genuinely use a different ending, and the baseline must keep watching them.",
+      "reason": "The full stop closing the consent sentence. Arabic, German, Spanish, French and Korean all end a sentence with '.', so the correct localization is the same mark the English uses. The sibling copy.consentParts.prefix is fully translated in every one of these five locales, which is the evidence that the sentence was localized and this mark is a deliberate choice rather than an untouched string. Recorded here rather than in the shrink-only baseline because a translation already correct can only leave that list by being replaced with a wrong mark. Hindi, Japanese, Tamil and Chinese are deliberately absent — they genuinely use a different ending, and the baseline must keep watching them. Hindi, Japanese, Tamil and Chinese end it differently and their exact endings are recorded below: the sentence is split into a prefix and a suffix, and those four put the closing verb or clause in the suffix rather than leaving it as a bare mark. Every locale is named because the English here has no words at all — the marks are the whole content, so 'not the English marks' cannot be read as 'translated', and each value has to be one a person approved.",
       "source": ".",
       "locales": [
         "ar",
         "de",
         "es",
         "fr",
-        "ko"
-      ]
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ],
+      "values": {
+        "hi": " से सहमत हूँ।",
+        "ja": "を理解し、同意します。",
+        "ta": " ஆகியவற்றைப் புரிந்துகொண்டு ஏற்கிறேன்.",
+        "zh": "。"
+      }
     },
     "copy.desk.positions.tab": {
       "reason": "\"Positions\" is the correct French plural of \"position\" — an ordinary French word spelled as the English. The same-language sibling copy.chrome.nav.positions is \"Mes positions\", which uses the identical noun, so this is settled French rather than an untouched string. Recorded here for the same reason as the notification labels: it is a translation already done, and a shrink-only baseline could only lose it to a worse synonym.",
@@ -127,7 +149,8 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.desk.statUnknown": {
       "reason": "The em dash marking an unavailable value on the trading desk (DeskHeader, OrderTicket). It is a symbol, not a word, and all nine locales render it identically on purpose — recorded here rather than in the baseline because it is not debt anyone can pay: the only way it could ever leave a shrink-only backlog is by being replaced with a different glyph, which would be a regression rather than a translation.",
@@ -142,7 +165,8 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.desk.ticket.expiryGtc": {
       "reason": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
@@ -157,7 +181,8 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.desk.ticket.fillAon": {
       "reason": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
@@ -172,7 +197,8 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.desk.ticket.fillIoc": {
       "reason": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
@@ -187,7 +213,8 @@
         "ko",
         "ta",
         "zh"
-      ]
+      ],
+      "invariant": true
     },
     "copy.notifications.bellLabel": {
       "reason": "\"Notifications\" is the correct French plural of \"notification\" — an ordinary French word that happens to be spelled exactly as the English. Recorded here rather than in the shrink-only baseline because the baseline is a worklist of translations someone owes, and this one is already done: the only way it could leave the baseline is by being replaced with a less natural synonym, which would be a regression.",

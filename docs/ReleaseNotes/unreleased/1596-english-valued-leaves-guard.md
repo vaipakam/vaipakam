@@ -146,6 +146,27 @@ reads as English. Listing what is allowed ends that sequence: anything else
 fails without anyone having to think of it first, and adding a new symbol is a
 deliberate edit somebody reviews.
 
+Two kinds of entry live in that list and they had been treated alike, which
+turned out to matter. Most are judgements about how things stand — the French
+heading, the closing full stops — and if someone rewords them the entry should
+simply lapse. But a handful are not judgements at all: the product name, the
+standard trading acronyms, a template with no words in it. Those can never
+legitimately differ, and when one was corrupted the check said the same thing it
+says for the others — that the entry looked unused and its language list should
+be narrowed. Doing as it asked made a misspelled product name pass. Entries of
+that kind are now marked as never-changing, checked in every language rather
+than only the ones listed, and a difference is reported as something to put back
+rather than something to stop watching.
+
+The same reasoning settled the last open case. Where the English text has no
+words at all — four places, all punctuation — the marks are the entire content,
+so "not the English marks" cannot mean "translated": a full stop followed by an
+exclamation mark was passing as a Chinese translation. Every language is now
+accounted for at those four places, either still showing the English or naming
+the exact wording someone approved. Five needed writing down, and all five were
+already correct: the Hindi and Tamil sentence endings, the Japanese and Chinese
+ones, and the French way of numbering an item.
+
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot
 be translated. That is simply untrue: the sentence ending is a full stop in

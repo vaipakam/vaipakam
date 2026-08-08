@@ -216,6 +216,25 @@ interface AcceptedAsTranslatedEntry {
    * standing guard over a string nobody looked at again.
    */
   values?: Record<string, string>;
+  /**
+   * This value may never differ, in ANY translated locale.
+   *
+   * Two kinds of entry live in this scope and they behave oppositely
+   * when the locale value moves. `Mode strict` is a judgement about the
+   * present: reword the French and the entry should retire, so the
+   * guard says "narrow the locale list". A brand name is not — change
+   * `Vaipakam` to `VaipakamX` and the guard said the same thing, and
+   * FOLLOWING that advice made the corrupted brand pass (Codex #1607
+   * r20). The advice was right for one kind of entry and actively
+   * harmful for the other.
+   *
+   * An invariant entry is checked against every translated locale
+   * rather than its own `locales` list, so narrowing the scope cannot
+   * make a changed value green. The only ways out are restoring the
+   * value or deleting this flag — a one-line edit, on a line that says
+   * it must never change, in front of a reviewer.
+   */
+  invariant?: boolean;
 }
 interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
@@ -337,14 +356,16 @@ const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
  * Leaves whose value is legitimately the same in every language, so
  * being identical to the English is not evidence of anything.
  *
- * TWO MECHANICAL RULES, no bookkeeping — a string made only of
- * interpolation tokens and separators (`{{amount}}{{suffix}}`) has no
- * words to translate, and one with no letters at all (`—`) has nothing
- * to translate either. Requiring a policy entry for those would mean a
- * new entry every time someone adds a template string, which is the
- * kind of ceremony people learn to skip.
+ * NO MECHANICAL RULES AT ALL. An earlier draft excused any value made
+ * only of interpolation tokens, and any value with no letters, on the
+ * reasoning that neither has anything to translate. The second is
+ * simply false — `copy.consentParts.suffix` is `.` in English and `。`
+ * in Chinese — and both were removed in round 1. The values they used
+ * to excuse (`{{amount}}{{suffix}}`, the em dash) are enumerated below
+ * with reasons, which is four entries rather than a rule that quietly
+ * excuses a class nobody counted.
  *
- * Everything else needs an explicit `acceptedAsTranslated` entry WITH A
+ * EVERY entry needs an explicit `acceptedAsTranslated` record WITH A
  * REASON, because "it looks like a proper noun" is a judgement and
  * judgements belong in the record rather than in a regex. The list is
  * deliberately short — read it; it is not summarized here, because a
@@ -404,6 +425,45 @@ for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
       throw new Error(`${where} records an empty value for "${code}" — record the exact accepted string`);
     }
   }
+  if (entry.invariant) {
+    // An invariant with per-locale variants is a contradiction: it
+    // claims the value can never differ AND records it differing.
+    if (entry.values !== undefined) {
+      throw new Error(`${where} is invariant and also records per-locale values — it cannot be both`);
+    }
+    const uncovered = translated.filter((c) => !entry.locales.includes(c));
+    if (uncovered.length > 0) {
+      throw new Error(
+        `${where} is invariant but omits ${uncovered.join(', ')}. An invariant ` +
+          'holds everywhere; a partial one reads as universal and is not.',
+      );
+    }
+  }
+}
+
+/**
+ * Invariant entries whose value has changed in some locale.
+ *
+ * Reported apart from the unused-scope sweep because the remedy is the
+ * opposite one. There, the value moving means the exemption has been
+ * overtaken and should retire. Here it means someone changed a string
+ * that was recorded as unchangeable, and retiring the entry would bless
+ * the change (Codex #1607 r20).
+ */
+function invariantViolations(): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+    if (!entry.invariant) continue;
+    for (const code of translated) {
+      const bundle = bundleByLocale.get(code);
+      if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      const value = leafOrElement(bundle, key);
+      if (value !== entry.source) {
+        out.push(`${code}:${key} is ${JSON.stringify(value)}, must be ${JSON.stringify(entry.source)}`);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -419,9 +479,13 @@ for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
  * (Codex #1607 r3). The neighbouring `omissions` / `empty` sections are
  * swept for staleness the same way.
  */
-function unusedPolicyScopes(): string[] {
+function unusedPolicyScopes(alreadyReported: ReadonlySet<string>): string[] {
   const out: string[] = [];
   for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+    // Invariant entries never "retire" — a changed value there is a
+    // regression, reported by `invariantViolations` with the opposite
+    // advice. Sweeping them here too would print both.
+    if (entry.invariant) continue;
     for (const code of entry.locales) {
       const bundle = bundleByLocale.get(code);
       if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
@@ -436,6 +500,11 @@ function unusedPolicyScopes(): string[] {
       // second message advising the opposite (narrow the scope), and
       // one edit producing two contradictory instructions is worse than
       // one clear one.
+      // Not if the punctuation sweep already named this pair. Its
+      // advice is "approve the value or fix it"; this one's is "narrow
+      // the scope", and they point opposite ways. One edit must not
+      // produce two instructions that contradict each other.
+      if (alreadyReported.has(`${code}:${key}`)) continue;
       if (!stillEnglish(acceptedValue(entry, code), leafOrElement(bundle, key))) {
         out.push(`${code}:${key}`);
       }
@@ -456,8 +525,8 @@ function unusedPolicyScopes(): string[] {
  * `.` in English and `。` in Chinese, so punctuation IS localized, and
  * a blanket rule would have let Chinese regress to the ASCII period
  * with the guard still green (Codex #1607 r1). The first was justified
- * as avoiding ceremony — but measured, the whole bundle contains ONE
- * token-only leaf and two letterless ones. Three explicit entries is
+ * as avoiding ceremony — but measured, the whole bundle contains four
+ * leaves with no letters at all. Four explicit entries is
  * not a tax; a rule that quietly excuses a class nobody counted is.
  */
 function policyReauditNeeded(): string[] {
@@ -734,6 +803,50 @@ function englishLeafPaths(): string[] {
       });
     } else if (typeof source === 'string') {
       out.push(key);
+    }
+  }
+  return out;
+}
+
+/**
+ * Punctuation-only English leaves localized to something nobody
+ * approved.
+ *
+ * Where the English has NO WORDS, the marks are the whole content, and
+ * the still-English test can only ask whether the candidate is built
+ * from those same marks. Anything else — one novel character is enough
+ * — comes out "not English", which the caller reads as translated. So
+ * `.` localized to `.!` passed: the English full stop plus unrelated
+ * punctuation, in a language whose full stop is `。` (Codex #1607 r20).
+ *
+ * The English bundle has FOUR such leaves, so requiring every locale to
+ * be accounted for is four keys of bookkeeping, not a tax. Each locale
+ * must either still show the English — recorded in the shrinkable
+ * baseline — or carry a policy entry naming its exact value. Measured
+ * before enforcing: five pairs needed entries, and every one is a real
+ * localization already argued for in review (the Hindi danda, the
+ * Japanese and Chinese ideographic stops, the Tamil clause, and the
+ * French `n°`).
+ *
+ * This is the same instrument round 1 chose over a pattern: when
+ * punctuation IS the content, a human says which punctuation is right.
+ */
+function unapprovedWordlessLocalizations(): string[] {
+  const out: string[] = [];
+  for (const key of englishLeafPaths()) {
+    const source = leafOrElement(en, key);
+    if (typeof source !== 'string' || hasLetters(source)) continue;
+    for (const code of translated) {
+      const bundle = bundleByLocale.get(code);
+      if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      const value = leafOrElement(bundle, key);
+      if (typeof value !== 'string') continue; // missing key — the other baseline
+      if (stillEnglish(source, value)) continue; // the baseline's business
+      const exemption = ACCEPTED_AS_TRANSLATED[key];
+      if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
+        continue;
+      }
+      out.push(`${code}:${key} = ${JSON.stringify(value)}`);
     }
   }
   return out;
@@ -1263,7 +1376,11 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
 // only one of them means the debt is gone.
 const needsReaudit = reauditNeeded();
 const policyStale = policyReauditNeeded();
-const policyUnused = unusedPolicyScopes();
+const invariantBroken = invariantViolations();
+const unapprovedMarks = unapprovedWordlessLocalizations();
+const policyUnused = unusedPolicyScopes(
+  new Set(unapprovedMarks.map((entry) => entry.split(' = ')[0])),
+);
 
 // Same stale sweep for the English-valued baseline: an entry that has
 // since been translated must LEAVE, or the exemption silently re-opens
@@ -1305,6 +1422,28 @@ if (needsReaudit.size > 0) {
       'each and update or remove it by hand: ' +
       [...needsReaudit].slice(0, 6).map(([k, why]) => `${k} (${why})`).join(', ') +
       (needsReaudit.size > 6 ? ', …' : ''),
+  );
+}
+if (invariantBroken.length > 0) {
+  problems.push(
+    `${invariantBroken.length} invariant polic(y/ies) no longer hold. These ` +
+      'values are recorded as unchangeable in every language — a brand name, ' +
+      'a standard acronym, a template with no words in it — so a different ' +
+      'value is a regression to restore, NOT an exemption to retire: ' +
+      `${invariantBroken.slice(0, 6).join('; ')}` +
+      (invariantBroken.length > 6 ? '; …' : ''),
+  );
+}
+if (unapprovedMarks.length > 0) {
+  problems.push(
+    `${unapprovedMarks.length} punctuation-only English leaf/leaves are ` +
+      'localized to a value nobody approved. Where the English has no words ' +
+      'at all, the marks ARE the content, so every locale must either still ' +
+      'show the English (recorded in the baseline) or carry an ' +
+      '`acceptedAsTranslated` entry naming its exact value — otherwise any ' +
+      'punctuation at all reads as a translation: ' +
+      `${unapprovedMarks.slice(0, 6).join('; ')}` +
+      (unapprovedMarks.length > 6 ? '; …' : ''),
   );
 }
 if (policyUnused.length > 0) {
