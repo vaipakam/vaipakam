@@ -118,15 +118,6 @@ function resolveGuide(
   };
 }
 
-/**
- * Locale of the guide document actually rendered — which is NOT the route
- * locale when a translation is missing and `resolveGuide` falls back to
- * English (#1610 review round 5). Nested renderers (`RoleTabs`,
- * `MarkdownChunk`) need it to format embedded values consistently with
- * the prose around them, and they are too deep to thread a prop through.
- */
-const DocLocaleContext = createContext('en');
-
 type Role = 'lender' | 'borrower';
 
 interface RoleContextValue {
@@ -217,9 +208,16 @@ interface RoleTabsProps {
   block: RoleTabBlock;
 }
 
-function RoleTabs({ block }: RoleTabsProps) {
+/**
+ * @param docLocale locale of the guide document actually rendered — NOT
+ * the route locale, which differs whenever `resolveGuide` falls back to
+ * English. Passed explicitly rather than read from a context: a context
+ * would silently default any renderer mounted outside its provider to
+ * English, mis-formatting a translated document with no error to notice
+ * (#1610 review round 6). A required prop makes that a compile error.
+ */
+function RoleTabs({ block, docLocale }: RoleTabsProps & { docLocale: string }) {
   const { role, setRole } = useRole();
-  const docLocale = useContext(DocLocaleContext);
   const body = role === 'lender' ? block.lender : block.borrower;
 
   return (
@@ -459,18 +457,13 @@ export default function UserGuide({ variant }: UserGuideProps) {
   );
 
   return (
-    // `DocLocaleContext` carries the locale of the document actually
-    // resolved — English when a translation is missing — so embedded
-    // values format like the prose around them rather than like the
-    // route (#1610 review round 5).
-    <DocLocaleContext.Provider value={usedLocale}>
-    {/* Standard sticky-footer flex column. `min-height: 100vh` on the
-        wrapper plus `flex: 1` on the main content guarantees that the
-        Footer is always anchored to the bottom — pushed below the
-        content when the page is long, parked at the viewport floor
-        when the page is short. Without this shell, on certain
-        viewport states the Footer can get pushed off-screen by sticky
-        children inside main and not show at all. */}
+    // Standard sticky-footer flex column. `min-height: 100vh` on the
+    // wrapper plus `flex: 1` on the main content guarantees that the
+    // Footer is always anchored to the bottom — pushed below the
+    // content when the page is long, parked at the viewport floor
+    // when the page is short. Without this shell, on certain
+    // viewport states the Footer can get pushed off-screen by sticky
+    // children inside main and not show at all.
     <div className="user-guide-page">
       <Navbar />
       <RoleContext.Provider value={ctx}>
@@ -507,9 +500,9 @@ export default function UserGuide({ variant }: UserGuideProps) {
               {fellBackToEnglish && <EnglishOnlyNotice variant="guide" />}
               {blocks.map((block, i) =>
                 block.kind === 'markdown' ? (
-                  <MarkdownChunk key={i} text={block.text} />
+                  <MarkdownChunk key={i} text={block.text} docLocale={usedLocale} />
                 ) : (
-                  <RoleTabs key={i} block={block} />
+                  <RoleTabs key={i} block={block} docLocale={usedLocale} />
                 ),
               )}
             </article>
@@ -518,13 +511,12 @@ export default function UserGuide({ variant }: UserGuideProps) {
       </RoleContext.Provider>
       <Footer />
     </div>
-    </DocLocaleContext.Provider>
   );
 }
 
 // Wrapper so the cast-narrow + plugin chain is in one place.
-function MarkdownChunk({ text }: { text: string }) {
-  const docLocale = useContext(DocLocaleContext);
+/** @param docLocale see {@link RoleTabs} — the document's locale, not the route's. */
+function MarkdownChunk({ text, docLocale }: { text: string; docLocale: string }) {
   // `as never` to satisfy react-markdown's strict plugin-tuple typing
   // while still passing our custom plugin through. The shape it
   // expects is a callable PluggableList; our plugin returns the right
