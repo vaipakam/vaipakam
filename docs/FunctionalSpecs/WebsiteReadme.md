@@ -583,6 +583,8 @@ Governance-configuration visibility:
 - a reader should be able to tell an embedded value from surrounding prose, and confirm on hover where the figure came from
 - an embedded value whose name is not recognised should render visibly as inline code rather than silently disappearing, so an authoring typo is obvious on the page instead of producing a confidently wrong number
 - a doc page that needs to DESCRIBE the embedding syntax itself should be able to show it literally inside a fenced code block without it being substituted
+- an embedded value should be formatted for the language of the document it appears in — grouping and decimal separators follow the reader's page, since English grouping on a page whose language reads a comma as a decimal point misstates the figure by orders of magnitude
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry the same resolved values as the human-facing pages, formatted for the same language, and should never expose the embedding syntax
 
 Foundational frontend migration requirements:
 

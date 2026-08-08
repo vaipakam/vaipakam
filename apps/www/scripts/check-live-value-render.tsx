@@ -46,13 +46,41 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
+import i18next from 'i18next';
+import { initReactI18next } from 'react-i18next';
 import { markdownComponents } from '../src/lib/markdownToc';
+import { substituteLiveValuesInMarkdown } from '../src/lib/liveValueKnobs';
+
+/*
+ * A minimal i18next instance. `LiveValue` reads the active locale (so its
+ * numbers group per the page's language), and that goes through
+ * `useTranslation`, which warns loudly and falls back to English without
+ * an initialised instance. Two reasons to initialise it rather than
+ * tolerate the warning: a guard that prints alarming output teaches
+ * people to skim past it, and without a real locale this file could only
+ * ever test English formatting — which is precisely the bug that made
+ * the formatting locale-aware in the first place.
+ */
+await i18next.use(initReactI18next).init({
+  lng: 'en',
+  fallbackLng: 'en',
+  resources: { en: { translation: {} }, de: { translation: {} }, fr: { translation: {} } },
+  interpolation: { escapeValue: false },
+});
 
 /** Render a markdown string through the real doc pipeline. */
 function render(markdown: string): string {
   return renderToStaticMarkup(
     <ReactMarkdown components={markdownComponents() as never}>{markdown}</ReactMarkdown>,
   );
+}
+
+/** Render with a given active language, for locale-formatting checks. */
+async function renderInLocale(markdown: string, lng: string): Promise<string> {
+  await i18next.changeLanguage(lng);
+  const html = render(markdown);
+  await i18next.changeLanguage('en');
+  return html;
 }
 
 const failures: string[] = [];
@@ -149,13 +177,82 @@ function check(name: string, ok: boolean, detail: string) {
   );
 }
 
+// 6. The MARKDOWN path, published to /docs/*.md and llms-full.txt and
+//    advertised to AI crawlers by llms.txt. Fixing only the React
+//    pipeline left 420 raw tokens in these artifacts (#1606 review), so
+//    the second substituter gets the same scrutiny as the first —
+//    including that the two agree, since they read one shared registry.
+{
+  const md = (text: string, locale = 'en') => substituteLiveValuesInMarkdown(text, locale);
+
+  check(
+    'markdown: inline token is substituted',
+    !md('Yield Fee — `{liveValue:treasuryFeeBps}`% of interest.').includes('liveValue:'),
+    `raw token survived: ${md('Yield Fee — `{liveValue:treasuryFeeBps}`%')}`,
+  );
+  check(
+    'markdown: fenced token stays literal',
+    md('```\n`{liveValue:treasuryFeeBps}`\n```').includes('liveValue:treasuryFeeBps'),
+    'a fenced token was substituted in the published markdown',
+  );
+  check(
+    'markdown: tilde-fenced token stays literal',
+    md('~~~\n`{liveValue:treasuryFeeBps}`\n~~~').includes('liveValue:treasuryFeeBps'),
+    'a tilde-fenced token was substituted in the published markdown',
+  );
+  check(
+    'markdown: indented token stays literal',
+    md('    `{liveValue:treasuryFeeBps}`').includes('liveValue:treasuryFeeBps'),
+    'an indented-block token was substituted in the published markdown',
+  );
+  check(
+    'markdown: unknown knob is left alone',
+    md('`{liveValue:treasuryFeebps}`').includes('liveValue:treasuryFeebps'),
+    'an unregistered knob was altered instead of left visible',
+  );
+  // The formatting bug that made this locale-aware: en-US grouping on a
+  // German page turns a 20,000-token threshold into something a German
+  // reader parses as twenty.
+  check(
+    'markdown: grouping follows the document locale',
+    md('`{liveValue:tier4Min}`', 'de') === '20.000' && md('`{liveValue:tier4Min}`', 'en') === '20,000',
+    `de gave "${md('`{liveValue:tier4Min}`', 'de')}", en gave "${md('`{liveValue:tier4Min}`', 'en')}"`,
+  );
+  check(
+    'markdown: decimal separator follows the document locale',
+    md('`{liveValue:loanInitiationFeeBps}`', 'fr') === '0,2' &&
+      md('`{liveValue:loanInitiationFeeBps}`', 'en') === '0.2',
+    `fr gave "${md('`{liveValue:loanInitiationFeeBps}`', 'fr')}", en gave "${md('`{liveValue:loanInitiationFeeBps}`', 'en')}"`,
+  );
+  // The RENDERED path must localise too — the markdown path passing is
+  // not evidence for it, since they format through the same helper but
+  // reach it by different routes (one from the file's locale, one from
+  // the active i18n language).
+  const deHtml = await renderInLocale('`{liveValue:tier4Min}`', 'de');
+  const enHtml = await renderInLocale('`{liveValue:tier4Min}`', 'en');
+  check(
+    'rendered: grouping follows the active language',
+    deHtml.includes('20.000') && enHtml.includes('20,000'),
+    `de HTML lacked "20.000" or en HTML lacked "20,000"`,
+  );
+
+  // Both substituters read KNOB_DEFAULTS, so a divergence means someone
+  // reintroduced a second source of truth.
+  const rendered = render('`{liveValue:treasuryFeeBps}`');
+  check(
+    'markdown and rendered paths agree',
+    rendered.includes(md('`{liveValue:treasuryFeeBps}`')),
+    `rendered HTML did not contain the markdown substitution "${md('`{liveValue:treasuryFeeBps}`')}"`,
+  );
+}
+
 if (failures.length > 0) {
   console.error(
-    `[check-live-value-render] FAILED — ${failures.length} of 15 checks\n${failures.join('\n')}\n`,
+    `[check-live-value-render] FAILED — ${failures.length} of 24 checks\n${failures.join('\n')}\n`,
   );
   process.exit(1);
 }
 
 console.log(
-  '[check-live-value-render] OK — 15 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak',
+  '[check-live-value-render] OK — 24 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak, and the published-markdown path matches the rendered one',
 );

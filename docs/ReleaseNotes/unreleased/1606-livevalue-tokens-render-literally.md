@@ -67,6 +67,29 @@ renderer had existed. The new fenced-block renderer would have added ten
 more of the same. Both are now stripped, and the new check asserts the
 attribute never comes back, so this cannot quietly resume either.
 
+Review then found the fix incomplete in two ways that mattered more than
+the mechanism. The published machine-readable copies of the same
+documents — the ones the site advertises to AI crawlers — were still being
+copied out verbatim, so 420 placeholders survived there after the rendered
+pages were clean; they are now substituted from the same single registry,
+so the two cannot disagree about what a value means. And the numbers were
+being formatted in English regardless of which translation a reader was
+on, which was harmless while nothing rendered and misleading the moment it
+worked: on a German page, English grouping turns a twenty-thousand-token
+threshold into something that reads as twenty. Both the pages and the
+published copies now format for the language of the document.
+
+One thing this surfaced that is not fixed here: the worked examples in the
+documents still calculate the older fee rates from before the rates were
+raised, so a reader can now see the correct rate in one sentence and an
+example computing the old one in the next. That is a content correction
+across ten translations, including derived totals that cannot be
+reconstructed from the text, so it is tracked separately rather than
+guessed at — publishing confidently wrong arithmetic in ten languages
+would be worse than a visible inconsistency. One unambiguous case, a
+constant contradicting the value beside it in the same sentence, is
+corrected here.
+
 Because the surviving mechanism now rests on that trailing-line-break
 property, the new check enumerates every way a document can produce a
 code element — inline in prose, in a list, in a quote, in a heading, in a
