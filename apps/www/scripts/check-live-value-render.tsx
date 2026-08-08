@@ -82,15 +82,29 @@ function renderWith(components: ReturnType<typeof markdownComponents>, markdown:
  * groups with "." regardless of what the formatter did.
  */
 /**
- * The rendered figure only, extracted from the `<span>` LiveValue emits.
+ * The rendered FIGURE, extracted from the markup by matching a numeric
+ * run — not by stripping tags.
  *
- * Separator assertions must not see the surrounding markup: the inline
- * style contains `var(--text-muted, #888)`, and that comma alone made an
- * "output must not contain the English separator" check fail against
- * correct German output. Assert on the value, not the element.
+ * Two reasons it is a targeted match rather than a tag strip:
+ *
+ *  - Separator assertions must not see surrounding markup. The inline
+ *    style contains `var(--text-muted, #888)`, and that comma alone made
+ *    an "output must not contain the English separator" check fail
+ *    against correct German output.
+ *  - A `replace(/<[^\>]*>/g, '')` tag strip is an incomplete sanitizer
+ *    (CodeQL flags it, correctly): one pass over `<<script>script>`
+ *    leaves `<script>`. Nothing here is user input and the result is only
+ *    compared against separator characters, so there was no exploit — but
+ *    a helper that LOOKS like a sanitizer invites reuse where the input
+ *    is hostile. Matching what we want is both safer and more precise.
+ *
+ * The character class covers the separators these locales actually use,
+ * including the narrow no-break space French groups with and Arabic-Indic
+ * digits, so a figure is not silently truncated to "".
  */
-function renderedValue(html: string): string {
-  return html.replace(/<[^>]*>/g, '');
+function renderedFigure(html: string): string {
+  const m = html.match(/>([\d\u0660-\u0669\u00A0\u202F.,\u066B\u066C]+)</);
+  return m ? m[1] : '';
 }
 
 function groupSeparator(locale: string): string {
@@ -316,8 +330,8 @@ function check(name: string, ok: boolean, detail: string) {
   const de = markdownComponents('de');
   // Same independent-oracle treatment as the markdown path: the
   // convention is checked against Intl, never against the formatter.
-  const enHtml = renderedValue(renderWith(en, '`{liveValue:tier4Min}`'));
-  const deHtml = renderedValue(renderWith(de, '`{liveValue:tier4Min}`'));
+  const enHtml = renderedFigure(renderWith(en, '`{liveValue:tier4Min}`'));
+  const deHtml = renderedFigure(renderWith(de, '`{liveValue:tier4Min}`'));
   check(
     'document locale is honoured over the active language',
     enHtml.includes(groupSeparator('en')) && !enHtml.includes(groupSeparator('de')),
