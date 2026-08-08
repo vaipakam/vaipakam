@@ -502,11 +502,19 @@ Thin-market honesty rules apply.
   recorded, dated, and enforced in both
   directions: a text that regresses to English fails the build, and one
   that gets translated must leave the record or the build fails too. The
-  record can only shrink. A handful of leaves legitimately read the same
-  in a given language (the product name, standard trading acronyms);
-  those are listed separately, each naming the languages it applies to
-  and carrying a written reason, rather than inferred from a pattern —
-  equality can be correct in one language and a regression in the next. See the dated row in
+  record can only shrink. The question asked is whether the text is
+  built from the same words as the English, in any order and whatever
+  the punctuation, spacing or invisible characters around them: an
+  English sentence rearranged into another language's word order is
+  still English to the person reading it. A handful of leaves are
+  correct despite matching (the product name, standard trading
+  acronyms, and one French heading that genuinely uses the same two
+  words the English does); those are listed separately, each naming the
+  languages it applies to, carrying a written reason, and recording the
+  exact wording it was granted against, rather than inferred from a
+  pattern — a match can be correct in one language and a regression in
+  the next, and a reworded string is a judgement nobody has made yet.
+  See the dated row in
   [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent above is
   deliberately left stated in full, because a spec narrowed to the
   surfaces that happen to be finished cannot be violated and would

@@ -735,6 +735,12 @@
       "hi"
     ]
   },
+  "copy.desk.orders.amendTitle": {
+    "source": "Amend in place — same offer, same position, one transaction.",
+    "locales": [
+      "hi"
+    ]
+  },
   "copy.desk.orders.amended": {
     "source": "Order amended.",
     "locales": [
@@ -782,6 +788,12 @@
   },
   "copy.desk.orders.saving": {
     "source": "Amending…",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.desk.orders.signedCancel": {
+    "source": "Cancel on-chain",
     "locales": [
       "hi"
     ]
@@ -1069,19 +1081,22 @@
   "copy.faucet.illiquid.action": {
     "source": "Mint {{units, number}} tILQ",
     "locales": [
-      "ar"
+      "ar",
+      "ko"
     ]
   },
   "copy.faucet.illiquid2.action": {
     "source": "Mint {{units, number}} tILQ2",
     "locales": [
-      "ar"
+      "ar",
+      "ko"
     ]
   },
   "copy.faucet.liquid.action": {
     "source": "Mint {{units, number}} tLIQ",
     "locales": [
-      "ar"
+      "ar",
+      "ko"
     ]
   },
   "copy.faucet.liquid2.action": {
@@ -1094,7 +1109,8 @@
   "copy.faucet.liquid2.actionGeneric": {
     "source": "Mint {{units, number}} test stablecoin",
     "locales": [
-      "ar"
+      "ar",
+      "ko"
     ]
   },
   "copy.faucet.liquid2.title": {
@@ -1129,7 +1145,8 @@
   "copy.faucet.mweth.action": {
     "source": "Mint {{units, number}} mWETH",
     "locales": [
-      "ar"
+      "ar",
+      "ko"
     ]
   },
   "copy.faucet.mweth.title": {
@@ -1642,6 +1659,12 @@
       "hi"
     ]
   },
+  "copy.preclose.action": {
+    "source": "Close early",
+    "locales": [
+      "hi"
+    ]
+  },
   "copy.receipt.fees": {
     "source": "Fees",
     "locales": [
@@ -1834,6 +1857,12 @@
     "source": "Submitting… ({{c}} of {{t}})",
     "locales": [
       "hi",
+      "ko"
+    ]
+  },
+  "copy.signing.phaseSign": {
+    "source": "Signing terms… ({{c}} of {{t}})",
+    "locales": [
       "ko"
     ]
   },

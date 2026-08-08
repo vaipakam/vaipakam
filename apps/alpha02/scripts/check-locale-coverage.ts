@@ -184,7 +184,7 @@ function reauditNeeded(): Map<string, string> {
  * which no other check can see: the key is present, the value is a
  * valid string, and there are no tokens to compare.
  */
-interface SameAsEnglishEntry {
+interface AcceptedAsTranslatedEntry {
   reason: string;
   /** The English value this exemption was granted against. If en.json
    *  moves on, the exemption is stale rather than silently inherited. */
@@ -200,14 +200,30 @@ interface SameAsEnglishEntry {
    * per-locale scope avoids both (Codex #1607 r2).
    */
   locales: string[];
+  /**
+   * The exact accepted value, per locale, where it is NOT the English
+   * one. Defaults to `source`.
+   *
+   * The word comparison is a MULTISET, so a translation built from the
+   * same words as the English is flagged whatever order they are in —
+   * necessary, because a rearranged English sentence still reads as
+   * English. French `Mode strict` for `Strict mode` is the case where
+   * that is wrong, and no rule can tell it from `content to Skip`
+   * without knowing French. Recording the accepted value makes the
+   * judgement explicit AND self-expiring: reword the French and it no
+   * longer matches, so the scope reports as unused rather than
+   * standing guard over a string nobody looked at again.
+   */
+  values?: Record<string, string>;
 }
 interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
   omissions: Record<string, { tokens: string[]; reason: string }>;
   empty: Record<string, string>;
-  /** key → why this leaf reads the same in every language, bound to
-   *  the English value the reason was written against (#1596). */
-  sameAsEnglish?: Record<string, SameAsEnglishEntry>;
+  /** key → why this leaf is correct despite matching the English word
+   *  for word, bound to the English value the reason was written
+   *  against (#1596). */
+  acceptedAsTranslated?: Record<string, AcceptedAsTranslatedEntry>;
 }
 const POLICY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -327,16 +343,28 @@ const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
  * new entry every time someone adds a template string, which is the
  * kind of ceremony people learn to skip.
  *
- * Everything else needs an explicit `sameAsEnglish` entry WITH A
+ * Everything else needs an explicit `acceptedAsTranslated` entry WITH A
  * REASON, because "it looks like a proper noun" is a judgement and
  * judgements belong in the record rather than in a regex. The list is
- * deliberately short: it is a brand name and three standard order-type
- * acronyms. Common UI words that happen to be untranslated — `Alerts`,
- * `Close`, `Revoke` — are NOT exempt; they go in the shrinkable
- * baseline, because they are a translation job rather than a decision.
+ * deliberately short — read it; it is not summarized here, because a
+ * summary of a list is the list stated twice. Common UI words that
+ * happen to be untranslated — `Alerts`, `Close`, `Revoke` — are NOT
+ * exempt; they go in the shrinkable baseline, because they are a
+ * translation job rather than a decision.
+ *
+ * Named for what it ASSERTS — "this locale's value is correct" — not
+ * for the shape that triggered the check. Most entries are identical to
+ * the English, but not all are: `values` records a locale value built
+ * from the same words in a different order, which is equally correct
+ * and equally invisible to a word comparison.
  */
-const SAME_AS_ENGLISH: Readonly<Record<string, SameAsEnglishEntry>> =
-  POLICY.sameAsEnglish ?? {};
+const ACCEPTED_AS_TRANSLATED: Readonly<
+  Record<string, AcceptedAsTranslatedEntry>
+> = POLICY.acceptedAsTranslated ?? {};
+
+/** The exact value this exemption accepts for `code`. */
+const acceptedValue = (entry: AcceptedAsTranslatedEntry, code: string): string =>
+  entry.values?.[code] ?? entry.source;
 
 /**
  * The shape above is a TypeScript interface over parsed JSON, which is
@@ -347,8 +375,8 @@ const SAME_AS_ENGLISH: Readonly<Record<string, SameAsEnglishEntry>> =
  * exists to prevent (Codex #1607 r2). Validated here, before any entry
  * is allowed to excuse anything.
  */
-for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
-  const where = `translation-policy.json sameAsEnglish["${key}"]`;
+for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+  const where = `translation-policy.json acceptedAsTranslated["${key}"]`;
   if (typeof entry?.reason !== 'string' || entry.reason.trim() === '') {
     throw new Error(`${where} has no reason — an exemption without a written justification is not reviewable`);
   }
@@ -364,12 +392,23 @@ for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
   if (unknown.length > 0) {
     throw new Error(`${where} names locale(s) that are not translated: ${unknown.join(', ')}`);
   }
+  // A `values` override for a locale the entry does not cover accepts
+  // nothing — it reads as an exemption and is inert, which is worse
+  // than absent.
+  for (const [code, value] of Object.entries(entry.values ?? {})) {
+    if (!entry.locales.includes(code)) {
+      throw new Error(`${where} records a value for "${code}", which is not in its locales`);
+    }
+    if (typeof value !== 'string' || value === '') {
+      throw new Error(`${where} records an empty value for "${code}" — record the exact accepted string`);
+    }
+  }
 }
 
 /**
- * `sameAsEnglish` scopes that are ARMED but not currently in use: the
- * policy names a locale whose value does not, right now, equal the
- * recorded English.
+ * `acceptedAsTranslated` scopes that are ARMED but not currently in
+ * use: the policy names a locale whose value has, right now, moved
+ * away from the one the entry accepts.
  *
  * An exemption is a statement about the present ("this locale reads the
  * same and that is correct"), not a standing permission. If the locale
@@ -381,11 +420,22 @@ for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
  */
 function unusedPolicyScopes(): string[] {
   const out: string[] = [];
-  for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
+  for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
     for (const code of entry.locales) {
       const bundle = bundleByLocale.get(code);
       if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
-      if (!stillEnglish(entry.source, leafOrElement(bundle, key))) {
+      // Against the ACCEPTED value, not the English one. An entry whose
+      // recorded French is reworded has had its judgement overtaken,
+      // and that is precisely when it should stop excusing anything.
+      //
+      // Still the loose comparison, not exact equality. A value that is
+      // near the accepted one — the brand name lowercased — fails the
+      // exact test in `englishValuedLeaves` and is reported there, with
+      // the advice to fix the casing. Reporting it here TOO would add a
+      // second message advising the opposite (narrow the scope), and
+      // one edit producing two contradictory instructions is worse than
+      // one clear one.
+      if (!stillEnglish(acceptedValue(entry, code), leafOrElement(bundle, key))) {
         out.push(`${code}:${key}`);
       }
     }
@@ -394,8 +444,9 @@ function unusedPolicyScopes(): string[] {
 }
 
 /**
- * `sameAsEnglish` entries whose recorded English no longer matches, so
- * the written reason may no longer describe the string it excuses.
+ * `acceptedAsTranslated` entries whose recorded English no longer
+ * matches, so the written reason may no longer describe the string it
+ * excuses.
  *
  * There are deliberately NO pattern-based exemptions. An earlier draft
  * excused any value made only of interpolation tokens, and any value
@@ -410,7 +461,7 @@ function unusedPolicyScopes(): string[] {
  */
 function policyReauditNeeded(): string[] {
   const out: string[] = [];
-  for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
+  for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
     const current = leafOrElement(en, key);
     if (typeof current !== 'string') {
       out.push(`${key} (no longer a string leaf in en.json)`);
@@ -461,32 +512,43 @@ function policyReauditNeeded(): string[] {
  * English one.
  */
 /**
- * What a reader actually sees: default-ignorable code points removed
- * and the ends trimmed. They render as nothing, so they can never be
- * the difference between two visible strings.
+ * Default-ignorable code points removed. They render as nothing, so
+ * they can never be the difference between two visible strings — and
+ * every comparison below is about what a reader sees, so every one of
+ * them drops these first.
  */
+const stripIgnorable = (value: string): string =>
+  value.replace(/\p{Default_Ignorable_Code_Point}/gu, '');
+
+/** What a reader actually sees, ends trimmed. */
 const visibleForm = (value: string): string =>
-  value
-    // NFKC, matching `wordsOf`: compatibility-equivalent punctuation is
-    // the same mark on screen. `．` (U+FF0E) is the English full stop
-    // wearing a wide glyph, and comparing NFC let it through (Codex
-    // #1607 r10). NFKC folds it to `.` while leaving `。` alone, which
-    // is the distinction rounds 1 and 4 turned on.
-    .normalize('NFKC')
-    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
-    .trim();
+  // NFKC, matching `wordsOf`: compatibility-equivalent punctuation is
+  // the same mark on screen. `．` (U+FF0E) is the English full stop
+  // wearing a wide glyph, and comparing NFC let it through (Codex
+  // #1607 r10). NFKC folds it to `.` while leaving `。` alone, which
+  // is the distinction rounds 1 and 4 turned on.
+  stripIgnorable(value.normalize('NFKC')).trim();
 
 const wordsOf = (value: string): string[] =>
-  (value
-    // Interpolation tokens are removed first. They are not prose, and
-    // their identifiers are not words: `({{c}} of {{t}})` reordered to
-    // `({{t}} of {{c}})` produced a different "word" sequence and was
-    // called a translation, while every visible word stayed English —
-    // and `placeholderDrift` deliberately PERMITS that reordering,
-    // because grammar requires it. Whether the tokens are right is its
-    // job; whether the prose is English is this one's (Codex #1607 r8).
-    .replace(/\{\{[^}]*\}\}/g, ' ')
-    .normalize('NFKC')
+  (stripIgnorable(
+    value
+      // Interpolation tokens are removed first. They are not prose, and
+      // their identifiers are not words: `({{c}} of {{t}})` reordered to
+      // `({{t}} of {{c}})` produced a different "word" sequence and was
+      // called a translation, while every visible word stayed English —
+      // and `placeholderDrift` deliberately PERMITS that reordering,
+      // because grammar requires it. Whether the tokens are right is its
+      // job; whether the prose is English is this one's (Codex #1607 r8).
+      .replace(/\{\{[^}]*\}\}/g, ' ')
+      .normalize('NFKC'),
+  )
+    // Invisible characters are dropped BEFORE tokenizing, not after.
+    // A zero-width space inside a word splits it into two: `Set​tings`
+    // tokenized as `set` + `tings`, which matches no English word list
+    // and passed as a translation while rendering as "Settings" (Codex
+    // #1607 r11). The wordless path already stripped them; the worded
+    // path did not, so the same character defeated one check and not
+    // the other.
     .toLowerCase()
     .match(/[\p{L}\p{N}]+/gu) ?? []);
 
@@ -512,10 +574,26 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // against `Refinance carry over collateral shortfall` in English is
   // English with a hyphen added, and `Mock USD Coin（{{symbol}}）` is
   // English with localized brackets. 11 such leaves were passing.
-  return (
-    sourceWords.length === candidateWords.length &&
-    sourceWords.every((word, i) => word === candidateWords[i])
-  );
+  //
+  // As a MULTISET, not a sequence. Word order is grammar, not
+  // vocabulary, and it is the first thing translation changes — so a
+  // sequence comparison excused the very edit most likely to be a
+  // rearranged English sentence: `Skip to content` written as
+  // `content to Skip` is three English words a reader reads as English,
+  // and it passed (Codex #1607 r11). Requiring the same words with the
+  // same multiplicities keeps every case above working — none of them
+  // turned on order — while a genuine translation still has to change
+  // at least one word, which is the lowest bar this check can set.
+  if (sourceWords.length !== candidateWords.length) return false;
+  const remaining = new Map<string, number>();
+  for (const word of sourceWords) remaining.set(word, (remaining.get(word) ?? 0) + 1);
+  for (const word of candidateWords) {
+    const left = remaining.get(word);
+    if (left === undefined) return false;
+    if (left === 1) remaining.delete(word);
+    else remaining.set(word, left - 1);
+  }
+  return remaining.size === 0;
 };
 
 /**
@@ -564,8 +642,10 @@ function englishValuedLeaves(code: string, bundle: Bundle): string[] {
     // acronym entries would likewise have excused `gtc` / `Aon`. Let
     // anything short of exact fall through to the baseline check
     // (Codex #1607 r4).
-    const exemption = SAME_AS_ENGLISH[key];
-    if (exemption?.locales.includes(code) && value === exemption.source) continue;
+    const exemption = ACCEPTED_AS_TRANSLATED[key];
+    if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
+      continue;
+    }
     found.push(key);
   }
   return found;
@@ -858,18 +938,6 @@ for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
   }
 }
 
-/**
- * The recorded pair count is quoted in three documents, and it went
- * stale three times in this one change — corrected in the audit row,
- * then in the spec, then in the release note, each time by hand and
- * each time missing one. A number that lives in four places and is
- * maintained by remembering is a number that will be wrong.
- *
- * Checked here instead: each doc must contain the current total
- * somewhere. It is a deliberately loose check — reword the prose all
- * you like, but do not leave a figure behind that contradicts the file
- * it describes (#1596).
- */
 const pruning = process.argv.includes('--prune');
 // In prune mode the stale pairs are about to be REMOVED, so they aren't
 // a problem — but every other problem still is (see below).
@@ -894,8 +962,8 @@ if (needsReaudit.size > 0) {
 }
 if (policyUnused.length > 0) {
   problems.push(
-    `${policyUnused.length} sameAsEnglish scope(s) name a locale that does ` +
-      'not currently hold the recorded English — an exemption is a statement ' +
+    `${policyUnused.length} acceptedAsTranslated scope(s) name a locale that ` +
+      'does not currently hold the value the entry accepts — an exemption is a statement ' +
       'about the present, and one left armed will silently excuse a future ' +
       `regression. Narrow the locale list: ${policyUnused.slice(0, 6).join(', ')}` +
       (policyUnused.length > 6 ? ', …' : ''),
@@ -903,7 +971,7 @@ if (policyUnused.length > 0) {
 }
 if (policyStale.length > 0) {
   problems.push(
-    `${policyStale.length} sameAsEnglish polic(y/ies) record an English ` +
+    `${policyStale.length} acceptedAsTranslated polic(y/ies) record an English ` +
       'string that en.json no longer has — the written reason may no longer ' +
       `describe what it excuses: ${policyStale.slice(0, 6).join(', ')}` +
       (policyStale.length > 6 ? ', …' : ''),
@@ -1025,9 +1093,12 @@ if (problems.length > 0) {
         'which OVERWRITES and re-translates that entire bundle — paid, and\n' +
         'it discards existing wording, so prefer merge-patch for a handful.\n' +
         'Prune the baseline as they land. If a leaf genuinely reads the\n' +
-        'same in that language, give it a `sameAsEnglish` entry with a\n' +
-        'reason AND the English it was granted against, in\n' +
-        'src/i18n/translation-policy.json.',
+        'same in that language — or is built from the same words in a\n' +
+        'different order, which is a real translation the word comparison\n' +
+        'cannot tell from a rearranged English sentence — give it an\n' +
+        '`acceptedAsTranslated` entry with a reason AND the English it was\n' +
+        'granted against, in src/i18n/translation-policy.json. Where the\n' +
+        'locale value is not the English one, record it under `values`.',
     );
   }
   process.exit(1);

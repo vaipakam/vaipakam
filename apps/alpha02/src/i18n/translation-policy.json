@@ -13,11 +13,15 @@
     "  recovery page compares against the same word).",
     "omissions / empty — the narrow linguistic exemptions, bound to the",
     "  exact locale:key(:token) so each excuses itself and nothing else.",
-    "sameAsEnglish — leaves that legitimately read the same in a given",
-    "  language, so being identical to the English is not evidence of a",
+    "acceptedAsTranslated — leaves whose value is CORRECT even though it",
+    "  matches the English word for word, so the match is not evidence of a",
     "  gap. Each entry carries a written reason AND the English value it",
     "  was granted against: if en.json moves on, the exemption goes stale",
-    "  and is reported rather than silently inherited.",
+    "  and is reported rather than silently inherited. Most entries are",
+    "  identical to the English; where a locale is instead built from the",
+    "  same words in a different order (French 'Mode strict' for 'Strict",
+    "  mode'), record that exact value under 'values' so rewording it",
+    "  retires the exemption instead of leaving it armed.",
     "  There are deliberately NO pattern-based exemptions. Punctuation is",
     "  localized (consentParts.suffix is '.' in English and '。' in",
     "  Chinese), so a no-letters rule would have let a real localization",
@@ -52,7 +56,7 @@
   "empty": {
     "ja:copy.consentParts.prefix": "Japanese puts the verb last; the suffix carries the agreement the English states up front"
   },
-  "sameAsEnglish": {
+  "acceptedAsTranslated": {
     "copy.app.name": {
       "reason": "The product name. A brand is not translated.",
       "source": "Vaipakam",
@@ -157,6 +161,16 @@
         "ta",
         "zh"
       ]
+    },
+    "copy.riskAccess.strict.title": {
+      "reason": "French 'Mode strict' is the correct rendering of 'Strict mode' — the noun-adjective order is French grammar, and both words are French. The word comparison is a multiset, so it cannot tell this from a rearranged English sentence; the accepted French is recorded below so rewording it retires this entry.",
+      "source": "Strict mode",
+      "locales": [
+        "fr"
+      ],
+      "values": {
+        "fr": "Mode strict"
+      }
     }
   }
 }
