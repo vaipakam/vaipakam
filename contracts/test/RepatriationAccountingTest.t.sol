@@ -77,6 +77,11 @@ contract RepatriationAccountingTest is SetupTest {
 
     function _arm() internal {
         _repat().setRepatriationEndpoints(address(0), RECEIVER);
+        // #1618 r3 — an unarmed lane refuses authorization (fail-closed
+        // per-destination ceiling). Type-max keeps the ceiling out of this
+        // suite's way: it pins the ACCOUNTING core, including hostile
+        // near-max draw magnitudes a finite ceiling would fence off.
+        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, type(uint256).max);
     }
 
     // ── Dark by default ─────────────────────────────────────────────────────

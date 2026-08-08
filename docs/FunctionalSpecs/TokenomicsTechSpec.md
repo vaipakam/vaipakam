@@ -1177,8 +1177,11 @@ of any implementation:
   refused at issuance, and the deploy tooling arms each destination's
   ceiling with the **minimum of the two capacities its return would
   consume** (the sending chain's outbound limit and the canonical chain's
-  inbound one), falling back to the local capacity — never wider — when the
-  other side's figure is not yet recorded
+  inbound one). A destination with **no ceiling armed refuses
+  authorization entirely** — while the other side's capacity is not yet
+  recorded, no bound is known-safe, so "not configured" means "not
+  authorizable", never "unbounded"; the tooling arms the lane once the
+  mirror's recorded figure is available
 - the entire surface is **inert on any deployment where the repatriation
   transport is not explicitly configured**
 

@@ -724,34 +724,37 @@ contract ConfigureCcip is Script {
                 "Diamond repatriation receiver armed ->", c.localReturnHandler
             );
             // PER-DESTINATION per-authorization ceilings (Codex #1618
-            // r1+r2 P2): a return consumes BOTH the mirror pool's
+            // r1+r2+r3 P2): a return consumes BOTH the mirror pool's
             // outbound limiter and Base's inbound one, and a single
             // message above either is rejected permanently — so each
             // mirror's ceiling is the MINIMUM of Base's local capacity
             // and the capacity that mirror RECORDED when its own
             // ConfigureCcip pass ran (`.ccipRateCapacity` in its
-            // artifact). A mirror configured after this pass reads zero
-            // → fall back to the local capacity and say so; re-running
-            // this script on Base (the documented "re-run on every
-            // chain" flow) then tightens it. Never widened silently: the
-            // fallback equals today's local bound.
+            // artifact). FAIL CLOSED when the mirror's figure is not yet
+            // recorded (r3: the runbook runs Base first, so a
+            // local-capacity fallback would install Base's LARGER bound
+            // and the mirror's later pass never repairs it): the lane is
+            // simply not armed, the facet refuses authorizations toward
+            // an unarmed lane, and the documented re-run on Base after
+            // the mirrors' passes arms it with the true minimum.
             for (uint256 i; i < c.laneChainIds.length; ++i) {
                 uint256 cid = c.laneChainIds[i];
                 if (_isCanonical(cid)) continue;
                 uint256 remoteCap = Deployments.readUintForChainOptional(
                     cid, ".ccipRateCapacity"
                 );
-                uint256 ceiling = uint256(c.rateCapacity);
-                if (remoteCap != 0 && remoteCap < ceiling) {
-                    ceiling = remoteCap;
-                } else if (remoteCap == 0) {
+                if (remoteCap == 0) {
                     console.log(
-                        "  NOTE: no recorded capacity for mirror", cid
+                        "  SKIP repatriation ceiling for mirror", cid
                     );
                     console.log(
-                        "  falling back to the local capacity - re-run on Base after that mirror's ConfigureCcip pass"
+                        "    no recorded capacity yet - the lane stays UN-AUTHORIZABLE until ConfigureCcip re-runs on this chain after that mirror's pass"
                     );
+                    continue;
                 }
+                uint256 ceiling = uint256(c.rateCapacity) < remoteCap
+                    ? uint256(c.rateCapacity)
+                    : remoteCap;
                 IRepatriationConfig(diamond).setRepatriationMaxPerAuth(
                     SafeCast.toUint32(cid), ceiling
                 );

@@ -199,11 +199,15 @@ contract RepatriationTransportTest is SetupTest {
         return RepatriationFacet(address(diamond));
     }
 
-    /// Take the Base role: canonical, receiver satellite armed.
+    /// Take the Base role: canonical, receiver satellite armed, and the
+    /// ARB lane's fail-closed ceiling armed generously (#1618 r3 — an
+    /// unarmed lane refuses authorization; tests about the ceiling itself
+    /// re-arm it explicitly).
     function _armBase() internal {
         vm.chainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         _repat().setRepatriationEndpoints(address(0), address(returnReceiver));
+        _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 1_000_000 ether);
     }
 
     /// Take the mirror role: non-canonical, sender satellite armed.
@@ -325,10 +329,19 @@ contract RepatriationTransportTest is SetupTest {
             )
         );
         _repat().authorizeRepatriation(CHAIN_ARB, 30 ether + 1);
-        // Exactly at the ceiling passes; zero re-disables the bound.
+        // Exactly at the ceiling passes.
         _repat().authorizeRepatriation(CHAIN_ARB, 30 ether);
+        // Zero DARKENS the lane — never "unbounded" (#1618 r3): while no
+        // ceiling is armed, no bound is known-safe, so authorization
+        // refuses the destination outright.
         _repat().setRepatriationMaxPerAuth(CHAIN_ARB, 0);
-        _repat().authorizeRepatriation(CHAIN_ARB, 60 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationLaneCeilingUnset.selector,
+                CHAIN_ARB
+            )
+        );
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
     }
 
     function test_MaxPerAuthCeiling_IsPerDestination() public {

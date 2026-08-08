@@ -224,6 +224,12 @@ contract RepatriationFacet is
     ///         (sized to the CCIP lane capacity — a single return above it
     ///         could never deliver, stranding the draw until cancellation).
     error RepatriationExceedsPerAuthMax(uint256 requested, uint256 maxPerAuth);
+    /// @notice No per-authorization ceiling is configured for this
+    ///         destination — the lane is un-authorizable until the operator
+    ///         arms one (fail-closed: without the mirror side's recorded
+    ///         capacity, ANY guessed bound can exceed the mirror's outbound
+    ///         limiter and strand the draw; Codex #1618 r3).
+    error RepatriationLaneCeilingUnset(uint32 dstChainId);
     /// @notice The referenced authorization is not in the required state.
     error RepatriationAuthNotPending(uint256 authId, uint8 status);
     /// @notice The return/cancel names a different issuing deployment — a
@@ -304,16 +310,22 @@ contract RepatriationFacet is
         if (amount > avail) {
             revert RepatriationExceedsAvailability(amount, avail);
         }
-        // Lane-capacity ceiling (Codex #1618 r1+r2 P2): the return is ONE
-        // token message consuming BOTH sides' rate limiters, and a single
-        // CCIP request above either capacity is rejected PERMANENTLY (not
-        // queued behind refill) — an over-capacity authorization would
-        // charge a draw that can only ever be released by the
-        // cancellation ceremony. Refuse it at issuance instead, against
-        // THIS destination's ceiling (capacities may diverge per lane).
-        // Zero = no ceiling configured for the lane.
+        // Lane-capacity ceiling (Codex #1618 r1+r2+r3 P2): the return is
+        // ONE token message consuming BOTH sides' rate limiters, and a
+        // single CCIP request above either capacity is rejected
+        // PERMANENTLY (not queued behind refill) — an over-capacity
+        // authorization would charge a draw that can only ever be
+        // released by the cancellation ceremony. Refuse it at issuance
+        // against THIS destination's ceiling (capacities may diverge per
+        // lane), and FAIL CLOSED while no ceiling is armed: the deploy
+        // tooling only arms a lane once the mirror side's capacity is
+        // recorded, so an unarmed lane means the safe bound is simply
+        // not known yet — any guessed default could exceed the mirror's
+        // outbound limiter (r3: the Base-first runbook order made the
+        // earlier local-capacity fallback exactly that guess).
         uint256 maxPer = s.repatriationMaxPerAuth[dstChainId];
-        if (maxPer != 0 && amount > maxPer) {
+        if (maxPer == 0) revert RepatriationLaneCeilingUnset(dstChainId);
+        if (amount > maxPer) {
             revert RepatriationExceedsPerAuthMax(amount, maxPer);
         }
         s.chainRepatriationDebited[dstChainId] += amount;
@@ -740,10 +752,11 @@ contract RepatriationFacet is
      *         ceremony releases it. Per-destination because capacities
      *         may legitimately diverge per lane (Codex #1618 r2 — a
      *         single global ceiling read from the local capacity misses
-     *         a lower-configured mirror). Zero disables the destination's
-     *         ceiling (the pre-arming default; kept legal because a dark
-     *         deployment has nothing to bound and issuance is ADMIN-gated
-     *         regardless).
+     *         a lower-configured mirror). Zero DARKENS the destination —
+     *         authorization refuses an unarmed lane (r3): while the
+     *         mirror side's capacity is unrecorded there is no bound that
+     *         is known-safe, so "not configured" must mean "not
+     *         authorizable", never "unbounded".
      */
     function setRepatriationMaxPerAuth(uint32 dstChainId, uint256 newMax)
         external
@@ -756,7 +769,8 @@ contract RepatriationFacet is
         s.repatriationMaxPerAuth[dstChainId] = newMax;
     }
 
-    /// @notice A destination's per-authorization ceiling (0 = unbounded).
+    /// @notice A destination's per-authorization ceiling (0 = the lane is
+    ///         unarmed and refuses authorization — never "unbounded").
     function getRepatriationMaxPerAuth(uint32 dstChainId)
         external
         view

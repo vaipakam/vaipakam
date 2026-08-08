@@ -222,6 +222,20 @@ contract MeshLedgerInvariant is Test {
         RepatriationFacet(address(diamond)).setRepatriationEndpoints(
             address(0), address(handler)
         );
+        // #1618 r3 — an UNARMED lane refuses authorization (fail-closed
+        // ceiling), so arm every chain the handler draws against at the
+        // type-max: the suite deliberately drives HOSTILE near-max draws,
+        // and any finite ceiling here would fence the fuzz away from
+        // exactly the magnitudes the §7 #6 second term is pinned against.
+        RepatriationFacet(address(diamond)).setRepatriationMaxPerAuth(
+            CHAIN_ARB, type(uint256).max
+        );
+        RepatriationFacet(address(diamond)).setRepatriationMaxPerAuth(
+            CHAIN_OP, type(uint256).max
+        );
+        RepatriationFacet(address(diamond)).setRepatriationMaxPerAuth(
+            CHAIN_BASE, type(uint256).max
+        );
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits
         // `Test`, which brings hundreds of public cheatcode/assertion helpers

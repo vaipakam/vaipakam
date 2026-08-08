@@ -890,6 +890,17 @@
   },
   {
     "type": "error",
+    "name": "RepatriationLaneCeilingUnset",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RepatriationMessengerNotSet",
     "inputs": []
   },

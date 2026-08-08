@@ -6182,8 +6182,10 @@ library LibVaipakam {
         //   (r2: one global ceiling read from Base's own capacity misses
         //   a lower-configured mirror). The deploy tooling arms each
         //   destination to min(local capacity, that mirror's recorded
-        //   capacity). Zero = unbounded (the pre-arming default;
-        //   authorize is ADMIN-gated either way).
+        //   capacity), and SKIPS a lane whose mirror capacity is not yet
+        //   recorded. Zero = the lane is UNARMED and authorization
+        //   refuses it (r3 fail-closed: an unrecorded mirror capacity
+        //   means no bound is known-safe — never "unbounded").
         mapping(uint32 => uint256) repatriationMaxPerAuth;
     }
 

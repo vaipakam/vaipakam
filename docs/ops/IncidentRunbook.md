@@ -844,8 +844,10 @@ command and for the case-sensitivity trap between the two guards.
 > tracked on #250 Phase 1 (Tenderly presets). For a suspected cross-chain
 > problem today, the authoritative enumeration of the live pausable
 > cross-chain set is **`contracts/script/pause-all-chains.sh`** — it names
-> `ccipMessenger`, `buybackRemittanceReceiver` and
-> `rewardRemittanceReceiver` alongside the mirror token.
+> `ccipMessenger`, `buybackRemittanceReceiver`,
+> `rewardRemittanceReceiver` and the #1568 C2 vpfi-return channel
+> endpoints (`vpfiReturnSender` / `vpfiReturnReceiver`) alongside the
+> mirror token.
 >
 > `contracts/RUNBOOK.md` §10 describes the pause MECHANICS, but its list is
 > itself stale: it names the removed `VpfiBuyAdapter` / `VpfiBuyReceiver`

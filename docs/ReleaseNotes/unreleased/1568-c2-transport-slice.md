@@ -43,8 +43,15 @@ What shipped, in behaviour terms:
   cancellation — is now refused at issuance instead. The deploy tooling
   arms each destination with the minimum of the two capacities its
   return would consume (each chain records its configured capacity for
-  the canonical chain to read), falling back to the local capacity —
-  never wider — until the other side's figure is recorded.
+  the canonical chain to read). A destination with no ceiling armed
+  **refuses authorization entirely** — until the other side's figure is
+  recorded no bound is known-safe, so an unconfigured lane is
+  un-authorizable rather than unbounded.
+- The incident tooling knows the new endpoints: the all-chains pause
+  sweep and the testnet pause rehearsal both enumerate the return
+  channel's sender and receiver, so an incident pause engages — and its
+  completion check verifies — the channel's own containment, not just
+  the surrounding surfaces'.
 - The mesh watcher now understands repatriation: the availability figure
   it re-derives nets out live draws, a new check pages if authorized
   draws ever exceed what a chain reported holding, and the bucket
