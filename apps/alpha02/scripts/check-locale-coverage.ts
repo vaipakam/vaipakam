@@ -469,7 +469,18 @@ const visibleForm = (value: string): string =>
   value.normalize('NFC').replace(/\p{Default_Ignorable_Code_Point}/gu, '').trim();
 
 const wordsOf = (value: string): string[] =>
-  (value.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+  (value
+    // Interpolation tokens are removed first. They are not prose, and
+    // their identifiers are not words: `({{c}} of {{t}})` reordered to
+    // `({{t}} of {{c}})` produced a different "word" sequence and was
+    // called a translation, while every visible word stayed English —
+    // and `placeholderDrift` deliberately PERMITS that reordering,
+    // because grammar requires it. Whether the tokens are right is its
+    // job; whether the prose is English is this one's (Codex #1607 r8).
+    .replace(/\{\{[^}]*\}\}/g, ' ')
+    .normalize('NFKC')
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu) ?? []);
 
 const stillEnglish = (source: string, candidate: unknown): boolean => {
   if (typeof candidate !== 'string') return false;

@@ -1087,7 +1087,8 @@
   "copy.faucet.liquid2.action": {
     "source": "Mint {{units, number}} {{symbol}}",
     "locales": [
-      "ar"
+      "ar",
+      "ko"
     ]
   },
   "copy.faucet.liquid2.actionGeneric": {
