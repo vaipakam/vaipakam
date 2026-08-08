@@ -1137,6 +1137,41 @@ Founder and contributor compensation:
 - genesis founder, team, early-contributor, and ecosystem grants should use per-grantee vesting wallets with the approved cliff and linear-release terms
 - real genesis funding actions, including founder grants and salary-stream activation, should remain gated on legal sign-off before token generation
 
+### 9b. Planned-surplus repatriation — authorization accounting (dark until transport is configured)
+
+The platform can deliberately move a mirror chain's surplus recycled value
+back to the canonical chain. The intended accounting behaviour, independent
+of any implementation:
+
+- moving surplus is always a **deliberate, bounded, authorized act** — never
+  an automatic consequence of the surplus flag (which remains an operator
+  signal only, §9a)
+- issuing an authorization immediately **stops the authorized amount being
+  offered to later funding rounds** on that chain, before anything moves;
+  an instruction that may still execute must never be double-spendable by
+  the daily mesh
+- an authorization ends in exactly one of two ways: the value **arrives**
+  (closing the record — a transfer-fee gap on the return leg is recorded
+  openly against the authorization, never silently resized), or the mirror
+  **confirms cancellation** (restoring the amount to that chain's offerable
+  availability). Proof that an instruction has not executed *yet* is not a
+  release condition — only the mirror's authenticated confirmation is
+- an authorization binds to the issuing deployment, its target chain and its
+  exact amount: a return from any other chain, deployment era, or of any
+  other declared amount is refused
+- a repatriation is tracked in its **own** ledger, never by the counters
+  that track reward consumption or reward payout — repatriated value is
+  neither a reward spent nor a reward paid
+- value arriving back on the canonical chain re-enters the books as a
+  **custody relocation**, never as new absorption: it was counted once when
+  first absorbed, and the transparency figures that size reward budgets must
+  not count it twice
+- a mirror may only ever part with genuinely **un-reserved** surplus — value
+  backing outstanding claim commitments or the keeper earmark is never
+  movable
+- the entire surface is **inert on any deployment where the repatriation
+  transport is not explicitly configured**
+
 ---
 
 ## 10. Multi-Chain Deployment Strategy

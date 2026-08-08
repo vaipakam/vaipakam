@@ -84,6 +84,7 @@ import RewardReporterFacetABI from './RewardReporterFacet.json';
 import RewardAggregatorFacetABI from './RewardAggregatorFacet.json';
 import RewardRemittanceFacetABI from './RewardRemittanceFacet.json';
 import RewardCommitmentFacetABI from './RewardCommitmentFacet.json';
+import RepatriationFacetABI from './RepatriationFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
@@ -177,6 +178,7 @@ export {
   RewardAggregatorFacetABI,
   RewardRemittanceFacetABI,
   RewardCommitmentFacetABI,
+  RepatriationFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,
   LegalFacetABI,
