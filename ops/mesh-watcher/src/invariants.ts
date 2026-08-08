@@ -48,13 +48,14 @@ export interface BaseChainBooks {
    * maintained in place, never derived from a cumulative pair);
    * `lifetimeReleased` is the monotonic release observability.
    *
-   * `undefined` means UNKNOWN — the view failed for a reason other than
-   * a missing selector, so the true draw may be nonzero and every
-   * draw-dependent check must SKIP (substituting zero would page a false
-   * CRITICAL on a chain with a live draw — Codex #1618 r1). A pre-C2
-   * Diamond, positively identified by its missing-selector revert, is
-   * recorded as `{0n, 0n}` instead: there zero is the KNOWN value and
-   * the checks keep their coverage. `mesh.ts` makes the distinction.
+   * `undefined` means UNKNOWN — the view could not be read, for ANY
+   * reason INCLUDING a missing selector (a partial facet refresh leaves
+   * possibly-nonzero storage behind a reverting view, so selector
+   * absence proves nothing about the value — Codex #1618 r1/r5). The
+   * true draw may be nonzero, so every draw-dependent check must SKIP:
+   * substituting zero would page a false CRITICAL on a chain with a
+   * live draw. A readable view on a genuinely pre-C2-shaped ledger
+   * reads zero, which needs no special case.
    */
   repat?: { netDraw: bigint; lifetimeReleased: bigint };
 }
@@ -122,12 +123,12 @@ export interface LocalLedger {
    * #1568 C2 — `recycleRepatriatedOutCumulative`: lifetime VPFI this
    * chain's bucket has repatriated to Base. A DESTINATION term in the
    * bucket composition and part of the reported-cumulative floor.
-   * `undefined` means UNKNOWN (a non-missing-selector read failure) and
-   * every check that consumes the term must SKIP for this chain — after
-   * a real repatriation, substituting zero deletes a genuine destination
-   * and pages a false over-credit CRITICAL (Codex #1618 r1). A pre-C2
-   * Diamond is recorded as `0n` (the KNOWN value; its missing-selector
-   * revert is the positive identification — `mesh.ts` decides).
+   * `undefined` means UNKNOWN — any read failure, missing selector
+   * included (a partial facet refresh leaves possibly-nonzero storage
+   * behind a reverting view — Codex #1618 r1/r5) — and every check that
+   * consumes the term must SKIP for this chain: after a real
+   * repatriation, substituting zero deletes a genuine destination and
+   * pages a false over-credit CRITICAL.
    */
   repatriatedOut?: bigint;
   outstandingFresh: bigint;
@@ -290,9 +291,9 @@ export function satSub(a: bigint, b: bigint): bigint {
  * would make `availability-formula` fire on healthy state.
  *
  * #1568 C2 — the repatriation NET draw is the third term, subtracted after
- * the claim netting exactly as `mirrorAvailRecycled` does. A pre-C2
- * Diamond carries a known-zero `repat` (its formula HAS no third term and
- * zero reproduces it); an UNKNOWN draw (`repat === undefined`) means the
+ * the claim netting exactly as `mirrorAvailRecycled` does. An UNKNOWN
+ * draw (`repat === undefined` — any failed read, missing selector
+ * included, per the r5 partial-refresh rule in `mesh.ts`) means the
  * caller must not evaluate availability at all this tick — the `?? 0n`
  * here exists only so this stays a total function, and
  * `checkHardInvariants` gates on definedness before relying on it.
@@ -501,8 +502,10 @@ export function checkHardInvariants(
     // live draw this Worker could not read, so re-deriving with zero
     // manufactures a disagreement on healthy state — a false CRITICAL,
     // the worst output this Worker can produce. The read failure is
-    // already reported as a `base-books-repat` coverage gap; a pre-C2
-    // Diamond arrives here with a KNOWN-ZERO draw and is still checked.
+    // already reported as a `base-books-repat` coverage gap. UNKNOWN
+    // includes a missing selector (r5): a partial facet refresh leaves
+    // possibly-nonzero storage behind a reverting view, so selector
+    // absence proves nothing about the value.
     if (b.repat !== undefined) {
       const wantAvail = expectedAvail(b);
       if (b.avail !== wantAvail) {
@@ -821,8 +824,10 @@ export function checkHardInvariants(
     // cumulative is UNKNOWN (Codex #1618 r1 P2): after a real
     // repatriation, deleting the destination term makes the healthy
     // identity read as over-credited — a false CRITICAL beside the
-    // coverage gap that already reports the failed read. A pre-C2
-    // Diamond arrives with a KNOWN-ZERO value and is still checked.
+    // coverage gap that already reports the failed read. UNKNOWN
+    // includes a missing selector (r5 — partial-refresh storage
+    // persistence); a readable view on a repatriation-free chain
+    // reads a genuine zero and is still checked.
     if (local.repatriatedOut === undefined) continue;
     const claimed = local.composition.creditedRaw + local.custodyRelocated;
     // Repatriated-out is a DESTINATION: `debitRepatriationSurplus` moves
@@ -954,8 +959,8 @@ export function checkHardInvariants(
     // #1568 C2 — the same skip-on-unknown gate as the composition bound
     // (the floor consumes the same term; a zero substitute would deflate
     // the re-derivation below the chain's own figure after any real
-    // repatriation). A pre-C2 Diamond carries a known zero and is
-    // still checked.
+    // repatriation). UNKNOWN includes a missing selector (r5); a
+    // readable zero is still checked.
     if (local.repatriatedOut === undefined) continue;
     // Repatriated-out value stays IN the floor: it was absorbed here
     // exactly once before leaving for Base, so a floor that dropped with

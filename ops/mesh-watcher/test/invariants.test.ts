@@ -1181,8 +1181,9 @@ describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
     // chain whose on-chain `avail` nets a live 100 draw. Substituting zero
     // would re-derive 700 against the chain's 600 and page a false
     // CRITICAL; the check must skip (the read failure is a coverage gap
-    // at the mesh layer). A pre-C2 Diamond never takes this path — its
-    // missing-selector revert records a KNOWN-ZERO draw instead.
+    // at the mesh layer). This is the path for EVERY failed read,
+    // missing selector included (r5 — partial-refresh storage
+    // persistence makes selector absence prove nothing).
     expect(
       codes({
         mirror: { repat: undefined, avail: 600n * E },
@@ -2511,11 +2512,11 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
   const TRANSIENT = () => new Error('boom');
 
   it('isMissingSelector separates a revert from a transport failure', () => {
-    // The whole Codex #1618 r1 P2 pair hangs on this: a revert is the
-    // POSITIVE identification of a pre-C2 Diamond (views on a present
-    // facet are pure reads and cannot revert), so zero is the KNOWN
-    // value; anything else leaves the value unknown and the dependent
-    // checks skip.
+    // GAP-WORDING discrimination only (r5): a revert means the selector
+    // is absent from the current CUT — which a partial facet refresh
+    // can cause on a post-C2 Diamond with nonzero storage — so the
+    // VALUE stays unknown either way; the kinds differ only in what
+    // the operator is told to fix (the cut vs the transport).
     expect(isMissingSelector(REVERT())).toBe(true);
     expect(isMissingSelector(TRANSIENT())).toBe(false);
     expect(
@@ -2545,13 +2546,19 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
     expect(pos.detail).toContain('did NOT run');
   });
 
-  it('a MISSING SELECTOR says zero is known and coverage was kept', () => {
-    const draw = repatDrawUnavailableGap(10, REVERT());
-    expect(draw.detail).toContain('pre-C2');
-    expect(draw.detail).toContain('KNOWN-ZERO');
-    const pos = repatPositionUnavailableGap(10, REVERT());
-    expect(pos.detail).toContain('pre-C2');
-    expect(pos.detail).toContain('KNOWN-ZERO');
+  it('a MISSING SELECTOR still reports UNKNOWN, naming the cut', () => {
+    // r5 — storage persists across facet cuts, so selector absence can
+    // be a partial refresh over nonzero state, not only a pre-C2
+    // deployment. The gap must say the checks did not run and point at
+    // the cut, never claim the value is known-zero.
+    for (const build of [repatDrawUnavailableGap, repatPositionUnavailableGap]) {
+      const gap = build(10, REVERT());
+      expect(gap.detail).toContain('UNKNOWN');
+      expect(gap.detail).toContain('did NOT run');
+      expect(gap.detail).toContain('CURRENT CUT');
+      expect(gap.detail).toContain('partial facet refresh');
+      expect(gap.detail).not.toContain('KNOWN-ZERO');
+    }
   });
 
   it('never forwards provider text — the RPC URL carries the API key', () => {

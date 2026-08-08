@@ -142,6 +142,21 @@ contract VpfiPoolRateGovernor is
     ///      for the underlying call to succeed. Both configs must be
     ///      enabled and in-bounds; CCIP's own `_validateTokenBucketConfig`
     ///      additionally enforces `rate <= capacity` at the pool.
+    ///
+    ///      #1568 C2 (Codex #1618 r5) — COUPLED CEREMONY: changing a
+    ///      CAPACITY here does NOT auto-update the canonical Diamond's
+    ///      repatriation per-authorization ceiling for the affected lane
+    ///      (nor the artifact-recorded `.ccipRateCapacity` the deploy
+    ///      tooling derives it from). A capacity LOWERED without
+    ///      re-arming leaves a stale, looser ceiling: an authorization
+    ///      between the two passes issuance but its single return
+    ///      message permanently exceeds the live limiter, stranding the
+    ///      draw until cancellation. The same governance batch that
+    ///      lowers a capacity MUST include
+    ///      `RepatriationFacet.setRepatriationMaxPerAuth(chainId,
+    ///      min(mirrorOutbound, baseInbound))` on the canonical Diamond —
+    ///      see `docs/ops/CcipCutoverRunbook.md` "Changing lane rate
+    ///      limits after deployment".
     /// @param remoteChainSelector CCIP selector of the lane's remote chain.
     /// @param outboundConfig      Outbound (this-chain → remote) limiter.
     /// @param inboundConfig       Inbound (remote → this-chain) limiter.

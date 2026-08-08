@@ -104,8 +104,17 @@ chain until every chain in the topology has been deployed.
 
 ```
 Pass 1 — deploy, every chain:        DeployCrosschain.s.sol
-Pass 2 — wire, every chain:          ConfigureCcip.s.sol
+Pass 2 — wire, every chain:          ConfigureCcip.s.sol   (canonical chain LAST)
 ```
+
+Within pass 2, run the **canonical (Base) chain last** (#1568 C2): each
+mirror's pass records its configured lane capacity into its artifact, and
+the canonical pass derives every repatriation per-authorization ceiling as
+min(local, mirror). Fail-closed — a lane whose mirror capacity is not yet
+recorded is skipped with a `REPATRIATION CEILINGS INCOMPLETE` banner, and
+Mode-A authorization toward it refuses until a canonical re-run arms it.
+Every other wiring step is order-independent (it reads only pass-1
+artifacts).
 
 The orchestration scripts encode this:
 
@@ -175,12 +184,22 @@ admin multisig → governance timelock.
    bash contracts/script/deploy-mainnet.sh <chain-slug> --phase contracts \
         --confirm-i-have-multisig-ready
    ```
-2. **Wire** every mainnet chain once all are deployed:
+2. **Wire** every mainnet chain once all are deployed — **mirrors first,
+   the canonical Base chain LAST** (§3's ordering rule: Base's pass
+   derives the repatriation ceilings from the capacities the mirrors'
+   passes record; run early it skips them all with a `REPATRIATION
+   CEILINGS INCOMPLETE` banner and Mode-A stays un-authorizable until a
+   Base re-run):
    ```
    CCIP_LANE_CHAIN_IDS=<remote chain ids> \
      bash contracts/script/deploy-mainnet.sh <chain-slug> --phase ccip-wire
    ```
-3. **Verify** every chain (`--phase verify`).
+3. **Verify** every chain (`--phase verify`). On Base additionally
+   confirm every mirror lane's repatriation ceiling is armed —
+   `cast call $DIAMOND 'getRepatriationMaxPerAuth(uint32)(uint256)'
+   <mirrorChainId>` must return the expected min(local, mirror)
+   capacity, not 0 — the automated verify phase does not read these
+   (same known limit as the per-lane limiter configs).
 4. **Hand over** ownership to governance — see §7.
 
 On mainnet the admin is a **multisig**, which cannot broadcast a Foundry
@@ -259,6 +278,34 @@ Rotating the admin multisig → governance timelock is the final step.
 - **Sync the consolidated deployments JSON + ABIs** to the apps —
   `bash contracts/script/exportFrontendDeployments.sh` and the typecheck
   cycle (see CLAUDE.md "Deployments sync").
+
+### Changing lane rate limits after deployment (#1568 C2 coupling)
+
+Whenever governance changes a lane CAPACITY through
+`VpfiPoolRateGovernor.setLaneRateLimits` — on the canonical chain or a
+mirror — the change does NOT propagate to the repatriation
+per-authorization ceiling the canonical Diamond enforces at issuance, nor
+to the artifact-recorded `.ccipRateCapacity` the deploy tooling derives
+it from. A capacity **lowered** without re-arming leaves a stale, looser
+ceiling: an authorization between the two values passes issuance but its
+single return message permanently exceeds the live limiter, stranding
+the draw until cancellation. So the ceremony is COUPLED:
+
+1. In the **same governance batch** that changes a lane's capacity,
+   include `RepatriationFacet.setRepatriationMaxPerAuth(<mirrorChainId>,
+   min(mirrorOutboundCapacity, baseInboundCapacity))` on the canonical
+   Diamond (post-handover this is a timelock action like the limit
+   change itself).
+2. Update `CCIP_RATE_CAPACITY` in the affected chain's `.env` and
+   re-record its artifact (`.ccipRateCapacity`) — either by re-running
+   `ccip-wire` on that chain or editing the artifact to match — so a
+   future canonical `ccip-wire` re-run derives the same ceiling instead
+   of silently reverting it.
+3. Verify: `cast call $DIAMOND
+   'getRepatriationMaxPerAuth(uint32)(uint256)' <mirrorChainId>` equals
+   the new min. (A capacity **raised** needs the same two steps or the
+   ceiling simply stays conservatively tight — safe, but Mode A refuses
+   amounts the lane could now carry.)
 
 ---
 
