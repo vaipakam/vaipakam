@@ -848,6 +848,27 @@ jobs:
       - name: Typecheck — apps/alpha02
         run: pnpm --filter @vaipakam/alpha02 typecheck
 
+      # The i18n baselines may only SHRINK, and until now that rule lived
+      # only in prose. `check-locale-coverage` fails on a locale value
+      # that still reads in English UNLESS the pair is recorded — and the
+      # record is a file in the same repository, so one change could both
+      # cause a regression and excuse it, going green (Codex #1607 r18).
+      #
+      # A guard cannot check this against the working tree; it needs a
+      # point of reference outside the change. Hence the base sha, fetched
+      # shallowly here rather than by widening the job's `fetch-depth` —
+      # this is a required check and a full history clone costs every PR.
+      #
+      # PR events only: a push to main has no "before" to compare against,
+      # and the script refuses to run against a ref it cannot resolve
+      # rather than passing everything.
+      - name: Baselines may only shrink — apps/alpha02
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          node apps/alpha02/scripts/check-baselines-shrink-only.mjs \
+            --base "${{ github.event.pull_request.base.sha }}"
+
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi
       # has pre-existing test-setup failures (Issue #85 — PublicDashboard +

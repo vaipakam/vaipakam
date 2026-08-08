@@ -204,12 +204,13 @@ interface AcceptedAsTranslatedEntry {
    * The exact accepted value, per locale, where it is NOT the English
    * one. Defaults to `source`.
    *
-   * The word comparison is a MULTISET, so a translation built from the
-   * same words as the English is flagged whatever order they are in —
-   * necessary, because a rearranged English sentence still reads as
-   * English. French `Mode strict` for `Strict mode` is the case where
-   * that is wrong, and no rule can tell it from `content to Skip`
-   * without knowing French. Recording the accepted value makes the
+   * The comparison asks whether everything the reader sees can be built
+   * out of the English source's own words — so a translation made of
+   * those words is flagged however it arranges them, which is necessary,
+   * because a rearranged English sentence still reads as English.
+   * French `Mode strict` for `Strict mode` is the case where that is
+   * wrong, and no rule can tell it from `content to Skip` without
+   * knowing French. Recording the accepted value makes the
    * judgement explicit AND self-expiring: reword the French and it no
    * longer matches, so the scope reports as unused rather than
    * standing guard over a string nobody looked at again.
@@ -570,24 +571,41 @@ const wordsOf = (value: string): string[] =>
     // path did not, so the same character defeated one check and not
     // the other.
     .toLowerCase()
-    .match(/[\p{L}\p{N}]+/gu) ?? []);
+    // LETTERS only — digits are not vocabulary. Keeping them let a
+    // digit dropped INSIDE a word break the decomposition: `Set1tings`
+    // produced a stream no arrangement of `settings` could cover, so
+    // mangled English read as translated (Codex #1607 r14 asked the
+    // same question of prose and got `123`; r18 found the inverse).
+    // Nothing is lost: a value differing from the English only in its
+    // numbers is not a translation either.
+    .match(/\p{L}+/gu) ?? []);
 
 const stillEnglish = (source: string, candidate: unknown): boolean => {
   if (typeof candidate !== 'string') return false;
   const sourceWords = wordsOf(source);
   const candidateWords = wordsOf(candidate);
-  // Wordless on either side — the punctuation IS the content, so compare
-  // it exactly. This is the case that makes a blanket punctuation-strip
-  // wrong: `copy.consentParts.suffix` is `.` in English and `。` in
-  // Chinese, and both reduce to zero words. Stripping punctuation would
-  // call a correct localization "still English" (Codex #1607 r4).
+  // Wordless on either side — the punctuation IS the content. This is
+  // the case that makes a blanket punctuation-strip wrong:
+  // `copy.consentParts.suffix` is `.` in English and `。` in Chinese,
+  // and both reduce to zero words. Stripping punctuation would call a
+  // correct localization "still English" (Codex #1607 r4).
+  //
+  // The SAME question as the worded branch, asked of characters instead
+  // of words: can what the reader sees be built entirely out of the
+  // source's own marks? Exact comparison was the earlier answer and it
+  // excused a repetition — `.` doubled to `..` is not a translation
+  // into anything, and it passed (r18). `。` is not among the English
+  // marks, so a real localization still reads as translated.
+  //
+  // Default-ignorable code points are removed first. They render as
+  // nothing, so `.` followed by a zero-width space IS the English full
+  // stop on screen while differing in bytes — a regression that looked
+  // like a translation (r6).
   if (sourceWords.length === 0 || candidateWords.length === 0) {
-    // Default-ignorable code points are removed first. They render as
-    // nothing, so `.` followed by a zero-width space IS the English full
-    // stop on screen while differing in bytes — a regression that looked
-    // like a translation (Codex #1607 r6). Visible punctuation is still
-    // compared exactly, so `.` and `。` stay distinct.
-    return visibleForm(candidate) === visibleForm(source);
+    const sourceMarks = visibleForm(source);
+    const candidateMarks = visibleForm(candidate);
+    if (candidateMarks === sourceMarks) return true;
+    return coveredBySourceWords(candidateMarks, [...new Set(sourceMarks)]);
   }
   // Otherwise compare the WORDS, on ONE rule: is everything the reader
   // sees made only of THIS SOURCE's words?

@@ -19,6 +19,15 @@ translated has to be struck from the record or the build fails as well. The
 record can only shrink, and every entry in it is a translation someone still
 owes.
 
+That last sentence used to be a promise rather than a rule. The record lives in
+the same place as the code, so a single change could introduce an English
+string, add it to the record, and pass — the check that exists to catch the
+regression could be widened by the change causing it. Both records are now
+compared against the state of the branch being merged into, and a change that
+adds an entry to either one fails. Nothing prevents someone editing the rule
+itself; what this stops is the quiet version, where a line is added in a large
+diff under a heading that says the file only ever loses entries.
+
 What counts as "still English" is deliberately loose about everything that is
 not vocabulary. Capitalisation, punctuation, spacing and invisible characters
 are not a language, and neither is word order — a sentence whose words are all
@@ -53,7 +62,11 @@ an edit can change: "Set-tings" is two fragments to a machine and mangled
 English to a reader. So the check asks whether the letters can be cut, end to
 end, into English words from the source — which covers reordering, deletion,
 repetition and moved punctuation together, in any combination, instead of one
-at a time. Text that adds an English word the source did not have
+at a time. Digits are left out of that stream, because a number dropped into
+the middle of an English word does not make it another language. The same
+question is asked of the punctuation where there are no words at all: an
+English full stop written twice is still an English full stop, and comparing
+the two exactly had been calling it a translation. Text that adds an English word the source did not have
 still passes. The broader rule was tried and measured: treating every word in
 the English as a dictionary would add seventeen entries to the backlog, and
 almost all of them are correct translations that happen to share a word with
