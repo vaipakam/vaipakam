@@ -8,6 +8,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {
+    InteractionRewardsLensFacet
+} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
@@ -16,7 +19,6 @@ import {
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// @dev Stand-in for the mirror's CCIP adapter — the receiver only checks
 ///      `msg.sender == messenger` and requires it to have code, so a thin relay
@@ -57,6 +59,19 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
     uint256 internal constant SRC_BASE = 8453;
 
     address internal alice;
+
+    /// @dev The whole FRESH spend of alice's day-1 claim in these fixtures —
+    ///      her payout plus the treasury share that moves with it. This is
+    ///      the figure #1460's backing gate weighs against the unearmarked
+    ///      balance, and so the first argument of the revert it raises.
+    ///
+    ///      Pinned as a literal deliberately. Recomputing it here from the
+    ///      same split policy the facet applies would make the assertion
+    ///      agree with a bug in that policy instead of catching one; a test
+    ///      that derives its expectation from the code under test asserts
+    ///      only that the code is self-consistent. Both fixtures below set
+    ///      up the identical day-1 accrual, so both weigh this same amount.
+    uint256 internal constant DAY1_FRESH_SPEND = 0.125e18;
 
     function setUp() public {
         setupHelper();
@@ -118,6 +133,19 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         return RewardRemittanceFacet(address(diamond));
     }
 
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
+    /// @dev The unearmarked VPFI the claim path is allowed to draw on —
+    ///      the Diamond's balance less the recycle bucket, read through the
+    ///      same {LibVpfiRecycle.backingPosition} the gate itself consults.
+    ///      Read rather than assumed so the expectation below pins the
+    ///      figure the protocol actually holds, not one the test invented.
+    function _backingRoom() internal view returns (uint256 room) {
+        (, , room, , , ) = _lens().getRecycleBackingSnapshot();
+    }
+
     function _days1() internal pure returns (uint256[] memory d) {
         d = new uint256[](1);
         d[0] = 1;
@@ -141,20 +169,38 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
     }
 
     /// @notice The whole point of #776: an open claim gate on an UNFUNDED
-    ///         mirror reverts at the ERC20 transfer; once the budget is
-    ///         remitted + received, the identical claim pays out.
+    ///         mirror refuses to pay; once the budget is remitted + received,
+    ///         the identical claim pays out.
     function test_E2E_UnfundedClaimReverts_ThenFundedClaimSucceeds() public {
         // alice earns a day-1 lender reward; the mutator opens the claim gate.
         _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
         vm.warp(block.timestamp + 2 days + 1);
 
-        // 1. UNFUNDED: the Diamond holds zero VPFI → the payout reverts at the
-        //    ERC20 transfer SPECIFICALLY (not some other gate) — assert the
-        //    exact insufficient-balance selector so a regression that closes the
-        //    claim gate for another reason can't make this test pass hollow.
+        // 1. UNFUNDED: the Diamond holds zero VPFI → the payout is refused.
+        //
+        //    #1460 moved WHERE that refusal happens, and the move is the
+        //    improvement rather than a regression to paper over. This used to
+        //    reach the ERC20 transfer and fail there for want of balance;
+        //    since #1460 the claim-time backing check fires first, so a
+        //    fresh-only claim can no longer reach the transfer and spend
+        //    tokens that back the recycle bucket. The old expectation named
+        //    the transfer failure and has been stale since.
+        //
+        //    Both figures are asserted, not just the selector: the amount
+        //    weighed and the room it was weighed against. Naming only the
+        //    error would let a regression that refused for an unrelated
+        //    reason — or refused the wrong quantity — still pass.
         assertEq(vpfi.balanceOf(address(diamond)), 0, "mirror starts empty");
+        uint256 room = _backingRoom();
+        assertEq(room, 0, "an empty mirror has no backing room");
         vm.prank(alice);
-        vm.expectPartialRevert(IERC20Errors.ERC20InsufficientBalance.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                InteractionRewardBackingShort.selector,
+                DAY1_FRESH_SPEND,
+                room
+            )
+        );
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // 2. Base remits the day-1 budget; the receiver credits the mirror.
@@ -213,11 +259,26 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
 
         // Simulate a tiny pre-existing non-reward balance (e.g. LIF custody),
         // deliberately far below the reward claim.
-        vpfi.mint(address(diamond), 1e12);
+        uint256 commingled = 1e12;
+        vpfi.mint(address(diamond), commingled);
         assertGt(vpfi.balanceOf(address(diamond)), 0, "mirror holds some VPFI");
 
+        // The commingled balance is unearmarked — nothing has credited the
+        // recycle bucket here — so it is the whole backing room, and the
+        // refusal must weigh the claim against exactly that. Asserting the
+        // reported room (rather than only that a revert occurred) is what
+        // pins the #917 tradeoff: the gate DOES see this non-reward balance,
+        // and still refuses because it does not cover the claim.
+        uint256 room = _backingRoom();
+        assertEq(room, commingled, "commingled balance is the whole room");
         vm.prank(alice);
-        vm.expectPartialRevert(IERC20Errors.ERC20InsufficientBalance.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                InteractionRewardBackingShort.selector,
+                DAY1_FRESH_SPEND,
+                room
+            )
+        );
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
 
         // The reward remittance tops the balance up → claim succeeds.
