@@ -58,16 +58,33 @@ interface Props {
   inApp?: boolean;
 }
 
+/**
+ * Visibility gate ONLY — deliberately hook-free above the redirect.
+ *
+ * T-042 Phase 1d — hard-redirect when the env flag is off (no
+ * wallet-aware admin detection yet). Phase 4 will refine this to
+ * "redirect unless admin wallet connected" so signers can still reach
+ * the cockpit when the public surface is hidden.
+ *
+ * The gate is a separate component rather than an early return inside
+ * the dashboard (#1521): eleven hooks used to sit below that return,
+ * which breaks the rules of hooks. Moving the return below them is NOT
+ * the fix here — it would run `useAdminKnobValues` and the other
+ * chain reads for exactly the visitors this gate exists to turn away.
+ * Splitting keeps the redirect free of any hook while letting the
+ * dashboard call its own unconditionally. Phase 4 makes the condition
+ * runtime-driven, at which point the old shape would have become a
+ * live crash rather than a latent violation.
+ */
 export default function AdminDashboard({ inApp = false }: Props = {}) {
-  const { t, i18n } = useTranslation();
-  // T-042 Phase 1d — public-visibility gate. Phase 1 hard-redirects
-  // when the env flag is off (no wallet-aware admin detection yet).
-  // Phase 4 will refine this to "redirect unless admin wallet
-  // connected" so signers can still reach the cockpit when the
-  // public surface is hidden.
   if (!isProtocolConsolePublic()) {
     return <Navigate to="/" replace />;
   }
+  return <AdminDashboardInner inApp={inApp} />;
+}
+
+function AdminDashboardInner({ inApp }: { inApp: boolean }) {
+  const { t, i18n } = useTranslation();
   const grouped = knobsByCategory();
   const lang = i18n.resolvedLanguage ?? 'en';
   // The Knobs & Switches reference lives on the marketing apex

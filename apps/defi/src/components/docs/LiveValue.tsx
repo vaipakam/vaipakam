@@ -134,12 +134,31 @@ interface LiveValueProps {
 
 export function LiveValue({ knob }: LiveValueProps) {
   const spec = KNOB_REGISTRY[knob];
+  // The bail-out sits BELOW the hook (#1521). Two things to know:
+  //
+  // 1. As written before, this was a rules-of-hooks violation — `spec`
+  //    comes from a prop, so the hook count depended on it.
+  // 2. It was NOT, on its own, a crash. React tolerates a render that
+  //    calls ZERO hooks, and the old bail-out preceded every hook here,
+  //    so the transition was 0 <-> 1 and React accepted it. (Probed
+  //    directly; the crash only occurs when a NON-zero count changes.)
+  //
+  // It is fixed anyway because the safety is accidental and one line
+  // deep: add any hook above the bail-out — a `useTranslation` for the
+  // error text, a context read — and the count becomes 1 <-> 2, which
+  // aborts the page. The ordering below removes that trap rather than
+  // relying on nobody springing it.
+  //
+  // NOTE this defi copy is dead code — nothing renders it; the live
+  // one is `apps/www`'s. Kept correct so a future revival starts from
+  // a correct file. Deletion tracked in #1603.
+  const { config } = useProtocolConfig();
+
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
   // through to inline code rendering so the bug is visible in the
   // page rather than rendering a silent misleading value.
   if (!spec) return <code>{`{liveValue:${knob}}`}</code>;
 
-  const { config } = useProtocolConfig();
   const live = spec.read(config);
   const value = live ?? spec.defaultValue;
   const isLive = live !== null;
