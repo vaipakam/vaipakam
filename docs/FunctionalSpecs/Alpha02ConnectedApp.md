@@ -493,13 +493,18 @@ Thin-market honesty rules apply.
   already presented as available. A newly added surface is translated in
   the same change that ships it, so a user never meets a page that
   switches to English partway down.
-  *(Not yet true of the whole app. Every key now EXISTS in every
-  advertised language — the missing-key baseline is empty — but a key
-  can exist and still hold the English string, and several hundred do:
-  Hindi carries ~283 such leaves, the others 12-48 each. The guard
-  compares key PRESENCE, so it cannot see them. That is a recorded gap,
-  not a revision of the intent above — see the dated row in
-  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent is
+  *(Not yet true of the whole app, but now bounded. Every key EXISTS in
+  every advertised language, and a second check asks the question key
+  presence cannot: does the key hold anything other than the English
+  string? 416 `(key, locale)` pairs still do — Hindi carries the bulk of
+  them — and every one is recorded, dated, and enforced in both
+  directions: a text that regresses to English fails the build, and one
+  that gets translated must leave the record or the build fails too. The
+  record can only shrink. A handful of leaves legitimately read the same
+  in every language (the product name, standard trading acronyms); those
+  are listed separately with a written reason each, rather than inferred
+  from a pattern. See the dated row in
+  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent above is
   deliberately left stated in full, because a spec narrowed to the
   surfaces that happen to be finished cannot be violated and would
   erase the only record that the rest is unfinished rather than

@@ -12,7 +12,15 @@
     "  include apps with no coverage guard of their own (apps/defi's",
     "  recovery page compares against the same word).",
     "omissions / empty — the narrow linguistic exemptions, bound to the",
-    "  exact locale:key(:token) so each excuses itself and nothing else."
+    "  exact locale:key(:token) so each excuses itself and nothing else.",
+    "sameAsEnglish — leaves that legitimately read the same in every",
+    "  language, so being identical to the English is not evidence of",
+    "  anything. Deliberately short and each entry carries its reason: a",
+    "  brand name and standard finance acronyms. Common UI words that",
+    "  merely happen to be untranslated do NOT belong here — they go in",
+    "  english-valued-baseline.json, which is meant to shrink. Two",
+    "  categories need no entry at all because they are mechanical: a",
+    "  string of only interpolation tokens, and a string with no letters."
   ],
   "requiredLiterals": {
     "copy.recover.confirmPrompt": [
@@ -41,5 +49,12 @@
   },
   "empty": {
     "ja:copy.consentParts.prefix": "Japanese puts the verb last; the suffix carries the agreement the English states up front"
+  },
+  "sameAsEnglish": {
+    "copy.app.name": "The product name. A brand is not translated.",
+    "copy.desk.ticket.expiryGtc": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
+    "copy.desk.ticket.fillAon": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
+    "copy.desk.ticket.fillIoc": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
+    "copy.desk.signed.rateLine": "Two interpolations around APR, itself a standard finance acronym; there is no prose to translate."
   }
 }

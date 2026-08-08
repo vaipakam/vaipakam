@@ -5,6 +5,13 @@
  *
  *     pnpm --filter @vaipakam/alpha02 i18n:coverage
  *
+ * TWO different questions, because one of them stayed invisible after
+ * the other was answered. Does the locale HAVE the key, and does it
+ * hold anything other than the English string? Key presence went to
+ * zero gaps and read as "fully translated" while `hi` alone still
+ * rendered 283 English leaves — `missingSubtree` compares presence, so
+ * it goes quiet the moment a key exists, whatever is in it (#1596).
+ *
  * `enTemplate.test.ts` guards copy.ts → en.json. NOTHING guarded
  * en.json → <locale>.json, and the gap was not theoretical: nine
  * locales had silently drifted 291 keys behind, including every string
@@ -89,6 +96,32 @@ const isKnownGap = (code: string, key: string): boolean =>
   KNOWN_GAPS[key]?.includes(code) ?? false;
 
 /**
+ * The `(key, locale)` pairs where the key EXISTS but still holds the
+ * English string, tracked as #1596. Same shape, same prune command and
+ * same shrink-only rule as the missing-key baseline above.
+ *
+ * A separate file because it is a separate claim. `missingSubtree`
+ * compares key PRESENCE, so it goes quiet the moment a key exists —
+ * and a bundle can be 100% present while a reader still meets English
+ * partway down the page. That is exactly what happened: the missing-key
+ * baseline reached zero and read as "fully translated", while `hi`
+ * alone still rendered 283 English leaves.
+ */
+const ENGLISH_VALUED_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'src',
+  'i18n',
+  'english-valued-baseline.json',
+);
+const ENGLISH_VALUED: Readonly<Record<string, readonly string[]>> = JSON.parse(
+  fs.readFileSync(ENGLISH_VALUED_PATH, 'utf8'),
+) as Record<string, string[]>;
+
+const isKnownEnglishValued = (code: string, key: string): boolean =>
+  ENGLISH_VALUED[key]?.includes(code) ?? false;
+
+/**
  * Per-(locale, key) exemptions, read from the COMMITTED record at
  * `src/i18n/translation-policy.json`.
  *
@@ -115,6 +148,8 @@ interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
   omissions: Record<string, { tokens: string[]; reason: string }>;
   empty: Record<string, string>;
+  /** key → why this leaf reads the same in every language (#1596). */
+  sameAsEnglish?: Record<string, string>;
 }
 const POLICY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -222,6 +257,55 @@ function readOrDamaged(code: string): Bundle | null {
 
 const en = read('en');
 const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
+
+/**
+ * Leaves whose value is legitimately the same in every language, so
+ * being identical to the English is not evidence of anything.
+ *
+ * TWO MECHANICAL RULES, no bookkeeping — a string made only of
+ * interpolation tokens and separators (`{{amount}}{{suffix}}`) has no
+ * words to translate, and one with no letters at all (`—`) has nothing
+ * to translate either. Requiring a policy entry for those would mean a
+ * new entry every time someone adds a template string, which is the
+ * kind of ceremony people learn to skip.
+ *
+ * Everything else needs an explicit `sameAsEnglish` entry WITH A
+ * REASON, because "it looks like a proper noun" is a judgement and
+ * judgements belong in the record rather than in a regex. The list is
+ * deliberately short: it is a brand name and three standard order-type
+ * acronyms. Common UI words that happen to be untranslated — `Alerts`,
+ * `Close`, `Revoke` — are NOT exempt; they go in the shrinkable
+ * baseline, because they are a translation job rather than a decision.
+ */
+const SAME_AS_ENGLISH: Readonly<Record<string, string>> = POLICY.sameAsEnglish ?? {};
+
+const PLACEHOLDER_ONLY = /^[\s\-\u2013\u2014:,.()/|]*(\{\{[^}]+\}\}[\s\-\u2013\u2014:,.()/|]*)+$/;
+const HAS_NO_LETTERS = /^[^\p{L}]*$/u;
+
+/** Is an identical-to-English value untranslatable by construction? */
+const identicalIsMeaningless = (value: string): boolean => {
+  const trimmed = value.trim();
+  return PLACEHOLDER_ONLY.test(trimmed) || HAS_NO_LETTERS.test(trimmed);
+};
+
+/**
+ * Leaves this locale carries with the English string still in them.
+ * Only leaves the locale actually HAS — a missing key is the other
+ * baseline's business, and reporting it here too would make one gap
+ * produce two failures.
+ */
+function englishValuedLeaves(bundle: Bundle): string[] {
+  const found: string[] = [];
+  for (const key of leafPaths(en)) {
+    const source = leafAt(en, key);
+    if (typeof source !== 'string') continue;
+    if (leafAt(bundle, key) !== source) continue;
+    if (identicalIsMeaningless(source)) continue;
+    if (SAME_AS_ENGLISH[key] !== undefined) continue;
+    found.push(key);
+  }
+  return found;
+}
 const problems: string[] = [];
 
 // What the bundles ACTUALLY do, so a policy exemption that no longer
@@ -257,6 +341,9 @@ if (declaredConfirm.length !== 1 || declaredConfirm[0] !== CONFIRM_WORD) {
  *  with NO entry here is one whose file is missing entirely: its
  *  bundle was never read, so nothing is known about it. */
 const missingByLocale = new Map<string, ReadonlySet<string>>();
+/** Same idea for the English-valued leaves — computed once per locale
+ *  and reused by the stale-baseline check and `--prune` (#1596). */
+const englishValuedByLocale = new Map<string, ReadonlySet<string>>();
 
 for (const code of translated) {
   const file = path.join(LOCALES_DIR, `${code}.json`);
@@ -320,6 +407,22 @@ for (const code of translated) {
     problems.push(
       `${code}: ${key} is empty while the English is not — i18next renders ` +
         'blank rather than falling back',
+    );
+  }
+
+  // PRESENT but still in English. `missingSubtree` cannot see this —
+  // it compares key presence, so it goes quiet the moment the key
+  // exists, whatever is in it.
+  const englishValued = englishValuedLeaves(bundle);
+  englishValuedByLocale.set(code, new Set(englishValued));
+  const unexplainedEnglish = englishValued.filter(
+    (key) => !isKnownEnglishValued(code, key),
+  );
+  if (unexplainedEnglish.length > 0) {
+    problems.push(
+      `${code}: ${unexplainedEnglish.length} key(s) still hold the English ` +
+        `string — ${unexplainedEnglish.slice(0, 8).join(', ')}` +
+        `${unexplainedEnglish.length > 8 ? ', …' : ''}`,
     );
   }
 
@@ -435,6 +538,24 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
     }
   }
 }
+// Same stale sweep for the English-valued baseline: an entry that has
+// since been translated must LEAVE, or the exemption silently re-opens
+// that key to regressing back to English.
+const staleEnglishValued: string[] = [];
+for (const [key, codes] of Object.entries(ENGLISH_VALUED)) {
+  for (const code of codes) {
+    if (!translated.includes(code as (typeof translated)[number])) {
+      staleEnglishValued.push(`${code}:${key} (not a translated locale)`);
+      continue;
+    }
+    const observed = englishValuedByLocale.get(code);
+    // No entry = the bundle was never read; its entries are unrefuted.
+    if (observed !== undefined && !observed.has(key)) {
+      staleEnglishValued.push(`${code}:${key}`);
+    }
+  }
+}
+
 const pruning = process.argv.includes('--prune');
 // In prune mode the stale pairs are about to be REMOVED, so they aren't
 // a problem — but every other problem still is (see below).
@@ -444,6 +565,15 @@ if (stalePairs.length > 0 && !pruning) {
       `\`pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune\`: ` +
       `${stalePairs.slice(0, 6).join(', ')}` +
       (stalePairs.length > 6 ? ', …' : ''),
+  );
+}
+
+if (staleEnglishValued.length > 0 && !pruning) {
+  problems.push(
+    `${staleEnglishValued.length} english-valued baseline entr(y/ies) already ` +
+      `translated — run \`pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune\`: ` +
+      `${staleEnglishValued.slice(0, 6).join(', ')}` +
+      (staleEnglishValued.length > 6 ? ', …' : ''),
   );
 }
 
@@ -477,6 +607,35 @@ if (pruning) {
   fs.writeFileSync(BASELINE_PATH, JSON.stringify(sorted, null, 2) + '\n');
   const pairs = Object.values(sorted).flat().length;
   console.log(`[check-locale-coverage] pruned baseline → ${Object.keys(sorted).length} key(s), ${pairs} pair(s)`);
+
+  // The English-valued baseline prunes on exactly the same rule: every
+  // pair written was independently OBSERVED still-English just now, so
+  // this can only shrink the record, never excuse a fresh regression.
+  const prunedEnglish: Record<string, string[]> = {};
+  for (const code of translated) {
+    const observed = englishValuedByLocale.get(code);
+    if (observed === undefined) {
+      for (const [key, codes] of Object.entries(ENGLISH_VALUED)) {
+        if (codes.includes(code)) (prunedEnglish[key] ??= []).push(code);
+      }
+      continue;
+    }
+    for (const key of observed) {
+      if (!isKnownEnglishValued(code, key)) continue; // a NEW one is a failure
+      (prunedEnglish[key] ??= []).push(code);
+    }
+  }
+  const sortedEnglish = Object.fromEntries(
+    Object.keys(prunedEnglish)
+      .sort()
+      .map((k) => [k, prunedEnglish[k].sort()]),
+  );
+  fs.writeFileSync(ENGLISH_VALUED_PATH, JSON.stringify(sortedEnglish, null, 2) + '\n');
+  const englishPairs = Object.values(sortedEnglish).flat().length;
+  console.log(
+    `[check-locale-coverage] pruned english-valued baseline → ` +
+      `${Object.keys(sortedEnglish).length} key(s), ${englishPairs} pair(s)`,
+  );
   // Deliberately NOT exiting here. Pruning fixes exactly one class of
   // problem — stale baseline entries — and every other finding above
   // (a new missing key, leaf-type drift, a malformed placeholder, a
@@ -496,6 +655,20 @@ if (problems.length > 0) {
       'or merge hand-authored patches with `merge-patch`. See\n' +
       'src/i18n/locales/README.md.',
   );
+  // A key that HOLDS the English string is present, so `--missing-only`
+  // walks straight past it — the advice above is the right advice for
+  // the wrong failure, and following it would report "nothing to do"
+  // on a locale this guard just failed (#1596).
+  if (problems.some((p) => p.includes('hold the English string'))) {
+    console.error(
+      '\nThose keys are PRESENT — they just still read in English, so\n' +
+        '`--missing-only` will skip every one of them. Translate them in\n' +
+        'place (drop `--missing-only`, or hand-author and `merge-patch`),\n' +
+        'and prune the baseline as they land. If a leaf genuinely reads the\n' +
+        'same in every language, give it a `sameAsEnglish` entry WITH a\n' +
+        'reason in src/i18n/translation-policy.json instead.',
+    );
+  }
   process.exit(1);
 }
 
