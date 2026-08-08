@@ -38,51 +38,65 @@
  * a real `id` attribute on the rendered heading, so deep links land
  * precisely on the heading and no `<a id>` text is ever rendered.
  */
-export function remarkInlineAnchorToId() {
-  const ANCHOR_RE = /^<a id="([^"]+)"><\/a>\s*$/;
+const ANCHOR_RE = /^<a id="([^"]+)"><\/a>\s*$/;
 
-  type Node = {
-    type: string;
-    value?: string;
-    children?: Node[];
-    data?: { hProperties?: { id?: string } };
-  };
+type Node = {
+  type: string;
+  value?: string;
+  children?: Node[];
+  data?: { hProperties?: { id?: string } };
+};
 
-  function readAnchorId(node: Node): string | null {
-    // Case A — paragraph wrapping the anchor as inline-html. CommonMark
-    // splits `<a id="X"></a>` into two separate inline-html nodes
-    // (opening + closing tag) inside the paragraph, so we concatenate
-    // all html children before matching. The paragraph must contain
-    // ONLY html children — any text would mean the paragraph carries
-    // real content and we shouldn't strip it.
-    if (
-      node.type === 'paragraph' &&
-      Array.isArray(node.children) &&
-      node.children.length > 0 &&
-      node.children.every((c) => c.type === 'html')
-    ) {
-      const joined = node.children
-        .map((c) => c.value ?? '')
-        .join('')
-        .trim();
-      const m = ANCHOR_RE.exec(joined);
-      if (m) return m[1];
-    }
-    // Case B — top-level html block (rare for inline-only `<a>` but
-    // possible in some markdown variants).
-    if (node.type === 'html' && typeof node.value === 'string') {
-      const m = ANCHOR_RE.exec(node.value.trim());
-      if (m) return m[1];
-    }
-    return null;
+/**
+ * The id an `<a id="…"></a>` marker node carries, or `null` if the node
+ * is not one.
+ *
+ * EXPORTED because the User Guide's contents-list builder has to answer
+ * the identical question, and "what counts as an anchor marker" is a
+ * rule with teeth: `<a>` is inline-only, so CommonMark puts the marker
+ * in a paragraph rather than an html block, and splits it into two
+ * inline-html children that must be rejoined before matching. A second
+ * copy of that reasoning is a second thing to get wrong, and the two
+ * would drift the first time either was touched — leaving the contents
+ * list offering an id the renderer never placed, or the renderer
+ * placing one the contents list never offers.
+ */
+export function anchorIdOf(node: Node): string | null {
+  // Case A — paragraph wrapping the anchor as inline-html. CommonMark
+  // splits `<a id="X"></a>` into two separate inline-html nodes
+  // (opening + closing tag) inside the paragraph, so we concatenate
+  // all html children before matching. The paragraph must contain
+  // ONLY html children — any text would mean the paragraph carries
+  // real content and we shouldn't strip it.
+  if (
+    node.type === 'paragraph' &&
+    Array.isArray(node.children) &&
+    node.children.length > 0 &&
+    node.children.every((c) => c.type === 'html')
+  ) {
+    const joined = node.children
+      .map((c) => c.value ?? '')
+      .join('')
+      .trim();
+    const m = ANCHOR_RE.exec(joined);
+    if (m) return m[1];
   }
+  // Case B — top-level html block (rare for inline-only `<a>` but
+  // possible in some markdown variants).
+  if (node.type === 'html' && typeof node.value === 'string') {
+    const m = ANCHOR_RE.exec(node.value.trim());
+    if (m) return m[1];
+  }
+  return null;
+}
 
+export function remarkInlineAnchorToId() {
   return (tree: { children: unknown[] }) => {
     const children = tree.children as Node[];
     if (!Array.isArray(children)) return;
     let i = 0;
     while (i < children.length) {
-      const id = readAnchorId(children[i]);
+      const id = anchorIdOf(children[i]);
       if (id) {
         // Walk forward looking for the heading this id should land on.
         // Skip any back-to-back anchor-paragraphs (rare but tolerated).
@@ -94,7 +108,7 @@ export function remarkInlineAnchorToId() {
             next.data.hProperties.id = id;
             break;
           }
-          if (readAnchorId(next) === null) break;
+          if (anchorIdOf(next) === null) break;
         }
         // Drop the anchor node from the tree and re-check at the same
         // index since splice shifts everything left.
