@@ -40,6 +40,17 @@ the accepted text is not the English one — with that exact text, so that
 rewording either side makes the exemption stale rather than letting it quietly
 carry over to text nobody looked at again.
 
+One more way a piece of text can read as English while comparing as
+something else: swap a letter for an identical-looking one from another
+alphabet. A Cyrillic "e" in "Settings" is a different letter to a computer and
+the same shape to a reader, so the check saw a German word where the screen
+showed an English one. Rather than keep a list of every lookalike character —
+which is a list that is never finished — the check now records which alphabets
+each language is actually written in, and rejects a letter from anywhere else.
+Nine short declarations, and the whole class goes with them. It does not catch
+a lookalike drawn from an alphabet the language genuinely uses, and the check
+says so rather than implying otherwise.
+
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot
 be translated. That is simply untrue: the sentence ending is a full stop in

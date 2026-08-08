@@ -650,7 +650,112 @@ function englishValuedLeaves(code: string, bundle: Bundle): string[] {
   }
   return found;
 }
+/**
+ * The writing systems each bundle may contain, BESIDES Latin.
+ *
+ * Latin is allowed everywhere — brand names, ticker symbols and units
+ * appear untranslated in every locale, and the English source is Latin.
+ * Anything outside a locale's own scripts is not a translation into
+ * that language; it is a mangled string.
+ *
+ * WHY THIS EXISTS. Every check above compares what a reader SEES, and
+ * that is exactly what a homoglyph defeats: `Sеttings` with a Cyrillic
+ * `е` renders as "Settings" and is byte-different from it, so the word
+ * comparison sees a different word and calls it German (Codex #1607
+ * r12). NFKC does not fold across scripts, and rightly — Cyrillic `е`
+ * and Latin `e` are different letters, not two spellings of one.
+ *
+ * A confusables table (UTS #39 skeletons) would answer the narrow
+ * question "does this look like that", and would need either a new
+ * dependency or a hand-maintained mapping of every ASCII lookalike —
+ * the same open-ended list-of-special-cases that the chapter counter in
+ * #1594 had to be abandoned for. This asks a closed question instead:
+ * WHICH ALPHABETS is this language written in? That is nine short
+ * declarations, it needs no table, and it rejects the whole class —
+ * Greek, Cherokee and Armenian lookalikes as well as Cyrillic — rather
+ * than the characters someone remembered to enumerate.
+ *
+ * It does NOT catch a lookalike from a script the locale legitimately
+ * uses (Latin `l` for `I`, or Han for Han). Stated rather than implied:
+ * this closes cross-script substitution, not every possible confusable.
+ */
+const LOCALE_SCRIPTS: Readonly<Record<string, readonly string[]>> = {
+  ar: ['Arabic'],
+  de: [],
+  es: [],
+  fr: [],
+  hi: ['Devanagari'],
+  ja: ['Hiragana', 'Katakana', 'Han'],
+  ko: ['Hangul', 'Han'],
+  ta: ['Tamil'],
+  zh: ['Han'],
+};
+
+/**
+ * Matches one LETTER outside the locale's alphabets.
+ *
+ * `[^\P{L}…]` reads oddly but is exact: inside a negated class,
+ * `\P{L}` excludes every non-letter from matching, so the class is
+ * "a letter, and not one of these scripts". Punctuation, digits,
+ * emoji and interpolation braces are untouched — they are not letters
+ * and carry no script.
+ *
+ * `scx` (Script_Extensions), not `Script`. The Arabic tatweel and the
+ * Japanese prolonged-sound mark are both `Script=Common`, so a
+ * `Script=` test flags two characters that belong in exactly the
+ * bundles they appear in.
+ */
+const foreignLetterRe = (code: string): RegExp =>
+  new RegExp(
+    `[^\\P{L}${['Latin', ...(LOCALE_SCRIPTS[code] ?? [])]
+      .map((s) => `\\p{scx=${s}}`)
+      .join('')}]`,
+    'u',
+  );
+
+/** Leaves containing a letter from outside this locale's alphabets. */
+function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
+  const re = foreignLetterRe(code);
+  const out: string[] = [];
+  const walk = (node: unknown, prefix: string): void => {
+    if (typeof node === 'string') {
+      const m = re.exec(node);
+      if (m) {
+        const ch = m[0];
+        out.push(`${prefix} (${ch} U+${ch.codePointAt(0)!.toString(16).toUpperCase()})`);
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach((element, index) => walk(element, `${prefix}[${index}]`));
+      return;
+    }
+    if (node !== null && typeof node === 'object') {
+      for (const [key, value] of Object.entries(node)) {
+        walk(value, prefix ? `${prefix}.${key}` : key);
+      }
+    }
+  };
+  walk(bundle, '');
+  return out;
+}
+
 const problems: string[] = [];
+
+// The English source too. A homoglyph there poisons every comparison
+// downstream — the source word would no longer match any locale that
+// spells it correctly, so nine locales would read as translated at
+// once, and the record would be pruned away as debt already paid.
+{
+  const foreign = foreignScriptLeaves('en', en);
+  if (foreign.length > 0) {
+    problems.push(
+      `en: ${foreign.length} leaf/leaves contain a letter outside the Latin ` +
+        `alphabet: ${foreign.slice(0, 6).join(', ')}` +
+        (foreign.length > 6 ? ', …' : ''),
+    );
+  }
+}
 
 // What the bundles ACTUALLY do, so a policy exemption that no longer
 // corresponds to anything can be reported (see the stale-exemption
@@ -717,6 +822,17 @@ for (const code of translated) {
       `${code}: missing ${unexplained.length} key(s) — ${unexplained
         .slice(0, 8)
         .join(', ')}${unexplained.length > 8 ? ', …' : ''}`,
+    );
+  }
+
+  const foreign = foreignScriptLeaves(code, bundle);
+  if (foreign.length > 0) {
+    problems.push(
+      `${code}: ${foreign.length} leaf/leaves contain a letter outside the ` +
+        `alphabets ${code} is written in. If it is a lookalike it renders as ` +
+        'the English while comparing as a different word; otherwise the ' +
+        `string is mangled: ${foreign.slice(0, 6).join(', ')}` +
+        (foreign.length > 6 ? ', …' : ''),
     );
   }
 

@@ -514,7 +514,11 @@ Thin-market honesty rules apply.
   exact wording it was granted against, rather than inferred from a
   pattern — a match can be correct in one language and a regression in
   the next, and a reworded string is a judgement nobody has made yet.
-  See the dated row in
+  Each language is also held to the alphabets it is actually written in,
+  because a letter swapped for an identical-looking one from another
+  alphabet reads as English on screen while comparing as a different
+  word — the one way text can pass every other check and still show the
+  reader English. See the dated row in
   [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent above is
   deliberately left stated in full, because a spec narrowed to the
   surfaces that happen to be finished cannot be violated and would
