@@ -441,10 +441,31 @@ function policyReauditNeeded(): string[] {
  * case-only difference is essentially never a translation. Where it
  * genuinely is one, that is what the per-locale policy is for.
  */
-const stillEnglish = (source: string, candidate: unknown): boolean =>
-  typeof candidate === 'string' &&
-  candidate.normalize('NFC').trim().toLowerCase() ===
-    source.normalize('NFC').trim().toLowerCase();
+const wordsOf = (value: string): string[] =>
+  (value.normalize('NFC').toLowerCase().match(/[^\W_]+/gu) ?? []);
+
+const stillEnglish = (source: string, candidate: unknown): boolean => {
+  if (typeof candidate !== 'string') return false;
+  const sourceWords = wordsOf(source);
+  const candidateWords = wordsOf(candidate);
+  // Wordless on either side — the punctuation IS the content, so compare
+  // it exactly. This is the case that makes a blanket punctuation-strip
+  // wrong: `copy.consentParts.suffix` is `.` in English and `。` in
+  // Chinese, and both reduce to zero words. Stripping punctuation would
+  // call a correct localization "still English" (Codex #1607 r4).
+  if (sourceWords.length === 0 || candidateWords.length === 0) {
+    return candidate.normalize('NFC').trim() === source.normalize('NFC').trim();
+  }
+  // Otherwise compare the WORDS. Separators and case are not the
+  // language: `Refinance carry-over collateral shortfall` in Hindi
+  // against `Refinance carry over collateral shortfall` in English is
+  // English with a hyphen added, and `Mock USD Coin（{{symbol}}）` is
+  // English with localized brackets. 11 such leaves were passing.
+  return (
+    sourceWords.length === candidateWords.length &&
+    sourceWords.every((word, i) => word === candidateWords[i])
+  );
+};
 
 /**
  * Resolve a leaf path that may address an ARRAY ELEMENT (`a.b[2]`).
@@ -484,8 +505,16 @@ function englishValuedLeaves(code: string, bundle: Bundle): string[] {
   for (const key of englishLeafPaths()) {
     const source = leafOrElement(en, key);
     if (typeof source !== 'string') continue;
-    if (!stillEnglish(source, leafOrElement(bundle, key))) continue;
-    if (SAME_AS_ENGLISH[key]?.locales.includes(code)) continue;
+    const value = leafOrElement(bundle, key);
+    if (!stillEnglish(source, value)) continue;
+    // The exemption is granted against an EXACT string. A normalized
+    // match is not that string: Spanish `copy.app.name` as `vaipakam`
+    // is a brand-casing regression the glossary forbids, and the
+    // acronym entries would likewise have excused `gtc` / `Aon`. Let
+    // anything short of exact fall through to the baseline check
+    // (Codex #1607 r4).
+    const exemption = SAME_AS_ENGLISH[key];
+    if (exemption?.locales.includes(code) && value === exemption.source) continue;
     found.push(key);
   }
   return found;

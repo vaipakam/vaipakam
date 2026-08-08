@@ -1,7 +1,21 @@
 {
+  "contractError.RefinanceCarryOverCollateralShortfall": {
+    "source": "Refinance carry over collateral shortfall",
+    "locales": [
+      "hi"
+    ]
+  },
   "contractError.SaleListingActive": {
     "source": "Sale listing active",
     "locales": [
+      "hi",
+      "ko"
+    ]
+  },
+  "contractError.SaleVehicleImmutable": {
+    "source": "Sale vehicle immutable",
+    "locales": [
+      "hi",
       "ko"
     ]
   },
@@ -50,6 +64,7 @@
   "copy.activity.labels.LoanSold": {
     "source": "Loan sold",
     "locales": [
+      "hi",
       "ko"
     ]
   },
@@ -277,6 +292,18 @@
       "hi"
     ]
   },
+  "copy.assetPicker.contractAddressAria": {
+    "source": "{{label}} contract address",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.assetPicker.faucetBadge": {
+    "source": "Faucet test token",
+    "locales": [
+      "de"
+    ]
+  },
   "copy.chrome.nav.positionsShort": {
     "source": "Positions",
     "locales": [
@@ -323,6 +350,7 @@
     "source": "Vault VPFI — {{amount}} VPFI",
     "locales": [
       "ar",
+      "de",
       "hi",
       "ja",
       "ko",
@@ -1006,6 +1034,7 @@
   "copy.diagnostics.build": {
     "source": "App version",
     "locales": [
+      "de",
       "hi"
     ]
   },
@@ -1104,14 +1133,17 @@
       "es",
       "fr",
       "hi",
+      "ja",
       "ko",
-      "ta"
+      "ta",
+      "zh"
     ]
   },
   "copy.faucet.liquid2.titleGeneric": {
     "source": "Mock USD Coin (test stablecoin)",
     "locales": [
       "ar",
+      "de",
       "hi",
       "ko"
     ]
@@ -1244,6 +1276,18 @@
       "hi"
     ]
   },
+  "copy.nftVerifier.placeholder": {
+    "source": "Position NFT token id",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.nftVerifier.sanctionsLabel": {
+    "source": "Compliance status",
+    "locales": [
+      "de"
+    ]
+  },
   "copy.nftVerifier.title": {
     "source": "NFT verifier",
     "locales": [
@@ -1267,37 +1311,43 @@
   "copy.notifications.unreadBadgeTitle_few": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.notifications.unreadBadgeTitle_many": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.notifications.unreadBadgeTitle_one": {
     "source": "1 unread notification",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.notifications.unreadBadgeTitle_other": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.notifications.unreadBadgeTitle_two": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.notifications.unreadBadgeTitle_zero": {
     "source": "{{count}} unread notifications",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.offerFlow.advancedOptions": {
@@ -1381,6 +1431,12 @@
   },
   "copy.offerFlow.steps.offers": {
     "source": "Offers",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.offerFlow.steps.review": {
+    "source": "Review & sign",
     "locales": [
       "hi"
     ]
@@ -1689,6 +1745,7 @@
   "copy.rent.nftTypeErc1155": {
     "source": "Multi-edition NFT (ERC-1155)",
     "locales": [
+      "de",
       "hi"
     ]
   },
@@ -1735,9 +1792,22 @@
       "hi"
     ]
   },
+  "copy.rent.stepReview": {
+    "source": "Review & sign",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.rent.switchPrompt": {
+    "source": "{{path}}? Switch",
+    "locales": [
+      "hi"
+    ]
+  },
   "copy.rent.tokenIdLabel": {
     "source": "Token id",
     "locales": [
+      "de",
       "hi",
       "ta",
       "zh"
@@ -1745,6 +1815,18 @@
   },
   "copy.risk.healthy": {
     "source": "Healthy",
+    "locales": [
+      "hi"
+    ]
+  },
+  "copy.seo.faucet.title": {
+    "source": "Test assets — Vaipakam",
+    "locales": [
+      "de"
+    ]
+  },
+  "copy.seo.home.title": {
+    "source": "Vaipakam — P2P lending, borrowing & NFT rental",
     "locales": [
       "hi"
     ]
@@ -1829,7 +1911,8 @@
     "source": "Email support@vaipakam.com",
     "locales": [
       "de",
-      "es"
+      "es",
+      "zh"
     ]
   },
   "copy.support.sending": {
