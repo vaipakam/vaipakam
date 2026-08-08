@@ -88,7 +88,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](149);
+        selectors = new bytes4[](151);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -135,6 +135,10 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setChainDayRemitIneligibleRaw.selector;
         // #1222 M3 B2-d2 — outstanding-commitment baseline for retire asserts.
         selectors[n++] = TestMutatorFacet.setOutstandingCommitRaw.selector;
+        // #1568 C2 — keeper-earmark seed + surplus-debit wrapper.
+        selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.debitRepatriationSurplusRaw.selector;
         // #1222 M3 B2-d3 — per-chain remit split for the netting identity.
         selectors[n++] =
             TestMutatorFacet.chainRewardBudgetSplitForDayRaw.selector;
