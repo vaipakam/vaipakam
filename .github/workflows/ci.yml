@@ -862,12 +862,28 @@ jobs:
       # PR events only: a push to main has no "before" to compare against,
       # and the script refuses to run against a ref it cannot resolve
       # rather than passing everything.
+      # Runs on PUSH as well as pull_request. Limiting it to PRs left
+      # the one check that compares the editable baselines with their
+      # prior state unrun on a direct push to main — so a commit landing
+      # that way could regress a locale to English, record the pair, and
+      # pass everything that did run (Codex #1607 r23). `detect-changes`
+      # above already derives a push base the same way.
       - name: Baselines may only shrink — apps/alpha02
-        if: github.event_name == 'pull_request'
         run: |
-          git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-          node apps/alpha02/scripts/check-baselines-shrink-only.mjs \
-            --base "${{ github.event.pull_request.base.sha }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            # All-zeros on the first push to a branch: there is no prior
+            # state, so there is nothing this check can say.
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              echo "First push to this ref — no prior baseline to compare."
+              exit 0
+            fi
+          fi
+          git fetch --depth=1 origin "$BASE"
+          pnpm --filter @vaipakam/alpha02 exec tsx \
+            scripts/check-baselines-shrink-only.ts --base "$BASE"
 
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi

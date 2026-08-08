@@ -2,7 +2,7 @@
  * Guardrail (#1596, Codex #1607 r18): the two i18n baselines may only
  * SHRINK. Fails if a change ADDS a `(key, locale)` pair to either.
  *
- *   node scripts/check-baselines-shrink-only.mjs --base <git-ref>
+ *   tsx scripts/check-baselines-shrink-only.ts --base <git-ref>
  *
  * WHY THIS EXISTS SEPARATELY FROM `check-locale-coverage.ts`.
  * That guard detects a locale value that still reads in English and
@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stillEnglish } from '../src/i18n/stillEnglish.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -60,16 +61,16 @@ if (!baseRef) {
  * older `{ "<key>": [...] }`. Flattened to `<locale>:<key>` either way,
  * so the check does not depend on which shape a file currently uses.
  */
-const entriesOf = (text, where) => {
+const entriesOf = (text: string, where: string): Map<string, string | undefined> => {
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new Error(`${where} is not valid JSON: ${error.message}`);
+    throw new Error(`${where} is not valid JSON: ${(error as Error).message}`);
   }
   // `<locale>:<key>` -> the English text the entry was recorded against
   // (undefined for the missing-key baseline, which records no source).
-  const out = new Map();
+  const out = new Map<string, string | undefined>();
   for (const [key, entry] of Object.entries(parsed)) {
     const locales = Array.isArray(entry) ? entry : entry?.locales;
     if (!Array.isArray(locales)) {
@@ -81,11 +82,11 @@ const entriesOf = (text, where) => {
 };
 
 /** `<locale>:<key>` -> what that locale actually holds right now. */
-const currentValue = (pair) => {
+const currentValue = (pair: string): string | undefined => {
   const [code, key] = [pair.slice(0, pair.indexOf(':')), pair.slice(pair.indexOf(':') + 1)];
   const file = path.join(REPO_ROOT, 'apps/alpha02/src/i18n/locales', `${code}.json`);
   if (!fs.existsSync(file)) return undefined;
-  let node;
+  let node: unknown;
   try {
     node = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
@@ -96,7 +97,7 @@ const currentValue = (pair) => {
     const m = /^(.*)\[(\d+)\]$/.exec(segment);
     const name = m ? m[1] : segment;
     if (node === null || typeof node !== 'object') return undefined;
-    node = node[name];
+    node = (node as Record<string, unknown>)[name];
     if (m) node = Array.isArray(node) ? node[Number(m[2])] : undefined;
   }
   return typeof node === 'string' ? node : undefined;
@@ -127,7 +128,7 @@ try {
 }
 
 /** The file's content at `baseRef`, or null if it did not exist there. */
-const atBase = (repoPath) => {
+const atBase = (repoPath: string): string | null => {
   try {
     return execFileSync('git', ['show', `${baseRef}:${repoPath}`], {
       cwd: REPO_ROOT,
@@ -141,7 +142,7 @@ const atBase = (repoPath) => {
   }
 };
 
-const problems = [];
+const problems: string[] = [];
 
 for (const repoPath of BASELINES) {
   const beforeText = atBase(repoPath);
@@ -193,10 +194,20 @@ for (const repoPath of BASELINES) {
   // entry was recorded against has not been translated, whatever the
   // English says now.
   const removed = [...before.keys()].filter((pair) => !after.has(pair)).sort();
+  //
+  // Compared with the coverage guard's OWN still-English rule, imported
+  // rather than restated. An exact comparison was the first attempt and
+  // it let the evidence go: the committed baseline already holds values
+  // those rules deliberately normalize away — `ko:contractError
+  // .SaleListingActive` differs from the English only in case — so
+  // lowercasing a value was enough to make its record deletable (Codex
+  // #1607 r23). Two guards asking the same question had to agree, and
+  // the only way to guarantee that is one definition.
   const wrongful = removed.filter((pair) => {
     const recordedSource = before.get(pair);
     if (typeof recordedSource !== 'string') return false; // no source recorded
-    return currentValue(pair) === recordedSource;
+    const value = currentValue(pair);
+    return typeof value === 'string' && stillEnglish(recordedSource, value);
   });
   if (wrongful.length > 0) {
     problems.push(
