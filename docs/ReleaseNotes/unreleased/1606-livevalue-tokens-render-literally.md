@@ -7,9 +7,9 @@ rather than `Yield Fee — 2%`. The same held across the whitepaper, the
 user guide and the parameter reference, in every language — 363 embedded
 values in the source content, none of them resolving.
 
-The mechanism exists so that when governance retunes a fee, the pages
-say the new number without anyone editing them. It had silently stopped
-working. The markdown renderer distinguishes an inline value from a
+The mechanism exists so that these figures live in one place instead of
+being retyped into 363 sentences across four documents and every
+language. It had silently stopped working. The markdown renderer distinguishes an inline value from a
 fenced code sample, and the code doing that asked the markdown library a
 question the library stopped answering two major versions ago. The
 answer came back empty, which read as "this is a code sample", so every
@@ -42,8 +42,20 @@ causes it rather than after publication.
 
 Verified against a real render of all 111 pages: 570 pieces of leaked
 placeholder text before, none after; 5,728 stray attributes before, none
-after; and 40 pages now showing live figures. The reader-visible result is that the overview page states the
-yield fee as a percentage again.
+after; and 40 pages now showing figures. The reader-visible result is
+that the overview page states the yield fee as a percentage again.
+
+**What this does not do.** Review caught an overclaim in an earlier draft
+of this note, and it is worth stating plainly rather than quietly
+deleting. On the public site these figures come from values bundled into
+the page at build time — the marketing pages deliberately do not talk to
+the chain, and the component's data source there is a stub that always
+reports "no chain reading available". So a governance change to a fee does
+**not** propagate to the public pages on its own; they still need a
+rebuild, and if a bundled default has drifted from the deployed value it
+needs correcting in one place. The benefit delivered here is the single
+place, not automatic freshness. Reading the real value from the chain on
+the public site would be a separate piece of work, tracked separately.
 
 Review then found a second, older defect one line away from the first.
 The renderer forwards the markdown library's leftover properties onto the
