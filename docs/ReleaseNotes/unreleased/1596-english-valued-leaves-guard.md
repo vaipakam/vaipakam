@@ -12,7 +12,7 @@ the moment the last missing piece was filled, every language read as complete �
 while Hindi alone still showed nearly three hundred English strings to anyone
 using the app in Hindi.
 
-The check now asks the second question too. At the time of writing, 491 pairs
+The check now asks the second question too. At the time of writing, 492 pairs
 of language and text are recorded as a known, dated backlog so the number cannot quietly grow: a
 piece of text that regresses to English fails the build, and one that gets
 translated has to be struck from the record or the build fails as well. The
@@ -40,16 +40,18 @@ it untranslated would invent work against a translation someone had started.
 
 Repeating a word does not translate it either, and that one arrived last: a
 label reading "Settings Settings" is longer than the English, and a check
-counting words rather than looking at which words they are let it through. The
-question the check finally settles on is the simplest form of itself — is every
-word here an English word? Reordering, deleting and repeating are all just
-arrangements of the same vocabulary, and each had been found separately before
-the shape common to all three was.
+counting words rather than looking at which words they are let it through. Reordering, deleting and
+repeating are all just arrangements of the same vocabulary, and each had been
+found separately before the shape common to all three was.
 
-The question it settles on is deliberately the narrow one — is every word here a
-word from the English this text is meant to translate? — and not the broader
-"is this English", which sounds better and cannot be answered without knowing
-the languages involved. Text that adds an English word the source did not have
+The question the check settles on is deliberately the narrow one — is every word
+here a word from the English this text is meant to translate? — and not the
+broader "is this English", which sounds better and cannot be answered without
+knowing the languages involved. One thing had to be added on top of it:
+punctuation dropped inside a word. "Set-tings" is two fragments to a machine and
+mangled English to a reader, so the letters are also compared with every
+separator removed — two texts whose letters run in the same order are the same
+text differently punctuated. Text that adds an English word the source did not have
 still passes. The broader rule was tried and measured: treating every word in
 the English as a dictionary would add seventeen entries to the backlog, and
 almost all of them are correct translations that happen to share a word with
@@ -112,7 +114,13 @@ questions now use two tests. Nor do invisible letters: one Korean character is
 simultaneously a letter, invisible, and part of the Korean alphabet, so adding
 it to an ellipsis satisfied three separate rules at once while showing the
 reader nothing. Every comparison here now drops invisible characters before
-looking.
+looking. Control characters are handled the opposite way — they are rejected
+outright rather than ignored. They render nothing, they are not covered by the
+rule for invisible characters, and one appended to a Chinese full stop was
+enough to make a regression to the English mark look like a translation. No copy
+in any of the ten languages legitimately contains one, so their presence means a
+corrupted file or a bad paste, and saying so is more useful than quietly
+tidying it away.
 
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot

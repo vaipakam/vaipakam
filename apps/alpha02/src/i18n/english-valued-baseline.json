@@ -988,6 +988,7 @@
   "copy.desk.ticket.title": {
     "source": "Order ticket",
     "locales": [
+      "de",
       "hi"
     ]
   },

@@ -589,71 +589,58 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
     // compared exactly, so `.` and `。` stay distinct.
     return visibleForm(candidate) === visibleForm(source);
   }
-  // Otherwise compare the WORDS. Separators and case are not the
-  // language: `Refinance carry-over collateral shortfall` in Hindi
-  // against `Refinance carry over collateral shortfall` in English is
-  // English with a hyphen added, and `Mock USD Coin（{{symbol}}）` is
-  // English with localized brackets. 11 such leaves were passing.
+  // Otherwise compare the WORDS, on ONE rule: is every word in the
+  // candidate one of THIS SOURCE's words?
   //
-  // As a MULTISET, not a sequence. Word order is grammar, not
-  // vocabulary, and it is the first thing translation changes — so a
-  // sequence comparison excused the very edit most likely to be a
-  // rearranged English sentence: `Skip to content` written as
-  // `content to Skip` is three English words a reader reads as English,
-  // and it passed (Codex #1607 r11). Requiring the same words with the
-  // same multiplicities keeps every case above working — none of them
-  // turned on order — while a genuine translation still has to change
-  // at least one word, which is the lowest bar this check can set.
-  //
-  // The test is VOCABULARY, not counts: is every word in the candidate
-  // one of THIS SOURCE's words? Counts and order are both bookkeeping a
-  // reader cannot see.
-  //
-  // Say the rule precisely, because the loose form — "is every word an
-  // English word?" — promises something this cannot deliver and Codex
-  // rightly called the gap (r15). `Open Settings` for `Settings` is
-  // entirely English and passes, because `open` is not in the source.
-  //
-  // The loose form was measured before being rejected. Treating all
-  // 1,801 words in en.json as an English dictionary and asking whether
-  // every candidate word is in THAT adds 17 pairs to the baseline, and
-  // reading them, essentially all are correct translations that share
-  // vocabulary with English: French `Plus` for `More`, `Principal` for
-  // `Primary`, `Type de NFT`, `Confirmation…`, `1 an` — and
-  // `{{noun}} n°{{id}} — {{what}}`, which is the very value defended
-  // one round earlier AS localization. 17 invented debts against one
-  // hypothetical catch is the wrong trade for a list whose worth is
-  // that every line on it is real.
-  //
-  // Separating `Open Settings` from `Type de NFT` needs to know that
-  // `open` is English and `de` is French — a language identifier, not
-  // a set operation. Tracked as #1611 rather than approximated here,
-  // because every approximation available scores worse than the rule
-  // it would replace.
-  //
-  //   Skip to content -> content to Skip   reordered, all English
-  //   Skip to content -> Skip content      an article deleted
-  //   Settings        -> Settings Settings duplicated, still English
+  //   Skip to content -> content to Skip          reordered
+  //   Skip to content -> Skip content             a word deleted
+  //   Settings        -> Settings Settings        repeated
   //   Settings        -> Einstellungen Settings   has a German word
   //
   // The first three are English on screen; only the fourth has a word
-  // from somewhere else. Two earlier revisions each got this partly
-  // right and left the rest through: an equal-length multiset excused
-  // deletions (Codex #1607 r13 — eight committed leaves, Hindi
+  // from somewhere else. Counts, order and separators are bookkeeping a
+  // reader cannot see: `Refinance carry-over collateral shortfall` in
+  // Hindi against `Refinance carry over collateral shortfall` in
+  // English is English with a hyphen added, and `Mock USD Coin（{{s}}）`
+  // is English with localized brackets — 11 such leaves were passing.
+  //
+  // Three revisions each caught one arrangement and left the next:
+  // sequence order (Codex #1607 r11), then equal-length multisets,
+  // which excused deletions (r13 — eight committed leaves, Hindi
   // `loan asset` for `the loan asset`, Korean `permission signing…`
-  // for `Signing the permission…`), and adding sub-multisets still
-  // excused repetition, since `Settings Settings` is LONGER than its
-  // source and the length shortcut returned early (r14). Asking about
-  // the word SET has no such edge — every arrangement, deletion and
-  // duplication of English words is English.
+  // for `Signing the permission…`), then sub-multisets, which still
+  // excused repetition because `Settings Settings` is LONGER than its
+  // source and fell out of the length shortcut (r14). The set has no
+  // such edge, and is less code than any of them.
+  //
+  // SAY THE RULE PRECISELY. The loose form — "is every word an English
+  // word?" — promises what this cannot deliver: `Open Settings` for
+  // `Settings` is entirely English and passes, because `open` is not in
+  // the source (r15). The loose form was measured before being
+  // rejected: all 1,801 words of en.json as a dictionary adds 17 pairs,
+  // and reading them, essentially all are correct translations sharing
+  // vocabulary with English — French `Plus`, `Principal`,
+  // `Type de NFT`, `1 an`, and `{{noun}} n°{{id}} — {{what}}`, the
+  // value defended one round earlier AS localization. Telling those
+  // from a real English rewrite needs a language identifier, not a set
+  // operation; #1611 carries it.
   //
   // The asymmetry is deliberate: a candidate with a word THIS SOURCE
   // does not have is treated as a translation someone started, because
   // flagging it would invent debt — the failure `\p{L}` over `\w` was
-  // fixed to avoid in round 5. The measurement above is what that
-  // choice costs and what it buys.
+  // fixed to avoid in round 5.
   const sourceVocabulary = new Set(sourceWords);
-  return candidateWords.every((word) => sourceVocabulary.has(word));
+  if (candidateWords.every((word) => sourceVocabulary.has(word))) return true;
+  // One case the set cannot reach: punctuation dropped INSIDE a word.
+  // `Set-tings` tokenizes as `set` + `tings`, neither of which is a
+  // source word, so the set test reads two foreign words where a reader
+  // sees mangled English (r16). Comparing the letters with every
+  // separator removed catches it, and cannot produce a false positive:
+  // two strings whose letters are identical in order ARE the same text
+  // differently punctuated.
+  return (
+    sourceWords.length > 0 && sourceWords.join('') === candidateWords.join('')
+  );
 };
 
 /**
@@ -789,16 +776,44 @@ const foreignLetterRe = (code: string): RegExp =>
     'u',
   );
 
-/** Leaves with a letter or mark from outside this locale's alphabets. */
+/**
+ * Matches one C0/C1 CONTROL character.
+ *
+ * A separate class from the ignorables every comparison drops, and it
+ * has to be, because `Default_Ignorable_Code_Point` does not include
+ * them: U+0000 renders nothing and matches no ignorable property, so
+ * `.` followed by a NUL is the English full stop on screen and a
+ * different string to `visibleForm` — enough to disguise a Chinese
+ * regression as a translation (Codex #1607 r16).
+ *
+ * REJECTED rather than stripped. Stripping would make them invisible
+ * to review as well as to the reader, and no UI string legitimately
+ * contains one: measured across all ten bundles before choosing, and
+ * the count is zero. A control character in copy is a corrupted file
+ * or a bad paste, and the right answer to both is to say so.
+ */
+const CONTROL_RE = /\p{Cc}/u;
+
+/**
+ * Leaves holding a character that does not belong in this locale's
+ * text — a letter or mark from another alphabet, or a control
+ * character.
+ */
 function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
   const re = foreignLetterRe(code);
   const out: string[] = [];
   const walk = (node: unknown, prefix: string): void => {
     if (typeof node === 'string') {
-      const m = re.exec(node);
+      const control = CONTROL_RE.exec(node);
+      const m = control ?? re.exec(node);
       if (m) {
         const ch = m[0];
-        out.push(`${prefix} (${ch} U+${ch.codePointAt(0)!.toString(16).toUpperCase()})`);
+        const point = `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`;
+        // The code point ALONE for a control character. Echoing the
+        // character itself would put a raw control into the terminal
+        // and into CI logs, where it is invisible or actively harmful
+        // — the same property that let it hide in the bundle.
+        out.push(control ? `${prefix} (${point})` : `${prefix} (${ch} ${point})`);
       }
       return;
     }
@@ -874,8 +889,9 @@ const problems: string[] = [];
   const foreign = foreignScriptLeaves('en', en);
   if (foreign.length > 0) {
     problems.push(
-      `en: ${foreign.length} leaf/leaves contain a letter or mark from outside ` +
-        `the Latin alphabet: ${foreign.slice(0, 6).join(', ')}` +
+      `en: ${foreign.length} leaf/leaves contain a character that does not ` +
+        'belong in English text — a letter or mark from another alphabet, or ' +
+        `a control character: ${foreign.slice(0, 6).join(', ')}` +
         (foreign.length > 6 ? ', …' : ''),
     );
   }
@@ -952,10 +968,11 @@ for (const code of translated) {
   const foreign = foreignScriptLeaves(code, bundle);
   if (foreign.length > 0) {
     problems.push(
-      `${code}: ${foreign.length} leaf/leaves contain a letter or mark from ` +
-        `outside the alphabets ${code} is written in. If it is a lookalike it ` +
-        'renders as the English while comparing as a different word; ' +
-        `otherwise the string is mangled: ${foreign.slice(0, 6).join(', ')}` +
+      `${code}: ${foreign.length} leaf/leaves contain a character that does ` +
+        `not belong in ${code} text — a letter or mark from another alphabet, ` +
+        'or a control character. A lookalike renders as the English while ' +
+        'comparing as a different word; anything else is a mangled string: ' +
+        `${foreign.slice(0, 6).join(', ')}` +
         (foreign.length > 6 ? ', …' : ''),
     );
   }
