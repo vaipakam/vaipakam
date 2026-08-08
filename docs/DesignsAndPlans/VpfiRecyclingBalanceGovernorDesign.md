@@ -674,9 +674,25 @@ sits at the single canonical point (Base finalization):
 
    ```
    claimNet = sat(consumed − released)
-   repatNet = sat(repatDebited − repatReleased)
+   repatNet = the NET repatriation draw slot   (see operand note below)
    claimNet ≤ reported   AND   repatNet ≤ reported − claimNet
    ```
+
+   **Operand note — `repatNet` is a MAINTAINED net slot, not a derived
+   subtraction** (Codex #1608 r2 P2, ratifying the implementation shape):
+   the draw slot is charged on authorization and DECREMENTED by an
+   authenticated cancellation ACK, and the lifetime released cumulative is
+   kept separately as monotonic observability. Deriving the net as
+   `sat(debited − released)` from two gross cumulatives is FORBIDDEN in
+   both directions: a consumer computing it from the published pair
+   under-counts the live draw once any release has occurred (after
+   releasing 40 and settling a new 30, the derived figure is 0 while 30 is
+   genuinely drawn — re-offering drawn capacity), and a gross debited
+   cumulative wedges every later authorization on overflow after a
+   cancelled near-max draw. The published pair is `(netDraw,
+   lifetimeReleased)`; every consumer — this bound, the availability
+   formula, the watcher, C3's mirror calculation — uses `netDraw`
+   directly.
 
    The second comparison is evaluated only once the first holds, so
    `reported − claimNet` cannot underflow, and no intermediate can exceed

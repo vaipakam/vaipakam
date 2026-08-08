@@ -360,6 +360,19 @@ design must therefore extend availability to
 same saturating, subtraction-first shape, and **no direction anywhere may say
 "increment `consumedCumulative`" for a repatriation**.
 
+> **Operand ratification (Codex #1608 r2 P2):** the
+> `(repatDebited − repatReleased)` net is a **maintained slot**, not a
+> derived subtraction — the draw slot is charged on authorization and
+> decremented by the authenticated cancellation ACK, with the lifetime
+> released cumulative kept separately as monotonic observability. Deriving
+> the net from two gross cumulatives fails in both directions: the derived
+> figure under-counts the live draw once any release has occurred
+> (re-offering genuinely drawn capacity), and a gross debited cumulative
+> wedges every later authorization on overflow after a cancelled near-max
+> draw. The published pair is `(netDraw, lifetimeReleased)` and every
+> consumer uses `netDraw` directly — governor §7 #6 carries the identical
+> operand note.
+
 **A THIRD draw term lands with C3** (Codex #1578 r5, applied here r6). The
 keeper allocation of §3.5 is a separate draw on the same bucket, so it takes
 its own pair on the same footing: `− (keeperDebited − keeperReleased)`. The

@@ -1118,6 +1118,23 @@ contract TestMutatorFacet {
         s.outstandingCommitRecycled = recycled;
     }
 
+    /// @notice #1568 C2 test-only — seed the keeper earmark directly so the
+    ///         repatriation fundable bound (bucket − outstanding − keeper)
+    ///         has a non-zero third term without driving a register split.
+    function setRecycleKeeperBudgetRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().recycleKeeperBudget = amount;
+    }
+
+    /// @notice #1568 C2 test-only — exercise the internal surplus-debit
+    ///         primitive through the Diamond (its production caller,
+    ///         `executeRepatriation`, ships with the transport slice).
+    function debitRepatriationSurplusRaw(uint256 amount) external {
+        LibVpfiRecycle.debitRepatriationSurplus(
+            LibVaipakam.storageSlot(),
+            amount
+        );
+    }
+
     /// @notice Governor PR-3a test-only — stamp a seeded entry as forfeited
     ///         (production stamps it via {LibInteractionRewards.closeLoan}
     ///         on liquidation-class terminals) so recycle-bucket tests can

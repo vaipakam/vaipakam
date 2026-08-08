@@ -107,6 +107,9 @@ export interface DeploymentFacets {
   rewardRemittanceFacet?: HexAddress;
   /** #1222 M3 B2-c — commitment-gate plumbing (reconcile + gate views). */
   rewardCommitmentFacet?: HexAddress;
+  /** #1568 C2 — planned-surplus repatriation accounting core (dark until
+   *  the transport satellites are configured). */
+  repatriationFacet?: HexAddress;
   riskAccessFacet?: HexAddress;
   /** #1104 — RiskPreviewFacet split off RiskAccessFacet (preview cluster). */
   riskPreviewFacet?: HexAddress;
