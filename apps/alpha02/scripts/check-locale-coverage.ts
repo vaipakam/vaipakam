@@ -521,6 +521,21 @@ function policyReauditNeeded(): string[] {
 const stripIgnorable = (value: string): string =>
   value.replace(/\p{Default_Ignorable_Code_Point}/gu, '');
 
+/**
+ * The visible MARKS, with all spacing removed.
+ *
+ * Spacing is not a language, and the worded branch has never treated it
+ * as one — `wordsOf` tokenizes, so separators disappear before anything
+ * is compared. The wordless branch trimmed only the ends, which left
+ * one arrangement uncovered: `.` written as `. .` is two English full
+ * stops to the reader and an undecomposable stream to the guard, so it
+ * passed (Codex #1607 r19). Same treatment, same branch.
+ *
+ * Measured: no wordless verdict on the committed bundles changes.
+ */
+const marksOf = (value: string): string =>
+  stripIgnorable(value.normalize('NFKC')).replace(/\s+/gu, '');
+
 /** What a reader actually sees, ends trimmed. */
 const visibleForm = (value: string): string =>
   // NFKC, matching `wordsOf`: compatibility-equivalent punctuation is
@@ -602,8 +617,8 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // stop on screen while differing in bytes — a regression that looked
   // like a translation (r6).
   if (sourceWords.length === 0 || candidateWords.length === 0) {
-    const sourceMarks = visibleForm(source);
-    const candidateMarks = visibleForm(candidate);
+    const sourceMarks = marksOf(source);
+    const candidateMarks = marksOf(candidate);
     if (candidateMarks === sourceMarks) return true;
     return coveredBySourceWords(candidateMarks, [...new Set(sourceMarks)]);
   }

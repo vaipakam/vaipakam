@@ -66,7 +66,8 @@ at a time. Digits are left out of that stream, because a number dropped into
 the middle of an English word does not make it another language. The same
 question is asked of the punctuation where there are no words at all: an
 English full stop written twice is still an English full stop, and comparing
-the two exactly had been calling it a translation. Text that adds an English word the source did not have
+the two exactly had been calling it a translation — with the spaces taken out
+first, because putting one between them changes nothing a reader would notice. Text that adds an English word the source did not have
 still passes. The broader rule was tried and measured: treating every word in
 the English as a dictionary would add seventeen entries to the backlog, and
 almost all of them are correct translations that happen to share a word with
