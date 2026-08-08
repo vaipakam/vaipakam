@@ -115,14 +115,19 @@ function check(name: string, ok: boolean, detail: string) {
 // 4. The LOAD-BEARING assumption, asserted across every construct that
 //    produces a `<code>` element.
 //
-//    The fix distinguishes inline from fenced by structure: react-markdown
-//    wraps block code in `<pre>` and leaves inline code bare. If that ever
-//    fails to hold for some construct, tokens in it silently stop
-//    resolving (or a code sample silently starts resolving) — the exact
-//    class of failure #1606 was. A comment asserting "v10 always wraps
-//    fenced blocks" is worth much less than a test, so every construct is
-//    enumerated here, including INDENTED code blocks, which are block code
-//    without any fence markers at all.
+//    The renderer asks ONE question — is this span exactly one live-value
+//    token — and the token pattern is ANCHORED. That is what keeps code
+//    samples literal: block code always arrives with a trailing newline,
+//    which an anchored pattern cannot match, while inline code never
+//    does. Nothing re-derives "is this span inline"; stating that fact
+//    twice is how the original bug happened.
+//
+//    So the anchors are load-bearing rather than cosmetic. Unanchor the
+//    pattern and fenced samples silently start resolving; that is the
+//    same class of silent failure #1606 was. A comment claiming the
+//    property is worth much less than a test of it, so every construct
+//    is enumerated here — including INDENTED blocks, which are block code
+//    with no fence markers at all.
 {
   const constructs: [string, string, 'literal' | 'substituted'][] = [
     ['fenced, no language', '```\n{liveValue:treasuryFeeBps}\n```', 'literal'],
