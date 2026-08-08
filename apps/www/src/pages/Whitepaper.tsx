@@ -69,7 +69,11 @@ export default function Whitepaper() {
     if (details) details.removeAttribute('open');
   };
 
-  const headingComps = useMemo(() => markdownComponents(), []);
+  // 'en' regardless of the route: resolveWhitepaper() always loads the .en.md source,
+  // so embedded values must format as English even on a
+  // locale-prefixed URL. Using the UI locale here rendered
+  // German grouping inside English prose (#1610 review r5).
+  const headingComps = useMemo(() => markdownComponents('en'), []);
 
   return (
     <div className="user-guide-page">

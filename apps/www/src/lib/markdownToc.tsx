@@ -265,26 +265,39 @@ interface CodeRendererProps {
  * ten constructs that produce a `<code>` element, so the property is
  * tested rather than merely asserted in this comment.
  */
-function MarkdownCode({ children, node: _node, ...rest }: CodeRendererProps) {
-  const match = LIVE_VALUE_TOKEN_RE.exec(nodeToText(children));
-  if (match) {
-    return <LiveValue knob={match[1] as KnobName} />;
-  }
-  // Default — preserve native ReactMarkdown behaviour for every other
-  // inline-code span and every code block.
-  return <code {...rest}>{children}</code>;
-}
-
-let _cachedMarkdownComponents: ReturnType<typeof buildMarkdownComponents> | null = null;
-function buildMarkdownComponents() {
-  return {
-    ...headingComponents(),
-    code: MarkdownCode,
+function makeMarkdownCode(docLocale: string) {
+  return function MarkdownCode({ children, node: _node, ...rest }: CodeRendererProps) {
+    const match = LIVE_VALUE_TOKEN_RE.exec(nodeToText(children));
+    if (match) {
+      return <LiveValue knob={match[1] as KnobName} locale={docLocale} />;
+    }
+    // Default — preserve native ReactMarkdown behaviour for every other
+    // inline-code span and every code block.
+    return <code {...rest}>{children}</code>;
   };
 }
-export function markdownComponents() {
-  if (!_cachedMarkdownComponents) {
-    _cachedMarkdownComponents = buildMarkdownComponents();
+
+// Keyed by document locale. ReactMarkdown shallow-compares `components`,
+// so a fresh object per render would re-render every chunk on every parent
+// update — the reason this was memoized in the first place. A Map keeps
+// that stability now that the map depends on the document's language.
+const _cachedMarkdownComponents = new Map<string, ReturnType<typeof buildMarkdownComponents>>();
+function buildMarkdownComponents(docLocale: string) {
+  return {
+    ...headingComponents(),
+    code: makeMarkdownCode(docLocale),
+  };
+}
+/**
+ * @param docLocale locale of the DOCUMENT being rendered — which is not
+ * always the UI locale. Pages that always resolve `.en.md` must pass
+ * `'en'` even on a locale-prefixed route.
+ */
+export function markdownComponents(docLocale: string) {
+  let cached = _cachedMarkdownComponents.get(docLocale);
+  if (!cached) {
+    cached = buildMarkdownComponents(docLocale);
+    _cachedMarkdownComponents.set(docLocale, cached);
   }
-  return _cachedMarkdownComponents;
+  return cached;
 }

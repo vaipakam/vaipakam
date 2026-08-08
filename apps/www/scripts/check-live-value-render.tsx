@@ -50,6 +50,7 @@ import i18next from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { markdownComponents } from '../src/lib/markdownToc';
 import { substituteLiveValuesInMarkdown } from './liveValueMarkdown';
+import { KNOB_DEFAULTS, formatKnob } from '../src/lib/liveValueKnobs';
 
 /*
  * A minimal i18next instance. `LiveValue` reads the active locale (so its
@@ -71,16 +72,15 @@ await i18next.use(initReactI18next).init({
 /** Render a markdown string through the real doc pipeline. */
 function render(markdown: string): string {
   return renderToStaticMarkup(
-    <ReactMarkdown components={markdownComponents() as never}>{markdown}</ReactMarkdown>,
+    <ReactMarkdown components={markdownComponents('en') as never}>{markdown}</ReactMarkdown>,
   );
 }
 
-/** Render with a given active language, for locale-formatting checks. */
-async function renderInLocale(markdown: string, lng: string): Promise<string> {
-  await i18next.changeLanguage(lng);
-  const html = render(markdown);
-  await i18next.changeLanguage('en');
-  return html;
+/** Render with an explicit components map (a given document locale). */
+function renderWith(components: ReturnType<typeof markdownComponents>, markdown: string): string {
+  return renderToStaticMarkup(
+    <ReactMarkdown components={components as never}>{markdown}</ReactMarkdown>,
+  );
 }
 
 const failures: string[] = [];
@@ -243,17 +243,12 @@ function check(name: string, ok: boolean, detail: string) {
       md('`{liveValue:loanInitiationFeeBps}`', 'en') === '0.2',
     `fr gave "${md('`{liveValue:loanInitiationFeeBps}`', 'fr')}", en gave "${md('`{liveValue:loanInitiationFeeBps}`', 'en')}"`,
   );
-  // The RENDERED path must localise too — the markdown path passing is
-  // not evidence for it, since they format through the same helper but
-  // reach it by different routes (one from the file's locale, one from
-  // the active i18n language).
-  const deHtml = await renderInLocale('`{liveValue:tier4Min}`', 'de');
-  const enHtml = await renderInLocale('`{liveValue:tier4Min}`', 'en');
-  check(
-    'rendered: grouping follows the active language',
-    deHtml.includes('20.000') && enHtml.includes('20,000'),
-    `de HTML lacked "20.000" or en HTML lacked "20,000"`,
-  );
+  // NOTE: there is deliberately no "formatting follows the active UI
+  // language" check here any more. That assertion existed in an earlier
+  // round and it encoded a BUG: `Whitepaper` and `AdminKnobsDocs` always
+  // render the English source, so on /de/help/technical the UI language
+  // is German while the document is English. Formatting must follow the
+  // DOCUMENT — asserted in section 7.
 
   // Both substituters read KNOB_DEFAULTS, so a divergence means someone
   // reintroduced a second source of truth.
@@ -265,13 +260,58 @@ function check(name: string, ok: boolean, detail: string) {
   );
 }
 
+// 7. The DOCUMENT locale, not the UI locale (#1610 review round 5).
+//
+//    `Whitepaper` and `AdminKnobsDocs` always resolve the .en.md source,
+//    so on /de/help/technical the prose is English. Formatting embedded
+//    values with the route's language put German grouping inside English
+//    sentences, and Arabic-Indic digits on an Arabic route. The renderer
+//    now takes the document locale explicitly; these pin that it is
+//    honoured and that the UI language cannot override it.
+{
+  const en = markdownComponents('en');
+  const de = markdownComponents('de');
+  check(
+    'document locale is honoured over the active language',
+    (() => {
+      // Active language German, document English — English must win.
+      return renderWith(en, '`{liveValue:tier4Min}`').includes('20,000');
+    })(),
+    'an English document did not format as English',
+  );
+  check(
+    'a German document still formats as German',
+    renderWith(de, '`{liveValue:tier4Min}`').includes('20.000'),
+    'a German document did not format as German',
+  );
+  check(
+    'components are memoized per locale',
+    markdownComponents('en') === en && markdownComponents('de') === de && en !== de,
+    'markdownComponents did not return a stable per-locale object',
+  );
+}
+
+// 8. The search index must hold what the reader can see, in the locale
+//    the reader sees it — otherwise searching visible text cannot find
+//    its own page. It reads the same registry, so this also asserts the
+//    third copy of the defaults is gone.
+{
+  const deTier4 = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'de');
+  const enTier4 = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'en');
+  check(
+    'search formatting differs by locale like the pages do',
+    deTier4 === '20.000' && enTier4 === '20,000',
+    `de gave "${deTier4}", en gave "${enTier4}"`,
+  );
+}
+
 if (failures.length > 0) {
   console.error(
-    `[check-live-value-render] FAILED — ${failures.length} of 34 checks\n${failures.join('\n')}\n`,
+    `[check-live-value-render] FAILED — ${failures.length} of 37 checks\n${failures.join('\n')}\n`,
   );
   process.exit(1);
 }
 
 console.log(
-  '[check-live-value-render] OK — 34 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak, and the published-markdown path matches the rendered one',
+  '[check-live-value-render] OK — 37 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak, and the published-markdown path matches the rendered one',
 );

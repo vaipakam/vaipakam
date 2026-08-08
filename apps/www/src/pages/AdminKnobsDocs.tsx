@@ -96,7 +96,11 @@ function AdminKnobsDocsInner() {
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');
   const isNonEnglish = useActiveLocale() !== 'en';
-  const headingComps = useMemo(() => markdownComponents(), []);
+  // 'en' regardless of the route: resolveAdminDoc() always loads the .en.md source,
+  // so embedded values must format as English even on a
+  // locale-prefixed URL. Using the UI locale here rendered
+  // German grouping inside English prose (#1610 review r5).
+  const headingComps = useMemo(() => markdownComponents('en'), []);
 
   const collapseEnclosingDetails = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const details = e.currentTarget.closest('details');

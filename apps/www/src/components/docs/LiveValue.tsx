@@ -33,7 +33,6 @@
  */
 
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
-import { useActiveLocale } from '../../i18n/useActiveLocale';
 import { KNOB_DEFAULTS, formatKnob, type KnobName } from '../../lib/liveValueKnobs';
 
 export type { KnobName };
@@ -63,9 +62,24 @@ const KNOB_READS: Record<KnobName, ChainRead> = {
 
 interface LiveValueProps {
   knob: KnobName;
+  /**
+   * Locale of the DOCUMENT this value appears in — not the UI language
+   * (#1610 review round 5).
+   *
+   * These differ, and using the UI language was wrong. `Whitepaper` and
+   * `AdminKnobsDocs` always resolve the `.en.md` source whatever the
+   * route, so on `/de/help/technical` the prose is English; formatting a
+   * threshold as `20.000` there contradicts the sentence around it, and
+   * on an Arabic route the digits themselves changed script inside
+   * English text. `Overview` and `UserGuide` fall back to English when a
+   * translation is missing, so their document locale is not the route
+   * locale either. The caller knows which document it resolved; this
+   * component cannot infer it.
+   */
+  locale: string;
 }
 
-export function LiveValue({ knob }: LiveValueProps) {
+export function LiveValue({ knob, locale }: LiveValueProps) {
   const spec = KNOB_DEFAULTS[knob];
   // The bail-out sits BELOW the hook (#1521). Two things to know:
   //
@@ -85,7 +99,6 @@ export function LiveValue({ knob }: LiveValueProps) {
   // This is the copy the docs actually render: Whitepaper, Overview,
   // UserGuide and AdminKnobsDocs all reach it via `markdownComponents()`.
   const { config } = useProtocolConfig();
-  const locale = useActiveLocale();
 
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
   // through to inline code rendering so the bug is visible in the

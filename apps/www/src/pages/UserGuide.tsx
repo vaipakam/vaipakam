@@ -118,6 +118,15 @@ function resolveGuide(
   };
 }
 
+/**
+ * Locale of the guide document actually rendered — which is NOT the route
+ * locale when a translation is missing and `resolveGuide` falls back to
+ * English (#1610 review round 5). Nested renderers (`RoleTabs`,
+ * `MarkdownChunk`) need it to format embedded values consistently with
+ * the prose around them, and they are too deep to thread a prop through.
+ */
+const DocLocaleContext = createContext('en');
+
 type Role = 'lender' | 'borrower';
 
 interface RoleContextValue {
@@ -210,6 +219,7 @@ interface RoleTabsProps {
 
 function RoleTabs({ block }: RoleTabsProps) {
   const { role, setRole } = useRole();
+  const docLocale = useContext(DocLocaleContext);
   const body = role === 'lender' ? block.lender : block.borrower;
 
   return (
@@ -237,7 +247,7 @@ function RoleTabs({ block }: RoleTabsProps) {
       <div className="role-tabs-body">
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkInlineAnchorToId]}
-          components={markdownComponents() as never}
+          components={markdownComponents(docLocale) as never}
         >
           {body}
         </ReactMarkdown>
@@ -449,13 +459,18 @@ export default function UserGuide({ variant }: UserGuideProps) {
   );
 
   return (
-    // Standard sticky-footer flex column. `min-height: 100vh` on the
-    // wrapper plus `flex: 1` on the main content guarantees that the
-    // Footer is always anchored to the bottom — pushed below the
-    // content when the page is long, parked at the viewport floor
-    // when the page is short. Without this shell, on certain
-    // viewport states the Footer can get pushed off-screen by sticky
-    // children inside main and not show at all.
+    // `DocLocaleContext` carries the locale of the document actually
+    // resolved — English when a translation is missing — so embedded
+    // values format like the prose around them rather than like the
+    // route (#1610 review round 5).
+    <DocLocaleContext.Provider value={usedLocale}>
+    {/* Standard sticky-footer flex column. `min-height: 100vh` on the
+        wrapper plus `flex: 1` on the main content guarantees that the
+        Footer is always anchored to the bottom — pushed below the
+        content when the page is long, parked at the viewport floor
+        when the page is short. Without this shell, on certain
+        viewport states the Footer can get pushed off-screen by sticky
+        children inside main and not show at all. */}
     <div className="user-guide-page">
       <Navbar />
       <RoleContext.Provider value={ctx}>
@@ -503,11 +518,13 @@ export default function UserGuide({ variant }: UserGuideProps) {
       </RoleContext.Provider>
       <Footer />
     </div>
+    </DocLocaleContext.Provider>
   );
 }
 
 // Wrapper so the cast-narrow + plugin chain is in one place.
 function MarkdownChunk({ text }: { text: string }) {
+  const docLocale = useContext(DocLocaleContext);
   // `as never` to satisfy react-markdown's strict plugin-tuple typing
   // while still passing our custom plugin through. The shape it
   // expects is a callable PluggableList; our plugin returns the right
@@ -516,7 +533,7 @@ function MarkdownChunk({ text }: { text: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={plugins}
-      components={markdownComponents() as never}
+      components={markdownComponents(docLocale) as never}
     >
       {text as ReactNode as string}
     </ReactMarkdown>

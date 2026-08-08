@@ -87,7 +87,11 @@ export default function Overview() {
     if (details) details.removeAttribute('open');
   };
 
-  const headingComps = useMemo(() => markdownComponents(), []);
+  // The DOCUMENT's locale, not the route's: `resolveOverview` falls
+  // back to the English source when a translation is missing, and
+  // embedded values must match the prose they sit in (#1610 r5).
+  const docLocale = fellBackToEnglish ? 'en' : lang;
+  const headingComps = useMemo(() => markdownComponents(docLocale), [docLocale]);
 
   return (
     <div className="user-guide-page">

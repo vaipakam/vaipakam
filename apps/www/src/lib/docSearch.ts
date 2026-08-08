@@ -23,6 +23,7 @@
  */
 
 import type { TFunction } from 'i18next';
+import { KNOB_DEFAULTS, formatKnob, type KnobName } from './liveValueKnobs';
 
 /**
  * The four doc kinds the search covers. The route + label mapping
@@ -155,45 +156,28 @@ function sliceSections(raw: string): RawSection[] {
 }
 
 /**
- * Compile-time defaults for the `{liveValue:knobName}` doc tokens.
- * Substituted into search-index bodies so snippets surface
- * human-readable text ("Yield Fee — 1%") rather than raw token text
- * ("Yield Fee — `{liveValue:treasuryFeeBps}`%"), AND so a user
- * searching for "100 VPFI" still matches the tier-1 minimum even
- * though the source markdown writes that as a token.
+ * Replace `{liveValue:knobName}` tokens with the value a reader would see
+ * on the page, so a search for visible text matches the page it came from.
  *
- * Drift note: these defaults mirror the on-chain library defaults in
- * `LibVaipakam.sol`. If governance retunes a knob, the search-index
- * snippet will lag the live page render — a worthwhile tradeoff
- * (snippets stay readable; the page itself reads live). When a knob
- * default actually changes in the contract, update this map too.
+ * Formatted for the INDEXED FILE's locale, from the shared registry
+ * (#1610 review round 5). This used to hold its own hardcoded map of
+ * English-formatted strings — a third copy of the defaults, and a
+ * mismatch once the pages became locale-aware: a German page shows
+ * `20.000`, so an index holding `20,000` cannot be found by searching
+ * what the reader can see, and snippets contradicted their destination.
+ * Reading `KNOB_DEFAULTS` also removes the drift note this file used to
+ * carry, since there is no second copy left to update.
  */
-const LIVE_VALUE_DEFAULTS_FOR_INDEX: Record<string, string> = {
-  treasuryFeeBps: '2',
-  loanInitiationFeeBps: '0.2',
-  tier1Min: '100',
-  tier2Min: '1,000',
-  tier3Min: '5,000',
-  tier4Min: '20,000',
-  tier1DiscountBps: '10',
-  tier2DiscountBps: '15',
-  tier3DiscountBps: '20',
-  tier4DiscountBps: '24',
-};
-
-/**
- * Replace `{liveValue:knobName}` tokens (with or without surrounding
- * backticks) with their compile-time default rendering, so the search
- * index sees the same human-readable text the rendered page would
- * show on a fresh deploy.
- */
-function substituteLiveValueDefaults(text: string): string {
+function substituteLiveValueDefaults(text: string, fileLocale: string): string {
   // Optional backticks on each side so both the inline-code form
-  // (`{liveValue:foo}`) and any bare-token form get rewritten.
-  return text.replace(
-    /`?\{liveValue:([a-zA-Z0-9]+)\}`?/g,
-    (raw, knob: string) => LIVE_VALUE_DEFAULTS_FOR_INDEX[knob] ?? raw,
-  );
+  // (`{liveValue:foo}`) and any bare-token form get rewritten. Deliberately
+  // looser than the renderer's anchored match: this is an index, and a
+  // token in a code sample is better indexed by its value than by its
+  // syntax.
+  return text.replace(/`?\{liveValue:([a-zA-Z0-9]+)\}`?/g, (raw, knob: string) => {
+    const spec = KNOB_DEFAULTS[knob as KnobName];
+    return spec ? formatKnob(spec.defaultValue, spec.format, fileLocale) : raw;
+  });
 }
 
 // ─── Build-time index ────────────────────────────────────────────────
@@ -230,7 +214,7 @@ function buildIndex(locale: string): IndexedSection[] {
   ): void => {
     if (!raw) return;
     for (const sec of sliceSections(raw)) {
-      const body = substituteLiveValueDefaults(sec.body);
+      const body = substituteLiveValueDefaults(sec.body, fileLocale);
       out.push({
         docKind,
         locale: fileLocale,

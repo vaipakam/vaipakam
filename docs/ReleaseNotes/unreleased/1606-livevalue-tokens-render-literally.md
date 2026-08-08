@@ -93,6 +93,19 @@ and only ever see an inline value as an inline value. The published copies
 now do the same, so every block form is excluded because of what it is
 rather than because a rule remembered to exclude it.
 
+Making the figures follow the reader's language then turned out to be
+half a rule. Some documents are published in English whatever address the
+reader arrives at — the whitepaper and the parameter reference have no
+translations — so following the URL's language put German digit grouping,
+and on one route a different numeral script, inside English sentences.
+Others fall back to English when a translation is missing. The figures now
+follow the language of the document actually shown rather than the address
+it was reached through, and the pages that always show English say so
+explicitly. The documentation search index was a third place doing its own
+substitution with its own English-only copy of the values: a reader on a
+German page could not find that page by searching for a figure visible on
+it. It now reads the same shared values and formats them the same way.
+
 One thing this surfaced that is not fixed here: the worked examples in the
 documents still calculate the older fee rates from before the rates were
 raised, so a reader can now see the correct rate in one sentence and an
