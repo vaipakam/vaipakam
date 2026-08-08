@@ -76,6 +76,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
+import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
@@ -248,6 +249,7 @@ contract DeployDiamond is Script {
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
         RewardRemittanceFacet rewardRemittanceFacet = new RewardRemittanceFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
+        RepatriationFacet repatriationFacet = new RepatriationFacet();
         ConfigFacet configFacet = new ConfigFacet();
         // #394 (Codex #647) — numeraire / PAD / periodic-interest config
         // carved off `ConfigFacet` to keep it under EIP-170. Sibling
@@ -278,7 +280,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](69);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](70);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -511,6 +513,12 @@ contract DeployDiamond is Script {
         cuts[68] = _buildCut(
             address(rewardCommitmentFacet),
             _getRewardCommitmentSelectors()
+        );
+        // #1568 C2 Mode A — repatriation accounting core (dark until the
+        // transport slice configures the satellites).
+        cuts[69] = _buildCut(
+            address(repatriationFacet),
+            _getRepatriationSelectors()
         );
         // #1104 — RiskPreviewFacet: the read-only preview cluster + the two
         // cross-facet gate asserts split off `RiskAccessFacet` (cuts[60]) so both
@@ -856,6 +864,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("rewardRemittanceFacet",   address(rewardRemittanceFacet));
         Deployments.writeFacet("rewardCommitmentFacet",   address(rewardCommitmentFacet));
+        Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
         // so addresses.json (explorer verification / upgrade scripts / audits) can
@@ -2215,6 +2224,24 @@ contract DeployDiamond is Script {
         s[7] = RewardCommitmentFacet.getCommitmentAccumulation.selector;
         s[8] = RewardCommitmentFacet.quoteCommitmentReportFee.selector;
         s[9] = RewardCommitmentFacet.isCommitmentReportSent.selector;
+    }
+
+    /// #1568 C2 Mode A — planned-surplus repatriation accounting core
+    /// (authorization lifecycle + draw ledger; transport slice follows).
+    function _getRepatriationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](8);
+        s[0] = RepatriationFacet.authorizeRepatriation.selector;
+        s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
+        s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
+        s[3] = RepatriationFacet.onRepatriationInstructionReceived.selector;
+        s[4] = RepatriationFacet.setRepatriationEndpoints.selector;
+        s[5] = RepatriationFacet.getRepatriationAuthorization.selector;
+        s[6] = RepatriationFacet.getChainRepatriationDraw.selector;
+        s[7] = RepatriationFacet.getRepatriationPosition.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

@@ -76,6 +76,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
+import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -2142,6 +2143,27 @@ contract HelperTest {
             .isCommitmentReportSent
             .selector;
         return selectors;
+    }
+
+    /// #1568 C2 Mode A — repatriation accounting core.
+    ///      Mirrors `DeployDiamond._getRepatriationSelectors` (keep in
+    ///      sync — SelectorCoverageTest asserts the two lists match).
+    function getRepatriationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](8);
+        selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
+        selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
+        selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
+        selectors[3] = RepatriationFacet
+            .onRepatriationInstructionReceived
+            .selector;
+        selectors[4] = RepatriationFacet.setRepatriationEndpoints.selector;
+        selectors[5] = RepatriationFacet.getRepatriationAuthorization.selector;
+        selectors[6] = RepatriationFacet.getChainRepatriationDraw.selector;
+        selectors[7] = RepatriationFacet.getRepatriationPosition.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

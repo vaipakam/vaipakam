@@ -142,6 +142,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
+import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 // #168 Track A — narrow (not yet close) the test-vs-prod drift. The
 // production diamond cuts these four facets
@@ -314,6 +315,7 @@ contract SetupTest is Test {
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardRemittanceFacet rewardRemittanceFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
+    RepatriationFacet repatriationFacet;
     RewardReporterFacet rewardReporterFacet;
     HelperTest helperTest;
 
@@ -425,6 +427,7 @@ contract SetupTest is Test {
         rewardAggregatorFacet = new RewardAggregatorFacet();
         rewardRemittanceFacet = new RewardRemittanceFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
+        repatriationFacet = new RepatriationFacet();
         rewardReporterFacet = new RewardReporterFacet();
         helperTest = new HelperTest();
 
@@ -454,7 +457,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](70);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](71);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -876,6 +879,12 @@ contract SetupTest is Test {
             facetAddress: address(rewardCommitmentFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardCommitmentFacetSelectors()
+        });
+        // #1568 C2 Mode A — repatriation accounting core (dark by default).
+        cuts[70] = IDiamondCut.FacetCut({
+            facetAddress: address(repatriationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRepatriationFacetSelectors()
         });
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 33 (see the #687-B note above).
