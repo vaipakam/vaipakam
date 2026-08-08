@@ -47,11 +47,13 @@ found separately before the shape common to all three was.
 The question the check settles on is deliberately the narrow one — is every word
 here a word from the English this text is meant to translate? — and not the
 broader "is this English", which sounds better and cannot be answered without
-knowing the languages involved. One thing had to be added on top of it:
-punctuation dropped inside a word. "Set-tings" is two fragments to a machine and
-mangled English to a reader, so the letters are also compared with every
-separator removed — two texts whose letters run in the same order are the same
-text differently punctuated. Text that adds an English word the source did not have
+knowing the languages involved. The question is asked of the letters rather than
+the words, because where one word ends and the next begins is itself something
+an edit can change: "Set-tings" is two fragments to a machine and mangled
+English to a reader. So the check asks whether the letters can be cut, end to
+end, into English words from the source — which covers reordering, deletion,
+repetition and moved punctuation together, in any combination, instead of one
+at a time. Text that adds an English word the source did not have
 still passes. The broader rule was tried and measured: treating every word in
 the English as a dictionary would add seventeen entries to the backlog, and
 almost all of them are correct translations that happen to share a word with
@@ -114,13 +116,21 @@ questions now use two tests. Nor do invisible letters: one Korean character is
 simultaneously a letter, invisible, and part of the Korean alphabet, so adding
 it to an ellipsis satisfied three separate rules at once while showing the
 reader nothing. Every comparison here now drops invisible characters before
-looking. Control characters are handled the opposite way — they are rejected
-outright rather than ignored. They render nothing, they are not covered by the
-rule for invisible characters, and one appended to a Chinese full stop was
-enough to make a regression to the English mark look like a translation. No copy
-in any of the ten languages legitimately contains one, so their presence means a
-corrupted file or a bad paste, and saying so is more useful than quietly
-tidying it away.
+looking. Characters that are not letters, marks, numbers, punctuation or
+spaces are handled the opposite way — they are rejected outright rather than
+ignored, unless they are on a short list of symbols the copy actually uses:
+twelve of them, counted rather than guessed.
+
+That list exists because the alternative kept failing. Seven separate reviews
+each found one more character that looks like something other than what it is —
+a wide letter, a wide full stop, a zero-width space, a Cyrillic letter shaped
+like a Latin one, a mark from another alphabet, an invisible letter, a control
+character — and each fix closed exactly the one that had been found. The
+eighth review produced two more, including a character that reverses the
+direction of the text after it, so that a backwards word renders forwards and
+reads as English. Listing what is allowed ends that sequence: anything else
+fails without anyone having to think of it first, and adding a new symbol is a
+deliberate edit somebody reviews.
 
 There are deliberately no rules-of-thumb about what is exempt. An earlier draft
 excused anything with no letters in it, on the reasoning that punctuation cannot

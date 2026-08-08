@@ -589,8 +589,8 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
     // compared exactly, so `.` and `。` stay distinct.
     return visibleForm(candidate) === visibleForm(source);
   }
-  // Otherwise compare the WORDS, on ONE rule: is every word in the
-  // candidate one of THIS SOURCE's words?
+  // Otherwise compare the WORDS, on ONE rule: is everything the reader
+  // sees made only of THIS SOURCE's words?
   //
   //   Skip to content -> content to Skip          reordered
   //   Skip to content -> Skip content             a word deleted
@@ -604,14 +604,17 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // English is English with a hyphen added, and `Mock USD Coin（{{s}}）`
   // is English with localized brackets — 11 such leaves were passing.
   //
-  // Three revisions each caught one arrangement and left the next:
+  // Five revisions each caught one arrangement and left the next:
   // sequence order (Codex #1607 r11), then equal-length multisets,
   // which excused deletions (r13 — eight committed leaves, Hindi
   // `loan asset` for `the loan asset`, Korean `permission signing…`
   // for `Signing the permission…`), then sub-multisets, which still
   // excused repetition because `Settings Settings` is LONGER than its
-  // source and fell out of the length shortcut (r14). The set has no
-  // such edge, and is less code than any of them.
+  // source and fell out of the length shortcut (r14), then the word
+  // set, which could not see punctuation dropped inside a word (r16),
+  // then concatenated letters, which could not see that repeated (r17).
+  // Each fix was correct about the case in front of it and blind to
+  // the next arrangement of the same thing.
   //
   // SAY THE RULE PRECISELY. The loose form — "is every word an English
   // word?" — promises what this cannot deliver: `Open Settings` for
@@ -629,19 +632,46 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
   // does not have is treated as a translation someone started, because
   // flagging it would invent debt — the failure `\p{L}` over `\w` was
   // fixed to avoid in round 5.
-  const sourceVocabulary = new Set(sourceWords);
-  if (candidateWords.every((word) => sourceVocabulary.has(word))) return true;
-  // One case the set cannot reach: punctuation dropped INSIDE a word.
-  // `Set-tings` tokenizes as `set` + `tings`, neither of which is a
-  // source word, so the set test reads two foreign words where a reader
-  // sees mangled English (r16). Comparing the letters with every
-  // separator removed catches it, and cannot produce a false positive:
-  // two strings whose letters are identical in order ARE the same text
-  // differently punctuated.
-  return (
-    sourceWords.length > 0 && sourceWords.join('') === candidateWords.join('')
-  );
+  //
+  // Applied to the LETTERS, not the tokens, because the word boundaries
+  // are themselves editable. `Set-tings` splits into `set` + `tings`,
+  // neither a source word — so a token-level test reads two foreign
+  // words where a reader sees one mangled English one (r16). Comparing
+  // the concatenated letters fixed that and then failed on
+  // `Set-tings Set-tings`, whose letters are `settings` twice (r17).
+  //
+  // So: can the candidate's letter stream be cut ENTIRELY into source
+  // words? That is one question covering all of it — reordering,
+  // deletion, repetition, and any punctuation moved, added or removed,
+  // in any combination. Measured against the committed bundles it flags
+  // exactly what the two rules it replaces flagged and nothing more.
+  return coveredBySourceWords(candidateWords.join(''), sourceWords);
 };
+
+/**
+ * Can `stream` be cut, end to end, into words drawn from `vocabulary`?
+ *
+ * A word may be used any number of times or not at all, so this covers
+ * every rearrangement of the source's own words. `settingssettings`
+ * decomposes into `settings` twice; `kontoeinstellungen` cannot be
+ * decomposed by `{settings}` at all, so real German is untouched.
+ *
+ * Linear in the stream, scanning the vocabulary at each reachable
+ * position — bundles are hundreds of characters and a handful of words
+ * per leaf, so the cost is invisible next to reading ten JSON files.
+ */
+function coveredBySourceWords(stream: string, vocabulary: string[]): boolean {
+  if (stream === '' || vocabulary.length === 0) return false;
+  const reachable = new Array<boolean>(stream.length + 1).fill(false);
+  reachable[0] = true;
+  for (let i = 0; i < stream.length; i++) {
+    if (!reachable[i]) continue;
+    for (const word of vocabulary) {
+      if (word !== '' && stream.startsWith(word, i)) reachable[i + word.length] = true;
+    }
+  }
+  return reachable[stream.length];
+}
 
 /**
  * Resolve a leaf path that may address an ARRAY ELEMENT (`a.b[2]`).
@@ -777,43 +807,57 @@ const foreignLetterRe = (code: string): RegExp =>
   );
 
 /**
- * Matches one C0/C1 CONTROL character.
+ * The only characters allowed in a bundle beyond letters, marks,
+ * numbers, punctuation and spaces.
  *
- * A separate class from the ignorables every comparison drops, and it
- * has to be, because `Default_Ignorable_Code_Point` does not include
- * them: U+0000 renders nothing and matches no ignorable property, so
- * `.` followed by a NUL is the English full stop on screen and a
- * different string to `visibleForm` — enough to disguise a Chinese
- * regression as a translation (Codex #1607 r16).
+ * MEASURED, not guessed: these twelve are every such character in all
+ * ten bundles today. `$` `+` `=` `~` `°` `×` `←` `→` `≈` `≥`, the
+ * fullwidth `＋` a CJK bundle uses, and the soft hyphen (a hyphenation
+ * hint, invisible but legitimate).
  *
- * REJECTED rather than stripped. Stripping would make them invisible
- * to review as well as to the reader, and no UI string legitimately
- * contains one: measured across all ten bundles before choosing, and
- * the count is zero. A control character in copy is a corrupted file
- * or a bad paste, and the right answer to both is to say so.
+ * An ALLOWLIST, because the blocklist polarity kept losing. Rounds 5,
+ * 10, 11, 12, 13, 15 and 16 each named one more character that renders
+ * as something other than its bytes — a full-width `Ｓ`, a full-width
+ * period, a zero-width space, a Cyrillic `е`, a Hebrew point, an
+ * invisible Hangul filler, a NUL — and each fix closed exactly the one
+ * named. Round 17 then produced two more: U+2800 BRAILLE PATTERN BLANK,
+ * a `So` character that renders empty and belongs to no ignorable
+ * class, and the bidi overrides U+202A–202E / U+2066–2069, which are
+ * default-ignorable and so were being STRIPPED — meaning `‮sgnitteS`
+ * compared as gibberish while a browser renders it as `Settings`.
+ *
+ * Enumerating what may appear ends the sequence. Anything outside these
+ * categories fails, so the next character with a surprising rendering
+ * is rejected before anyone has to discover it — and adding one is a
+ * deliberate edit here, with the reason visible in review.
  */
-const CONTROL_RE = /\p{Cc}/u;
+const ALLOWED_SYMBOLS = '$+=~­°×←→≈≥＋';
+const DISALLOWED_RE = new RegExp(
+  `[^\\p{L}\\p{M}\\p{N}\\p{P}\\p{Zs}${ALLOWED_SYMBOLS}]`,
+  'u',
+);
 
 /**
  * Leaves holding a character that does not belong in this locale's
- * text — a letter or mark from another alphabet, or a control
- * character.
+ * text — a letter or mark from another alphabet, or a character
+ * outside the allowed categories.
  */
 function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
   const re = foreignLetterRe(code);
   const out: string[] = [];
   const walk = (node: unknown, prefix: string): void => {
     if (typeof node === 'string') {
-      const control = CONTROL_RE.exec(node);
-      const m = control ?? re.exec(node);
+      const disallowed = DISALLOWED_RE.exec(node);
+      const m = disallowed ?? re.exec(node);
       if (m) {
         const ch = m[0];
         const point = `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`;
-        // The code point ALONE for a control character. Echoing the
-        // character itself would put a raw control into the terminal
-        // and into CI logs, where it is invisible or actively harmful
-        // — the same property that let it hide in the bundle.
-        out.push(control ? `${prefix} (${point})` : `${prefix} (${ch} ${point})`);
+        // The code point ALONE for a disallowed character. Echoing it
+        // would put a control or a bidi override into the terminal and
+        // into CI logs, where it is invisible or actively reorders the
+        // surrounding text — the same property that let it hide in the
+        // bundle. Script violations are real glyphs, so those print.
+        out.push(disallowed ? `${prefix} (${point})` : `${prefix} (${ch} ${point})`);
       }
       return;
     }
@@ -891,7 +935,8 @@ const problems: string[] = [];
     problems.push(
       `en: ${foreign.length} leaf/leaves contain a character that does not ` +
         'belong in English text — a letter or mark from another alphabet, or ' +
-        `a control character: ${foreign.slice(0, 6).join(', ')}` +
+        'something outside the allowed categories and declared symbols: ' +
+        `${foreign.slice(0, 6).join(', ')}` +
         (foreign.length > 6 ? ', …' : ''),
     );
   }
@@ -970,7 +1015,8 @@ for (const code of translated) {
     problems.push(
       `${code}: ${foreign.length} leaf/leaves contain a character that does ` +
         `not belong in ${code} text — a letter or mark from another alphabet, ` +
-        'or a control character. A lookalike renders as the English while ' +
+        'or something outside letters/marks/numbers/punctuation/spaces and ' +
+        'the declared symbol list. A lookalike renders as the English while ' +
         'comparing as a different word; anything else is a mangled string: ' +
         `${foreign.slice(0, 6).join(', ')}` +
         (foreign.length > 6 ? ', …' : ''),

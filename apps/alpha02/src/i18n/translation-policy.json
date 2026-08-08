@@ -218,7 +218,7 @@
       }
     },
     "copy.riskAccess.strict.title": {
-      "reason": "French 'Mode strict' is the correct rendering of 'Strict mode' — the noun-adjective order is French grammar, and both words are French. The word comparison is a multiset, so it cannot tell this from a rearranged English sentence; the accepted French is recorded below so rewording it retires this entry.",
+      "reason": "French 'Mode strict' is the correct rendering of 'Strict mode' — the noun-adjective order is French grammar, and both words are French. The guard asks whether everything the reader sees is made only of the English source's own words, in any arrangement, so it cannot tell this from a rearranged English sentence; the accepted French is recorded below so rewording it retires this entry.",
       "source": "Strict mode",
       "locales": [
         "fr"
