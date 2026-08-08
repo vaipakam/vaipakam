@@ -9,8 +9,14 @@ import { PeriodicInterestCadenceField } from '../../src/components/createOffer/P
  * React tolerates a render that calls ZERO hooks: going 2 hooks → 0 and
  * back raises nothing. It only throws when a non-zero count changes —
  * 2 → 1 gives "Rendered fewer hooks than expected", 1 → 2 gives
- * "Rendered more hooks than during the previous render". (Probed
- * directly against this repo's React before writing these tests.)
+ * "Rendered more hooks than during the previous render".
+ *
+ * That is an OBSERVED property of react 19.2.6 (probed directly before
+ * these tests were written), not a documented guarantee. If a React
+ * upgrade ever makes the zero-hook case throw too, the mock below stops
+ * being necessary — but it also does no harm, so the safe reading is
+ * that this comment may go stale while the test stays correct. What
+ * must not change is that the mock keeps calling a real hook.
  *
  * In production `useTranslation()` runs above the gate and is a real
  * hook, so the buggy component went from "i18n hooks + 2 memos" to
