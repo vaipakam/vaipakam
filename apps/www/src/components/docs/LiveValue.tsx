@@ -1,7 +1,17 @@
 /**
  * `<LiveValue>` — renders a single governance-tunable protocol value
  * (fee BPS, discount tier, VPFI threshold, etc.) inline inside doc
- * markdown, sourced live from the chain via `useProtocolConfig`.
+ * markdown, via `useProtocolConfig`.
+ *
+ * ON THIS SURFACE THAT IS ALWAYS THE COMPILE-TIME DEFAULT. The
+ * marketing site is deliberately wallet-free, so its `useProtocolConfig`
+ * is a stub that reports no config and every knob below falls back to
+ * `defaultValue`. The component is shared with connected-app surfaces
+ * where the read is real; here it buys a single definition point for a
+ * number that ten locale files would otherwise each hold a copy of.
+ * That is worth having — #1352 retuned both fees and the copies drifted
+ * — but it is not liveness, and marketing copy must not tell a reader
+ * these figures come from the chain.
  *
  * Markdown integration: doc content uses inline-code tokens like
  *   `{liveValue:treasuryFeeBps}`
@@ -12,11 +22,14 @@
  * in {@link KNOB_DEFAULTS}.
  *
  * Why a single component (vs. raw text):
- * - Numbers stay accurate when governance retunes a knob — no doc PR
- *   needed to keep the marketing pages in sync with on-chain truth.
- * - Compile-time defaults are still bundled in, so the page renders
- *   with sensible fallbacks before the chain read resolves AND when
- *   the read fails (offline, RPC blip, no Diamond on this chain).
+ * - A retune updates one definition rather than every sentence in
+ *   every language that quotes the figure. On surfaces that read
+ *   config, that update needs no deploy at all; here it needs one
+ *   build, which is still nine fewer places to forget.
+ * - Compile-time defaults are bundled in, so the page renders with
+ *   sensible values before a chain read resolves, when the read fails
+ *   (offline, RPC blip, no Diamond on this chain), and — on the
+ *   marketing site — always.
  * - The `<span title="...">` tooltip names the source so a reader
  *   curious about provenance can hover to confirm the value comes
  *   from the chain rather than a hardcoded marketing claim.

@@ -5,6 +5,13 @@
  *
  *     pnpm --filter @vaipakam/alpha02 i18n:coverage
  *
+ * TWO different questions, because one of them stayed invisible after
+ * the other was answered. Does the locale HAVE the key, and does it
+ * hold anything other than the English string? Key presence went to
+ * zero gaps and read as "fully translated" while `hi` alone still
+ * rendered 283 English leaves — `missingSubtree` compares presence, so
+ * it goes quiet the moment a key exists, whatever is in it (#1596).
+ *
  * `enTemplate.test.ts` guards copy.ts → en.json. NOTHING guarded
  * en.json → <locale>.json, and the gap was not theoretical: nine
  * locales had silently drifted 291 keys behind, including every string
@@ -46,6 +53,20 @@ import {
   type Bundle,
 } from '@vaipakam/i18n';
 import { TRANSLATED_LOCALES } from '../src/i18n/localeConfig.ts';
+import {
+  acceptedValue,
+  isAcceptedAsTranslated,
+  type AcceptedAsTranslatedEntry,
+} from '../src/i18n/translationPolicy.ts';
+import {
+  coveredBySourceWords,
+  hasLetters,
+  marksOf,
+  stillEnglish,
+  stripIgnorable,
+  visibleForm,
+  wordsOf,
+} from '../src/i18n/stillEnglish.ts';
 import { CONFIRM_WORD, RECOVERY_ACK_TEXT } from '../src/lib/recoveryAck.ts';
 
 const LOCALES_DIR = path.resolve(
@@ -89,6 +110,72 @@ const isKnownGap = (code: string, key: string): boolean =>
   KNOWN_GAPS[key]?.includes(code) ?? false;
 
 /**
+ * The `(key, locale)` pairs where the key EXISTS but still holds the
+ * English string, tracked as #1596. Same shape, same prune command and
+ * same shrink-only rule as the missing-key baseline above.
+ *
+ * A separate file because it is a separate claim. `missingSubtree`
+ * compares key PRESENCE, so it goes quiet the moment a key exists —
+ * and a bundle can be 100% present while a reader still meets English
+ * partway down the page. That is exactly what happened: the missing-key
+ * baseline reached zero and read as "fully translated", while `hi`
+ * alone still rendered 283 English leaves.
+ */
+const ENGLISH_VALUED_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'src',
+  'i18n',
+  'english-valued-baseline.json',
+);
+interface EnglishValuedEntry {
+  /** The English text these locales are recorded as still showing. */
+  source: string;
+  locales: string[];
+}
+const ENGLISH_VALUED: Readonly<Record<string, EnglishValuedEntry>> = JSON.parse(
+  fs.readFileSync(ENGLISH_VALUED_PATH, 'utf8'),
+) as Record<string, EnglishValuedEntry>;
+
+const isKnownEnglishValued = (code: string, key: string): boolean =>
+  ENGLISH_VALUED[key]?.locales.includes(code) ?? false;
+
+/**
+ * Entries whose recorded English no longer matches en.json.
+ *
+ * Without this the record rots INVISIBLY, in the direction that loses
+ * debt. Say `hi` is recorded as showing the English "Approval" and
+ * someone rewords the English to "Approval updated". `hi` now differs
+ * from the source, so it stops being detected — and the stale sweep
+ * concludes the entry was translated and tells you to prune it. Prune
+ * obeys, the entry disappears, and `hi` goes on showing "Approval": a
+ * locale that is still untranslated, no longer recorded, and no longer
+ * detectable, produced by following the guard's own advice (Codex
+ * #1607 r1).
+ *
+ * Inequality is not proof of translation. It is only proof of
+ * inequality, and there are two ways to get there.
+ */
+function reauditNeeded(): Map<string, string> {
+  // key → why, RAW keys. An earlier revision pushed the annotated
+  // string (`key (no longer a string leaf…)`) into the set that the
+  // stale sweep and `--prune` then queried by bare key, so an entry
+  // whose English was DELETED reported correctly and was pruned away
+  // anyway — the annotation made it invisible to the very guard that
+  // produced it (Codex #1607 r2). Format at the edge, never in the key.
+  const out = new Map<string, string>();
+  for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+    const current = leafOrElement(en, key);
+    if (typeof current !== 'string') {
+      out.set(key, 'no longer a string leaf in en.json');
+    } else if (current !== entry.source) {
+      out.set(key, 'the English was reworded');
+    }
+  }
+  return out;
+}
+
+/**
  * Per-(locale, key) exemptions, read from the COMMITTED record at
  * `src/i18n/translation-policy.json`.
  *
@@ -115,6 +202,10 @@ interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
   omissions: Record<string, { tokens: string[]; reason: string }>;
   empty: Record<string, string>;
+  /** key → why this leaf is correct despite matching the English word
+   *  for word, bound to the English value the reason was written
+   *  against (#1596). */
+  acceptedAsTranslated?: Record<string, AcceptedAsTranslatedEntry>;
 }
 const POLICY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -222,7 +313,591 @@ function readOrDamaged(code: string): Bundle | null {
 
 const en = read('en');
 const translated = TRANSLATED_LOCALES.filter((code) => code !== 'en');
+
+/**
+ * Leaves whose value is legitimately the same in every language, so
+ * being identical to the English is not evidence of anything.
+ *
+ * NO MECHANICAL RULES AT ALL. An earlier draft excused any value made
+ * only of interpolation tokens, and any value with no letters, on the
+ * reasoning that neither has anything to translate. The second is
+ * simply false — `copy.consentParts.suffix` is `.` in English and `。`
+ * in Chinese — and both were removed in round 1. The values they used
+ * to excuse (`{{amount}}{{suffix}}`, the em dash) are enumerated below
+ * with reasons, which is four entries rather than a rule that quietly
+ * excuses a class nobody counted.
+ *
+ * EVERY entry needs an explicit `acceptedAsTranslated` record WITH A
+ * REASON, because "it looks like a proper noun" is a judgement and
+ * judgements belong in the record rather than in a regex. The list is
+ * deliberately short — read it; it is not summarized here, because a
+ * summary of a list is the list stated twice. Common UI words that
+ * happen to be untranslated — `Alerts`, `Close`, `Revoke` — are NOT
+ * exempt; they go in the shrinkable baseline, because they are a
+ * translation job rather than a decision.
+ *
+ * Named for what it ASSERTS — "this locale's value is correct" — not
+ * for the shape that triggered the check. Most entries are identical to
+ * the English, but not all are: `values` records a locale value built
+ * from the same words in a different order, which is equally correct
+ * and equally invisible to a word comparison.
+ */
+const ACCEPTED_AS_TRANSLATED: Readonly<
+  Record<string, AcceptedAsTranslatedEntry>
+> = POLICY.acceptedAsTranslated ?? {};
+
+
+/**
+ * The shape above is a TypeScript interface over parsed JSON, which is
+ * erased at run time and asserted, not checked — so `reason` was a
+ * requirement in name only. Removing it from an entry left the guard
+ * passing, meaning an exemption could suppress findings with no
+ * committed justification at all, which is the one thing this section
+ * exists to prevent (Codex #1607 r2). Validated here, before any entry
+ * is allowed to excuse anything.
+ */
+for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+  const where = `translation-policy.json acceptedAsTranslated["${key}"]`;
+  if (typeof entry?.reason !== 'string' || entry.reason.trim() === '') {
+    throw new Error(`${where} has no reason — an exemption without a written justification is not reviewable`);
+  }
+  if (typeof entry.source !== 'string') {
+    throw new Error(`${where} has no source — record the English value the reason was granted against`);
+  }
+  if (!Array.isArray(entry.locales) || entry.locales.length === 0) {
+    throw new Error(`${where} has no locales — name them explicitly; equality can be right in one language and wrong in the next`);
+  }
+  // Against `translated`, which excludes `en` — the set every check
+  // below actually walks. Validating against `TRANSLATED_LOCALES`
+  // accepted `locales: ["en"]`, which excuses nothing, is swept by
+  // nothing, and sits in the file forever looking like a decision
+  // somebody made (Codex #1607 r21). An exemption that cannot fire is
+  // worse than absent: it is a claim nobody can audit.
+  const unknown = entry.locales.filter(
+    (c) => !translated.includes(c as (typeof translated)[number]),
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `${where} names locale(s) that are not translated: ${unknown.join(', ')}` +
+        (unknown.includes('en') ? ' (en is the source, not a translation)' : ''),
+    );
+  }
+  // A `values` override for a locale the entry does not cover accepts
+  // nothing — it reads as an exemption and is inert, which is worse
+  // than absent.
+  for (const [code, value] of Object.entries(entry.values ?? {})) {
+    if (!entry.locales.includes(code)) {
+      throw new Error(`${where} records a value for "${code}", which is not in its locales`);
+    }
+    if (typeof value !== 'string' || value === '') {
+      throw new Error(`${where} records an empty value for "${code}" — record the exact accepted string`);
+    }
+  }
+  // `invariant` is asserted by TypeScript and never checked, so a
+  // truthiness test read `0` as absent — and the entry then behaved as
+  // an ordinary one, restoring the exact escape route the flag exists
+  // to close (Codex #1607 r21). Round 2 fixed this same class for
+  // `reason`; the new field arrived without the lesson.
+  if (entry.invariant !== undefined && typeof entry.invariant !== 'boolean') {
+    throw new Error(
+      `${where} has a non-boolean \`invariant\` (${JSON.stringify(entry.invariant)}). ` +
+        'A flag that decides whether a value may ever change must not be ' +
+        'satisfiable by a falsey placeholder.',
+    );
+  }
+  if (entry.invariant) {
+    // An invariant with per-locale variants is a contradiction: it
+    // claims the value can never differ AND records it differing.
+    if (entry.values !== undefined) {
+      throw new Error(`${where} is invariant and also records per-locale values — it cannot be both`);
+    }
+    const uncovered = translated.filter((c) => !entry.locales.includes(c));
+    if (uncovered.length > 0) {
+      throw new Error(
+        `${where} is invariant but omits ${uncovered.join(', ')}. An invariant ` +
+          'holds everywhere; a partial one reads as universal and is not.',
+      );
+    }
+  }
+}
+
+/**
+ * Invariant entries whose value has changed in some locale.
+ *
+ * Reported apart from the unused-scope sweep because the remedy is the
+ * opposite one. There, the value moving means the exemption has been
+ * overtaken and should retire. Here it means someone changed a string
+ * that was recorded as unchangeable, and retiring the entry would bless
+ * the change (Codex #1607 r20).
+ */
+function invariantViolations(): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+    if (!entry.invariant) continue;
+    for (const code of translated) {
+      const bundle = bundleByLocale.get(code);
+      if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      const value = leafOrElement(bundle, key);
+      if (value !== entry.source) {
+        out.push(`${code}:${key} is ${JSON.stringify(value)}, must be ${JSON.stringify(entry.source)}`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `acceptedAsTranslated` scopes that are ARMED but not currently in
+ * use: the policy names a locale whose value has, right now, moved
+ * away from the one the entry accepts.
+ *
+ * An exemption is a statement about the present ("this locale reads the
+ * same and that is correct"), not a standing permission. If the locale
+ * has since been localized — or was named by mistake — the entry sits
+ * there waiting, and the day that locale regresses to the English the
+ * guard says nothing. Reported so the scope is narrowed instead
+ * (Codex #1607 r3). The neighbouring `omissions` / `empty` sections are
+ * swept for staleness the same way.
+ */
+function unusedPolicyScopes(alreadyReported: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+    // Invariant entries never "retire" — a changed value there is a
+    // regression, reported by `invariantViolations` with the opposite
+    // advice. Sweeping them here too would print both.
+    if (entry.invariant) continue;
+    const source = leafOrElement(en, key);
+    for (const code of entry.locales) {
+      const bundle = bundleByLocale.get(code);
+      if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      // ONE FAULT, ONE REMEDY. If another sweep has already named this
+      // pair — the punctuation one, or the English-valued one — it has
+      // the repair instruction, and this function's advice ("narrow the
+      // scope") is the opposite of it. Three separate rounds produced
+      // that collision, each time from a new checker not asking who
+      // already speaks for the pair (Codex #1607 r20, r21, r22). The
+      // Japanese consent suffix regressing to `.` is the clearest: the
+      // entry records the exact Japanese to restore, and telling anyone
+      // to delete that record is the last thing to do.
+      if (alreadyReported.has(`${code}:${key}`)) continue;
+      const value = leafOrElement(bundle, key);
+      // Against the ACCEPTED value, not the English one. An entry whose
+      // recorded French is reworded has had its judgement overtaken,
+      // and that is precisely when it should stop excusing anything.
+      // The comparison is loose, not exact: a value NEAR the accepted
+      // one — the brand name lowercased — is reported by
+      // `englishValuedLeaves` with the advice to fix the casing.
+      if (!stillEnglish(acceptedValue(entry, code), value)) {
+        out.push(`${code}:${key} — no longer holds the value this entry accepts`);
+        continue;
+      }
+      // INERT: the entry matches, and suppresses nothing. An exemption
+      // is consulted in exactly two places — the English-valued check
+      // (which needs the value to read as English) and the wordless
+      // check (which runs only where the source has no letters). An
+      // entry outside both excuses a finding that was never going to
+      // happen, and no sweep would ever retire it, so it sits in the
+      // file forever looking like a judgement somebody made
+      // (Codex #1607 r22). Same reasoning as the `locales: ["en"]`
+      // scope in r21: an unauditable claim is worse than none.
+      if (typeof source === 'string' && hasLetters(source) && !stillEnglish(source, value)) {
+        out.push(`${code}:${key} — suppresses nothing; this locale is already translated`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `acceptedAsTranslated` entries whose recorded English no longer
+ * matches, so the written reason may no longer describe the string it
+ * excuses.
+ *
+ * There are deliberately NO pattern-based exemptions. An earlier draft
+ * excused any value made only of interpolation tokens, and any value
+ * with no letters in it — on the theory that neither has anything to
+ * translate. The second is simply false: `copy.consentParts.suffix` is
+ * `.` in English and `。` in Chinese, so punctuation IS localized, and
+ * a blanket rule would have let Chinese regress to the ASCII period
+ * with the guard still green (Codex #1607 r1). The first was justified
+ * as avoiding ceremony — but measured, the whole bundle contains four
+ * leaves with no letters at all. Four explicit entries is
+ * not a tax; a rule that quietly excuses a class nobody counted is.
+ */
+function policyReauditNeeded(): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
+    const current = leafOrElement(en, key);
+    if (typeof current !== 'string') {
+      out.push(`${key} (no longer a string leaf in en.json)`);
+    } else if (current !== entry.source) {
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+/**
+ * Leaves this locale carries with the English string still in them.
+ * Only leaves the locale actually HAS — a missing key is the other
+ * baseline's business, and reporting it here too would make one gap
+ * produce two failures.
+ */
+/**
+ * Is this locale's value still, for practical purposes, the English one?
+ *
+ * NOT byte equality. Exact inequality is not evidence that the language
+ * changed: the Korean bundle carries 40 leaves that differ from English
+ * only in capitalization — `approving… ({{c}} of {{t}})` against
+ * `Approving… ({{c}} of {{t}})` — and a Korean reader sees English
+ * either way (Codex #1607 r3). Case and surrounding whitespace are
+ * normalized away before deciding.
+ *
+ * Six of the nine advertised locales have no letter case at all, so a
+ * case-only difference is essentially never a translation. Where it
+ * genuinely is one, that is what the per-locale policy is for.
+ */
+/**
+ * The words in a value, for deciding whether it is still English.
+ *
+ * NFKC, not NFC: compatibility normalization folds the visually
+ * equivalent forms an orthographic edit can hide behind — `Ｓettings`
+ * with a full-width S reads as English and rendered as English, but
+ * survived a codepoint comparison (Codex #1607 r5).
+ *
+ * `\p{L}\p{N}`, not `\w`: JavaScript's `\w` stays ASCII-only even under
+ * the `u` flag, so the first version silently dropped every non-Latin
+ * character. That was not merely a missed detection — it made
+ * `Reclaim tokens करें` compare EQUAL to `Reclaim tokens`, which would
+ * have reported a partly-translated Hindi string as untranslated. A
+ * guard that invents debt is as bad as one that loses it.
+ *
+ * NFKC deliberately does NOT fold `。` into `.`, so the wordless
+ * fallback below still tells the Chinese full stop apart from the
+ * English one.
+ */
+
+/**
+ * Resolve a leaf path that may address an ARRAY ELEMENT (`a.b[2]`).
+ *
+ * `leafPaths` stops at an array and `leafAt` hands back the whole
+ * array, so an element-wise check needs its own accessor. Without one,
+ * every element of `copy.help.risks` and `copy.recover.warnings` — 8
+ * displayed strings per locale — was skipped outright, and replacing a
+ * Spanish warning with the English text left the guard green
+ * (Codex #1607 r3).
+ */
+function leafOrElement(bundle: Bundle, key: string): unknown {
+  const m = /^(.*)\[(\d+)\]$/.exec(key);
+  if (!m) return leafAt(bundle, key);
+  const arr = leafAt(bundle, m[1]);
+  return Array.isArray(arr) ? arr[Number(m[2])] : undefined;
+}
+
+/** Every English leaf path, with array elements expanded to `path[i]`. */
+function englishLeafPaths(): string[] {
+  const out: string[] = [];
+  for (const key of leafPaths(en)) {
+    const source = leafAt(en, key);
+    if (Array.isArray(source)) {
+      source.forEach((element, index) => {
+        if (typeof element === 'string') out.push(`${key}[${index}]`);
+      });
+    } else if (typeof source === 'string') {
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+/**
+ * Punctuation-only English leaves localized to something nobody
+ * approved.
+ *
+ * Where the English has NO WORDS, the marks are the whole content, and
+ * the still-English test can only ask whether the candidate is built
+ * from those same marks. Anything else — one novel character is enough
+ * — comes out "not English", which the caller reads as translated. So
+ * `.` localized to `.!` passed: the English full stop plus unrelated
+ * punctuation, in a language whose full stop is `。` (Codex #1607 r20).
+ *
+ * The English bundle has FOUR such leaves, so requiring every locale to
+ * be accounted for is four keys of bookkeeping, not a tax. Each locale
+ * must either still show the English — recorded in the shrinkable
+ * baseline — or carry a policy entry naming its exact value. Measured
+ * before enforcing: five pairs needed entries, and every one is a real
+ * localization already argued for in review (the Hindi danda, the
+ * Japanese and Chinese ideographic stops, the Tamil clause, and the
+ * French `n°`).
+ *
+ * This is the same instrument round 1 chose over a pattern: when
+ * punctuation IS the content, a human says which punctuation is right.
+ */
+function unapprovedWordlessLocalizations(): string[] {
+  const out: string[] = [];
+  for (const key of englishLeafPaths()) {
+    const source = leafOrElement(en, key);
+    if (typeof source !== 'string' || hasLetters(source)) continue;
+    for (const code of translated) {
+      const bundle = bundleByLocale.get(code);
+      if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      const value = leafOrElement(bundle, key);
+      if (typeof value !== 'string') continue; // missing key — the other baseline
+      if (stillEnglish(source, value)) continue; // the baseline's business
+      const exemption = ACCEPTED_AS_TRANSLATED[key];
+      // An invariant that has moved is reported by `invariantViolations`
+      // with the only correct remedy: restore the value. Reporting it
+      // here too would tell the maintainer to record the new value as
+      // approved — which the validation above explicitly forbids for an
+      // invariant, so the second instruction is not merely redundant
+      // but impossible to follow (Codex #1607 r21).
+      if (exemption?.invariant) continue;
+      if (isAcceptedAsTranslated(ACCEPTED_AS_TRANSLATED, key, code, value)) {
+        continue;
+      }
+      out.push(`${code}:${key} = ${JSON.stringify(value)}`);
+    }
+  }
+  return out;
+}
+
+function englishValuedLeaves(code: string, bundle: Bundle): string[] {
+  const found: string[] = [];
+  for (const key of englishLeafPaths()) {
+    const source = leafOrElement(en, key);
+    if (typeof source !== 'string') continue;
+    const value = leafOrElement(bundle, key);
+    if (!stillEnglish(source, value)) continue;
+    // The exemption is granted against an EXACT string. A normalized
+    // match is not that string: Spanish `copy.app.name` as `vaipakam`
+    // is a brand-casing regression the glossary forbids, and the
+    // acronym entries would likewise have excused `gtc` / `Aon`. Let
+    // anything short of exact fall through to the baseline check
+    // (Codex #1607 r4).
+    if (isAcceptedAsTranslated(ACCEPTED_AS_TRANSLATED, key, code, value)) {
+      continue;
+    }
+    found.push(key);
+  }
+  return found;
+}
+/**
+ * The writing systems each bundle may contain, BESIDES Latin.
+ *
+ * Latin is allowed everywhere — brand names, ticker symbols and units
+ * appear untranslated in every locale, and the English source is Latin.
+ * Anything outside a locale's own scripts is not a translation into
+ * that language; it is a mangled string.
+ *
+ * WHY THIS EXISTS. Every check above compares what a reader SEES, and
+ * that is exactly what a homoglyph defeats: `Sеttings` with a Cyrillic
+ * `е` renders as "Settings" and is byte-different from it, so the word
+ * comparison sees a different word and calls it German (Codex #1607
+ * r12). NFKC does not fold across scripts, and rightly — Cyrillic `е`
+ * and Latin `e` are different letters, not two spellings of one.
+ *
+ * A confusables table (UTS #39 skeletons) would answer the narrow
+ * question "does this look like that", and would need either a new
+ * dependency or a hand-maintained mapping of every ASCII lookalike —
+ * the same open-ended list-of-special-cases that the chapter counter in
+ * #1594 had to be abandoned for. This asks a closed question instead:
+ * WHICH ALPHABETS is this language written in? That is nine short
+ * declarations, it needs no table, and it rejects the whole class —
+ * Greek, Cherokee and Armenian lookalikes as well as Cyrillic — rather
+ * than the characters someone remembered to enumerate.
+ *
+ * It does NOT catch a lookalike from a script the locale legitimately
+ * uses (Latin `l` for `I`, or Han for Han). Stated rather than implied:
+ * this closes cross-script substitution, not every possible confusable.
+ */
+const LOCALE_SCRIPTS: Readonly<Record<string, readonly string[]>> = {
+  ar: ['Arabic'],
+  de: [],
+  es: [],
+  fr: [],
+  hi: ['Devanagari'],
+  ja: ['Hiragana', 'Katakana', 'Han'],
+  ko: ['Hangul', 'Han'],
+  ta: ['Tamil'],
+  zh: ['Han'],
+};
+
+/**
+ * Matches one LETTER OR COMBINING MARK outside the locale's alphabets.
+ *
+ * Marks as well as letters, because a mark is script-bearing and a
+ * misplaced one is doubly invisible: the tokenizer treats it as a word
+ * boundary, so a Hebrew point dropped inside `Settings` splits the word
+ * into `set` + `tings`, matching no English word, while the screen
+ * still reads Settings. A letters-only test missed it entirely, since
+ * the mark is `\p{Mn}` and not `\p{L}` (Codex #1607 r13).
+ *
+ * `Inherited` is allowed — that is what ordinary diacritics carry
+ * (a combining acute takes the script of the letter it sits on), so
+ * excluding it would reject correctly accented French and German.
+ * A mark that names a script of its OWN, like the Hebrew point, is
+ * not a diacritic on a Latin letter; it is text from another writing
+ * system.
+ *
+ * The lookahead is load-bearing: `[^…]` alone cannot express "is a
+ * letter or mark AND is not one of these scripts", because a negated
+ * class conjoins its negations — `[^\P{L}\P{M}]` asks for a character
+ * that is both a letter and a mark, which is nothing at all.
+ *
+ * Punctuation, digits, emoji and interpolation braces are untouched;
+ * they are neither letters nor marks and carry no script.
+ *
+ * `scx` (Script_Extensions), not `Script`. The Arabic tatweel and the
+ * Japanese prolonged-sound mark are both `Script=Common`, so a
+ * `Script=` test flags two characters that belong in exactly the
+ * bundles they appear in.
+ */
+const foreignLetterRe = (code: string): RegExp =>
+  new RegExp(
+    `(?=[\\p{L}\\p{M}])[^${['Latin', 'Inherited', ...(LOCALE_SCRIPTS[code] ?? [])]
+      .map((s) => `\\p{scx=${s}}`)
+      .join('')}]`,
+    'u',
+  );
+
+/**
+ * The only characters allowed in a bundle beyond letters, marks,
+ * numbers, punctuation and spaces.
+ *
+ * MEASURED, not guessed: these twelve are every such character in all
+ * ten bundles today. `$` `+` `=` `~` `°` `×` `←` `→` `≈` `≥`, the
+ * fullwidth `＋` a CJK bundle uses, and the soft hyphen (a hyphenation
+ * hint, invisible but legitimate).
+ *
+ * An ALLOWLIST, because the blocklist polarity kept losing. Rounds 5,
+ * 10, 11, 12, 13, 15 and 16 each named one more character that renders
+ * as something other than its bytes — a full-width `Ｓ`, a full-width
+ * period, a zero-width space, a Cyrillic `е`, a Hebrew point, an
+ * invisible Hangul filler, a NUL — and each fix closed exactly the one
+ * named. Round 17 then produced two more: U+2800 BRAILLE PATTERN BLANK,
+ * a `So` character that renders empty and belongs to no ignorable
+ * class, and the bidi overrides U+202A–202E / U+2066–2069, which are
+ * default-ignorable and so were being STRIPPED — meaning `‮sgnitteS`
+ * compared as gibberish while a browser renders it as `Settings`.
+ *
+ * Enumerating what may appear ends the sequence. Anything outside these
+ * categories fails, so the next character with a surprising rendering
+ * is rejected before anyone has to discover it — and adding one is a
+ * deliberate edit here, with the reason visible in review.
+ */
+const ALLOWED_SYMBOLS = '$+=~­°×←→≈≥＋';
+const DISALLOWED_RE = new RegExp(
+  `[^\\p{L}\\p{M}\\p{N}\\p{P}\\p{Zs}${ALLOWED_SYMBOLS}]`,
+  'u',
+);
+
+/**
+ * Leaves holding a character that does not belong in this locale's
+ * text — a letter or mark from another alphabet, or a character
+ * outside the allowed categories.
+ */
+function foreignScriptLeaves(code: string, bundle: Bundle): string[] {
+  const re = foreignLetterRe(code);
+  const out: string[] = [];
+  const walk = (node: unknown, prefix: string): void => {
+    if (typeof node === 'string') {
+      const disallowed = DISALLOWED_RE.exec(node);
+      const m = disallowed ?? re.exec(node);
+      if (m) {
+        const ch = m[0];
+        const point = `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`;
+        // The code point ALONE for a disallowed character. Echoing it
+        // would put a control or a bidi override into the terminal and
+        // into CI logs, where it is invisible or actively reorders the
+        // surrounding text — the same property that let it hide in the
+        // bundle. Script violations are real glyphs, so those print.
+        out.push(disallowed ? `${prefix} (${point})` : `${prefix} (${ch} ${point})`);
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach((element, index) => walk(element, `${prefix}[${index}]`));
+      return;
+    }
+    if (node !== null && typeof node === 'object') {
+      for (const [key, value] of Object.entries(node)) {
+        walk(value, prefix ? `${prefix}.${key}` : key);
+      }
+    }
+  };
+  walk(bundle, '');
+  return out;
+}
+
+/**
+ * Leaves where the English is PROSE and the locale value has no
+ * letters at all.
+ *
+ * `stillEnglish` cannot see these. Its wordless branch exists for the
+ * case where punctuation IS the content on both sides (`.` against
+ * `。`), and it compares the two strings exactly — so a worded English
+ * against a wordless locale value comes out UNEQUAL, which the caller
+ * reads as "not English, therefore translated". Replacing a German
+ * label with `…` passed every check in the file (Codex #1607 r13), and
+ * so did `123` — a digit run counts as a word to `wordsOf`, which is
+ * right for comparing vocabulary and wrong for asking whether there is
+ * anything to read (r14), so this asks about LETTERS.
+ *
+ * Not translation debt, so not the baseline: a value with no letters
+ * where the source has a sentence is a mangled string, and the reader
+ * sees punctuation or digits where text should be.
+ *
+ * Empty values are skipped — `emptyTranslations` and the `empty` policy
+ * scope already own that case, and reporting it twice would make one
+ * fault produce two failures with two different remedies.
+ */
+function letterlessForProseLeaves(code: string, bundle: Bundle): string[] {
+  const out: string[] = [];
+  for (const key of englishLeafPaths()) {
+    const source = leafOrElement(en, key);
+    // LETTERS, not words. A digit run counts as a word to `wordsOf`,
+    // so a label replaced by `123` looked wordful and skipped this
+    // check entirely while showing the reader no text at all
+    // (Codex #1607 r14).
+    if (typeof source !== 'string' || !hasLetters(source)) continue;
+    const value = leafOrElement(bundle, key);
+    if (typeof value !== 'string' || visibleForm(value) === '') continue;
+    if (hasLetters(value)) continue;
+    // Same scope the still-English check consults. A sentence split
+    // into parts can legitimately leave one part as bare punctuation
+    // in a language that puts the words elsewhere — three locales do
+    // exactly that with the offer footer's tail — and that is a written
+    // judgement, not a pattern.
+    if (isAcceptedAsTranslated(ACCEPTED_AS_TRANSLATED, key, code, value)) {
+      continue;
+    }
+    out.push(`${key} (${JSON.stringify(value)})`);
+  }
+  return out;
+}
+
 const problems: string[] = [];
+
+/** `<locale>:<key>` for every pair the letterless sweep names, so the
+ *  policy-scope sweep can stay quiet about them (see its comment). */
+const letterlessByLocale: string[] = [];
+
+// The English source too. A homoglyph there poisons every comparison
+// downstream — the source word would no longer match any locale that
+// spells it correctly, so nine locales would read as translated at
+// once, and the record would be pruned away as debt already paid.
+{
+  const foreign = foreignScriptLeaves('en', en);
+  if (foreign.length > 0) {
+    problems.push(
+      `en: ${foreign.length} leaf/leaves contain a character that does not ` +
+        'belong in English text — a letter or mark from another alphabet, or ' +
+        'something outside the allowed categories and declared symbols: ' +
+        `${foreign.slice(0, 6).join(', ')}` +
+        (foreign.length > 6 ? ', …' : ''),
+    );
+  }
+}
 
 // What the bundles ACTUALLY do, so a policy exemption that no longer
 // corresponds to anything can be reported (see the stale-exemption
@@ -257,6 +932,13 @@ if (declaredConfirm.length !== 1 || declaredConfirm[0] !== CONFIRM_WORD) {
  *  with NO entry here is one whose file is missing entirely: its
  *  bundle was never read, so nothing is known about it. */
 const missingByLocale = new Map<string, ReadonlySet<string>>();
+/** Same idea for the English-valued leaves — computed once per locale
+ *  and reused by the stale-baseline check and `--prune` (#1596). */
+const englishValuedByLocale = new Map<string, ReadonlySet<string>>();
+/** The parsed bundles, kept so the policy-scope sweep below does not
+ *  re-read and re-parse nine ~200 KB files — the very cost this file's
+ *  header already calls out for the missing-key check. */
+const bundleByLocale = new Map<string, Bundle>();
 
 for (const code of translated) {
   const file = path.join(LOCALES_DIR, `${code}.json`);
@@ -282,6 +964,33 @@ for (const code of translated) {
       `${code}: missing ${unexplained.length} key(s) — ${unexplained
         .slice(0, 8)
         .join(', ')}${unexplained.length > 8 ? ', …' : ''}`,
+    );
+  }
+
+  const foreign = foreignScriptLeaves(code, bundle);
+  if (foreign.length > 0) {
+    problems.push(
+      `${code}: ${foreign.length} leaf/leaves contain a character that does ` +
+        `not belong in ${code} text — a letter or mark from another alphabet, ` +
+        'or something outside letters/marks/numbers/punctuation/spaces and ' +
+        'the declared symbol list. A lookalike renders as the English while ' +
+        'comparing as a different word; anything else is a mangled string: ' +
+        `${foreign.slice(0, 6).join(', ')}` +
+        (foreign.length > 6 ? ', …' : ''),
+    );
+  }
+
+  const wordless = letterlessForProseLeaves(code, bundle);
+  for (const entry of wordless) {
+    letterlessByLocale.push(`${code}:${entry.split(' (')[0]}`);
+  }
+  if (wordless.length > 0) {
+    problems.push(
+      `${code}: ${wordless.length} leaf/leaves hold no letters where the ` +
+        'English is prose — the reader sees punctuation or digits where words ' +
+        'should be: ' +
+        `${wordless.slice(0, 6).join(', ')}` +
+        (wordless.length > 6 ? ', …' : ''),
     );
   }
 
@@ -315,11 +1024,51 @@ for (const code of translated) {
 
   // An empty translation renders as nothing at all, and no other check
   // can see it.
+  const reportedEmpty = new Set<string>();
   for (const key of emptyTranslations(en, bundle)) {
     if (ALLOWED_EMPTY[`${code}:${key}`] !== undefined) continue;
+    reportedEmpty.add(key);
     problems.push(
       `${code}: ${key} is empty while the English is not — i18next renders ` +
         'blank rather than falling back',
+    );
+  }
+
+  // VISIBLY empty: a value made only of default-ignorable characters is
+  // not the empty string, so `emptyTranslations` walks past it — and it
+  // is not equal to the English either, so the still-English check calls
+  // it translated. A `zh` suffix of U+200B alone rendered nothing and
+  // passed both (Codex #1607 r7). Falling through two checks because it
+  // sits between their definitions is exactly the gap this PR is about.
+  for (const key of englishLeafPaths()) {
+    if (reportedEmpty.has(key)) continue; // already reported as empty
+    if (ALLOWED_EMPTY[`${code}:${key}`] !== undefined) continue;
+    const source = leafOrElement(en, key);
+    const value = leafOrElement(bundle, key);
+    if (typeof source !== 'string' || typeof value !== 'string') continue;
+    if (value === '' || visibleForm(source) === '') continue;
+    if (visibleForm(value) === '') {
+      problems.push(
+        `${code}: ${key} contains only invisible characters while the English ` +
+          'is not empty — it renders as nothing',
+      );
+    }
+  }
+
+  // PRESENT but still in English. `missingSubtree` cannot see this —
+  // it compares key presence, so it goes quiet the moment the key
+  // exists, whatever is in it.
+  bundleByLocale.set(code, bundle);
+  const englishValued = englishValuedLeaves(code, bundle);
+  englishValuedByLocale.set(code, new Set(englishValued));
+  const unexplainedEnglish = englishValued.filter(
+    (key) => !isKnownEnglishValued(code, key),
+  );
+  if (unexplainedEnglish.length > 0) {
+    problems.push(
+      `${code}: ${unexplainedEnglish.length} key(s) still hold the English ` +
+        `string — ${unexplainedEnglish.slice(0, 8).join(', ')}` +
+        `${unexplainedEnglish.length > 8 ? ', …' : ''}`,
     );
   }
 
@@ -435,6 +1184,53 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
     }
   }
 }
+// A changed English source is reported BEFORE the stale sweep, and
+// suppresses it for those keys: "the English moved" and "the locale was
+// translated" are different events that look identical from here, and
+// only one of them means the debt is gone.
+const needsReaudit = reauditNeeded();
+const policyStale = policyReauditNeeded();
+const invariantBroken = invariantViolations();
+const unapprovedMarks = unapprovedWordlessLocalizations();
+const policyUnused = unusedPolicyScopes(
+  new Set([
+    ...unapprovedMarks.map((entry) => entry.split(' = ')[0]),
+    // The letterless sweep too — fourth collision (Codex #1607 r23).
+    // An accepted fragment changing from `.` to `。` is reported there
+    // with the repair, and here as a scope to narrow. Every sweep that
+    // names a pair belongs in this list; that is now the rule rather
+    // than four separate discoveries of it.
+    ...letterlessByLocale,
+    // Pairs the English-valued check has already named. It says "this
+    // still reads in English"; this sweep would say "narrow the scope",
+    // and for an entry recording the exact translated value to restore
+    // that is precisely backwards.
+    ...[...englishValuedByLocale].flatMap(([code, keys]) =>
+      [...keys].map((key) => `${code}:${key}`),
+    ),
+  ]),
+);
+
+// Same stale sweep for the English-valued baseline: an entry that has
+// since been translated must LEAVE, or the exemption silently re-opens
+// that key to regressing back to English.
+const staleEnglishValued: string[] = [];
+for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+  for (const code of entry.locales) {
+    if (!translated.includes(code as (typeof translated)[number])) {
+      staleEnglishValued.push(`${code}:${key} (not a translated locale)`);
+      continue;
+    }
+    const observed = englishValuedByLocale.get(code);
+    // No entry = the bundle was never read; its entries are unrefuted.
+    // A key pending re-audit is NOT stale — it stopped matching because
+    // the English moved, which is reported separately above.
+    if (observed !== undefined && !observed.has(key) && !needsReaudit.has(key)) {
+      staleEnglishValued.push(`${code}:${key}`);
+    }
+  }
+}
+
 const pruning = process.argv.includes('--prune');
 // In prune mode the stale pairs are about to be REMOVED, so they aren't
 // a problem — but every other problem still is (see below).
@@ -444,6 +1240,65 @@ if (stalePairs.length > 0 && !pruning) {
       `\`pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune\`: ` +
       `${stalePairs.slice(0, 6).join(', ')}` +
       (stalePairs.length > 6 ? ', …' : ''),
+  );
+}
+
+if (needsReaudit.size > 0) {
+  problems.push(
+    `${needsReaudit.size} english-valued baseline entr(y/ies) record an ` +
+      'English string that en.json no longer has — the recorded locales may ' +
+      'now be showing STALE English rather than being translated. Re-check ' +
+      'each and update or remove it by hand: ' +
+      [...needsReaudit].slice(0, 6).map(([k, why]) => `${k} (${why})`).join(', ') +
+      (needsReaudit.size > 6 ? ', …' : ''),
+  );
+}
+if (invariantBroken.length > 0) {
+  problems.push(
+    `${invariantBroken.length} invariant polic(y/ies) no longer hold. These ` +
+      'values are recorded as unchangeable in every language — a brand name, ' +
+      'a standard acronym, a template with no words in it — so a different ' +
+      'value is a regression to restore, NOT an exemption to retire: ' +
+      `${invariantBroken.slice(0, 6).join('; ')}` +
+      (invariantBroken.length > 6 ? '; …' : ''),
+  );
+}
+if (unapprovedMarks.length > 0) {
+  problems.push(
+    `${unapprovedMarks.length} punctuation-only English leaf/leaves are ` +
+      'localized to a value nobody approved. Where the English has no words ' +
+      'at all, the marks ARE the content, so every locale must either still ' +
+      'show the English (recorded in the baseline) or carry an ' +
+      '`acceptedAsTranslated` entry naming its exact value — otherwise any ' +
+      'punctuation at all reads as a translation: ' +
+      `${unapprovedMarks.slice(0, 6).join('; ')}` +
+      (unapprovedMarks.length > 6 ? '; …' : ''),
+  );
+}
+if (policyUnused.length > 0) {
+  problems.push(
+    `${policyUnused.length} acceptedAsTranslated scope(s) are not doing ` +
+      'anything. An exemption is a statement about the present, and one left ' +
+      'armed either excuses a future regression silently or records a ' +
+      'judgement no check ever consults. Narrow the locale list: ' +
+      `${policyUnused.slice(0, 6).join('; ')}` +
+      (policyUnused.length > 6 ? '; …' : ''),
+  );
+}
+if (policyStale.length > 0) {
+  problems.push(
+    `${policyStale.length} acceptedAsTranslated polic(y/ies) record an English ` +
+      'string that en.json no longer has — the written reason may no longer ' +
+      `describe what it excuses: ${policyStale.slice(0, 6).join(', ')}` +
+      (policyStale.length > 6 ? ', …' : ''),
+  );
+}
+if (staleEnglishValued.length > 0 && !pruning) {
+  problems.push(
+    `${staleEnglishValued.length} english-valued baseline entr(y/ies) already ` +
+      `translated — run \`pnpm --filter @vaipakam/alpha02 i18n:coverage -- --prune\`: ` +
+      `${staleEnglishValued.slice(0, 6).join(', ')}` +
+      (staleEnglishValued.length > 6 ? ', …' : ''),
   );
 }
 
@@ -477,6 +1332,47 @@ if (pruning) {
   fs.writeFileSync(BASELINE_PATH, JSON.stringify(sorted, null, 2) + '\n');
   const pairs = Object.values(sorted).flat().length;
   console.log(`[check-locale-coverage] pruned baseline → ${Object.keys(sorted).length} key(s), ${pairs} pair(s)`);
+
+  // The English-valued baseline prunes on exactly the same rule: every
+  // pair written was independently OBSERVED still-English just now, so
+  // this can only shrink the record, never excuse a fresh regression.
+  const prunedEnglish: Record<string, string[]> = {};
+  for (const code of translated) {
+    const observed = englishValuedByLocale.get(code);
+    if (observed === undefined) {
+      for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+        if (entry.locales.includes(code)) (prunedEnglish[key] ??= []).push(code);
+      }
+      continue;
+    }
+    for (const key of observed) {
+      if (!isKnownEnglishValued(code, key)) continue; // a NEW one is a failure
+      (prunedEnglish[key] ??= []).push(code);
+    }
+  }
+  // A key whose English MOVED is carried through untouched. Pruning it
+  // would delete the very debt the re-audit exists to preserve, which
+  // is the failure the r1 finding described.
+  for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
+    if (needsReaudit.has(key)) prunedEnglish[key] = [...entry.locales];
+  }
+  const sortedEnglish = Object.fromEntries(
+    Object.keys(prunedEnglish)
+      .sort()
+      .map((k) => [
+        k,
+        {
+          source: ENGLISH_VALUED[k]?.source ?? (leafOrElement(en, k) as string),
+          locales: prunedEnglish[k].sort(),
+        },
+      ]),
+  );
+  fs.writeFileSync(ENGLISH_VALUED_PATH, JSON.stringify(sortedEnglish, null, 2) + '\n');
+  const englishPairs = Object.values(sortedEnglish).flatMap((e) => e.locales).length;
+  console.log(
+    `[check-locale-coverage] pruned english-valued baseline → ` +
+      `${Object.keys(sortedEnglish).length} key(s), ${englishPairs} pair(s)`,
+  );
   // Deliberately NOT exiting here. Pruning fixes exactly one class of
   // problem — stale baseline entries — and every other finding above
   // (a new missing key, leaf-type drift, a malformed placeholder, a
@@ -496,6 +1392,31 @@ if (problems.length > 0) {
       'or merge hand-authored patches with `merge-patch`. See\n' +
       'src/i18n/locales/README.md.',
   );
+  // A key that HOLDS the English string is present, so `--missing-only`
+  // walks straight past it — the advice above is the right advice for
+  // the wrong failure, and following it would report "nothing to do"
+  // on a locale this guard just failed (#1596).
+  if (problems.some((p) => p.includes('hold the English string'))) {
+    console.error(
+      '\nThose keys are PRESENT — they just still read in English, so\n' +
+        '`--missing-only` skips every one of them. Do NOT simply drop that\n' +
+        'flag: with no locale codes the translator targets bundles that are\n' +
+        'missing or `{}`, i.e. the untranslated stubs, and not the locale\n' +
+        'that just failed. Either hand-author the strings and merge them\n' +
+        'with `merge-patch`, or name the locale explicitly:\n' +
+        '  pnpm --filter @vaipakam/i18n translate -- \\\n' +
+        '    --locales-dir apps/alpha02/src/i18n/locales <code>\n' +
+        'which OVERWRITES and re-translates that entire bundle — paid, and\n' +
+        'it discards existing wording, so prefer merge-patch for a handful.\n' +
+        'Prune the baseline as they land. If a leaf genuinely reads the\n' +
+        'same in that language — or is built from the same words in a\n' +
+        'different order, which is a real translation the word comparison\n' +
+        'cannot tell from a rearranged English sentence — give it an\n' +
+        '`acceptedAsTranslated` entry with a reason AND the English it was\n' +
+        'granted against, in src/i18n/translation-policy.json. Where the\n' +
+        'locale value is not the English one, record it under `values`.',
+    );
+  }
   process.exit(1);
 }
 

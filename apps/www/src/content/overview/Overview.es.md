@@ -76,9 +76,9 @@ En el momento que acepta:
   USDC + intereses"; el suyo dice "Se me debe mi WETH cuando pague"
 - El cronómetro del préstamo empieza a correr
 
-Una pequeña **Comisión de iniciación del préstamo (0,1%)** se descuenta
+Una pequeña **Comisión de iniciación del préstamo (`{liveValue:loanInitiationFeeBps}`%)** se descuenta
 del importe prestado y se envía al tesoro del protocolo. Así que el
-prestatario recibe 999 USDC, no 1.000. (Puedes pagar la comisión en
+prestatario recibe 998 USDC, no 1.000. (Puedes pagar la comisión en
 **VPFI** y entonces el prestatario recibe los 1.000 completos —
 más sobre VPFI más abajo.)
 
@@ -93,12 +93,17 @@ Intereses = 1.000 USDC × 8% × (30 / 365) = ~6,58 USDC
 Hace clic en **Devolver**, firma una transacción, y 1.006,58 USDC
 entran en la liquidación del préstamo. De ahí:
 
-- Tú recibes **1.005,51 USDC** (principal + intereses menos una
-  Comisión sobre Rendimiento del 1% aplicada únicamente a los intereses)
-- El tesoro recibe **1,07 USDC** como Comisión sobre Rendimiento
+- Tú recibes **1.006,44 USDC** (principal + intereses menos una
+  Comisión sobre Rendimiento del `{liveValue:treasuryFeeBps}`% aplicada únicamente a los intereses)
+- El tesoro recibe **0,13 USDC** como Comisión sobre Rendimiento
 - El WETH del prestatario se desbloquea
 
-En tu panel ves un botón **Reclamar**. Al hacer clic, los 1.005,51
+Estas cifras están redondeadas al céntimo. Los intereses exactos son
+6,575342 USDC y la Comisión sobre Rendimiento exacta 0,131506 USDC, así
+que restar una cifra redondeada de otra te deja a un céntimo — el
+protocolo liquida con los importes sin redondear.
+
+En tu panel ves un botón **Reclamar**. Al hacer clic, los 1.006,44
 USDC se mueven de la liquidación a tu billetera. El prestatario hace
 clic en reclamar y su WETH vuelve a su billetera. El préstamo se
 cierra.
@@ -211,11 +216,11 @@ Dos comisiones, ambas pequeñas:
 - **Comisión sobre Rendimiento — `{liveValue:treasuryFeeBps}`%** de
   los **intereses** que ganas como prestamista (no de tu principal).
   En un préstamo a 30 días al 8% APR de 1.000 USDC, el prestamista
-  gana ~6,58 USDC de intereses, de los cuales ~0,066 USDC son la
+  gana ~6,58 USDC de intereses, de los cuales ~0,132 USDC son la
   Comisión sobre Rendimiento al tipo por defecto.
 - **Comisión de Iniciación del Préstamo — `{liveValue:loanInitiationFeeBps}`%**
   del importe prestado, pagada por el prestatario en el origen. En
-  un préstamo de 1.000 USDC, eso es 1 USDC al tipo por defecto.
+  un préstamo de 1.000 USDC, eso es 2 USDC al tipo por defecto.
 
 Ambas comisiones pueden tener un **descuento de hasta el
 `{liveValue:tier4DiscountBps}`%** manteniendo VPFI en vault (ver más
@@ -323,7 +328,7 @@ Si quieres **pedir prestado**:
    coincida con tu garantía y el APR que puedes pagar.
 3. Haz clic en **Aceptar**, firma dos transacciones, y recibes el
    importe del préstamo en tu billetera (menos la Comisión de
-   Iniciación del 0,1%).
+   Iniciación del `{liveValue:loanInitiationFeeBps}`%).
 4. Devuelve antes de la fecha de vencimiento más el periodo de
    gracia. Tu garantía vuelve a tu billetera.
 

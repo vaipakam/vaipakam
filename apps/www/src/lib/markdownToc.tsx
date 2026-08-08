@@ -188,10 +188,18 @@ function explicitAnchor(id: string | undefined, slug: string): ReactNode {
 }
 
 /**
- * Match an inline-code token of the form `{liveValue:knobName}`. Used
- * by the markdown `code` interceptor so doc authors can write a
- * single-token snippet in plain markdown that renders as a live
- * on-chain value instead of literal text.
+ * Match a code span whose ENTIRE content is a `{liveValue:knobName}`
+ * token. Used by the markdown `code` interceptor so doc authors can
+ * write a single-token snippet in plain markdown and have the value
+ * render in its place instead of the literal token text.
+ *
+ * The anchors are load-bearing, and they are the ONLY thing that keeps
+ * a fenced code block out: markdown gives a block's content a trailing
+ * newline (fenced with a language, fenced without one, and indented
+ * alike) while an inline span's content has none, so `^…$` matches
+ * exactly the spans we mean and nothing else. That was measured
+ * against the installed react-markdown, not assumed — see the
+ * interceptor below for why a separate inline/block test is not used.
  */
 const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
 
@@ -202,16 +210,26 @@ const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
  * `<LiveValue>` component in their place.
  *
  * Doc pages (Overview / UserGuide / Whitepaper / AdminKnobsDocs) use
- * this in place of `headingComponents()` so values like the yield fee
- * BPS or VPFI tier thresholds stay synced with on-chain config without
- * a doc PR every time governance retunes a knob. Tokens that don't
- * match a registered knob fall through to the standard `<code>`
- * renderer so a typo is visibly debuggable rather than silently wrong.
+ * this in place of `headingComponents()` so a figure like the yield fee
+ * or a VPFI tier threshold is written ONCE and referenced from every
+ * sentence and every translation that quotes it, instead of copied into
+ * ten locale files that then drift apart. Tokens that don't match a
+ * registered knob fall through to the standard `<code>` renderer so a
+ * typo is visibly debuggable rather than silently wrong.
  *
- * Escape hatch: if a doc author genuinely wants the literal text
- * `{liveValue:foo}` to render as inline code (e.g. when documenting
- * this very system), they can use a fenced code block — fenced blocks
- * pass `inline === false` and skip this match.
+ * What the token resolves to depends on the surface, and the difference
+ * matters when writing copy: a surface that reads protocol config gets
+ * the live figure, while THIS one — the wallet-free marketing site —
+ * has a `useProtocolConfig` stub that reports no config, so every token
+ * renders the compile-time default shipped in `<LiveValue>`'s registry.
+ * On these pages the mechanism buys a single definition point, not
+ * liveness, and the pages are only as current as their last build. Don't
+ * describe a marketing figure to a reader as read from the chain.
+ *
+ * Escape hatch: a doc author who genuinely wants the literal text
+ * `{liveValue:foo}` to render as code (e.g. when documenting this very
+ * system) can put it in a code BLOCK — see {@link LIVE_VALUE_TOKEN_RE}
+ * for why a block can never match.
  *
  * The returned object is module-scoped + memoized so consumers calling
  * this on every render (UserGuide renders many small `<MarkdownChunk>`
@@ -220,74 +238,58 @@ const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
  * chunk would force every chunk to re-render its tree on every parent
  * update.
  */
-interface CodeRendererProps {
-  children?: ReactNode;
-  /**
-   * react-markdown v10 hands every custom renderer the HAST node it is
-   * rendering. It is INTERNAL — the default renderers never forward it —
-   * so it is destructured away rather than spread onto a DOM element,
-   * where React serialises it as `node="[object Object]"`.
-   *
-   * That was already shipping before #1606: this renderer spread
-   * `...rest` unchanged, putting the attribute on 5,728 inline-code
-   * elements across the prerendered pages.
-   */
-  node?: unknown;
-  [key: string]: unknown;
-}
-
-/**
- * `<code>` renderer that swaps `{liveValue:knobName}` for the live value.
- *
- * Why there is NO inline-vs-block test here (#1606)
- * ------------------------------------------------
- * This used to read react-markdown's `inline` prop, which v9 REMOVED —
- * so on v10 it was always `undefined`, the substitution never ran, and
- * every token in the docs rendered as literal text.
- *
- * The prop is not needed, and re-deriving it was a wrong turn. Block
- * code always arrives with a TRAILING NEWLINE and inline code never
- * does — verified for fenced, fenced-with-language and indented blocks:
- *
- *     fenced    →  "{liveValue:x}\n"
- *     indented  →  "{liveValue:x}\n"
- *     inline    →  "{liveValue:x}"
- *
- * {@link LIVE_VALUE_TOKEN_RE} is ANCHORED, so it rejects the newline
- * form on its own. The anchoring IS the block/inline discriminator, and
- * it is what preserves the deliberate escape hatch: a fenced block
- * containing the token renders literally, so the docs can document this
- * mechanism.
- *
- * That makes the anchors load-bearing rather than cosmetic. Unanchor the
- * regex and fenced code samples silently start resolving.
- * `scripts/check-live-value-render.tsx` asserts the behaviour across all
- * ten constructs that produce a `<code>` element, so the property is
- * tested rather than merely asserted in this comment.
- */
-function makeMarkdownCode(docLocale: string) {
-  return function MarkdownCode({ children, node: _node, ...rest }: CodeRendererProps) {
-    const match = LIVE_VALUE_TOKEN_RE.exec(nodeToText(children));
-    if (match) {
-      return <LiveValue knob={match[1] as KnobName} locale={docLocale} />;
-    }
-    // Default — preserve native ReactMarkdown behaviour for every other
-    // inline-code span and every code block.
-    return <code {...rest}>{children}</code>;
-  };
-}
-
-// Keyed by document locale. ReactMarkdown shallow-compares `components`,
-// so a fresh object per render would re-render every chunk on every parent
-// update — the reason this was memoized in the first place. A Map keeps
-// that stability now that the map depends on the document's language.
+// Keyed by DOCUMENT locale (#1610). ReactMarkdown shallow-compares
+// `components`, so a fresh object per render would re-render every chunk
+// on every parent update — the reason this was memoized at all. A Map
+// keeps that stability now that the map depends on the document's
+// language.
 const _cachedMarkdownComponents = new Map<string, ReturnType<typeof buildMarkdownComponents>>();
 function buildMarkdownComponents(docLocale: string) {
   return {
     ...headingComponents(),
-    code: makeMarkdownCode(docLocale),
+    code: ({
+      node: _node,
+      children,
+      ...rest
+    }: {
+      node?: unknown;
+      children?: ReactNode;
+      [key: string]: unknown;
+    }) => {
+      // react-markdown 10 hands a `code` component only `node`,
+      // `children`, and — for a fenced block — `className="language-…"`.
+      // There is no `inline` flag; it was removed in v9. The gate that
+      // stood here asked `if (inline)` against a prop that is therefore
+      // always `undefined`, so it never fired once and every token in
+      // every doc reached the reader as the literal text
+      // `{liveValue:treasuryFeeBps}`.
+      //
+      // Nothing below re-derives "is this span inline". Doing that would
+      // state the same fact twice — once as an inline/block test, once
+      // as the token pattern — and the two would disagree the first time
+      // markdown's shape changed again, which is precisely how this
+      // broke. The anchored token regex already answers the only
+      // question that matters (is this span exactly one live-value
+      // token), and it cannot match a block, because a block's content
+      // always carries a trailing newline. One rule, and it is the rule
+      // about the thing we actually want.
+      const match = LIVE_VALUE_TOKEN_RE.exec(nodeToText(children));
+      if (match) {
+        // An unregistered knob name falls through inside `<LiveValue>`,
+        // which renders the raw token so the typo is visible in the page
+        // rather than silently resolving to something misleading.
+        return <LiveValue knob={match[1] as KnobName} locale={docLocale} />;
+      }
+      // Default — preserve native ReactMarkdown behaviour for every
+      // other code span and every fenced block. `node` is dropped on
+      // purpose: it is react-markdown's internal hast node, and
+      // spreading it onto a DOM `<code>` makes React warn about an
+      // unrecognised attribute on every code span in the document.
+      return <code {...rest}>{children}</code>;
+    },
   };
 }
+
 /**
  * @param docLocale locale of the DOCUMENT being rendered — which is not
  * always the UI locale. Pages that always resolve `.en.md` must pass

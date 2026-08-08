@@ -493,13 +493,38 @@ Thin-market honesty rules apply.
   already presented as available. A newly added surface is translated in
   the same change that ships it, so a user never meets a page that
   switches to English partway down.
-  *(Not yet true of the whole app. Every key now EXISTS in every
-  advertised language — the missing-key baseline is empty — but a key
-  can exist and still hold the English string, and several hundred do:
-  Hindi carries ~283 such leaves, the others 12-48 each. The guard
-  compares key PRESENCE, so it cannot see them. That is a recorded gap,
-  not a revision of the intent above — see the dated row in
-  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent is
+  *(Not yet true of the whole app, but now bounded. Every key EXISTS in
+  every advertised language, and a second check asks the question key
+  presence cannot: does the key hold anything other than the English
+  string? Several hundred `(key, locale)` pairs still do — Hindi carries
+  the bulk of them, and `apps/alpha02/src/i18n/english-valued-baseline.json`
+  is the current count, deliberately not restated here — and every one is
+  recorded, dated, and enforced in both
+  directions: a text that regresses to English fails the build, and one
+  that gets translated must leave the record or the build fails too. The
+  record can only shrink. The question asked is whether the text is
+  built from the same words as the English, in any order and whatever
+  the punctuation, spacing or invisible characters around them: an
+  English sentence rearranged into another language's word order is
+  still English to the person reading it. A handful of leaves are
+  correct despite matching (the product name, standard trading
+  acronyms, and one French heading that genuinely uses the same two
+  words the English does); those are listed separately, each naming the
+  languages it applies to, carrying a written reason, and recording the
+  exact wording it was granted against, rather than inferred from a
+  pattern — a match can be correct in one language and a regression in
+  the next, and a reworded string is a judgement nobody has made yet.
+  Deleting words from the English is not translating the ones that
+  remain, so that counts as untranslated too; adding words to them does
+  not, because text with words from somewhere else is a translation
+  someone has started. Each language is also held to the alphabets it is
+  actually written in, because a letter swapped for an identical-looking
+  one from another alphabet reads as English on screen while comparing
+  as a different word — the one way text can pass every other check and
+  still show the reader English. And text holding no words at all, where
+  the English is a sentence, is not a translation either: the reader
+  would see punctuation where the words should be. See the dated row in
+  [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent above is
   deliberately left stated in full, because a spec narrowed to the
   surfaces that happen to be finished cannot be violated and would
   erase the only record that the rest is unfinished rather than
