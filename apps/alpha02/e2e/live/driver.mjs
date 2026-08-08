@@ -56,6 +56,87 @@ const WALLETS_PATH =
  * `launch()`, which is the first thing it does, so the BLOCKED exit
  * still fires before any browser work.
  */
+/**
+ * Exit BLOCKED (code 2) — "this drive could not verify anything", as
+ * distinct from FAIL (code 1) — "this drive found a defect".
+ *
+ * The distinction is the whole point of the three-verdict contract in
+ * `run-live-batch.mjs`: a misclassified infra blip sends someone hunting
+ * a product bug that does not exist, and habitual FAIL rows train
+ * reviewers to skim past the one that is real (#1581).
+ *
+ * The rule for choosing: if the drive never got a served page to assert
+ * against — unreachable site, dead RPC, absent credential, no browser,
+ * no eligible on-chain state — it is BLOCKED. If it asserted against a
+ * page that WAS served and the assertion failed, that is FAIL.
+ *
+ * Closes any browser this module opened, so a blocked exit cannot leave
+ * a Chromium behind. Callers do not wire that themselves — it was the
+ * per-driver duplication `live-position-observe.mjs`'s `discovery()`
+ * wrapper existed to avoid.
+ */
+let LIVE_BROWSER = null;
+
+/**
+ * Synchronous BLOCKED exit, for the pre-browser precondition checks
+ * (`loadWallets`, `walletFor`) that run before any browser exists and
+ * cannot await.
+ */
+export function blockedSync(why) {
+  console.error(`\nBLOCKED: ${why}`);
+  process.exit(2);
+}
+
+export async function blocked(why, err) {
+  const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
+  console.error(`\nBLOCKED: ${why}${detail}`);
+  try {
+    await LIVE_BROWSER?.close();
+  } catch {
+    /* exiting anyway — a close failure must not mask the real cause */
+  }
+  process.exit(2);
+}
+
+/**
+ * Run a setup/precondition step; any throw is BLOCKED, not FAIL.
+ *
+ * Wrap the things that must work before verification can start —
+ * navigation to the site, reading deployment data, resolving config —
+ * and leave assertions against a served page unwrapped so a real defect
+ * still exits 1.
+ */
+export async function precondition(what, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    await blocked(`${what} failed, so nothing could be observed`, err);
+  }
+}
+
+/**
+ * Open a site path as a PRECONDITION — BLOCKED on failure, not FAIL.
+ *
+ * Use this for a drive's FIRST navigation, which is its reachability
+ * probe: an unreachable site, a DNS failure or a dead preview means the
+ * drive never got a page to assert against.
+ *
+ * Deliberately NOT for later navigations. Once the site is known
+ * reachable, a route that fails to load is a plausible product
+ * regression — a broken route IS a defect — so those keep exiting 1.
+ * The line is "did we ever get served anything", not "did every
+ * navigation succeed".
+ */
+export async function visit(page, pathname, opts = {}) {
+  return precondition(`opening ${pathname}`, () =>
+    page.goto(`${SITE}${pathname}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+      ...opts,
+    }),
+  );
+}
+
 let WALLETS;
 function loadWallets() {
   if (WALLETS !== undefined) return WALLETS;
@@ -69,13 +150,14 @@ function loadWallets() {
     // secret-unavailable batch read as a defect, which is exactly the
     // mislabelling the three-verdict contract exists to prevent (#1529
     // review round 6).
-    console.error(
-      `\nBLOCKED: cannot read the dev wallet file — this driver signs, so it` +
-        ` cannot run without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
+    // Uses the shared exit so there is one definition of "BLOCKED" —
+    // this message and `walletFor`'s were separate copies of it.
+    blockedSync(
+      `cannot read the dev wallet file — this driver signs, so it cannot run` +
+        ` without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
         `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
         ` (live-position-observe.mjs) which needs no key.`,
     );
-    process.exit(2);
   }
   // Normalize both documented shapes to a role map — the array form
   // ({ role, address, privateKey }[]) indexed as a map yields
@@ -101,17 +183,16 @@ function walletFor(role) {
   const wallets = loadWallets();
   const w = wallets?.[role];
   const key = w?.privateKey;
+  // Shared exit, not a local copy of it (#1581).
   const blocked = (why) => {
     const roles = Object.keys(wallets ?? {});
-    console.error(
-      `\nBLOCKED: the dev wallet file has no usable credential for role` +
-        ` "${role}" — ${why}.` +
+    blockedSync(
+      `the dev wallet file has no usable credential for role "${role}" — ${why}.` +
         `\n  path:  ${WALLETS_PATH}` +
         `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
         `\n  → each role needs { address, privateKey } with a 32-byte key,` +
         ` and the address must be the one that key derives.`,
     );
-    process.exit(2);
   };
 
   if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
@@ -312,9 +393,15 @@ export async function launch({
       args: ['--no-sandbox'],
       viewport: { width: 1280, height: 900 },
     });
+    // Register it so a later `blocked()` — from this module or a driver —
+    // closes it instead of leaving a Chromium behind.
+    LIVE_BROWSER = ctx;
   } catch (err) {
     if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
-    throw err;
+    // BLOCKED, not FAIL (#1581): no browser means the drive never got a
+    // page to assert against. Rethrowing exited 1 and made a missing or
+    // unusable Chromium read as a product regression.
+    await blocked('could not launch a browser', err);
   }
 
   // The egress gateway resets Chromium's own TLS handshakes, so ALL
