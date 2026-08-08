@@ -142,14 +142,20 @@ const isKnownEnglishValued = (code: string, key: string): boolean =>
  * Inequality is not proof of translation. It is only proof of
  * inequality, and there are two ways to get there.
  */
-function reauditNeeded(): string[] {
-  const out: string[] = [];
+function reauditNeeded(): Map<string, string> {
+  // key → why, RAW keys. An earlier revision pushed the annotated
+  // string (`key (no longer a string leaf…)`) into the set that the
+  // stale sweep and `--prune` then queried by bare key, so an entry
+  // whose English was DELETED reported correctly and was pruned away
+  // anyway — the annotation made it invisible to the very guard that
+  // produced it (Codex #1607 r2). Format at the edge, never in the key.
+  const out = new Map<string, string>();
   for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
     const current = leafAt(en, key);
     if (typeof current !== 'string') {
-      out.push(`${key} (no longer a string leaf in en.json)`);
+      out.set(key, 'no longer a string leaf in en.json');
     } else if (current !== entry.source) {
-      out.push(key);
+      out.set(key, 'the English was reworded');
     }
   }
   return out;
@@ -183,6 +189,17 @@ interface SameAsEnglishEntry {
   /** The English value this exemption was granted against. If en.json
    *  moves on, the exemption is stale rather than silently inherited. */
   source: string;
+  /**
+   * The locales it applies to — REQUIRED, never an implicit "all".
+   *
+   * Equality can be right in one language and wrong in the next.
+   * `copy.consentParts.suffix` is `.` in English, `.` in Arabic, and
+   * `。` in Chinese: a key-wide exemption would excuse Chinese
+   * regressing to the ASCII period, and no exemption leaves Arabic as
+   * permanent debt it does not owe. Neither is acceptable, and only a
+   * per-locale scope avoids both (Codex #1607 r2).
+   */
+  locales: string[];
 }
 interface PolicyRecord {
   requiredLiterals: Record<string, string[]>;
@@ -322,6 +339,34 @@ const SAME_AS_ENGLISH: Readonly<Record<string, SameAsEnglishEntry>> =
   POLICY.sameAsEnglish ?? {};
 
 /**
+ * The shape above is a TypeScript interface over parsed JSON, which is
+ * erased at run time and asserted, not checked — so `reason` was a
+ * requirement in name only. Removing it from an entry left the guard
+ * passing, meaning an exemption could suppress findings with no
+ * committed justification at all, which is the one thing this section
+ * exists to prevent (Codex #1607 r2). Validated here, before any entry
+ * is allowed to excuse anything.
+ */
+for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
+  const where = `translation-policy.json sameAsEnglish["${key}"]`;
+  if (typeof entry?.reason !== 'string' || entry.reason.trim() === '') {
+    throw new Error(`${where} has no reason — an exemption without a written justification is not reviewable`);
+  }
+  if (typeof entry.source !== 'string') {
+    throw new Error(`${where} has no source — record the English value the reason was granted against`);
+  }
+  if (!Array.isArray(entry.locales) || entry.locales.length === 0) {
+    throw new Error(`${where} has no locales — name them explicitly; equality can be right in one language and wrong in the next`);
+  }
+  const unknown = entry.locales.filter(
+    (c) => !TRANSLATED_LOCALES.includes(c as (typeof TRANSLATED_LOCALES)[number]),
+  );
+  if (unknown.length > 0) {
+    throw new Error(`${where} names locale(s) that are not translated: ${unknown.join(', ')}`);
+  }
+}
+
+/**
  * `sameAsEnglish` entries whose recorded English no longer matches, so
  * the written reason may no longer describe the string it excuses.
  *
@@ -355,13 +400,13 @@ function policyReauditNeeded(): string[] {
  * baseline's business, and reporting it here too would make one gap
  * produce two failures.
  */
-function englishValuedLeaves(bundle: Bundle): string[] {
+function englishValuedLeaves(code: string, bundle: Bundle): string[] {
   const found: string[] = [];
   for (const key of leafPaths(en)) {
     const source = leafAt(en, key);
     if (typeof source !== 'string') continue;
     if (leafAt(bundle, key) !== source) continue;
-    if (SAME_AS_ENGLISH[key] !== undefined) continue;
+    if (SAME_AS_ENGLISH[key]?.locales.includes(code)) continue;
     found.push(key);
   }
   return found;
@@ -473,7 +518,7 @@ for (const code of translated) {
   // PRESENT but still in English. `missingSubtree` cannot see this —
   // it compares key presence, so it goes quiet the moment the key
   // exists, whatever is in it.
-  const englishValued = englishValuedLeaves(bundle);
+  const englishValued = englishValuedLeaves(code, bundle);
   englishValuedByLocale.set(code, new Set(englishValued));
   const unexplainedEnglish = englishValued.filter(
     (key) => !isKnownEnglishValued(code, key),
@@ -602,7 +647,7 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
 // suppresses it for those keys: "the English moved" and "the locale was
 // translated" are different events that look identical from here, and
 // only one of them means the debt is gone.
-const needsReaudit = new Set(reauditNeeded());
+const needsReaudit = reauditNeeded();
 const policyStale = policyReauditNeeded();
 
 // Same stale sweep for the English-valued baseline: an entry that has
@@ -642,7 +687,8 @@ if (needsReaudit.size > 0) {
     `${needsReaudit.size} english-valued baseline entr(y/ies) record an ` +
       'English string that en.json no longer has — the recorded locales may ' +
       'now be showing STALE English rather than being translated. Re-check ' +
-      `each and update or remove it by hand: ${[...needsReaudit].slice(0, 6).join(', ')}` +
+      'each and update or remove it by hand: ' +
+      [...needsReaudit].slice(0, 6).map(([k, why]) => `${k} (${why})`).join(', ') +
       (needsReaudit.size > 6 ? ', …' : ''),
   );
 }

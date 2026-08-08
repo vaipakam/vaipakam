@@ -496,14 +496,15 @@ Thin-market honesty rules apply.
   *(Not yet true of the whole app, but now bounded. Every key EXISTS in
   every advertised language, and a second check asks the question key
   presence cannot: does the key hold anything other than the English
-  string? 416 `(key, locale)` pairs still do — Hindi carries the bulk of
+  string? 430 `(key, locale)` pairs still do — Hindi carries the bulk of
   them — and every one is recorded, dated, and enforced in both
   directions: a text that regresses to English fails the build, and one
   that gets translated must leave the record or the build fails too. The
   record can only shrink. A handful of leaves legitimately read the same
-  in every language (the product name, standard trading acronyms); those
-  are listed separately with a written reason each, rather than inferred
-  from a pattern. See the dated row in
+  in a given language (the product name, standard trading acronyms);
+  those are listed separately, each naming the languages it applies to
+  and carrying a written reason, rather than inferred from a pattern —
+  equality can be correct in one language and a regression in the next. See the dated row in
   [`_CodeVsDocsAudit.md`](./_CodeVsDocsAudit.md). The intent above is
   deliberately left stated in full, because a spec narrowed to the
   surfaces that happen to be finished cannot be violated and would

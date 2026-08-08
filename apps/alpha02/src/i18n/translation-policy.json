@@ -55,27 +55,93 @@
   "sameAsEnglish": {
     "copy.app.name": {
       "reason": "The product name. A brand is not translated.",
-      "source": "Vaipakam"
+      "source": "Vaipakam",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
     },
     "copy.desk.ticket.expiryGtc": {
       "reason": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
-      "source": "GTC"
+      "source": "GTC",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
     },
     "copy.desk.ticket.fillAon": {
       "reason": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-      "source": "AON"
+      "source": "AON",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
     },
     "copy.desk.ticket.fillIoc": {
       "reason": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-      "source": "IOC"
+      "source": "IOC",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
     },
     "copy.desk.signed.rateLine": {
       "reason": "Two interpolated values around APR, itself a standard finance acronym; there is no prose here to translate.",
-      "source": "{{rate}} APR · {{days}}"
+      "source": "{{rate}} APR · {{days}}",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
     },
     "copy.claims.row.amountWithSuffix": {
       "reason": "Two interpolated values and nothing else — there are no words in this string.",
-      "source": "{{amount}}{{suffix}}"
+      "source": "{{amount}}{{suffix}}",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ]
     }
   }
 }
