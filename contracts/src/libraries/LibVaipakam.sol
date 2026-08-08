@@ -6108,22 +6108,27 @@ library LibVaipakam {
         ///      protocol-controlled disposal.
         uint16 recycleSurplusMultiple;
         // ── C2 Mode-A repatriation draw ledger (#1568) ────────────────────
-        // `chainRepatriationDebited` — BASE-ONLY: cumulative recycled value
-        //   Base has AUTHORIZED out of chain `c`'s recycle availability for
-        //   planned-surplus repatriation (Mode A). Charged when the
-        //   authorization is issued — before any mirror send — under a
-        //   releasable pending authorization. Deliberately its OWN ledger:
-        //   charging `chainConsumedRecycled` instead would break the
+        // `chainRepatriationDebited` — BASE-ONLY: the NET recycled value
+        //   currently drawn out of chain `c`'s availability for
+        //   planned-surplus repatriation (Mode A): charged when an
+        //   authorization is issued — before any mirror send — and
+        //   DECREMENTED by an authenticated cancellation ACK (the only
+        //   release path). Net-in-place rather than a gross cumulative
+        //   (Codex #1608 r1 P2): under hostile near-max reports a cancelled
+        //   near-max draw would pin a gross cumulative at ~2^256 and wedge
+        //   every later authorization on overflow. Deliberately its OWN
+        //   ledger: charging `chainConsumedRecycled` instead would break the
         //   `outstanding + retired == consumed` commitment identity on the
         //   first authorization (plan §M4 correction; §3.6a constraint 2).
-        //   Enters availability as the second net term of
+        //   IS §3.6a's `(repatDebited − repatReleased)` net, and enters
+        //   availability as the second term of
         //   `LibVpfiRecycle.mirrorAvailRecycled` — never anywhere else.
         mapping(uint32 => uint256) chainRepatriationDebited;
-        // `chainRepatriationReleased` — BASE-ONLY: cumulative released back
-        //   from repatriation authorizations that verifiably never executed.
-        //   Ratchet `<= chainRepatriationDebited[c]`, enforced at the write
-        //   site; a release restores the chain's availability instead of
-        //   stranding it (B3's release lesson applied to this draw).
+        // `chainRepatriationReleased` — BASE-ONLY: LIFETIME cumulative
+        //   released back by authenticated cancellation ACKs. Monotonic,
+        //   pure observability (the live availability term above is already
+        //   net) — the watcher and operators reconstruct release history
+        //   from it; nothing on-chain reads it back.
         mapping(uint32 => uint256) chainRepatriationReleased;
         // `repatAuthorizations` — BASE-ONLY: the terminal ledger for every
         //   Mode-A instruction (§3.6a constraint 5). Keyed by the Base-local

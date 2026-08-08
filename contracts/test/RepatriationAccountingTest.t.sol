@@ -42,6 +42,9 @@ contract RepatriationAccountingTest is SetupTest {
         _agg().setExpectedSourceChainIds(chainIds);
         vpfi = new ERC20Mock("VPFI", "VPFI", 18);
         _mut().setVpfiTokenRaw(address(vpfi));
+        // The endpoint setter rejects code-less addresses (Codex #1608 r1),
+        // so give the pranked receiver a byte of code.
+        vm.etch(RECEIVER, hex"01");
     }
 
     function _rep() internal view returns (RewardReporterFacet) {
@@ -288,10 +291,10 @@ contract RepatriationAccountingTest is SetupTest {
         assertEq(_avail(CHAIN_ARB), 60 ether, "fixture must be live");
         vm.prank(RECEIVER);
         _repat().onRepatriationCancelAck(authId, address(diamond), CHAIN_ARB);
-        (uint256 debited, uint256 released) =
+        (uint256 netDraw, uint256 lifetimeReleased) =
             _repat().getChainRepatriationDraw(CHAIN_ARB);
-        assertEq(debited, 40 ether);
-        assertEq(released, 40 ether);
+        assertEq(netDraw, 0, "release decrements the net draw in place");
+        assertEq(lifetimeReleased, 40 ether, "lifetime observability grows");
         assertEq(_avail(CHAIN_ARB), 100 ether, "release restores avail");
         (uint8 status, , , , ) = _repat().getRepatriationAuthorization(authId);
         assertEq(status, 3);
@@ -311,6 +314,41 @@ contract RepatriationAccountingTest is SetupTest {
         );
     }
 
+    function test_CancelAck_NearMaxDrawDoesNotWedgeTheChain() public {
+        // Codex #1608 r1 P2 regression: with a hostile near-max reported
+        // cumulative, authorize ~everything, cancel it, then authorize
+        // again. Under gross-cumulative release semantics the second
+        // authorization overflowed the debited counter and wedged the chain
+        // forever while availability said the capacity was back.
+        uint256 huge = type(uint256).max - 1_000;
+        _seedAvail(1, huge);
+        _arm();
+        uint256 bigId = _repat().authorizeRepatriation(CHAIN_ARB, huge);
+        assertEq(_avail(CHAIN_ARB), 0, "fixture live: everything drawn");
+        vm.prank(RECEIVER);
+        _repat().onRepatriationCancelAck(bigId, address(diamond), CHAIN_ARB);
+        assertEq(_avail(CHAIN_ARB), huge, "release restored the capacity");
+        // The chain must remain authorizable — this is the wedge assert.
+        uint256 nextId = _repat().authorizeRepatriation(CHAIN_ARB, 40 ether);
+        (uint8 status, , , uint256 amount, ) =
+            _repat().getRepatriationAuthorization(nextId);
+        assertEq(status, 1);
+        assertEq(amount, 40 ether);
+    }
+
+    function test_SetEndpoints_RejectsCodelessNonzero() public {
+        address eoa = address(0xE0A0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationEndpointNotContract.selector,
+                eoa
+            )
+        );
+        _repat().setRepatriationEndpoints(address(0), eoa);
+        // Zero stays allowed — it re-darkens.
+        _repat().setRepatriationEndpoints(address(0), address(0));
+    }
+
     // ── Mirror instruction ingress ──────────────────────────────────────────
 
     function test_Instruction_CanonicalChainRejected() public {
@@ -321,8 +359,22 @@ contract RepatriationAccountingTest is SetupTest {
         _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 5 ether);
     }
 
+    function test_Instruction_DarkWithoutSenderConfigured() public {
+        _rep().setIsCanonicalRewardChain(false);
+        // Codex #1608 r1: an unconfigured mirror must REVERT (leaving the
+        // CCIP packet failed-but-re-executable), never persist state
+        // recorded while the deployment was supposed to be dark.
+        vm.prank(address(messenger));
+        vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
+        _repat().onRepatriationInstructionReceived(address(0xBA5E), 1, 5 ether);
+    }
+
     function test_Instruction_MessengerGatedAndIdempotent() public {
         _rep().setIsCanonicalRewardChain(false);
+        // Arm the mirror side: the sender satellite must exist and hold code.
+        address senderSat = address(0x5E4D);
+        vm.etch(senderSat, hex"01");
+        _repat().setRepatriationEndpoints(senderSat, address(0));
         // Non-messenger caller rejected.
         vm.expectRevert(
             abi.encodeWithSelector(

@@ -133,6 +133,11 @@ contract RepatriationFacet is
     /// @notice 6a delivery checks failed: wrong token, mismatched declared
     ///         amount, or zero actual receipt.
     error RepatriationDeliveryInvalid();
+    /// @notice A nonzero transport endpoint must be a contract — an EOA
+    ///         receiver could fabricate cancellation ACKs with no transport
+    ///         authentication behind them (Codex #1608 r1; the same
+    ///         trust-root class setRewardRemittanceReceiver rejects).
+    error RepatriationEndpointNotContract(address endpoint);
 
     // ── Gates ───────────────────────────────────────────────────────────────
 
@@ -282,16 +287,33 @@ contract RepatriationFacet is
             revert RepatriationWrongSourceChain(sourceChainId, auth.dstChainId);
         }
         auth.status = AUTH_RELEASED;
-        // Ratchet `released <= debited` holds structurally — every release
-        // matches one prior authorization's exact charge — but the invariant
-        // is the ledger's soundness condition, so degrade to a capped write
-        // rather than trusting the argument forever.
+        // NET-DRAW release (Codex #1608 r1 P2): the draw slot is maintained
+        // as the NET outstanding+settled charge — a release DECREMENTS it —
+        // because the cumulative-pair form wedges at hostile magnitudes: a
+        // cancelled near-max draw would leave the debited cumulative at
+        // ~2^256 and every later authorization reverting on overflow while
+        // availability says the capacity is back. The lifetime released
+        // cumulative stays monotonic as pure observability. The floor is
+        // structural (every release matches one prior un-released charge)
+        // but kept anyway — this slot is the availability term and must
+        // never be able to revert a read path.
         uint32 dst = auth.dstChainId;
-        uint256 debited = s.chainRepatriationDebited[dst];
-        uint256 released = s.chainRepatriationReleased[dst] + auth.amount;
-        s.chainRepatriationReleased[dst] = released > debited
-            ? debited
-            : released;
+        uint256 net = s.chainRepatriationDebited[dst];
+        s.chainRepatriationDebited[dst] = net > auth.amount
+            ? net - auth.amount
+            : 0;
+        // SATURATING lifetime observability (the sibling of the net-draw
+        // fix, found by the invariant fuzz rather than predicted with it:
+        // repeated near-max authorize→cancel cycles overflow a plain
+        // cumulative, and a reverting release is the WORSE wedge — it
+        // strands the authorization un-releasable and its availability
+        // drawn forever). Near 2^256 the exact figure is meaningless;
+        // saturation keeps the release path alive under any history.
+        uint256 rel = s.chainRepatriationReleased[dst];
+        uint256 amt = auth.amount;
+        s.chainRepatriationReleased[dst] = rel > type(uint256).max - amt
+            ? type(uint256).max
+            : rel + amt;
         emit RepatriationReleased(authId, dst, auth.amount);
     }
 
@@ -316,6 +338,15 @@ contract RepatriationFacet is
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
             revert OnlyRewardMessengerRepat(msg.sender);
         }
+        // Dark gate, mirror side (Codex #1608 r1 P2): a mirror whose sender
+        // satellite is not configured must NOT consume an instruction — a
+        // REVERT leaves the CCIP packet failed-but-re-executable, so the
+        // instruction lands cleanly once the operator arms the transport,
+        // instead of persisting state recorded while the deployment was
+        // supposed to be dark.
+        if (s.repatriationSender == address(0)) {
+            revert RepatriationNotConfigured();
+        }
         if (issuingBase == address(0) || authId == 0 || amount == 0) {
             revert RepatriationInvalidRequest();
         }
@@ -337,6 +368,15 @@ contract RepatriationFacet is
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
+        // Zero re-darkens; a NONZERO endpoint must hold code (Codex #1608
+        // r1 P2 — an EOA receiver could release availability with no
+        // transport authentication behind it).
+        if (sender_ != address(0) && sender_.code.length == 0) {
+            revert RepatriationEndpointNotContract(sender_);
+        }
+        if (receiver_ != address(0) && receiver_.code.length == 0) {
+            revert RepatriationEndpointNotContract(receiver_);
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.repatriationSender = sender_;
         s.repatriationReceiver = receiver_;
@@ -357,12 +397,16 @@ contract RepatriationFacet is
         return (auth.status, auth.dstChainId, auth.issuedAt, auth.amount, s.repatShortfall[authId]);
     }
 
-    /// @notice A chain's repatriation draw pair — the availability term's raw
-    ///         inputs, published for the mesh watcher's re-derivation.
+    /// @notice A chain's repatriation draw figures, published for the mesh
+    ///         watcher's re-derivation: `netDraw` is the LIVE availability
+    ///         term (outstanding + settled charges, already net of
+    ///         releases — exactly the §3.6a `(repatDebited − repatReleased)`
+    ///         net, maintained in place); `lifetimeReleased` is the
+    ///         monotonic release observability cumulative.
     function getChainRepatriationDraw(uint32 chainId)
         external
         view
-        returns (uint256 debited, uint256 released)
+        returns (uint256 netDraw, uint256 lifetimeReleased)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (

@@ -1129,19 +1129,20 @@ library LibVpfiRecycle {
         uint256 released = s.chainReleasedRecycledCommit[chainId];
         uint256 netConsumed = consumed > released ? consumed - released : 0;
         uint256 avail = reported > netConsumed ? reported - netConsumed : 0;
-        // C2 Mode-A repatriation draw (#1568): a SEPARATE saturating
-        // debit/release pair, per §3.6a's canonical availability formula
+        // C2 Mode-A repatriation draw (#1568): the SEPARATE draw term of
+        // §3.6a's canonical availability formula
         // `reported − (consumed − released) − (repatDebited − repatReleased)`.
         // It must NOT ride `chainConsumedRecycled` — that counter is one half
         // of the `outstanding + retired == consumed` identity, and charging a
         // repatriation there breaks the identity on the first authorization.
-        // All-zero until the repatriation ledger writes land, so this term is
-        // inert on every deployment built before #1568 arms.
-        uint256 repatDebited = s.chainRepatriationDebited[chainId];
-        uint256 repatReleased = s.chainRepatriationReleased[chainId];
-        uint256 netRepat = repatDebited > repatReleased
-            ? repatDebited - repatReleased
-            : 0;
+        // The `(debited − released)` NET is maintained IN the debited slot
+        // (a cancellation ACK decrements it) rather than derived from two
+        // cumulatives here (Codex #1608 r1 P2): with hostile near-max
+        // reports a cancelled near-max draw would pin the debited cumulative
+        // at ~2^256 and wedge every later authorization on overflow while
+        // this view said the capacity was back. Zero until #1568 arms, so
+        // the term is inert on every deployment built before then.
+        uint256 netRepat = s.chainRepatriationDebited[chainId];
         return avail > netRepat ? avail - netRepat : 0;
     }
 
