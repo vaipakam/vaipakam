@@ -408,11 +408,20 @@ for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
   if (!Array.isArray(entry.locales) || entry.locales.length === 0) {
     throw new Error(`${where} has no locales — name them explicitly; equality can be right in one language and wrong in the next`);
   }
+  // Against `translated`, which excludes `en` — the set every check
+  // below actually walks. Validating against `TRANSLATED_LOCALES`
+  // accepted `locales: ["en"]`, which excuses nothing, is swept by
+  // nothing, and sits in the file forever looking like a decision
+  // somebody made (Codex #1607 r21). An exemption that cannot fire is
+  // worse than absent: it is a claim nobody can audit.
   const unknown = entry.locales.filter(
-    (c) => !TRANSLATED_LOCALES.includes(c as (typeof TRANSLATED_LOCALES)[number]),
+    (c) => !translated.includes(c as (typeof translated)[number]),
   );
   if (unknown.length > 0) {
-    throw new Error(`${where} names locale(s) that are not translated: ${unknown.join(', ')}`);
+    throw new Error(
+      `${where} names locale(s) that are not translated: ${unknown.join(', ')}` +
+        (unknown.includes('en') ? ' (en is the source, not a translation)' : ''),
+    );
   }
   // A `values` override for a locale the entry does not cover accepts
   // nothing — it reads as an exemption and is inert, which is worse
@@ -424,6 +433,18 @@ for (const [key, entry] of Object.entries(ACCEPTED_AS_TRANSLATED)) {
     if (typeof value !== 'string' || value === '') {
       throw new Error(`${where} records an empty value for "${code}" — record the exact accepted string`);
     }
+  }
+  // `invariant` is asserted by TypeScript and never checked, so a
+  // truthiness test read `0` as absent — and the entry then behaved as
+  // an ordinary one, restoring the exact escape route the flag exists
+  // to close (Codex #1607 r21). Round 2 fixed this same class for
+  // `reason`; the new field arrived without the lesson.
+  if (entry.invariant !== undefined && typeof entry.invariant !== 'boolean') {
+    throw new Error(
+      `${where} has a non-boolean \`invariant\` (${JSON.stringify(entry.invariant)}). ` +
+        'A flag that decides whether a value may ever change must not be ' +
+        'satisfiable by a falsey placeholder.',
+    );
   }
   if (entry.invariant) {
     // An invariant with per-locale variants is a contradiction: it
@@ -843,6 +864,13 @@ function unapprovedWordlessLocalizations(): string[] {
       if (typeof value !== 'string') continue; // missing key — the other baseline
       if (stillEnglish(source, value)) continue; // the baseline's business
       const exemption = ACCEPTED_AS_TRANSLATED[key];
+      // An invariant that has moved is reported by `invariantViolations`
+      // with the only correct remedy: restore the value. Reporting it
+      // here too would tell the maintainer to record the new value as
+      // approved — which the validation above explicitly forbids for an
+      // invariant, so the second instruction is not merely redundant
+      // but impossible to follow (Codex #1607 r21).
+      if (exemption?.invariant) continue;
       if (exemption?.locales.includes(code) && value === acceptedValue(exemption, code)) {
         continue;
       }
