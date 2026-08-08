@@ -2180,8 +2180,8 @@ contract HelperTest {
         selectors[11] = RepatriationFacet.executeRepatriation.selector;
         selectors[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
         selectors[13] = RepatriationFacet.getRepatriationInstruction.selector;
-        selectors[14] = RepatriationFacet.setRepatriationLanePool.selector;
-        selectors[15] = RepatriationFacet.getRepatriationLanePool.selector;
+        selectors[14] = RepatriationFacet.setRepatriationTokenAdminRegistry.selector;
+        selectors[15] = RepatriationFacet.getRepatriationTokenAdminRegistry.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

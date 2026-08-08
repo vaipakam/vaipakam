@@ -6171,22 +6171,26 @@ library LibVaipakam {
         //   them.
         address repatriationSender; //   mirror-side outbound escrow/sender
         address repatriationReceiver; // Base-side inbound endpoint
-        // #1568 C2 part 2 (Codex #1618 r1→r6) — this chain's VPFI CCIP
-        //   TokenPool, read LIVE at the lane-capacity bounds. A Mode-A
-        //   return travels as ONE CCIP token message and consumes BOTH
-        //   the mirror pool's outbound limiter and Base's inbound one; a
-        //   single request above either capacity is rejected permanently,
-        //   which would strand the authorization's draw until the
-        //   cancellation ceremony. Four review rounds showed that ANY
-        //   off-chain-derived ceiling (artifact-recorded capacities,
-        //   min() arming ceremonies, ordering rules) goes stale or gets
-        //   skipped on some documented operator path — so the bound is
-        //   read from the pool's live limiter state instead: authorize
-        //   checks Base's INBOUND capacity for the lane, execute checks
-        //   the mirror's OUTBOUND capacity, and nothing has to be armed,
-        //   recorded, ordered, or kept in sync. Zero = transport dark
-        //   (fail-closed, like the endpoints).
-        address repatriationLanePool;
+        // #1568 C2 part 2 (Codex #1618 r1→r7) — this chain's CCIP
+        //   TokenAdminRegistry, through which the lane-capacity bounds
+        //   resolve the ACTIVE VPFI pool live (`getPool(vpfiToken)`). A
+        //   Mode-A return travels as ONE CCIP token message and consumes
+        //   BOTH the mirror pool's outbound limiter and Base's inbound
+        //   one; a single request above either capacity is rejected
+        //   permanently, which would strand the authorization's draw
+        //   until the cancellation ceremony. Five review rounds showed
+        //   that ANY stored copy of transport state (recorded
+        //   capacities, arming ceremonies, ordering rules — and in r7,
+        //   a stored pool address across a CCT pool rotation) goes
+        //   stale on some documented operator path — so the whole chain
+        //   is resolved live at the point of use: registry → active
+        //   pool → lane supported? → live bucket. authorize checks
+        //   Base's INBOUND capacity, execute the mirror's OUTBOUND, and
+        //   nothing has to be armed, recorded, ordered, or kept in
+        //   sync. Zero = transport dark (fail-closed, like the
+        //   endpoints); the registry itself is permanent Chainlink
+        //   chain infrastructure, the one address that never rotates.
+        address repatriationTokenAdminRegistry;
     }
 
     /// @notice #1568 C2 Mode A — one planned-surplus repatriation

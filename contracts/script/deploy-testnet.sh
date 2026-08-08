@@ -1074,7 +1074,7 @@ EOF
 # the topology. Run it once per chain, in any order (#1568 C2: the
 # repatriation lane-capacity bounds read each chain's own pool limiter
 # LIVE, so no per-lane ceilings are derived or ordered here — the only
-# repatriation wiring is setRepatriationLanePool).
+# repatriation wiring is setRepatriationTokenAdminRegistry).
 #
 # CCIP has no per-chain DVN policy — Chainlink operates a uniform
 # committing DON + executing DON + an independent Risk Management

@@ -22,6 +22,7 @@ import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.s
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {
     MockCcipSelectorRegistry,
+    MockTokenAdminRegistry,
     MockVpfiTokenPool
 } from "../mocks/MockVpfiTokenPool.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
@@ -226,14 +227,18 @@ contract MeshLedgerInvariant is Test {
         RepatriationFacet(address(diamond)).setRepatriationEndpoints(
             address(0), address(handler)
         );
-        // #1618 r6 — the live lane-capacity bound reads the pool limiter
-        // through the messenger's selector registry; wire both with the
-        // buckets left DISABLED (= no bound, CCIP's own semantics for a
-        // disabled limiter). The suite deliberately drives HOSTILE
-        // near-max draws, and any finite capacity here would fence the
-        // fuzz away from exactly the magnitudes the §7 #6 second term is
-        // pinned against.
+        // #1618 r6/r7 — the live lane-capacity bound resolves registry ->
+        // active pool -> lane membership -> limiter bucket through the
+        // messenger's selector registry; wire the chain with the buckets
+        // left DISABLED (= no bound, CCIP's own semantics for a disabled
+        // limiter on a SUPPORTED lane — the mock defaults every lane
+        // supported). The suite deliberately drives HOSTILE near-max
+        // draws, and any finite capacity here would fence the fuzz away
+        // from exactly the magnitudes the §7 #6 second term is pinned
+        // against.
         MockVpfiTokenPool lanePool = new MockVpfiTokenPool();
+        MockTokenAdminRegistry tokenReg = new MockTokenAdminRegistry();
+        tokenReg.setPool(address(vpfi), address(lanePool));
         MockCcipSelectorRegistry selReg = new MockCcipSelectorRegistry();
         selReg.setChainSelector(uint256(CHAIN_ARB), 1);
         selReg.setChainSelector(uint256(CHAIN_OP), 2);
@@ -241,8 +246,8 @@ contract MeshLedgerInvariant is Test {
         TestMutatorFacet(address(diamond)).setCrossChainMessengerRaw(
             address(selReg)
         );
-        RepatriationFacet(address(diamond)).setRepatriationLanePool(
-            address(lanePool)
+        RepatriationFacet(address(diamond)).setRepatriationTokenAdminRegistry(
+            address(tokenReg)
         );
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits

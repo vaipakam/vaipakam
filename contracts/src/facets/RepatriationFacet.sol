@@ -34,11 +34,25 @@ interface ICcipSelectorRegistry {
     function chainSelectorOf(uint256 chainId) external view returns (uint64);
 }
 
+/// @dev The slice of the CCIP TokenAdminRegistry the lane-capacity bounds
+///      read — token → ACTIVE pool. Resolving the pool here, live, is
+///      what makes a CCT pool rotation (TokenAdminRegistry.setPool)
+///      auto-track: there is no stored pool address to go stale (r7).
+interface ITokenAdminRegistryView {
+    function getPool(address token) external view returns (address);
+}
+
 /// @dev The slice of the CCIP VPFI TokenPool the lane-capacity bounds
-///      read — the LIVE per-lane limiter state. The struct comes from the
-///      pinned CCIP library itself, never a hand-typed copy, so the
-///      decode shape cannot drift from the audited pool's.
+///      read — lane membership + the LIVE per-lane limiter state. The
+///      struct comes from the pinned CCIP library itself, never a
+///      hand-typed copy, so the decode shape cannot drift from the
+///      audited pool's.
 interface IVpfiPoolRateLimitView {
+    function isSupportedChain(uint64 remoteChainSelector)
+        external
+        view
+        returns (bool);
+
     function getCurrentInboundRateLimiterState(uint64 remoteChainSelector)
         external
         view
@@ -51,9 +65,14 @@ interface IVpfiPoolRateLimitView {
 }
 
 /// @dev The slice of {VpfiReturnSender} the mirror-side surfaces drive —
-///      the shared return channel's Mode-A send legs.
+///      the shared return channel's Mode-A send legs. The DESTINATION is
+///      threaded from this facet on every call (r7): the facet just
+///      checked the lane's live capacity against `s.baseChainId`, and a
+///      second destination copy inside the satellite could diverge from
+///      the one that was checked — so the satellite carries none.
 interface IVpfiReturnSender {
     function sendRepatriationReturn(
+        uint256 dstChainId,
         address issuingBase,
         uint256 authId,
         uint256 amount,
@@ -61,6 +80,7 @@ interface IVpfiReturnSender {
     ) external payable returns (bytes32 messageId);
 
     function sendRepatriationCancelAck(
+        uint256 dstChainId,
         address issuingBase,
         uint256 authId,
         address payable refundAddress
@@ -173,9 +193,13 @@ contract RepatriationFacet is
     ///         the facet to dark.
     event RepatriationEndpointsSet(address sender, address receiver);
 
-    /// @notice The VPFI TokenPool the lane-capacity bounds read was
-    ///         (re)configured. Zeroing it re-darkens the bounded surfaces.
-    event RepatriationLanePoolSet(address previousPool, address newPool);
+    /// @notice The CCIP TokenAdminRegistry the lane-capacity bounds
+    ///         resolve the active pool through was (re)configured.
+    ///         Zeroing it re-darkens the bounded surfaces.
+    event RepatriationTokenAdminRegistrySet(
+        address previousRegistry,
+        address newRegistry
+    );
 
     /// @notice Base dispatched (or re-dispatched) the cross-chain instruction
     ///         for a pending authorization.
@@ -280,16 +304,27 @@ contract RepatriationFacet is
 
     /**
      * @dev Enforce `amount` against the LIVE limiter capacity of the CCIP
-     *      lane toward `remoteChainId`, on this chain's own VPFI pool —
+     *      lane toward `remoteChainId`, on this chain's ACTIVE VPFI pool —
      *      the inbound bucket when this chain will RECEIVE the return
      *      (Base, at authorize), the outbound bucket when it will SEND it
-     *      (mirror, at execute). Fail-closed on missing wiring: an unset
-     *      pool or messenger, or an unknown lane selector, refuses rather
-     *      than passes. A disabled limiter imposes no bound — CCIP's own
-     *      `_consume` short-circuits the same way, and the pool rate
-     *      governor refuses to disable a lane's limit (ET-008), so on a
-     *      production deploy this branch means "governor policy says
-     *      unlimited", not "unconfigured".
+     *      (mirror, at execute). The whole reference chain is resolved
+     *      live: registry → `getPool(vpfiToken)` (a CCT pool rotation
+     *      auto-tracks, r7) → `isSupportedChain(selector)` → bucket.
+     *
+     *      Fail-closed at every rung: unset registry/messenger, an
+     *      unknown lane selector, an unregistered token, or an
+     *      UNSUPPORTED lane refuse rather than pass. The support check is
+     *      load-bearing (r7 P1): for a lane the pool does not carry,
+     *      Chainlink's limiter getter returns a ZEROED bucket with
+     *      `isEnabled == false` — indistinguishable from "governor chose
+     *      unlimited" — so without the membership gate a REMOVED lane
+     *      would read as unbounded, and an authorization toward it could
+     *      execute on the mirror and then fail delivery forever. A
+     *      disabled limiter on a lane the pool DOES carry imposes no
+     *      bound — CCIP's own `_consume` short-circuits the same way,
+     *      and the pool rate governor refuses to disable a lane's limit
+     *      (ET-008), so that branch means "governor policy says
+     *      unlimited", never "unconfigured".
      */
     function _assertWithinLaneCapacity(
         LibVaipakam.Storage storage s,
@@ -297,14 +332,19 @@ contract RepatriationFacet is
         uint256 amount,
         bool inbound
     ) private view {
-        address pool = s.repatriationLanePool;
+        address registry = s.repatriationTokenAdminRegistry;
         address messenger = s.crossChainMessenger;
-        if (pool == address(0) || messenger == address(0)) {
+        if (registry == address(0) || messenger == address(0)) {
             revert RepatriationNotConfigured();
         }
         uint64 selector =
             ICcipSelectorRegistry(messenger).chainSelectorOf(remoteChainId);
         if (selector == 0) revert RepatriationLaneUnknown(remoteChainId);
+        address pool = ITokenAdminRegistryView(registry).getPool(s.vpfiToken);
+        if (pool == address(0)) revert RepatriationNotConfigured();
+        if (!IVpfiPoolRateLimitView(pool).isSupportedChain(selector)) {
+            revert RepatriationLaneUnknown(remoteChainId);
+        }
         RateLimiter.TokenBucket memory bucket = inbound
             ? IVpfiPoolRateLimitView(pool).getCurrentInboundRateLimiterState(
                 selector
@@ -733,8 +773,12 @@ contract RepatriationFacet is
         // a message the limiter permanently rejects. This is also what
         // keeps a capacity LOWERED after instruction issuance from
         // wedging: the execute simply refuses until the operator cancels
-        // or governance re-raises the lane.
-        _assertWithinLaneCapacity(s, s.baseChainId, amount, false);
+        // or governance re-raises the lane. The destination the capacity
+        // was checked FOR is then threaded into the send (r7): the
+        // satellite holds no destination of its own, so the lane checked
+        // and the lane used cannot diverge.
+        uint256 dst = uint256(s.baseChainId);
+        _assertWithinLaneCapacity(s, dst, amount, false);
 
         // CEI: the one-shot marker precedes every effect and interaction.
         s.repatInstructionState[key] = INSTR_EXECUTED;
@@ -742,7 +786,7 @@ contract RepatriationFacet is
         IERC20(s.vpfiToken).safeTransfer(sender, amount);
         messageId = IVpfiReturnSender(sender).sendRepatriationReturn{
             value: msg.value
-        }(issuingBase, authId, amount, refundAddress);
+        }(dst, issuingBase, authId, amount, refundAddress);
         emit RepatriationExecuted(issuingBase, authId, amount, messageId);
     }
 
@@ -780,7 +824,7 @@ contract RepatriationFacet is
         }
         messageId = IVpfiReturnSender(sender).sendRepatriationCancelAck{
             value: msg.value
-        }(issuingBase, authId, refundAddress);
+        }(uint256(s.baseChainId), issuingBase, authId, refundAddress);
         emit RepatriationCancelAckDispatched(issuingBase, authId, messageId);
     }
 
@@ -811,33 +855,46 @@ contract RepatriationFacet is
     }
 
     /**
-     * @notice Configure this chain's VPFI CCIP TokenPool — the contract
-     *         whose LIVE per-lane limiter state bounds every repatriation
-     *         (Base reads its inbound bucket at authorize, a mirror its
-     *         outbound bucket at execute). Reading the pool directly is
-     *         what removed the armed-ceiling ceremony (Codex #1618
-     *         r1→r6): there is no recorded copy to go stale, no arming
-     *         order to follow, and no Safe-execution path that skips a
-     *         local side effect. Zero re-darkens the bounded surfaces
-     *         (fail-closed, like the endpoints); a nonzero pool must hold
-     *         code for the same trust-root reason the endpoints must.
+     * @notice Configure this chain's CCIP TokenAdminRegistry — the root
+     *         of the live reference chain the lane-capacity bounds walk
+     *         (registry → active VPFI pool → lane membership → limiter
+     *         bucket; Base reads the inbound bucket at authorize, a
+     *         mirror its outbound bucket at execute). Resolving the
+     *         ACTIVE pool through the registry at every check is what
+     *         removed both the armed-ceiling ceremony (Codex #1618
+     *         r1→r6) and the stored-pool rotation gap (r7): a CCT pool
+     *         upgrade through `TokenAdminRegistry.setPool` is picked up
+     *         by the very next check, with no Diamond call to remember.
+     *         The registry itself is permanent Chainlink chain
+     *         infrastructure — the one address in the chain that never
+     *         rotates. Zero re-darkens the bounded surfaces
+     *         (fail-closed, like the endpoints); a nonzero registry must
+     *         hold code for the same trust-root reason the endpoints
+     *         must.
      */
-    function setRepatriationLanePool(address pool_)
+    function setRepatriationTokenAdminRegistry(address registry_)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (pool_ != address(0) && pool_.code.length == 0) {
-            revert RepatriationEndpointNotContract(pool_);
+        if (registry_ != address(0) && registry_.code.length == 0) {
+            revert RepatriationEndpointNotContract(registry_);
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        emit RepatriationLanePoolSet(s.repatriationLanePool, pool_);
-        s.repatriationLanePool = pool_;
+        emit RepatriationTokenAdminRegistrySet(
+            s.repatriationTokenAdminRegistry, registry_
+        );
+        s.repatriationTokenAdminRegistry = registry_;
     }
 
-    /// @notice The configured VPFI TokenPool the live lane-capacity
-    ///         bounds read (0 = the bounded surfaces are dark).
-    function getRepatriationLanePool() external view returns (address) {
-        return LibVaipakam.storageSlot().repatriationLanePool;
+    /// @notice The configured CCIP TokenAdminRegistry the live
+    ///         lane-capacity bounds resolve the active pool through
+    ///         (0 = the bounded surfaces are dark).
+    function getRepatriationTokenAdminRegistry()
+        external
+        view
+        returns (address)
+    {
+        return LibVaipakam.storageSlot().repatriationTokenAdminRegistry;
     }
 
     // ── Views ───────────────────────────────────────────────────────────────

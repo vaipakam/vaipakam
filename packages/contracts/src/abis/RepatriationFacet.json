@@ -146,19 +146,6 @@
   },
   {
     "type": "function",
-    "name": "getRepatriationLanePool",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getRepatriationPosition",
     "inputs": [],
     "outputs": [
@@ -181,6 +168,19 @@
         "name": "authNonce",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRepatriationTokenAdminRegistry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -384,10 +384,10 @@
   },
   {
     "type": "function",
-    "name": "setRepatriationLanePool",
+    "name": "setRepatriationTokenAdminRegistry",
     "inputs": [
       {
-        "name": "pool_",
+        "name": "registry_",
         "type": "address",
         "internalType": "address"
       }
@@ -597,25 +597,6 @@
   },
   {
     "type": "event",
-    "name": "RepatriationLanePoolSet",
-    "inputs": [
-      {
-        "name": "previousPool",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "newPool",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RepatriationReleased",
     "inputs": [
       {
@@ -666,6 +647,25 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepatriationTokenAdminRegistrySet",
+    "inputs": [
+      {
+        "name": "previousRegistry",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "newRegistry",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false

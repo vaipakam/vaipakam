@@ -262,14 +262,7 @@ contract DeployCrosschain is Script {
                     returnSenderImpl,
                     abi.encodeCall(
                         VpfiReturnSender.initialize,
-                        (
-                            admin,
-                            messenger,
-                            diamond,
-                            vpfiToken,
-                            baseChainId,
-                            destGasLimit
-                        )
+                        (admin, messenger, diamond, vpfiToken, destGasLimit)
                     )
                 )
             );

@@ -10,6 +10,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {
     MockCcipSelectorRegistry,
+    MockTokenAdminRegistry,
     MockVpfiTokenPool
 } from "./mocks/MockVpfiTokenPool.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -88,10 +89,12 @@ contract RepatriationAccountingTest is SetupTest {
         // ACCOUNTING core, including hostile near-max draw magnitudes a
         // finite capacity would fence off.
         MockVpfiTokenPool pool = new MockVpfiTokenPool();
+        MockTokenAdminRegistry tokenReg = new MockTokenAdminRegistry();
+        tokenReg.setPool(address(vpfi), address(pool));
         MockCcipSelectorRegistry reg = new MockCcipSelectorRegistry();
         reg.setChainSelector(uint256(CHAIN_ARB), 1);
         _mut().setCrossChainMessengerRaw(address(reg));
-        _repat().setRepatriationLanePool(address(pool));
+        _repat().setRepatriationTokenAdminRegistry(address(tokenReg));
     }
 
     // ── Dark by default ─────────────────────────────────────────────────────

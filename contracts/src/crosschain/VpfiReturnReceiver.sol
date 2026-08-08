@@ -295,6 +295,17 @@ contract VpfiReturnReceiver is
         messenger = newMessenger;
     }
 
+    /// @notice Re-point the credit target. DRAIN FIRST (Codex #1618 r7):
+    ///         a delayed return or cancellation ACK delivered after a
+    ///         rotation still names the OLD issuing Diamond in its
+    ///         payload, and the new Diamond refuses it with
+    ///         `RepatriationWrongEra` — the era binding doing its job —
+    ///         leaving the delivery failed against a target that will
+    ///         never accept it. Settle or cancel-and-ACK every PENDING
+    ///         authorization before rotating (the standing
+    ///         receiver-rotation precondition every remittance receiver
+    ///         shares; see CcipCutoverRunbook "Rotating a Diamond or a
+    ///         pool under in-flight repatriations").
     function setDiamond(address newDiamond) external onlyOwner {
         if (newDiamond == address(0)) revert ZeroAddress();
         if (newDiamond.code.length == 0) revert NotAContract(newDiamond);

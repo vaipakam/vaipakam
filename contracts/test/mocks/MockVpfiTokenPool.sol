@@ -17,6 +17,24 @@ import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLim
 contract MockVpfiTokenPool {
     mapping(uint64 => RateLimiter.TokenBucket) internal inboundBuckets;
     mapping(uint64 => RateLimiter.TokenBucket) internal outboundBuckets;
+    /// @dev INVERTED storage so the default is SUPPORTED: the accounting
+    ///      and invariant suites wire this mock purely so the live bound
+    ///      resolves, and a default-unsupported mapping would fail-close
+    ///      every fixture. Tests pinning the r7 removed-lane behaviour
+    ///      mark a selector unsupported explicitly.
+    mapping(uint64 => bool) internal unsupportedChains;
+
+    function setSupported(uint64 selector, bool supported) external {
+        unsupportedChains[selector] = !supported;
+    }
+
+    function isSupportedChain(uint64 remoteChainSelector)
+        external
+        view
+        returns (bool)
+    {
+        return !unsupportedChains[remoteChainSelector];
+    }
 
     function setInbound(uint64 selector, bool enabled, uint128 capacity)
         external
@@ -68,5 +86,21 @@ contract MockCcipSelectorRegistry {
 
     function setChainSelector(uint256 chainId, uint64 selector) external {
         chainSelectorOf[chainId] = selector;
+    }
+}
+
+/// @notice Minimal stand-in for the CCIP `TokenAdminRegistry` — token →
+///         ACTIVE pool, the root of the live reference chain the
+///         lane-capacity bounds walk (#1618 r7: resolving the pool here
+///         is what makes a CCT pool rotation auto-track).
+contract MockTokenAdminRegistry {
+    mapping(address => address) internal pools;
+
+    function setPool(address token, address pool) external {
+        pools[token] = pool;
+    }
+
+    function getPool(address token) external view returns (address) {
+        return pools[token];
     }
 }

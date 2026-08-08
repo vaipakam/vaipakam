@@ -640,10 +640,11 @@ bash contracts/script/deploy-testnet.sh op-sepolia   --phase ccip-wire
 
 The pass order across chains is free — every step reads only
 `contracts`-phase artifacts. (#1568 C2: the repatriation lane-capacity
-bounds are read LIVE from each chain's VPFI TokenPool limiter at
-issuance/execution; the only repatriation wiring this phase performs is
-`setRepatriationLanePool`, so there are no per-lane ceilings to derive,
-record, or order.)
+bounds resolve registry → active pool → lane membership → limiter
+bucket LIVE at issuance/execution; the only repatriation wiring this
+phase performs is `setRepatriationTokenAdminRegistry`, so there are no
+per-lane ceilings to derive, record, or order, and a CCT pool rotation
+auto-tracks.)
 
 Each invocation runs `ConfigureCcip.s.sol`, which reads every chain's
 `deployments/<slug>/addresses.json` and registers chain selectors,
@@ -751,11 +752,12 @@ each item is checked:
 - [ ] `--phase ccip-wire` ran clean on every chain (`ConfigureCcip.s.sol`
       completed: peers, lanes, rate limits, and CCT registration all
       landed with no `⚠` lines).
-- [ ] On every chain, the Diamond's repatriation lane pool is wired
-      (#1568 C2 — the live lane-capacity bounds read it; unset = the
-      bounded surfaces are dark):
-      `cast call $DIAMOND 'getRepatriationLanePool()(address)'` returns
-      that chain's VPFI TokenPool, not the zero address.
+- [ ] On every chain, the Diamond's repatriation registry is wired
+      (#1568 C2 — the live lane-capacity bounds resolve the active pool
+      through it; unset = the bounded surfaces are dark):
+      `cast call $DIAMOND 'getRepatriationTokenAdminRegistry()(address)'`
+      returns that chain's CCIP TokenAdminRegistry, not the zero
+      address.
 - [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
       chain — capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/`.

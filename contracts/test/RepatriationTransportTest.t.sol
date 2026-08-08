@@ -16,7 +16,10 @@ import {VpfiReturnReceiver} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
-import {MockVpfiTokenPool} from "./mocks/MockVpfiTokenPool.sol";
+import {
+    MockTokenAdminRegistry,
+    MockVpfiTokenPool
+} from "./mocks/MockVpfiTokenPool.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /// @dev Stand-in for the CCIP adapter on the SEND side: quotes a settable
@@ -122,6 +125,7 @@ contract RepatriationTransportTest is SetupTest {
     MockCcipChannelMessenger internal ccip;
     MockReturnRelay internal relay;
     MockVpfiTokenPool internal pool;
+    MockTokenAdminRegistry internal tokenRegistry;
     VpfiReturnSender internal returnSender;
     VpfiReturnReceiver internal returnReceiver;
     ERC20Mock internal vpfi;
@@ -154,16 +158,20 @@ contract RepatriationTransportTest is SetupTest {
         chainIds[1] = CHAIN_ARB;
         _agg().setExpectedSourceChainIds(chainIds);
 
-        // Live lane-capacity wiring (#1618 r6): the facet reads the pool's
-        // limiter buckets through the messenger's selector registry. Unset
-        // selectors' buckets read disabled = no bound, so tests that pin
-        // the bound itself enable a bucket explicitly.
+        // Live lane-capacity wiring (#1618 r6/r7): the facet resolves
+        // registry -> active pool -> lane membership -> limiter bucket at
+        // every check, through the messenger's selector registry. Unset
+        // selectors' buckets read disabled = no bound (all lanes default
+        // SUPPORTED in the mock), so tests that pin the bound itself
+        // enable a bucket / unsupport a lane explicitly.
         pool = new MockVpfiTokenPool();
+        tokenRegistry = new MockTokenAdminRegistry();
+        tokenRegistry.setPool(address(vpfi), address(pool));
         ccip.setChainSelector(CHAIN_BASE, SEL_BASE);
         ccip.setChainSelector(CHAIN_ARB, SEL_ARB);
         ccip.setChainSelector(CHAIN_OP, SEL_OP);
         _mut().setCrossChainMessengerRaw(address(ccip));
-        _repat().setRepatriationLanePool(address(pool));
+        _repat().setRepatriationTokenAdminRegistry(address(tokenRegistry));
 
         // Base-side receiver satellite (real, behind a proxy), driven by
         // the relay standing in for the CCIP adapter.
@@ -196,7 +204,6 @@ contract RepatriationTransportTest is SetupTest {
                             address(ccip),
                             address(diamond),
                             address(vpfi),
-                            uint256(CHAIN_BASE),
                             DEST_GAS
                         )
                     )
@@ -398,12 +405,60 @@ contract RepatriationTransportTest is SetupTest {
         );
         _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
         ccip.setChainSelector(CHAIN_ARB, SEL_ARB);
-        // Unset pool — the bounded surface is dark, never unbounded.
-        _repat().setRepatriationLanePool(address(0));
+        // Unset registry — the bounded surface is dark, never unbounded.
+        _repat().setRepatriationTokenAdminRegistry(address(0));
         vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
         _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
-        _repat().setRepatriationLanePool(address(pool));
+        _repat().setRepatriationTokenAdminRegistry(address(tokenRegistry));
+        // Unregistered token (registry answers zero pool) — dark too.
+        tokenRegistry.setPool(address(vpfi), address(0));
+        vm.expectRevert(RepatriationFacet.RepatriationNotConfigured.selector);
         _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+        tokenRegistry.setPool(address(vpfi), address(pool));
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+    }
+
+    function test_Authorize_RemovedLaneFailsClosed() public {
+        // #1618 r7 P1 — for a lane the pool does NOT carry, Chainlink's
+        // limiter getter returns a ZEROED bucket with isEnabled == false,
+        // indistinguishable from "governor chose unlimited". Without the
+        // membership gate a REMOVED lane would read as unbounded, and an
+        // authorization toward it could execute on the mirror and then
+        // fail delivery forever.
+        _armBase();
+        _seedAvail(1, 100 ether);
+        pool.setSupported(SEL_ARB, false);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationLaneUnknown.selector,
+                uint256(CHAIN_ARB)
+            )
+        );
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+        pool.setSupported(SEL_ARB, true);
+        _repat().authorizeRepatriation(CHAIN_ARB, 1 ether);
+    }
+
+    function test_Authorize_PoolRotationAutoTracks() public {
+        // #1618 r7 P2 — a CCT pool upgrade switches the active pool via
+        // TokenAdminRegistry.setPool; because the facet resolves the pool
+        // through the registry at EVERY check, the very next authorize is
+        // bounded by the NEW pool's buckets with no Diamond call at all.
+        _armBase();
+        _seedAvail(1, 100 ether);
+        pool.setInbound(SEL_ARB, true, 100 ether);
+        _repat().authorizeRepatriation(CHAIN_ARB, 40 ether);
+        MockVpfiTokenPool rotated = new MockVpfiTokenPool();
+        rotated.setInbound(SEL_ARB, true, 10 ether);
+        tokenRegistry.setPool(address(vpfi), address(rotated));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationExceedsLaneCapacity.selector,
+                40 ether,
+                10 ether
+            )
+        );
+        _repat().authorizeRepatriation(CHAIN_ARB, 40 ether);
     }
 
     function test_Execute_BoundedByLiveOutboundCapacity_Retryable() public {
@@ -432,19 +487,22 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(state, 2);
     }
 
-    function test_SetLanePool_AdminOnlyAndCodeChecked() public {
+    function test_SetTokenAdminRegistry_AdminOnlyAndCodeChecked() public {
         _armBase();
         vm.prank(STRANGER);
         vm.expectRevert();
-        _repat().setRepatriationLanePool(address(pool));
+        _repat().setRepatriationTokenAdminRegistry(address(tokenRegistry));
         vm.expectRevert(
             abi.encodeWithSelector(
                 RepatriationFacet.RepatriationEndpointNotContract.selector,
                 address(0xE0A1)
             )
         );
-        _repat().setRepatriationLanePool(address(0xE0A1));
-        assertEq(_repat().getRepatriationLanePool(), address(pool));
+        _repat().setRepatriationTokenAdminRegistry(address(0xE0A1));
+        assertEq(
+            _repat().getRepatriationTokenAdminRegistry(),
+            address(tokenRegistry)
+        );
     }
 
     // ── Base side: cancel request ───────────────────────────────────────────
@@ -650,7 +708,8 @@ contract RepatriationTransportTest is SetupTest {
             )
         );
         returnSender.sendRepatriationReturn(
-            address(0xBA5E), 1, 1 ether, payable(address(this))
+            uint256(CHAIN_BASE), address(0xBA5E), 1, 1 ether,
+            payable(address(this))
         );
     }
 

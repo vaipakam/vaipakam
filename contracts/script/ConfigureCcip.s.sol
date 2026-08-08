@@ -43,7 +43,7 @@ interface IRepatriationConfig {
     function setRepatriationEndpoints(address sender_, address receiver_)
         external;
 
-    function setRepatriationLanePool(address pool_) external;
+    function setRepatriationTokenAdminRegistry(address registry_) external;
 }
 
 /**
@@ -708,15 +708,19 @@ contract ConfigureCcip is Script {
     function _wireDiamondRepatriationConfig(Ctx memory c) internal {
         address diamond =
             Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
-        // #1568 C2 (Codex #1618 r1→r6) — the lane-capacity bounds read
-        // the pool's LIVE limiter state, so the only wiring either chain
-        // class needs is the pool address itself. No per-lane ceilings to
-        // derive, no capacity artifacts to record, no cross-chain arming
-        // order: the bound can never go stale, and the mainnet Safe path
+        // #1568 C2 (Codex #1618 r1→r7) — the lane-capacity bounds resolve
+        // registry → active pool → lane membership → live bucket at every
+        // check, so the only wiring either chain class needs is the CCIP
+        // TokenAdminRegistry address (permanent Chainlink infrastructure).
+        // No per-lane ceilings to derive, no capacity artifacts to record,
+        // no cross-chain arming order, and a CCT pool rotation
+        // auto-tracks: nothing can go stale, and the mainnet Safe path
         // (which reproduces on-chain calls but not local file writes) has
         // nothing to persist.
-        IRepatriationConfig(diamond).setRepatriationLanePool(c.pool);
-        console.log("Diamond repatriation lane pool armed ->", c.pool);
+        IRepatriationConfig(diamond).setRepatriationTokenAdminRegistry(
+            c.registry
+        );
+        console.log("Diamond repatriation registry armed ->", c.registry);
         if (c.canonical) {
             IRepatriationConfig(diamond).setRepatriationEndpoints(
                 address(0), c.localReturnHandler

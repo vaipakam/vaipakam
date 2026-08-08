@@ -1177,10 +1177,16 @@ of any implementation:
   capacity would be rejected permanently by the transport rather than
   queued, leaving the authorization able only to strand its draw until
   cancellation, so an over-capacity request is refused before it can
-  commit anything. Because the bound is read live, capacity changes bind
+  commit anything. The whole reference chain is resolved live — the
+  transport's token registry names the active transfer contract, which
+  must confirm it carries the lane before its limit is read — so a
+  transfer-contract upgrade binds at the very next check, a removed
+  lane refuses rather than reading as unlimited, capacity changes bind
   immediately with no re-arming ceremony, and a deployment whose
   transport references are unconfigured refuses rather than passes
-  (fail-closed, like every other unarmed repatriation surface)
+  (fail-closed, like every other unarmed repatriation surface). The
+  destination a transfer was checked against is the destination used —
+  the sending endpoint carries no destination of its own
 - the entire surface is **inert on any deployment where the repatriation
   transport is not explicitly configured**
 

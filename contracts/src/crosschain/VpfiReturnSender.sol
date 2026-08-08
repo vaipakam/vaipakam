@@ -58,15 +58,12 @@ contract VpfiReturnSender is
     address public diamond;
     /// @notice The local (mirror) VPFI token a repatriation returns.
     address public vpfiToken;
-    /// @notice EVM chain id of the canonical (Base) chain — every send's
-    ///         destination; the return channel is hub-and-spoke.
-    uint256 public baseChainId;
     /// @notice Gas forwarded to the Base-side receiver callback.
     uint256 public destGasLimit;
 
     /// @dev Reserved storage for upgrade-safe appends.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[45] private __gap;
+    uint256[46] private __gap;
 
     // ─── Events ───────────────────────────────────────────────────────
 
@@ -76,8 +73,6 @@ contract VpfiReturnSender is
     event DiamondSet(address indexed previousDiamond, address indexed newDiamond);
     /// @custom:event-category informational/config
     event VpfiTokenSet(address indexed previousToken, address indexed newToken);
-    /// @custom:event-category informational/config
-    event BaseChainIdSet(uint256 previousChainId, uint256 newChainId);
     /// @custom:event-category informational/config
     event DestGasLimitSet(uint256 previousLimit, uint256 newLimit);
     /// @custom:event-category informational/reward-transport
@@ -100,7 +95,6 @@ contract VpfiReturnSender is
     error NotAContract(address candidate);
     error NotDiamond(address caller);
     error ZeroAmount();
-    error ZeroChainId();
     /// @notice The Diamond declared more than it delivered into escrow —
     ///         the send would pull tokens this contract does not hold.
     error InsufficientEscrow(uint256 declared, uint256 held);
@@ -119,14 +113,17 @@ contract VpfiReturnSender is
     /// @param messenger_   The {ICrossChainMessenger} deployment on this chain.
     /// @param diamond_     The Vaipakam Diamond on this chain.
     /// @param vpfiToken_   The local (mirror) VPFI token.
-    /// @param baseChainId_ EVM chain id of canonical Base.
     /// @param destGasLimit_ Base-side receiver callback gas budget.
+    ///
+    /// @dev No destination is configured here (Codex #1618 r7): every
+    ///      send takes its destination from the calling Diamond, which
+    ///      just checked that lane's live capacity — a second copy in
+    ///      this satellite could diverge from the lane that was checked.
     function initialize(
         address owner_,
         address messenger_,
         address diamond_,
         address vpfiToken_,
-        uint256 baseChainId_,
         uint256 destGasLimit_
     ) external initializer {
         if (
@@ -140,9 +137,6 @@ contract VpfiReturnSender is
         if (messenger_.code.length == 0) revert NotAContract(messenger_);
         if (diamond_.code.length == 0) revert NotAContract(diamond_);
         if (vpfiToken_.code.length == 0) revert NotAContract(vpfiToken_);
-        if (baseChainId_ == 0 || baseChainId_ == block.chainid) {
-            revert ZeroChainId();
-        }
         __Ownable_init(owner_);
         __Ownable2Step_init();
         _guardianPausableInit();
@@ -150,13 +144,11 @@ contract VpfiReturnSender is
         messenger = messenger_;
         diamond = diamond_;
         vpfiToken = vpfiToken_;
-        baseChainId = baseChainId_;
         destGasLimit = destGasLimit_;
 
         emit MessengerSet(address(0), messenger_);
         emit DiamondSet(address(0), diamond_);
         emit VpfiTokenSet(address(0), vpfiToken_);
-        emit BaseChainIdSet(0, baseChainId_);
         emit DestGasLimitSet(0, destGasLimit_);
     }
 
@@ -174,6 +166,7 @@ contract VpfiReturnSender is
     ///         instruction the reward messenger recorded, and the messenger
     ///         embedded the sending deployment at dispatch.
     function sendRepatriationReturn(
+        uint256 dstChainId,
         address issuingBase,
         uint256 authId,
         uint256 amount,
@@ -207,7 +200,7 @@ contract VpfiReturnSender is
         // Exact-amount approval; the messenger's pull drains it to zero in
         // this same call.
         IERC20(token).forceApprove(messenger, amount);
-        messageId = _send(payload, tokens, refundAddress);
+        messageId = _send(dstChainId, payload, tokens, refundAddress);
         emit RepatriationReturnSent(messageId, issuingBase, authId, amount);
     }
 
@@ -218,6 +211,7 @@ contract VpfiReturnSender is
     /// @dev    Called by {RepatriationFacet.sendRepatriationCancelAck},
     ///         which requires the tombstone to exist first.
     function sendRepatriationCancelAck(
+        uint256 dstChainId,
         address issuingBase,
         uint256 authId,
         address payable refundAddress
@@ -234,7 +228,7 @@ contract VpfiReturnSender is
             issuingBase,
             authId
         );
-        messageId = _send(payload, _noTokens(), refundAddress);
+        messageId = _send(dstChainId, payload, _noTokens(), refundAddress);
         emit RepatriationCancelAckSent(messageId, issuingBase, authId);
     }
 
@@ -242,6 +236,7 @@ contract VpfiReturnSender is
 
     /// @notice Fee quote for {sendRepatriationReturn} with these arguments.
     function quoteRepatriationReturn(
+        uint256 dstChainId,
         address issuingBase,
         uint256 authId,
         uint256 amount
@@ -259,12 +254,13 @@ contract VpfiReturnSender is
             amount: amount
         });
         return ICrossChainMessenger(messenger).quoteMessageFee(
-            baseChainId, payload, tokens, destGasLimit
+            dstChainId, payload, tokens, destGasLimit
         );
     }
 
     /// @notice Fee quote for {sendRepatriationCancelAck} with these arguments.
     function quoteRepatriationCancelAck(
+        uint256 dstChainId,
         address issuingBase,
         uint256 authId
     ) external view returns (uint256 fee) {
@@ -274,27 +270,30 @@ contract VpfiReturnSender is
             authId
         );
         return ICrossChainMessenger(messenger).quoteMessageFee(
-            baseChainId, payload, _noTokens(), destGasLimit
+            dstChainId, payload, _noTokens(), destGasLimit
         );
     }
 
     // ─── Internals ────────────────────────────────────────────────────
 
-    /// @dev Quote, forward the exact fee, refund the remainder.
+    /// @dev Quote, forward the exact fee, refund the remainder. The
+    ///      destination comes from the calling Diamond on every send —
+    ///      this satellite deliberately stores none (Codex #1618 r7).
     function _send(
+        uint256 dstChainId,
         bytes memory payload,
         ICrossChainMessenger.TokenAmount[] memory tokens,
         address payable refundAddress
     ) internal returns (bytes32 messageId) {
         uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
-            baseChainId, payload, tokens, destGasLimit
+            dstChainId, payload, tokens, destGasLimit
         );
         if (msg.value < fee) revert InsufficientFee(msg.value, fee);
         // `messenger` is the owner-set CCIP adapter and `fee` is the exact
         // value just re-quoted from that same contract.
         // slither-disable-next-line arbitrary-send-eth
         messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
-            baseChainId, payload, tokens, destGasLimit
+            dstChainId, payload, tokens, destGasLimit
         );
         uint256 remainder = msg.value - fee;
         if (remainder != 0) {
@@ -345,14 +344,6 @@ contract VpfiReturnSender is
         if (newToken.code.length == 0) revert NotAContract(newToken);
         emit VpfiTokenSet(vpfiToken, newToken);
         vpfiToken = newToken;
-    }
-
-    function setBaseChainId(uint256 newChainId) external onlyOwner {
-        if (newChainId == 0 || newChainId == block.chainid) {
-            revert ZeroChainId();
-        }
-        emit BaseChainIdSet(baseChainId, newChainId);
-        baseChainId = newChainId;
     }
 
     function setDestGasLimit(uint256 newLimit) external onlyOwner {

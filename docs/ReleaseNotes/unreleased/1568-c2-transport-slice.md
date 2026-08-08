@@ -39,13 +39,18 @@ What shipped, in behaviour terms:
 - Authorizations and executions are bounded by the lane's **live
   transfer capacity, read from the transport itself at each check** —
   the canonical chain checks its inbound limit at issuance, the mirror
-  its outbound limit before the irreversible execution step. A single
-  transfer above either capacity would be rejected permanently by the
-  transport, so an over-capacity request — which could only ever strand
-  its reserved amount until cancellation — is refused before it commits
-  anything. Because the bound is live there is nothing to arm, record,
-  or keep in sync when capacities change; an unconfigured transport
-  reference refuses rather than passes.
+  its outbound limit before the irreversible execution step. The whole
+  reference chain is resolved live (the transport's own token registry
+  names the ACTIVE transfer contract, which is asked whether it even
+  carries the lane before its limit is read), so a transfer-contract
+  upgrade is picked up by the very next check, a REMOVED lane refuses
+  rather than reading as unlimited, and there is nothing to arm,
+  record, or keep in sync when capacities change. A single transfer
+  above either capacity would be rejected permanently by the transport,
+  so an over-capacity request — which could only ever strand its
+  reserved amount until cancellation — is refused before it commits
+  anything; an unconfigured transport reference refuses rather than
+  passes.
 - The incident tooling knows the new endpoints: the all-chains pause
   sweep and the testnet pause rehearsal both enumerate the return
   channel's sender and receiver, so an incident pause engages — and its

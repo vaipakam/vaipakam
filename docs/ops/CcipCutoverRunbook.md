@@ -108,10 +108,11 @@ Pass 2 — wire, every chain:          ConfigureCcip.s.sol
 ```
 
 Pass-2 order across chains is free — every step reads only pass-1
-artifacts. (#1568 C2: the repatriation lane-capacity bounds read each
-chain's own VPFI TokenPool limiter LIVE at issuance/execution; the only
-repatriation wiring in pass 2 is `setRepatriationLanePool`, so nothing
-per-lane has to be derived, recorded, or ordered.)
+artifacts. (#1568 C2: the repatriation lane-capacity bounds resolve
+registry → active pool → lane membership → limiter bucket LIVE at
+issuance/execution; the only repatriation wiring in pass 2 is
+`setRepatriationTokenAdminRegistry`, so nothing per-lane has to be
+derived, recorded, or ordered, and a CCT pool rotation auto-tracks.)
 
 The orchestration scripts encode this:
 
@@ -187,12 +188,12 @@ admin multisig → governance timelock.
      bash contracts/script/deploy-mainnet.sh <chain-slug> --phase ccip-wire
    ```
 3. **Verify** every chain (`--phase verify`). On every chain
-   additionally confirm the Diamond's repatriation lane pool is wired —
-   `cast call $DIAMOND 'getRepatriationLanePool()(address)'` must
-   return that chain's VPFI TokenPool, not zero (the live
-   lane-capacity bounds read it; unset = repatriation stays dark) —
-   the automated verify phase does not read this (same known limit as
-   the per-lane limiter configs).
+   additionally confirm the Diamond's repatriation registry is wired —
+   `cast call $DIAMOND 'getRepatriationTokenAdminRegistry()(address)'`
+   must return that chain's CCIP TokenAdminRegistry, not zero (the
+   live lane-capacity bounds resolve the active pool through it;
+   unset = repatriation stays dark) — the automated verify phase does
+   not read this (same known limit as the per-lane limiter configs).
 4. **Hand over** ownership to governance — see §7.
 
 On mainnet the admin is a **multisig**, which cannot broadcast a Foundry
@@ -284,19 +285,29 @@ update, on either chain, and nothing to keep in sync across timelocks.
 What a capacity change DOES require is attention to work already in
 flight, in this order when **lowering**:
 
-1. **Before lowering a canonical INBOUND capacity**: confirm no
-   executed repatriation return (or any other VPFI token message —
-   reward remits and buyback remits share the pools) is still
-   in flight above the proposed value. An in-flight message that
-   exceeds the new inbound capacity fails delivery PERMANENTLY (a
-   single over-capacity request is rejected, never queued), and for a
-   repatriation the mirror has already irreversibly marked the
-   instruction executed — cancellation can then never produce an ACK,
-   so the draw stays charged until governance re-raises the lane to
-   drain the message. Check pending authorizations too
-   (`getRepatriationAuthorization` status 1 with
-   `getRepatriationInstruction` state 2 on the mirror = executed,
-   return in flight).
+1. **Before lowering a canonical INBOUND capacity**, retire EVERY
+   repatriation authorization above the proposed value that is not yet
+   SETTLED — not only the in-flight ones (Codex #1618 r7): the mirror's
+   execute checks only its OUTBOUND capacity, so an oversized
+   authorization still PENDING (or whose instruction is undispatched)
+   remains executable by anyone AFTER the inbound is lowered, and its
+   return would then fail delivery permanently. Concretely, for each
+   authorization with `getRepatriationAuthorization` status 1 and
+   amount above the proposed capacity:
+   - mirror instruction state 0/1 (never arrived / pending):
+     `requestRepatriationCancel` and WAIT for the ACK to land
+     (status 3, draw released);
+   - mirror instruction state 2 (executed, return in flight): WAIT for
+     settlement (status 2) — an in-flight message that exceeds the new
+     inbound capacity fails delivery PERMANENTLY (a single
+     over-capacity request is rejected, never queued), and the mirror's
+     executed marker is irreversible, so cancellation could never
+     produce an ACK and the draw would stay charged until governance
+     re-raises the lane. The same in-flight caution applies to every
+     VPFI token message class — reward remits and buyback remits share
+     the pools.
+   Only when no unsettled authorization above the proposed value
+   remains, lower the capacity.
 2. **Lowering a mirror OUTBOUND capacity** is self-healing for
    not-yet-executed instructions: `executeRepatriation` re-checks the
    live limiter BEFORE its one-shot marker, so an instruction above
@@ -305,6 +316,23 @@ flight, in this order when **lowering**:
    any such pending authorizations at your convenience.
 3. **Raising** a capacity needs nothing: the live bounds simply accept
    larger amounts from that moment.
+
+### Rotating a Diamond or a pool under in-flight repatriations
+
+- **CCT pool rotation** (`TokenAdminRegistry.setPool`) needs no
+  repatriation step: the bounds resolve the ACTIVE pool through the
+  registry at every check (#1618 r7). Mind only the in-flight caution
+  above if the replacement pool's capacities are lower.
+- **Canonical Diamond rotation** (`VpfiReturnReceiver.setDiamond`, and
+  the same for the reward/buyback remittance receivers): DRAIN FIRST.
+  A delayed return or cancellation ACK delivered after the rotation
+  still names the old issuing Diamond and is refused by the new one
+  (`RepatriationWrongEra` — the era binding doing its job), leaving the
+  delivery failed-but-re-executable against a target that will never
+  accept it. Settle or cancel-and-ACK every PENDING authorization
+  before pointing the receiver at a new Diamond; this is the standing
+  receiver-rotation precondition shared by every remittance receiver,
+  not a repatriation-specific rule.
 
 ---
 
