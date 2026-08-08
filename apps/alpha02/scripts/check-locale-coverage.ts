@@ -460,6 +460,14 @@ function policyReauditNeeded(): string[] {
  * fallback below still tells the Chinese full stop apart from the
  * English one.
  */
+/**
+ * What a reader actually sees: default-ignorable code points removed
+ * and the ends trimmed. They render as nothing, so they can never be
+ * the difference between two visible strings.
+ */
+const visibleForm = (value: string): string =>
+  value.normalize('NFC').replace(/\p{Default_Ignorable_Code_Point}/gu, '').trim();
+
 const wordsOf = (value: string): string[] =>
   (value.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
 
@@ -478,9 +486,7 @@ const stillEnglish = (source: string, candidate: unknown): boolean => {
     // stop on screen while differing in bytes — a regression that looked
     // like a translation (Codex #1607 r6). Visible punctuation is still
     // compared exactly, so `.` and `。` stay distinct.
-    const visible = (value: string) =>
-      value.normalize('NFC').replace(/\p{Default_Ignorable_Code_Point}/gu, '').trim();
-    return visible(candidate) === visible(source);
+    return visibleForm(candidate) === visibleForm(source);
   }
   // Otherwise compare the WORDS. Separators and case are not the
   // language: `Refinance carry-over collateral shortfall` in Hindi
@@ -645,12 +651,35 @@ for (const code of translated) {
 
   // An empty translation renders as nothing at all, and no other check
   // can see it.
+  const reportedEmpty = new Set<string>();
   for (const key of emptyTranslations(en, bundle)) {
     if (ALLOWED_EMPTY[`${code}:${key}`] !== undefined) continue;
+    reportedEmpty.add(key);
     problems.push(
       `${code}: ${key} is empty while the English is not — i18next renders ` +
         'blank rather than falling back',
     );
+  }
+
+  // VISIBLY empty: a value made only of default-ignorable characters is
+  // not the empty string, so `emptyTranslations` walks past it — and it
+  // is not equal to the English either, so the still-English check calls
+  // it translated. A `zh` suffix of U+200B alone rendered nothing and
+  // passed both (Codex #1607 r7). Falling through two checks because it
+  // sits between their definitions is exactly the gap this PR is about.
+  for (const key of englishLeafPaths()) {
+    if (reportedEmpty.has(key)) continue; // already reported as empty
+    if (ALLOWED_EMPTY[`${code}:${key}`] !== undefined) continue;
+    const source = leafOrElement(en, key);
+    const value = leafOrElement(bundle, key);
+    if (typeof source !== 'string' || typeof value !== 'string') continue;
+    if (value === '' || visibleForm(source) === '') continue;
+    if (visibleForm(value) === '') {
+      problems.push(
+        `${code}: ${key} contains only invisible characters while the English ` +
+          'is not empty — it renders as nothing',
+      );
+    }
   }
 
   // PRESENT but still in English. `missingSubtree` cannot see this —
