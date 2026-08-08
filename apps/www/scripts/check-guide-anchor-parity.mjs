@@ -99,14 +99,16 @@ const anchorsIn = (file) =>
  * falls out for free, and so do the ones nobody has thought of yet
  * (Codex #1594 r4-r7).
  *
- * Verified equal to the previous hand-rolled count on all twenty files
- * before the swap — including `Advanced.hi.md` / `Advanced.ja.md` at 16,
- * where two `##` lines are indented into the preceding list item and so
- * parse as `root > list > listItem > heading`. Requiring the ROOT is
- * what keeps that conclusion (Codex #1594 r2, correcting r1): those
- * chapters are in the file but not in the sidebar, and counting them
- * would record those editions as chapter-equivalent while two of their
- * chapters stay unreachable.
+ * Requiring the ROOT is load-bearing, not incidental. `Advanced.hi.md`
+ * and `Advanced.ja.md` used to carry two `##` lines each indented into
+ * the preceding list item, parsing as `root > list > listItem > heading`
+ * — present in the file, absent from the contents list, so a reader of
+ * those languages could not navigate to them. Counting them would have
+ * recorded both editions as chapter-equivalent while two of their
+ * chapters stayed unreachable (Codex #1594 r2, correcting r1). Those two
+ * files have since been de-indented (#1593) and now genuinely have the
+ * chapters; the rule stays because the next mis-indentation should be
+ * caught the same way rather than counted as done.
  *
  * Two places where the SIDEBAR shows fewer chapters than the FILE
  * declares, and why this counts the file anyway:
@@ -149,24 +151,24 @@ const chapterCount = (file) =>
  * Editions known to be short of the English chapter list, per
  * `<doc>:<locale>` → the number of chapters they still lack.
  *
- * Translating these is tracked as #1593: one English chapter of
- * ~10.7k characters, which is ~96k of translated output across the
- * nine — and for `hi`/`ja` the extra two may need no translator at
- * all, since the prose is already there and only the indentation
- * hides it. Recorded here so the count cannot quietly grow in the
- * meantime. Shrink it; a new shortfall, or one larger than recorded,
- * is a failure.
+ * Every edition is now short by exactly ONE and the same one:
+ * `How VPFI Discounts Work`, ~10.7k characters of English source and
+ * ~96k of translated output across the nine, tracked as #1593.
+ *
+ * `hi`/`ja` were recorded at 3 until their two extra chapters turned
+ * out to need no translator at all — the prose was already written and
+ * merely indented into a list item, so the fix was to de-indent it.
+ * That is the happier half of #1593 and it is done. Recorded here so
+ * the count cannot quietly grow. Shrink it; a new shortfall, or one
+ * larger than recorded, is a failure.
  */
 const KNOWN_CHAPTER_GAPS = {
   'Advanced:ar': 1,
   'Advanced:de': 1,
   'Advanced:es': 1,
   'Advanced:fr': 1,
-  // hi/ja additionally lack `How Liquidation Actually Works` and
-  // `Allowances` as CHAPTERS: the text is present but indented into
-  // the preceding list item, so the sidebar never offers it.
-  'Advanced:hi': 3,
-  'Advanced:ja': 3,
+  'Advanced:hi': 1,
+  'Advanced:ja': 1,
   'Advanced:ko': 1,
   'Advanced:ta': 1,
   'Advanced:zh': 1,
