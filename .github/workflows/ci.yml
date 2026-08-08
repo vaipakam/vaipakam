@@ -868,6 +868,17 @@ jobs:
       # that way could regress a locale to English, record the pair, and
       # pass everything that did run (Codex #1607 r23). `detect-changes`
       # above already derives a push base the same way.
+      #
+      # WHY `github.event.before` IS A TRUSTED BASE HERE, which is not
+      # true in general (Codex #1607 r24): the `Protect main` ruleset is
+      # active over `refs/heads/main` with a `pull_request` rule and an
+      # EMPTY bypass-actor list, so nothing — including admins and
+      # Actions tokens — can put a commit on main outside a pull request.
+      # main therefore only advances through merges that were themselves
+      # checked against their own base, and each previous tip inherits
+      # that by induction. If that ruleset is ever relaxed to allow
+      # direct pushes, this comparison inherits an untrusted base and
+      # needs a persistent known-good ceiling instead.
       - name: Baselines may only shrink — apps/alpha02
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then

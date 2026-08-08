@@ -214,10 +214,12 @@ for (const repoPath of BASELINES) {
       `${repoPath} REMOVED ${wrongful.length} pair(s) that are not translated: ` +
         `${wrongful.slice(0, 8).join(', ')}` +
         (wrongful.length > 8 ? ', …' : '') +
-        '\n    Each still holds the exact English it was recorded against, so ' +
-        'removing it deletes the record of debt that is still owed rather ' +
-        'than marking it paid. If the English was reworded, re-audit the ' +
-        'entry and update its source; do not drop it.',
+        '\n    Each still reads as the English it was recorded against — by ' +
+        'the same rule the coverage guard uses, so a difference of case, ' +
+        'spacing, punctuation or repetition does not count as translated ' +
+        'here either. Removing one deletes the record of debt that is still ' +
+        'owed rather than marking it paid. If the English was reworded, ' +
+        're-audit the entry and update its source; do not drop it.',
     );
   }
 }
