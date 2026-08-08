@@ -151,7 +151,7 @@ function reauditNeeded(): Map<string, string> {
   // produced it (Codex #1607 r2). Format at the edge, never in the key.
   const out = new Map<string, string>();
   for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
-    const current = leafAt(en, key);
+    const current = leafOrElement(en, key);
     if (typeof current !== 'string') {
       out.set(key, 'no longer a string leaf in en.json');
     } else if (current !== entry.source) {
@@ -367,6 +367,33 @@ for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
 }
 
 /**
+ * `sameAsEnglish` scopes that are ARMED but not currently in use: the
+ * policy names a locale whose value does not, right now, equal the
+ * recorded English.
+ *
+ * An exemption is a statement about the present ("this locale reads the
+ * same and that is correct"), not a standing permission. If the locale
+ * has since been localized — or was named by mistake — the entry sits
+ * there waiting, and the day that locale regresses to the English the
+ * guard says nothing. Reported so the scope is narrowed instead
+ * (Codex #1607 r3). The neighbouring `omissions` / `empty` sections are
+ * swept for staleness the same way.
+ */
+function unusedPolicyScopes(): string[] {
+  const out: string[] = [];
+  for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
+    for (const code of entry.locales) {
+      const bundle = bundleByLocale.get(code);
+      if (bundle === undefined) continue; // unreadable/missing — reported elsewhere
+      if (!stillEnglish(entry.source, leafOrElement(bundle, key))) {
+        out.push(`${code}:${key}`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * `sameAsEnglish` entries whose recorded English no longer matches, so
  * the written reason may no longer describe the string it excuses.
  *
@@ -384,7 +411,7 @@ for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
 function policyReauditNeeded(): string[] {
   const out: string[] = [];
   for (const [key, entry] of Object.entries(SAME_AS_ENGLISH)) {
-    const current = leafAt(en, key);
+    const current = leafOrElement(en, key);
     if (typeof current !== 'string') {
       out.push(`${key} (no longer a string leaf in en.json)`);
     } else if (current !== entry.source) {
@@ -400,12 +427,64 @@ function policyReauditNeeded(): string[] {
  * baseline's business, and reporting it here too would make one gap
  * produce two failures.
  */
-function englishValuedLeaves(code: string, bundle: Bundle): string[] {
-  const found: string[] = [];
+/**
+ * Is this locale's value still, for practical purposes, the English one?
+ *
+ * NOT byte equality. Exact inequality is not evidence that the language
+ * changed: the Korean bundle carries 40 leaves that differ from English
+ * only in capitalization — `approving… ({{c}} of {{t}})` against
+ * `Approving… ({{c}} of {{t}})` — and a Korean reader sees English
+ * either way (Codex #1607 r3). Case and surrounding whitespace are
+ * normalized away before deciding.
+ *
+ * Six of the nine advertised locales have no letter case at all, so a
+ * case-only difference is essentially never a translation. Where it
+ * genuinely is one, that is what the per-locale policy is for.
+ */
+const stillEnglish = (source: string, candidate: unknown): boolean =>
+  typeof candidate === 'string' &&
+  candidate.normalize('NFC').trim().toLowerCase() ===
+    source.normalize('NFC').trim().toLowerCase();
+
+/**
+ * Resolve a leaf path that may address an ARRAY ELEMENT (`a.b[2]`).
+ *
+ * `leafPaths` stops at an array and `leafAt` hands back the whole
+ * array, so an element-wise check needs its own accessor. Without one,
+ * every element of `copy.help.risks` and `copy.recover.warnings` — 8
+ * displayed strings per locale — was skipped outright, and replacing a
+ * Spanish warning with the English text left the guard green
+ * (Codex #1607 r3).
+ */
+function leafOrElement(bundle: Bundle, key: string): unknown {
+  const m = /^(.*)\[(\d+)\]$/.exec(key);
+  if (!m) return leafAt(bundle, key);
+  const arr = leafAt(bundle, m[1]);
+  return Array.isArray(arr) ? arr[Number(m[2])] : undefined;
+}
+
+/** Every English leaf path, with array elements expanded to `path[i]`. */
+function englishLeafPaths(): string[] {
+  const out: string[] = [];
   for (const key of leafPaths(en)) {
     const source = leafAt(en, key);
+    if (Array.isArray(source)) {
+      source.forEach((element, index) => {
+        if (typeof element === 'string') out.push(`${key}[${index}]`);
+      });
+    } else if (typeof source === 'string') {
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+function englishValuedLeaves(code: string, bundle: Bundle): string[] {
+  const found: string[] = [];
+  for (const key of englishLeafPaths()) {
+    const source = leafOrElement(en, key);
     if (typeof source !== 'string') continue;
-    if (leafAt(bundle, key) !== source) continue;
+    if (!stillEnglish(source, leafOrElement(bundle, key))) continue;
     if (SAME_AS_ENGLISH[key]?.locales.includes(code)) continue;
     found.push(key);
   }
@@ -449,6 +528,10 @@ const missingByLocale = new Map<string, ReadonlySet<string>>();
 /** Same idea for the English-valued leaves — computed once per locale
  *  and reused by the stale-baseline check and `--prune` (#1596). */
 const englishValuedByLocale = new Map<string, ReadonlySet<string>>();
+/** The parsed bundles, kept so the policy-scope sweep below does not
+ *  re-read and re-parse nine ~200 KB files — the very cost this file's
+ *  header already calls out for the missing-key check. */
+const bundleByLocale = new Map<string, Bundle>();
 
 for (const code of translated) {
   const file = path.join(LOCALES_DIR, `${code}.json`);
@@ -518,6 +601,7 @@ for (const code of translated) {
   // PRESENT but still in English. `missingSubtree` cannot see this —
   // it compares key presence, so it goes quiet the moment the key
   // exists, whatever is in it.
+  bundleByLocale.set(code, bundle);
   const englishValued = englishValuedLeaves(code, bundle);
   englishValuedByLocale.set(code, new Set(englishValued));
   const unexplainedEnglish = englishValued.filter(
@@ -649,6 +733,7 @@ for (const [key, codes] of Object.entries(KNOWN_GAPS)) {
 // only one of them means the debt is gone.
 const needsReaudit = reauditNeeded();
 const policyStale = policyReauditNeeded();
+const policyUnused = unusedPolicyScopes();
 
 // Same stale sweep for the English-valued baseline: an entry that has
 // since been translated must LEAVE, or the exemption silently re-opens
@@ -690,6 +775,15 @@ if (needsReaudit.size > 0) {
       'each and update or remove it by hand: ' +
       [...needsReaudit].slice(0, 6).map(([k, why]) => `${k} (${why})`).join(', ') +
       (needsReaudit.size > 6 ? ', …' : ''),
+  );
+}
+if (policyUnused.length > 0) {
+  problems.push(
+    `${policyUnused.length} sameAsEnglish scope(s) name a locale that does ` +
+      'not currently hold the recorded English — an exemption is a statement ' +
+      'about the present, and one left armed will silently excuse a future ' +
+      `regression. Narrow the locale list: ${policyUnused.slice(0, 6).join(', ')}` +
+      (policyUnused.length > 6 ? ', …' : ''),
   );
 }
 if (policyStale.length > 0) {
@@ -769,7 +863,7 @@ if (pruning) {
       .map((k) => [
         k,
         {
-          source: ENGLISH_VALUED[k]?.source ?? (leafAt(en, k) as string),
+          source: ENGLISH_VALUED[k]?.source ?? (leafOrElement(en, k) as string),
           locales: prunedEnglish[k].sort(),
         },
       ]),

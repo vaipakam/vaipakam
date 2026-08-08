@@ -1,140 +1,216 @@
 {
+  "contractError.SaleListingActive": {
+    "source": "Sale listing active",
+    "locales": [
+      "ko"
+    ]
+  },
   "copy.activity.labels.Approval": {
     "source": "Approval",
     "locales": [
       "hi"
     ]
   },
+  "copy.activity.labels.LoanDefaulted": {
+    "source": "Loan defaulted",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanLiquidated": {
+    "source": "Loan liquidated",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanRefinanced": {
+    "source": "Loan refinanced",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanRepaid": {
+    "source": "Loan repaid",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanSettled": {
+    "source": "Loan settled",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanSettlementBreakdown": {
+    "source": "Loan settled",
+    "locales": [
+      "ko"
+    ]
+  },
+  "copy.activity.labels.LoanSold": {
+    "source": "Loan sold",
+    "locales": [
+      "ko"
+    ]
+  },
   "copy.activity.labels.OfferAccepted": {
     "source": "Offer accepted",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OfferCanceled": {
     "source": "Offer cancelled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OfferClosed": {
     "source": "Offer closed",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OfferCreated": {
     "source": "Offer created",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OfferMatched": {
     "source": "Offers matched",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OfferModified": {
     "source": "Offer amended",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OffsetCompleted": {
     "source": "Loan offset",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.OffsetOfferCreated": {
     "source": "Offset offer created",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.PartialRepaid": {
     "source": "Partial repayment",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.PeriodicInterestSettled": {
     "source": "Interest settled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.PrepayCollateralSaleSettled": {
     "source": "Collateral sale settled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.PrepayListingCanceled": {
     "source": "Collateral listing cancelled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.PrepayListingMatched": {
     "source": "Collateral sale matched",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.PrepayListingUpdated": {
     "source": "Collateral listing updated",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
+    ]
+  },
+  "copy.activity.labels.RepayPartialPeriodAdvanced": {
+    "source": "Interest period advanced",
+    "locales": [
+      "ko"
     ]
   },
   "copy.activity.labels.SignedOfferCancelled": {
     "source": "Signed offer cancelled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SignedOfferFilled": {
     "source": "Signed offer filled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SignedOfferMatched": {
     "source": "Signed offers matched",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SignedOfferNonceBurned": {
     "source": "Signed offer voided",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentCancelled": {
     "source": "Swap-to-repay cancelled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentCommitted": {
     "source": "Swap-to-repay set up",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentFilled": {
     "source": "Swap-to-repay filled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.SwapToRepayIntentForceCancelled": {
     "source": "Swap-to-repay cancelled",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.activity.labels.Transfer": {
@@ -239,7 +315,8 @@
   "copy.claimAll.rewardsLabel": {
     "source": "Interaction rewards — {{amount}} VPFI",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.claimAll.vaultVpfiLabel": {
@@ -270,7 +347,8 @@
   "copy.claims.row.defaultRecovery": {
     "source": "Default recovery — {{collateral}}",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.claims.row.heldProceedsSuffix": {
@@ -474,7 +552,8 @@
     "source": "Health factor {{ratio}} · LTV {{ltv}}",
     "locales": [
       "ar",
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.desk.history.loadingMore": {
@@ -522,6 +601,7 @@
   "copy.desk.ladderSpread": {
     "source": " · spread {{spread}}",
     "locales": [
+      "de",
       "es",
       "fr",
       "hi"
@@ -1051,6 +1131,7 @@
   "copy.faucet.mweth.title": {
     "source": "Mock wrapped ETH (mWETH)",
     "locales": [
+      "de",
       "es",
       "fr",
       "hi",
@@ -1102,25 +1183,29 @@
   "copy.loanState.closed": {
     "source": "Closed",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.loanState.defaulted": {
     "source": "Defaulted",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.loanState.pastDue": {
     "source": "Past due",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.loanState.repaid": {
     "source": "Repaid",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.match.loanOpened": {
@@ -1565,6 +1650,7 @@
     "source": "{{duration}} · listing #{{id}}",
     "locales": [
       "ar",
+      "de",
       "hi",
       "ko",
       "zh"
@@ -1653,7 +1739,8 @@
     "source": "Token id",
     "locales": [
       "hi",
-      "ta"
+      "ta",
+      "zh"
     ]
   },
   "copy.risk.healthy": {
@@ -1721,13 +1808,15 @@
   "copy.signing.phaseApprove": {
     "source": "Approving… ({{c}} of {{t}})",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.signing.phaseSend": {
     "source": "Submitting… ({{c}} of {{t}})",
     "locales": [
-      "hi"
+      "hi",
+      "ko"
     ]
   },
   "copy.stepNav.progressAria": {
@@ -1739,6 +1828,7 @@
   "copy.support.mailButton": {
     "source": "Email support@vaipakam.com",
     "locales": [
+      "de",
       "es"
     ]
   },
@@ -1787,6 +1877,7 @@
   "copy.vault.unreadableCount_few": {
     "source": "{{count}} assets",
     "locales": [
+      "de",
       "hi",
       "ko"
     ]
@@ -1794,6 +1885,7 @@
   "copy.vault.unreadableCount_many": {
     "source": "{{count}} assets",
     "locales": [
+      "de",
       "hi",
       "ko"
     ]
@@ -1801,6 +1893,7 @@
   "copy.vault.unreadableCount_other": {
     "source": "{{count}} assets",
     "locales": [
+      "de",
       "hi",
       "ko"
     ]
@@ -1808,6 +1901,7 @@
   "copy.vault.unreadableCount_two": {
     "source": "{{count}} assets",
     "locales": [
+      "de",
       "hi",
       "ko"
     ]
@@ -1815,6 +1909,7 @@
   "copy.vault.unreadableCount_zero": {
     "source": "{{count}} assets",
     "locales": [
+      "de",
       "hi",
       "ko"
     ]

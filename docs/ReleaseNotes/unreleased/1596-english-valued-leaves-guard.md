@@ -12,7 +12,7 @@ the moment the last missing piece was filled, every language read as complete â€
 while Hindi alone still showed nearly three hundred English strings to anyone
 using the app in Hindi.
 
-The check now asks the second question too. Four hundred and thirty of these
+The check now asks the second question too. Four hundred and eighty of these
 are recorded as a known, dated backlog so the number cannot quietly grow: a
 piece of text that regresses to English fails the build, and one that gets
 translated has to be struck from the record or the build fails as well. The
