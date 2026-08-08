@@ -1169,6 +1169,13 @@ of any implementation:
 - a mirror may only ever part with genuinely **un-reserved** surplus — value
   backing outstanding claim commitments or the keeper earmark is never
   movable
+- an authorization is additionally bounded by a configured **per-move
+  ceiling sized to the cross-chain transfer capacity**: a single transfer
+  above the lane's capacity would be rejected permanently by the transport
+  rather than queued, leaving the authorization able only to strand its
+  draw until cancellation — so an over-capacity request is refused at
+  issuance, and the deploy tooling arms the ceiling with the same capacity
+  it configures on the transfer lanes
 - the entire surface is **inert on any deployment where the repatriation
   transport is not explicitly configured**
 

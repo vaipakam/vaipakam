@@ -64,6 +64,24 @@ async function readView<T>(
 }
 
 /**
+ * Whether a failed repatriation-view read POSITIVELY identifies a pre-C2
+ * Diamond (the selector does not exist, so the Diamond fallback reverted)
+ * as opposed to a transport failure that leaves the value UNKNOWN.
+ *
+ * The distinction is load-bearing (Codex #1618 r1, both watcher P2s): a
+ * pre-C2 Diamond's draw / outflow is KNOWN-ZERO — nothing could have
+ * charged it — so the dependent checks may run with zero and keep their
+ * coverage. A transient RPC failure on a chain with a live draw is a
+ * different fact entirely: substituting zero there makes `expectedAvail`
+ * disagree with the on-chain `avail` and pages a false CRITICAL, the one
+ * outcome this Worker must never produce. Exported for direct testing —
+ * the catch branches that use it do I/O.
+ */
+export function isMissingSelector(err: unknown): boolean {
+  return classify(err).kind === 'contract-revert';
+}
+
+/**
  * Build the gap for an unreadable Base-side repatriation-draw view.
  *
  * Exported for the same reason as {@link compositionUnavailableGap}: the
@@ -74,13 +92,16 @@ export function repatDrawUnavailableGap(
   err: unknown,
 ): CoverageGap {
   const failure = classify(err, 'getChainRepatriationDraw');
+  const preC2 = isMissingSelector(err);
   return {
     chainId,
     reason: 'view-unavailable',
     source: 'base-books-repat',
     detail:
       `getChainRepatriationDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `Most likely the canonical Diamond predates the #1568 C2 RepatriationFacet. For this chain THIS TICK: the §7 #6 repat-cap check did NOT run, and the availability re-derivation used the pre-C2 two-term form (safe exactly because a Diamond without the facet cannot have charged a repatriation draw).`,
+      (preC2
+        ? `The selector does not exist on this Diamond — a pre-C2 deployment. The draw is KNOWN-ZERO (a Diamond without the facet cannot have charged one), so the availability re-derivation ran under the pre-C2 formula and the §7 #6 repat-cap bound is trivially satisfied. Refresh the Diamond to close this gap.`
+        : `Transient read failure — the draw is UNKNOWN this tick. For this chain THIS TICK the availability-formula and repat-cap checks did NOT run: substituting zero for an unknown draw would page a false CRITICAL on any chain with a live repatriation.`),
   };
 }
 
@@ -133,7 +154,15 @@ async function readBaseBooks(
     );
     repat = { netDraw: draw[0], lifetimeReleased: draw[1] };
   } catch (err) {
-    repat = undefined;
+    // A POSITIVELY-identified missing selector (the Diamond fallback
+    // reverted) is a pre-C2 deployment whose draw is KNOWN-ZERO — record
+    // the true value so the availability checks keep their coverage. Any
+    // other failure leaves the draw UNKNOWN, and the draw-dependent
+    // checks skip rather than page a false CRITICAL against zero
+    // (Codex #1618 r1 P2).
+    repat = isMissingSelector(err)
+      ? { netDraw: 0n, lifetimeReleased: 0n }
+      : undefined;
     gaps.push(repatDrawUnavailableGap(chainId, err));
   }
 
@@ -182,13 +211,16 @@ export function repatPositionUnavailableGap(
   err: unknown,
 ): CoverageGap {
   const failure = classify(err, 'getRepatriationPosition');
+  const preC2 = isMissingSelector(err);
   return {
     chainId,
     reason: 'view-unavailable',
     source: 'own-ledger-repat',
     detail:
       `getRepatriationPosition() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `Most likely this chain's Diamond predates the #1568 C2 RepatriationFacet. For this chain THIS TICK: bucket composition and the reported-cumulative re-derivation treated the repatriated-out cumulative as zero — safe exactly because a Diamond without the facet cannot have repatriated anything.`,
+      (preC2
+        ? `The selector does not exist on this Diamond — a pre-C2 deployment. The repatriated-out cumulative is KNOWN-ZERO (a Diamond without the facet cannot have repatriated), so bucket composition and the reported-cumulative re-derivation ran under the pre-C2 identity. Refresh the Diamond to close this gap.`
+        : `Transient read failure — the repatriated-out cumulative is UNKNOWN this tick. For this chain THIS TICK bucket composition and the reported-cumulative re-derivation did NOT run: substituting zero for an unknown destination term would page a false CRITICAL after any real repatriation.`),
   };
 }
 
@@ -296,7 +328,11 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     );
     repatriatedOut = pos[0];
   } catch (err) {
-    repatriatedOut = undefined;
+    // Same discrimination as the Base-side draw read: a missing selector
+    // is a pre-C2 Diamond whose outflow is KNOWN-ZERO (checks keep their
+    // coverage); anything else leaves it UNKNOWN and the composition /
+    // derivation checks skip for this chain (Codex #1618 r1 P2).
+    repatriatedOut = isMissingSelector(err) ? 0n : undefined;
     viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
   }
 

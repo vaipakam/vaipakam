@@ -150,6 +150,9 @@ contract RepatriationFacet is
     ///         the facet to dark.
     event RepatriationEndpointsSet(address sender, address receiver);
 
+    /// @notice The per-authorization ceiling was (re)configured.
+    event RepatriationMaxPerAuthSet(uint256 previousMax, uint256 newMax);
+
     /// @notice Base dispatched (or re-dispatched) the cross-chain instruction
     ///         for a pending authorization.
     /// @custom:event-category informational/reward-transport
@@ -213,6 +216,10 @@ contract RepatriationFacet is
     error RepatriationInvalidRequest();
     /// @notice The draw exceeds the chain's current recycled availability.
     error RepatriationExceedsAvailability(uint256 requested, uint256 available);
+    /// @notice The amount exceeds the configured per-authorization ceiling
+    ///         (sized to the CCIP lane capacity — a single return above it
+    ///         could never deliver, stranding the draw until cancellation).
+    error RepatriationExceedsPerAuthMax(uint256 requested, uint256 maxPerAuth);
     /// @notice The referenced authorization is not in the required state.
     error RepatriationAuthNotPending(uint256 authId, uint8 status);
     /// @notice The return/cancel names a different issuing deployment — a
@@ -292,6 +299,16 @@ contract RepatriationFacet is
         uint256 avail = LibVpfiRecycle.mirrorAvailRecycled(s, dstChainId);
         if (amount > avail) {
             revert RepatriationExceedsAvailability(amount, avail);
+        }
+        // Lane-capacity ceiling (Codex #1618 r1 P2): the return is ONE
+        // token message, and a single CCIP request above the lane
+        // capacity is rejected PERMANENTLY (not queued behind refill) —
+        // an over-capacity authorization would charge a draw that can
+        // only ever be released by the cancellation ceremony. Refuse it
+        // at issuance instead. Zero = no ceiling configured.
+        uint256 maxPer = s.repatriationMaxPerAuth;
+        if (maxPer != 0 && amount > maxPer) {
+            revert RepatriationExceedsPerAuthMax(amount, maxPer);
         }
         s.chainRepatriationDebited[dstChainId] += amount;
         authId = ++s.repatAuthNonce;
@@ -704,6 +721,31 @@ contract RepatriationFacet is
         s.repatriationSender = sender_;
         s.repatriationReceiver = receiver_;
         emit RepatriationEndpointsSet(sender_, receiver_);
+    }
+
+    /**
+     * @notice Configure the per-authorization ceiling — sized by the deploy
+     *         tooling to the CCIP lane capacity it configures on the VPFI
+     *         token pool, because a single return message above that
+     *         capacity is rejected permanently (never queued behind
+     *         refill), which would strand the authorization's draw until
+     *         the cancellation ceremony releases it. Zero disables the
+     *         ceiling (the pre-arming default; kept legal because a dark
+     *         deployment has nothing to bound and issuance is ADMIN-gated
+     *         regardless).
+     */
+    function setRepatriationMaxPerAuth(uint256 newMax)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        emit RepatriationMaxPerAuthSet(s.repatriationMaxPerAuth, newMax);
+        s.repatriationMaxPerAuth = newMax;
+    }
+
+    /// @notice The configured per-authorization ceiling (0 = unbounded).
+    function getRepatriationMaxPerAuth() external view returns (uint256) {
+        return LibVaipakam.storageSlot().repatriationMaxPerAuth;
     }
 
     // ── Views ───────────────────────────────────────────────────────────────

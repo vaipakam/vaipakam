@@ -2233,7 +2233,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](14);
+        s = new bytes4[](16);
         s[0] = RepatriationFacet.authorizeRepatriation.selector;
         s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2251,6 +2251,8 @@ contract DeployDiamond is Script {
         s[11] = RepatriationFacet.executeRepatriation.selector;
         s[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
         s[13] = RepatriationFacet.getRepatriationInstruction.selector;
+        s[14] = RepatriationFacet.setRepatriationMaxPerAuth.selector;
+        s[15] = RepatriationFacet.getRepatriationMaxPerAuth.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

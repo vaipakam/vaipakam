@@ -48,10 +48,13 @@ export interface BaseChainBooks {
    * maintained in place, never derived from a cumulative pair);
    * `lifetimeReleased` is the monotonic release observability.
    *
-   * `undefined` when the canonical Diamond predates the facet (reported
-   * as a coverage gap). Safe to treat as zero in the availability
-   * re-derivation exactly because a Diamond without the facet cannot
-   * have charged a draw.
+   * `undefined` means UNKNOWN — the view failed for a reason other than
+   * a missing selector, so the true draw may be nonzero and every
+   * draw-dependent check must SKIP (substituting zero would page a false
+   * CRITICAL on a chain with a live draw — Codex #1618 r1). A pre-C2
+   * Diamond, positively identified by its missing-selector revert, is
+   * recorded as `{0n, 0n}` instead: there zero is the KNOWN value and
+   * the checks keep their coverage. `mesh.ts` makes the distinction.
    */
   repat?: { netDraw: bigint; lifetimeReleased: bigint };
 }
@@ -119,8 +122,12 @@ export interface LocalLedger {
    * #1568 C2 — `recycleRepatriatedOutCumulative`: lifetime VPFI this
    * chain's bucket has repatriated to Base. A DESTINATION term in the
    * bucket composition and part of the reported-cumulative floor.
-   * `undefined` when the Diamond predates the facet (reported as a
-   * coverage gap; safe as zero — such a Diamond cannot have repatriated).
+   * `undefined` means UNKNOWN (a non-missing-selector read failure) and
+   * every check that consumes the term must SKIP for this chain — after
+   * a real repatriation, substituting zero deletes a genuine destination
+   * and pages a false over-credit CRITICAL (Codex #1618 r1). A pre-C2
+   * Diamond is recorded as `0n` (the KNOWN value; its missing-selector
+   * revert is the positive identification — `mesh.ts` decides).
    */
   repatriatedOut?: bigint;
   outstandingFresh: bigint;
@@ -283,9 +290,12 @@ export function satSub(a: bigint, b: bigint): bigint {
  * would make `availability-formula` fire on healthy state.
  *
  * #1568 C2 — the repatriation NET draw is the third term, subtracted after
- * the claim netting exactly as `mirrorAvailRecycled` does. When the draw
- * view is unavailable (pre-C2 canonical Diamond, reported as a coverage
- * gap) the term is zero, which IS that Diamond's formula.
+ * the claim netting exactly as `mirrorAvailRecycled` does. A pre-C2
+ * Diamond carries a known-zero `repat` (its formula HAS no third term and
+ * zero reproduces it); an UNKNOWN draw (`repat === undefined`) means the
+ * caller must not evaluate availability at all this tick — the `?? 0n`
+ * here exists only so this stays a total function, and
+ * `checkHardInvariants` gates on definedness before relying on it.
  */
 export function expectedAvail(b: BaseChainBooks): bigint {
   return satSub(
@@ -486,22 +496,31 @@ export function checkHardInvariants(
     // re-derives it from the same three inputs: a mismatch means the
     // deployed `mirrorAvailRecycled` is not the function this Worker (and
     // the plan, and the specs) assume.
-    const wantAvail = expectedAvail(b);
-    if (b.avail !== wantAvail) {
-      add(
-        'availability-formula',
-        'definition',
-        b.chainId,
-        'Availability does not match its definition',
-        `avail != max(0, reported - max(0, consumed - released) - repatNet)\n` +
-          `  reported = ${fmt(b.reported)}\n` +
-          `  consumed = ${fmt(b.consumed)}\n` +
-          `  released = ${fmt(b.released)}\n` +
-          `  repatNet = ${b.repat === undefined ? '(view unavailable — treated as 0)' : fmt(b.repat.netDraw)}\n` +
-          `  expected = ${fmt(wantAvail)}\n` +
-          `  on-chain = ${fmt(b.avail)}`,
-        [b.avail, b.reported, b.consumed, b.released, b.repat?.netDraw ?? 0n],
-      );
+    // SKIPPED, not zero-substituted, while the repatriation draw is
+    // UNKNOWN (Codex #1618 r1 P2): the on-chain `avail` already nets a
+    // live draw this Worker could not read, so re-deriving with zero
+    // manufactures a disagreement on healthy state — a false CRITICAL,
+    // the worst output this Worker can produce. The read failure is
+    // already reported as a `base-books-repat` coverage gap; a pre-C2
+    // Diamond arrives here with a KNOWN-ZERO draw and is still checked.
+    if (b.repat !== undefined) {
+      const wantAvail = expectedAvail(b);
+      if (b.avail !== wantAvail) {
+        add(
+          'availability-formula',
+          'definition',
+          b.chainId,
+          'Availability does not match its definition',
+          `avail != max(0, reported - max(0, consumed - released) - repatNet)\n` +
+            `  reported = ${fmt(b.reported)}\n` +
+            `  consumed = ${fmt(b.consumed)}\n` +
+            `  released = ${fmt(b.released)}\n` +
+            `  repatNet = ${fmt(b.repat.netDraw)}\n` +
+            `  expected = ${fmt(wantAvail)}\n` +
+            `  on-chain = ${fmt(b.avail)}`,
+          [b.avail, b.reported, b.consumed, b.released, b.repat.netDraw],
+        );
+      }
     }
 
     // ── Base self-inertness ──────────────────────────────────────────
@@ -798,12 +817,18 @@ export function checkHardInvariants(
   // they would have no reason to expect.
   for (const local of obs.allLocals.values()) {
     if (!local.composition) continue; // reported as a coverage gap
+    // #1568 C2 — SKIPPED, not zero-substituted, while the repatriated-out
+    // cumulative is UNKNOWN (Codex #1618 r1 P2): after a real
+    // repatriation, deleting the destination term makes the healthy
+    // identity read as over-credited — a false CRITICAL beside the
+    // coverage gap that already reports the failed read. A pre-C2
+    // Diamond arrives with a KNOWN-ZERO value and is still checked.
+    if (local.repatriatedOut === undefined) continue;
     const claimed = local.composition.creditedRaw + local.custodyRelocated;
-    // #1568 C2 — repatriated-out is a DESTINATION: `debitRepatriationSurplus`
-    // moves bucket → the repatriated cumulative, exactly as `consume` moves
-    // bucket → paidOut. `undefined` (facet absent, reported as a gap) is
-    // safe as zero — such a Diamond cannot have repatriated.
-    const repatOut = local.repatriatedOut ?? 0n;
+    // Repatriated-out is a DESTINATION: `debitRepatriationSurplus` moves
+    // bucket → the repatriated cumulative, exactly as `consume` moves
+    // bucket → paidOut.
+    const repatOut = local.repatriatedOut;
     const destinations =
       local.bucket +
       local.paidOutRecycled +
@@ -864,7 +889,7 @@ export function checkHardInvariants(
           `  bucket        = ${fmt(local.bucket)}\n` +
           `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
           `  stranded      = ${fmt(local.composition.releasedRemitStranded)}\n` +
-          `  repatriated   = ${local.repatriatedOut === undefined ? '(view unavailable — treated as 0)' : fmt(repatOut)}\n` +
+          `  repatriated   = ${fmt(repatOut)}\n` +
           `  destinations  = ${fmt(destinations)}\n` +
           `  unaccounted   = ${fmt(destinations - claimed)}\n` +
           `  tolerance     = ${fmt(compositionSlackToleranceWei)}\n\n` +
@@ -898,7 +923,7 @@ export function checkHardInvariants(
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
         `  stranded      = ${fmt(local.composition.releasedRemitStranded)}\n` +
-        `  repatriated   = ${local.repatriatedOut === undefined ? '(view unavailable — treated as 0)' : fmt(repatOut)}\n` +
+        `  repatriated   = ${fmt(repatOut)}\n` +
         `  destinations  = ${fmt(destinations)}\n` +
         `  excess        = ${fmt(claimed - destinations)}\n\n` +
         `LIKELIEST CAUSE — a relocated-custody credit also advancing the absorption cumulative. That would let this chain report Base's own already-spent top-up back as its own local absorption, and Base would re-offer it as this chain's funding.`,
@@ -926,15 +951,20 @@ export function checkHardInvariants(
   // will alarm on correct behaviour.
   for (const local of obs.allLocals.values()) {
     if (!local.composition) continue; // reported as a coverage gap
-    // #1568 C2 — repatriated-out value stays IN the floor: it was absorbed
-    // here exactly once before leaving for Base, so a floor that dropped
-    // with the bucket on a healthy repatriation would fall below an
-    // earlier report (`LibVpfiRecycle.creditedCumulative` carries the same
-    // term; this restatement must move with it or the first repatriation
-    // pages a false mismatch). `undefined` (facet absent, reported as a
-    // gap) is safe as zero — such a Diamond cannot have repatriated.
+    // #1568 C2 — the same skip-on-unknown gate as the composition bound
+    // (the floor consumes the same term; a zero substitute would deflate
+    // the re-derivation below the chain's own figure after any real
+    // repatriation). A pre-C2 Diamond carries a known zero and is
+    // still checked.
+    if (local.repatriatedOut === undefined) continue;
+    // Repatriated-out value stays IN the floor: it was absorbed here
+    // exactly once before leaving for Base, so a floor that dropped with
+    // the bucket on a healthy repatriation would fall below an earlier
+    // report (`LibVpfiRecycle.creditedCumulative` carries the same term;
+    // this restatement must move with it or the first repatriation pages
+    // a false mismatch).
     const gross =
-      local.bucket + local.paidOutRecycled + (local.repatriatedOut ?? 0n);
+      local.bucket + local.paidOutRecycled + local.repatriatedOut;
     const floorTerm =
       gross > local.custodyRelocated ? gross - local.custodyRelocated : 0n;
     const raw = local.composition.creditedRaw;
@@ -955,7 +985,7 @@ export function checkHardInvariants(
         `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
-        `  repatriated   = ${local.repatriatedOut === undefined ? '(view unavailable — treated as 0)' : fmt(local.repatriatedOut)}\n` +
+        `  repatriated   = ${fmt(local.repatriatedOut)}\n` +
         `  relocated     = ${fmt(local.custodyRelocated)}\n\n` +
         `Either the derivation changed on-chain without this Worker being updated in the same change, or the relocated-custody exclusion has regressed. The figure is what mirrors report to Base and what sizes their funding, so treat a mismatch as load-bearing either way.`,
     }));

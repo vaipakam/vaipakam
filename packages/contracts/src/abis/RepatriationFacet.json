@@ -146,6 +146,19 @@
   },
   {
     "type": "function",
+    "name": "getRepatriationMaxPerAuth",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRepatriationPosition",
     "inputs": [],
     "outputs": [
@@ -370,6 +383,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setRepatriationMaxPerAuth",
+    "inputs": [
+      {
+        "name": "newMax",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "RepatriationAuthorized",
     "inputs": [
@@ -564,6 +590,25 @@
         "name": "authId",
         "type": "uint256",
         "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepatriationMaxPerAuthSet",
+    "inputs": [
+      {
+        "name": "previousMax",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newMax",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
@@ -779,6 +824,22 @@
       },
       {
         "name": "fundable",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RepatriationExceedsPerAuthMax",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxPerAuth",
         "type": "uint256",
         "internalType": "uint256"
       }

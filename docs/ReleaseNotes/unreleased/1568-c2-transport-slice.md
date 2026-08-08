@@ -32,7 +32,16 @@ What shipped, in behaviour terms:
   channel later with its own protocol.
 - Deployment tooling deploys and wires the two channel endpoints per
   chain role, arms the Diamond's endpoints, and puts both under the same
-  incident-pause guardian as every other cross-chain surface.
+  incident-pause guardian as every other cross-chain surface. Both
+  endpoints also join the governance ownership handover ceremony, so
+  after handover no single operator key retains upgrade or re-pointing
+  authority over the channel.
+- Authorizations gained a **per-move ceiling sized to the cross-chain
+  lane capacity** (armed by the deploy tooling with the same value it
+  configures on the lanes): a single transfer above lane capacity would
+  be rejected permanently by the transport, so an over-capacity
+  authorization — which could only ever strand its reserved amount until
+  cancellation — is now refused at issuance instead.
 - The mesh watcher now understands repatriation: the availability figure
   it re-derives nets out live draws, a new check pages if authorized
   draws ever exceed what a chain reported holding, and the bucket

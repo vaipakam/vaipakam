@@ -42,6 +42,8 @@ interface IRewardRemittanceConfig {
 interface IRepatriationConfig {
     function setRepatriationEndpoints(address sender_, address receiver_)
         external;
+
+    function setRepatriationMaxPerAuth(uint256 newMax) external;
 }
 
 /**
@@ -710,8 +712,20 @@ contract ConfigureCcip is Script {
             IRepatriationConfig(diamond).setRepatriationEndpoints(
                 address(0), c.localReturnHandler
             );
+            // Per-authorization ceiling = the SAME lane capacity this
+            // script configures on the VPFI token pools (Codex #1618 r1
+            // P2): a single return message above the lane capacity is
+            // rejected permanently by the CCIP rate limiter, so an
+            // authorization above it could never execute and would strand
+            // its availability draw until cancellation.
+            IRepatriationConfig(diamond).setRepatriationMaxPerAuth(
+                uint256(c.rateCapacity)
+            );
             console.log(
                 "Diamond repatriation receiver armed ->", c.localReturnHandler
+            );
+            console.log(
+                "Diamond repatriation per-auth ceiling ->", uint256(c.rateCapacity)
             );
         } else {
             IRepatriationConfig(diamond).setRepatriationEndpoints(

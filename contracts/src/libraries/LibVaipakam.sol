@@ -6171,6 +6171,15 @@ library LibVaipakam {
         //   them.
         address repatriationSender; //   mirror-side outbound escrow/sender
         address repatriationReceiver; // Base-side inbound endpoint
+        // #1568 C2 part 2 (Codex #1618 r1 P2) — per-AUTHORIZATION ceiling.
+        //   A Mode-A return travels as ONE CCIP token message, and the
+        //   lane rate limiter permanently rejects any single request above
+        //   its capacity — so an authorization larger than the lane cap
+        //   could never execute, stranding its availability draw until an
+        //   operator cancels. The deploy tooling arms this to the same
+        //   capacity it configures on the pool lanes. Zero = unbounded
+        //   (the pre-arming default; authorize is ADMIN-gated either way).
+        uint256 repatriationMaxPerAuth;
     }
 
     /// @notice #1568 C2 Mode A — one planned-surplus repatriation

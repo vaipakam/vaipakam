@@ -44,6 +44,7 @@ import {
 } from '../src/invariants';
 import {
   compositionUnavailableGap,
+  isMissingSelector,
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
 } from '../src/mesh';
@@ -99,6 +100,11 @@ function mirrorBooks(): BaseChainBooks {
     released: 100n * E,
     // consumed - retired = 400 - 250
     outstanding: 150n * E,
+    // #1568 C2 — the baseline models a CURRENT deployment: the draw view
+    // exists and reads zero. `undefined` means UNKNOWN and makes the
+    // draw-dependent checks skip, so leaving it off the baseline would
+    // silently disable those checks across the whole suite.
+    repat: { netDraw: 0n, lifetimeReleased: 0n },
   };
 }
 
@@ -113,6 +119,7 @@ function canonicalBooks(): BaseChainBooks {
     retired: 0n,
     released: 0n,
     outstanding: 0n,
+    repat: { netDraw: 0n, lifetimeReleased: 0n },
   };
 }
 
@@ -135,6 +142,9 @@ function mirrorLocal(): LocalLedger {
       accountingSeeded: true,
       isCanonicalRewardChain: false,
     },
+    // #1568 C2 — current deployment, view present, nothing repatriated
+    // (undefined would skip composition + derivation suite-wide).
+    repatriatedOut: 0n,
     observedAt: 1_800_000_000n,
   });
 }
@@ -163,6 +173,7 @@ function canonicalLocal(): LocalLedger {
       accountingSeeded: true,
       isCanonicalRewardChain: true,
     },
+    repatriatedOut: 0n,
     observedAt: 1_800_000_000n,
   });
 }
@@ -1165,14 +1176,64 @@ describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
     ).toEqual(['bucket-composition']);
   });
 
-  it('treats a missing repat view as zero everywhere (pre-C2 Diamond)', () => {
-    // `repatriatedOut: undefined` (the default baseline) with an untouched
-    // ledger — the healthy-mesh baseline already asserts zero findings; this
-    // pins the SAME for a repatriation-free chain whose view exists and
-    // reads zero, so "absent" and "zero" stay behaviourally identical.
+  it('SKIPS the availability check while the draw is UNKNOWN', () => {
+    // Codex #1618 r1 P2 — a transient failure of only the draw view, on a
+    // chain whose on-chain `avail` nets a live 100 draw. Substituting zero
+    // would re-derive 700 against the chain's 600 and page a false
+    // CRITICAL; the check must skip (the read failure is a coverage gap
+    // at the mesh layer). A pre-C2 Diamond never takes this path — its
+    // missing-selector revert records a KNOWN-ZERO draw instead.
     expect(
-      codes({ mirrorLocal: { repatriatedOut: 0n } }),
+      codes({
+        mirror: { repat: undefined, avail: 600n * E },
+      }),
     ).toEqual([]);
+    // The control: the SAME on-chain figure WITH the draw readable is
+    // healthy (proving the skip above is the only reason nothing fired)…
+    expect(
+      codes({
+        mirror: {
+          repat: { netDraw: 100n * E, lifetimeReleased: 0n },
+          avail: 600n * E,
+        },
+      }),
+    ).toEqual([]);
+    // …and a real mismatch with the draw readable still pages.
+    expect(
+      codes({
+        mirror: {
+          repat: { netDraw: 100n * E, lifetimeReleased: 0n },
+          avail: 700n * E,
+        },
+      }),
+    ).toEqual(['availability-formula']);
+  });
+
+  it('SKIPS composition + derivation while repatriated-out is UNKNOWN', () => {
+    // The same one-view-transient-failure shape on the local side: the
+    // bucket genuinely shrank by a repatriation this Worker could not
+    // read. Zero-substitution would page over-credited on healthy state;
+    // the two consuming checks skip instead.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          repatriatedOut: undefined,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual([]);
+    // Control: identical figures with the view readable (and genuinely
+    // zero) is the real over-credit regression and still pages.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          repatriatedOut: 0n,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual(['bucket-composition']);
   });
 });
 
@@ -2443,7 +2504,25 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
 
 
 // ── #1568 C2 ────────────────────────────────────────────────────────────
-describe('repat gap builders', () => {
+describe('repat gap builders + the pre-C2/unknown discrimination', () => {
+  /** An error `classify` marks `contract-revert` — a missing selector. */
+  const REVERT = () => new Error('execution reverted');
+  /** An error of no classifiable kind — a transient transport failure. */
+  const TRANSIENT = () => new Error('boom');
+
+  it('isMissingSelector separates a revert from a transport failure', () => {
+    // The whole Codex #1618 r1 P2 pair hangs on this: a revert is the
+    // POSITIVE identification of a pre-C2 Diamond (views on a present
+    // facet are pure reads and cannot revert), so zero is the KNOWN
+    // value; anything else leaves the value unknown and the dependent
+    // checks skip.
+    expect(isMissingSelector(REVERT())).toBe(true);
+    expect(isMissingSelector(TRANSIENT())).toBe(false);
+    expect(
+      isMissingSelector(new Error('HTTP 429: too many requests')),
+    ).toBe(false);
+  });
+
   it('each is its own source, so neither collides with the other gaps', () => {
     // Same #1443 r7 dedup-key rationale as the composition gap: one gap
     // must never suppress a different one for the same chain.
@@ -2455,13 +2534,24 @@ describe('repat gap builders', () => {
     expect(pos.source).toBe('own-ledger-repat');
   });
 
-  it('each names the checks that did not run, and why zero is safe', () => {
-    const draw = repatDrawUnavailableGap(10, new Error('boom'));
+  it('a TRANSIENT failure names the checks that did NOT run', () => {
+    const draw = repatDrawUnavailableGap(10, TRANSIENT());
+    expect(draw.detail).toContain('UNKNOWN');
     expect(draw.detail).toContain('repat-cap');
-    expect(draw.detail).toContain('pre-C2');
-    const pos = repatPositionUnavailableGap(10, new Error('boom'));
+    expect(draw.detail).toContain('did NOT run');
+    const pos = repatPositionUnavailableGap(10, TRANSIENT());
+    expect(pos.detail).toContain('UNKNOWN');
     expect(pos.detail).toContain('bucket composition');
-    expect(pos.detail).toContain('repatriated-out');
+    expect(pos.detail).toContain('did NOT run');
+  });
+
+  it('a MISSING SELECTOR says zero is known and coverage was kept', () => {
+    const draw = repatDrawUnavailableGap(10, REVERT());
+    expect(draw.detail).toContain('pre-C2');
+    expect(draw.detail).toContain('KNOWN-ZERO');
+    const pos = repatPositionUnavailableGap(10, REVERT());
+    expect(pos.detail).toContain('pre-C2');
+    expect(pos.detail).toContain('KNOWN-ZERO');
   });
 
   it('never forwards provider text — the RPC URL carries the API key', () => {

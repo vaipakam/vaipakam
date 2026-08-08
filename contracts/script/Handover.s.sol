@@ -104,7 +104,9 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *        diamond, timelock, ccipMessenger, vpfiTokenPool,
  *        vpfiPoolRateGovernor, rewardMessenger,
  *        vpfiToken | vpfiMirror,
- *        buybackRemittanceReceiver (canonical only — T-087 Sub 3.A)
+ *        buybackRemittanceReceiver (canonical only — T-087 Sub 3.A),
+ *        vpfiReturnReceiver (canonical only — #1568 C2) |
+ *        vpfiReturnSender (mirror only — #1568 C2)
  *
  *      Per CLAUDE.md "Deployments sync — Omit-keys policy", canonical
  *      and mirror keys are mutually exclusive on any single chain;
@@ -182,6 +184,16 @@ contract Handover is Script {
         // `setDiamond` and divert future Base→mirror reward-budget VPFI.
         address rewardReceiver =
             _readAddrOptional(addrJson, "rewardRemittanceReceiver");
+        // #1568 C2 — the shared vpfi-return channel satellites (Ownable2Step
+        // / UUPS; role-scoped per the omit-keys policy, so exactly one of
+        // the pair resolves on any chain). Both must rotate to the Timelock
+        // like the remittance receivers: a post-handover ADMIN EOA holding
+        // either could upgrade it or repoint `setMessenger`/`setDiamond`
+        // (and `setVpfiToken` on the sender) to divert repatriation returns
+        // (Codex #1618 r1 P1).
+        address returnSender = _readAddrOptional(addrJson, "vpfiReturnSender");
+        address returnReceiver =
+            _readAddrOptional(addrJson, "vpfiReturnReceiver");
 
         // The VPFI token whose CCT admin is rotated below — the
         // pre-existing `vpfiToken` on canonical Base, the `vpfiMirror`
@@ -272,6 +284,8 @@ contract Handover is Script {
         _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
         _transferCrossChainOwnership(adminKey, buybackReceiver, "buybackRemittanceReceiver", timelock);
         _transferCrossChainOwnership(adminKey, rewardReceiver,  "rewardRemittanceReceiver",  timelock);
+        _transferCrossChainOwnership(adminKey, returnSender,    "vpfiReturnSender",          timelock);
+        _transferCrossChainOwnership(adminKey, returnReceiver,  "vpfiReturnReceiver",        timelock);
         // #853 Codex P2 — canonical VPFI token OZ ownership → Timelock. On
         // canonical Base the token is now DEPLOYED as part of the flow
         // (`DeployVPFIToken`) with owner = ADMIN (`Ownable2StepUpgradeable`).
@@ -318,6 +332,8 @@ contract Handover is Script {
         if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
         if (buybackReceiver != address(0)) console.log("    target: buybackRemittanceReceiver @", buybackReceiver);
         if (rewardReceiver != address(0)) console.log("    target: rewardRemittanceReceiver @", rewardReceiver);
+        if (returnSender != address(0)) console.log("    target: vpfiReturnSender     @", returnSender);
+        if (returnReceiver != address(0)) console.log("    target: vpfiReturnReceiver   @", returnReceiver);
         if (canonical && vpfiToken != address(0)) console.log("    target: vpfiToken            @", vpfiToken);
         if (cctRotated) {
             console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");

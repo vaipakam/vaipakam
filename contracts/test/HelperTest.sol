@@ -2157,7 +2157,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](14);
+        selectors = new bytes4[](16);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2177,6 +2177,8 @@ contract HelperTest {
         selectors[11] = RepatriationFacet.executeRepatriation.selector;
         selectors[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
         selectors[13] = RepatriationFacet.getRepatriationInstruction.selector;
+        selectors[14] = RepatriationFacet.setRepatriationMaxPerAuth.selector;
+        selectors[15] = RepatriationFacet.getRepatriationMaxPerAuth.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

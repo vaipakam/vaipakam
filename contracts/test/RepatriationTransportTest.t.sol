@@ -307,6 +307,37 @@ contract RepatriationTransportTest is SetupTest {
         _repat().sendRepatriationInstruction(authId, payable(address(this)));
     }
 
+    // ── Base side: per-authorization ceiling (lane capacity) ────────────────
+
+    function test_Authorize_BoundedByPerAuthCeiling() public {
+        _armBase();
+        _seedAvail(1, 100 ether);
+        _repat().setRepatriationMaxPerAuth(30 ether);
+        assertEq(_repat().getRepatriationMaxPerAuth(), 30 ether);
+        // Above the ceiling: refused at ISSUANCE — a single CCIP token
+        // message above the lane capacity is rejected permanently, so an
+        // over-capacity authorization could only ever strand its draw.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.RepatriationExceedsPerAuthMax.selector,
+                30 ether + 1,
+                30 ether
+            )
+        );
+        _repat().authorizeRepatriation(CHAIN_ARB, 30 ether + 1);
+        // Exactly at the ceiling passes; zero re-disables the bound.
+        _repat().authorizeRepatriation(CHAIN_ARB, 30 ether);
+        _repat().setRepatriationMaxPerAuth(0);
+        _repat().authorizeRepatriation(CHAIN_ARB, 60 ether);
+    }
+
+    function test_SetMaxPerAuth_AdminOnly() public {
+        _armBase();
+        vm.prank(STRANGER);
+        vm.expectRevert();
+        _repat().setRepatriationMaxPerAuth(1 ether);
+    }
+
     // ── Base side: cancel request ───────────────────────────────────────────
 
     function test_RequestCancel_DispatchesThroughMessenger() public {
