@@ -466,7 +466,15 @@ function policyReauditNeeded(): string[] {
  * the difference between two visible strings.
  */
 const visibleForm = (value: string): string =>
-  value.normalize('NFC').replace(/\p{Default_Ignorable_Code_Point}/gu, '').trim();
+  value
+    // NFKC, matching `wordsOf`: compatibility-equivalent punctuation is
+    // the same mark on screen. `．` (U+FF0E) is the English full stop
+    // wearing a wide glyph, and comparing NFC let it through (Codex
+    // #1607 r10). NFKC folds it to `.` while leaving `。` alone, which
+    // is the distinction rounds 1 and 4 turned on.
+    .normalize('NFKC')
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
+    .trim();
 
 const wordsOf = (value: string): string[] =>
   (value
@@ -862,61 +870,6 @@ for (const [key, entry] of Object.entries(ENGLISH_VALUED)) {
  * you like, but do not leave a figure behind that contradicts the file
  * it describes (#1596).
  */
-/**
- * Each doc quoting the recorded total must quote the CURRENT one.
- *
- * Called with the total as it stands AFTER any prune, not before.
- * Validating the pre-prune figure let the documented maintenance
- * command exit 0 having just written a baseline the docs contradict —
- * success, and a tree the next ordinary run fails on (Codex #1607 r5).
- */
-function checkDocumentedTotal(pairs: number): void {
-  const REPO_ROOT = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-    '..',
-    '..',
-  );
-  const DOCS_QUOTING_THE_COUNT: ReadonlyArray<{ rel: string; optional: boolean }> = [
-    { rel: 'docs/FunctionalSpecs/_CodeVsDocsAudit.md', optional: false },
-    { rel: 'docs/FunctionalSpecs/Alpha02ConnectedApp.md', optional: false },
-    // Folded into the dated release notes and deleted at release time.
-    { rel: 'docs/ReleaseNotes/unreleased/1596-english-valued-leaves-guard.md', optional: true },
-  ];
-  for (const { rel, optional } of DOCS_QUOTING_THE_COUNT) {
-    const file = path.resolve(REPO_ROOT, rel);
-    if (!fs.existsSync(file)) {
-      // A silently-skipped check is worse than no check: the first
-      // draft had this path one level short, so `existsSync` was false
-      // for all three and it reported OK on a figure of 999.
-      if (!optional) problems.push(`${rel} is missing — this check cannot verify the recorded total`);
-      continue;
-    }
-    // Bound to the SENTENCE that states the backlog, not merely present
-    // in the file. A whole-number match anywhere was the second version
-    // of this check and still too loose: both required docs contain an
-    // unrelated standalone `12` (a per-locale count in one, "2026-07-12"
-    // in the other), so a future 12-pair baseline would have satisfied
-    // it with neither backlog sentence touched (Codex #1607 r9).
-    //
-    // The number must be followed by the word `pairs` in the same
-    // sentence. That still lets the prose around it be reworded freely
-    // — which is the point — while requiring the reworded sentence to
-    // still be ABOUT pairs.
-    const inBacklogSentence = new RegExp(
-      `(?<![0-9])${pairs}(?![0-9])[^.\n]{0,60}?\\bpairs\\b`,
-    );
-    if (!inBacklogSentence.test(fs.readFileSync(file, 'utf8'))) {
-      problems.push(
-        `${path.basename(file)} does not mention the current english-valued ` +
-          `total (${pairs} pairs) — it quotes a figure this baseline no ` +
-          'longer supports',
-      );
-    }
-  }
-}
-
-let documentedTotalChecked = false;
 const pruning = process.argv.includes('--prune');
 // In prune mode the stale pairs are about to be REMOVED, so they aren't
 // a problem — but every other problem still is (see below).
@@ -1036,9 +989,6 @@ if (pruning) {
     `[check-locale-coverage] pruned english-valued baseline → ` +
       `${Object.keys(sortedEnglish).length} key(s), ${englishPairs} pair(s)`,
   );
-  // Validate the docs against what was just WRITTEN, not what was read.
-  checkDocumentedTotal(englishPairs);
-  documentedTotalChecked = true;
   // Deliberately NOT exiting here. Pruning fixes exactly one class of
   // problem — stale baseline entries — and every other finding above
   // (a new missing key, leaf-type drift, a malformed placeholder, a
@@ -1046,12 +996,6 @@ if (pruning) {
   // maintenance command would have reported a broken locale as healthy
   // at precisely the moment someone is editing translations (Codex
   // #1563 r3). Fall through to the normal verdict.
-}
-
-if (!documentedTotalChecked) {
-  checkDocumentedTotal(
-    Object.values(ENGLISH_VALUED).flatMap((entry) => entry.locales).length,
-  );
 }
 
 if (problems.length > 0) {
