@@ -35,12 +35,12 @@
     ],
     "outputs": [
       {
-        "name": "debited",
+        "name": "netDraw",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "released",
+        "name": "lifetimeReleased",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -456,6 +456,17 @@
     "type": "error",
     "name": "RepatriationDeliveryInvalid",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RepatriationEndpointNotContract",
+    "inputs": [
+      {
+        "name": "endpoint",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
