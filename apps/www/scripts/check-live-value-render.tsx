@@ -46,28 +46,9 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
-import i18next from 'i18next';
-import { initReactI18next } from 'react-i18next';
 import { markdownComponents } from '../src/lib/markdownToc';
 import { substituteLiveValuesInMarkdown } from './liveValueMarkdown';
 import { KNOB_DEFAULTS, formatKnob } from '../src/lib/liveValueKnobs';
-
-/*
- * A minimal i18next instance. `LiveValue` reads the active locale (so its
- * numbers group per the page's language), and that goes through
- * `useTranslation`, which warns loudly and falls back to English without
- * an initialised instance. Two reasons to initialise it rather than
- * tolerate the warning: a guard that prints alarming output teaches
- * people to skim past it, and without a real locale this file could only
- * ever test English formatting — which is precisely the bug that made
- * the formatting locale-aware in the first place.
- */
-await i18next.use(initReactI18next).init({
-  lng: 'en',
-  fallbackLng: 'en',
-  resources: { en: { translation: {} }, de: { translation: {} }, fr: { translation: {} } },
-  interpolation: { escapeValue: false },
-});
 
 /** Render a markdown string through the real doc pipeline. */
 function render(markdown: string): string {
