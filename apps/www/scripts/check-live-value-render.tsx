@@ -64,6 +64,47 @@ function renderWith(components: ReturnType<typeof markdownComponents>, markdown:
   );
 }
 
+/*
+ * Locale-convention oracles, deliberately INDEPENDENT of `formatKnob`
+ * (#1610 review round 7).
+ *
+ * The locale checks used to compare output against `formatKnob`'s own
+ * result. That removed a false-failure risk — a knob retune no longer
+ * breaks them — but introduced a tautology in the dimension that
+ * matters: if the formatter SWAPPED German and English conventions,
+ * actual and expected would move together and the "the two differ"
+ * clause would still hold. The bug the checks exist to prevent is
+ * precisely a locale being given the wrong convention.
+ *
+ * These ask `Intl` what a locale's separators ARE, from the locale tag
+ * alone, and never call the formatter. A formatter that hands German
+ * output English grouping now fails, because the oracle knows German
+ * groups with "." regardless of what the formatter did.
+ */
+/**
+ * The rendered figure only, extracted from the `<span>` LiveValue emits.
+ *
+ * Separator assertions must not see the surrounding markup: the inline
+ * style contains `var(--text-muted, #888)`, and that comma alone made an
+ * "output must not contain the English separator" check fail against
+ * correct German output. Assert on the value, not the element.
+ */
+function renderedValue(html: string): string {
+  return html.replace(/<[^>]*>/g, '');
+}
+
+function groupSeparator(locale: string): string {
+  return (
+    new Intl.NumberFormat(locale).formatToParts(1000).find((p) => p.type === 'group')?.value ?? ''
+  );
+}
+
+function decimalSeparator(locale: string): string {
+  return (
+    new Intl.NumberFormat(locale).formatToParts(1.5).find((p) => p.type === 'decimal')?.value ?? ''
+  );
+}
+
 const failures: string[] = [];
 function check(name: string, ok: boolean, detail: string) {
   if (ok) return;
@@ -218,31 +259,32 @@ function check(name: string, ok: boolean, detail: string) {
   // The formatting bug that made this locale-aware: en-US grouping on a
   // German page turns a 20,000-token threshold into something a German
   // reader parses as twenty.
-  // Expectations DERIVED from the registry, not written as literals.
-  // Pinning "20.000" would couple this file to one knob's current value,
-  // so a governance retune would fail a locale test for no reason — and a
-  // test that fails on unrelated changes is one people delete. What is
-  // asserted is the PROPERTY: output matches the shared formatter for
-  // that locale, and the two locales genuinely differ (otherwise the
-  // check would pass trivially against a locale-blind formatter).
-  const expectCount = (loc: string) =>
-    formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', loc);
-  const expectPct = (loc: string) =>
-    formatKnob(KNOB_DEFAULTS.loanInitiationFeeBps.defaultValue, 'percent', loc);
-
+  // The VALUE comes from the registry so a knob retune doesn't fail these,
+  // but the CONVENTION is checked against `Intl` directly rather than
+  // against the formatter — see the oracle comment above for why calling
+  // `formatKnob` here made a locale-swap bug invisible.
+  const deCount = md('`{liveValue:tier4Min}`', 'de');
+  const enCount = md('`{liveValue:tier4Min}`', 'en');
   check(
     'markdown: grouping follows the document locale',
-    md('`{liveValue:tier4Min}`', 'de') === expectCount('de') &&
-      md('`{liveValue:tier4Min}`', 'en') === expectCount('en') &&
-      expectCount('de') !== expectCount('en'),
-    `de gave "${md('`{liveValue:tier4Min}`', 'de')}", en gave "${md('`{liveValue:tier4Min}`', 'en')}"`,
+    deCount.includes(groupSeparator('de')) &&
+      !deCount.includes(groupSeparator('en')) &&
+      enCount.includes(groupSeparator('en')) &&
+      !enCount.includes(groupSeparator('de')),
+    `de gave "${deCount}" (expected "${groupSeparator('de')}" grouping), ` +
+      `en gave "${enCount}" (expected "${groupSeparator('en')}")`,
   );
+
+  const frPct = md('`{liveValue:loanInitiationFeeBps}`', 'fr');
+  const enPct = md('`{liveValue:loanInitiationFeeBps}`', 'en');
   check(
     'markdown: decimal separator follows the document locale',
-    md('`{liveValue:loanInitiationFeeBps}`', 'fr') === expectPct('fr') &&
-      md('`{liveValue:loanInitiationFeeBps}`', 'en') === expectPct('en') &&
-      expectPct('fr') !== expectPct('en'),
-    `fr gave "${md('`{liveValue:loanInitiationFeeBps}`', 'fr')}", en gave "${md('`{liveValue:loanInitiationFeeBps}`', 'en')}"`,
+    frPct.includes(decimalSeparator('fr')) &&
+      !frPct.includes(decimalSeparator('en')) &&
+      enPct.includes(decimalSeparator('en')) &&
+      !enPct.includes(decimalSeparator('fr')),
+    `fr gave "${frPct}" (expected "${decimalSeparator('fr')}" decimal), ` +
+      `en gave "${enPct}" (expected "${decimalSeparator('en')}")`,
   );
   // NOTE: there is deliberately no "formatting follows the active UI
   // language" check here any more. That assertion existed in an earlier
@@ -272,17 +314,19 @@ function check(name: string, ok: boolean, detail: string) {
 {
   const en = markdownComponents('en');
   const de = markdownComponents('de');
-  const enExpected = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'en');
-  const deExpected = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'de');
+  // Same independent-oracle treatment as the markdown path: the
+  // convention is checked against Intl, never against the formatter.
+  const enHtml = renderedValue(renderWith(en, '`{liveValue:tier4Min}`'));
+  const deHtml = renderedValue(renderWith(de, '`{liveValue:tier4Min}`'));
   check(
     'document locale is honoured over the active language',
-    renderWith(en, '`{liveValue:tier4Min}`').includes(enExpected) && enExpected !== deExpected,
-    'an English document did not format as English',
+    enHtml.includes(groupSeparator('en')) && !enHtml.includes(groupSeparator('de')),
+    `an English document used "${groupSeparator('de')}" grouping: ${enHtml}`,
   );
   check(
     'a German document still formats as German',
-    renderWith(de, '`{liveValue:tier4Min}`').includes(deExpected),
-    'a German document did not format as German',
+    deHtml.includes(groupSeparator('de')) && !deHtml.includes(groupSeparator('en')),
+    `a German document used "${groupSeparator('en')}" grouping: ${deHtml}`,
   );
   check(
     'components are memoized per locale',
@@ -296,12 +340,17 @@ function check(name: string, ok: boolean, detail: string) {
 //    its own page. It reads the same registry, so this also asserts the
 //    third copy of the defaults is gone.
 {
+  // The index formats through the same registry the pages do, so assert
+  // the same property with the same independent oracle rather than
+  // comparing the formatter to itself.
   const deTier4 = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'de');
   const enTier4 = formatKnob(KNOB_DEFAULTS.tier4Min.defaultValue, 'count', 'en');
   check(
-    'search formatting differs by locale like the pages do',
-    deTier4 !== enTier4,
-    `both locales formatted identically ("${deTier4}"), so the index is locale-blind`,
+    'search formatting follows each indexed document\'s locale',
+    deTier4.includes(groupSeparator('de')) &&
+      !deTier4.includes(groupSeparator('en')) &&
+      enTier4.includes(groupSeparator('en')),
+    `de gave "${deTier4}", en gave "${enTier4}"`,
   );
 }
 
