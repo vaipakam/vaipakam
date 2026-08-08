@@ -24,9 +24,15 @@ is malformed. The page-snapshotting step would have, since it renders
 every page for real — but it only runs during a deploy, so it would have
 noticed after the broken pages were already public.
 
-The fix reconstructs the inline-versus-fenced distinction from the shape
-of the document rather than from a question the library may or may not
-answer, so it cannot lapse the same way again. Alongside it, a new check
+The first attempt at a fix rebuilt that distinction from the shape of the
+document. It worked, but it was solving a problem that did not exist: the
+recogniser only ever matched a value standing completely alone, and code
+samples always arrive with a trailing line break that disqualifies them
+automatically. The distinction had been holding on its own the whole
+time. So the fix is smaller than the first attempt — the discarded
+question is simply removed, and nothing replaces it. That also removed
+the new page-element wrapper the first attempt introduced, which had been
+adding stray attributes of its own. Alongside it, a new check
 renders the real doc pipeline and asserts on the outcome: an inline
 value resolves to a number, a fenced sample stays literal so the docs
 can still explain the mechanism, and an unrecognised name renders
@@ -49,12 +55,10 @@ renderer had existed. The new fenced-block renderer would have added ten
 more of the same. Both are now stripped, and the new check asserts the
 attribute never comes back, so this cannot quietly resume either.
 
-One incidental note on the fix's own shape: the change needed a
-component to consult shared state, and the repository's newly-added
-hook-order guard rejected the first attempt because the renderer
-functions were named in a way that made them look like plain helpers
-rather than components. The guard was right — it cannot know the
-markdown library renders them as components — so they were promoted to
-properly named components rather than the warning being suppressed.
+Because the surviving mechanism now rests on that trailing-line-break
+property, the new check enumerates every way a document can produce a
+code element — inline in prose, in a list, in a quote, in a heading, in a
+table cell, in bold, inside a link, and as all three kinds of code block
+— so the property is tested rather than merely believed.
 
 Closes #1606

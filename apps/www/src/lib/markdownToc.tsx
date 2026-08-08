@@ -21,7 +21,7 @@
  * skipped. H4+ are body-level and don't appear in the TOC.
  */
 
-import { createContext, useContext, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { LiveValue, type KnobName } from '../components/docs/LiveValue';
 
 import { slugify } from './slugify';
@@ -195,28 +195,6 @@ function explicitAnchor(id: string | undefined, slug: string): ReactNode {
  */
 const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
 
-/**
- * True while rendering inside a `<pre>`, i.e. a FENCED code block.
- *
- * Why a context instead of react-markdown's `inline` prop (#1606)
- * --------------------------------------------------------------
- * The `code` interceptor below used to branch on `inline`, which
- * react-markdown REMOVED in v9 (this app is on v10). The prop was
- * therefore always `undefined`, the branch never ran, and every single
- * `{liveValue:...}` token in the docs rendered as literal text —
- * readers saw `Yield Fee — {liveValue:treasuryFeeBps}%`. Nothing
- * caught it: the props type declared `inline?: boolean` locally next to
- * an index signature, so an optional prop that is never passed
- * type-checks cleanly forever.
- *
- * react-markdown still wraps fenced blocks in `<pre>` and leaves inline
- * spans bare, so overriding `pre` to flip this flag reconstructs the
- * distinction from structure rather than from a prop's existence. That
- * also preserves the deliberate escape hatch: a FENCED block containing
- * `{liveValue:foo}` renders literally, so the docs can describe this
- * very mechanism.
- */
-const InsideFencedBlock = createContext(false);
 
 /**
  * Like {@link headingComponents} plus a `code` interceptor that
@@ -247,62 +225,53 @@ interface CodeRendererProps {
   /**
    * react-markdown v10 hands every custom renderer the HAST node it is
    * rendering. It is INTERNAL — the default renderers never forward it —
-   * so both renderers below destructure it away rather than letting
-   * `{...rest}` spread it onto a DOM element, where React serialises it
-   * as the literal attribute `node="[object Object]"`.
+   * so it is destructured away rather than spread onto a DOM element,
+   * where React serialises it as `node="[object Object]"`.
    *
-   * This was already shipping on the marketing site before #1606: the
-   * pre-existing `code` renderer spread `...rest` too, putting that
-   * attribute on 5,728 inline-code elements across the prerendered
-   * pages. Adding a `pre` renderer would have added 10 more. Both are
-   * stripped here; `scripts/check-live-value-render.tsx` asserts the
-   * attribute never reappears.
+   * That was already shipping before #1606: this renderer spread
+   * `...rest` unchanged, putting the attribute on 5,728 inline-code
+   * elements across the prerendered pages.
    */
   node?: unknown;
   [key: string]: unknown;
 }
 
 /**
- * `<pre>` renderer that marks its subtree as a fenced block.
+ * `<code>` renderer that swaps `{liveValue:knobName}` for the live value.
  *
- * Fenced code arrives as `<pre><code>…</code></pre>`, inline code as a
- * bare `<code>`, so flagging here is what lets {@link MarkdownCode}
- * tell the two apart (#1606).
- */
-function FencedBlock({ children, node: _node, ...rest }: CodeRendererProps) {
-  return (
-    <InsideFencedBlock.Provider value={true}>
-      <pre {...rest}>{children}</pre>
-    </InsideFencedBlock.Provider>
-  );
-}
-
-/**
- * `<code>` renderer that swaps `{liveValue:knobName}` tokens for the
- * live on-chain value, leaving fenced blocks untouched.
+ * Why there is NO inline-vs-block test here (#1606)
+ * ------------------------------------------------
+ * This used to read react-markdown's `inline` prop, which v9 REMOVED —
+ * so on v10 it was always `undefined`, the substitution never ran, and
+ * every token in the docs rendered as literal text.
  *
- * NAMED IN PASCAL CASE ON PURPOSE. These are passed to ReactMarkdown as
- * `pre` / `code`, and it would be tempting to write them inline as
- * lowercase object properties — but this one calls a hook, and
- * `react-hooks/rules-of-hooks` (wired into CI in #1521) rejects a hook
- * inside a function whose name doesn't look like a component. The rule
- * is right to: it has no way to know ReactMarkdown renders these as
- * components. Declaring them as real components satisfies the linter
- * without suppressing it.
+ * The prop is not needed, and re-deriving it was a wrong turn. Block
+ * code always arrives with a TRAILING NEWLINE and inline code never
+ * does — verified for fenced, fenced-with-language and indented blocks:
+ *
+ *     fenced    →  "{liveValue:x}\n"
+ *     indented  →  "{liveValue:x}\n"
+ *     inline    →  "{liveValue:x}"
+ *
+ * {@link LIVE_VALUE_TOKEN_RE} is ANCHORED, so it rejects the newline
+ * form on its own. The anchoring IS the block/inline discriminator, and
+ * it is what preserves the deliberate escape hatch: a fenced block
+ * containing the token renders literally, so the docs can document this
+ * mechanism.
+ *
+ * That makes the anchors load-bearing rather than cosmetic. Unanchor the
+ * regex and fenced code samples silently start resolving.
+ * `scripts/check-live-value-render.tsx` asserts the behaviour across all
+ * ten constructs that produce a `<code>` element, so the property is
+ * tested rather than merely asserted in this comment.
  */
 function MarkdownCode({ children, node: _node, ...rest }: CodeRendererProps) {
-  // Unconditional — a conditional hook here would be exactly the defect
-  // #1521 fixed in this file's neighbourhood.
-  const fenced = useContext(InsideFencedBlock);
-  if (!fenced) {
-    const text = nodeToText(children);
-    const match = LIVE_VALUE_TOKEN_RE.exec(text);
-    if (match) {
-      return <LiveValue knob={match[1] as KnobName} />;
-    }
+  const match = LIVE_VALUE_TOKEN_RE.exec(nodeToText(children));
+  if (match) {
+    return <LiveValue knob={match[1] as KnobName} />;
   }
   // Default — preserve native ReactMarkdown behaviour for every other
-  // inline-code span and every fenced code block.
+  // inline-code span and every code block.
   return <code {...rest}>{children}</code>;
 }
 
@@ -310,7 +279,6 @@ let _cachedMarkdownComponents: ReturnType<typeof buildMarkdownComponents> | null
 function buildMarkdownComponents() {
   return {
     ...headingComponents(),
-    pre: FencedBlock,
     code: MarkdownCode,
   };
 }

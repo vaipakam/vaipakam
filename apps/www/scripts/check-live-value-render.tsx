@@ -103,7 +103,42 @@ function check(name: string, ok: boolean, detail: string) {
   );
 }
 
-// 4. An unregistered knob must fall through to visible inline code
+// 4. The LOAD-BEARING assumption, asserted across every construct that
+//    produces a `<code>` element.
+//
+//    The fix distinguishes inline from fenced by structure: react-markdown
+//    wraps block code in `<pre>` and leaves inline code bare. If that ever
+//    fails to hold for some construct, tokens in it silently stop
+//    resolving (or a code sample silently starts resolving) — the exact
+//    class of failure #1606 was. A comment asserting "v10 always wraps
+//    fenced blocks" is worth much less than a test, so every construct is
+//    enumerated here, including INDENTED code blocks, which are block code
+//    without any fence markers at all.
+{
+  const constructs: [string, string, 'literal' | 'substituted'][] = [
+    ['fenced, no language', '```\n{liveValue:treasuryFeeBps}\n```', 'literal'],
+    ['fenced, with language', '```js\n{liveValue:treasuryFeeBps}\n```', 'literal'],
+    ['indented code block', '    {liveValue:treasuryFeeBps}', 'literal'],
+    ['inline in paragraph', 'fee `{liveValue:treasuryFeeBps}` here', 'substituted'],
+    ['inline in list item', '- fee `{liveValue:treasuryFeeBps}` here', 'substituted'],
+    ['inline in blockquote', '> fee `{liveValue:treasuryFeeBps}` here', 'substituted'],
+    ['inline in heading', '## fee `{liveValue:treasuryFeeBps}`', 'substituted'],
+    ['inline in table cell', '| a |\n|---|\n| `{liveValue:treasuryFeeBps}` |', 'substituted'],
+    ['inline in bold', '**`{liveValue:treasuryFeeBps}`**', 'substituted'],
+    ['inline in link text', '[`{liveValue:treasuryFeeBps}`](https://example.com)', 'substituted'],
+  ];
+  for (const [name, markdown, expected] of constructs) {
+    const html = render(markdown);
+    const actual = html.includes('liveValue:') ? 'literal' : 'substituted';
+    check(
+      `${name} renders ${expected}`,
+      actual === expected,
+      `got ${actual}; the inline-vs-block signal does not hold for this construct:\n      ${html}`,
+    );
+  }
+}
+
+// 5. An unregistered knob must fall through to visible inline code
 //    rather than rendering a silently wrong value.
 {
   const html = render('Typo: `{liveValue:treasuryFeebps}`.');
@@ -116,11 +151,11 @@ function check(name: string, ok: boolean, detail: string) {
 
 if (failures.length > 0) {
   console.error(
-    `[check-live-value-render] FAILED — ${failures.length} of 5 checks\n${failures.join('\n')}\n`,
+    `[check-live-value-render] FAILED — ${failures.length} of 15 checks\n${failures.join('\n')}\n`,
   );
   process.exit(1);
 }
 
 console.log(
-  '[check-live-value-render] OK — inline tokens substitute, fenced blocks stay literal, unknown knobs stay visible',
+  '[check-live-value-render] OK — 15 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak',
 );
