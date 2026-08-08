@@ -21,7 +21,7 @@
  * skipped. H4+ are body-level and don't appear in the TOC.
  */
 
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { LiveValue, type KnobName } from '../components/docs/LiveValue';
 
 import { slugify } from './slugify';
@@ -196,6 +196,29 @@ function explicitAnchor(id: string | undefined, slug: string): ReactNode {
 const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
 
 /**
+ * True while rendering inside a `<pre>`, i.e. a FENCED code block.
+ *
+ * Why a context instead of react-markdown's `inline` prop (#1606)
+ * --------------------------------------------------------------
+ * The `code` interceptor below used to branch on `inline`, which
+ * react-markdown REMOVED in v9 (this app is on v10). The prop was
+ * therefore always `undefined`, the branch never ran, and every single
+ * `{liveValue:...}` token in the docs rendered as literal text —
+ * readers saw `Yield Fee — {liveValue:treasuryFeeBps}%`. Nothing
+ * caught it: the props type declared `inline?: boolean` locally next to
+ * an index signature, so an optional prop that is never passed
+ * type-checks cleanly forever.
+ *
+ * react-markdown still wraps fenced blocks in `<pre>` and leaves inline
+ * spans bare, so overriding `pre` to flip this flag reconstructs the
+ * distinction from structure rather than from a prop's existence. That
+ * also preserves the deliberate escape hatch: a FENCED block containing
+ * `{liveValue:foo}` renders literally, so the docs can describe this
+ * very mechanism.
+ */
+const InsideFencedBlock = createContext(false);
+
+/**
  * Like {@link headingComponents} plus a `code` interceptor that
  * recognises `{liveValue:knobName}` inline-code spans and renders the
  * `<LiveValue>` component in their place.
@@ -219,30 +242,61 @@ const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
  * chunk would force every chunk to re-render its tree on every parent
  * update.
  */
+interface CodeRendererProps {
+  children?: ReactNode;
+  [key: string]: unknown;
+}
+
+/**
+ * `<pre>` renderer that marks its subtree as a fenced block.
+ *
+ * Fenced code arrives as `<pre><code>…</code></pre>`, inline code as a
+ * bare `<code>`, so flagging here is what lets {@link MarkdownCode}
+ * tell the two apart (#1606).
+ */
+function FencedBlock({ children, ...rest }: CodeRendererProps) {
+  return (
+    <InsideFencedBlock.Provider value={true}>
+      <pre {...rest}>{children}</pre>
+    </InsideFencedBlock.Provider>
+  );
+}
+
+/**
+ * `<code>` renderer that swaps `{liveValue:knobName}` tokens for the
+ * live on-chain value, leaving fenced blocks untouched.
+ *
+ * NAMED IN PASCAL CASE ON PURPOSE. These are passed to ReactMarkdown as
+ * `pre` / `code`, and it would be tempting to write them inline as
+ * lowercase object properties — but this one calls a hook, and
+ * `react-hooks/rules-of-hooks` (wired into CI in #1521) rejects a hook
+ * inside a function whose name doesn't look like a component. The rule
+ * is right to: it has no way to know ReactMarkdown renders these as
+ * components. Declaring them as real components satisfies the linter
+ * without suppressing it.
+ */
+function MarkdownCode({ children, ...rest }: CodeRendererProps) {
+  // Unconditional — a conditional hook here would be exactly the defect
+  // #1521 fixed in this file's neighbourhood.
+  const fenced = useContext(InsideFencedBlock);
+  if (!fenced) {
+    const text = nodeToText(children);
+    const match = LIVE_VALUE_TOKEN_RE.exec(text);
+    if (match) {
+      return <LiveValue knob={match[1] as KnobName} />;
+    }
+  }
+  // Default — preserve native ReactMarkdown behaviour for every other
+  // inline-code span and every fenced code block.
+  return <code {...rest}>{children}</code>;
+}
+
 let _cachedMarkdownComponents: ReturnType<typeof buildMarkdownComponents> | null = null;
 function buildMarkdownComponents() {
   return {
     ...headingComponents(),
-    code: ({
-      inline,
-      children,
-      ...rest
-    }: {
-      inline?: boolean;
-      children?: ReactNode;
-      [key: string]: unknown;
-    }) => {
-      if (inline) {
-        const text = nodeToText(children);
-        const match = LIVE_VALUE_TOKEN_RE.exec(text);
-        if (match) {
-          return <LiveValue knob={match[1] as KnobName} />;
-        }
-      }
-      // Default — preserve native ReactMarkdown behaviour for every
-      // other inline-code span and every fenced code block.
-      return <code {...rest}>{children}</code>;
-    },
+    pre: FencedBlock,
+    code: MarkdownCode,
   };
 }
 export function markdownComponents() {

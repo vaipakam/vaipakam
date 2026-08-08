@@ -576,6 +576,11 @@ Governance-configuration visibility:
 - internal-match warning chips, threshold displays, route labels, priority-window copy, and terminal-state labels should derive from live config and indexed loan state rather than hardcoded constants.
 - VPFI unit displays should use the token contract's live `decimals()` value where available, with an 18-decimal fallback during transient read failures
 - raw wei-denominated config values such as VPFI tier thresholds should be converted through shared display helpers before reaching cards, tooltips, translated strings, or tier tables
+- long-form doc pages (overview, whitepaper, user guide, parameter reference) should be able to embed a governance-tunable value inline in their prose, so retuning a knob changes what the page says without editing the page
+- an embedded value should always resolve to a number for the reader: the live protocol read when it is available, and the compile-time default when it is not, so a page never displays its own placeholder syntax or an empty gap
+- a reader should be able to tell an embedded live value from surrounding prose, and confirm on hover whether the figure came from the chain or from a bundled default
+- an embedded value whose name is not recognised should render visibly as inline code rather than silently disappearing, so an authoring typo is obvious on the page instead of producing a confidently wrong number
+- a doc page that needs to DESCRIBE the embedding syntax itself should be able to show it literally inside a fenced code block without it being substituted
 
 Foundational frontend migration requirements:
 
