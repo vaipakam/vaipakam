@@ -6125,6 +6125,61 @@ library LibVaipakam {
         //   site; a release restores the chain's availability instead of
         //   stranding it (B3's release lesson applied to this draw).
         mapping(uint32 => uint256) chainRepatriationReleased;
+        // `repatAuthorizations` — BASE-ONLY: the terminal ledger for every
+        //   Mode-A instruction (§3.6a constraint 5). Keyed by the Base-local
+        //   `repatAuthNonce` id; the wire carries `(address(this), authId)`
+        //   so a rotated Base deployment's records can never collide with a
+        //   prior era's (5b's era binding — the RETURN must echo the issuing
+        //   deployment and the ingress accepts only its own).
+        mapping(uint256 => RepatriationAuthorization) repatAuthorizations;
+        // Monotonic id source for `repatAuthorizations`. First id is 1 —
+        //   0 stays "no authorization" everywhere.
+        uint256 repatAuthNonce;
+        // MIRROR-ONLY: the instruction state machine, ALL of it in Diamond
+        //   storage deliberately — §3.6a 5b/5c's rotation gaps came from
+        //   handler-local markers, and a stateless transport satellite
+        //   cannot recreate them. Key = keccak256(issuingBase, authId).
+        //   States: 0 none · 1 pending · 2 executed · 3 tombstoned.
+        //   Execution marker and tombstone are the SAME slot, so their
+        //   mutual exclusion (5c) is structural rather than checked.
+        mapping(bytes32 => uint8) repatInstructionState;
+        // MIRROR-ONLY: the instructed amount per instruction key — what the
+        //   execute step debits and declares, exactly (6a's Mode-A
+        //   exact-match binding reads it back at Base ingress).
+        mapping(bytes32 => uint256) repatInstructionAmount;
+        // MIRROR-ONLY: cumulative recycled value repatriated OUT of this
+        //   chain's bucket (§3.6a constraint 2a's monotonic outflow
+        //   counter). Enters the §7 #8 composition identity as its own
+        //   destination term — never `paidOutRecycled`, which means "reward
+        //   paid to users" and would book a payout that never happened.
+        uint256 recycleRepatriatedOutCumulative;
+        // BASE-ONLY: tracked shortfall per authorization id — a short Mode-A
+        //   arrival (fee-on-transfer on the return leg) closes the
+        //   authorization at its DECLARED amount with the gap recorded here,
+        //   never silently resized (§3.6a constraint 6a/7 interaction: the
+        //   source debit must not scale to `actualReceived`).
+        mapping(uint256 => uint256) repatShortfall;
+        // Transport satellites (constraint 3: the mirror Diamond is already
+        //   the buyback channel's one-to-one handler, so repatriation gets
+        //   its own satellites). Zero = C2 is DARK on this deployment: every
+        //   repatriation entry point reverts until the operator configures
+        //   them.
+        address repatriationSender; //   mirror-side outbound escrow/sender
+        address repatriationReceiver; // Base-side inbound endpoint
+    }
+
+    /// @notice #1568 C2 Mode A — one planned-surplus repatriation
+    ///         authorization (§3.6a constraint 5's terminal ledger entry).
+    /// @dev    `status`: 0 none · 1 pending · 2 settled (return arrived and
+    ///         closed it) · 3 released (authenticated cancellation ACK —
+    ///         the ONLY release path; proven non-execution is not one, 5c).
+    ///         Packed: status+chain+timestamp share a slot; amount takes the
+    ///         second.
+    struct RepatriationAuthorization {
+        uint8 status;
+        uint32 dstChainId;
+        uint64 issuedAt;
+        uint256 amount;
     }
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled figures for one

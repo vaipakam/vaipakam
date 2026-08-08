@@ -225,7 +225,16 @@ library LibVpfiRecycle {
         // bucket → `paidOutRecycled` — but saturate anyway so a future path
         // that decremented the bucket without this counter degrades to a
         // conservative under-report instead of reverting every day-close.
-        uint256 gross = s.recycleBucket + s.paidOutRecycled;
+        // #1568 C2 — repatriated-out value stays IN the floor: it was
+        // credited (absorbed) here exactly once before leaving for Base, so
+        // a floor that dropped with the bucket on a healthy repatriation
+        // could fall BELOW an earlier report on an unseeded upgraded
+        // Diamond (§3.6a constraint 2a — the seed-before-debit step in
+        // {debitRepatriationSurplus} closes the same gap from the other
+        // side).
+        uint256 gross = s.recycleBucket +
+            s.paidOutRecycled +
+            s.recycleRepatriatedOutCumulative;
         uint256 relocated = s.recycleCustodyRelocatedCumulative;
         uint256 preUpgradeFloor = gross > relocated ? gross - relocated : 0;
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
@@ -667,6 +676,58 @@ library LibVpfiRecycle {
      *         amounts (redesign ceil-dust rule), and a payout that the
      *         claim math authorized must not brick on ledger dust.
      */
+    /// @notice #1568 C2 Mode A — a repatriation may take only genuinely
+    ///         un-reserved surplus. The fundable slice nets the bucket
+    ///         against outstanding claim commitments and the keeper
+    ///         earmark, and the requested amount exceeded it.
+    error RepatriationExceedsFundable(uint256 requested, uint256 fundable);
+
+    /**
+     * @notice #1568 C2 Mode A (§3.6a constraint 2) — the DEDICATED
+     *         planned-surplus debit: moves `amount` out of the recycle
+     *         bucket for repatriation to the canonical chain.
+     * @dev    Deliberately NOT {consume}: consume also retires claim
+     *         commitments and advances `paidOutRecycled`, so calling it for
+     *         a surplus repatriation while live claim commitments exist
+     *         would retire those claims and book a reward payout that never
+     *         happened (constraint 2 verbatim). This primitive touches
+     *         exactly two ledger slots — the bucket, and the monotonic
+     *         repatriated-outflow counter that carries the movement through
+     *         the §7 #8 composition identity and {creditedCumulative}'s
+     *         floor (constraint 2a) — after the same seed-before-debit
+     *         snapshot {creditCustodyRelocated} performs, and for the same
+     *         reason: debiting an unseeded upgraded Diamond's bucket first
+     *         would let the next derived cumulative fall below an earlier
+     *         report.
+     *
+     *         Reverts {RepatriationExceedsFundable} instead of flooring:
+     *         unlike {consume}'s dust case, nothing authorizes spending
+     *         claim backing or the keeper earmark here, and a failed
+     *         execute is retryable after commitments retire.
+     */
+    function debitRepatriationSurplus(
+        LibVaipakam.Storage storage s,
+        uint256 amount
+    ) internal {
+        uint256 bucket = s.recycleBucket;
+        uint256 reserved = s.outstandingCommitRecycled +
+            s.recycleKeeperBudget;
+        uint256 fundable = bucket > reserved ? bucket - reserved : 0;
+        if (amount > fundable) {
+            revert RepatriationExceedsFundable(amount, fundable);
+        }
+        // Seed-before-debit (#1448 r3 idiom; constraint 2a). Read BEFORE
+        // the bucket write, or the departing value would be dropped from
+        // the seed.
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
+        s.recycleAccountingSeeded = true;
+        s.recycleBucket = bucket - amount;
+        s.recycleRepatriatedOutCumulative += amount;
+    }
+
     function consume(uint256 amount) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
