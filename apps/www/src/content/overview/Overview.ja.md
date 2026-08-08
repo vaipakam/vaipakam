@@ -75,9 +75,9 @@ Acceptされた瞬間に:
   戻す権利」を表します
 - Loan clockが動き始めます
 
-Loaned amountから小さな**Loan Initiation Fee (0.1%)**が差し引かれ、
+Loaned amountから小さな**Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**が差し引かれ、
 protocol treasuryへ送られます。そのためborrowerが受け取るのは
-1,000 USDCではなく999 USDCです。（このfeeを**VPFI**で支払うことも
+1,000 USDCではなく998 USDCです。（このfeeを**VPFI**で支払うことも
 でき、その場合borrowerは1,000 USDCを全額受け取ります — VPFIについては
 後述します。）
 
@@ -92,12 +92,12 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 borrowerが**Repay**をclickし、transactionにsignすると、1,006.58
 USDCがloan settlementへ移動します。そこから:
 
-- あなたは**1,005.51 USDC**を受け取ります（principal + interest
-  から、interest部分にのみかかる1% Yield Feeを差し引いた額）
-- Treasuryは**1.07 USDC**をYield Feeとして受け取ります
+- あなたは**1,006.45 USDC**を受け取ります（principal + interest
+  から、interest部分にのみかかる`{liveValue:treasuryFeeBps}`% Yield Feeを差し引いた額）
+- Treasuryは**0.13 USDC**をYield Feeとして受け取ります
 - BorrowerのWETHはunlockされます
 
-dashboardに**Claim** buttonが表示されます。clickすると、1,005.51
+dashboardに**Claim** buttonが表示されます。clickすると、1,006.45
 USDCがsettlementからあなたのwalletへ移動します。borrowerもclaimすると、
 WETHが相手のwalletへ戻ります。これでloanはcloseされます。
 
@@ -199,10 +199,10 @@ Feesは2つだけで、どちらも小さいものです。
 - **Yield Fee — `{liveValue:treasuryFeeBps}`%** lenderとして得る
   **interest**の割合です（principalの割合ではありません）。1,000 USDC、
   30-day、8% APRのloanでは、lenderは約6.58 USDCのinterestを得て、
-  そのうちdefault rateで約0.066 USDCがYield Feeになります。
+  そのうちdefault rateで約0.132 USDCがYield Feeになります。
 - **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**
   lending amountの割合で、origination時にborrowerが支払います。
-  1,000 USDC loanならdefault rateで1 USDCです。
+  1,000 USDC loanならdefault rateで2 USDCです。
 
 どちらのfeeも、vaultにVPFIをholdすることで**最大
 `{liveValue:tier4DiscountBps}`% discount**を受けられます（下記参照）。
@@ -300,7 +300,7 @@ chainsの間でrewardsをfairにするため）。
 2. **Offer Book**で、自分のcollateralと支払えるAPRに合うofferを
    browseします。
 3. **Accept**をclickし、2つのtransactionsにsignすると、loan amount
-   がwalletに入ります（0.1% Loan Initiation Feeを差し引いた額）。
+   がwalletに入ります（`{liveValue:loanInitiationFeeBps}`% Loan Initiation Feeを差し引いた額）。
 4. due date plus grace periodまでにrepayします。collateralはunlock
    され、walletに戻ります。
 

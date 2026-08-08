@@ -78,8 +78,8 @@ Accept होते ही:
   वापस मिलना है"
 - Loan clock चलना शुरू हो जाता है
 
-Loaned amount से एक छोटी **Loan Initiation Fee (0.1%)** ली जाती है और
-protocol treasury को भेजी जाती है। इसलिए borrower को 1,000 नहीं, 999
+Loaned amount से एक छोटी **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** ली जाती है और
+protocol treasury को भेजी जाती है। इसलिए borrower को 1,000 नहीं, 998
 USDC मिलते हैं। (आप fee को **VPFI** में pay कर सकते हैं; तब borrower
 को पूरे 1,000 मिलते हैं — VPFI के बारे में नीचे और है।)
 
@@ -95,13 +95,13 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 वह **Repay** पर click करता है, transaction sign करता है, और 1,006.58
 USDC loan settlement में move होते हैं। इसमें से:
 
-- आपको **1,005.51 USDC** मिलते हैं (principal + interest, interest
-  वाले हिस्से पर केवल 1% Yield Fee घटाकर)
-- Treasury को **1.07 USDC** Yield Fee के रूप में मिलते हैं
+- आपको **1,006.45 USDC** मिलते हैं (principal + interest, interest
+  वाले हिस्से पर केवल `{liveValue:treasuryFeeBps}`% Yield Fee घटाकर)
+- Treasury को **0.13 USDC** Yield Fee के रूप में मिलते हैं
 - Borrower का WETH unlock हो जाता है
 
 आपके dashboard पर **Claim** button दिखता है। आप click करते हैं और
-1,005.51 USDC settlement से आपके wallet में move हो जाते हैं।
+1,006.45 USDC settlement से आपके wallet में move हो जाते हैं।
 Borrower claim करता है, उसका WETH उसके wallet में लौटता है, और loan
 close हो जाता है।
 
@@ -207,10 +207,10 @@ accept नहीं करने देगा।
 - **Yield Fee — `{liveValue:treasuryFeeBps}`%** उस **interest** का
   जो आप lender के रूप में कमाते हैं (principal का नहीं)। 1,000 USDC
   के 30-day 8% APR loan पर lender ~6.58 USDC interest कमाता है,
-  जिसमें से ~0.066 USDC default rate पर Yield Fee है।
+  जिसमें से ~0.132 USDC default rate पर Yield Fee है।
 - **Loan Initiation Fee — `{liveValue:loanInitiationFeeBps}`%**
   lending amount का, origination पर borrower द्वारा paid। 1,000 USDC
-  loan पर यह default rate पर 1 USDC है।
+  loan पर यह default rate पर 2 USDC है।
 
 दोनों fees को vault में VPFI hold करके **`{liveValue:tier4DiscountBps}`%
 तक discount** किया जा सकता है (नीचे देखें)। Default या liquidation पर
@@ -313,7 +313,7 @@ loan Arbitrum पर ही settle होता है। Cross-chain debt न�
 2. **Offer Book** में ऐसी offer browse करें जो आपके collateral और
    आपके pay कर सकने वाले APR से match करती हो।
 3. **Accept** पर click करें, दो transactions sign करें, और loan amount
-   आपके wallet में आ जाता है (0.1% Loan Initiation Fee घटाकर)।
+   आपके wallet में आ जाता है (`{liveValue:loanInitiationFeeBps}`% Loan Initiation Fee घटाकर)।
 4. Due date plus grace period से पहले repay करें। आपका collateral
    unlock होकर आपके wallet में वापस आ जाता है।
 

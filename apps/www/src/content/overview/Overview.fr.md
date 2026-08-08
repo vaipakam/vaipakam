@@ -83,9 +83,9 @@ Au moment où l'acceptation se déclenche :
   remboursement »
 - Le compteur du prêt démarre
 
-De modestes **frais d'initiation du prêt (0,1 %)** sont prélevés sur
+De modestes **frais d'initiation du prêt (`{liveValue:loanInitiationFeeBps}` %)** sont prélevés sur
 le montant prêté et dirigés vers le trésor du protocole. L'emprunteur
-reçoit donc 999 USDC, pas 1 000. (Vous pouvez payer ces frais en
+reçoit donc 998 USDC, pas 1 000. (Vous pouvez payer ces frais en
 **VPFI** à la place et l'emprunteur reçoit alors les 1 000 complets
 — plus de détails sur VPFI ci-dessous.)
 
@@ -101,13 +101,13 @@ Intérêts = 1 000 USDC × 8 % × (30 / 365) = ~6,58 USDC
 Il clique sur **Rembourser**, signe une transaction, et 1 006,58 USDC
 arrivent dans le règlement du prêt. À partir de là :
 
-- Vous recevez **1 005,51 USDC** (principal + intérêts, moins une
-  commission de rendement de 1 % appliquée uniquement aux intérêts)
-- Le trésor reçoit **1,07 USDC** au titre de la commission de rendement
+- Vous recevez **1 006,45 USDC** (principal + intérêts, moins une
+  commission de rendement de `{liveValue:treasuryFeeBps}` % appliquée uniquement aux intérêts)
+- Le trésor reçoit **0,13 USDC** au titre de la commission de rendement
 - Le WETH de l'emprunteur est déverrouillé
 
 Vous voyez un bouton **Réclamer** sur votre tableau de bord. Vous
-cliquez et les 1 005,51 USDC passent du règlement à votre
+cliquez et les 1 006,45 USDC passent du règlement à votre
 portefeuille. L'emprunteur clique sur réclamer et son WETH revient
 dans son portefeuille. Le prêt est clôturé.
 
@@ -220,11 +220,11 @@ Deux frais, tous les deux modestes :
 - **Commission de Rendement — `{liveValue:treasuryFeeBps}` %** des
   **intérêts** que vous gagnez en tant que prêteur (pas du
   principal). Sur un prêt à 30 jours à 8 % APR de 1 000 USDC, le
-  prêteur gagne ~6,58 USDC d'intérêts, dont ~0,066 USDC sont la
+  prêteur gagne ~6,58 USDC d'intérêts, dont ~0,132 USDC sont la
   Commission de Rendement au taux par défaut.
 - **Frais d'Initiation du Prêt — `{liveValue:loanInitiationFeeBps}` %**
   du montant prêté, payés par l'emprunteur à l'origination. Sur un
-  prêt de 1 000 USDC, c'est 1 USDC au taux par défaut.
+  prêt de 1 000 USDC, c'est 2 USDC au taux par défaut.
 
 Les deux frais peuvent bénéficier d'une **remise allant jusqu'à
 `{liveValue:tier4DiscountBps}` %** en détenant du VPFI en vault
@@ -335,7 +335,7 @@ Si vous voulez **emprunter** :
    correspond à votre garantie et à l'APR que vous pouvez payer.
 3. Cliquez sur **Accepter**, signez deux transactions, et vous
    recevez le montant du prêt dans votre portefeuille (moins les
-   Frais d'Initiation de 0,1 %).
+   Frais d'Initiation de `{liveValue:loanInitiationFeeBps}` %).
 4. Remboursez avant la date d'échéance plus la période de grâce.
    Votre garantie repart vers votre portefeuille.
 
