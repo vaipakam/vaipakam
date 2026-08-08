@@ -609,6 +609,16 @@ challenged and stand.
    authenticated channel selection. This is a **transport-layer** decision and
    it gates both modes.
 
+   > **RESOLVED by the C2 transport slice (#1568 part 2): the dedicated
+   > sender/escrow.** The shared `vpfi-return` channel is handled by
+   > `VpfiReturnSender` on each mirror (Diamond-only send surfaces; a pure
+   > transport escrow whose tokens pass through within one transaction, so
+   > a failed send strands nothing) and by the kind-dispatching
+   > `VpfiReturnReceiver` on Base. The authenticated-channel-selection
+   > alternative was NOT taken — every lifecycle marker stays in Diamond
+   > storage per 5b/5c, and the satellites stay stateless. Mode B joins
+   > the same channel with its own {ReturnWire} kind.
+
 **On reservations and ordering:**
 
 4. **A stranded compensation must be RESERVED on arrival, not left

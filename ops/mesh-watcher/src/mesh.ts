@@ -8,8 +8,8 @@
  * "all clear" for chains it never looked at.
  */
 
-import type { Address, PublicClient } from 'viem';
-import { REWARD_AGGREGATOR_ABI } from './abi';
+import type { Abi, Address, PublicClient } from 'viem';
+import { REPATRIATION_ABI, REWARD_AGGREGATOR_ABI } from './abi';
 import {
   isCoverageGap,
   resolveChain,
@@ -44,10 +44,11 @@ async function readView<T>(
   functionName: string,
   args: readonly unknown[] = [],
   blockNumber?: bigint,
+  abi: Abi = REWARD_AGGREGATOR_ABI,
 ): Promise<T> {
   const result = await client.readContract({
     address,
-    abi: REWARD_AGGREGATOR_ABI,
+    abi,
     functionName,
     args: args as never,
     // Pin to ONE block when the caller supplies it. Related ledger fields
@@ -62,11 +63,56 @@ async function readView<T>(
   return result as T;
 }
 
+/**
+ * Whether a failed repatriation-view read reverted at the CONTRACT (the
+ * selector does not exist in the current cut) as opposed to failing in
+ * transport.
+ *
+ * Used for GAP WORDING ONLY — never to substitute a value. An earlier
+ * revision inferred "missing selector ⇒ pre-C2 deployment ⇒ the value is
+ * known-zero", which is wrong under a PARTIAL FACET REFRESH (Codex #1618
+ * r5): Diamond storage persists across cuts, so a post-C2 Diamond whose
+ * refresh dropped the repatriation facet has a nonzero draw/outflow in
+ * storage behind a reverting view. Selector absence identifies the
+ * current CUT, not the deployment's history — the value is UNKNOWN
+ * either way, and every dependent check skips. Exported for direct
+ * testing — the catch branches that use it do I/O.
+ */
+export function isMissingSelector(err: unknown): boolean {
+  return classify(err).kind === 'contract-revert';
+}
+
+/**
+ * Build the gap for an unreadable Base-side repatriation-draw view.
+ *
+ * Exported for the same reason as {@link compositionUnavailableGap}: the
+ * catch branch does I/O-adjacent work a unit test must reach directly.
+ */
+export function repatDrawUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getChainRepatriationDraw');
+  const preC2 = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'base-books-repat',
+    detail:
+      `getChainRepatriationDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The draw is UNKNOWN this tick, so the availability-formula and repat-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation).\n\n` +
+      (preC2
+        ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
 /** Base's books for one chain — three views, read together. */
 async function readBaseBooks(
   canonical: ChainTarget,
   chainId: number,
   blockNumber: bigint,
+  gaps: CoverageGap[],
 ): Promise<BaseChainBooks> {
   const [ledger, retirement, outstanding] = await Promise.all([
     readView<readonly [bigint, bigint, bigint, bigint]>(
@@ -92,6 +138,34 @@ async function readBaseBooks(
     ),
   ]);
 
+  // #1568 C2 — the repatriation draw pair, OUTSIDE the `Promise.all` above
+  // for the same reason `getRecycleCompositionPosition` reads separately
+  // on the local side: this is a NEWER facet's selector, and a canonical
+  // Diamond missed during a refresh must cost only the checks that need
+  // it, not the whole chain's books. Same pinned block — the draw slot
+  // and the availability view move in one transaction.
+  let repat: BaseChainBooks['repat'];
+  try {
+    const draw = await readView<readonly [bigint, bigint]>(
+      canonical.client,
+      canonical.diamond,
+      'getChainRepatriationDraw',
+      [chainId],
+      blockNumber,
+      REPATRIATION_ABI,
+    );
+    repat = { netDraw: draw[0], lifetimeReleased: draw[1] };
+  } catch (err) {
+    // The draw is UNKNOWN on ANY failure — including a missing selector
+    // (Codex #1618 r5): storage persists across facet cuts, so a partial
+    // refresh that dropped the facet leaves a nonzero draw behind a
+    // reverting view, and a zero substitute would page a false CRITICAL.
+    // The dependent checks skip; the gap below names which, and whether
+    // the cause was the cut or transport.
+    repat = undefined;
+    gaps.push(repatDrawUnavailableGap(chainId, err));
+  }
+
   return {
     chainId,
     reported: ledger[0],
@@ -101,6 +175,7 @@ async function readBaseBooks(
     retired: retirement[0],
     released: retirement[1],
     outstanding,
+    repat,
   };
 }
 
@@ -126,6 +201,30 @@ interface LocalRead {
  * catch branch is otherwise unreachable from a unit test — which is exactly
  * how the missing gap survived review (#1448 r3).
  */
+/**
+ * Build the gap for an unreadable chain-local repatriation position.
+ *
+ * Exported for direct testing, like {@link compositionUnavailableGap}.
+ */
+export function repatPositionUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getRepatriationPosition');
+  const preC2 = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'own-ledger-repat',
+    detail:
+      `getRepatriationPosition() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The repatriated-out cumulative is UNKNOWN this tick, so bucket composition and the reported-cumulative re-derivation for this chain did NOT run (substituting zero would page a false CRITICAL after any real repatriation).\n\n` +
+      (preC2
+        ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
 export function compositionUnavailableGap(
   chainId: number,
   err: unknown,
@@ -213,6 +312,30 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     viewGaps.push(compositionUnavailableGap(target.chainId, err));
   }
 
+  // #1568 C2 — the repatriated-outflow cumulative, separately for the same
+  // newer-facet reason as the composition read above, at the same pinned
+  // block. `undefined` (view unavailable) and `0n` (facet present, nothing
+  // repatriated) are deliberately distinct: the first reports a coverage
+  // gap, the second is just a healthy figure.
+  let repatriatedOut: bigint | undefined;
+  try {
+    const pos = await readView<readonly [bigint, Address, Address, bigint]>(
+      target.client,
+      target.diamond,
+      'getRepatriationPosition',
+      [],
+      blockNumber,
+      REPATRIATION_ABI,
+    );
+    repatriatedOut = pos[0];
+  } catch (err) {
+    // UNKNOWN on ANY failure, missing selector included — same partial-
+    // refresh reasoning as the Base-side draw read (Codex #1618 r5). The
+    // composition / derivation checks skip for this chain.
+    repatriatedOut = undefined;
+    viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
+  }
+
   return {
     ledger: {
     // The freshness brand is applied by `observeMesh` after validation —
@@ -228,6 +351,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     outstandingRecycled: governor[2],
     paidOutRecycled: governor[3],
     composition,
+    repatriatedOut,
     observedAt: block.timestamp,
     },
     gaps: viewGaps,
@@ -404,7 +528,7 @@ export async function observeMesh(
   // unevaluated and undelivered (Codex #1443 r6). A rejected chain
   // becomes a coverage gap; the rest are still checked.
   const bookResults = await Promise.allSettled(
-    chainIds.map((id) => readBaseBooks(canonical, id, canonicalBlock)),
+    chainIds.map((id) => readBaseBooks(canonical, id, canonicalBlock, gaps)),
   );
   const books: BaseChainBooks[] = [];
   bookResults.forEach((result, i) => {

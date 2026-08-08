@@ -1137,7 +1137,7 @@ Founder and contributor compensation:
 - genesis founder, team, early-contributor, and ecosystem grants should use per-grantee vesting wallets with the approved cliff and linear-release terms
 - real genesis funding actions, including founder grants and salary-stream activation, should remain gated on legal sign-off before token generation
 
-### 9b. Planned-surplus repatriation — authorization accounting (dark until transport is configured)
+### 9b. Planned-surplus repatriation (dark until transport is configured)
 
 The platform can deliberately move a mirror chain's surplus recycled value
 back to the canonical chain. The intended accounting behaviour, independent
@@ -1169,8 +1169,60 @@ of any implementation:
 - a mirror may only ever part with genuinely **un-reserved** surplus — value
   backing outstanding claim commitments or the keeper earmark is never
   movable
+- an authorization and its execution are additionally bounded by the
+  lane's **live transfer capacity, read from the transport itself at the
+  moment of each check** — the canonical chain checks its inbound limit
+  at issuance, the mirror checks its outbound limit before the
+  irreversible execution step: a single transfer above either side's
+  capacity would be rejected permanently by the transport rather than
+  queued, leaving the authorization able only to strand its draw until
+  cancellation, so an over-capacity request is refused before it can
+  commit anything. The whole reference chain is resolved live — the
+  transport's token registry names the active transfer contract, which
+  must confirm it carries the lane before its limit is read — so a
+  transfer-contract upgrade binds at the very next check, a removed
+  lane refuses rather than reading as unlimited, capacity changes bind
+  immediately with no re-arming ceremony, and a deployment whose
+  transport references are unconfigured refuses rather than passes
+  (fail-closed, like every other unarmed repatriation surface). The
+  destination a transfer was checked against is the destination used —
+  the sending endpoint carries no destination of its own
 - the entire surface is **inert on any deployment where the repatriation
   transport is not explicitly configured**
+
+The intended transport behaviour, equally implementation-independent:
+
+- carrying an issued authorization to its target chain is **open to anyone
+  and repeatable**: the instruction's content comes entirely from the
+  stored authorization (issuing was the privileged act), the mirror records
+  a given instruction at most once, and a lost or delayed message is
+  recovered by simply sending again — no operator-only recovery step exists
+- executing a recorded instruction on the mirror is likewise **open to
+  anyone willing to pay the delivery fee**, happens **at most once**, and
+  moves only the un-reserved surplus bound above; a failed execution
+  attempt leaves the instruction intact and retryable
+- requesting cancellation is a **deliberate operator act** (like issuing);
+  the mirror marks the instruction dead — including an instruction it never
+  received, so a late-arriving instruction lands on a closed record — and
+  then anyone may carry the mirror's confirmation back. Cancellation and
+  execution can never both happen for one instruction: the two outcomes
+  are recorded in one mutually-exclusive place
+- return traffic travels over **one shared return channel** whose message
+  kinds are independent wire protocols: a receiver that does not yet know
+  a kind must refuse the delivery in a way that keeps it re-deliverable
+  after upgrade, so a partial rollout can never book a return under the
+  wrong meaning. Future return flows (the stranded-value recovery path)
+  join the same channel as new kinds, never by reinterpreting an existing
+  one
+- both channel endpoints sit under the same guardian fast-pause discipline
+  as every other cross-chain surface, and a paused endpoint fails
+  deliveries in the re-deliverable way, never destructively
+- the operator monitoring layer must account for repatriation wherever it
+  re-derives availability or bucket composition: live draws reduce a
+  chain's offerable availability, authorized draws must never exceed what
+  a chain reported holding net of funding instructions, and repatriated
+  value counts as a bucket destination — while a deployment that predates
+  the feature is reported as a visible coverage gap, not a false alarm
 
 ---
 

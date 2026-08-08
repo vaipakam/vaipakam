@@ -1071,7 +1071,10 @@ EOF
 # limits, and the TokenAdminRegistry CCT registration.
 # `ConfigureCcip.s.sol` reads EVERY chain's addresses.json, so run this
 # phase only after the `contracts` phase has landed on every chain in
-# the topology. Run it once per chain.
+# the topology. Run it once per chain, in any order (#1568 C2: the
+# repatriation lane-capacity bounds read each chain's own pool limiter
+# LIVE, so no per-lane ceilings are derived or ordered here — the only
+# repatriation wiring is setRepatriationTokenAdminRegistry).
 #
 # CCIP has no per-chain DVN policy — Chainlink operates a uniform
 # committing DON + executing DON + an independent Risk Management
@@ -1852,7 +1855,12 @@ phase_pause_rehearsal() {
   # #776 — the mirror rewardRemittanceReceiver is GuardianPausable; include it
   # so the rehearsal exercises the same pause surface production uses (missing
   # keys are skipped by the `// empty` filter below, so Base is unaffected).
-  for KEY in diamond ccipMessenger rewardMessenger rewardRemittanceReceiver; do
+  # #1568 C2 (Codex #1618 r3) — likewise the vpfi-return channel endpoints
+  # (VpfiReturnSender on mirrors / VpfiReturnReceiver on Base): the rehearsal
+  # must exercise the same endpoint-local pause the production sweep now
+  # verifies, or a rehearsal "all paused" proves less than production needs.
+  for KEY in diamond ccipMessenger rewardMessenger rewardRemittanceReceiver \
+             vpfiReturnSender vpfiReturnReceiver; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
     # Legacy fallback: pre-PR #272 artifacts stored the reward messenger
     # under the LayerZero-era key `rewardOApp`. Same pattern as

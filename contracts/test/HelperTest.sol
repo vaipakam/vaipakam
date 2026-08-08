@@ -88,7 +88,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](151);
+        selectors = new bytes4[](152);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -139,6 +139,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRecycleKeeperBudgetRaw.selector;
         selectors[n++] =
             TestMutatorFacet.debitRepatriationSurplusRaw.selector;
+        // #1618 r6 — selector-registry pointer for the live lane bound.
+        selectors[n++] =
+            TestMutatorFacet.setCrossChainMessengerRaw.selector;
         // #1222 M3 B2-d3 — per-chain remit split for the netting identity.
         selectors[n++] =
             TestMutatorFacet.chainRewardBudgetSplitForDayRaw.selector;
@@ -2157,7 +2160,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](16);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2168,6 +2171,17 @@ contract HelperTest {
         selectors[5] = RepatriationFacet.getRepatriationAuthorization.selector;
         selectors[6] = RepatriationFacet.getChainRepatriationDraw.selector;
         selectors[7] = RepatriationFacet.getRepatriationPosition.selector;
+        // #1568 C2 transport slice — dispatch/execute/cancel surfaces.
+        selectors[8] = RepatriationFacet.sendRepatriationInstruction.selector;
+        selectors[9] = RepatriationFacet.requestRepatriationCancel.selector;
+        selectors[10] = RepatriationFacet
+            .onRepatriationCancelInstructionReceived
+            .selector;
+        selectors[11] = RepatriationFacet.executeRepatriation.selector;
+        selectors[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
+        selectors[13] = RepatriationFacet.getRepatriationInstruction.selector;
+        selectors[14] = RepatriationFacet.setRepatriationTokenAdminRegistry.selector;
+        selectors[15] = RepatriationFacet.getRepatriationTokenAdminRegistry.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

@@ -1,11 +1,91 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {RateLimiter} from "@chainlink/contracts-ccip/contracts/libraries/RateLimiter.sol";
+
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+
+/// @dev The slice of {VaipakamRewardMessenger} the Base-side dispatch
+///      surfaces drive — the two #1568 C2 instruction kinds.
+interface IRepatRewardMessenger {
+    function sendRepatriationInstruction(
+        uint256 dstChainId,
+        uint256 authId,
+        uint256 amount,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    function sendRepatriationCancel(
+        uint256 dstChainId,
+        uint256 authId,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+}
+
+/// @dev The slice of {CcipMessenger}'s registry the lane-capacity bounds
+///      read — the chainId → CCIP-selector mapping ConfigureCcip wires.
+interface ICcipSelectorRegistry {
+    function chainSelectorOf(uint256 chainId) external view returns (uint64);
+}
+
+/// @dev The slice of the CCIP TokenAdminRegistry the lane-capacity bounds
+///      read — token → ACTIVE pool. Resolving the pool here, live, is
+///      what makes a CCT pool rotation (TokenAdminRegistry.setPool)
+///      auto-track: there is no stored pool address to go stale (r7).
+interface ITokenAdminRegistryView {
+    function getPool(address token) external view returns (address);
+}
+
+/// @dev The slice of the CCIP VPFI TokenPool the lane-capacity bounds
+///      read — lane membership + the LIVE per-lane limiter state. The
+///      struct comes from the pinned CCIP library itself, never a
+///      hand-typed copy, so the decode shape cannot drift from the
+///      audited pool's.
+interface IVpfiPoolRateLimitView {
+    function isSupportedChain(uint64 remoteChainSelector)
+        external
+        view
+        returns (bool);
+
+    function getCurrentInboundRateLimiterState(uint64 remoteChainSelector)
+        external
+        view
+        returns (RateLimiter.TokenBucket memory);
+
+    function getCurrentOutboundRateLimiterState(uint64 remoteChainSelector)
+        external
+        view
+        returns (RateLimiter.TokenBucket memory);
+}
+
+/// @dev The slice of {VpfiReturnSender} the mirror-side surfaces drive —
+///      the shared return channel's Mode-A send legs. The DESTINATION is
+///      threaded from this facet on every call (r7): the facet just
+///      checked the lane's live capacity against `s.baseChainId`, and a
+///      second destination copy inside the satellite could diverge from
+///      the one that was checked — so the satellite carries none.
+interface IVpfiReturnSender {
+    function sendRepatriationReturn(
+        uint256 dstChainId,
+        address issuingBase,
+        uint256 authId,
+        uint256 amount,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    function sendRepatriationCancelAck(
+        uint256 dstChainId,
+        address issuingBase,
+        uint256 authId,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+}
 
 /**
  * @title  RepatriationFacet
@@ -45,16 +125,22 @@ import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
  *         ingresses accept only `issuingBase == address(this)` — a rotated
  *         deployment's records can never collide with a prior era's.
  *
- *         The transport slice (mirror sender/escrow satellite, kind-
- *         dispatching Base receiver, `executeRepatriation`, the messenger
- *         instruction kind and the shared-channel rollout tests) follows in
- *         its own PR; this facet is the ledger it will drive.
+ *         The transport rides two seams: the Base→mirror instruction kinds
+ *         on {VaipakamRewardMessenger} (kinds 8/9 — this facet's
+ *         `sendRepatriationInstruction` / `requestRepatriationCancel`
+ *         dispatch them, its two `on…InstructionReceived` ingresses land
+ *         them), and the shared mirror→Base `vpfi-return` channel
+ *         (`VpfiReturnSender` escrow on the mirror, kind-dispatching
+ *         `VpfiReturnReceiver` on Base — see {ReturnWire} for why each mode
+ *         is its own wire protocol on that one channel).
  */
 contract RepatriationFacet is
     DiamondAccessControl,
     DiamondReentrancyGuard,
     DiamondPausable
 {
+    using SafeERC20 for IERC20;
+
     // ── Authorization status values (LibVaipakam.RepatriationAuthorization) ─
     uint8 private constant AUTH_NONE = 0;
     uint8 private constant AUTH_PENDING = 1;
@@ -107,6 +193,62 @@ contract RepatriationFacet is
     ///         the facet to dark.
     event RepatriationEndpointsSet(address sender, address receiver);
 
+    /// @notice The CCIP TokenAdminRegistry the lane-capacity bounds
+    ///         resolve the active pool through was (re)configured.
+    ///         Zeroing it re-darkens the bounded surfaces.
+    event RepatriationTokenAdminRegistrySet(
+        address previousRegistry,
+        address newRegistry
+    );
+
+    /// @notice Base dispatched (or re-dispatched) the cross-chain instruction
+    ///         for a pending authorization.
+    /// @custom:event-category informational/reward-transport
+    event RepatriationInstructionDispatched(
+        uint256 indexed authId,
+        uint32 indexed dstChainId,
+        uint256 amount,
+        bytes32 messageId
+    );
+
+    /// @notice Base dispatched (or re-dispatched) a cancellation instruction
+    ///         for a pending authorization. The authorization stays PENDING
+    ///         until the mirror's ACK arrives — dispatching the request is
+    ///         not the release (§3.6a constraint 5c).
+    /// @custom:event-category informational/reward-transport
+    event RepatriationCancelDispatched(
+        uint256 indexed authId,
+        uint32 indexed dstChainId,
+        bytes32 messageId
+    );
+
+    /// @notice Mirror tombstoned an instruction on a Base cancellation —
+    ///         terminal, mutually exclusive with execution (one shared slot).
+    /// @custom:event-category state-change/treasury-mutation
+    event RepatriationInstructionTombstoned(
+        address indexed issuingBase,
+        uint256 indexed authId
+    );
+
+    /// @notice Mirror executed a repatriation instruction: the bucket
+    ///         surplus was debited and the VPFI left on the return channel.
+    /// @custom:event-category state-change/treasury-mutation
+    event RepatriationExecuted(
+        address indexed issuingBase,
+        uint256 indexed authId,
+        uint256 amount,
+        bytes32 messageId
+    );
+
+    /// @notice Mirror sent (or re-sent) the cancellation ACK for a
+    ///         tombstoned instruction over the return channel.
+    /// @custom:event-category informational/reward-transport
+    event RepatriationCancelAckDispatched(
+        address indexed issuingBase,
+        uint256 indexed authId,
+        bytes32 messageId
+    );
+
     // ── Errors ──────────────────────────────────────────────────────────────
 
     /// @notice C2's transport is not configured on this deployment — the
@@ -122,6 +264,15 @@ contract RepatriationFacet is
     error RepatriationInvalidRequest();
     /// @notice The draw exceeds the chain's current recycled availability.
     error RepatriationExceedsAvailability(uint256 requested, uint256 available);
+    /// @notice The amount exceeds the lane's LIVE limiter capacity (read
+    ///         from the VPFI TokenPool at the moment of the check) — a
+    ///         single return message above capacity is rejected
+    ///         permanently by CCIP, never queued behind refill, so it
+    ///         could only ever strand the authorization's draw.
+    error RepatriationExceedsLaneCapacity(uint256 requested, uint256 capacity);
+    /// @notice The messenger's registry has no CCIP selector for this
+    ///         chain pair — the lane is not wired; fail closed.
+    error RepatriationLaneUnknown(uint256 chainId);
     /// @notice The referenced authorization is not in the required state.
     error RepatriationAuthNotPending(uint256 authId, uint8 status);
     /// @notice The return/cancel names a different issuing deployment — a
@@ -138,6 +289,75 @@ contract RepatriationFacet is
     ///         authentication behind them (Codex #1608 r1; the same
     ///         trust-root class setRewardRemittanceReceiver rejects).
     error RepatriationEndpointNotContract(address endpoint);
+    /// @notice The reward messenger is not configured on this deployment —
+    ///         the Base-side dispatch surfaces have no wire to ride.
+    error RepatriationMessengerNotSet();
+    /// @notice The referenced mirror instruction is not in the required
+    ///         state for this action.
+    error RepatriationInstructionWrongState(
+        address issuingBase,
+        uint256 authId,
+        uint8 state
+    );
+
+    // ── Live lane-capacity bound ────────────────────────────────────────────
+
+    /**
+     * @dev Enforce `amount` against the LIVE limiter capacity of the CCIP
+     *      lane toward `remoteChainId`, on this chain's ACTIVE VPFI pool —
+     *      the inbound bucket when this chain will RECEIVE the return
+     *      (Base, at authorize), the outbound bucket when it will SEND it
+     *      (mirror, at execute). The whole reference chain is resolved
+     *      live: registry → `getPool(vpfiToken)` (a CCT pool rotation
+     *      auto-tracks, r7) → `isSupportedChain(selector)` → bucket.
+     *
+     *      Fail-closed at every rung: unset registry/messenger, an
+     *      unknown lane selector, an unregistered token, or an
+     *      UNSUPPORTED lane refuse rather than pass. The support check is
+     *      load-bearing (r7 P1): for a lane the pool does not carry,
+     *      Chainlink's limiter getter returns a ZEROED bucket with
+     *      `isEnabled == false` — indistinguishable from "governor chose
+     *      unlimited" — so without the membership gate a REMOVED lane
+     *      would read as unbounded, and an authorization toward it could
+     *      execute on the mirror and then fail delivery forever. A
+     *      disabled limiter on a lane the pool DOES carry imposes no
+     *      bound — CCIP's own `_consume` short-circuits the same way,
+     *      and the pool rate governor refuses to disable a lane's limit
+     *      (ET-008), so that branch means "governor policy says
+     *      unlimited", never "unconfigured".
+     */
+    function _assertWithinLaneCapacity(
+        LibVaipakam.Storage storage s,
+        uint256 remoteChainId,
+        uint256 amount,
+        bool inbound
+    ) private view {
+        address registry = s.repatriationTokenAdminRegistry;
+        address messenger = s.crossChainMessenger;
+        if (registry == address(0) || messenger == address(0)) {
+            revert RepatriationNotConfigured();
+        }
+        uint64 selector =
+            ICcipSelectorRegistry(messenger).chainSelectorOf(remoteChainId);
+        if (selector == 0) revert RepatriationLaneUnknown(remoteChainId);
+        address pool = ITokenAdminRegistryView(registry).getPool(s.vpfiToken);
+        if (pool == address(0)) revert RepatriationNotConfigured();
+        if (!IVpfiPoolRateLimitView(pool).isSupportedChain(selector)) {
+            revert RepatriationLaneUnknown(remoteChainId);
+        }
+        RateLimiter.TokenBucket memory bucket = inbound
+            ? IVpfiPoolRateLimitView(pool).getCurrentInboundRateLimiterState(
+                selector
+            )
+            : IVpfiPoolRateLimitView(pool).getCurrentOutboundRateLimiterState(
+                selector
+            );
+        if (bucket.isEnabled && amount > uint256(bucket.capacity)) {
+            revert RepatriationExceedsLaneCapacity(
+                amount, uint256(bucket.capacity)
+            );
+        }
+    }
 
     // ── Gates ───────────────────────────────────────────────────────────────
 
@@ -192,6 +412,21 @@ contract RepatriationFacet is
         if (amount > avail) {
             revert RepatriationExceedsAvailability(amount, avail);
         }
+        // LIVE lane-capacity bound, Base-inbound half (Codex #1618
+        // r1→r6): the return is ONE token message consuming BOTH sides'
+        // rate limiters, and a single CCIP request above either capacity
+        // is rejected PERMANENTLY (not queued behind refill) — an
+        // over-capacity authorization would charge a draw that can only
+        // ever be released by the cancellation ceremony. The bound is
+        // read from THIS chain's pool limiter at the moment of issuance —
+        // never from an armed/recorded copy, four rounds of review having
+        // shown every off-chain derivation stale or skippable on some
+        // documented operator path. The mirror-outbound half is enforced
+        // the same live way at {executeRepatriation}. A DISABLED limiter
+        // imposes no bound, exactly as CCIP's own `_consume` treats it
+        // (and the rate governor refuses to disable a lane's limit,
+        // ET-008).
+        _assertWithinLaneCapacity(s, uint256(dstChainId), amount, true);
         s.chainRepatriationDebited[dstChainId] += amount;
         authId = ++s.repatAuthNonce;
         s.repatAuthorizations[authId] = LibVaipakam.RepatriationAuthorization({
@@ -201,6 +436,94 @@ contract RepatriationFacet is
             amount: amount
         });
         emit RepatriationAuthorized(authId, dstChainId, amount);
+    }
+
+    /**
+     * @notice Dispatch (or re-dispatch) the cross-chain instruction for a
+     *         pending authorization through the reward messenger.
+     * @dev    PERMISSIONLESS and re-sendable by design: the instruction's
+     *         content is derived entirely from the stored authorization —
+     *         the ADMIN act was {authorizeRepatriation} — and the mirror
+     *         ingress is idempotent, so re-dispatch can never double-record.
+     *         A dispatch racing a cancellation converges on the mirror:
+     *         whichever instruction lands first decides, execution requires
+     *         a PENDING record, and a cancel tombstones even a record that
+     *         never arrived — every ordering ends in exactly one of
+     *         settle-by-return or release-by-ACK (§3.6a 5c's mutual
+     *         exclusion is structural, one shared slot).
+     *         `msg.value` must cover the CCIP fee (quote via the messenger's
+     *         {quoteSendRepatriationInstruction}); the remainder refunds to
+     *         `refundAddress`.
+     */
+    function sendRepatriationInstruction(
+        uint256 authId,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyCanonical
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.repatriationReceiver == address(0)) {
+            revert RepatriationNotConfigured();
+        }
+        address rm = s.rewardMessenger;
+        if (rm == address(0)) revert RepatriationMessengerNotSet();
+        LibVaipakam.RepatriationAuthorization storage auth =
+            s.repatAuthorizations[authId];
+        if (auth.status != AUTH_PENDING) {
+            revert RepatriationAuthNotPending(authId, auth.status);
+        }
+        messageId = IRepatRewardMessenger(rm).sendRepatriationInstruction{
+            value: msg.value
+        }(uint256(auth.dstChainId), authId, auth.amount, refundAddress);
+        emit RepatriationInstructionDispatched(
+            authId, auth.dstChainId, auth.amount, messageId
+        );
+    }
+
+    /**
+     * @notice Request cancellation of a pending authorization: dispatches
+     *         the cancel instruction to the mirror. ADMIN-only — cancelling
+     *         is an economic policy decision, like issuing.
+     * @dev    The authorization stays PENDING (and its availability draw
+     *         stays charged) until the mirror's authenticated ACK arrives
+     *         through the return channel — the ONLY release path (§3.6a
+     *         constraint 5c: proof of non-execution so far is not proof it
+     *         will not execute). Re-sendable while still PENDING: the
+     *         mirror tombstone is idempotent and a lost cancel is retried
+     *         by re-calling.
+     */
+    function requestRepatriationCancel(
+        uint256 authId,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.repatriationReceiver == address(0)) {
+            revert RepatriationNotConfigured();
+        }
+        address rm = s.rewardMessenger;
+        if (rm == address(0)) revert RepatriationMessengerNotSet();
+        LibVaipakam.RepatriationAuthorization storage auth =
+            s.repatAuthorizations[authId];
+        if (auth.status != AUTH_PENDING) {
+            revert RepatriationAuthNotPending(authId, auth.status);
+        }
+        messageId = IRepatRewardMessenger(rm).sendRepatriationCancel{
+            value: msg.value
+        }(uint256(auth.dstChainId), authId, refundAddress);
+        emit RepatriationCancelDispatched(authId, auth.dstChainId, messageId);
     }
 
     /**
@@ -361,6 +684,150 @@ contract RepatriationFacet is
         emit RepatriationInstructionRecorded(issuingBase, authId, amount);
     }
 
+    /**
+     * @notice Mirror ingress for a Base CANCEL instruction, delivered
+     *         through the registered reward messenger.
+     * @dev    Tombstones NONE (a pre-tombstone: the cancel overtook the
+     *         instruction, so the instruction lands on a terminal record
+     *         and no-ops) and PENDING. An EXECUTED record is a NO-OP, not a
+     *         revert — execution won the race, the return is already on the
+     *         wire, and Base will settle by it; reverting would only leave
+     *         a CCIP packet endlessly re-executable toward a state that can
+     *         never change (execution and tombstone share one slot — 5c's
+     *         mutual exclusion is structural). A TOMBSTONED record is a
+     *         no-op re-delivery.
+     */
+    function onRepatriationCancelInstructionReceived(
+        address issuingBase,
+        uint256 authId
+    ) external nonReentrant whenNotPaused onlyMirror {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0)) {
+            revert OnlyRewardMessengerRepat(msg.sender);
+        }
+        // Dark gate — same REVERT posture as the instruction ingress: a
+        // tombstone recorded while the deployment was supposed to be dark
+        // is state the operator never armed; the CCIP packet stays
+        // failed-but-re-executable instead.
+        if (s.repatriationSender == address(0)) {
+            revert RepatriationNotConfigured();
+        }
+        if (issuingBase == address(0) || authId == 0) {
+            revert RepatriationInvalidRequest();
+        }
+        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        uint8 state = s.repatInstructionState[key];
+        if (state == INSTR_EXECUTED || state == INSTR_TOMBSTONED) return;
+        s.repatInstructionState[key] = INSTR_TOMBSTONED;
+        emit RepatriationInstructionTombstoned(issuingBase, authId);
+    }
+
+    /**
+     * @notice Execute a recorded repatriation instruction: debit the mirror
+     *         bucket's un-reserved surplus and send the VPFI to Base over
+     *         the shared return channel.
+     * @dev    PERMISSIONLESS — the instruction is Base-authorized, its
+     *         content is entirely storage-derived, and the caller
+     *         contributes only the CCIP fee (quote via the sender
+     *         satellite's {quoteRepatriationReturn}; remainder refunds to
+     *         `refundAddress`). ONE-SHOT by checks-effects-interactions:
+     *         the execution marker is written BEFORE the debit, the escrow
+     *         transfer and the send, and the marker slot doubles as the
+     *         tombstone slot, so a second execution — or a cancellation of
+     *         an executed instruction — is structurally excluded (5c). A
+     *         failed send reverts the whole call, marker included, leaving
+     *         the instruction PENDING and retryable.
+     *
+     *         The debit can revert {RepatriationExceedsFundable} if claim
+     *         commitments or the keeper earmark have since grown past the
+     *         surplus Base observed at authorization — the execute is
+     *         retryable after commitments retire, and Base's draw stays
+     *         safely charged meanwhile (constraint 5's safe direction).
+     */
+    function executeRepatriation(
+        address issuingBase,
+        uint256 authId,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address sender = s.repatriationSender;
+        if (sender == address(0)) revert RepatriationNotConfigured();
+        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        uint8 state = s.repatInstructionState[key];
+        if (state != INSTR_PENDING) {
+            revert RepatriationInstructionWrongState(issuingBase, authId, state);
+        }
+        uint256 amount = s.repatInstructionAmount[key];
+
+        // LIVE lane-capacity bound, mirror-outbound half (Codex #1618
+        // r1→r6) — checked BEFORE the one-shot marker, so an instruction
+        // above the lane's current capacity fails RETRYABLY (still
+        // PENDING, cancellable) instead of marking executed and sending
+        // a message the limiter permanently rejects. This is also what
+        // keeps a capacity LOWERED after instruction issuance from
+        // wedging: the execute simply refuses until the operator cancels
+        // or governance re-raises the lane. The destination the capacity
+        // was checked FOR is then threaded into the send (r7): the
+        // satellite holds no destination of its own, so the lane checked
+        // and the lane used cannot diverge.
+        uint256 dst = uint256(s.baseChainId);
+        _assertWithinLaneCapacity(s, dst, amount, false);
+
+        // CEI: the one-shot marker precedes every effect and interaction.
+        s.repatInstructionState[key] = INSTR_EXECUTED;
+        LibVpfiRecycle.debitRepatriationSurplus(s, amount);
+        IERC20(s.vpfiToken).safeTransfer(sender, amount);
+        messageId = IVpfiReturnSender(sender).sendRepatriationReturn{
+            value: msg.value
+        }(dst, issuingBase, authId, amount, refundAddress);
+        emit RepatriationExecuted(issuingBase, authId, amount, messageId);
+    }
+
+    /**
+     * @notice Send (or re-send) the cancellation ACK for a tombstoned
+     *         instruction over the shared return channel — the evidence
+     *         that lets Base release the authorization's availability draw.
+     * @dev    PERMISSIONLESS: the tombstone is the Base-authorized fact
+     *         being attested, the caller contributes only the CCIP fee
+     *         (quote via {VpfiReturnSender.quoteRepatriationCancelAck}).
+     *         Re-sendable because an ACK can be lost to a Base-side pause
+     *         window: a duplicate simply reverts on Base's ingress (the
+     *         authorization is no longer PENDING) as a failed, inert CCIP
+     *         delivery.
+     */
+    function sendRepatriationCancelAck(
+        address issuingBase,
+        uint256 authId,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address sender = s.repatriationSender;
+        if (sender == address(0)) revert RepatriationNotConfigured();
+        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        uint8 state = s.repatInstructionState[key];
+        if (state != INSTR_TOMBSTONED) {
+            revert RepatriationInstructionWrongState(issuingBase, authId, state);
+        }
+        messageId = IVpfiReturnSender(sender).sendRepatriationCancelAck{
+            value: msg.value
+        }(uint256(s.baseChainId), issuingBase, authId, refundAddress);
+        emit RepatriationCancelAckDispatched(issuingBase, authId, messageId);
+    }
+
     // ── Config ──────────────────────────────────────────────────────────────
 
     /**
@@ -385,6 +852,49 @@ contract RepatriationFacet is
         s.repatriationSender = sender_;
         s.repatriationReceiver = receiver_;
         emit RepatriationEndpointsSet(sender_, receiver_);
+    }
+
+    /**
+     * @notice Configure this chain's CCIP TokenAdminRegistry — the root
+     *         of the live reference chain the lane-capacity bounds walk
+     *         (registry → active VPFI pool → lane membership → limiter
+     *         bucket; Base reads the inbound bucket at authorize, a
+     *         mirror its outbound bucket at execute). Resolving the
+     *         ACTIVE pool through the registry at every check is what
+     *         removed both the armed-ceiling ceremony (Codex #1618
+     *         r1→r6) and the stored-pool rotation gap (r7): a CCT pool
+     *         upgrade through `TokenAdminRegistry.setPool` is picked up
+     *         by the very next check, with no Diamond call to remember.
+     *         The registry itself is permanent Chainlink chain
+     *         infrastructure — the one address in the chain that never
+     *         rotates. Zero re-darkens the bounded surfaces
+     *         (fail-closed, like the endpoints); a nonzero registry must
+     *         hold code for the same trust-root reason the endpoints
+     *         must.
+     */
+    function setRepatriationTokenAdminRegistry(address registry_)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (registry_ != address(0) && registry_.code.length == 0) {
+            revert RepatriationEndpointNotContract(registry_);
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        emit RepatriationTokenAdminRegistrySet(
+            s.repatriationTokenAdminRegistry, registry_
+        );
+        s.repatriationTokenAdminRegistry = registry_;
+    }
+
+    /// @notice The configured CCIP TokenAdminRegistry the live
+    ///         lane-capacity bounds resolve the active pool through
+    ///         (0 = the bounded surfaces are dark).
+    function getRepatriationTokenAdminRegistry()
+        external
+        view
+        returns (address)
+    {
+        return LibVaipakam.storageSlot().repatriationTokenAdminRegistry;
     }
 
     // ── Views ───────────────────────────────────────────────────────────────
@@ -417,6 +927,21 @@ contract RepatriationFacet is
             s.chainRepatriationDebited[chainId],
             s.chainRepatriationReleased[chainId]
         );
+    }
+
+    /// @notice A mirror instruction record, keyed by its issuing deployment
+    ///         and authorization id. `state`: 0 none, 1 pending, 2 executed,
+    ///         3 tombstoned. This is how an operator (or the mesh watcher)
+    ///         sees that a tombstone exists and its cancellation ACK is
+    ///         still owed, or that a pending instruction awaits execution.
+    function getRepatriationInstruction(address issuingBase, uint256 authId)
+        external
+        view
+        returns (uint8 state, uint256 amount)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 key = keccak256(abi.encodePacked(issuingBase, authId));
+        return (s.repatInstructionState[key], s.repatInstructionAmount[key]);
     }
 
     /// @notice This chain's repatriation position: the mirror-side outflow

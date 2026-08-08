@@ -122,7 +122,9 @@
 #   - CCIP lane / channel wiring across chains is the `ccip-wire`
 #     phase — but it must run AFTER --phase contracts has landed on
 #     every chain in the topology (ConfigureCcip reads each chain's
-#     addresses.json), so it is a deliberate post-all-chains pass.
+#     addresses.json), so it is a deliberate post-all-chains pass
+#     (any order across chains — #1568 C2's repatriation bounds read
+#     each chain's own pool limiter LIVE, nothing per-lane to order).
 #   - `wrangler secret put` — operator-specific (TG_BOT_TOKEN,
 #     RPC_*  with API keys, PUSH_CHANNEL_PK, aggregator keys, keeper
 #     PK). The script doesn't know what they are; it would have no

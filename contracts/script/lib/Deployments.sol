@@ -318,6 +318,12 @@ library Deployments {
     // #776 — mirror-side inbound handler for the reward-budget channel.
     function writeRewardRemittanceReceiver(address a)     internal { _writeAddr(".rewardRemittanceReceiver",     a); }
     function writeRewardRemittanceReceiverImpl(address a) internal { _writeAddr(".rewardRemittanceReceiverImpl", a); }
+    // #1568 C2 — the shared mirror→Base vpfi-return channel satellites:
+    // sender/escrow on mirrors, kind-dispatching receiver on Base.
+    function writeVpfiReturnSender(address a)       internal { _writeAddr(".vpfiReturnSender",       a); }
+    function writeVpfiReturnSenderImpl(address a)   internal { _writeAddr(".vpfiReturnSenderImpl",   a); }
+    function writeVpfiReturnReceiver(address a)     internal { _writeAddr(".vpfiReturnReceiver",     a); }
+    function writeVpfiReturnReceiverImpl(address a) internal { _writeAddr(".vpfiReturnReceiverImpl", a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }

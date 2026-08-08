@@ -142,6 +142,19 @@ contract VpfiPoolRateGovernor is
     ///      for the underlying call to succeed. Both configs must be
     ///      enabled and in-bounds; CCIP's own `_validateTokenBucketConfig`
     ///      additionally enforces `rate <= capacity` at the pool.
+    ///
+    ///      #1568 C2 (Codex #1618 r5/r6) — the repatriation lane-capacity
+    ///      bounds read the pool's limiter state LIVE (authorize reads
+    ///      the canonical inbound bucket, execute the mirror outbound
+    ///      one), so a capacity change here binds new repatriation
+    ///      activity the moment it lands — no ceiling to re-arm anywhere.
+    ///      When LOWERING a capacity, mind work already in flight: an
+    ///      in-flight token message above a new INBOUND capacity fails
+    ///      delivery permanently (for an executed repatriation return
+    ///      that also strands the Base draw — the mirror marker is
+    ///      irreversible, so no cancellation ACK can ever release it);
+    ///      see `docs/ops/CcipCutoverRunbook.md` "Changing lane rate
+    ///      limits after deployment" for the drain-first order.
     /// @param remoteChainSelector CCIP selector of the lane's remote chain.
     /// @param outboundConfig      Outbound (this-chain → remote) limiter.
     /// @param inboundConfig       Inbound (remote → this-chain) limiter.

@@ -630,13 +630,21 @@ The post-deploy health check (step `[5d]`) runs on every chain and
 its log is persisted to
 `deployments/<slug>/.history/health-<unix-ts>.log` for audit.
 
-### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains)
+### 2. Cross-chain CCIP wiring (run ONCE per chain after step 1 on all chains, any order)
 
 ```bash
 bash contracts/script/deploy-testnet.sh base-sepolia --phase ccip-wire
 bash contracts/script/deploy-testnet.sh arb-sepolia  --phase ccip-wire
 bash contracts/script/deploy-testnet.sh op-sepolia   --phase ccip-wire
 ```
+
+The pass order across chains is free — every step reads only
+`contracts`-phase artifacts. (#1568 C2: the repatriation lane-capacity
+bounds resolve registry → active pool → lane membership → limiter
+bucket LIVE at issuance/execution; the only repatriation wiring this
+phase performs is `setRepatriationTokenAdminRegistry`, so there are no
+per-lane ceilings to derive, record, or order, and a CCT pool rotation
+auto-tracks.)
 
 Each invocation runs `ConfigureCcip.s.sol`, which reads every chain's
 `deployments/<slug>/addresses.json` and registers chain selectors,
@@ -744,6 +752,12 @@ each item is checked:
 - [ ] `--phase ccip-wire` ran clean on every chain (`ConfigureCcip.s.sol`
       completed: peers, lanes, rate limits, and CCT registration all
       landed with no `⚠` lines).
+- [ ] On every chain, the Diamond's repatriation registry is wired
+      (#1568 C2 — the live lane-capacity bounds resolve the active pool
+      through it; unset = the bounded surfaces are dark):
+      `cast call $DIAMOND 'getRepatriationTokenAdminRegistry()(address)'`
+      returns that chain's CCIP TokenAdminRegistry, not the zero
+      address.
 - [ ] `PositiveFlows.s.sol` + `PartialFlows.s.sol` green on every
       chain — capture the broadcast logs in
       `docs/internal/RehearsalReports/<date>/`.

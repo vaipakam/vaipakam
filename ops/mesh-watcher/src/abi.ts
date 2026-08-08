@@ -26,9 +26,17 @@
 
 import type { Abi, AbiFunction } from 'viem';
 import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggregatorFacet.json';
+import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
 
 /** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
 export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
+
+/** The compiled `RepatriationFacet` ABI (#1568 C2) — the repatriation
+ *  draw / position views the C2 checks read. Kept as its OWN import
+ *  rather than merged into the aggregator ABI so a repat-view revert on a
+ *  not-yet-refreshed chain stays attributable to the facet that is
+ *  actually missing. */
+export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
 
 /**
  * Every view this Worker calls, with the output shape its reader assumes.
@@ -42,6 +50,8 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   readonly name: string;
   readonly inputs: readonly string[];
   readonly outputs: readonly string[];
+  /** Which compiled facet ABI carries the view (default: aggregator). */
+  readonly facet?: 'repatriation';
 }> = [
   {
     name: 'getExpectedSourceChainIds',
@@ -108,6 +118,29 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'isCanonicalRewardChain:bool',
     ],
   },
+  // #1568 C2 — the repatriation ledger views, on `RepatriationFacet`.
+  // Base-side: the per-chain NET draw (`expectedAvail`'s new term and the
+  // §7 #6 second comparison) plus the lifetime release observability.
+  {
+    name: 'getChainRepatriationDraw',
+    inputs: ['uint32'],
+    outputs: ['netDraw:uint256', 'lifetimeReleased:uint256'],
+    facet: 'repatriation',
+  },
+  // Chain-local: the repatriated-outflow cumulative — a DESTINATION term
+  // in the §7 #8 bucket composition and part of the reported-cumulative
+  // floor re-derivation.
+  {
+    name: 'getRepatriationPosition',
+    inputs: [],
+    outputs: [
+      'repatriatedOutCumulative:uint256',
+      'sender:address',
+      'receiver:address',
+      'authNonce:uint256',
+    ],
+    facet: 'repatriation',
+  },
 ] as const;
 
 /** Names of the views asserted above — handy for tests and diagnostics. */
@@ -128,11 +161,15 @@ function describe(io: { name?: string; type: string }): string {
  * @throws   On a missing view, or on any arity / order / name / type
  *           mismatch, naming the view and the exact divergence.
  */
-export function assertAbiShape(abi: Abi = REWARD_AGGREGATOR_ABI): void {
+export function assertAbiShape(
+  abi: Abi = REWARD_AGGREGATOR_ABI,
+  repatAbi: Abi = REPATRIATION_ABI,
+): void {
   const problems: string[] = [];
 
   for (const expected of EXPECTED_VIEWS) {
-    const matches = abi.filter(
+    const source = expected.facet === 'repatriation' ? repatAbi : abi;
+    const matches = source.filter(
       (item): item is AbiFunction =>
         item.type === 'function' && item.name === expected.name,
     );

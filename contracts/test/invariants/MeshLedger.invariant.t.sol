@@ -20,6 +20,11 @@ import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
+import {
+    MockCcipSelectorRegistry,
+    MockTokenAdminRegistry,
+    MockVpfiTokenPool
+} from "../mocks/MockVpfiTokenPool.sol";
 import {MockRewardMessenger} from "../mocks/MockRewardMessenger.sol";
 import {HelperTest} from "../HelperTest.sol";
 
@@ -221,6 +226,28 @@ contract MeshLedgerInvariant is Test {
         );
         RepatriationFacet(address(diamond)).setRepatriationEndpoints(
             address(0), address(handler)
+        );
+        // #1618 r6/r7 — the live lane-capacity bound resolves registry ->
+        // active pool -> lane membership -> limiter bucket through the
+        // messenger's selector registry; wire the chain with the buckets
+        // left DISABLED (= no bound, CCIP's own semantics for a disabled
+        // limiter on a SUPPORTED lane — the mock defaults every lane
+        // supported). The suite deliberately drives HOSTILE near-max
+        // draws, and any finite capacity here would fence the fuzz away
+        // from exactly the magnitudes the §7 #6 second term is pinned
+        // against.
+        MockVpfiTokenPool lanePool = new MockVpfiTokenPool();
+        MockTokenAdminRegistry tokenReg = new MockTokenAdminRegistry();
+        tokenReg.setPool(address(vpfi), address(lanePool));
+        MockCcipSelectorRegistry selReg = new MockCcipSelectorRegistry();
+        selReg.setChainSelector(uint256(CHAIN_ARB), 1);
+        selReg.setChainSelector(uint256(CHAIN_OP), 2);
+        selReg.setChainSelector(uint256(CHAIN_BASE), 3);
+        TestMutatorFacet(address(diamond)).setCrossChainMessengerRaw(
+            address(selReg)
+        );
+        RepatriationFacet(address(diamond)).setRepatriationTokenAdminRegistry(
+            address(tokenReg)
         );
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits

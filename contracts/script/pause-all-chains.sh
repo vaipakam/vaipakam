@@ -134,8 +134,15 @@ list_pause_targets() {
   # inbound surface (Base->mirror reward-budget deliveries); include it so an
   # incident pause actually freezes that ingress and operators can keep just it
   # paused while resuming other CCIP channels.
+  # #1568 C2 (Codex #1618 r3) — the vpfi-return channel endpoints are
+  # GuardianPausable send/receive controls in their own right
+  # (VpfiReturnSender on mirrors, VpfiReturnReceiver on Base); without them
+  # the sweep could report full containment while the repatriation channel's
+  # endpoint-local pause was never engaged or verified. Role-scoped keys —
+  # each chain carries exactly one; the emptiness check skips the other.
   for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror \
-             ccipMessenger buybackRemittanceReceiver rewardRemittanceReceiver; do
+             ccipMessenger buybackRemittanceReceiver rewardRemittanceReceiver \
+             vpfiReturnSender vpfiReturnReceiver; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)
     # Legacy fallback: pre-T-068 deployment artifacts stored the cross-
     # chain reward messenger under the LayerZero-era key `rewardOApp`.
