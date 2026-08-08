@@ -58,15 +58,31 @@ function resolveAdminDoc(): string {
   );
 }
 
+/**
+ * Visibility gate ONLY — deliberately hook-free above the redirect.
+ *
+ * Mirrors the defi-side `AdminDashboard` split (#1521). Four hooks
+ * used to sit below this redirect, which breaks the rules of hooks;
+ * lowering the redirect instead would run the doc resolve/parse work
+ * for exactly the visitors the gate turns away. The env flag
+ * VITE_ADMIN_DASHBOARD_PUBLIC must be set identically on both Workers
+ * for the two gates to stay in sync.
+ */
 export default function AdminKnobsDocs() {
+  if (!isProtocolConsolePublic()) {
+    return <Navigate to="/" replace />;
+  }
+  return <AdminKnobsDocsInner />;
+}
+
+function AdminKnobsDocsInner() {
   const { i18n } = useTranslation();
   const location = useLocation();
   // Per-route SEO meta — this route is in the sitemap/prerender set
   // (scripts/seo-routes.mjs, same env gate), so it needs its own
   // title/description/canonical like every other advertised page.
-  // Called before the visibility gate below: hooks must run
-  // unconditionally, and on the hidden-console redirect the target
-  // route's own meta immediately overwrites this.
+  // The gate now lives in the wrapper above, so this runs only on the
+  // visible path — the redirect target sets its own meta anyway.
   usePageMeta({
     titleKey: 'pageMeta.adminKnobs.title',
     descriptionKey: 'pageMeta.adminKnobs.description',
@@ -76,13 +92,6 @@ export default function AdminKnobsDocs() {
     // English duplicate per locale (EN_ONLY_ROUTES policy).
     canonicalPath: '/protocol-console/docs',
   });
-  // Same visibility gate as the defi-side dashboard route. Hide
-  // the prose reference when the parameter values themselves are
-  // hidden — the env flag VITE_ADMIN_DASHBOARD_PUBLIC must be set
-  // identically on both Workers for the gates to stay in sync.
-  if (!isProtocolConsolePublic()) {
-    return <Navigate to="/" replace />;
-  }
   const text = useMemo(() => resolveAdminDoc(), []);
   const toc = useMemo(() => extractMarkdownToc(text), [text]);
   const basePath = location.pathname.replace(/\/$/, '');

@@ -134,12 +134,21 @@ interface LiveValueProps {
 
 export function LiveValue({ knob }: LiveValueProps) {
   const spec = KNOB_REGISTRY[knob];
+  // The unknown-token bail-out lives BELOW the hook (#1521): `spec` is
+  // derived from a prop, so returning before `useProtocolConfig` made
+  // the hook count depend on it. React reuses a component instance
+  // when the same tree position re-renders, so doc content that swaps
+  // a known token for an unknown one at the same node changes the
+  // count and aborts the page. This is the copy the docs actually
+  // render — Whitepaper, Overview, UserGuide and AdminKnobsDocs all
+  // reach it through `markdownComponents()`.
+  const { config } = useProtocolConfig();
+
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
   // through to inline code rendering so the bug is visible in the
   // page rather than rendering a silent misleading value.
   if (!spec) return <code>{`{liveValue:${knob}}`}</code>;
 
-  const { config } = useProtocolConfig();
   const live = spec.read(config);
   const value = live ?? spec.defaultValue;
   const isLive = live !== null;

@@ -27,6 +27,20 @@ dashboard calls its hooks unconditionally — which is also the shape the
 planned wallet-aware gating needs, since that will make the condition
 runtime-driven and turn the old arrangement into a live crash.
 
+Review then caught the sweep being narrower than it looked. The
+documentation component that had been fixed lives in the connected app,
+and that copy turns out to be unreachable — nothing renders it. The
+component the documentation pages actually render is the marketing
+site's near-identical copy, which still carried the same defect, on
+pages that really are served: the whitepaper, the overview, the user
+guide and the parameter reference. That copy is fixed here too, along
+with four more conditional hooks on the parameter-reference page, which
+needed the same gate-and-inner split as the admin console for the same
+reason. The duplicate itself is left alone for now and tracked
+separately (#1603) — two look-alike files where only one is rendered is
+a trap that already cost this change a review round, but deleting dead
+code is its own piece of work.
+
 Guarding the fix mattered as much as making it. Wiring the app's full
 lint into CI is not currently possible — it reports several hundred
 pre-existing errors, mostly untyped values — and waiting for that
@@ -37,6 +51,14 @@ shape makes it fail with the two calculations named. The narrow check is
 deliberately quiet about everything else: an earlier draft reported
 forty-two problems it did not care about, and a guard that cries wolf is
 one people stop reading — the habit that started this.
+
+The marketing site needed the same guard and had even less: no lint
+configuration of any kind, which is why nothing could have reported the
+defect on its pages. It now runs the same single-rule check, verified
+the same way. That closes the gap for every part of the codebase that
+renders React — the connected app and the marketing site are guarded by
+this check, the alpha surface already ran the full lint, and the shared
+component package was scanned and is clean.
 
 No functional-spec change accompanies this: the intended behaviour was
 always that the page works, and nothing about what the product is meant
