@@ -21,6 +21,10 @@ import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {BuybackRemittanceReceiver} from "../src/crosschain/BuybackRemittanceReceiver.sol";
 // #776 — mirror-side inbound handler for the reward-budget channel.
 import {RewardRemittanceReceiver} from "../src/crosschain/RewardRemittanceReceiver.sol";
+// #1568 C2 — the shared vpfi-return channel: sender/escrow on mirrors,
+// kind-dispatching receiver on Base.
+import {VpfiReturnSender} from "../src/crosschain/VpfiReturnSender.sol";
+import {VpfiReturnReceiver} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -49,10 +53,14 @@ interface IOwnable2Step {
  *         Canonical (Base) only:
  *           - `BuybackRemittanceReceiver` — UUPS proxy; Base-side buyback
  *             remittance inbound handler
+ *           - `VpfiReturnReceiver`      — UUPS proxy; Base-side inbound
+ *             handler of the shared vpfi-return channel (#1568 C2)
  *         Mirror only:
  *           - `VPFIMirrorToken`         — UUPS proxy (the mirror VPFI ERC20)
  *           - `RewardRemittanceReceiver` — UUPS proxy; mirror-side reward-budget
  *             inbound handler
+ *           - `VpfiReturnSender`        — UUPS proxy; mirror-side sender/escrow
+ *             of the shared vpfi-return channel (#1568 C2)
  *
  *         (#687-A removed the cross-chain VPFI fixed-rate buy
  *         (`VpfiBuyReceiver`/`VpfiBuyAdapter`) from this script.)
@@ -220,6 +228,55 @@ contract DeployCrosschain is Script {
             console.log("RewardRemittanceReceiver: ", rewardReceiver);
         }
 
+        // ── #1568 C2 — the shared vpfi-return channel satellites ───────
+        // The channel is cut once and shared by both repatriation modes
+        // (per-mode payload kinds discriminate); each mirror gets the
+        // sender/escrow, Base gets the kind-dispatching receiver. Neither
+        // Diamond can be the handler — each is already bound to another
+        // channel (`channelOf` is one-to-one).
+        address returnSenderImpl;
+        address returnSender;
+        address returnReceiverImpl;
+        address returnReceiver;
+        if (canonical) {
+            vm.startBroadcast(deployerKey);
+            VpfiReturnReceiver vrImpl = new VpfiReturnReceiver();
+            returnReceiverImpl = address(vrImpl);
+            returnReceiver = address(
+                new ERC1967Proxy(
+                    returnReceiverImpl,
+                    abi.encodeCall(
+                        VpfiReturnReceiver.initialize,
+                        (admin, messenger, diamond)
+                    )
+                )
+            );
+            vm.stopBroadcast();
+            console.log("VpfiReturnReceiver:       ", returnReceiver);
+        } else {
+            vm.startBroadcast(deployerKey);
+            VpfiReturnSender vsImpl = new VpfiReturnSender();
+            returnSenderImpl = address(vsImpl);
+            returnSender = address(
+                new ERC1967Proxy(
+                    returnSenderImpl,
+                    abi.encodeCall(
+                        VpfiReturnSender.initialize,
+                        (
+                            admin,
+                            messenger,
+                            diamond,
+                            vpfiToken,
+                            baseChainId,
+                            destGasLimit
+                        )
+                    )
+                )
+            );
+            vm.stopBroadcast();
+            console.log("VpfiReturnSender:         ", returnSender);
+        }
+
         // ── Record to deployments/<chain>/addresses.json ─────────────────
         Deployments.writeCcipMessenger(messenger);
         Deployments.writeVpfiTokenPool(pool);
@@ -228,10 +285,14 @@ contract DeployCrosschain is Script {
         if (canonical) {
             Deployments.writeBuybackRemittanceReceiver(buybackReceiver);
             Deployments.writeBuybackRemittanceReceiverImpl(buybackReceiverImpl);
+            Deployments.writeVpfiReturnReceiver(returnReceiver);
+            Deployments.writeVpfiReturnReceiverImpl(returnReceiverImpl);
         } else {
             Deployments.writeVpfiMirror(vpfiToken);
             Deployments.writeRewardRemittanceReceiver(rewardReceiver);
             Deployments.writeRewardRemittanceReceiverImpl(rewardReceiverImpl);
+            Deployments.writeVpfiReturnSender(returnSender);
+            Deployments.writeVpfiReturnSenderImpl(returnSenderImpl);
         }
 
         console.log("");

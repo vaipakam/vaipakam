@@ -103,6 +103,26 @@ interface IMirrorTierIngress {
         external;
 }
 
+/// @dev #1568 C2 — mirror-side Diamond ingresses for the Base→mirror Mode-A
+///      repatriation instruction kinds. The Diamond implementation lives in
+///      `RepatriationFacet`, which keys every record by
+///      `keccak256(issuingBase, authId)` — the era binding rides in the
+///      payload as immutable message data (the same #1426 r4 rationale the
+///      remit `remitter` field carries), so this messenger embeds the
+///      sending Diamond at dispatch and forwards it verbatim on delivery.
+interface IRepatriationInstructionIngress {
+    function onRepatriationInstructionReceived(
+        address issuingBase,
+        uint256 authId,
+        uint256 amount
+    ) external;
+
+    function onRepatriationCancelInstructionReceived(
+        address issuingBase,
+        uint256 authId
+    ) external;
+}
+
 /**
  * @title VaipakamRewardMessenger — cross-chain reward accounting on the
  *        CCIP seam (T-068 Phase 4)
@@ -171,6 +191,17 @@ contract VaipakamRewardMessenger is
     ///         finalizing Base's delivered-backing reservation. Data-only —
     ///         the value moved on the token channel; this is its receipt.
     uint8 internal constant MSG_TYPE_REMIT_ACK = 7;
+    /// @notice #1568 C2 — Base → ONE mirror Mode-A repatriation INSTRUCTION:
+    ///         directs the mirror to move `amount` of its recycled surplus
+    ///         back to Base under the identified authorization. The mirror
+    ///         records it idempotently; execution is a separate,
+    ///         permissionless, fee-paying step.
+    uint8 internal constant MSG_TYPE_REPAT_INSTRUCTION = 8;
+    /// @notice #1568 C2 — Base → ONE mirror Mode-A repatriation CANCEL
+    ///         instruction: tombstones the identified instruction on the
+    ///         mirror (including one never received — a pre-tombstone), so
+    ///         the mirror can ACK the cancellation over the return channel.
+    uint8 internal constant MSG_TYPE_REPAT_CANCEL = 9;
 
     /// @notice LEGACY REPORT payload size — the pre-#1222 mirror→Base
     ///         `abi.encode(uint8, uint256, uint256, uint256)` four-word
@@ -274,6 +305,14 @@ contract VaipakamRewardMessenger is
     ///         receive; kind-7 pre-dates any deployment, so there is no
     ///         legacy 3-word shape to dual-decode.
     uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 4 * 32;
+    /// @notice #1568 C2 — repatriation INSTRUCTION payload:
+    ///         `abi.encode(uint8, address issuingBase, uint256 authId,
+    ///         uint256 amount)`. Same length as the legacy report / remit
+    ///         ack; the kind tag disambiguates.
+    uint256 internal constant REPAT_INSTRUCTION_PAYLOAD_SIZE = 4 * 32;
+    /// @notice #1568 C2 — repatriation CANCEL payload:
+    ///         `abi.encode(uint8, address issuingBase, uint256 authId)`.
+    uint256 internal constant REPAT_CANCEL_PAYLOAD_SIZE = 3 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -374,6 +413,38 @@ contract VaipakamRewardMessenger is
         uint256 amountReceived
     );
     /// @custom:event-category informational/reward-transport
+    /// @notice #1568 C2 — a Base→mirror repatriation instruction left this
+    ///         (canonical) messenger.
+    event RepatriationInstructionSent(
+        bytes32 indexed messageId,
+        uint256 indexed dstChainId,
+        uint256 indexed authId,
+        uint256 amount
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1568 C2 — a Base→mirror repatriation CANCEL instruction left
+    ///         this (canonical) messenger.
+    event RepatriationCancelSent(
+        bytes32 indexed messageId,
+        uint256 indexed dstChainId,
+        uint256 indexed authId
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1568 C2 — a repatriation instruction arrived at this
+    ///         (mirror) messenger.
+    event RepatriationInstructionReceived(
+        uint256 indexed sourceChainId,
+        uint256 indexed authId,
+        uint256 amount
+    );
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1568 C2 — a repatriation CANCEL instruction arrived at this
+    ///         (mirror) messenger.
+    event RepatriationCancelReceived(
+        uint256 indexed sourceChainId,
+        uint256 indexed authId
+    );
+    /// @custom:event-category informational/reward-transport
     /// @notice #1222 M3 B2-b — one kind-5 per-destination broadcast left
     ///         this (canonical) messenger.
     event BroadcastV2Sent(
@@ -461,6 +532,9 @@ contract VaipakamRewardMessenger is
     /// @notice A BROADCAST arrived on the canonical instance (only
     ///         mirrors accept BROADCASTs).
     error BroadcastOnCanonical();
+    /// @notice #1568 C2 — a Base→mirror repatriation kind arrived on the
+    ///         canonical chain itself (Base cannot repatriate to itself).
+    error RepatriationOnCanonical();
     /// @notice Unknown payload msgType.
     error UnknownMessageType(uint8 msgType);
     /// @notice Inbound payload length is not the canonical 4-word shape.
@@ -750,6 +824,98 @@ contract VaipakamRewardMessenger is
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
+        );
+    }
+
+    /// @notice #1568 C2 — send a Base→mirror Mode-A repatriation
+    ///         instruction. Diamond-only (the Diamond enforces the
+    ///         canonical-side precondition — an ADMIN-issued PENDING
+    ///         authorization — and computes the content from its own
+    ///         record). Deliberately re-sendable: the mirror ingress is
+    ///         idempotent, so a lost or never-dispatched instruction is
+    ///         retried by re-calling. The issuing deployment is embedded
+    ///         HERE, at dispatch, as immutable message data (`msg.sender`
+    ///         is the Diamond under `onlyDiamond`) — the mirror keys its
+    ///         instruction record by it, which is the era binding.
+    function sendRepatriationInstruction(
+        uint256 dstChainId,
+        uint256 authId,
+        uint256 amount,
+        address payable refundAddress
+    )
+        external
+        payable
+        onlyDiamond
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (messenger == address(0)) revert MessengerNotSet();
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPAT_INSTRUCTION,
+            msg.sender,
+            authId,
+            amount
+        );
+        messageId = _dispatch(dstChainId, payload, msg.value, refundAddress);
+        emit RepatriationInstructionSent(messageId, dstChainId, authId, amount);
+    }
+
+    /// @notice Quote the native CCIP fee for a repatriation instruction.
+    function quoteSendRepatriationInstruction(
+        uint256 dstChainId,
+        uint256 authId,
+        uint256 amount
+    ) external view returns (uint256 nativeFee) {
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPAT_INSTRUCTION,
+            diamond,
+            authId,
+            amount
+        );
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            dstChainId, payload, _noTokens(), destGasLimit
+        );
+    }
+
+    /// @notice #1568 C2 — send a Base→mirror Mode-A repatriation CANCEL
+    ///         instruction. Diamond-only; re-sendable for the same reason
+    ///         as the instruction (the mirror tombstone is idempotent).
+    function sendRepatriationCancel(
+        uint256 dstChainId,
+        uint256 authId,
+        address payable refundAddress
+    )
+        external
+        payable
+        onlyDiamond
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (messenger == address(0)) revert MessengerNotSet();
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPAT_CANCEL,
+            msg.sender,
+            authId
+        );
+        messageId = _dispatch(dstChainId, payload, msg.value, refundAddress);
+        emit RepatriationCancelSent(messageId, dstChainId, authId);
+    }
+
+    /// @notice Quote the native CCIP fee for a repatriation cancel
+    ///         instruction.
+    function quoteSendRepatriationCancel(
+        uint256 dstChainId,
+        uint256 authId
+    ) external view returns (uint256 nativeFee) {
+        bytes memory payload = abi.encode(
+            MSG_TYPE_REPAT_CANCEL,
+            diamond,
+            authId
+        );
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            dstChainId, payload, _noTokens(), destGasLimit
         );
     }
 
@@ -1216,11 +1382,12 @@ contract VaipakamRewardMessenger is
         if (tokens.length != 0) revert UnexpectedTokens(tokens.length);
 
         // The inbound shape gate accepts the union of valid word counts:
-        // 6 (REPORT, #1222 B1), 4 (legacy REPORT), 8 (REPORT #1222 B3 /
-        // legacy BROADCAST / TierUpdated — all disambiguated by the kind tag
-        // below), 2 (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3
-        // (REMIT_ACK, #1222 B2-d2). Any other length is a padded / truncated
-        // packet and is rejected before decode.
+        // 6 (REPORT, #1222 B1), 4 (legacy REPORT / REMIT_ACK #1222 B2-d2 /
+        // REPAT_INSTRUCTION #1568 C2 — disambiguated by the kind tag below),
+        // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
+        // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
+        // #1568 C2). Any other length is a padded / truncated packet and is
+        // rejected before decode.
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
@@ -1230,6 +1397,7 @@ contract VaipakamRewardMessenger is
             && len != VERSION_BUMPED_PAYLOAD_SIZE
             && len != BROADCAST_V2_PAYLOAD_SIZE
             && len != REMIT_ACK_PAYLOAD_SIZE
+            && len != REPAT_CANCEL_PAYLOAD_SIZE
         ) {
             revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
         }
@@ -1409,6 +1577,35 @@ contract VaipakamRewardMessenger is
                 amountReceived,
                 remitter
             );
+        } else if (msgType == MSG_TYPE_REPAT_INSTRUCTION) {
+            // #1568 C2 — Base → mirror repatriation instruction. Mirror-only.
+            // No legacy shape precedes kind-8, so no dual-length decode and
+            // no ingress downgrade: a mirror Diamond without the facet (or
+            // with its transport un-armed) reverts the ingress and the CCIP
+            // message stays failed/re-executable until the mirror is armed —
+            // the instruction is never consumed while the deployment is
+            // supposed to be dark, and Base can simply re-send it anyway.
+            if (len != REPAT_INSTRUCTION_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, REPAT_INSTRUCTION_PAYLOAD_SIZE);
+            }
+            if (isCanonical) revert RepatriationOnCanonical();
+            (, address issuingBase, uint256 authId, uint256 amount) =
+                abi.decode(payload, (uint8, address, uint256, uint256));
+            emit RepatriationInstructionReceived(sourceChainId, authId, amount);
+            IRepatriationInstructionIngress(diamond)
+                .onRepatriationInstructionReceived(issuingBase, authId, amount);
+        } else if (msgType == MSG_TYPE_REPAT_CANCEL) {
+            // #1568 C2 — Base → mirror repatriation CANCEL. Mirror-only; the
+            // same fail-closed posture as kind-8.
+            if (len != REPAT_CANCEL_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, REPAT_CANCEL_PAYLOAD_SIZE);
+            }
+            if (isCanonical) revert RepatriationOnCanonical();
+            (, address issuingBase, uint256 authId) =
+                abi.decode(payload, (uint8, address, uint256));
+            emit RepatriationCancelReceived(sourceChainId, authId);
+            IRepatriationInstructionIngress(diamond)
+                .onRepatriationCancelInstructionReceived(issuingBase, authId);
         } else {
             revert UnknownMessageType(msgType);
         }

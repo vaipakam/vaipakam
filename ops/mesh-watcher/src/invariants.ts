@@ -41,6 +41,19 @@ export interface BaseChainBooks {
   released: bigint;
   /** Reservations Base booked and the chain has not yet retired. */
   outstanding: bigint;
+  /**
+   * #1568 C2 — the chain's repatriation draw pair, from
+   * `getChainRepatriationDraw`. `netDraw` is the LIVE availability term
+   * (outstanding + settled Mode-A charges, already net of releases —
+   * maintained in place, never derived from a cumulative pair);
+   * `lifetimeReleased` is the monotonic release observability.
+   *
+   * `undefined` when the canonical Diamond predates the facet (reported
+   * as a coverage gap). Safe to treat as zero in the availability
+   * re-derivation exactly because a Diamond without the facet cannot
+   * have charged a draw.
+   */
+  repat?: { netDraw: bigint; lifetimeReleased: bigint };
 }
 
 /**
@@ -102,6 +115,14 @@ export interface LocalLedger {
    *  canonical chain, Base's own commits plus the top-ups it funds for
    *  mirrors. */
   outstandingRecycled: bigint;
+  /**
+   * #1568 C2 — `recycleRepatriatedOutCumulative`: lifetime VPFI this
+   * chain's bucket has repatriated to Base. A DESTINATION term in the
+   * bucket composition and part of the reported-cumulative floor.
+   * `undefined` when the Diamond predates the facet (reported as a
+   * coverage gap; safe as zero — such a Diamond cannot have repatriated).
+   */
+  repatriatedOut?: bigint;
   outstandingFresh: bigint;
   armedFromDay: bigint;
   paidOutRecycled: bigint;
@@ -257,12 +278,20 @@ export function satSub(a: bigint, b: bigint): bigint {
 /**
  * Re-derive `LibVpfiRecycle.mirrorAvailRecycled` off-chain.
  *
- * Both subtractions floor at zero exactly as the library does, so this is
+ * Every subtraction floors at zero exactly as the library does, so this is
  * a faithful model rather than an idealised one — an off-by-a-floor here
  * would make `availability-formula` fire on healthy state.
+ *
+ * #1568 C2 — the repatriation NET draw is the third term, subtracted after
+ * the claim netting exactly as `mirrorAvailRecycled` does. When the draw
+ * view is unavailable (pre-C2 canonical Diamond, reported as a coverage
+ * gap) the term is zero, which IS that Diamond's formula.
  */
 export function expectedAvail(b: BaseChainBooks): bigint {
-  return satSub(b.reported, satSub(b.consumed, b.released));
+  return satSub(
+    satSub(b.reported, satSub(b.consumed, b.released)),
+    b.repat?.netDraw ?? 0n,
+  );
 }
 
 /**
@@ -403,6 +432,36 @@ export function checkHardInvariants(
       );
     }
 
+    // ── Repatriation cap (governor §7 #6, second comparison) ─────────
+    // #1568 C2 — the OTHER draw on the same reported capacity:
+    // `repatNet ≤ reported − claimNet` per chain. Checked separately from
+    // `consumed-cap` for the same saturation-blindness reason that check
+    // documents, and against the CLAIM-NETTED remainder rather than
+    // `reported` alone — the two draws share one capacity, and each being
+    // individually within `reported` still over-commits it when their sum
+    // is not (`MeshLedger.invariant.t.sol`'s canonical two-comparison
+    // form). Skipped, and reported as a coverage gap, when the canonical
+    // Diamond predates the repatriation facet.
+    if (
+      b.repat !== undefined &&
+      b.repat.netDraw > satSub(b.reported, satSub(b.consumed, b.released))
+    ) {
+      add(
+        'repat-cap',
+        'vs-remainder',
+        b.chainId,
+        'Repatriation draw exceeds the chain\'s un-instructed capacity',
+        `repatNet > reported - (consumed - released) — Base has authorized repatriating more than the chain reported holding net of claim instructions\n` +
+          `  repatNet  = ${fmt(b.repat.netDraw)}\n` +
+          `  consumed  = ${fmt(b.consumed)}\n` +
+          `  released  = ${fmt(b.released)}\n` +
+          `  reported  = ${fmt(b.reported)}\n` +
+          `  remainder = ${fmt(satSub(b.reported, satSub(b.consumed, b.released)))}\n` +
+          `  excess    = ${fmt(b.repat.netDraw - satSub(b.reported, satSub(b.consumed, b.released)))}`,
+        [b.repat.netDraw, b.consumed, b.released, b.reported],
+      );
+    }
+
     // ── Attribution ceiling ──────────────────────────────────────────
     // Σ of accepted per-day credits can never exceed the cumulative it is
     // attributed from; exceeding it would feed `Ā` absorption the
@@ -434,13 +493,14 @@ export function checkHardInvariants(
         'definition',
         b.chainId,
         'Availability does not match its definition',
-        `avail != reported - max(0, consumed - released)\n` +
+        `avail != max(0, reported - max(0, consumed - released) - repatNet)\n` +
           `  reported = ${fmt(b.reported)}\n` +
           `  consumed = ${fmt(b.consumed)}\n` +
           `  released = ${fmt(b.released)}\n` +
+          `  repatNet = ${b.repat === undefined ? '(view unavailable — treated as 0)' : fmt(b.repat.netDraw)}\n` +
           `  expected = ${fmt(wantAvail)}\n` +
           `  on-chain = ${fmt(b.avail)}`,
-        [b.avail, b.reported, b.consumed, b.released],
+        [b.avail, b.reported, b.consumed, b.released, b.repat?.netDraw ?? 0n],
       );
     }
 
@@ -711,11 +771,13 @@ export function checkHardInvariants(
   // Every recycled credit lands in the bucket exactly once, so the two
   // lifetime cumulatives can never exceed where the tokens actually went:
   //
-  //     creditedRaw + relocated <= bucket + paidOut + releasedRemitStranded
+  //     creditedRaw + relocated
+  //       <= bucket + paidOut + releasedRemitStranded + repatriatedOut
   //
   // `credit` and `creditCustodyRelocated` each add to one term on each
   // side; `consume` moves bucket → paidOut; `releaseCommitment` moves
-  // neither; `restoreReleasedRemit` moves paidOut → releasedRemitStranded.
+  // neither; `restoreReleasedRemit` moves paidOut → releasedRemitStranded;
+  // `debitRepatriationSurplus` (#1568 C2) moves bucket → repatriatedOut.
   //
   // Why it is the only check that sees this class: `reportedCumulative`
   // is built by the SAME helper that builds the outbound day-close report,
@@ -737,10 +799,16 @@ export function checkHardInvariants(
   for (const local of obs.allLocals.values()) {
     if (!local.composition) continue; // reported as a coverage gap
     const claimed = local.composition.creditedRaw + local.custodyRelocated;
+    // #1568 C2 — repatriated-out is a DESTINATION: `debitRepatriationSurplus`
+    // moves bucket → the repatriated cumulative, exactly as `consume` moves
+    // bucket → paidOut. `undefined` (facet absent, reported as a gap) is
+    // safe as zero — such a Diamond cannot have repatriated.
+    const repatOut = local.repatriatedOut ?? 0n;
     const destinations =
       local.bucket +
       local.paidOutRecycled +
-      local.composition.releasedRemitStranded;
+      local.composition.releasedRemitStranded +
+      repatOut;
     // ── REVERSE bound (#1448 r3) ──────────────────────────────────
     //
     // The forward bound alone is defeated by the very regression this
@@ -779,6 +847,7 @@ export function checkHardInvariants(
           local.bucket,
           local.paidOutRecycled,
           local.composition.releasedRemitStranded,
+          repatOut,
         ],
         severity: unseeded ? 'advisory' : 'critical',
         chainId: local.chainId,
@@ -788,13 +857,14 @@ export function checkHardInvariants(
         detail:
           (unseeded
             ? `no recycled credit has ever run on this chain, so its bucket has no counter behind it — a Diamond refreshed over live pre-#1222 state. The composition relation is UNVERIFIABLE until the first credit seeds the cumulative; reported here so the gap is visible rather than silently passing.\n`
-            : `bucket + paidOut + stranded > creditedRaw + relocated — VPFI is in the bucket that no cumulative claims\n`) +
+            : `bucket + paidOut + stranded + repatriated > creditedRaw + relocated — VPFI is in the bucket that no cumulative claims\n`) +
           `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
           `  relocated     = ${fmt(local.custodyRelocated)}\n` +
           `  claimed       = ${fmt(claimed)}\n` +
           `  bucket        = ${fmt(local.bucket)}\n` +
           `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
           `  stranded      = ${fmt(local.composition.releasedRemitStranded)}\n` +
+          `  repatriated   = ${local.repatriatedOut === undefined ? '(view unavailable — treated as 0)' : fmt(repatOut)}\n` +
           `  destinations  = ${fmt(destinations)}\n` +
           `  unaccounted   = ${fmt(destinations - claimed)}\n` +
           `  tolerance     = ${fmt(compositionSlackToleranceWei)}\n\n` +
@@ -815,18 +885,20 @@ export function checkHardInvariants(
         local.bucket,
         local.paidOutRecycled,
         local.composition.releasedRemitStranded,
+        repatOut,
       ],
       severity: 'critical',
       chainId: local.chainId,
       title: 'Recycled cumulatives claim more credit than the bucket received',
       detail:
-        `creditedRaw + relocated > bucket + paidOut + releasedRemitStranded — a counter advanced without tokens landing in the bucket\n` +
+        `creditedRaw + relocated > bucket + paidOut + releasedRemitStranded + repatriated — a counter advanced without tokens landing in the bucket\n` +
         `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
         `  relocated     = ${fmt(local.custodyRelocated)}\n` +
         `  claimed       = ${fmt(claimed)}\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
         `  stranded      = ${fmt(local.composition.releasedRemitStranded)}\n` +
+        `  repatriated   = ${local.repatriatedOut === undefined ? '(view unavailable — treated as 0)' : fmt(repatOut)}\n` +
         `  destinations  = ${fmt(destinations)}\n` +
         `  excess        = ${fmt(claimed - destinations)}\n\n` +
         `LIKELIEST CAUSE — a relocated-custody credit also advancing the absorption cumulative. That would let this chain report Base's own already-spent top-up back as its own local absorption, and Base would re-offer it as this chain's funding.`,
@@ -854,7 +926,15 @@ export function checkHardInvariants(
   // will alarm on correct behaviour.
   for (const local of obs.allLocals.values()) {
     if (!local.composition) continue; // reported as a coverage gap
-    const gross = local.bucket + local.paidOutRecycled;
+    // #1568 C2 — repatriated-out value stays IN the floor: it was absorbed
+    // here exactly once before leaving for Base, so a floor that dropped
+    // with the bucket on a healthy repatriation would fall below an
+    // earlier report (`LibVpfiRecycle.creditedCumulative` carries the same
+    // term; this restatement must move with it or the first repatriation
+    // pages a false mismatch). `undefined` (facet absent, reported as a
+    // gap) is safe as zero — such a Diamond cannot have repatriated.
+    const gross =
+      local.bucket + local.paidOutRecycled + (local.repatriatedOut ?? 0n);
     const floorTerm =
       gross > local.custodyRelocated ? gross - local.custodyRelocated : 0n;
     const raw = local.composition.creditedRaw;
@@ -871,10 +951,11 @@ export function checkHardInvariants(
       detail:
         `the chain publishes a lifetime absorption figure this Worker cannot re-derive from the raw slots at the same block\n` +
         `  reported      = ${fmt(local.reportedCumulative)}\n` +
-        `  re-derived    = ${fmt(expected)}  = max(creditedRaw, bucket + paidOut - relocated)\n` +
+        `  re-derived    = ${fmt(expected)}  = max(creditedRaw, bucket + paidOut + repatriated - relocated)\n` +
         `  creditedRaw   = ${fmt(local.composition.creditedRaw)}\n` +
         `  bucket        = ${fmt(local.bucket)}\n` +
         `  paidOut       = ${fmt(local.paidOutRecycled)}\n` +
+        `  repatriated   = ${local.repatriatedOut === undefined ? '(view unavailable — treated as 0)' : fmt(local.repatriatedOut)}\n` +
         `  relocated     = ${fmt(local.custodyRelocated)}\n\n` +
         `Either the derivation changed on-chain without this Worker being updated in the same change, or the relocated-custody exclusion has regressed. The figure is what mirrors report to Base and what sizes their funding, so treat a mismatch as load-bearing either way.`,
     }));

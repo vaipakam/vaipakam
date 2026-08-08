@@ -2233,7 +2233,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](8);
+        s = new bytes4[](14);
         s[0] = RepatriationFacet.authorizeRepatriation.selector;
         s[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         s[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2242,6 +2242,15 @@ contract DeployDiamond is Script {
         s[5] = RepatriationFacet.getRepatriationAuthorization.selector;
         s[6] = RepatriationFacet.getChainRepatriationDraw.selector;
         s[7] = RepatriationFacet.getRepatriationPosition.selector;
+        // #1568 C2 transport slice — dispatch/execute/cancel surfaces.
+        s[8] = RepatriationFacet.sendRepatriationInstruction.selector;
+        s[9] = RepatriationFacet.requestRepatriationCancel.selector;
+        s[10] = RepatriationFacet
+            .onRepatriationCancelInstructionReceived
+            .selector;
+        s[11] = RepatriationFacet.executeRepatriation.selector;
+        s[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
+        s[13] = RepatriationFacet.getRepatriationInstruction.selector;
     }
 
     /// T-087 Sub 1.B — single-home accumulator facet (ring-buffer

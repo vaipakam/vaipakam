@@ -42,7 +42,11 @@ import {
   type FRESH,
   type MeshObservation,
 } from '../src/invariants';
-import { compositionUnavailableGap } from '../src/mesh';
+import {
+  compositionUnavailableGap,
+  repatDrawUnavailableGap,
+  repatPositionUnavailableGap,
+} from '../src/mesh';
 import {
   formatAlert,
   redactDeliveryError,
@@ -229,12 +233,16 @@ function coherent(
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
   };
   if (over.paidOutRecycled === undefined) {
-    // `bucket + paidOut + stranded == creditedRaw + relocated`. Subtracting
-    // the stranded total is load-bearing: a release moves paidOut INTO it,
-    // so it never adds to the destinations side. Omitting it invented tokens
-    // the chain never held and tripped the reverse bound (#1448 r3).
+    // `bucket + paidOut + stranded + repatriatedOut == creditedRaw +
+    // relocated`. Subtracting the stranded total is load-bearing: a release
+    // moves paidOut INTO it, so it never adds to the destinations side.
+    // Omitting it invented tokens the chain never held and tripped the
+    // reverse bound (#1448 r3). The repatriated-out term (#1568 C2) is a
+    // destination for the same reason paidOut is — a fixture that models a
+    // repatriation without it would trip the over-credit bound.
     const destinations = comp.creditedRaw + l.custodyRelocated;
-    const already = l.bucket + comp.releasedRemitStranded;
+    const already =
+      l.bucket + comp.releasedRemitStranded + (l.repatriatedOut ?? 0n);
     l.paidOutRecycled = destinations > already ? destinations - already : 0n;
   }
   return { ...l, composition: comp };
@@ -1063,6 +1071,108 @@ describe('checkHardInvariants — reported-cumulative derivation', () => {
     expect(finding?.severity).toBe('critical');
     expect(finding?.detail).toContain('1023.000000 VPFI');
     expect(finding?.detail).toContain('1000.000000 VPFI');
+  });
+});
+
+describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
+  it('a healthy repatriation state produces zero findings', () => {
+    // Base charged a 100 draw (avail drops to 600 = 1000 - 300 - 100), and
+    // the mirror's lifetime destinations include a repatriated 100 (the
+    // coherent-fixture helper re-derives paidOut so the composition
+    // identity holds, exactly as normal operation maintains it — the
+    // bucket itself stays above the outstanding reservation, which the
+    // real debit's fundable bound guarantees). Neither side may page: the
+    // draw is within the remainder, the availability formula includes the
+    // new term, composition counts the outflow as a destination, and the
+    // reported floor keeps the departed value. Any of those missing fails
+    // THIS test, not a violation test — which is what pins the terms as
+    // implemented, not just added.
+    expect(
+      codes({
+        mirror: {
+          repat: { netDraw: 100n * E, lifetimeReleased: 0n },
+          avail: 600n * E,
+        },
+        mirrorLocal: { repatriatedOut: 100n * E },
+      }),
+    ).toEqual([]);
+  });
+
+  it('expectedAvail subtracts the net draw', () => {
+    expect(
+      expectedAvail({
+        ...({} as BaseChainBooks),
+        chainId: MIRROR,
+        reported: 1000n * E,
+        consumed: 400n * E,
+        avail: 0n,
+        attributed: 0n,
+        retired: 0n,
+        released: 100n * E,
+        outstanding: 0n,
+        repat: { netDraw: 100n * E, lifetimeReleased: 0n },
+      }),
+    ).toBe(600n * E);
+  });
+
+  it('pages repat-cap when the draw exceeds the un-instructed remainder', () => {
+    // remainder = 1000 - (400 - 100) = 700; a 701 draw over-commits the
+    // chain's reported capacity even though it is under `reported` alone —
+    // the two draws share one capacity (§7 #6's two-comparison form).
+    // `avail` is the saturated zero the chain would genuinely return, so
+    // the availability formula stays green — same blindness rationale as
+    // `consumed-cap`.
+    expect(
+      codes({
+        mirror: {
+          repat: { netDraw: 701n * E, lifetimeReleased: 0n },
+          avail: 0n,
+        },
+      }),
+    ).toEqual(['repat-cap']);
+  });
+
+  it('accepts the bound exactly at the remainder', () => {
+    expect(
+      codes({
+        mirror: {
+          repat: { netDraw: 700n * E, lifetimeReleased: 0n },
+          avail: 0n,
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('a bucket debit WITHOUT the outflow counter pages over-credited', () => {
+    // The regression the composition term exists for: a repatriation that
+    // debits the bucket but never advances `recycleRepatriatedOutCumulative`
+    // leaves the cumulatives claiming credit the destinations cannot
+    // account for. paidOut is pinned at the baseline-coherent value so the
+    // ONLY incoherence is the missing counter; the debit (200→160) stays
+    // above the 150 outstanding reservation so bucket coverage — which the
+    // real debit's fundable bound genuinely preserves — cannot co-fire and
+    // mask which check caught it. `reported-derivation` stays green
+    // because the stored cumulative (not the floor) is the binding branch
+    // here — the composition bound is precisely the check that sees this.
+    expect(
+      codes({
+        mirrorLocal: {
+          bucket: 160n * E,
+          repatriatedOut: 0n,
+          paidOutRecycled: 800n * E,
+        },
+      }),
+    ).toEqual(['bucket-composition']);
+  });
+
+  it('treats a missing repat view as zero everywhere (pre-C2 Diamond)', () => {
+    // `repatriatedOut: undefined` (the default baseline) with an untouched
+    // ledger — the healthy-mesh baseline already asserts zero findings; this
+    // pins the SAME for a repatriation-free chain whose view exists and
+    // reads zero, so "absent" and "zero" stay behaviourally identical.
+    expect(
+      codes({ mirrorLocal: { repatriatedOut: 0n } }),
+    ).toEqual([]);
   });
 });
 
@@ -2331,6 +2441,41 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
   });
 });
 
+
+// ── #1568 C2 ────────────────────────────────────────────────────────────
+describe('repat gap builders', () => {
+  it('each is its own source, so neither collides with the other gaps', () => {
+    // Same #1443 r7 dedup-key rationale as the composition gap: one gap
+    // must never suppress a different one for the same chain.
+    const draw = repatDrawUnavailableGap(42161, new Error('boom'));
+    expect(draw.reason).toBe('view-unavailable');
+    expect(draw.source).toBe('base-books-repat');
+    const pos = repatPositionUnavailableGap(42161, new Error('boom'));
+    expect(pos.reason).toBe('view-unavailable');
+    expect(pos.source).toBe('own-ledger-repat');
+  });
+
+  it('each names the checks that did not run, and why zero is safe', () => {
+    const draw = repatDrawUnavailableGap(10, new Error('boom'));
+    expect(draw.detail).toContain('repat-cap');
+    expect(draw.detail).toContain('pre-C2');
+    const pos = repatPositionUnavailableGap(10, new Error('boom'));
+    expect(pos.detail).toContain('bucket composition');
+    expect(pos.detail).toContain('repatriated-out');
+  });
+
+  it('never forwards provider text — the RPC URL carries the API key', () => {
+    for (const build of [repatDrawUnavailableGap, repatPositionUnavailableGap]) {
+      const gap = build(
+        8453,
+        new Error(
+          'HTTP request failed. URL: https://base.example/v2/SUPERSECRETKEY',
+        ),
+      );
+      expect(gap.detail).not.toContain('SUPERSECRETKEY');
+    }
+  });
+});
 
 // ── #1448 r3 ────────────────────────────────────────────────────────────
 describe('compositionUnavailableGap', () => {

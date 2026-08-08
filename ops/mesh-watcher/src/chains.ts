@@ -66,7 +66,13 @@ export interface CoverageGap {
    * collided on one dedup key, sending one detail twice and discarding
    * the other (Codex #1443 r7).
    */
-  source: 'config' | 'base-books' | 'own-ledger' | 'own-ledger-composition';
+  source:
+    | 'config'
+    | 'base-books'
+    | 'base-books-repat'
+    | 'own-ledger'
+    | 'own-ledger-composition'
+    | 'own-ledger-repat';
   detail: string;
   /**
    * The chain the endpoint actually reported, on `chain-mismatch` gaps only

@@ -35,6 +35,15 @@ interface IRewardRemittanceConfig {
     function setRewardRemittanceReceiver(address receiver) external;
 }
 
+/// @dev #1568 C2 — the `RepatriationFacet` endpoint setter: arms the C2
+///      transport (the facet is dark until its side's endpoint is set).
+///      A mirror sets the sender; Base sets the receiver; each side leaves
+///      the other zero.
+interface IRepatriationConfig {
+    function setRepatriationEndpoints(address sender_, address receiver_)
+        external;
+}
+
 /**
  * @title ConfigureCcip
  * @notice T-068 Phase 6 — wires the Chainlink CCIP cross-chain stack on
@@ -136,6 +145,15 @@ contract ConfigureCcip is Script {
     ///      never collides).
     bytes32 internal constant VPFI_REWARD_BUDGET_CHANNEL =
         keccak256("vaipakam.ccip.channel.vpfi-reward-budget");
+    /// @dev #1568 C2 — the SHARED mirror→Base return channel (cut once;
+    ///      Mode A rides it now, Mode B/#1434 R4 later — per-mode payload
+    ///      kinds discriminate, see `ReturnWire`). On a mirror the handler
+    ///      is the local `VpfiReturnSender` (send leg); on Base it is the
+    ///      `VpfiReturnReceiver` (kind-dispatching inbound). Neither
+    ///      Diamond can be the handler — each is already bound to another
+    ///      channel and `channelOf` is one-to-one.
+    bytes32 internal constant VPFI_RETURN_CHANNEL =
+        keccak256("vaipakam.ccip.channel.vpfi-return");
 
     /// @dev Everything `run()` resolves once, threaded through the wiring
     ///      steps — keeps each step a small, readable unit.
@@ -157,6 +175,10 @@ contract ConfigureCcip is Script {
         // local RewardRemittanceReceiver (inbound handler + the address the
         // Diamond's `setRewardRemittanceReceiver` authorizes).
         address localRewardBudgetHandler;
+        // #1568 C2 — the shared vpfi-return channel handler on THIS chain:
+        // the VpfiReturnSender on a mirror, the VpfiReturnReceiver on Base.
+        // Also the address `setRepatriationEndpoints` arms on the Diamond.
+        address localReturnHandler;
         address registry;
         address moduleOwner;
         address guardian;
@@ -219,6 +241,11 @@ contract ConfigureCcip is Script {
             // #776 — on Base, the reward-budget SEND handler is the Diamond.
             c.localRewardBudgetHandler =
                 Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
+            // #1568 C2 — on Base, the return-channel inbound handler.
+            c.localReturnHandler = Deployments.readAddress(
+                ".vpfiReturnReceiver",
+                "VPFI_RETURN_RECEIVER"
+            );
         } else {
             c.localToken =
                 Deployments.readAddress(".vpfiMirror", "VPFI_MIRROR_ADDRESS");
@@ -233,6 +260,11 @@ contract ConfigureCcip is Script {
             c.localRewardBudgetHandler = Deployments.readAddress(
                 ".rewardRemittanceReceiver",
                 "REWARD_REMITTANCE_RECEIVER"
+            );
+            // #1568 C2 — on a mirror, the return-channel send handler.
+            c.localReturnHandler = Deployments.readAddress(
+                ".vpfiReturnSender",
+                "VPFI_RETURN_SENDER"
             );
         }
 
@@ -282,6 +314,7 @@ contract ConfigureCcip is Script {
         _setBroadcastDestinations(c);
         _wireDiamondBuybackConfig(c);
         _wireDiamondRewardBudgetConfig(c);
+        _wireDiamondRepatriationConfig(c);
 
         vm.stopBroadcast();
 
@@ -335,8 +368,13 @@ contract ConfigureCcip is Script {
         // buyback handler, on a mirror the handler is the receiver (distinct
         // address from the Diamond).
         m.registerChannel(VPFI_REWARD_BUDGET_CHANNEL, c.localRewardBudgetHandler);
+        // #1568 C2 — the shared return channel: sender satellite on a
+        // mirror, receiver satellite on Base. Distinct addresses from every
+        // other handler on both chain classes, so `channelOf`'s one-to-one
+        // binding holds.
+        m.registerChannel(VPFI_RETURN_CHANNEL, c.localReturnHandler);
         console.log(
-            "Channels registered: vpfi-reward, vpfi-buyback, vpfi-reward-budget."
+            "Channels registered: vpfi-reward, vpfi-buyback, vpfi-reward-budget, vpfi-return."
         );
     }
 
@@ -369,6 +407,14 @@ contract ConfigureCcip is Script {
                     cid,
                     Deployments.readAddressForChain(cid, ".rewardRemittanceReceiver")
                 );
+                // #1568 C2 — Base peers the return channel with each
+                // mirror's VpfiReturnSender (the send leg its inbound
+                // repatriation returns originate from).
+                m.setChannelPeer(
+                    VPFI_RETURN_CHANNEL,
+                    cid,
+                    Deployments.readAddressForChain(cid, ".vpfiReturnSender")
+                );
                 console.log("  channel peers wired -> mirror", cid);
             }
         } else {
@@ -392,6 +438,15 @@ contract ConfigureCcip is Script {
                 VPFI_REWARD_BUDGET_CHANNEL,
                 c.baseChainId,
                 Deployments.readAddressForChain(c.baseChainId, ".diamond")
+            );
+            // #1568 C2 — mirrors peer the return channel with the Base
+            // receiver satellite.
+            m.setChannelPeer(
+                VPFI_RETURN_CHANNEL,
+                c.baseChainId,
+                Deployments.readAddressForChain(
+                    c.baseChainId, ".vpfiReturnReceiver"
+                )
             );
             console.log("  channel peers wired -> Base", c.baseChainId);
         }
@@ -442,8 +497,11 @@ contract ConfigureCcip is Script {
             // #776 — the mirror-only `RewardRemittanceReceiver` also extends
             // `GuardianPausable`; wire the same guardian onto its inbound path.
             GuardianPausable(c.localRewardBudgetHandler).setGuardian(c.guardian);
+            // #1568 C2 — the mirror-side VpfiReturnSender extends
+            // GuardianPausable; same fast-pause on the repatriation send leg.
+            GuardianPausable(c.localReturnHandler).setGuardian(c.guardian);
             console.log(
-                "Guardian set on messenger / reward / mirrorToken / rewardReceiver:",
+                "Guardian set on messenger / reward / mirrorToken / rewardReceiver / returnSender:",
                 c.guardian
             );
         } else {
@@ -452,8 +510,12 @@ contract ConfigureCcip is Script {
             // wire the same guardian so the buyback inbound surface
             // gets the same incident-response fast-pause.
             GuardianPausable(c.localBuybackHandler).setGuardian(c.guardian);
+            // #1568 C2 — the Base-side VpfiReturnReceiver extends
+            // GuardianPausable; same fast-pause on the repatriation
+            // inbound leg.
+            GuardianPausable(c.localReturnHandler).setGuardian(c.guardian);
             console.log(
-                "Guardian set on messenger / reward / buybackReceiver:",
+                "Guardian set on messenger / reward / buybackReceiver / returnReceiver:",
                 c.guardian
             );
         }
@@ -633,6 +695,32 @@ contract ConfigureCcip is Script {
             "Diamond reward-budget receiver wired ->",
             c.localRewardBudgetHandler
         );
+    }
+
+    /// @dev #1568 C2 — arm the Diamond's repatriation transport endpoint
+    ///      for this chain's role: the receiver satellite on Base, the
+    ///      sender satellite on a mirror (each side leaves the other
+    ///      zero). Until this call the `RepatriationFacet` is dark by
+    ///      design — every entry point reverts and the availability draw
+    ///      pair stays inert.
+    function _wireDiamondRepatriationConfig(Ctx memory c) internal {
+        address diamond =
+            Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
+        if (c.canonical) {
+            IRepatriationConfig(diamond).setRepatriationEndpoints(
+                address(0), c.localReturnHandler
+            );
+            console.log(
+                "Diamond repatriation receiver armed ->", c.localReturnHandler
+            );
+        } else {
+            IRepatriationConfig(diamond).setRepatriationEndpoints(
+                c.localReturnHandler, address(0)
+            );
+            console.log(
+                "Diamond repatriation sender armed ->", c.localReturnHandler
+            );
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

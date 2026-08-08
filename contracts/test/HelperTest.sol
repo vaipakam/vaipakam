@@ -2157,7 +2157,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](14);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2168,6 +2168,15 @@ contract HelperTest {
         selectors[5] = RepatriationFacet.getRepatriationAuthorization.selector;
         selectors[6] = RepatriationFacet.getChainRepatriationDraw.selector;
         selectors[7] = RepatriationFacet.getRepatriationPosition.selector;
+        // #1568 C2 transport slice — dispatch/execute/cancel surfaces.
+        selectors[8] = RepatriationFacet.sendRepatriationInstruction.selector;
+        selectors[9] = RepatriationFacet.requestRepatriationCancel.selector;
+        selectors[10] = RepatriationFacet
+            .onRepatriationCancelInstructionReceived
+            .selector;
+        selectors[11] = RepatriationFacet.executeRepatriation.selector;
+        selectors[12] = RepatriationFacet.sendRepatriationCancelAck.selector;
+        selectors[13] = RepatriationFacet.getRepatriationInstruction.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

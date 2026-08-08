@@ -8,6 +8,7 @@ import {
 } from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
+import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
 
 /// @title MockRewardMessenger
 /// @notice Test double for the production CCIP-backed reward messenger
@@ -413,6 +414,96 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         reporter ingress.
     function deliverBroadcastV2(RewardBroadcastV2 calldata b) external {
         RewardReporterFacet(diamond).onRewardBroadcastV2Received(b);
+    }
+
+    // ─── #1568 C2 — repatriation instruction surfaces ─────────────────────
+
+    uint256 public lastRepatDst;
+    uint256 public lastRepatAuthId;
+    uint256 public lastRepatAmount;
+    address public lastRepatRefund;
+    uint256 public lastRepatValue;
+    uint256 public repatSendCount;
+    uint256 public lastRepatCancelDst;
+    uint256 public lastRepatCancelAuthId;
+    address public lastRepatCancelRefund;
+    uint256 public lastRepatCancelValue;
+    uint256 public repatCancelSendCount;
+    /// @notice The messageId the repat sends return (settable).
+    bytes32 public repatMessageId = bytes32(uint256(0x11E8A7));
+
+    function setRepatMessageId(bytes32 id) external {
+        repatMessageId = id;
+    }
+
+    function sendRepatriationInstruction(
+        uint256 dstChainId,
+        uint256 authId,
+        uint256 amount,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastRepatDst = dstChainId;
+        lastRepatAuthId = authId;
+        lastRepatAmount = amount;
+        lastRepatRefund = refundAddress;
+        lastRepatValue = msg.value;
+        repatSendCount += 1;
+        return repatMessageId;
+    }
+
+    function quoteSendRepatriationInstruction(
+        uint256,
+        uint256,
+        uint256
+    ) external view returns (uint256) {
+        return quoteNative;
+    }
+
+    function sendRepatriationCancel(
+        uint256 dstChainId,
+        uint256 authId,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastRepatCancelDst = dstChainId;
+        lastRepatCancelAuthId = authId;
+        lastRepatCancelRefund = refundAddress;
+        lastRepatCancelValue = msg.value;
+        repatCancelSendCount += 1;
+        return repatMessageId;
+    }
+
+    function quoteSendRepatriationCancel(
+        uint256,
+        uint256
+    ) external view returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice Simulate a Base repatriation instruction landing on the
+    ///         mirror ingress (kind-8 CCIP delivery).
+    function deliverRepatriationInstruction(
+        address issuingBase,
+        uint256 authId,
+        uint256 amount
+    ) external {
+        RepatriationFacet(diamond).onRepatriationInstructionReceived(
+            issuingBase, authId, amount
+        );
+    }
+
+    /// @notice Simulate a Base repatriation CANCEL instruction landing on
+    ///         the mirror ingress (kind-9 CCIP delivery).
+    function deliverRepatriationCancel(
+        address issuingBase,
+        uint256 authId
+    ) external {
+        RepatriationFacet(diamond).onRepatriationCancelInstructionReceived(
+            issuingBase, authId
+        );
     }
 
     // ─── Receive-side: simulate a CCIP delivery landing on the Diamond ────

@@ -25,6 +25,35 @@
   },
   {
     "type": "function",
+    "name": "executeRepatriation",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "getChainRepatriationDraw",
     "inputs": [
       {
@@ -88,6 +117,35 @@
   },
   {
     "type": "function",
+    "name": "getRepatriationInstruction",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRepatriationPosition",
     "inputs": [],
     "outputs": [
@@ -132,6 +190,24 @@
         "name": "sourceChainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onRepatriationCancelInstructionReceived",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -200,6 +276,83 @@
   },
   {
     "type": "function",
+    "name": "requestRepatriationCancel",
+    "inputs": [
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendRepatriationCancelAck",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendRepatriationInstruction",
+    "inputs": [
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "setRepatriationEndpoints",
     "inputs": [
       {
@@ -243,6 +396,56 @@
   },
   {
     "type": "event",
+    "name": "RepatriationCancelAckDispatched",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepatriationCancelDispatched",
+    "inputs": [
+      {
+        "name": "authId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RepatriationEndpointsSet",
     "inputs": [
       {
@@ -256,6 +459,68 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepatriationExecuted",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepatriationInstructionDispatched",
+    "inputs": [
+      {
+        "name": "authId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -280,6 +545,25 @@
         "name": "amount",
         "type": "uint256",
         "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepatriationInstructionTombstoned",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -486,7 +770,49 @@
   },
   {
     "type": "error",
+    "name": "RepatriationExceedsFundable",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fundable",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RepatriationInstructionWrongState",
+    "inputs": [
+      {
+        "name": "issuingBase",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "authId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RepatriationInvalidRequest",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RepatriationMessengerNotSet",
     "inputs": []
   },
   {
@@ -523,6 +849,17 @@
         "name": "want",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   }
