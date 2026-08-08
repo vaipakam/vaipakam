@@ -77,6 +77,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
+import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 // #1222 M3 B2-d5 — the mirror-side remit receiver is a standalone UUPS
 // proxy, not a Diamond facet; the B2-d5 block below upgrades it in step
@@ -156,7 +157,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 69;
+    uint256 internal constant EXPECTED_FACETS = 70;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -686,6 +687,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardCommitmentFacet",
             address(new RewardCommitmentFacet()),
             _getRewardCommitmentSelectors()
+        );
+        // #1568 C2 — repatriation accounting core. NEW facet: an in-place
+        // refresh must cut it or the exported ABI advertises eight selectors
+        // the live Diamond's fallback rejects, and endpoint configuration
+        // (the arming step) reverts until a fresh deployment (Codex #1608
+        // r3).
+        items[69] = Item(
+            "repatriationFacet",
+            address(new RepatriationFacet()),
+            _getRepatriationSelectors()
         );
         // #1132 (S10 central enforcement) — terminal-transition register host.
     }

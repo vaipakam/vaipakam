@@ -72,7 +72,18 @@ library LibVpfiRecycle {
         // absorbed there, so this class is excluded from the day-bucketed
         // `credited[d]` feed AND from the cumulative a mirror reports to Base
         // (see {creditCustodyRelocated} and design record §2f).
-        RemittedCustodyRelocation
+        RemittedCustodyRelocation,
+        // #1568 C2 — CUSTODY-RELOCATION class for the OPPOSITE direction
+        // (append-only enum): a Mode-A planned-surplus RETURN settling on
+        // Base. Same exclusion semantics as the entry above (relocated
+        // custody, never new absorption — the value was Ā-counted once on
+        // the mirror), but a DISTINCT class (Codex #1608 r2 P2): the remit
+        // class is documented as Base→mirror with a remit-id refId, and a
+        // repatriation return published under it would attribute returned
+        // surplus as mirror funding and collide authorization ids with
+        // remit ids in event-based accounting. refId here is the
+        // repatriation AUTHORIZATION id.
+        RepatriationReturnRelocation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -225,7 +236,16 @@ library LibVpfiRecycle {
         // bucket → `paidOutRecycled` — but saturate anyway so a future path
         // that decremented the bucket without this counter degrades to a
         // conservative under-report instead of reverting every day-close.
-        uint256 gross = s.recycleBucket + s.paidOutRecycled;
+        // #1568 C2 — repatriated-out value stays IN the floor: it was
+        // credited (absorbed) here exactly once before leaving for Base, so
+        // a floor that dropped with the bucket on a healthy repatriation
+        // could fall BELOW an earlier report on an unseeded upgraded
+        // Diamond (§3.6a constraint 2a — the seed-before-debit step in
+        // {debitRepatriationSurplus} closes the same gap from the other
+        // side).
+        uint256 gross = s.recycleBucket +
+            s.paidOutRecycled +
+            s.recycleRepatriatedOutCumulative;
         uint256 relocated = s.recycleCustodyRelocatedCumulative;
         uint256 preUpgradeFloor = gross > relocated ? gross - relocated : 0;
         return stored >= preUpgradeFloor ? stored : preUpgradeFloor;
@@ -559,7 +579,11 @@ library LibVpfiRecycle {
      * @param  refId  Class-specific reference id (the remit id at arrival).
      * @param  amount VPFI wei of RECYCLED backing delivered.
      */
-    function creditCustodyRelocated(uint256 refId, uint256 amount) internal {
+    function creditCustodyRelocated(
+        uint256 refId,
+        uint256 amount,
+        RecycleSource source
+    ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
@@ -597,9 +621,7 @@ library LibVpfiRecycle {
         // records is "recycled accounting has run here", not "the cumulative
         // is non-zero".
         s.recycleAccountingSeeded = true;
-        emit VpfiCustodyRelocated(
-            uint8(RecycleSource.RemittedCustodyRelocation), refId, amount, dayId
-        );
+        emit VpfiCustodyRelocated(uint8(source), refId, amount, dayId);
     }
 
     /**
@@ -667,6 +689,58 @@ library LibVpfiRecycle {
      *         amounts (redesign ceil-dust rule), and a payout that the
      *         claim math authorized must not brick on ledger dust.
      */
+    /// @notice #1568 C2 Mode A — a repatriation may take only genuinely
+    ///         un-reserved surplus. The fundable slice nets the bucket
+    ///         against outstanding claim commitments and the keeper
+    ///         earmark, and the requested amount exceeded it.
+    error RepatriationExceedsFundable(uint256 requested, uint256 fundable);
+
+    /**
+     * @notice #1568 C2 Mode A (§3.6a constraint 2) — the DEDICATED
+     *         planned-surplus debit: moves `amount` out of the recycle
+     *         bucket for repatriation to the canonical chain.
+     * @dev    Deliberately NOT {consume}: consume also retires claim
+     *         commitments and advances `paidOutRecycled`, so calling it for
+     *         a surplus repatriation while live claim commitments exist
+     *         would retire those claims and book a reward payout that never
+     *         happened (constraint 2 verbatim). This primitive touches
+     *         exactly two ledger slots — the bucket, and the monotonic
+     *         repatriated-outflow counter that carries the movement through
+     *         the §7 #8 composition identity and {creditedCumulative}'s
+     *         floor (constraint 2a) — after the same seed-before-debit
+     *         snapshot {creditCustodyRelocated} performs, and for the same
+     *         reason: debiting an unseeded upgraded Diamond's bucket first
+     *         would let the next derived cumulative fall below an earlier
+     *         report.
+     *
+     *         Reverts {RepatriationExceedsFundable} instead of flooring:
+     *         unlike {consume}'s dust case, nothing authorizes spending
+     *         claim backing or the keeper earmark here, and a failed
+     *         execute is retryable after commitments retire.
+     */
+    function debitRepatriationSurplus(
+        LibVaipakam.Storage storage s,
+        uint256 amount
+    ) internal {
+        uint256 bucket = s.recycleBucket;
+        uint256 reserved = s.outstandingCommitRecycled +
+            s.recycleKeeperBudget;
+        uint256 fundable = bucket > reserved ? bucket - reserved : 0;
+        if (amount > fundable) {
+            revert RepatriationExceedsFundable(amount, fundable);
+        }
+        // Seed-before-debit (#1448 r3 idiom; constraint 2a). Read BEFORE
+        // the bucket write, or the departing value would be dropped from
+        // the seed.
+        if (s.recycleCreditedCumulative == 0) {
+            uint256 cumulative = creditedCumulative(s);
+            if (cumulative != 0) s.recycleCreditedCumulative = cumulative;
+        }
+        s.recycleAccountingSeeded = true;
+        s.recycleBucket = bucket - amount;
+        s.recycleRepatriatedOutCumulative += amount;
+    }
+
     function consume(uint256 amount) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1067,7 +1141,22 @@ library LibVpfiRecycle {
         uint256 consumed = s.chainConsumedRecycled[chainId];
         uint256 released = s.chainReleasedRecycledCommit[chainId];
         uint256 netConsumed = consumed > released ? consumed - released : 0;
-        return reported > netConsumed ? reported - netConsumed : 0;
+        uint256 avail = reported > netConsumed ? reported - netConsumed : 0;
+        // C2 Mode-A repatriation draw (#1568): the SEPARATE draw term of
+        // §3.6a's canonical availability formula
+        // `reported − (consumed − released) − (repatDebited − repatReleased)`.
+        // It must NOT ride `chainConsumedRecycled` — that counter is one half
+        // of the `outstanding + retired == consumed` identity, and charging a
+        // repatriation there breaks the identity on the first authorization.
+        // The `(debited − released)` NET is maintained IN the debited slot
+        // (a cancellation ACK decrements it) rather than derived from two
+        // cumulatives here (Codex #1608 r1 P2): with hostile near-max
+        // reports a cancelled near-max draw would pin the debited cumulative
+        // at ~2^256 and wedge every later authorization on overflow while
+        // this view said the capacity was back. Zero until #1568 arms, so
+        // the term is inert on every deployment built before then.
+        uint256 netRepat = s.chainRepatriationDebited[chainId];
+        return avail > netRepat ? avail - netRepat : 0;
     }
 
     /**

@@ -825,11 +825,15 @@ jobs:
       # red CI on that scenario (the step errors with "command not found"
       # rather than silently no-opping).
       #
-      # `apps/defi` typechecks via `tsc -b --noEmit` directly because its
-      # workspace doesn't declare a `typecheck` script (the type-check is
-      # bundled into the `build` script's `tsc -b && vite build`). We avoid
-      # the full build to keep CI fast — `--noEmit` is the structural-only
+      # `apps/defi` now HAS a `typecheck` script (#1521): `tsc -b --noEmit`
+      # plus a one-rule `react-hooks/rules-of-hooks` lint. We avoid the
+      # full build to keep CI fast — `--noEmit` is the structural-only
       # half of the build and is what matters for "did the types break".
+      # The lint half is deliberately narrow: defi's full config reports
+      # ~277 errors (mostly `no-explicit-any`), which is exactly why no
+      # job ever ran it, and is how a real hook-order crash on Create
+      # Offer reached production. Guarding the one rule the app is clean
+      # against beats guarding nothing until the backlog is cleared.
       - name: Typecheck — apps/keeper
         run: pnpm --filter @vaipakam/keeper typecheck
 
@@ -839,8 +843,8 @@ jobs:
       - name: Typecheck — apps/agent
         run: pnpm --filter @vaipakam/agent typecheck
 
-      - name: Typecheck — apps/defi (tsc -b --noEmit)
-        run: pnpm --filter @vaipakam/defi exec tsc -b --noEmit
+      - name: Typecheck — apps/defi (tsc -b --noEmit + rules-of-hooks)
+        run: pnpm --filter @vaipakam/defi typecheck
 
       - name: Typecheck — apps/www
         run: pnpm --filter @vaipakam/www typecheck
@@ -848,20 +852,37 @@ jobs:
       - name: Typecheck — apps/alpha02
         run: pnpm --filter @vaipakam/alpha02 typecheck
 
-      # The i18n baselines may only SHRINK, and until now that rule lived
-      # only in prose. `check-locale-coverage` fails on a locale value
-      # that still reads in English UNLESS the pair is recorded — and the
-      # record is a file in the same repository, so one change could both
-      # cause a regression and excuse it, going green (Codex #1607 r18).
+      # `apps/alpha` and `apps/alpha01` are deployable Workers that
+      # render React, and neither was typechecked here at all (#1521).
+      # Both now run `tsc` plus the single-rule rules-of-hooks check,
+      # so a conditional hook in either fails CI like it does in the
+      # other React apps.
+      - name: Typecheck — apps/alpha (tsc -b --noEmit + rules-of-hooks)
+        run: pnpm --filter @vaipakam/alpha typecheck
+
+      - name: Typecheck — apps/alpha01 (tsc -b --noEmit + rules-of-hooks)
+        run: pnpm --filter @vaipakam/alpha01 typecheck
+
+      # `packages/ui` is not deployed on its own, but its components are
+      # compiled INTO apps/defi (eleven importers), and each app's
+      # `eslint .` runs from that app's directory without following
+      # imports across the workspace boundary. Without this step a
+      # conditional hook in a shared component keeps every app green
+      # and still breaks the page (#1521).
+      - name: Lint — packages/ui (rules-of-hooks)
+        run: pnpm --filter @vaipakam/ui typecheck
+
+      # The i18n baselines may only SHRINK, and that rule lived only in
+      # prose. `check-locale-coverage` fails on a locale value that still
+      # reads in English UNLESS the pair is recorded — and the record is a
+      # file in the same repository, so one change could both cause a
+      # regression and excuse it, going green (Codex #1607 r18).
       #
       # A guard cannot check this against the working tree; it needs a
       # point of reference outside the change. Hence the base sha, fetched
       # shallowly here rather than by widening the job's `fetch-depth` —
       # this is a required check and a full history clone costs every PR.
       #
-      # PR events only: a push to main has no "before" to compare against,
-      # and the script refuses to run against a ref it cannot resolve
-      # rather than passing everything.
       # Runs on PUSH as well as pull_request. Limiting it to PRs left
       # the one check that compares the editable baselines with their
       # prior state unrun on a direct push to main — so a commit landing

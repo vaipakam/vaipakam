@@ -14,6 +14,8 @@ import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.
 import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
+import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
+import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
@@ -131,8 +133,9 @@ contract MeshLedgerInvariant is Test {
         // #1437 r1 P1 — §7 #2's FRESH half reads `getInteractionPoolPaidOut`,
         // which lives on the lens facet (#1306 follow-up split).
         InteractionRewardsLensFacet lens = new InteractionRewardsLensFacet();
+        RepatriationFacet repatFacet = new RepatriationFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = _cut(address(ac), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(admin), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(vpfiFacet), helper.getVPFITokenFacetSelectors());
@@ -148,6 +151,11 @@ contract MeshLedgerInvariant is Test {
         cuts[6] = _cut(address(mutator), helper.getTestMutatorFacetSelectors());
         cuts[7] = _cut(
             address(lens), helper.getInteractionRewardsLensFacetSelectors()
+        );
+        // #1568 C2 — the Mode-A accounting core, so the fuzzer can drive the
+        // authorization draw the SS7 #6 second term bounds.
+        cuts[8] = _cut(
+            address(repatFacet), helper.getRepatriationFacetSelectors()
         );
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -206,6 +214,14 @@ contract MeshLedgerInvariant is Test {
         TestMutatorFacet(address(diamond)).setGovernorCommitArmedFromDayRaw(1);
 
         handler = new MeshHandler(address(diamond), address(messenger));
+        // #1568 C2 — the handler drives ADMIN-gated authorizations, and IS
+        // the configured receiver so its cancellation ACKs are accepted.
+        AccessControlFacet(address(diamond)).grantRole(
+            LibAccessControl.ADMIN_ROLE, address(handler)
+        );
+        RepatriationFacet(address(diamond)).setRepatriationEndpoints(
+            address(0), address(handler)
+        );
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits
         // `Test`, which brings hundreds of public cheatcode/assertion helpers
@@ -215,7 +231,7 @@ contract MeshLedgerInvariant is Test {
         // in `test_CoverageProbe_FuzzerReachesRealState`: with an unrestricted
         // target the probe showed ZERO instructions, ZERO retirements and an
         // untouched bucket after 50,000 calls.)
-        bytes4[] memory sel = new bytes4[](8);
+        bytes4[] memory sel = new bytes4[](11);
         sel[0] = MeshHandler.reportB3.selector;
         sel[1] = MeshHandler.reportLegacyB1.selector;
         sel[2] = MeshHandler.reportLegacyPre1222.selector;
@@ -224,6 +240,9 @@ contract MeshLedgerInvariant is Test {
         sel[5] = MeshHandler.warp.selector;
         sel[6] = MeshHandler.creditDay.selector;
         sel[7] = MeshHandler.instructThenRetire.selector;
+        sel[8] = MeshHandler.authorizeRepat.selector;
+        sel[9] = MeshHandler.cancelRepat.selector;
+        sel[10] = MeshHandler.debitSurplus.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
     }
 
@@ -265,10 +284,27 @@ contract MeshLedgerInvariant is Test {
             // overflows on a near-max report and this invariant would FAIL
             // against correct production code. An invariant that cannot
             // survive the states its own subject admits is worse than none.
+            uint256 claimNet = consumed > released ? consumed - released : 0;
             assertLe(
-                consumed > released ? consumed - released : 0,
+                claimNet,
                 reported,
                 "SS7#6: consumed - released <= reported"
+            );
+            // #1568 C2 — the SECOND net term of governor SS7 #6's canonical
+            // two-comparison form: the repatriation draw fits inside what
+            // the claim side leaves. Never a sum with `reported` — the
+            // reported cumulative is unbounded and an addition form
+            // overflows on the hostile near-max band this handler visits.
+            // The view's first figure IS the net (maintained in place —
+            // a cancellation decrements it), so no subtraction here: doing
+            // one against the lifetime-released cumulative would
+            // double-count releases.
+            (uint256 repatNet, ) = RepatriationFacet(address(diamond))
+                .getChainRepatriationDraw(cs[i]);
+            assertLe(
+                repatNet,
+                reported > claimNet ? reported - claimNet : 0,
+                "SS7#6: repatNet <= reported - claimNet"
             );
         }
     }
@@ -377,10 +413,18 @@ contract MeshLedgerInvariant is Test {
         (uint256 relocated, uint256 bucket, ) =
             _agg().getRecycleCustodyPosition();
         (, , , uint256 paidOut) = _agg().getGovernorCommitState();
+        // #1568 C2 — repatriated-out value is a REAL destination: without
+        // this term one healthy mirror-side surplus debit makes the old
+        // three-destination form reject correct code (Codex #1608 r1 P2).
+        // These sums are safe where afterInvariant's draw sums were not:
+        // every term is bounded by value the bucket actually held, never by
+        // hostile report magnitudes.
+        (uint256 repatriatedOut, , , ) = RepatriationFacet(address(diamond))
+            .getRepatriationPosition();
         assertLe(
             raw + relocated,
-            bucket + paidOut + stranded,
-            "#1446: creditedRaw + relocated <= bucket + paidOut + stranded"
+            bucket + paidOut + stranded + repatriatedOut,
+            "#1446: raw + relocated <= bucket + paidOut + stranded + repatOut"
         );
     }
 
@@ -451,6 +495,46 @@ contract MeshLedgerInvariant is Test {
             0,
             "VACUOUS RUN: no RELEASE was ever recorded - B3's availability "
             "restoration was never exercised"
+        );
+        // #1568 C2 — the SS7 #6 second term is only tested if the fuzzer
+        // actually drew and released repatriation authorizations. Same
+        // rationale as the three guards above: an inert draw pair makes the
+        // new comparison pass on zeros forever.
+        (uint256 repArb, uint256 repRelArb) = RepatriationFacet(
+            address(diamond)
+        ).getChainRepatriationDraw(CHAIN_ARB);
+        (uint256 repOp, uint256 repRelOp) = RepatriationFacet(
+            address(diamond)
+        ).getChainRepatriationDraw(CHAIN_OP);
+        // Disjunctions, NOT sums: the handler deliberately draws up to the
+        // hostile near-max availability band, so two chains' cumulative
+        // draws can each approach 2^256 and a sum overflows — the exact
+        // arithmetic class SS7 #6's subtraction form exists to avoid.
+        // Lifetime evidence, disjunctive: the first figure is the NET draw,
+        // which a completed authorize->cancel cycle returns to zero — a run
+        // that authorized and released everything is NOT vacuous. "Ever
+        // authorized" is therefore any of net-draw or lifetime-released
+        // being nonzero on either mirror.
+        assertTrue(
+            repArb != 0 || repOp != 0 || repRelArb != 0 || repRelOp != 0,
+            "VACUOUS RUN: no repatriation was ever authorized - SS7#6's "
+            "second term passed on an untouched draw ledger"
+        );
+        assertTrue(
+            repRelArb != 0 || repRelOp != 0,
+            "VACUOUS RUN: no repatriation release ever landed - the draw's "
+            "restore half was never exercised"
+        );
+        // #1568 C2 — the composition invariant's repatriated-out term needs
+        // the mirror-side debit to have actually run (single counter,
+        // bounded by real bucket value — no sum, no overflow exposure).
+        (uint256 repatOut, , , ) = RepatriationFacet(address(diamond))
+            .getRepatriationPosition();
+        assertGt(
+            repatOut,
+            0,
+            "VACUOUS RUN: the mirror-side surplus debit never ran - the "
+            "composition invariant's repatriated-out term passed on zero"
         );
     }
 
@@ -1127,10 +1211,58 @@ contract MeshHandler is Test {
     /// Steps the reserved-band day pair used by {instructThenRetire}.
     uint256 internal retireNonce;
 
+    RepatriationFacet internal repat;
+    address internal diamondAddr;
+
+    /// #1568 C2 — authorizations this handler opened and has not yet
+    /// cancelled; `cancelRepat` compacts settled/stale entries as it draws.
+    uint256[] internal pendingAuths;
+
     constructor(address diamond_, address messenger_) {
         agg = RewardAggregatorFacet(diamond_);
         mut = TestMutatorFacet(diamond_);
         messenger = MockRewardMessenger(payable(messenger_));
+        repat = RepatriationFacet(diamond_);
+        diamondAddr = diamond_;
+    }
+
+    /// #1568 C2 — a Mode-A authorization against LIVE availability. Bounded
+    /// by the current netted figure, so the fuzzer explores the two-term
+    /// SS7 #6 bound from inside its legal region while hostile reports
+    /// stretch `reported` toward the near-max band.
+    function authorizeRepat(uint256 chainSeed, uint256 amountSeed) external {
+        uint32 c = _chain(chainSeed);
+        if (c == CHAIN_BASE) c = CHAIN_OP; // Base never repatriates itself
+        (, , uint256 avail, ) = agg.getChainRecycledLedger(c);
+        if (avail == 0) return;
+        uint256 amt = bound(amountSeed, 1, avail);
+        uint256 id = repat.authorizeRepatriation(c, amt);
+        pendingAuths.push(id);
+    }
+
+    /// #1568 C2 — the MIRROR-side surplus debit, through the test-only
+    /// Diamond wrapper (its production caller is the transport slice's
+    /// executeRepatriation). Small bounded amounts against the seeded
+    /// bucket, so the composition invariant's repatriated-out term is
+    /// driven rather than asserted on zero; an over-fundable request
+    /// reverts and is counted, exactly like the other hostile actions.
+    function debitSurplus(uint256 amountSeed) external {
+        mut.debitRepatriationSurplusRaw(bound(amountSeed, 1, 50 ether));
+    }
+
+    /// #1568 C2 — the cancellation ACK (this handler IS the configured
+    /// receiver), releasing a prior draw back into availability.
+    function cancelRepat(uint256 idxSeed) external {
+        uint256 n = pendingAuths.length;
+        if (n == 0) return;
+        uint256 i = idxSeed % n;
+        uint256 id = pendingAuths[i];
+        pendingAuths[i] = pendingAuths[n - 1];
+        pendingAuths.pop();
+        (uint8 status, uint32 dst, , , ) =
+            repat.getRepatriationAuthorization(id);
+        if (status != 1) return;
+        repat.onRepatriationCancelAck(id, diamondAddr, dst);
     }
 
     /// Codex #1437 r1 P1 — the reported cumulative is DELIBERATELY unbounded
