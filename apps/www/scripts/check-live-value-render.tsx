@@ -49,7 +49,7 @@ import ReactMarkdown from 'react-markdown';
 import i18next from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { markdownComponents } from '../src/lib/markdownToc';
-import { substituteLiveValuesInMarkdown } from '../src/lib/liveValueKnobs';
+import { substituteLiveValuesInMarkdown } from './liveValueMarkdown';
 
 /*
  * A minimal i18next instance. `LiveValue` reads the active locale (so its
@@ -190,21 +190,40 @@ function check(name: string, ok: boolean, detail: string) {
     !md('Yield Fee — `{liveValue:treasuryFeeBps}`% of interest.').includes('liveValue:'),
     `raw token survived: ${md('Yield Fee — `{liveValue:treasuryFeeBps}`%')}`,
   );
-  check(
-    'markdown: fenced token stays literal',
-    md('```\n`{liveValue:treasuryFeeBps}`\n```').includes('liveValue:treasuryFeeBps'),
-    'a fenced token was substituted in the published markdown',
-  );
-  check(
-    'markdown: tilde-fenced token stays literal',
-    md('~~~\n`{liveValue:treasuryFeeBps}`\n~~~').includes('liveValue:treasuryFeeBps'),
-    'a tilde-fenced token was substituted in the published markdown',
-  );
-  check(
-    'markdown: indented token stays literal',
-    md('    `{liveValue:treasuryFeeBps}`').includes('liveValue:treasuryFeeBps'),
-    'an indented-block token was substituted in the published markdown',
-  );
+  // Block-vs-inline in raw markdown, across every construct probed.
+  //
+  // The first implementation tracked fence state by hand and got two of
+  // these wrong: a ``` line inside a ~~~ block closed the block (so a
+  // documented code sample got substituted), and a 4-space list
+  // continuation was mistaken for an indented code block (so its token
+  // stayed raw in the published artifact — the original bug). Parsing
+  // with remark and touching only `inlineCode` nodes excludes every
+  // block form by construction; these cases pin that.
+  const T = '`{liveValue:treasuryFeeBps}`';
+  const blockCases: [string, string, 'literal' | 'substituted'][] = [
+    ['fenced', `\`\`\`\n${T}\n\`\`\``, 'literal'],
+    ['fenced with info string', `\`\`\`js title="x"\n${T}\n\`\`\``, 'literal'],
+    ['fence indented 3 spaces', `   \`\`\`\n   ${T}\n   \`\`\``, 'literal'],
+    ['fence inside a list item', `- item\n\n  \`\`\`\n  ${T}\n  \`\`\``, 'literal'],
+    ['tilde fence containing backticks', `~~~\n\`\`\`\n${T}\n~~~`, 'literal'],
+    ['plain indented code block', `paragraph\n\n    ${T}`, 'literal'],
+    ['4-space list continuation', `- item\n\n    ${T}`, 'substituted'],
+    ['after a closed fence', `\`\`\`\ncode\n\`\`\`\n\nfee ${T}`, 'substituted'],
+    ['between two fences', `\`\`\`\na\n\`\`\`\n\nfee ${T}\n\n\`\`\`\nb\n\`\`\``, 'substituted'],
+    ['blockquote', `> fee ${T}`, 'substituted'],
+    ['nested list', `- a\n  - fee ${T}`, 'substituted'],
+    ['heading', `## fee ${T}`, 'substituted'],
+    ['table row', `| a |\n|---|\n| ${T} |`, 'substituted'],
+  ];
+  for (const [name, markdown, expected] of blockCases) {
+    const actual = md(markdown).includes('liveValue:') ? 'literal' : 'substituted';
+    check(
+      `markdown: ${name} renders ${expected}`,
+      actual === expected,
+      `got ${actual} — block/inline detection is wrong for this construct`,
+    );
+  }
+
   check(
     'markdown: unknown knob is left alone',
     md('`{liveValue:treasuryFeebps}`').includes('liveValue:treasuryFeebps'),
@@ -248,11 +267,11 @@ function check(name: string, ok: boolean, detail: string) {
 
 if (failures.length > 0) {
   console.error(
-    `[check-live-value-render] FAILED — ${failures.length} of 24 checks\n${failures.join('\n')}\n`,
+    `[check-live-value-render] FAILED — ${failures.length} of 34 checks\n${failures.join('\n')}\n`,
   );
   process.exit(1);
 }
 
 console.log(
-  '[check-live-value-render] OK — 24 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak, and the published-markdown path matches the rendered one',
+  '[check-live-value-render] OK — 34 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak, and the published-markdown path matches the rendered one',
 );

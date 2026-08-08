@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 // Shared with `LiveValue.tsx` so the published markdown and the rendered
 // pages cannot disagree about what a `{liveValue:...}` token means.
 // This script therefore runs under `tsx`, not bare node (#1606 review).
-import { substituteLiveValuesInMarkdown } from '../src/lib/liveValueKnobs.ts';
+import { substituteLiveValuesInMarkdown } from './liveValueMarkdown.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dirname, '..', 'src', 'content');

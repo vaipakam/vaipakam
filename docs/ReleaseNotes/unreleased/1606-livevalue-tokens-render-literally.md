@@ -79,6 +79,20 @@ worked: on a German page, English grouping turns a twenty-thousand-token
 threshold into something that reads as twenty. Both the pages and the
 published copies now format for the language of the document.
 
+Substituting the published copies needed care that the first attempt did
+not have. Deciding which values to replace means knowing what is prose and
+what is a code sample, and the first version worked that out by scanning
+lines for fence markers. Testing it against the awkward shapes found two
+faults: a document could close a code block early if it contained the other
+kind of fence marker inside it, which would have substituted values inside
+a sample; and an indented paragraph inside a list was mistaken for a code
+sample, which left a placeholder in the published file — the very fault
+this change exists to remove. Both came from re-deriving document
+structure. The pages never had to: they receive an already-parsed document
+and only ever see an inline value as an inline value. The published copies
+now do the same, so every block form is excluded because of what it is
+rather than because a rule remembered to exclude it.
+
 One thing this surfaced that is not fixed here: the worked examples in the
 documents still calculate the older fee rates from before the rates were
 raised, so a reader can now see the correct rate in one sentence and an

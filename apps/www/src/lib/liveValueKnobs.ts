@@ -8,9 +8,9 @@
  * disagree:
  *
  *  - `LiveValue.tsx` renders them in the React doc pages.
- *  - `scripts/generate-llms.mjs` publishes the same source markdown as
- *    machine-readable artifacts (`/docs/*.md`, `llms-full.txt`) that
- *    `llms.txt` advertises to AI crawlers.
+ *  - `scripts/liveValueMarkdown.ts` substitutes the same tokens in the
+ *    raw markdown published as machine-readable artifacts (`/docs/*.md`,
+ *    `llms-full.txt`) that `llms.txt` advertises to AI crawlers.
  *
  * The React fix alone left 420 raw tokens in those artifacts — crawlers
  * were still being served the internal syntax the fix was meant to
@@ -77,44 +77,3 @@ export function formatKnob(value: number, format: 'percent' | 'count', locale: s
 
 /** Matches a whole inline-code token: `{liveValue:knobName}`. */
 export const LIVE_VALUE_TOKEN_RE = /^\{liveValue:([a-zA-Z0-9]+)\}$/;
-
-/**
- * Substitute `{liveValue:...}` tokens in RAW MARKDOWN, for the published
- * machine-readable copies.
- *
- * Fence-aware, mirroring the rendered pages: a token inside a fenced or
- * indented code block stays literal, so the docs can still document this
- * mechanism. In the React path that falls out of the anchored regex (block
- * code arrives with a trailing newline); here there is no renderer to lean
- * on, so the block state is tracked explicitly.
- *
- * An unrecognised knob is left exactly as written — same rule as the
- * rendered pages, so an authoring typo stays visible instead of becoming
- * a confidently wrong number.
- */
-export function substituteLiveValuesInMarkdown(markdown: string, locale: string): string {
-  const lines = markdown.split('\n');
-  let inFence = false;
-
-  return lines
-    .map((line) => {
-      const fenceDelimiter = /^\s{0,3}(```|~~~)/.test(line);
-      if (fenceDelimiter) {
-        inFence = !inFence;
-        return line;
-      }
-      if (inFence) return line;
-      // Indented code block — four spaces or a tab. Not inside a list
-      // continuation, which markdown also indents, so this is
-      // deliberately conservative: it can only ever leave a token
-      // unsubstituted, never substitute one it should not.
-      if (/^(\t| {4})/.test(line)) return line;
-
-      return line.replace(/`\{liveValue:([a-zA-Z0-9]+)\}`/g, (whole, knob: string) => {
-        const spec = KNOB_DEFAULTS[knob as KnobName];
-        if (!spec) return whole;
-        return formatKnob(spec.defaultValue, spec.format, locale);
-      });
-    })
-    .join('\n');
-}
