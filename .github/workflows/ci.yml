@@ -863,6 +863,15 @@ jobs:
       - name: Typecheck — apps/alpha01 (tsc -b --noEmit + rules-of-hooks)
         run: pnpm --filter @vaipakam/alpha01 typecheck
 
+      # `packages/ui` is not deployed on its own, but its components are
+      # compiled INTO apps/defi (eleven importers), and each app's
+      # `eslint .` runs from that app's directory without following
+      # imports across the workspace boundary. Without this step a
+      # conditional hook in a shared component keeps every app green
+      # and still breaks the page (#1521).
+      - name: Lint — packages/ui (rules-of-hooks)
+        run: pnpm --filter @vaipakam/ui typecheck
+
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi
       # has pre-existing test-setup failures (Issue #85 — PublicDashboard +

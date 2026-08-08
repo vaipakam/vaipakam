@@ -134,14 +134,23 @@ interface LiveValueProps {
 
 export function LiveValue({ knob }: LiveValueProps) {
   const spec = KNOB_REGISTRY[knob];
-  // The unknown-token bail-out lives BELOW the hook (#1521): `spec` is
-  // derived from a prop, so returning before `useProtocolConfig` made
-  // the hook count depend on it. React reuses a component instance
-  // when the same tree position re-renders, so doc content that swaps
-  // a known token for an unknown one at the same node changes the
-  // count and aborts the page. This is the copy the docs actually
-  // render — Whitepaper, Overview, UserGuide and AdminKnobsDocs all
-  // reach it through `markdownComponents()`.
+  // The bail-out sits BELOW the hook (#1521). Two things to know:
+  //
+  // 1. As written before, this was a rules-of-hooks violation — `spec`
+  //    comes from a prop, so the hook count depended on it.
+  // 2. It was NOT, on its own, a crash. React tolerates a render that
+  //    calls ZERO hooks, and the old bail-out preceded every hook here,
+  //    so the transition was 0 <-> 1 and React accepted it. (Probed
+  //    directly; the crash only occurs when a NON-zero count changes.)
+  //
+  // It is fixed anyway because the safety is accidental and one line
+  // deep: add any hook above the bail-out — a `useTranslation` for the
+  // error text, a context read — and the count becomes 1 <-> 2, which
+  // aborts the page. The ordering below removes that trap rather than
+  // relying on nobody springing it.
+  //
+  // This is the copy the docs actually render: Whitepaper, Overview,
+  // UserGuide and AdminKnobsDocs all reach it via `markdownComponents()`.
   const { config } = useProtocolConfig();
 
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
