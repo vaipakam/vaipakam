@@ -737,6 +737,7 @@ contract ConfigureCcip is Script {
             // simply not armed, the facet refuses authorizations toward
             // an unarmed lane, and the documented re-run on Base after
             // the mirrors' passes arms it with the true minimum.
+            uint256 skipped;
             for (uint256 i; i < c.laneChainIds.length; ++i) {
                 uint256 cid = c.laneChainIds[i];
                 if (_isCanonical(cid)) continue;
@@ -744,6 +745,7 @@ contract ConfigureCcip is Script {
                     cid, ".ccipRateCapacity"
                 );
                 if (remoteCap == 0) {
+                    skipped++;
                     console.log(
                         "  SKIP repatriation ceiling for mirror", cid
                     );
@@ -759,6 +761,30 @@ contract ConfigureCcip is Script {
                     SafeCast.toUint32(cid), ceiling
                 );
                 console.log("  repatriation ceiling for", cid, "->", ceiling);
+            }
+            // #1618 r4 P1 — an operator following a Base-FIRST order would
+            // otherwise finish this pass with every lane skipped and no
+            // unmissable signal that the ceremony is incomplete (each
+            // authorization would revert `RepatriationLaneCeilingUnset`
+            // until someone diagnosed why). The runbook now orders the
+            // canonical chain's ccip-wire pass LAST — every mirror records
+            // its capacity first and this pass arms everything — and this
+            // banner catches the out-of-order run loudly.
+            if (skipped != 0) {
+                console.log("");
+                console.log(
+                    "  *** REPATRIATION CEILINGS INCOMPLETE:", skipped,
+                    "lane(s) skipped ***"
+                );
+                console.log(
+                    "  *** Mode-A authorization toward those chains will revert until armed."
+                );
+                console.log(
+                    "  *** Re-run ccip-wire on THIS chain after the skipped mirrors' passes"
+                );
+                console.log(
+                    "  *** (the runbook orders the canonical chain LAST for exactly this reason)."
+                );
             }
         } else {
             IRepatriationConfig(diamond).setRepatriationEndpoints(

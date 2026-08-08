@@ -1071,7 +1071,11 @@ EOF
 # limits, and the TokenAdminRegistry CCT registration.
 # `ConfigureCcip.s.sol` reads EVERY chain's addresses.json, so run this
 # phase only after the `contracts` phase has landed on every chain in
-# the topology. Run it once per chain.
+# the topology. Run it once per chain — CANONICAL (Base) CHAIN LAST:
+# its pass derives each repatriation per-auth ceiling from the capacity
+# every mirror's pass records first (#1568 C2, Codex #1618 r4); run too
+# early it prints a REPATRIATION CEILINGS INCOMPLETE banner and the
+# repair is re-running this phase on the canonical chain (idempotent).
 #
 # CCIP has no per-chain DVN policy — Chainlink operates a uniform
 # committing DON + executing DON + an independent Risk Management
